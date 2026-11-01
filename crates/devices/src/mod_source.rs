@@ -102,6 +102,17 @@ const P_ENV_SUSTAIN: u32 = 22;
 const P_ENV_RELEASE: u32 = 23;
 const P_ENV_AMOUNT: u32 = 24;
 const P_ENV_MODE: u32 = 25;
+/// Params appended after the envelope: LFO 2 into LFO 1, the output lag and the key follow.
+const P_X_RATE: u32 = 26;
+const P_X_LEVEL: u32 = 27;
+const P_LAG: u32 = 28;
+const P_KEY_FOLLOW: u32 = 29;
+/// Longest output lag in ms.
+const LAG_MAX_MS: f32 = 2_000.0;
+/// Highest free LFO rate in Hz.
+const RATE_MAX_HZ: f32 = 1_000.0;
+/// `log2(e)`: turns `exp(-x)` into `2^(-x log2 e)`.
+const LOG2_E: f32 = std::f32::consts::LOG2_E;
 
 /// Choice labels of `div`: for each note length a triplet, a straight and a dotted entry.
 const DIV_LABELS: [&str; 30] = [
@@ -217,7 +228,7 @@ macro_rules! lfo_params {
                 $base + O_RATE,
                 concat!($key, "_rate"),
                 concat!($name, " rate"),
-                (0.01, 40.0, $rate),
+                (0.01, RATE_MAX_HZ, $rate),
                 Taper::Exponential,
                 Unit::Hz,
                 false,
@@ -292,8 +303,8 @@ macro_rules! lfo_params {
 const LFO1: [ParamDescriptor; 10] = lfo_params!(0, "lfo1", "LFO 1", 0.0, 1.0);
 const LFO2: [ParamDescriptor; 10] = lfo_params!(LFO_PARAMS, "lfo2", "LFO 2", 1.0, 0.5);
 
-const fn all_params() -> [ParamDescriptor; 26] {
-    let mut out = [LFO1[0]; 26];
+const fn all_params() -> [ParamDescriptor; 30] {
+    let mut out = [LFO1[0]; 30];
     let mut i = 0;
     while i < 10 {
         out[i] = LFO1[i];
@@ -354,10 +365,46 @@ const fn all_params() -> [ParamDescriptor; 26] {
         Unit::Choice(&["retrigger", "legato"]),
         true,
     );
+    out[26] = param(
+        P_X_RATE,
+        "lfo2_to_lfo1_rate",
+        "LFO 2 to LFO 1 rate",
+        (-1.0, 1.0, 0.0),
+        Taper::Linear,
+        Unit::None,
+        false,
+    );
+    out[27] = param(
+        P_X_LEVEL,
+        "lfo2_to_lfo1_level",
+        "LFO 2 to LFO 1 level",
+        (-1.0, 1.0, 0.0),
+        Taper::Linear,
+        Unit::None,
+        false,
+    );
+    out[28] = param(
+        P_LAG,
+        "lag",
+        "Output lag",
+        (0.0, LAG_MAX_MS, 0.0),
+        Taper::Linear,
+        Unit::Ms,
+        false,
+    );
+    out[29] = param(
+        P_KEY_FOLLOW,
+        "key_follow",
+        "LFO key follow",
+        (0.0, 1.0, 0.0),
+        Taper::Linear,
+        Unit::Percent,
+        false,
+    );
     out
 }
 
-static PARAMS: [ParamDescriptor; 26] = all_params();
+static PARAMS: [ParamDescriptor; 30] = all_params();
 
 const NOTES_IN: SocketId = SocketId(0);
 const GATE_CV_IN: SocketId = SocketId(1);
@@ -491,6 +538,16 @@ struct BatchTime {
     tempo_tpf: f64,
     time_signature: (u8, u8),
     jump: bool,
+    /// Rate multiplier of the key follow (1 when off); free-running LFOs only.
+    follow: f64,
+}
+
+/// LFO 2 as a source for LFO 1: its output of the same batch and how far it moves LFO 1's rate
+/// (in octaves at full amount) and level.
+struct Cross<'a> {
+    src: &'a Batch,
+    rate: f32,
+    level: f32,
 }
 
 /// One LFO: parameters and phase state.
@@ -557,7 +614,7 @@ impl Lfo {
         match offset {
             O_SHAPE => self.shape = ModShape::from_index(v.round().max(0.0) as usize),
             O_MORPH => self.morph = v.clamp(-1.0, 1.0),
-            O_RATE => self.rate = v.clamp(0.01, 40.0),
+            O_RATE => self.rate = v.clamp(0.01, RATE_MAX_HZ),
             O_SYNC => self.sync = v >= 0.5,
             O_DIV => self.div = (v.round().max(0.0) as usize).min(DIV_LABELS.len() - 1),
             O_PHASE => self.phase = v.clamp(0.0, 1.0),
@@ -582,6 +639,7 @@ impl Lfo {
         t: &BatchTime,
         rate_cv: Option<&Batch>,
         amount_cv: Option<&Batch>,
+        cross: Option<&Cross<'_>>,
         note_on: &[bool; BATCH],
         out: &mut Batch,
     ) {
@@ -591,11 +649,12 @@ impl Lfo {
         } else {
             1.0
         };
-        let cv_active = rate_cv.is_some() && self.rate_cv != 0.0;
+        let cross_rate = cross.filter(|c| c.rate != 0.0);
+        let cv_active = (rate_cv.is_some() && self.rate_cv != 0.0) || cross_rate.is_some();
         let base_inc = if self.sync {
             t.tempo_tpf / tpc
         } else {
-            f64::from(self.rate) / t.sample_rate
+            f64::from(self.rate) / t.sample_rate * t.follow
         };
         let offset = f64::from(self.phase);
         if locked && !self.was_locked {
@@ -607,11 +666,17 @@ impl Lfo {
                 Some((o, to)) if n >= o => (to + (n - o) as f64 * t.tpf, n == o),
                 _ => (t.tick + n as f64 * t.tpf, false),
             };
-            let mul = match rate_cv {
-                Some(c) => f64::from(exp2_det(
-                    cv_in::clean(c[n]) * self.rate_cv * RATE_CV_OCTAVES,
-                )),
-                None => 1.0,
+            let mul = if rate_cv.is_none() && cross_rate.is_none() {
+                1.0
+            } else {
+                let mut octaves = 0.0;
+                if let Some(c) = rate_cv {
+                    octaves += cv_in::clean(c[n]) * self.rate_cv * RATE_CV_OCTAVES;
+                }
+                if let Some(x) = cross_rate {
+                    octaves += x.src[n] * x.rate * RATE_CV_OCTAVES;
+                }
+                f64::from(exp2_det(octaves))
             };
             let reset = self.key_sync && note_on[n];
             if reset {
@@ -653,11 +718,16 @@ impl Lfo {
             if self.unipolar {
                 v = 0.5 * (v + 1.0);
             }
-            let amt = self.amount
+            let mut amt = self.amount
                 * match amount_cv {
                     Some(c) => cv(c[n], 0.0, 1.0),
                     None => 1.0,
                 };
+            if let Some(x) = cross.filter(|c| c.level != 0.0) {
+                // Never louder than set: the level dips by up to `|level|` as the other LFO
+                // moves away from the side the sign picks.
+                amt *= 1.0 - 0.5 * x.level.abs() * (1.0 - x.level.signum() * x.src[n]);
+            }
             out[n] = (v * amt).clamp(-1.0, 1.0);
             self.last_phase = frac as f32;
 
@@ -743,6 +813,16 @@ pub struct ModSource {
     decay_ms: f32,
     sustain: f32,
     release_ms: f32,
+    /// LFO 2 into LFO 1: rate (octaves) and level.
+    x_rate: f32,
+    x_level: f32,
+    lag_ms: f32,
+    key_follow: f32,
+    /// The key of the latest note-on (60 until one arrives).
+    follow_key: u8,
+    /// The smoothed outputs (LFO 1, LFO 2, envelope) and whether they hold a value yet.
+    lagged: [f32; 3],
+    lag_primed: bool,
     clock: JumpTracker,
     // Meter state.
     ring: [[f32; SCOPE_POINTS]; 3],
@@ -774,6 +854,13 @@ impl ModSource {
             decay_ms: 200.0,
             sustain: 0.7,
             release_ms: 300.0,
+            x_rate: 0.0,
+            x_level: 0.0,
+            lag_ms: 0.0,
+            key_follow: 0.0,
+            follow_key: 60,
+            lagged: [0.0; 3],
+            lag_primed: false,
             clock: JumpTracker::new(),
             ring: [[0.0; SCOPE_POINTS]; 3],
             pushes: 0,
@@ -803,6 +890,9 @@ impl ModSource {
         self.dec_acc = 0.0;
         self.last = [0.0; 3];
         self.stage = 0.0;
+        self.follow_key = 60;
+        self.lagged = [0.0; 3];
+        self.lag_primed = false;
     }
 }
 
@@ -847,6 +937,10 @@ impl Device for ModSource {
             }
             P_ENV_AMOUNT => self.env.amount = v.clamp(0.0, 1.0),
             P_ENV_MODE => self.env.legato = v >= 0.5,
+            P_X_RATE => self.x_rate = v.clamp(-1.0, 1.0),
+            P_X_LEVEL => self.x_level = v.clamp(-1.0, 1.0),
+            P_LAG => self.lag_ms = v.clamp(0.0, LAG_MAX_MS),
+            P_KEY_FOLLOW => self.key_follow = v.clamp(0.0, 1.0),
             _ => {}
         }
     }
@@ -875,14 +969,28 @@ impl Device for ModSource {
             tempo_tpf: time.tempo.bpm() * PPQ as f64 / (60.0 * self.sample_rate),
             time_signature: time.time_signature,
             jump,
+            follow: 1.0,
         };
 
         let mut note_on = [false; BATCH];
         for e in ctx.notes_in(NOTES_IN) {
-            if matches!(e.kind, NoteKind::On { .. }) {
+            if let NoteKind::On { key, .. } = e.kind {
                 note_on[usize::from(e.offset).min(BATCH - 1)] = true;
+                self.follow_key = key.min(127);
             }
         }
+        // The key follow moves the free LFO rate by `key_follow` octaves per octave from the
+        // latest key, at control rate (the whole batch).
+        let bt = if self.key_follow > 0.0 {
+            BatchTime {
+                follow: f64::from(exp2_det(
+                    self.key_follow * (f32::from(self.follow_key) - 60.0) / 12.0,
+                )),
+                ..bt
+            }
+        } else {
+            bt
+        };
         let grab = |ctx: &ProcessContext<'_>, id: SocketId| -> Option<Batch> {
             ctx.is_connected(id).then(|| *ctx.input(id))
         };
@@ -895,21 +1003,29 @@ impl Device for ModSource {
         let mut out1 = [0.0f32; BATCH];
         let mut out2 = [0.0f32; BATCH];
         let mut out_env = [0.0f32; BATCH];
-        self.lfos[0].run(
-            self.seed,
-            &bt,
-            rate1.as_ref(),
-            amt1.as_ref(),
-            &note_on,
-            &mut out1,
-        );
+        // LFO 2 first: LFO 1 may take its output as a modulation source.
         self.lfos[1].run(
             self.seed,
             &bt,
             rate2.as_ref(),
             amt2.as_ref(),
+            None,
             &note_on,
             &mut out2,
+        );
+        let cross = Cross {
+            src: &out2,
+            rate: self.x_rate,
+            level: self.x_level,
+        };
+        self.lfos[0].run(
+            self.seed,
+            &bt,
+            rate1.as_ref(),
+            amt1.as_ref(),
+            Some(&cross),
+            &note_on,
+            &mut out1,
         );
 
         // Envelope: notes at their offsets, then the gate CV of the same sample.
@@ -936,6 +1052,28 @@ impl Device for ModSource {
                 }
             }
             out_env[n] = (self.env.env.next_sample() * self.env.amount).clamp(0.0, 1.0);
+        }
+
+        // Output lag: a one-pole smoothing of all three outputs (off at 0 ms).
+        if self.lag_ms > 0.0 {
+            let tau = (self.lag_ms * 0.001 * self.sample_rate as f32).max(1.0);
+            let coef = 1.0 - exp2_det(-LOG2_E / tau);
+            for (state, out) in self
+                .lagged
+                .iter_mut()
+                .zip([&mut out1, &mut out2, &mut out_env])
+            {
+                if !self.lag_primed {
+                    *state = out[0];
+                }
+                for s in out.iter_mut() {
+                    *state += coef * (*s - *state);
+                    *s = *state;
+                }
+            }
+            self.lag_primed = true;
+        } else {
+            self.lag_primed = false;
         }
 
         // Scope history: one point every `sample_rate / SCOPE_RATE_HZ` frames.

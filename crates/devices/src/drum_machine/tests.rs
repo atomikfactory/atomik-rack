@@ -202,13 +202,21 @@ fn descriptor_validates_with_the_contract_order() {
         sockets.push(format!("pad{n}_gate_cv_in"));
         sockets.push(format!("pad{n}_gate_cv_out"));
     }
+    for n in 1..=16 {
+        for k in ["tone", "lowcut", "highcut", "drive", "send1", "send2"] {
+            params.push(format!("pad{n}.{k}"));
+        }
+    }
+    for k in ["send1_l", "send1_r", "send2_l", "send2_r"] {
+        sockets.push(k.to_string());
+    }
     let p: Vec<&str> = params.iter().map(String::as_str).collect();
     let s: Vec<&str> = sockets.iter().map(String::as_str).collect();
     assert_keys(&DESCRIPTOR, &p, &s);
     assert_eq!(DESCRIPTOR.type_id, "atomik.drum-machine");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
-    assert_eq!(DESCRIPTOR.params.len(), 131);
-    assert_eq!(DESCRIPTOR.sockets.len(), 69);
+    assert_eq!(DESCRIPTOR.params.len(), 131 + 96);
+    assert_eq!(DESCRIPTOR.sockets.len(), 73);
     let d = |k: &str| {
         let d = DESCRIPTOR.param_by_key(k).unwrap();
         (d.min, d.max, d.default)
@@ -228,7 +236,7 @@ fn descriptor_validates_with_the_contract_order() {
         assert_eq!(sd.kind, SocketKind::Audio, "{i}");
         assert_eq!(sd.direction, Direction::Output);
     }
-    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(35) {
+    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(35).take(34) {
         assert_eq!(sd.kind, SocketKind::Cv, "{i}");
         let input = i < 37 || (i - 37) % 2 == 0;
         assert_eq!(
@@ -1585,3 +1593,6 @@ fn a_reversed_pad_zone_ends_with_a_fade_at_its_start() {
     assert!((ol[199] - 0.5 / 64.0).abs() < 1e-6, "{}", ol[199]);
     assert!(ol[100..120].iter().all(|v| (*v - 0.5).abs() < 1e-6));
 }
+
+#[path = "fx_tests.rs"]
+mod fx_tests;

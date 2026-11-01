@@ -66,7 +66,9 @@ use std::sync::Arc;
 use crate::cv_in::{batch_mean, clean, db_gain};
 use crate::poly_synth::soft_limit;
 
+mod pad_fx;
 mod voice;
+use pad_fx::{HIGHCUT_MAX, LOWCUT_MIN, PadFx};
 use voice::{Pending, Slot, Voice, VoiceCv};
 
 /// Number of pads.
@@ -93,7 +95,10 @@ const PARAMS_PER_PAD: usize = 8;
 const CV_PARAM_BASE: usize = 1 + PAD_COUNT * PARAMS_PER_PAD;
 const P_LEVEL_CV_TRIM: u32 = CV_PARAM_BASE as u32;
 const P_PITCH_CV_TRIM: u32 = CV_PARAM_BASE as u32 + 1;
-const PARAM_COUNT: usize = CV_PARAM_BASE + 2;
+/// Per-pad effect params (tone, low cut, high cut, drive, two sends), appended after the CV trims.
+const EXT_PER_PAD: usize = 6;
+const EXT_BASE: usize = CV_PARAM_BASE + 2;
+const PARAM_COUNT: usize = EXT_BASE + PAD_COUNT * EXT_PER_PAD;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
 /// Fixed range of the pitch CV in semitones (times `pitch_cv_trim`).
@@ -102,7 +107,7 @@ const CV_PITCH_RANGE_ST: f32 = 24.0;
 const GATE_THRESHOLD: f32 = 0.5;
 /// Lowest gate-out level of a held pad (velocity 1/127), so a held gate is always above the threshold.
 const GATE_OUT_MIN: f32 = 0.5 + 0.5 / 127.0;
-const SOCKET_COUNT: usize = 3 + PAD_COUNT * 2 + 2 + PAD_COUNT * 2;
+const SOCKET_COUNT: usize = 3 + PAD_COUNT * 2 + 2 + PAD_COUNT * 2 + 4;
 
 const P_MASTER: u32 = 0;
 const K_LEVEL: u32 = 0;
@@ -113,6 +118,14 @@ const K_DECAY: u32 = 4;
 const K_MODE: u32 = 5;
 const K_CHOKE: u32 = 6;
 const K_VELOCITY: u32 = 7;
+
+// Offsets inside a pad's block of effect params.
+const X_TONE: u32 = 0;
+const X_LOWCUT: u32 = 1;
+const X_HIGHCUT: u32 = 2;
+const X_DRIVE: u32 = 3;
+const X_SEND1: u32 = 4;
+const X_SEND2: u32 = 5;
 
 const fn param(
     id: u32,
@@ -243,6 +256,62 @@ macro_rules! pad_params {
                 Unit::None,
                 false,
             ),
+            $(
+                param(
+                    EXT_BASE as u32 + ($n - 1) * EXT_PER_PAD as u32 + X_TONE,
+                    concat!("pad", $n, ".tone"),
+                    concat!("Pad ", $n, " tone"),
+                    (-1.0, 1.0, 0.0),
+                    Taper::Linear,
+                    Unit::None,
+                    false,
+                ),
+                param(
+                    EXT_BASE as u32 + ($n - 1) * EXT_PER_PAD as u32 + X_LOWCUT,
+                    concat!("pad", $n, ".lowcut"),
+                    concat!("Pad ", $n, " low cut"),
+                    (LOWCUT_MIN, 2_000.0, LOWCUT_MIN),
+                    Taper::Exponential,
+                    Unit::Hz,
+                    false,
+                ),
+                param(
+                    EXT_BASE as u32 + ($n - 1) * EXT_PER_PAD as u32 + X_HIGHCUT,
+                    concat!("pad", $n, ".highcut"),
+                    concat!("Pad ", $n, " high cut"),
+                    (500.0, HIGHCUT_MAX, HIGHCUT_MAX),
+                    Taper::Exponential,
+                    Unit::Hz,
+                    false,
+                ),
+                param(
+                    EXT_BASE as u32 + ($n - 1) * EXT_PER_PAD as u32 + X_DRIVE,
+                    concat!("pad", $n, ".drive"),
+                    concat!("Pad ", $n, " drive"),
+                    (0.0, 1.0, 0.0),
+                    Taper::Linear,
+                    Unit::Percent,
+                    false,
+                ),
+                param(
+                    EXT_BASE as u32 + ($n - 1) * EXT_PER_PAD as u32 + X_SEND1,
+                    concat!("pad", $n, ".send1"),
+                    concat!("Pad ", $n, " send 1"),
+                    (0.0, 1.0, 0.0),
+                    Taper::Linear,
+                    Unit::Percent,
+                    false,
+                ),
+                param(
+                    EXT_BASE as u32 + ($n - 1) * EXT_PER_PAD as u32 + X_SEND2,
+                    concat!("pad", $n, ".send2"),
+                    concat!("Pad ", $n, " send 2"),
+                    (0.0, 1.0, 0.0),
+                    Taper::Linear,
+                    Unit::Percent,
+                    false,
+                ),
+            )*
         ]
     };
 }
@@ -261,6 +330,12 @@ const fn pad_out(pad: usize) -> (SocketId, SocketId) {
 
 const LEVEL_CV_IN: SocketId = SocketId(3 + 2 * PAD_COUNT as u16);
 const PITCH_CV_IN: SocketId = SocketId(4 + 2 * PAD_COUNT as u16);
+
+/// The two shared send outputs (after the gate sockets).
+const SEND1_L: SocketId = SocketId(5 + 4 * PAD_COUNT as u16);
+const SEND1_R: SocketId = SocketId(6 + 4 * PAD_COUNT as u16);
+const SEND2_L: SocketId = SocketId(7 + 4 * PAD_COUNT as u16);
+const SEND2_R: SocketId = SocketId(8 + 4 * PAD_COUNT as u16);
 
 /// The gate input and gate output sockets of zero-based pad `pad`.
 const fn pad_gate(pad: usize) -> (SocketId, SocketId) {
@@ -338,6 +413,10 @@ macro_rules! pad_sockets {
                     concat!("Pad ", $n, " gate out"),
                 ),
             )*
+            audio_out(SEND1_L.0, "send1_l", "Send 1 L"),
+            audio_out(SEND1_R.0, "send1_r", "Send 1 R"),
+            audio_out(SEND2_L.0, "send2_l", "Send 2 L"),
+            audio_out(SEND2_R.0, "send2_r", "Send 2 R"),
         ]
     };
 }
@@ -475,6 +554,8 @@ fn gate_velocity(gate: f32) -> f32 {
 pub struct DrumMachine {
     values: [f32; PARAM_COUNT],
     pads: [Pad; PAD_COUNT],
+    /// Per-pad tone, cuts, drive and sends.
+    fx: [PadFx; PAD_COUNT],
     shared: Shared,
     master: Smoother,
     fresh: bool,
@@ -513,6 +594,7 @@ impl DrumMachine {
         let mut d = Self {
             values: PARAMS.map(|p| p.default),
             pads: [Pad::new(); PAD_COUNT],
+            fx: std::array::from_fn(|_| PadFx::new(48_000.0)),
             shared: Shared {
                 sample_rate: 48_000.0,
                 attack: 24,
@@ -554,6 +636,25 @@ impl DrumMachine {
         if id == P_MASTER {
             self.master
                 .set_target(PARAMS[P_MASTER as usize].db_param_gain(v));
+            return;
+        }
+        if id as usize >= EXT_BASE {
+            let rel = id - EXT_BASE as u32;
+            let pad = (rel / EXT_PER_PAD as u32) as usize;
+            let mut p = self.fx[pad].params();
+            match rel % EXT_PER_PAD as u32 {
+                X_TONE => p.tone = v,
+                X_LOWCUT => p.lowcut = v,
+                X_HIGHCUT => p.highcut = v,
+                X_DRIVE => p.drive = v,
+                X_SEND1 => p.send1 = v,
+                X_SEND2 => p.send2 = v,
+                _ => {}
+            }
+            self.fx[pad].set(p);
+            if !self.fx[pad].active() {
+                self.fx[pad].reset();
+            }
             return;
         }
         match id {
@@ -737,6 +838,9 @@ impl Device for DrumMachine {
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
         self.shared.sample_rate = sr;
+        for fx in &mut self.fx {
+            fx.set_sample_rate(sr);
+        }
         self.shared.attack = (ATTACK_MS * 0.001 * sr).round().max(1.0) as u32;
         if self.voices.len() < VOICES {
             self.voices.resize(VOICES, Voice::new());
@@ -754,6 +858,9 @@ impl Device for DrumMachine {
         self.gate_out = [0.0; PAD_COUNT];
         self.gate_high = [false; PAD_COUNT];
         self.pitch_prev = None;
+        for fx in &mut self.fx {
+            fx.reset();
+        }
         let m = self.master.target();
         self.master.set_immediate(m);
         self.fresh = true;
@@ -837,9 +944,11 @@ impl Device for DrumMachine {
             self.fresh = false;
         }
         let mut routed = [false; PAD_COUNT];
+        let mut fx_on = [false; PAD_COUNT];
         for (p, r) in routed.iter_mut().enumerate() {
             let (l, rr) = pad_out(p);
             *r = ctx.is_connected(l) || ctx.is_connected(rr);
+            fx_on[p] = self.fx[p].active();
         }
         let mut cv = VoiceCv::new();
         if ctx.is_connected(LEVEL_CV_IN) {
@@ -934,7 +1043,7 @@ impl Device for DrumMachine {
                     v.kill();
                     continue;
                 };
-                let [l, r] = if routed[usize::from(v.pad)] {
+                let [l, r] = if routed[usize::from(v.pad)] || fx_on[usize::from(v.pad)] {
                     &mut pad_mix[usize::from(v.pad)]
                 } else {
                     &mut mix
@@ -950,6 +1059,32 @@ impl Device for DrumMachine {
             }
             start = end;
         }
+        // Pads with an effect set: run the chain on the pad's pair, feed the sends and (unless the
+        // pad has its own outputs) add the pair to the main mix.
+        let mut sends = [[[0.0f32; BATCH]; 2]; 2];
+        for p in 0..PAD_COUNT {
+            if !fx_on[p] {
+                continue;
+            }
+            self.fx[p].process(&mut pad_mix[p]);
+            let amounts = [self.fx[p].params().send1, self.fx[p].params().send2];
+            for (send, amount) in sends.iter_mut().zip(amounts) {
+                if amount > 0.0 {
+                    for (dst, src) in send.iter_mut().zip(&pad_mix[p]) {
+                        for (d, s) in dst.iter_mut().zip(src) {
+                            *d += s * amount;
+                        }
+                    }
+                }
+            }
+            if !routed[p] {
+                for (dst, src) in mix.iter_mut().zip(&pad_mix[p]) {
+                    for (d, s) in dst.iter_mut().zip(src) {
+                        *d += s;
+                    }
+                }
+            }
+        }
         let [mix_l, mix_r] = &mut mix;
         for (l, r) in mix_l.iter_mut().zip(mix_r.iter_mut()) {
             let m = self.master.next_value();
@@ -958,6 +1093,19 @@ impl Device for DrumMachine {
         }
         *ctx.output(OUT_L) = mix[0];
         *ctx.output(OUT_R) = mix[1];
+        for (ids, send) in [(SEND1_L, SEND1_R), (SEND2_L, SEND2_R)]
+            .into_iter()
+            .zip(&sends)
+        {
+            for (id, src) in [(ids.0, &send[0]), (ids.1, &send[1])] {
+                if ctx.is_connected(id) {
+                    let dst = ctx.output(id);
+                    for (d, s) in dst.iter_mut().zip(src) {
+                        *d = if s.is_finite() { *s } else { 0.0 };
+                    }
+                }
+            }
+        }
         for (p, on) in gate_out_on.iter().enumerate() {
             if *on {
                 *ctx.output(pad_gate(p).1) = gate_out[p];

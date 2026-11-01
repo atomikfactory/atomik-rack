@@ -796,7 +796,6 @@ fn random_pattern(seed: u8, res: SeqResolution) -> DrumPattern {
                     prob: if i % 4 == 0 { 60 } else { 100 },
                     flam: if i % 5 == 1 { (i * 7 % 51) as u8 } else { 0 },
                     ratchet: if i % 3 == 0 { (i % 9) as u8 } else { 0 },
-                    ..DrumStep::default()
                 };
             }
         }
