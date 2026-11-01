@@ -98,6 +98,10 @@ enum TakeOp {
     Pick(usize, usize),
     Delete(usize, usize),
     Flatten(usize),
+    Duplicate(usize, usize),
+    Move(usize, usize, usize),
+    Unused(usize),
+    Silence(usize, i64, i64),
 }
 
 fn take_op() -> impl Strategy<Value = TakeOp> {
@@ -112,6 +116,10 @@ fn take_op() -> impl Strategy<Value = TakeOp> {
         (0usize..4, 0usize..4).prop_map(|(g, t)| TakeOp::Pick(g, t)),
         (0usize..4, 0usize..4).prop_map(|(g, t)| TakeOp::Delete(g, t)),
         (0usize..4).prop_map(TakeOp::Flatten),
+        (0usize..4, 0usize..4).prop_map(|(g, t)| TakeOp::Duplicate(g, t)),
+        (0usize..4, 0usize..4, 0usize..4).prop_map(|(g, t, to)| TakeOp::Move(g, t, to)),
+        (0usize..4).prop_map(TakeOp::Unused),
+        (0usize..4, span()).prop_map(|(g, (s, l))| TakeOp::Silence(g, s, s + l)),
     ]
 }
 
@@ -186,6 +194,29 @@ fn resolve_take(op: &TakeOp, doc: &RackDoc) -> Option<SongCommand> {
         }
         TakeOp::Flatten(g) => SongCommand::FlattenTakes {
             group: pick(&all, *g)?.0,
+        },
+        TakeOp::Duplicate(g, t) => {
+            let (group, takes) = pick(&all, *g)?;
+            SongCommand::DuplicateTake {
+                group,
+                take: t % takes.max(1),
+            }
+        }
+        TakeOp::Move(g, t, to) => {
+            let (group, takes) = pick(&all, *g)?;
+            SongCommand::MoveTake {
+                group,
+                take: t % takes.max(1),
+                to: to % takes.max(1),
+            }
+        }
+        TakeOp::Unused(g) => SongCommand::DeleteUnusedTakes {
+            group: pick(&all, *g)?.0,
+        },
+        TakeOp::Silence(g, start, end) => SongCommand::SetCompSilence {
+            group: pick(&all, *g)?.0,
+            start: *start,
+            end: *end,
         },
     })
 }

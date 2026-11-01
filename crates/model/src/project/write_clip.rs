@@ -190,7 +190,13 @@ pub(super) fn write_take_groups(w: &mut String, lane: &Lane, open: &BTreeSet<u32
         let comp: Vec<String> = group
             .comp
             .iter()
-            .map(|s| format!("[{}, {}, {}]", s.take, s.start, s.end))
+            .map(|s| {
+                if s.xfade == 0 {
+                    format!("[{}, {}, {}]", s.take, s.start, s.end)
+                } else {
+                    format!("[{}, {}, {}, {}]", s.take, s.start, s.end, s.xfade)
+                }
+            })
             .collect();
         // A comp clip removed or moved by a plain clip edit keeps its id in the group (the next
         // comp change skips it); only the ids still on the lane are written.

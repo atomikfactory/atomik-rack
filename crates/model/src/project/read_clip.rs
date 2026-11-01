@@ -51,11 +51,15 @@ pub(super) fn load_take_groups(
         let comp_path = gp.field("comp");
         for (i, item) in array(&obj["comp"], &comp_path)?.iter().enumerate() {
             let sp = comp_path.index(i);
-            let a = tuple(item, &sp, 3, "a segment [take, start, end]")?;
+            let a = comp_tuple(item, &sp)?;
             group.comp.push(CompSegment {
                 take: uint(&a[0], &sp.index(0), u64::from(u32::MAX))? as usize,
                 start: tick(&a[1], &sp.index(1))?,
                 end: tick(&a[2], &sp.index(2))?,
+                xfade: match a.get(3) {
+                    Some(x) => uint(x, &sp.index(3), crate::song::MAX_TICK as u64)?,
+                    None => 0,
+                },
             });
         }
         check_comp(&group.comp, group.takes.len(), group.range())
@@ -581,4 +585,14 @@ pub(crate) fn load_clip_meta(
         None => None,
     };
     Ok((name, color))
+}
+
+/// A comp segment's elements: `[take, start, end]`, plus the crossfade in ticks when it is set.
+fn comp_tuple<'v>(v: &'v Value, path: &JsonPath) -> Result<&'v [Value], ModelError> {
+    match v.as_array() {
+        Some(a) if a.len() == 3 || a.len() == 4 => Ok(a),
+        _ => Err(path.error(format!(
+            "expected a segment [take, start, end] or [take, start, end, crossfade], found {v}"
+        ))),
+    }
 }

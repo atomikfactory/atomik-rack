@@ -25,9 +25,14 @@
 //!
 //! A cut that is not the natural edge of its take (a segment that starts or ends strictly inside
 //! the take) gets a short fade ([`COMP_FADE_FRAMES`], equal power) so the splice does not click;
-//! a natural edge keeps the take's own fade. Overlapping clips never sum in the engine (a later
-//! clip hides an earlier one), so a boundary between two takes is a fade out followed by a fade
-//! in, a dip of a few milliseconds, not an overlapped crossfade.
+//! a natural edge keeps the take's own fade. A boundary between two takes is then a fade out
+//! followed by a fade in, a dip of a few milliseconds.
+//!
+//! A cut can instead carry a crossfade ([`CompSegment::xfade`], in ticks): the compiled clip
+//! before the cut then runs on past it by that length and the clip after the cut crossfades
+//! over it with an equal-power curve, the overlap rule of `flatten_audio` (the engine mixes the
+//! two regions). The length is clamped to the later segment and to what is left of the earlier
+//! take; a cut without it compiles exactly as before.
 
 use crate::RackDoc;
 use crate::song::{AudioClipContent, Clip, ClipContent, ClipId, FadeCurve};
@@ -45,6 +50,22 @@ pub struct CompSegment {
     pub start: i64,
     /// End tick (exclusive), greater than `start`.
     pub end: i64,
+    /// Crossfade in ticks at this segment's start, with the segment that ends there (another
+    /// take, audio only): 0 is the short dip of [`COMP_FADE_FRAMES`]. Ignored when no segment
+    /// ends at `start`.
+    pub xfade: u64,
+}
+
+impl CompSegment {
+    /// A segment with no crossfade.
+    pub fn new(take: usize, start: i64, end: i64) -> Self {
+        Self {
+            take,
+            start,
+            end,
+            xfade: 0,
+        }
+    }
 }
 
 /// A set of stacked takes on one lane and the comp that picks what plays (module docs).
@@ -101,13 +122,32 @@ pub fn layered_comp(takes: &[Clip]) -> Vec<CompSegment> {
 }
 
 /// Makes `[start, end)` play from `take`: segments under the range are trimmed or dropped, and
-/// segments of one take that touch are joined. `start >= end` changes nothing.
+/// segments of one take that touch are joined. `start >= end` changes nothing. The new segment
+/// has no crossfade, and neither has the piece of a segment that is left after it (its start is
+/// a new cut).
 pub fn set_segment(comp: &mut Vec<CompSegment>, take: usize, start: i64, end: i64) {
     if start >= end {
         return;
     }
+    let mut out = cut_out(comp, start, end);
+    out.push(CompSegment::new(take, start, end));
+    out.sort_by_key(|s| s.start);
+    *comp = join_touching(out);
+}
+
+/// Makes `[start, end)` silent: segments under the range are trimmed or dropped. `start >= end`
+/// changes nothing.
+pub fn clear_segment(comp: &mut Vec<CompSegment>, start: i64, end: i64) {
+    if start >= end {
+        return;
+    }
+    *comp = cut_out(comp, start, end);
+}
+
+/// The segments of `comp` with `[start, end)` cut out of them.
+fn cut_out(comp: &[CompSegment], start: i64, end: i64) -> Vec<CompSegment> {
     let mut out: Vec<CompSegment> = Vec::with_capacity(comp.len() + 2);
-    for s in comp.iter() {
+    for s in comp {
         if s.end <= start || s.start >= end {
             out.push(*s);
             continue;
@@ -116,12 +156,14 @@ pub fn set_segment(comp: &mut Vec<CompSegment>, take: usize, start: i64, end: i6
             out.push(CompSegment { end: start, ..*s });
         }
         if s.end > end {
-            out.push(CompSegment { start: end, ..*s });
+            out.push(CompSegment {
+                start: end,
+                xfade: 0,
+                ..*s
+            });
         }
     }
-    out.push(CompSegment { take, start, end });
-    out.sort_by_key(|s| s.start);
-    *comp = join_touching(out);
+    out
 }
 
 /// Joins neighbouring segments of the same take that touch.
@@ -167,6 +209,53 @@ pub fn comp_without_take(
     Some(join_touching(moved))
 }
 
+/// The comp after a take is inserted at index `at` (the takes from `at` up move up by one).
+pub fn comp_with_take_inserted(comp: &[CompSegment], at: usize) -> Vec<CompSegment> {
+    comp.iter()
+        .map(|s| CompSegment {
+            take: if s.take >= at { s.take + 1 } else { s.take },
+            ..*s
+        })
+        .collect()
+}
+
+/// The comp after take `from` moves to index `to` of the reordered list: the takes between the
+/// two shift by one, so every segment keeps playing the same take.
+pub fn comp_with_take_moved(comp: &[CompSegment], from: usize, to: usize) -> Vec<CompSegment> {
+    let renumber = |t: usize| {
+        if t == from {
+            to
+        } else if from < to && t > from && t <= to {
+            t - 1
+        } else if from > to && t >= to && t < from {
+            t + 1
+        } else {
+            t
+        }
+    };
+    comp.iter()
+        .map(|s| CompSegment {
+            take: renumber(s.take),
+            ..*s
+        })
+        .collect()
+}
+
+/// The comp with every segment cut back to `range` (segments left empty go).
+pub fn comp_within(comp: &[CompSegment], range: (i64, i64)) -> Vec<CompSegment> {
+    comp.iter()
+        .filter_map(|s| {
+            let (a, b) = (s.start.max(range.0), s.end.min(range.1));
+            (a < b).then_some(CompSegment {
+                start: a,
+                end: b,
+                xfade: if a > s.start { 0 } else { s.xfade },
+                ..*s
+            })
+        })
+        .collect()
+}
+
 /// Checks a comp against `takes` takes whose range is `range`: segments sorted, disjoint,
 /// non-empty, inside the range, naming existing takes.
 pub fn check_comp(comp: &[CompSegment], takes: usize, range: (i64, i64)) -> Result<(), String> {
@@ -200,23 +289,73 @@ pub fn check_comp(comp: &[CompSegment], takes: usize, range: (i64, i64)) -> Resu
     Ok(())
 }
 
+/// The part of segment `seg` its take plays: the segment cut to the take's own extent, `None`
+/// when nothing is left.
+fn played(group: &TakeGroup, seg: &CompSegment) -> Option<(i64, i64)> {
+    let take = group.takes.get(seg.take)?;
+    let (a, b) = (seg.start.max(take.start), seg.end.min(take.end()));
+    (a < b).then_some((a, b))
+}
+
+/// The crossfade length in ticks that segment `i` really gets at its start (0: none, the cut is
+/// the short dip). It needs a segment of another audio take that plays up to this segment's
+/// start, and this segment's take to play from there; it is clamped to this segment's length and
+/// to what is left of the earlier take after the cut.
+fn crossfade_in(group: &TakeGroup, i: usize) -> i64 {
+    let seg = &group.comp[i];
+    let Some(prev) = i.checked_sub(1).map(|p| &group.comp[p]) else {
+        return 0;
+    };
+    if seg.xfade == 0 || prev.end != seg.start || prev.take == seg.take {
+        return 0;
+    }
+    let (Some(a), Some(prev_take), Some(take)) = (
+        played(group, seg),
+        group.takes.get(prev.take),
+        group.takes.get(seg.take),
+    ) else {
+        return 0;
+    };
+    let Some((_, prev_b)) = played(group, prev) else {
+        return 0;
+    };
+    // Both clips must meet exactly at the cut, and both be audio.
+    if a.0 != seg.start || prev_b != seg.start || !take.content.is_audio() {
+        return 0;
+    }
+    if !prev_take.content.is_audio() {
+        return 0;
+    }
+    let left = prev_take.end() - prev_b;
+    i64::try_from(seg.xfade)
+        .unwrap_or(i64::MAX)
+        .min(a.1 - a.0)
+        .min(left)
+        .max(0)
+}
+
 /// The plain clips a comp plays as: for each segment, the take's clip cut to the segment (and to
 /// the take's own extent), ids 0 (the command allocates them). Notes and automation keep their
 /// content alignment (the content offset moves by the cut, as `SplitClip` does); an audio clip
 /// starts the frames between the two ticks later in its asset. See the module docs for the
-/// fades.
+/// fades and the crossfades (a segment with `xfade` makes the clip before it run on and
+/// overlap this one).
 pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
     let song = &doc.song;
     let rate = doc.sample_rate;
+    let n = group.comp.len();
+    let xin: Vec<i64> = (0..n).map(|i| crossfade_in(group, i)).collect();
     let mut out = Vec::new();
-    for seg in &group.comp {
+    for (i, seg) in group.comp.iter().enumerate() {
         let Some(take) = group.takes.get(seg.take) else {
             continue;
         };
-        let (a, b) = (seg.start.max(take.start), seg.end.min(take.end()));
-        if a >= b {
+        let Some((a, cut_b)) = played(group, seg) else {
             continue;
-        }
+        };
+        // The clip runs on past its cut while the next segment crossfades in over it.
+        let ahead = xin.get(i + 1).copied().unwrap_or(0);
+        let b = cut_b + ahead;
         let shift = take.offset + (a - take.start);
         let mut clip = Clip {
             id: ClipId(0),
@@ -246,6 +385,14 @@ pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
             }
             if cut_in || cut_out {
                 audio.fade_curve = FadeCurve::EqualPower;
+            }
+            // The crossfade is the fade at a crossfaded edge: no dip on top of it.
+            if xin[i] > 0 {
+                audio.fade_in = 0;
+                audio.xfade = Some(FadeCurve::EqualPower);
+            }
+            if ahead > 0 && cut_out {
+                audio.fade_out = 0;
             }
             clip.offset = 0;
             clip.content = ClipContent::Audio(audio);
