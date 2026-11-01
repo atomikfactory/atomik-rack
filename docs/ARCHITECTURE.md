@@ -4205,8 +4205,16 @@ and on Rename, and nowhere else.
   first, then audio files (wav, aif/aiff, flac, mp3, ogg), in a natural order ("kick 2" before "kick
   10"); the columns that fit are star, name, duration and, when wide, channels, rate and size. The
   search field filters as you type with the language of `atomik_library::Query`: words match the
-  name (case-insensitive, all words), `#tag` matches a tag, `fav` keeps favourites; a toggle
-  searches the sub-folders too. The view owns the query, sort, selection, scroll, expansion and the
+  name (case-insensitive, all words), `#tag` (or `tag:`) matches a tag, `fav` keeps favourites,
+  `kind:` picks audio, a format, folders or an item kind, `cat:` a category, `author:` an author
+  and `in:` a folder the row lies in (all tokens must match; the matcher allocates nothing per
+  row); a toggle searches the sub-folders too. The path bar has back and forward buttons that walk
+  the last 64 places shown (a new place after stepping back drops the ones ahead), and a
+  right-click on it, or a click on its shortened start, opens a pop-up of every folder above the
+  one shown. The row menu has Show in Folder (the `Reveal` request: Explorer with the file
+  selected, `open -R` on macOS, the folder in the file manager elsewhere), Edit Author and Edit
+  Categories (an inline entry, empty clears), and the named favourite lists: Add to a list, New
+  list and, inside a list, Remove from it. The view owns the query, sort, selection, scroll, expansion and the
   filtered index list, and paints only the visible rows, so painting does not grow with the folder
   size. It does no disk access: the app pushes everything it shows (`set_places`, `set_children`,
   `set_location`, `set_rows`, `append_rows`, `patch_info`, `patch_marks`, `set_preview`) and answers
@@ -4225,11 +4233,15 @@ and on Rename, and nowhere else.
   Folders are not watched: a folder is listed again when it is shown and on refresh.
 - **The library file** ([app/src/library_store.rs](../crates/app/src/library_store.rs),
   [library/src/db.rs](../crates/library/src/db.rs)). `<config_dir>/library.json` holds favourites,
-  tags and bookmarked folders, keyed by `PathKey` (a lexical normal form of the path: `/`
-  separators, case-folded on Windows):
-  `{"version":1,"places":["/home/me/samples"],"entries":{"/home/me/samples/kick.wav":{"favorite":true,"tags":["808"]}}}`.
-  Entries with no tag and no favourite flag are removed, and the output is deterministic (ordered
-  maps). The file is read once when the path is set. A file that is not valid is renamed
+  tags, authors, categories, named favourite lists and bookmarked folders, keyed by `PathKey` (a
+  lexical normal form of the path: `/` separators, case-folded on Windows):
+  `{"version":2,"places":["/home/me/samples"],"lists":[{"name":"Drums","paths":["/home/me/samples/kick.wav"]}],"entries":{"/home/me/samples/kick.wav":{"favorite":true,"tags":["808"],"author":"Ada","categories":["Percussion"]}}}`.
+  Version 1 files (no `lists`, `author` or `categories`) load unchanged and are written as version 2
+  by the next save; a file from a later version is left alone like any newer one. Entries with
+  nothing to remember are removed, and the output is deterministic (ordered maps). The text is
+  encoded before anything is written, and a failure to encode (`LibraryError::Encode`) is reported
+  and keeps the file on disk, so a bad snapshot can never replace the library with an empty one.
+  The file is read once when the path is set. A file that is not valid is renamed
   `library.json.bad` (replacing an older one), and the app starts with an empty library and says so
   in the status bar. A file with a newer version, or one that cannot be read, is never overwritten:
   the library stays in memory only. A change marks the database dirty; the next frame hands a JSON
