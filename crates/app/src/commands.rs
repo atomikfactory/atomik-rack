@@ -85,6 +85,8 @@ pub enum AppCommand {
     ExportSongAudio,
     /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
     ExportLoopAudio,
+    /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
+    ExportStems,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
     StressRack,
     /// File ▸ Stress Song: 8 tracks × 64 bars with automation.
@@ -354,6 +356,9 @@ pub enum AppCommand {
     BounceInPlace,
     /// Track ▸ Bounce in Place and Mute Originals.
     BounceInPlaceMute,
+    /// Track ▸ Bounce Clips to New Track (Dry): the selected clips as the instrument plays them,
+    /// before the channel strip, on a new audio track.
+    BounceClipDry,
     /// Edit ▸ Reverse Audio: the selected audio clips play backwards (forwards again when they
     /// all do).
     AudioReverse,
@@ -552,6 +557,7 @@ impl AppCommand {
             AppCommand::ExportMidiSong => ("file.export_midi_song", None),
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
+            AppCommand::ExportStems => ("file.export_stems", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
             AppCommand::Quit => ("file.quit", None),
@@ -707,6 +713,7 @@ impl AppCommand {
             AppCommand::UnfreezeTrackKeep => ("sequencer.unfreeze_track_keep", None),
             AppCommand::BounceInPlace => ("sequencer.bounce_in_place", None),
             AppCommand::BounceInPlaceMute => ("sequencer.bounce_in_place_mute", None),
+            AppCommand::BounceClipDry => ("sequencer.bounce_clip_dry", None),
             AppCommand::FoldLanes(true) => ("sequencer.fold_lanes", Some("fold")),
             AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
             AppCommand::TrackHeight(p) => ("sequencer.track_height", Some(p.arg())),
@@ -805,6 +812,7 @@ impl AppCommand {
             ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
+            ("file.export_stems", None) => AppCommand::ExportStems,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
             ("file.quit", None) => AppCommand::Quit,
@@ -980,6 +988,7 @@ impl AppCommand {
             ("sequencer.unfreeze_track_keep", None) => AppCommand::UnfreezeTrackKeep,
             ("sequencer.bounce_in_place", None) => AppCommand::BounceInPlace,
             ("sequencer.bounce_in_place_mute", None) => AppCommand::BounceInPlaceMute,
+            ("sequencer.bounce_clip_dry", None) => AppCommand::BounceClipDry,
             ("sequencer.fold_lanes", Some("fold")) => AppCommand::FoldLanes(true),
             ("sequencer.fold_lanes", Some("unfold")) => AppCommand::FoldLanes(false),
             ("sequencer.track_height", Some(arg)) => {
@@ -1360,6 +1369,9 @@ pub struct MenuState {
     /// The loop can be exported as audio: its locators are apart and no export runs (File >
     /// Export Loop as Audio File is available).
     pub export_loop: bool,
+    /// The console has strips and no export runs (File > Export Stems as Audio Files is
+    /// available).
+    pub export_stems: bool,
     /// What the selected tracks and folder allow (the Track menu).
     pub org: OrgMenu,
     /// What the selected note lane allows (the lane items of the Track menu).
@@ -1767,6 +1779,11 @@ pub fn menus_with_lists(
                     "Export Loop as Audio File\u{2026}",
                     AppCommand::ExportLoopAudio,
                     state.export_loop,
+                ),
+                enabled(
+                    "Export Stems as Audio Files\u{2026}",
+                    AppCommand::ExportStems,
+                    state.export_stems,
                 ),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
@@ -2279,6 +2296,11 @@ pub fn menus_with_lists(
                     AppCommand::BounceInPlaceMute,
                     state.freeze.can_bounce,
                 ),
+                enabled(
+                    "Bounce Clips to New Track (Dry)",
+                    AppCommand::BounceClipDry,
+                    state.freeze.can_bounce,
+                ),
                 MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
@@ -2666,6 +2688,7 @@ mod tests {
             midi_song: false,
             export_song: false,
             export_loop: false,
+            export_stems: false,
             org: OrgMenu::default(),
             lane: LaneMenu::default(),
             audio: AudioMenu::default(),
@@ -2711,6 +2734,7 @@ mod tests {
             AppCommand::ExportMidiSong,
             AppCommand::ExportSongAudio,
             AppCommand::ExportLoopAudio,
+            AppCommand::ExportStems,
             AppCommand::StressRack,
             AppCommand::StressSong,
             AppCommand::Quit,
@@ -2823,6 +2847,7 @@ mod tests {
             AppCommand::UnfreezeTrackKeep,
             AppCommand::BounceInPlace,
             AppCommand::BounceInPlaceMute,
+            AppCommand::BounceClipDry,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
@@ -3305,6 +3330,7 @@ mod tests {
                 "Export MIDI Song\u{2026}",
                 "Export Song as Audio File\u{2026}",
                 "Export Loop as Audio File\u{2026}",
+                "Export Stems as Audio Files\u{2026}",
                 "Stress Rack",
                 "Stress Song",
                 "Quit"
@@ -3467,6 +3493,7 @@ mod tests {
                 "Cancel Freeze",
                 "Bounce in Place",
                 "Bounce in Place and Mute Originals",
+                "Bounce Clips to New Track (Dry)",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",
@@ -3773,6 +3800,7 @@ mod tests {
                 midi_song: true,
                 export_song: true,
                 export_loop: true,
+                export_stems: true,
                 org: OrgMenu::default(),
                 lane: LaneMenu::default(),
                 audio: AudioMenu::default(),

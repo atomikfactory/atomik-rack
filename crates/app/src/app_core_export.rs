@@ -7,6 +7,11 @@
 //! when it starts, so the live engine is not touched: the song keeps playing, and editing goes on
 //! (an edit after the start is not in the file). One export runs at a time.
 //!
+//! **Export Stems as Audio Files** ([`ExportScope::Stems`]) is the same export with one file per
+//! strip of the console ([`atomik_render::stems`]): the path is the folder the files go into, and
+//! the panel's values say the container, depth, dither, rate, tail and whether the channels are
+//! taken before their strips.
+//!
 //! The shell asks for the file, then for the options (its panel), then calls
 //! [`AppCore::start_audio_export`]; progress and **Cancel** are [`AppCore::audio_export_progress`]
 //! and [`AppCore::cancel_audio_export`]. A cancelled or failed export leaves no file (the worker
@@ -14,14 +19,15 @@
 //! export that runs.
 
 use super::*;
-use crate::export_worker::{self, Work};
+use crate::export_worker::{self, Done, Target, Work};
 use crate::freeze_worker::PluginEnv;
 use atomik_render::export::{
-    BitDepth, DEFAULT_TAIL_SECONDS, ExportFormat, ExportReport, ExportRequest, ExportSpan,
-    span_frames,
+    BitDepth, DEFAULT_TAIL_SECONDS, ExportContainer, ExportFormat, ExportReport, ExportRequest,
+    ExportSpan, span_frames,
 };
+use atomik_render::stems::StemStrip;
 use atomik_ui::export_panel::rate_label;
-use atomik_ui::{ExportDepth, ExportDither, ExportScope, ExportValues};
+use atomik_ui::{ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The export that runs.
@@ -52,7 +58,7 @@ impl ExportState {
 
 fn span_of(scope: ExportScope) -> ExportSpan {
     match scope {
-        ExportScope::Song => ExportSpan::Song,
+        ExportScope::Song | ExportScope::Stems => ExportSpan::Song,
         ExportScope::Loop => ExportSpan::Loop,
     }
 }
@@ -74,6 +80,10 @@ pub fn export_format(values: &ExportValues) -> ExportFormat {
         atomik_dsp::DitherMode::None
     };
     ExportFormat {
+        container: match values.file {
+            ExportFile::Wav => ExportContainer::Wav,
+            ExportFile::Aiff => ExportContainer::Aiff,
+        },
         bit_depth,
         dither,
         sample_rate: values.rate,
@@ -84,7 +94,7 @@ pub fn export_format(values: &ExportValues) -> ExportFormat {
 pub fn export_request(scope: ExportScope, values: &ExportValues) -> ExportRequest {
     ExportRequest {
         span: span_of(scope),
-        tail_seconds: if scope == ExportScope::Song && values.tail {
+        tail_seconds: if scope != ExportScope::Loop && values.tail {
             DEFAULT_TAIL_SECONDS
         } else {
             0.0
@@ -98,17 +108,55 @@ fn clock(seconds: f64) -> String {
     format!("{}:{:04.1}", minutes as u64, seconds - minutes * 60.0)
 }
 
+fn depth_label(values: &ExportValues) -> &'static str {
+    match values.depth {
+        ExportDepth::Pcm16 => "16-bit",
+        ExportDepth::Pcm24 => "24-bit",
+        ExportDepth::Float32 => "32-bit float",
+    }
+}
+
+/// The toast of a finished export of stems: "Exported 5 stems to Bounced song: 24-bit, 48 kHz,
+/// 1:05.3".
+fn describe_stems(
+    report: &atomik_render::stems::StemsReport,
+    values: &ExportValues,
+    project_rate: u32,
+) -> String {
+    let folder = report
+        .folder
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let n = report.files.len();
+    let seconds = report.frames as f64 / f64::from(report.sample_rate);
+    let tail = if report.tail_frames > 0 {
+        format!(
+            ", with {:.1} s of tail",
+            report.tail_frames as f64 / f64::from(project_rate)
+        )
+    } else {
+        String::new()
+    };
+    let warnings = match report.warnings.len() {
+        0 => String::new(),
+        n => format!(" ({n} warning{})", if n == 1 { "" } else { "s" }),
+    };
+    format!(
+        "Exported {n} stem{} to {folder}: {}, {}, {}{tail}{warnings}",
+        if n == 1 { "" } else { "s" },
+        depth_label(values),
+        rate_label(report.sample_rate),
+        clock(seconds)
+    )
+}
+
 /// The toast of a finished export: "Exported song.wav: 24-bit, 48 kHz, 1:05.3".
 fn describe(report: &ExportReport, values: &ExportValues, project_rate: u32) -> String {
     let file = report
         .path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let depth = match values.depth {
-        ExportDepth::Pcm16 => "16-bit",
-        ExportDepth::Pcm24 => "24-bit",
-        ExportDepth::Float32 => "32-bit float",
-    };
+    let depth = depth_label(values);
     let seconds = report.frames as f64 / f64::from(report.sample_rate);
     let tail = if report.tail_frames > 0 {
         format!(
@@ -139,13 +187,16 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Whether `scope` can be exported now: no export runs and its range is not empty.
     pub fn can_export_audio(&self, scope: ExportScope) -> bool {
-        !self.audio_export_busy() && span_frames(self.doc(), span_of(scope)).is_ok()
+        self.export_audio_refusal(scope).is_none()
     }
 
     /// Why `scope` cannot be exported, for the message of the menu item.
     pub fn export_audio_refusal(&self, scope: ExportScope) -> Option<String> {
         if self.audio_export_busy() {
             return Some("An export is running: wait for it, or cancel it".to_owned());
+        }
+        if scope == ExportScope::Stems && self.doc().console.channels.is_empty() {
+            return Some("There are no mixer strips to export as stems".to_owned());
         }
         span_frames(self.doc(), span_of(scope))
             .err()
@@ -164,6 +215,7 @@ impl<S: EngineSink> AppCore<S> {
         let what = match running.scope {
             ExportScope::Song => "Rendering the song",
             ExportScope::Loop => "Rendering the loop",
+            ExportScope::Stems => "Rendering the stems",
         };
         Some((fraction, what.to_owned()))
     }
@@ -185,6 +237,12 @@ impl<S: EngineSink> AppCore<S> {
             self.reject(why.clone());
             return Err(why);
         }
+        // The file keeps the name the dialog gave it, with the extension of the container; the
+        // stems go to a folder of that name.
+        let path = match scope {
+            ExportScope::Stems => path,
+            _ => path.with_extension(export_format(&values).container.extension()),
+        };
         let file = path
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -196,7 +254,17 @@ impl<S: EngineSink> AppCore<S> {
             doc: self.doc().clone(),
             request: export_request(scope, &values),
             format: export_format(&values),
-            path,
+            target: match scope {
+                ExportScope::Stems => Target::Stems {
+                    folder: path,
+                    strip: if values.dry {
+                        StemStrip::Dry
+                    } else {
+                        StemStrip::Full
+                    },
+                },
+                _ => Target::File(path),
+            },
             bundle_root: self.bundle_root().map(Path::to_path_buf),
             plugins: PluginEnv {
                 cache: self.plugins.cache.clone(),
@@ -241,19 +309,19 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// An export finished (or failed, or was stopped): says so.
-    pub(super) fn apply_exported(
-        &mut self,
-        job: u64,
-        result: Result<Option<ExportReport>, String>,
-    ) {
+    pub(super) fn apply_exported(&mut self, job: u64, result: Result<Option<Done>, String>) {
         let Some(running) = self.audio.export.running.take_if(|r| r.job == job) else {
             return;
         };
         match result {
             Err(e) => self.reject(format!("Export of {} failed: {e}", running.file)),
             Ok(None) => self.reject(format!("Export of {} cancelled", running.file)),
-            Ok(Some(report)) => {
-                let message = describe(&report, &running.values, self.doc().sample_rate);
+            Ok(Some(done)) => {
+                let rate = self.doc().sample_rate;
+                let message = match done {
+                    Done::File(report) => describe(&report, &running.values, rate),
+                    Done::Stems(report) => describe_stems(&report, &running.values, rate),
+                };
                 self.reject(message);
             }
         }

@@ -398,7 +398,8 @@ pub use cursor::CursorHint;
 pub use display_list::{DisplayList, Op};
 pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
-    EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportScope, ExportValues, ExportView,
+    EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues,
+    ExportView,
 };
 pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;

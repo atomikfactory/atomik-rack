@@ -1,5 +1,5 @@
-//! The audio export panel: the options of File > Export Song / Export Loop as Audio File, and the
-//! progress of the render that follows.
+//! The audio export panel: the options of File > Export Song / Export Loop as Audio File and
+//! Export Stems, and the progress of the render that follows.
 //!
 //! ```text
 //! EXPORT SONG AS AUDIO FILE
@@ -7,6 +7,7 @@
 //!   BIT DEPTH   [ 16-BIT ] [ 24-BIT ] [ 32-BIT FLOAT ]
 //!   DITHER      [ NONE ] [ TPDF ] [ SHAPED ]
 //!   SAMPLE RATE [ PROJECT ] [ 44.1 kHz ] [ 48 kHz ] [ 88.2 kHz ] [ 96 kHz ]
+//!   FILE FORMAT [ WAV ] [ AIFF ]
 //!   TAIL        [ KEEP EFFECT TAIL ]
 //!   Renders to the End marker, then keeps the tail while it is audible.
 //!                                                          [ EXPORT ] [ CANCEL ]
@@ -16,7 +17,8 @@
 //! **options** mode ([`ExportView::open`]) the buttons change the [`ExportValues`] the view
 //! holds; EXPORT emits [`ExportAction::Start`] with them and CANCEL (or Esc) emits
 //! [`ExportAction::Cancel`]. The dither applies to 16-bit files only, so its row is greyed at the
-//! other depths; the tail applies to a song only. In the **progress** mode
+//! other depths; the tail applies to a song and to stems (which also have a CHANNELS row: after the
+//! strip or dry). In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
 //! [`ExportView::set_progress`], and CANCEL (or Esc) emits [`ExportAction::Cancel`] to stop the
 //! render. The view never closes itself: the app drops it when the export is over.
@@ -51,6 +53,18 @@ pub enum ExportScope {
     Song,
     /// From the left to the right locator.
     Loop,
+    /// The song as one file per mixer strip (channels, buses, returns and the master), in a
+    /// folder.
+    Stems,
+}
+
+/// The container of the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFile {
+    /// A WAV file.
+    Wav,
+    /// An AIFF file.
+    Aiff,
 }
 
 /// The bit depth of the file.
@@ -89,6 +103,11 @@ pub struct ExportValues {
     pub rate: Option<u32>,
     /// Keep the tail of the song after the End while it is audible.
     pub tail: bool,
+    /// The container of the file.
+    pub file: ExportFile,
+    /// Stems only: take the channels before their strips (the source's own sound) instead of
+    /// after them.
+    pub dry: bool,
 }
 
 impl Default for ExportValues {
@@ -98,6 +117,8 @@ impl Default for ExportValues {
             dither: ExportDither::Tpdf,
             rate: None,
             tail: true,
+            file: ExportFile::Wav,
+            dry: false,
         }
     }
 }
@@ -117,7 +138,9 @@ enum Hit {
     Depth(ExportDepth),
     Dither(ExportDither),
     Rate(Option<u32>),
+    File(ExportFile),
     Tail,
+    Dry(bool),
     Start,
     Cancel,
 }
@@ -245,11 +268,21 @@ impl ExportView {
 
     // ------------------------------------------------------------------ geometry
 
-    fn rows(&self) -> usize {
-        match self.scope {
-            ExportScope::Song => 4,
-            ExportScope::Loop => 3,
+    /// The rows of the options, in order: bit depth, dither, sample rate and file format for
+    /// every scope, then the tail (songs and stems) and the strip (stems).
+    fn row_names(&self) -> Vec<&'static str> {
+        let mut rows = vec!["BIT DEPTH", "DITHER", "SAMPLE RATE", "FILE FORMAT"];
+        if self.scope != ExportScope::Loop {
+            rows.push("TAIL");
         }
+        if self.scope == ExportScope::Stems {
+            rows.push("CHANNELS");
+        }
+        rows
+    }
+
+    fn rows(&self) -> usize {
+        self.row_names().len()
     }
 
     /// The panel box.
@@ -358,14 +391,40 @@ impl ExportView {
                 true,
             ));
         }
-        if self.scope == ExportScope::Song {
+        for (i, (file, label)) in [(ExportFile::Wav, "WAV"), (ExportFile::Aiff, "AIFF")]
+            .into_iter()
+            .enumerate()
+        {
+            out.push((
+                Hit::File(file),
+                self.button(3, i, w),
+                label.to_owned(),
+                v.file == file,
+                true,
+            ));
+        }
+        if self.scope != ExportScope::Loop {
             out.push((
                 Hit::Tail,
-                self.button(3, 0, 150.0),
+                self.button(4, 0, 150.0),
                 "KEEP EFFECT TAIL".to_owned(),
                 v.tail,
                 true,
             ));
+        }
+        if self.scope == ExportScope::Stems {
+            for (i, (dry, label)) in [(false, "AFTER STRIP"), (true, "DRY SOURCE")]
+                .into_iter()
+                .enumerate()
+            {
+                out.push((
+                    Hit::Dry(dry),
+                    self.button(5, i, 110.0),
+                    label.to_owned(),
+                    v.dry == dry,
+                    true,
+                ));
+            }
         }
         out.push((
             Hit::Start,
@@ -447,7 +506,9 @@ impl ExportView {
             Hit::Depth(d) => self.values.depth = d,
             Hit::Dither(d) => self.values.dither = d,
             Hit::Rate(r) => self.values.rate = r,
+            Hit::File(f) => self.values.file = f,
             Hit::Tail => self.values.tail = !self.values.tail,
+            Hit::Dry(d) => self.values.dry = d,
             Hit::Start => return Some(ExportAction::Start(self.values)),
             Hit::Cancel => return Some(ExportAction::Cancel),
         }
@@ -473,9 +534,19 @@ impl ExportView {
             }
             Hit::Rate(None) => "Write the file at the sample rate of the project",
             Hit::Rate(Some(_)) => "Convert the render to this sample rate",
+            Hit::File(ExportFile::Wav) => "Write WAV files",
+            Hit::File(ExportFile::Aiff) => "Write AIFF files (AIFF-C for 32-bit float)",
             Hit::Tail => {
                 "Keep what rings out after the End marker (reverb, delay) while it is audible"
             }
+            Hit::Dry(false) => {
+                "Each channel as it sounds in the mix: fader, pan and inserts applied"
+            }
+            Hit::Dry(true) => {
+                "Each channel's source before its strip: no fader, pan, insert or send; buses, \
+                 returns and the master are left out"
+            }
+            Hit::Start if self.scope == ExportScope::Stems => "Render and write the files",
             Hit::Start => "Render and write the file",
             Hit::Cancel if self.in_progress() => "Stop the render and write nothing",
             Hit::Cancel => "Close without exporting",
@@ -489,8 +560,10 @@ impl ExportView {
         match (self.scope, self.in_progress()) {
             (ExportScope::Song, false) => "EXPORT SONG AS AUDIO FILE",
             (ExportScope::Loop, false) => "EXPORT LOOP AS AUDIO FILE",
+            (ExportScope::Stems, false) => "EXPORT STEMS",
             (ExportScope::Song, true) => "EXPORTING SONG",
             (ExportScope::Loop, true) => "EXPORTING LOOP",
+            (ExportScope::Stems, true) => "EXPORTING STEMS",
         }
     }
 
@@ -583,11 +656,7 @@ impl ExportView {
 
     fn paint_options(&self, c: &mut dyn Canvas, p: Rect) {
         let t = &self.st.base;
-        let mut rows = vec!["BIT DEPTH", "DITHER", "SAMPLE RATE"];
-        if self.scope == ExportScope::Song {
-            rows.push("TAIL");
-        }
-        for (i, name) in rows.iter().enumerate() {
+        for (i, name) in self.row_names().iter().enumerate() {
             sp::label(
                 c,
                 name,
@@ -603,6 +672,7 @@ impl ExportView {
                 "From the start to the End marker; the tail is kept while audible."
             }
             ExportScope::Loop => "Exactly from the left to the right locator, with no tail.",
+            ExportScope::Stems => "One file per strip, in order, lined up with the master.",
         };
         let note = if self.values.depth == ExportDepth::Pcm16 {
             hint.to_owned()

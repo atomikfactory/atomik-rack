@@ -837,3 +837,44 @@ fn an_audio_track_freezes_through_its_insert_effects_too() {
     let diff = max_diff(&plain, &with_freeze);
     assert!(peak(&plain) > 0.05 && diff < 2e-4, "differ by {diff}");
 }
+
+#[test]
+fn a_dry_clip_bounce_is_the_source_before_the_strip() {
+    let mut d = project(1);
+    let doc = d.doc().clone();
+    let clip = doc.song.track(&key("lead")).unwrap().lanes[0].clips[0].clone();
+    let dry = FreezeRequest {
+        device: key("lead"),
+        effects: 0,
+        clips: Some(vec![clip.id]),
+        span: (clip.start, clip.end()),
+        tail_seconds: 0.0,
+    };
+    let render = render_now(&doc, &dry);
+    assert!(render.audio.channels[0].iter().any(|x| x.abs() > 0.01));
+    // The insert effect is not in it: through the chain the audio is another.
+    let through = render_now(
+        &doc,
+        &FreezeRequest {
+            effects: 1,
+            ..dry.clone()
+        },
+    );
+    assert_ne!(render.audio, through.audio);
+    // Nor are the fader and the pan: moving them changes nothing of the dry audio.
+    let channel = track_chain(&doc, &default_registry(), &key("lead"))
+        .unwrap()
+        .channel;
+    for (param, value) in [("fader", 0.2), ("pan", -0.8)] {
+        apply(
+            &mut d,
+            Command::SetParam {
+                key: channel.clone(),
+                param: param.into(),
+                value,
+                merge: None,
+            },
+        );
+    }
+    assert_eq!(render_now(d.doc(), &dry).audio, render.audio);
+}

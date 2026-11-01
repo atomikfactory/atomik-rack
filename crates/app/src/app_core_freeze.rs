@@ -30,11 +30,15 @@
 //! frozen, nothing leaves the engine, and the sends and the rest of the channel strip apply to
 //! the new track like to any.
 //!
+//! **Bounce Clips to New Track (Dry)** does the same through no insert effect: the render is the
+//! instrument's own output (an audio clip's gain, fades and warp included), before the effects
+//! and the channel strip, so the new track holds the clip's sound alone.
+//!
 //! The commands are in the Track menu, the track header menu and (bounce) the clip menu, and in
 //! the registry as `sequencer.freeze_track`, `sequencer.freeze_track_to_device`,
 //! `sequencer.freeze_tail`, `sequencer.freeze_cancel`, `sequencer.unfreeze_track`,
-//! `sequencer.unfreeze_track_keep`, `sequencer.bounce_in_place` and
-//! `sequencer.bounce_in_place_mute`.
+//! `sequencer.unfreeze_track_keep`, `sequencer.bounce_in_place`,
+//! `sequencer.bounce_in_place_mute` and `sequencer.bounce_clip_dry`.
 
 use super::*;
 use crate::commands::FreezeMenu;
@@ -64,8 +68,9 @@ pub enum FreezeThrough {
 enum Kind {
     /// Freeze the track through its first `effects` insert effects.
     Freeze,
-    /// Add the render as a new audio track; mute these clips (the originals) with it.
-    Bounce { mute: Vec<ClipId> },
+    /// Add the render as a new audio track; mute these clips (the originals) with it. `dry`: the
+    /// render is the instrument's own output, before the insert effects and the strip.
+    Bounce { mute: Vec<ClipId>, dry: bool },
 }
 
 /// A render waiting for its turn.
@@ -262,6 +267,17 @@ impl<S: EngineSink> AppCore<S> {
     /// Renders the selected clips of each track through the track's chain into a new audio track
     /// (see the module docs); with `mute_originals` the clips are muted in the same step.
     pub fn bounce_in_place(&mut self, mute_originals: bool) {
+        self.bounce_selected(mute_originals, false);
+    }
+
+    /// Renders the selected clips of each track as the instrument plays them, before its insert
+    /// effects and its channel strip, into a new audio track (**Bounce Clips to New Track
+    /// (Dry)**): the clip's own sound, to be treated again or kept as audio. The originals stay.
+    pub fn bounce_clips_dry(&mut self) {
+        self.bounce_selected(false, true);
+    }
+
+    fn bounce_selected(&mut self, mute_originals: bool, dry: bool) {
         let selected = self.arrangement.selected_clips();
         if selected.is_empty() {
             return self.reject("Select the clips to bounce".to_owned());
@@ -315,10 +331,11 @@ impl<S: EngineSink> AppCore<S> {
                     } else {
                         Vec::new()
                     },
+                    dry,
                 },
                 request: FreezeRequest {
                     device,
-                    effects: chain.effects.len(),
+                    effects: if dry { 0 } else { chain.effects.len() },
                     clips: Some(ids),
                     span: (start, end),
                     tail_seconds: tail,
@@ -543,9 +560,13 @@ impl<S: EngineSink> AppCore<S> {
                     self.reject(format!("Froze {}{}", job.name, tail.unwrap_or_default()));
                 }
             }
-            Kind::Bounce { mute } => {
+            Kind::Bounce { mute, dry } => {
                 let applied = self.apply_command(Command::Song(SongCommand::AddRenderedTrack {
-                    name: Some(format!("{} (bounce)", job.name)),
+                    name: Some(format!(
+                        "{} ({})",
+                        job.name,
+                        if dry { "dry bounce" } else { "bounce" }
+                    )),
                     after: Some(device),
                     start: done.start,
                     length: done.length,

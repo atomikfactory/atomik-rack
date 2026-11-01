@@ -102,9 +102,31 @@ impl BitDepth {
     }
 }
 
+/// The container of the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportContainer {
+    /// A WAV file (RIFF).
+    #[default]
+    Wav,
+    /// An AIFF file (AIFF-C for 32-bit float), see [`crate::aiff`].
+    Aiff,
+}
+
+impl ExportContainer {
+    /// The file extension, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Wav => "wav",
+            Self::Aiff => "aif",
+        }
+    }
+}
+
 /// The file the audio is written as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExportFormat {
+    /// The container.
+    pub container: ExportContainer,
     /// The bit depth.
     pub bit_depth: BitDepth,
     /// The dither of the requantisation (ignored for 32-bit float).
@@ -117,6 +139,7 @@ impl ExportFormat {
     /// A format with the default dither of the depth, at the project's rate.
     pub fn new(bit_depth: BitDepth) -> Self {
         Self {
+            container: ExportContainer::Wav,
             bit_depth,
             dither: bit_depth.default_dither(),
             sample_rate: None,
@@ -245,8 +268,47 @@ pub fn partial_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Converts `render` to the rate of `format` and writes it to `path` as a WAV file, through a
-/// temporary file that is renamed when it is complete (a failure removes it).
+/// Writes `channels` to `path` in the container, depth and dither of `format` at `rate` (no
+/// conversion), through a temporary file ([`partial_path`]) that is renamed when it is complete:
+/// a failure removes it and leaves an existing file as it was.
+///
+/// # Errors
+/// The file cannot be written.
+pub fn write_audio_file(
+    path: &Path,
+    channels: &[Vec<f32>],
+    rate: u32,
+    format: &ExportFormat,
+) -> Result<(), RenderError> {
+    let partial = partial_path(path);
+    let dither = (format.dither, DITHER_SEED);
+    let sample_format = format.bit_depth.sample_format();
+    let written = match format.container {
+        ExportContainer::Wav => {
+            write_wav_file_with(&partial, channels, rate, sample_format, dither)
+        }
+        ExportContainer::Aiff => {
+            crate::aiff::write_aiff_file(&partial, channels, rate, sample_format, dither)
+        }
+    }
+    .map_err(|source| RenderError::Write {
+        path: path.to_path_buf(),
+        source,
+    });
+    let renamed = written.and_then(|()| {
+        std::fs::rename(&partial, path).map_err(|e| RenderError::Write {
+            path: path.to_path_buf(),
+            source: hound::Error::from(e).into(),
+        })
+    });
+    if renamed.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    renamed
+}
+
+/// Converts `render` to the rate of `format` and writes it to `path` in the container of
+/// `format`, through a temporary file that is renamed when it is complete (a failure removes it).
 ///
 /// # Errors
 /// The rate is out of range, the conversion fails, or the file cannot be written.
@@ -271,28 +333,7 @@ pub fn write_export(
         )
     };
     let audio = converted.as_ref().unwrap_or(&render.audio);
-    let partial = partial_path(path);
-    let written = write_wav_file_with(
-        &partial,
-        &audio.channels,
-        rate,
-        format.bit_depth.sample_format(),
-        (format.dither, DITHER_SEED),
-    )
-    .map_err(|source| RenderError::Write {
-        path: path.to_path_buf(),
-        source,
-    });
-    let renamed = written.and_then(|()| {
-        std::fs::rename(&partial, path).map_err(|e| RenderError::Write {
-            path: path.to_path_buf(),
-            source: hound::Error::from(e).into(),
-        })
-    });
-    if renamed.is_err() {
-        let _ = std::fs::remove_file(&partial);
-    }
-    renamed?;
+    write_audio_file(path, &audio.channels, rate, format)?;
     Ok(ExportReport {
         path: path.to_path_buf(),
         frames: audio.frames() as u64,

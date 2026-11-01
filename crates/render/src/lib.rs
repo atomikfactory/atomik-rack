@@ -3,8 +3,13 @@
 //! - [`patch`]: the serde model of the patch file, its validation and JSON-path errors.
 //! - [`build`]: resolves a [`patch::Patch`] against a device [`Registry`] into a compiled plan.
 //! - [`flat`]: the expanded rack (containers compiled away) as a patch.
-//! - [`export`]: the song or the loop as an audio file (16/24-bit PCM with dither, or float).
-//! - [`freeze`]: a track's chain rendered to audio (freeze and bounce in place).
+//! - [`export`]: the song or the loop as an audio file (16/24-bit PCM with dither, or float; WAV
+//!   or AIFF).
+//! - [`aiff`]: the AIFF writer behind the export's second container.
+//! - [`stems`]: the strips of the console (channels, buses, returns, master) rendered to files of
+//!   their own, aligned with each other and with the master.
+//! - [`freeze`]: a track's chain rendered to audio (freeze and bounce in place; with no effect
+//!   it is a dry bounce of the clips).
 //! - [`bundle`]: project folder bundles (layout rules and asset loading for bounces).
 //! - [`plugin_pass`]: the bounce loop for projects with plugins (pre-roll, restarts, latency).
 //! - [`project`]: `.atomik` projects: the song as engine input and the song bounce.
@@ -22,6 +27,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod aiff;
 pub mod build;
 pub mod bundle;
 pub mod cli;
@@ -33,6 +39,7 @@ pub mod plugin_pass;
 pub mod plugins;
 pub mod project;
 pub mod samples;
+pub mod stems;
 pub mod warp;
 pub mod wav;
 

@@ -265,3 +265,43 @@ fn the_menu_items_are_disabled_while_an_export_runs() {
     s.frame();
     assert!(item(&s, AppCommand::ExportSongAudio).enabled);
 }
+
+#[test]
+fn export_stems_asks_for_a_folder_and_writes_a_file_per_strip_with_the_remembered_choices() {
+    let t = Tmp::new();
+    let mut s = shell(&t.0);
+    let stems = item(&s, AppCommand::ExportStems);
+    assert_eq!(stems.label, "Export Stems as Audio Files\u{2026}");
+    assert!(stems.enabled);
+    assert_eq!(
+        stems.command.command_id(),
+        Some(("file.export_stems", None))
+    );
+    assert_eq!(
+        s.execute(AppCommand::ExportStems),
+        vec![ShellRequest::PickExportAudio(ExportScope::Stems)]
+    );
+    assert_eq!(s.export_audio_name(ExportScope::Stems), "Bounced project");
+    let folder = t.file("Bounced mix");
+    s.export_audio_to(ExportScope::Stems, &folder);
+    assert!(s.export_open());
+    let mut dl = atomik_ui::DisplayList::new();
+    s.paint(&mut dl);
+    for want in ["EXPORT STEMS", "Bounced mix", "AFTER STRIP", "DRY SOURCE"] {
+        assert!(dl.texts().contains(&want), "{want} in {:?}", dl.texts());
+    }
+    press(&mut s, "AIFF");
+    press(&mut s, "EXPORT");
+    assert!(s.core().audio_export_busy());
+    let mut dl = atomik_ui::DisplayList::new();
+    s.paint(&mut dl);
+    assert!(dl.texts().contains(&"EXPORTING STEMS"));
+    s.core_mut().wait_background();
+    s.frame();
+    assert!(!s.export_open());
+    let files = std::fs::read_dir(&folder).unwrap().count();
+    assert_eq!(files, 2, "a channel and the master");
+    // The choices are remembered: the next panel starts with AIFF, and in the folder's parent.
+    assert_eq!(s.export_values().file, atomik_ui::ExportFile::Aiff);
+    assert_eq!(s.export_audio_dir(), Some(t.0.clone()));
+}

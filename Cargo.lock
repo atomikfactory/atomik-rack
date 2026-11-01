@@ -361,6 +361,7 @@ name = "atomik-mcp"
 version = "0.2.0-rc.2"
 dependencies = [
  "atomik-app",
+ "atomik-audio-file",
  "atomik-core",
  "atomik-device-sdk",
  "atomik-library",

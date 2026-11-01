@@ -19,6 +19,8 @@ path = "src/main.rs"
 
 [dependencies]
 atomik-core.workspace = true
+# Reads an exported file back (any container) for the audio report.
+atomik-audio-file.workspace = true
 atomik-device-sdk.workspace = true
 # Library item kinds and the search words of `library_list`.
 atomik-library.workspace = true

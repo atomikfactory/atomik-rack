@@ -1952,9 +1952,28 @@ ends at the End), `span` loop is exactly the frames between the locators with no
 is pcm16 (dithered, see `dither`), pcm24 (no dither, the default) or f32; `sample_rate` converts \
 from the project's rate. The file is read back for the audio report. Returns `path`, `bytes`, \
 `format`, `dither`, `sample_rate`, `frames`, `seconds`, `span_frames`, `tail_frames`, `warnings` \
-and `audio`.",
+and `audio`. `container` is wav (default) or aiff. With `stems` true, `file` names a folder and \
+every strip of the console (channels, buses, returns, master) is written to a file of its own \
+in it, numbered in mixer order and lined up with the master (`stems_dry` takes the channels \
+before their strips); the answer lists `stems` (file, kind, name, delay_frames and the `audio` \
+report of each).",
         &[
-            ("file", "string", "The WAV file to write."),
+            (
+                "file",
+                "string",
+                "The file to write (the folder, with `stems`).",
+            ),
+            ("container", "string", "wav (default) or aiff."),
+            (
+                "stems",
+                "boolean",
+                "Write one file per mixer strip into the folder `file` (default false).",
+            ),
+            (
+                "stems_dry",
+                "boolean",
+                "With stems: the channels before their strips (default false).",
+            ),
             ("span", "string", "song (default) or loop."),
             ("format", "string", "pcm16, pcm24 (default) or f32."),
             (
@@ -2024,6 +2043,16 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         .transpose()?;
     let tail = args.opt_bool("tail")?.unwrap_or(true);
     let window_s = args.opt_f64("window_s")?.unwrap_or(0.5);
+    let container = match args.opt_str("container")?.unwrap_or("wav") {
+        "wav" => atomik_render::export::ExportContainer::Wav,
+        "aiff" => atomik_render::export::ExportContainer::Aiff,
+        other => return Err(format!("container must be wav or aiff, not `{other}`")),
+    };
+    let stems = args.opt_bool("stems")?.unwrap_or(false);
+    let stems_dry = args.opt_bool("stems_dry")?.unwrap_or(false);
+    if stems_dry && !stems {
+        return Err("stems_dry applies with stems".to_string());
+    }
     let out = server.paths().write(file)?;
     let session = server.require_session()?;
     let core = session.shell().core();
@@ -2049,10 +2078,19 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         },
     };
     let format = ExportFormat {
+        container,
         bit_depth,
         dither,
         sample_rate,
     };
+    if stems {
+        return export_stems_json(
+            core,
+            (&options, &request),
+            (&format, stems_dry),
+            (&out, window_s),
+        );
+    }
     let report = export_audio_file(
         doc,
         core.registry(),
@@ -2063,7 +2101,7 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     )
     .map_err(|e| e.to_string())?
     .ok_or("the export was cancelled")?;
-    let written = read_wav_file(&out).map_err(|e| e.to_string())?;
+    let written = atomik_audio_file::decode_file(&out).map_err(|e| e.to_string())?;
     Ok(ToolOutput::json(&json!({
         "path": out.to_string_lossy(),
         "bytes": std::fs::metadata(&out).map(|m| m.len()).ok(),
@@ -2085,6 +2123,59 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "tail_frames": report.tail_frames,
         "warnings": report.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "audio": analysis::report(&written.channels, written.sample_rate, window_s),
+    })))
+}
+
+/// `session_export` with `stems`: every strip of the console to its own file in the folder
+/// `out`, and the audio report of each file read back.
+fn export_stems_json(
+    core: &AppCore<atomik_app::session::LiveSession<SystemBackend>>,
+    (options, request): (
+        &atomik_render::project::ProjectOptions,
+        &atomik_render::export::ExportRequest,
+    ),
+    (format, dry): (&atomik_render::export::ExportFormat, bool),
+    (out, window_s): (&Path, f64),
+) -> Result<ToolOutput, String> {
+    use atomik_render::stems::{StemRequest, StemStrip, export_stems};
+    let doc = core.doc();
+    let stems = StemRequest {
+        span: request.span,
+        tail_seconds: request.tail_seconds,
+        strip: if dry { StemStrip::Dry } else { StemStrip::Full },
+        sources: atomik_model::stem_sources(doc, core.registry()),
+    };
+    let report = export_stems(
+        doc,
+        core.registry(),
+        (options, core.bundle_root()),
+        &mut atomik_render::project::PluginBounce::default(),
+        (&stems, format),
+        (out, atomik_render::plugin_pass::RenderControl::default()),
+    )
+    .map_err(|e| e.to_string())?
+    .ok_or("the export was cancelled")?;
+    let mut rows = Vec::new();
+    for (path, source) in &report.files {
+        let written = atomik_audio_file::decode_file(path).map_err(|e| e.to_string())?;
+        rows.push(json!({
+            "file": path.file_name().map(|n| n.to_string_lossy().into_owned()),
+            "kind": source.kind.label(),
+            "name": source.name,
+            "bytes": std::fs::metadata(path).map(|m| m.len()).ok(),
+            "audio": analysis::report(&written.channels, written.sample_rate, window_s),
+        }));
+    }
+    Ok(ToolOutput::json(&json!({
+        "folder": out.to_string_lossy(),
+        "stems": rows,
+        "strip": if dry { "dry" } else { "after_strip" },
+        "sample_rate": report.sample_rate,
+        "frames": report.frames,
+        "seconds": report.frames as f64 / f64::from(report.sample_rate),
+        "span_frames": report.span_frames,
+        "tail_frames": report.tail_frames,
+        "warnings": report.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
     })))
 }
 

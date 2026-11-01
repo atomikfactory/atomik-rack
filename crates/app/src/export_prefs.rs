@@ -1,17 +1,20 @@
 //! The audio export choices the app remembers: `export.json`, next to `settings.json`.
 //!
 //! ```json
-//! { "bit_depth": "24", "dither": "tpdf", "sample_rate": null, "tail": true, "folder": "D:/Music" }
+//! { "bit_depth": "24", "dither": "tpdf", "sample_rate": null, "tail": true, "file": "wav",
+//!   "dry": false, "folder": "D:/Music" }
 //! ```
 //!
 //! `bit_depth` is `"16"`, `"24"` or `"32f"`, `dither` is `"none"`, `"tpdf"` or `"shaped"`
 //! (it applies to 16-bit files only), `sample_rate` is a rate in Hz or `null` for the project's,
-//! `tail` keeps the tail of a song, and `folder` is where the last export went. Loading is
+//! `tail` keeps the tail of a song, `file` is the container (`"wav"` or `"aiff"`), `dry` takes
+//! the channels of a stems export before their strips, and `folder` is where the last export
+//! went. Loading is
 //! lenient: a missing or unreadable file, a missing field or a value this build does not know is
 //! the default. Saving is atomic ([`crate::keymap_store::write_atomic`]) and canonical, so an
 //! unchanged choice writes identical bytes. These are app preferences, not part of the project.
 
-use atomik_ui::{EXPORT_RATES, ExportDepth, ExportDither, ExportValues};
+use atomik_ui::{EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportValues};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -35,6 +38,10 @@ pub struct ExportPrefs {
     pub sample_rate: Option<u32>,
     /// Keep the tail of a song.
     pub tail: bool,
+    /// `"wav"` or `"aiff"`.
+    pub file: String,
+    /// Stems only: the channels before their strips.
+    pub dry: bool,
     /// The folder the last export went to.
     pub folder: Option<String>,
 }
@@ -63,6 +70,12 @@ impl ExportPrefs {
             .to_owned(),
             sample_rate: values.rate,
             tail: values.tail,
+            file: match values.file {
+                ExportFile::Wav => "wav",
+                ExportFile::Aiff => "aiff",
+            }
+            .to_owned(),
+            dry: values.dry,
             folder: folder.map(|f| f.to_string_lossy().into_owned()),
         }
     }
@@ -85,6 +98,12 @@ impl ExportPrefs {
             },
             rate: self.sample_rate.filter(|r| EXPORT_RATES.contains(r)),
             tail: self.tail,
+            file: match self.file.as_str() {
+                "wav" => ExportFile::Wav,
+                "aiff" => ExportFile::Aiff,
+                _ => default.file,
+            },
+            dry: self.dry,
         }
     }
 
@@ -148,6 +167,8 @@ mod tests {
             dither: ExportDither::Shaped,
             rate: Some(44_100),
             tail: false,
+            file: ExportFile::Aiff,
+            dry: true,
         };
         let prefs = ExportPrefs::from_values(&values, Some(Path::new("music")));
         prefs.save(&path).unwrap();

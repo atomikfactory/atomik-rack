@@ -9,7 +9,7 @@ use atomik_model::{
     Clip, ClipContent, CreateOptions, CreateSource, Note, WorkflowCommand, new_project_doc,
 };
 use atomik_render::export::BitDepth;
-use atomik_ui::{EXPORT_RATES, ExportDepth, ExportDither, ExportScope, ExportValues};
+use atomik_ui::{EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const BAR: i64 = 4 * PPQ;
@@ -199,6 +199,7 @@ fn the_panel_values_map_to_the_render_request_and_format() {
         dither: ExportDither::Shaped,
         rate: Some(96_000),
         tail: true,
+        ..ExportValues::default()
     };
     let f = export_format(&v);
     assert_eq!(f.bit_depth, BitDepth::Pcm16);
@@ -218,4 +219,78 @@ fn the_panel_values_map_to_the_render_request_and_format() {
     assert!(export_request(ExportScope::Song, &v).tail_seconds.abs() < f64::EPSILON);
     v.tail = true;
     assert!(export_request(ExportScope::Loop, &v).tail_seconds.abs() < f64::EPSILON);
+}
+
+#[test]
+fn a_stems_export_writes_a_file_per_strip_in_a_folder_without_touching_the_engine() {
+    let t = Tmp::new();
+    let mut c = core();
+    let dirty = c.is_dirty();
+    let folder = t.file("Bounced song");
+    let aiff = ExportValues {
+        file: ExportFile::Aiff,
+        ..values(ExportDepth::Pcm24)
+    };
+    c.start_audio_export(ExportScope::Stems, folder.clone(), aiff)
+        .unwrap();
+    assert!(c.audio_export_busy());
+    let (_, text) = c.audio_export_progress().unwrap();
+    assert!(text.contains("stems"), "{text}");
+    c.wait_background();
+    assert!(!c.audio_export_busy());
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported 2 stems to Bounced song") && message.contains("24-bit"),
+        "{message}"
+    );
+    // One channel and the master, numbered, in the chosen container.
+    let mut names: Vec<String> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(
+        names[0].starts_with("01 ") && names[0].ends_with(".aif"),
+        "{names:?}"
+    );
+    assert!(names[1].starts_with("02 Master"), "{names:?}");
+    let master = atomik_audio_file::decode_file(&folder.join(&names[1])).unwrap();
+    assert!(master.channels[0].iter().any(|x| x.abs() > 1e-3));
+    assert_eq!(c.is_dirty(), dirty);
+    assert!(c.sink_mut().take().is_empty(), "the engine was not touched");
+}
+
+#[test]
+fn stems_need_a_strip_and_a_song_and_the_file_extension_follows_the_container() {
+    let t = Tmp::new();
+    let c = AppCore::with_doc(RecordingSink::new(), new_project_doc(), None);
+    let why = c.export_audio_refusal(ExportScope::Stems).unwrap();
+    assert!(why.contains("no mixer strips"), "{why}");
+    assert!(!c.can_export_audio(ExportScope::Stems));
+    // A song export takes the extension of the container, whatever the dialog added.
+    let mut c = core();
+    let aiff = ExportValues {
+        file: ExportFile::Aiff,
+        ..values(ExportDepth::Pcm16)
+    };
+    c.start_audio_export(ExportScope::Song, t.file("mix.wav"), aiff)
+        .unwrap();
+    c.wait_background();
+    assert!(t.file("mix.aif").is_file() && !t.file("mix.wav").exists());
+}
+
+#[test]
+fn the_dry_bounce_of_a_clip_is_a_new_track_without_the_strip() {
+    let mut c = core();
+    let clip = c.doc().song.track(&key("lead")).unwrap().lanes[0].clips[0].id;
+    c.arrangement.set_selected_clips(&[clip]);
+    let before = c.doc().song.tracks.len();
+    c.bounce_clips_dry();
+    c.wait_background();
+    assert_eq!(c.doc().song.tracks.len(), before + 1);
+    let new = c.doc().song.tracks.last().unwrap();
+    let name = &c.doc().device(&new.device).unwrap().name;
+    assert!(name.ends_with("(dry bounce)"), "{name}");
+    assert!(c.last_rejection().unwrap().contains("Bounced"));
 }

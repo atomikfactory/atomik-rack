@@ -2428,6 +2428,66 @@ fn a_session_export_of_the_loop_is_exactly_the_locator_range_at_another_rate() {
 }
 
 #[test]
+fn a_session_export_of_stems_writes_a_file_per_strip_that_adds_up_to_the_master() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let folder = tmp("stems-demo");
+    let v = ok(
+        &mut s,
+        "session_export",
+        json!({"file": folder, "stems": true, "format": "f32", "tail": false}),
+    );
+    let rows = v["stems"].as_array().unwrap();
+    assert!(rows.len() >= 2, "{v}");
+    assert_eq!(rows.last().unwrap()["kind"], "master");
+    assert_eq!(v["frames"], 16 * 48_000, "{v}");
+    assert_eq!(v["strip"], "after_strip");
+    for row in rows {
+        assert_eq!(row["audio"]["frames"], 16 * 48_000, "{row}");
+    }
+    // The first file is numbered 01 and every stem is a file of the folder.
+    assert!(rows[0]["file"].as_str().unwrap().starts_with("01 "), "{v}");
+    for row in rows {
+        let path = Path::new(&folder).join(row["file"].as_str().unwrap());
+        assert!(path.is_file(), "{}", path.display());
+    }
+    // The master stem is the export: the same bits as `session_export` of the song.
+    let whole = tmp("stems-demo-whole.wav");
+    ok(
+        &mut s,
+        "session_export",
+        json!({"file": whole, "format": "f32", "tail": false}),
+    );
+    let master = Path::new(&folder).join(rows.last().unwrap()["file"].as_str().unwrap());
+    let c = ok(
+        &mut s,
+        "compare_audio",
+        json!({"a": master.to_string_lossy(), "b": whole}),
+    );
+    assert_eq!(c["bit_identical"], true, "{c}");
+    // Dry stems leave the buses, returns and master out; an AIFF container reads back.
+    let dry = tmp("stems-demo-dry");
+    let d = ok(
+        &mut s,
+        "session_export",
+        json!({"file": dry, "stems": true, "stems_dry": true, "container": "aiff"}),
+    );
+    assert_eq!(d["strip"], "dry");
+    assert!(
+        d["stems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["kind"] == "channel" && r["file"].as_str().unwrap().ends_with(".aif")),
+        "{d}"
+    );
+}
+
+#[test]
 fn session_export_validates_its_arguments_and_the_path() {
     let mut s = server();
     ok(&mut s, "session_open", json!({}));
@@ -2446,6 +2506,11 @@ fn session_export_validates_its_arguments_and_the_path() {
         ),
         (json!({"file": out, "sample_rate": 1000}), "sample_rate"),
         (json!({"file": out, "tail": "yes"}), "tail"),
+        (json!({"file": out, "container": "ogg"}), "container"),
+        (
+            json!({"file": out, "stems_dry": true}),
+            "applies with stems",
+        ),
     ] {
         let r = call(&mut s, "session_export", args);
         assert!(r.is_error, "{needle}");

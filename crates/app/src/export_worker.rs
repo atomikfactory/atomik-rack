@@ -1,4 +1,5 @@
-//! The export worker: renders the song or the loop to an audio file on its own thread (see
+//! The export worker: renders the song or the loop to an audio file, or the strips of the console
+//! to a folder of stem files ([`atomik_render::stems`]), on its own thread (see
 //! [`crate::AppCore::start_audio_export`]).
 //!
 //! Like the freeze worker it owns what it needs (a copy of the document, its own device registry)
@@ -16,10 +17,34 @@ use atomik_render::export::{ExportFormat, ExportReport, ExportRequest, export_au
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::plugins::MissingPlugins;
 use atomik_render::project::{PluginBounce, ProjectOptions};
+use atomik_render::stems::{StemRequest, StemStrip, StemsReport, export_stems};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
+
+/// What an export writes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Target {
+    /// One file: the mix of the document's outputs.
+    File(PathBuf),
+    /// One file per strip of the console, in this folder.
+    Stems {
+        /// The folder.
+        folder: PathBuf,
+        /// Which signal of the channels.
+        strip: StemStrip,
+    },
+}
+
+/// What a finished export wrote.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Done {
+    /// The file of [`Target::File`].
+    File(ExportReport),
+    /// The files of [`Target::Stems`].
+    Stems(StemsReport),
+}
 
 /// One export.
 pub(crate) struct Work {
@@ -29,8 +54,8 @@ pub(crate) struct Work {
     pub request: ExportRequest,
     /// The file format.
     pub format: ExportFormat,
-    /// The file to write.
-    pub path: PathBuf,
+    /// What to write.
+    pub target: Target,
     /// The folder the project's audio lives in.
     pub bundle_root: Option<PathBuf>,
     /// The plugin machinery.
@@ -38,12 +63,12 @@ pub(crate) struct Work {
 }
 
 /// Renders and writes `work`. `None`: the control stopped it (nothing was written).
-fn run(work: Work, control: RenderControl<'_>) -> Result<Option<ExportReport>, String> {
+fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
     let Work {
         doc,
         request,
         format,
-        path,
+        target,
         bundle_root,
         plugins,
     } = work;
@@ -60,14 +85,34 @@ fn run(work: Work, control: RenderControl<'_>) -> Result<Option<ExportReport>, S
         mode: RunMode::Offline,
         missing: MissingPlugins::Error,
     };
-    export_audio_file(
-        &doc,
-        &registry,
-        (&options, bundle_root.as_deref()),
-        &mut bounce,
-        (&request, &format),
-        (&path, control),
-    )
+    match target {
+        Target::File(path) => export_audio_file(
+            &doc,
+            &registry,
+            (&options, bundle_root.as_deref()),
+            &mut bounce,
+            (&request, &format),
+            (&path, control),
+        )
+        .map(|r| r.map(Done::File)),
+        Target::Stems { folder, strip } => {
+            let stems = StemRequest {
+                span: request.span,
+                tail_seconds: request.tail_seconds,
+                strip,
+                sources: atomik_model::stem_sources(&doc, &registry),
+            };
+            export_stems(
+                &doc,
+                &registry,
+                (&options, bundle_root.as_deref()),
+                &mut bounce,
+                (&stems, &format),
+                (&folder, control),
+            )
+            .map(|r| r.map(Done::Stems))
+        }
+    }
     .map_err(|e| e.to_string())
 }
 
@@ -80,7 +125,7 @@ struct Guard {
 }
 
 impl Guard {
-    fn send(&mut self, result: Result<Option<ExportReport>, String>) {
+    fn send(&mut self, result: Result<Option<Done>, String>) {
         self.sent = true;
         let _ = self.tx.send(Msg::Exported {
             generation: self.generation,
