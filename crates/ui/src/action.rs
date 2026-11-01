@@ -362,10 +362,11 @@ pub enum UiAction {
     /// Close the sequencer grid editor and show the arrangement again.
     CloseSeqEditor,
     /// GENERATE or RANDOMISE on a drum generator panel: the app writes pattern `index` of the
-    /// generator from its role templates with the device's `style`, `density` and `random.seed`
-    /// params, as one undo step (`atomik_devices::drum_generator::generate_pattern`;
-    /// `Command::SetDrumPattern`). `randomise` first moves `random.seed` up by one (wrapping
-    /// 999 to 0), in the same undo step, so the next press writes another pattern.
+    /// generator from its role templates with the device's `style` and `density` params and a
+    /// new seed (written to `random.seed`), as one undo step
+    /// (`atomik_devices::drum_generator::generate_pattern`; `Command::SetDrumPattern`).
+    /// `randomise` also draws the style, density, variation, accent and the pattern's swing, in the
+    /// same undo step.
     GenerateDrums {
         /// The drum generator.
         device: DeviceKey,

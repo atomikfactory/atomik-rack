@@ -530,3 +530,120 @@ fn the_to_channel_button_is_dim_and_silent_when_the_pad_is_already_cabled() {
     v.paint(&mut free, &doc2, &reg);
     assert_ne!(cabled.to_json(), free.to_json());
 }
+
+// ------------------------------------------------------------------ big pads
+
+#[test]
+fn the_pad_grid_and_knob_columns_use_the_whole_panel() {
+    use atomik_ui::autolayout::{self, CONTENT_X, MARGIN_BOTTOM};
+    let reg = registry();
+    let desc = reg.get("atomik.drum-machine").unwrap().descriptor;
+    let spec = autolayout::drum_layout(desc);
+    let drum = spec.drum.unwrap();
+    let panel_h = f64::from(spec.height_units) * 76.0;
+    // Big pads: at least 100 px each way, filling the width the knob columns leave.
+    let (w, h) = (drum.pads.width() / 4.0, drum.pads.height() / 4.0);
+    assert!(w >= 100.0 && h >= 100.0, "{w} x {h}");
+    assert_eq!(drum.pads.x0, CONTENT_X.0);
+    let front: Vec<_> = spec.front.iter().filter(|c| !spec.on_back(c)).collect();
+    let knobs_x0 = front.iter().map(|c| c.rect.x0).fold(f64::MAX, f64::min);
+    let knobs_x1 = front.iter().map(|c| c.rect.x1).fold(0.0, f64::max);
+    assert!(drum.pads.x1 < knobs_x0, "the grid ends before the knobs");
+    assert!(knobs_x0 - drum.pads.x1 < 40.0, "no wide gap: {knobs_x0}");
+    assert!(
+        CONTENT_X.1 - knobs_x1 < 16.0,
+        "the knobs reach the right edge"
+    );
+    // Everything fits the panel, and nothing overlaps the pad grid.
+    let band = drum.info.y0;
+    assert!(drum.pads.y1 <= band && drum.pads.y0 > 0.0);
+    for r in [drum.info, drum.edit, drum.to_channel] {
+        assert!(r.y1 <= panel_h - MARGIN_BOTTOM + 1e-9, "{r:?}");
+        assert!(r.y0 >= drum.pads.y1, "{r:?}");
+    }
+    for c in &front {
+        assert!(c.rect.y1 <= panel_h - MARGIN_BOTTOM + 1e-9, "{c:?}");
+        assert!(c.rect.x0 >= drum.pads.x1, "{c:?}");
+    }
+    // Every pad cell is reachable and distinct.
+    let mut seen = std::collections::BTreeSet::new();
+    for pad in 1..=16u8 {
+        let r = autolayout::drum_pad_rect(drum.pads, pad);
+        assert!(drum.pads.contains(r.center()));
+        assert_eq!(autolayout::drum_pad_at(drum.pads, r.center()), Some(pad));
+        seen.insert(r.x0.to_bits() ^ r.y0.to_bits().rotate_left(7));
+    }
+    assert_eq!(seen.len(), 16);
+    // All 14 knobs and the master level are on the front.
+    assert_eq!(front.len(), 15);
+}
+
+#[test]
+fn a_loaded_pad_shows_its_file_name_and_an_empty_pad_says_empty() {
+    let doc = drum_only();
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    let t = texts_of(&mut v, &doc);
+    // Pads 1 and 2 hold samples; the other fourteen are empty.
+    assert_eq!(t.iter().filter(|x| *x == "empty").count(), 14, "{t:?}");
+    for name in ["kick_808", "snare_soft"] {
+        assert!(t.iter().any(|x| x == name), "{name}: {t:?}");
+    }
+    // A name too long for one line goes on two.
+    let mut long = doc.clone();
+    long.assets.get_mut(KICK).unwrap().original_name = "boom_bap_kick_layered_long.wav".into();
+    let mut v = view(&long, &reg);
+    let t = texts_of(&mut v, &long);
+    assert!(t.iter().any(|x| x == "boom_bap_kick_"), "{t:?}");
+    assert!(t.iter().any(|x| x == "layered_long"), "{t:?}");
+}
+
+#[test]
+fn a_loaded_pad_is_painted_differently_from_an_empty_one() {
+    let doc = drum_only();
+    let reg = registry();
+    let mut empty = doc.clone();
+    empty.devices[0].zones.clear();
+    let mut a = view(&doc, &reg);
+    let mut b = view(&empty, &reg);
+    let (mut da, mut db) = (DisplayList::new(), DisplayList::new());
+    a.paint(&mut da, &doc, &reg);
+    b.paint(&mut db, &empty, &reg);
+    assert_ne!(da.to_json(), db.to_json());
+}
+
+#[test]
+fn a_file_dragged_over_a_pad_lights_exactly_that_pad() {
+    let doc = drum_only();
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    let d = key("drums");
+    for pad in [1u8, 7, 16] {
+        let on = v.pad_center(&d, pad).unwrap();
+        let _ = v.handle(
+            &UiEvent::FileHover {
+                pos: on,
+                paths: vec!["a.wav".into()],
+            },
+            &doc,
+            &reg,
+        );
+        assert_eq!(v.drop_pad(), Some((&d, pad)));
+    }
+}
+
+#[test]
+fn pad_names_wrap_at_separators_then_in_words_and_never_past_two_lines() {
+    use atomik_ui::paint::wrap_pad_name;
+    let w = |t: &str| wrap_pad_name(t, 60.0, 10.0);
+    // 60 px at 10 pt is ten characters a line.
+    assert_eq!(w("kick"), ["kick"]);
+    assert_eq!(w("kick_808_long"), ["kick_808_", "long"]);
+    assert_eq!(w("big snare hit"), ["big snare", "hit"]);
+    assert_eq!(w("abcdefghijklmnopqrst"), ["abcdefghij", "klmnopqrst"]);
+    assert_eq!(w("abcdefghijklmnopqrstuvwxy"), ["abcdefghij", "klmnopqrs."]);
+    let lines = w("a_very_very_long_name_that_never_ends_anywhere");
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().all(|l| l.chars().count() <= 10), "{lines:?}");
+    assert_eq!(w(""), [""]);
+}

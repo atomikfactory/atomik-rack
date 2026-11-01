@@ -37,8 +37,10 @@ fn drum_button(b: DrumButton) -> Option<Cow<'static, str>> {
         DrumButton::Copy => "Copy the edited pattern",
         DrumButton::Paste => "Paste the copied pattern into the edited one",
         DrumButton::Clear => "Clear the steps of the edited pattern",
-        DrumButton::Generate => "Write the pattern from the role templates",
-        DrumButton::Randomise => "Write the pattern again from the next seed",
+        DrumButton::Generate => "Write a new rhythm from the style (a new seed every press)",
+        DrumButton::Randomise => {
+            "Draw style, density, swing and a new seed, then write the pattern"
+        }
         DrumButton::LenDec => "One step shorter (Shift: four)",
         DrumButton::LenInc => "One step longer (Shift: four)",
         DrumButton::Bank(n) => {
