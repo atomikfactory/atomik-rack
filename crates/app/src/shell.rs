@@ -2114,6 +2114,7 @@ impl<B: AudioBackend> Shell<B> {
             console_maximised: self.maximised(),
             compensation: self.core.doc().console.compensation,
             align_returns: self.core.doc().console.align_returns,
+            send_follow: self.core.doc().console.send_follow,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
             cpu_meters: self.core.cpu_meters_on(),
@@ -5035,7 +5036,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.add_audio_track();
                 Vec::new()
             }
-            AppCommand::CreateMixerChannel => self.execute_command(AppCommand::AddChannel),
+            AppCommand::CreateMixerChannel => {
+                self.core.add_mix_channel();
+                Vec::new()
+            }
             // With the rack in a window of its own F6 raises that window; the F6 choice is the
             // main window's layout, which the rack no longer takes part in.
             AppCommand::ToggleRack if self.rack_detached() => {
@@ -5372,6 +5376,22 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ToggleCompensation => {
                 let on = self.core.doc().console.compensation;
                 let command = Command::Console(ConsoleCommand::SetCompensation(!on));
+                // A rejection is already reported in the view.
+                let _ = self.core.apply_command(command);
+                Vec::new()
+            }
+            AppCommand::RemoveChannel => {
+                self.core.remove_selected_strips(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::CreateParallel => {
+                self.core
+                    .create_parallel_channels(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::ToggleSendFollow => {
+                let on = self.core.doc().console.send_follow;
+                let command = Command::Console(ConsoleCommand::SetSendFollow(!on));
                 // A rejection is already reported in the view.
                 let _ = self.core.apply_command(command);
                 Vec::new()

@@ -650,6 +650,7 @@ mod tests {
             console_maximised: false,
             compensation: true,
             align_returns: true,
+            send_follow: true,
             console_devices: false,
             console_links: false,
             cpu_meters: false,
