@@ -3,6 +3,10 @@
 //! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
+//! The utility devices [`gain_tool`], [`stereo_tool`], [`gate`], [`dynamics`] (gate then
+//! compressor), [`duck`] (the sidechain tool), [`env_filter`] and the two cable mergers in
+//! [`spider`] share the descriptor builders of the private `tool_support` module.
+//!
 //! The effects are wrapped in [`bypass::Bypassable`], which adds their `bypass` param.
 //!
 //! Each module exposes a `pub static DESCRIPTOR`, a `pub fn factory()` and the device struct.
@@ -25,8 +29,13 @@ pub mod cv_sequencer;
 pub mod distortion;
 pub mod drum_generator;
 pub mod drum_machine;
+pub mod duck;
+pub mod dynamics;
+pub mod env_filter;
 pub mod eq;
 pub mod fm_synth;
+pub mod gain_tool;
+pub mod gate;
 pub mod granular;
 pub mod guitar_amp;
 pub mod key_chord;
@@ -51,8 +60,11 @@ mod recent_peak;
 pub mod reverb;
 pub mod sampler;
 pub mod spectrum;
+pub mod spider;
 pub mod step_sequencer;
 pub mod stereo_delay;
+pub mod stereo_tool;
+mod tool_support;
 pub mod wavetable_synth;
 
 use atomik_device_sdk::{Registry, RegistryError};
@@ -124,11 +136,17 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register_with_drums(drum_generator::factory())?;
     registry.register_with_player_data(step_sequencer::factory())?;
     registry.register(stereo_delay::factory())?;
+    registry.register(stereo_tool::factory())?;
     registry.register(reverb::factory())?;
     registry.register(compressor::factory())?;
     registry.register(container::factory())?;
     registry.register(distortion::factory())?;
+    registry.register(duck::factory())?;
+    registry.register(dynamics::factory())?;
+    registry.register(env_filter::factory())?;
     registry.register(eq::factory())?;
+    registry.register(gain_tool::factory())?;
+    registry.register(gate::factory())?;
     registry.register(guitar_amp::factory())?;
     registry.register(macro_bank::factory())?;
     registry.register(mastering::factory())?;
@@ -145,6 +163,8 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(character::factory())?;
     registry.register(master::factory())?;
     registry.register(spectrum::factory())?;
+    registry.register(spider::audio_factory())?;
+    registry.register(spider::cv_factory())?;
     Ok(())
 }
 
@@ -157,7 +177,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 36] = [
+    const TYPE_IDS: [&str; 44] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -169,8 +189,13 @@ mod tests {
         "atomik.distortion",
         "atomik.drum-generator",
         "atomik.drum-machine",
+        "atomik.duck",
+        "atomik.dynamics",
+        "atomik.env-filter",
         "atomik.eq",
         "atomik.fm-synth",
+        "atomik.gain-tool",
+        "atomik.gate",
         "atomik.granular",
         "atomik.guitar-amp",
         "atomik.key-chord",
@@ -191,13 +216,16 @@ mod tests {
         "atomik.reverb",
         "atomik.sampler",
         "atomik.spectrum",
+        "atomik.spider-audio",
+        "atomik.spider-cv",
         "atomik.step-sequencer",
         "atomik.stereo-delay",
+        "atomik.stereo-tool",
         "atomik.wavetable-synth",
     ];
 
     #[test]
-    // Name kept; it now covers all thirty-six devices.
+    // Name kept; it now covers all forty-four devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -223,6 +251,26 @@ mod tests {
             );
             assert_eq!(r.takes_curves(id), id == "atomik.cv-sequencer", "{id}");
             assert_eq!(r.takes_drums(id), id == "atomik.drum-generator", "{id}");
+        }
+    }
+
+    #[test]
+    fn the_utility_devices_have_a_section_in_the_device_reference() {
+        let doc = include_str!("../../../docs/DEVICES.md");
+        for id in [
+            "atomik.duck",
+            "atomik.dynamics",
+            "atomik.env-filter",
+            "atomik.gain-tool",
+            "atomik.gate",
+            "atomik.spider-audio",
+            "atomik.spider-cv",
+            "atomik.stereo-tool",
+        ] {
+            assert!(
+                doc.lines().any(|l| l.starts_with('#') && l.contains(id)),
+                "{id} has no section in docs/DEVICES.md"
+            );
         }
     }
 

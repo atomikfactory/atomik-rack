@@ -29,6 +29,13 @@
 //! * **Ballistics:** the gain in dB follows a one-pole with the *attack* time constant when
 //!   opening and the *release* time constant when closing.
 
+use crate::det_math::{exp2_det, exp2_det_f64, log2_det};
+
+/// `20 * log10(2)`: dB per octave of amplitude (the deterministic level path).
+const DB_PER_LOG2: f32 = 6.020_6;
+/// `log2(10) / 20`: `10^(x/20) = 2^(x * LOG2_10_20)`.
+const LOG2_10_20: f32 = 0.166_096_4;
+
 /// Fixed compressor soft-knee width in dB (centred on the threshold).
 pub const KNEE_DB: f32 = 6.0;
 /// RMS detector time constant.
@@ -232,6 +239,8 @@ pub struct Gate {
     hold_left: u32,
     /// Current gain in dB (≤ 0).
     gain_db: f32,
+    /// Deterministic maths (see [`Gate::set_deterministic`]).
+    det: bool,
 }
 
 impl Gate {
@@ -252,17 +261,40 @@ impl Gate {
             env: 0.0,
             hold_left: 0,
             gain_db: 0.0,
+            det: false,
         };
         g.set_sample_rate(sample_rate);
         g
     }
 
+    /// Switches the gate to the platform-independent maths: the level in dB comes from
+    /// [`log2_det`], the gain from [`exp2_det`] and the time constants from [`exp2_det_f64`], so
+    /// the result is bit-identical on every platform. Off by default (the channel strip's gate
+    /// keeps its `log10`/`powf` maths and its goldens). Resets the gate.
+    pub fn set_deterministic(&mut self, on: bool) {
+        self.det = on;
+        self.set_sample_rate(self.sample_rate);
+    }
+
+    /// One-pole coefficient for `ms` in the maths this gate uses.
+    fn coeff_of(&self, ms: f32) -> f32 {
+        if !self.det {
+            return coeff(ms, self.sample_rate);
+        }
+        let n = f64::from(ms) * 0.001 * f64::from(self.sample_rate);
+        if n > 0.0 {
+            exp2_det_f64(-std::f64::consts::LOG2_E / n) as f32
+        } else {
+            0.0
+        }
+    }
+
     /// Changes the sample rate and resets.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
-        self.alpha_attack = coeff(self.attack_ms, sample_rate);
-        self.alpha_release = coeff(self.release_ms, sample_rate);
-        self.alpha_detector = coeff(GATE_DETECTOR_MS, sample_rate);
+        self.alpha_attack = self.coeff_of(self.attack_ms);
+        self.alpha_release = self.coeff_of(self.release_ms);
+        self.alpha_detector = self.coeff_of(GATE_DETECTOR_MS);
         self.set_hold_ms(self.hold_ms);
         self.reset();
     }
@@ -286,13 +318,13 @@ impl Gate {
     /// Opening time constant in ms.
     pub fn set_attack_ms(&mut self, ms: f32) {
         self.attack_ms = finite_or(ms, 0.0).max(0.0);
-        self.alpha_attack = coeff(self.attack_ms, self.sample_rate);
+        self.alpha_attack = self.coeff_of(self.attack_ms);
     }
 
     /// Closing time constant in ms.
     pub fn set_release_ms(&mut self, ms: f32) {
         self.release_ms = finite_or(ms, 0.0).max(0.0);
-        self.alpha_release = coeff(self.release_ms, self.sample_rate);
+        self.alpha_release = self.coeff_of(self.release_ms);
     }
 
     /// Expander (true) or gate (false) mode.
@@ -315,7 +347,11 @@ impl Gate {
         if self.env < 1e-30 {
             self.env = 0.0;
         }
-        let lvl = level_db(self.env);
+        let lvl = if self.det {
+            (DB_PER_LOG2 * log2_det(self.env)).max(-200.0)
+        } else {
+            level_db(self.env)
+        };
         let target = if lvl >= self.threshold_db {
             self.hold_left = self.hold_samples;
             0.0
@@ -336,7 +372,11 @@ impl Gate {
         if (self.gain_db - target).abs() < 1e-6 {
             self.gain_db = target;
         }
-        10f32.powf(self.gain_db / 20.0)
+        if self.det {
+            exp2_det(self.gain_db * LOG2_10_20)
+        } else {
+            10f32.powf(self.gain_db / 20.0)
+        }
     }
 
     /// Current attenuation in dB (≥ 0).
@@ -533,5 +573,21 @@ mod tests {
             gain = g.process(1e-6, 1e-6); // −120 dB: floored at −range
         }
         assert!((db(gain) + 60.0).abs() < 0.1, "{}", db(gain));
+    }
+
+    #[test]
+    fn deterministic_gate_matches_the_libm_gate() {
+        let mut a = gate();
+        let mut b = gate();
+        b.set_deterministic(true);
+        let mut worst = 0.0f32;
+        for i in 0..24_000 {
+            // A burst, a quiet tail, a burst again.
+            let level = if (i / 6_000) % 2 == 0 { 0.4 } else { 0.002 };
+            let x = level * (std::f32::consts::TAU * 440.0 * i as f32 / SR).sin();
+            let (ga, gb) = (a.process(x, x), b.process(x, x));
+            worst = worst.max((db(ga) - db(gb)).abs());
+        }
+        assert!(worst < 0.05, "{worst} dB apart");
     }
 }
