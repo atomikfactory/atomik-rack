@@ -611,7 +611,8 @@ mod tests {
 
     #[test]
     fn zone_ext_fields_are_validated() {
-        let cases: [(&str, fn(&mut Zone)); 8] = [
+        type Case = (&'static str, fn(&mut Zone));
+        let cases: [Case; 8] = [
             ("group", |z| z.ext.group = MAX_ZONE_GROUPS as u8),
             ("vel_xfade", |z| z.ext.vel_xfade = 127),
             ("rr_len", |z| z.ext.rr_len = MAX_RR_LEN + 1),

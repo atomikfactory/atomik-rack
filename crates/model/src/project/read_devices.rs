@@ -65,7 +65,7 @@ pub(crate) fn load_zones(
             } else {
                 false
             },
-            ext: load_zone_ext(&z, &p)?,
+            ext: load_zone_ext(z, &p)?,
         });
     }
     Ok(zones)
