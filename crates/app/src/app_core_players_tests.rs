@@ -977,7 +977,7 @@ fn a_drum_generator_gets_drum_data_and_every_drum_edit_swaps_it() {
 }
 
 #[test]
-fn generate_writes_the_edited_pattern_from_the_style_density_and_seed_in_one_undo_step() {
+fn generate_writes_the_edited_pattern_from_the_style_density_and_a_new_seed_in_one_undo_step() {
     let mut c = AppCore::new(RecordingSink::new());
     add(&mut c, DRUMS, "g");
     set_param(&mut c, "g", "style", 1.0);
@@ -999,34 +999,65 @@ fn generate_writes_the_edited_pattern_from_the_style_density_and_seed_in_one_und
     assert_eq!(written.name, blank.name);
     assert_eq!(written.lanes, blank.lanes);
     assert_eq!(drum_calls(&c.sink_mut().take()).len(), 1, "one swap");
-    // The same params write the same pattern again; undo restores the blank one first.
-    c.undo();
-    assert_eq!(drum_pattern(&c, "g", 0), blank, "one undo step");
-    c.handle_action(UiAction::GenerateDrums {
-        device: key("g"),
-        index: 0,
-        randomise: false,
-    });
-    assert_eq!(
-        drum_pattern(&c, "g", 0),
-        written,
-        "deterministic for a seed"
-    );
-    // The params follow the pattern the generator would write by itself.
+    // The press picked a new seed and wrote it with the pattern.
+    let seed = c.doc().device(&key("g")).unwrap().params["random.seed"];
+    assert_ne!(seed, 7.0);
+    assert!((0.0..=999.0).contains(&seed) && seed.fract() == 0.0);
+    // The pattern is what the generator writes for that style, density and seed.
     let by_hand = atomik_devices::drum_generator::generate_pattern(
         &blank.to_data(),
         atomik_devices::drum_generator::DrumStyle::BrokenBeat,
         0.2,
-        7,
+        seed as u64,
     );
     assert_eq!(
         written.steps,
         atomik_model::DrumPatternDoc::from_data(&by_hand, "").steps
     );
+    // Undo restores the blank pattern and the old seed together.
+    c.undo();
+    assert_eq!(drum_pattern(&c, "g", 0), blank, "one undo step");
+    assert_eq!(
+        c.doc().device(&key("g")).unwrap().params["random.seed"],
+        7.0
+    );
 }
 
 #[test]
-fn randomise_moves_the_seed_up_and_writes_another_pattern_in_one_undo_step() {
+fn every_generate_press_picks_another_seed_and_another_rhythm() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, DRUMS, "g");
+    let mut seeds = std::collections::BTreeSet::new();
+    let mut rhythms = std::collections::BTreeSet::new();
+    let mut last = c
+        .doc()
+        .device(&key("g"))
+        .unwrap()
+        .params
+        .get("random.seed")
+        .copied();
+    for _ in 0..12 {
+        c.handle_action(UiAction::GenerateDrums {
+            device: key("g"),
+            index: 0,
+            randomise: false,
+        });
+        let seed = c.doc().device(&key("g")).unwrap().params["random.seed"];
+        assert_ne!(Some(seed), last, "never the held seed");
+        last = Some(seed);
+        seeds.insert(seed as u32);
+        rhythms.insert(format!("{:?}", drum_pattern(&c, "g", 0).steps));
+    }
+    assert!(seeds.len() >= 10, "{seeds:?}");
+    assert!(
+        rhythms.len() >= 10,
+        "default density still varies: {}",
+        rhythms.len()
+    );
+}
+
+#[test]
+fn randomise_draws_the_character_and_a_new_seed_and_writes_a_pattern_in_one_undo_step() {
     let mut c = AppCore::new(RecordingSink::new());
     add(&mut c, DRUMS, "g");
     set_param(&mut c, "g", "random.seed", 7.0);
@@ -1035,37 +1066,63 @@ fn randomise_moves_the_seed_up_and_writes_another_pattern_in_one_undo_step() {
         index: 0,
         randomise: false,
     });
-    let seven = drum_pattern(&c, "g", 0);
-    c.handle_action(UiAction::GenerateDrums {
-        device: key("g"),
-        index: 0,
-        randomise: true,
-    });
-    let eight = drum_pattern(&c, "g", 0);
-    let seed = c.doc().device(&key("g")).unwrap().params["random.seed"];
-    assert_eq!(seed, 8.0);
-    assert_ne!(eight.steps, seven.steps);
+    let first = drum_pattern(&c, "g", 0);
+    let params_of = |c: &AppCore<RecordingSink>| {
+        let p = &c.doc().device(&key("g")).unwrap().params;
+        ["random.seed", "style", "density", "variation", "accent"]
+            .map(|k| p.get(k).copied().unwrap_or(0.0))
+    };
+    let before = params_of(&c);
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..10 {
+        c.handle_action(UiAction::GenerateDrums {
+            device: key("g"),
+            index: 0,
+            randomise: true,
+        });
+        let now = params_of(&c);
+        assert!((-0.3..=0.5).contains(&now[2]), "density {}", now[2]);
+        assert!((0.0..=3.0).contains(&now[1]) && now[1].fract() == 0.0);
+        assert!((0.0..=0.6).contains(&now[3]) && (0.0..=0.5).contains(&now[4]));
+        let swing = drum_pattern(&c, "g", 0).swing;
+        assert!(swing <= 28, "swing {swing}");
+        seen.insert((now[1] as u8, swing));
+        // One undo step: the pattern, the seed and the character come back together.
+        let after = drum_pattern(&c, "g", 0);
+        c.undo();
+        c.redo();
+        assert_eq!(drum_pattern(&c, "g", 0), after);
+    }
+    assert!(seen.len() >= 3, "style and swing are drawn: {seen:?}");
+    assert_ne!(params_of(&c), before);
+    assert_ne!(drum_pattern(&c, "g", 0).steps, first.steps);
+    // One press is one undo step.
     c.undo();
-    assert_eq!(
-        drum_pattern(&c, "g", 0),
-        seven,
-        "the pattern and the seed in one step"
-    );
-    assert_eq!(
-        c.doc().device(&key("g")).unwrap().params["random.seed"],
-        7.0
-    );
-    // 999 wraps to 0.
-    set_param(&mut c, "g", "random.seed", 999.0);
+    c.undo();
+    assert_ne!(drum_pattern(&c, "g", 0).steps, first.steps);
+}
+
+#[test]
+fn a_saved_generated_pattern_loads_as_stored() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, DRUMS, "g");
     c.handle_action(UiAction::GenerateDrums {
         device: key("g"),
         index: 0,
         randomise: true,
     });
-    assert_eq!(
-        c.doc().device(&key("g")).unwrap().params["random.seed"],
-        0.0
-    );
+    let written = drum_pattern(&c, "g", 0);
+    let text = atomik_model::save_project(c.doc());
+    let loaded = atomik_model::load_project(&text, &default_registry()).unwrap();
+    let back = loaded
+        .device(&key("g"))
+        .unwrap()
+        .drums
+        .as_ref()
+        .unwrap()
+        .patterns[0]
+        .clone();
+    assert_eq!(back, written, "the steps are stored, never redrawn on load");
 }
 
 #[test]

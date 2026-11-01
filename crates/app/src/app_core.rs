@@ -272,6 +272,8 @@ pub struct AppCore<S: EngineSink> {
     sampling: sampling::Sampling,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: Option<atomik_model::PatternDoc>,
+    /// The counter the drum generator draws its seeds and character from.
+    drum_draws: u64,
     transport_bar: TransportBar,
     piano_clip: Option<ClipId>,
     snapshot: Option<SongSnapshot>,
@@ -495,6 +497,7 @@ impl<S: EngineSink> AppCore<S> {
             tuners: tuner::Tuners::default(),
             sampling: sampling::Sampling::default(),
             pattern_clip_seen: None,
+            drum_draws: clock_entropy(),
             transport_bar: TransportBar::new(theme.clone()),
             console: ConsoleView::new(theme.clone()),
             meter_points: Vec::new(),
@@ -3038,6 +3041,16 @@ impl<S: EngineSink> AppCore<S> {
             self.engine_result(result);
         }
     }
+}
+
+/// Nanoseconds since the Unix epoch: where the drum generator's seed draws start, so every launch
+/// writes other patterns (never used by the engine, and a saved pattern is stored, not redrawn).
+#[allow(clippy::disallowed_methods)]
+// Justification: the wall clock only starts a seed counter; no audio or saved state depends on it.
+fn clock_entropy() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64)
 }
 
 /// The command that starts playback, with a count-in when there is one.

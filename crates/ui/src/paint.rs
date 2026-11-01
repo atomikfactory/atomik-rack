@@ -89,6 +89,30 @@ pub fn wrap_name(text: &str, width: f64, size: f32) -> Vec<String> {
     vec![fit_label(text, width, size)]
 }
 
+/// Size of the sample name on a loaded drum pad.
+pub const PAD_NAME_SIZE: f32 = 9.5;
+
+/// Splits a file name into at most two lines that fit `width`: after the last space, `_`, `-`
+/// or `.` that leaves the first line at least half full, else in the middle of a word.
+/// The second line ends in a `.` when it is cut.
+pub fn wrap_pad_name(text: &str, width: f64, size: f32) -> Vec<String> {
+    let max = ((width / (f64::from(size) * 0.56)).floor() as usize).max(1);
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max {
+        return vec![text.to_string()];
+    }
+    let breaks = |c: char| matches!(c, ' ' | '_' | '-' | '.');
+    // The first line holds `at` characters: up to and including a separator, or a hard cut.
+    let at = (1..=max.min(chars.len() - 1))
+        .rev()
+        .find(|&n| n * 2 >= max && breaks(chars[n - 1]))
+        .unwrap_or(max);
+    let first: String = chars[..at].iter().collect();
+    let rest: String = chars[at..].iter().collect();
+    let first = first.trim_end().to_string();
+    vec![first, fit_label(rest.trim_start(), width, size)]
+}
+
 /// Estimated advance of a run (for tooltip boxes only).
 pub fn estimate_width(text: &str, size: f32) -> f64 {
     text.chars().count() as f64 * f64::from(size) * 0.58
@@ -1306,9 +1330,9 @@ fn drum_panel<C: Canvas + ?Sized>(
         let loaded = !name.is_empty();
         let selected = pad == info.pad;
         let face = match (selected, loaded) {
-            (true, true) => mix(theme.button, info.accent, 0.35),
+            (true, true) => mix(theme.button, info.accent, 0.6),
             (true, false) => mix(theme.lcd, info.accent, 0.2),
-            (false, true) => mix(theme.button, info.accent, 0.12),
+            (false, true) => mix(theme.button, info.accent, 0.42),
             (false, false) => with_alpha(theme.lcd, 0.8),
         };
         let rr = RoundedRect::from_rect(r, 4.0);
@@ -1326,24 +1350,35 @@ fn drum_panel<C: Canvas + ?Sized>(
         c.text(
             &TextRun::new(
                 pad.to_string(),
-                pt(r.x0 + 5.0, r.y0 + 11.0),
-                9.0,
-                if loaded {
-                    info.accent
-                } else {
-                    theme.text_muted
-                }
-                .with_alpha(dim),
+                pt(r.x0 + 4.0, r.y0 + 9.0),
+                7.5,
+                if loaded { theme.text } else { theme.text_muted }.with_alpha(dim * 0.8),
             )
             .weight(700),
         );
         if loaded {
+            // The sample's file name, on up to two lines, centred in the lit pad.
+            let lines = wrap_pad_name(name, r.width() - 8.0, PAD_NAME_SIZE);
+            let first = r.center().y + 4.0 - (lines.len() as f64 - 1.0) * 6.0;
+            for (n, line) in lines.into_iter().enumerate() {
+                c.text(
+                    &TextRun::new(
+                        line,
+                        pt(r.center().x, first + n as f64 * 12.0),
+                        PAD_NAME_SIZE,
+                        theme.text,
+                    )
+                    .align(Align::Center)
+                    .weight(600),
+                );
+            }
+        } else {
             c.text(
                 &TextRun::new(
-                    fit_label(name, r.width() - 2.0, 8.0),
-                    pt(r.center().x, r.y1 - 6.0),
+                    "empty",
+                    pt(r.center().x, r.center().y + 3.5),
                     8.0,
-                    theme.text,
+                    theme.text_muted.with_alpha(0.4),
                 )
                 .align(Align::Center),
             );
@@ -1360,8 +1395,8 @@ fn drum_panel<C: Canvas + ?Sized>(
     c.text(
         &TextRun::new(
             format!("PAD {}  ·  {}", info.pad, crate::zone_edit::note_name(key)),
-            pt(lcd.x0 + 8.0, lcd.y0 + 14.0),
-            10.0,
+            pt(lcd.x0 + 8.0, lcd.y0 + 18.0),
+            11.0,
             info.accent,
         )
         .weight(700),
@@ -1373,10 +1408,10 @@ fn drum_panel<C: Canvas + ?Sized>(
     c.text(&TextRun::new(
         name.map_or_else(
             || "empty: drop a sample here".to_string(),
-            |n| fit_label(n, lcd.width() - 16.0, 8.5),
+            |n| fit_label(n, lcd.width() - 16.0, 10.0),
         ),
-        pt(lcd.x0 + 8.0, lcd.y0 + 28.0),
-        8.5,
+        pt(lcd.x0 + 8.0, lcd.y0 + 36.0),
+        10.0,
         theme.text_muted,
     ));
     let (edit, sample) = button_halves(drum.edit);

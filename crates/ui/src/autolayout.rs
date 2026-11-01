@@ -634,13 +634,28 @@ const DRUM_CV: [(&str, &str); 2] = [
 ];
 /// Width of the trim knob cell on the drum back (narrower than a front knob).
 const DRUM_TRIM_W: f64 = 40.0;
-/// Size of one pad cell of the 4x4 pad grid (the pad itself is inset by 2 px).
-pub const DRUM_PAD_CELL: (f64, f64) = (54.0, 48.0);
 /// Width of one knob column of the selected pad's section.
 const DRUM_COL_W: f64 = 64.0;
-const DRUM_KNOBS_X: f64 = CONTENT_X.0 + 4.0 * DRUM_PAD_CELL.0 + 16.0;
-const DRUM_MASTER_X: f64 = DRUM_KNOBS_X + 4.0 * DRUM_COL_W + 16.0;
-/// The per-pad params of the drum panel, in layout order (knobs left to right, four rows: the
+/// Knob columns of the selected pad's section (the pad's 14 knobs and the master level run down
+/// two columns beside the pad grid).
+const DRUM_KNOB_COLS: usize = 2;
+/// Gap between the pad grid and the knob columns.
+const DRUM_GAP: f64 = 16.0;
+/// Left edge of the knob columns: they end at the right edge of the content area.
+const DRUM_KNOBS_X: f64 = CONTENT_X.1 - DRUM_KNOB_COLS as f64 * DRUM_COL_W;
+/// Width of the pad grid: what the content area leaves left of the knob columns.
+const DRUM_PADS_W: f64 = DRUM_KNOBS_X - DRUM_GAP - CONTENT_X.0;
+/// Knob rows of the section: the 14 pad params and the master level.
+const DRUM_KNOB_ROWS: usize = (DRUM_PAD_PARAMS.len() + 1).div_ceil(DRUM_KNOB_COLS);
+/// Height of the readout and button band along the bottom of the pad grid.
+const DRUM_BAND_H: f64 = 46.0;
+/// Width of the EDIT / SAMPLE and TO CH buttons at the right of the band.
+const DRUM_BUTTON_W: f64 = 88.0;
+/// Height of one band button.
+const DRUM_BUTTON_H: f64 = 22.0;
+/// Gap between the pad grid and the band, and between the readout and the buttons.
+const DRUM_BAND_GAP: f64 = 6.0;
+/// The per-pad params of the drum panel, in layout order (knobs left to right, two per row: the
 /// pad, then its tone, cuts, drive and sends).
 pub const DRUM_PAD_PARAMS: [&str; 14] = [
     "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity", "tone", "lowcut",
@@ -667,11 +682,12 @@ pub struct DrumPanel {
 }
 
 /// The cell rectangle of `pad` (1..=16) in the pad grid `pads`: pad 1 is bottom left, the
-/// numbers run left to right and upwards, like the rows of the step editor.
+/// numbers run left to right and upwards, like the rows of the step editor. The grid is four
+/// equal columns and rows (the pad itself is inset by 2 px).
 pub fn drum_pad_rect(pads: Rect, pad: u8) -> Rect {
     let i = f64::from(pad.clamp(1, 16) - 1);
     let (col, row) = (i % 4.0, (i / 4.0).floor());
-    let (w, h) = DRUM_PAD_CELL;
+    let (w, h) = (pads.width() / 4.0, pads.height() / 4.0);
     let x0 = pads.x0 + col * w;
     let y0 = pads.y1 - (row + 1.0) * h;
     Rect::new(x0 + 2.0, y0 + 2.0, x0 + w - 2.0, y0 + h - 2.0)
@@ -708,93 +724,16 @@ fn pad_of_socket(key: &str) -> Option<u8> {
         .flatten()
 }
 
-/// The panel of `atomik.drum-machine`: a 4x4 pad grid, the eight knobs of the selected pad
-/// (placed on `pad1.*`, see [`PanelSpec::param_index`]), `master.level` and an Edit button on
-/// the front; on the back the sockets are grouped per pad (`PAD 1`..`PAD 16`, left and right
-/// stacked), after the notes input and the main outputs. Three rack units.
+/// The panel of `atomik.drum-machine`: a 4x4 pad grid that takes the whole width and height the
+/// panel leaves it, a readout of the selected pad with the EDIT / SAMPLE and TO CH buttons under
+/// it, and the 14 knobs of the selected pad (placed on `pad1.*`, see [`PanelSpec::param_index`])
+/// and `master.level` in two columns at the right; on the back the sockets are grouped per pad
+/// (`PAD 1`..`PAD 16`, left and right stacked), after the notes input and the main outputs. The
+/// panel is as tall as the back needs, and at least as tall as the knob columns.
 pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
     let top = MARGIN_TOP + TITLE_H;
-    let pads = Rect::new(
-        CONTENT_X.0,
-        top + 2.0,
-        CONTENT_X.0 + 4.0 * DRUM_PAD_CELL.0,
-        top + 2.0 + 4.0 * DRUM_PAD_CELL.1,
-    );
     let index = |key: &str| desc.params.iter().position(|p| p.key == key);
-    let cell = |param: usize, kind: ControlKind, cx: f64, row_top: f64| {
-        let (w, h) = cell_size(kind);
-        let h = h.unwrap_or(ROW_H);
-        let y0 = row_top + (ROW_H - h) / 2.0;
-        PlacedControl {
-            param,
-            kind,
-            rect: Rect::new(cx - w / 2.0, y0, cx + w / 2.0, y0 + h),
-        }
-    };
-    let mut front = Vec::new();
-    for (i, suffix) in DRUM_PAD_PARAMS.iter().enumerate() {
-        let Some(param) = index(&format!("pad1.{suffix}")) else {
-            continue;
-        };
-        let kind = match choose_widget(&desc.params[param]) {
-            ControlKind::Fader => ControlKind::Knob,
-            k => k,
-        };
-        let cx = DRUM_KNOBS_X + (i % 4) as f64 * DRUM_COL_W + DRUM_COL_W / 2.0;
-        front.push(cell(param, kind, cx, top + (i / 4) as f64 * ROW_H));
-    }
-    if let Some(param) = index("master.level") {
-        front.push(cell(
-            param,
-            ControlKind::Knob,
-            DRUM_MASTER_X + DRUM_COL_W / 2.0,
-            top,
-        ));
-    }
-    let knobs_w = 4.0 * DRUM_COL_W;
-    let front_sections = vec![
-        Section {
-            label: "PADS".to_string(),
-            rect: Rect::new(pads.x0, MARGIN_TOP, pads.x1, MARGIN_TOP + TITLE_H),
-        },
-        Section {
-            label: "MASTER".to_string(),
-            rect: Rect::new(
-                DRUM_MASTER_X,
-                MARGIN_TOP,
-                DRUM_MASTER_X + DRUM_COL_W,
-                MARGIN_TOP + TITLE_H,
-            ),
-        },
-    ];
-    let drum = DrumPanel {
-        pads,
-        info: Rect::new(
-            DRUM_KNOBS_X,
-            top + 4.0 * ROW_H + 8.0,
-            DRUM_KNOBS_X + knobs_w,
-            top + 4.0 * ROW_H + 44.0,
-        ),
-        pad_title: Rect::new(
-            DRUM_KNOBS_X,
-            MARGIN_TOP,
-            DRUM_KNOBS_X + knobs_w,
-            MARGIN_TOP + TITLE_H,
-        ),
-        edit: Rect::new(
-            DRUM_MASTER_X,
-            top + ROW_H + 12.0,
-            DRUM_MASTER_X + DRUM_COL_W,
-            top + ROW_H + 34.0,
-        ),
-        to_channel: Rect::new(
-            DRUM_MASTER_X,
-            top + ROW_H + 40.0,
-            DRUM_MASTER_X + DRUM_COL_W,
-            top + ROW_H + 62.0,
-        ),
-        back_params: DRUM_CV.map(|(_, trim)| index(trim).unwrap_or(usize::MAX)),
-    };
+    let back_params = DRUM_CV.map(|(_, trim)| index(trim).unwrap_or(usize::MAX));
     let is_global_cv = |k: &str| DRUM_CV.iter().any(|(s, _)| *s == k);
     let mut groups = back_groups_filtered(desc, |k| pad_of_socket(k).is_none() && !is_global_cv(k));
     // The global CV inputs, each next to its trim knob.
@@ -803,7 +742,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         .enumerate()
         .flat_map(|(n, (socket, _))| {
             let jack = desc.sockets.iter().position(|s| s.key == *socket);
-            let trim = (drum.back_params[n] != usize::MAX).then_some((
+            let trim = (back_params[n] != usize::MAX).then_some((
                 DRUM_TRIM_ITEM + n,
                 DRUM_TRIM_W,
                 Some(ROW_H),
@@ -837,11 +776,93 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         }
     }
     // One row per section (a knob is as tall as a row): each pad is its four jacks side by side
-    // (out L, out R, gate in, gate out).
-    let units = (DRUM_UNITS..=MAX_UNITS)
+    // (out L, out R, gate in, gate out). The front needs room for its knob rows too.
+    let front_min =
+        ((top + DRUM_KNOB_ROWS as f64 * ROW_H + MARGIN_BOTTOM) / f64::from(RACK_UNIT)).ceil() as u8;
+    let units = (DRUM_UNITS.max(front_min)..=MAX_UNITS)
         .find(|&u| fit(&groups, u, ROW_H, 0.0).is_some())
         .unwrap_or(MAX_UNITS);
     let (back_cells, back_sections) = fit(&groups, units, ROW_H, 0.0).unwrap_or_default();
+
+    // The band along the bottom: the readout and the buttons; the pad grid fills the rest.
+    let panel_h = f64::from(units) * f64::from(RACK_UNIT);
+    let band_y = panel_h - MARGIN_BOTTOM - DRUM_BAND_H;
+    let pads_top = top + 2.0;
+    let cell_h = ((band_y - DRUM_BAND_GAP - pads_top) / 4.0).floor();
+    let pads = Rect::new(
+        CONTENT_X.0,
+        pads_top,
+        CONTENT_X.0 + DRUM_PADS_W,
+        pads_top + 4.0 * cell_h,
+    );
+    let button_x = pads.x1 - DRUM_BUTTON_W;
+    let button = |y: f64| Rect::new(button_x, y, pads.x1, y + DRUM_BUTTON_H);
+    let drum = DrumPanel {
+        pads,
+        info: Rect::new(
+            pads.x0,
+            band_y,
+            button_x - DRUM_BAND_GAP,
+            band_y + DRUM_BAND_H,
+        ),
+        pad_title: Rect::new(DRUM_KNOBS_X, MARGIN_TOP, CONTENT_X.1, MARGIN_TOP + TITLE_H),
+        edit: button(band_y),
+        to_channel: button(band_y + DRUM_BAND_H - DRUM_BUTTON_H),
+        back_params,
+    };
+
+    let cell = |param: usize, kind: ControlKind, cx: f64, row_top: f64| {
+        let (w, h) = cell_size(kind);
+        let h = h.unwrap_or(ROW_H);
+        let y0 = row_top + (ROW_H - h) / 2.0;
+        PlacedControl {
+            param,
+            kind,
+            rect: Rect::new(cx - w / 2.0, y0, cx + w / 2.0, y0 + h),
+        }
+    };
+    // The knob at `slot`: columns fill left to right, then the next row down.
+    let slot_x =
+        |slot: usize| DRUM_KNOBS_X + (slot % DRUM_KNOB_COLS) as f64 * DRUM_COL_W + DRUM_COL_W / 2.0;
+    let slot_y = |slot: usize| top + (slot / DRUM_KNOB_COLS) as f64 * ROW_H;
+    let mut front = Vec::new();
+    for (i, suffix) in DRUM_PAD_PARAMS.iter().enumerate() {
+        let Some(param) = index(&format!("pad1.{suffix}")) else {
+            continue;
+        };
+        let kind = match choose_widget(&desc.params[param]) {
+            ControlKind::Fader => ControlKind::Knob,
+            k => k,
+        };
+        front.push(cell(param, kind, slot_x(i), slot_y(i)));
+    }
+    // The master level sits in the last column of the row after the pad knobs, its title to the
+    // left of it.
+    let master_slot = DRUM_KNOB_ROWS * DRUM_KNOB_COLS - 1;
+    if let Some(param) = index("master.level") {
+        front.push(cell(
+            param,
+            ControlKind::Knob,
+            slot_x(master_slot),
+            slot_y(master_slot),
+        ));
+    }
+    let master_y = slot_y(master_slot) + (ROW_H - TITLE_H) / 2.0;
+    let front_sections = vec![
+        Section {
+            label: "PADS".to_string(),
+            rect: Rect::new(pads.x0, MARGIN_TOP, pads.x1, MARGIN_TOP + TITLE_H),
+        },
+        Section {
+            label: "MASTER".to_string(),
+            rect: Rect::new(
+                DRUM_KNOBS_X,
+                master_y,
+                DRUM_KNOBS_X + DRUM_COL_W - 4.0,
+                master_y + TITLE_H,
+            ),
+        },
+    ];
     for (item, rect) in &back_cells {
         if *item >= DRUM_TRIM_ITEM {
             front.push(PlacedControl {

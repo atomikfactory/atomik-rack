@@ -715,11 +715,16 @@ fn generate_is_deterministic_for_a_seed_and_follows_the_style() {
         let a = generate_pattern(&base, style, 0.0, 3);
         assert_eq!(a, generate_pattern(&base, style, 0.0, 3), "{style:?}");
         let kick: Vec<usize> = (0..16).filter(|i| a.steps[0][*i].velocity > 0).collect();
-        match style {
-            DrumStyle::FourOnTheFloor => assert_eq!(kick, [0, 4, 8, 12]),
-            DrumStyle::BrokenBeat => assert_eq!(kick, [0, 3, 6, 10, 13]),
-            DrumStyle::HalfTime | DrumStyle::Straight => assert_eq!(kick, [0, 8, 10]),
-        }
+        // The kick on the one and the style's strong kicks stay at any seed.
+        let strong: &[usize] = match style {
+            DrumStyle::FourOnTheFloor => &[0, 4, 8, 12],
+            DrumStyle::BrokenBeat => &[0, 3, 6, 13],
+            DrumStyle::HalfTime | DrumStyle::Straight => &[0, 8],
+        };
+        assert!(
+            strong.iter().all(|s| kick.contains(s)),
+            "{style:?} {kick:?}"
+        );
         assert!(
             a.steps
                 .iter()
@@ -730,11 +735,73 @@ fn generate_is_deterministic_for_a_seed_and_follows_the_style() {
     }
     let a = generate_pattern(&base, DrumStyle::Straight, 0.0, 1);
     let b = generate_pattern(&base, DrumStyle::Straight, 0.0, 2);
-    assert_ne!(a.steps, b.steps, "the seed jitters the velocities");
-    let snare: Vec<usize> = (0..16).filter(|i| a.steps[2][*i].velocity > 0).collect();
-    assert_eq!(snare, [4, 12]);
+    assert_ne!(a.steps, b.steps, "the seed varies the pattern");
     assert_eq!(a.lanes, base.lanes);
     assert_eq!((a.length, a.swing), (base.length, base.swing));
+}
+
+/// The steps that sound, lane by lane (what the ear hears, without the velocities).
+fn hit_mask(p: &DrumPattern) -> Vec<Vec<usize>> {
+    (0..p.lanes.len())
+        .map(|l| {
+            (0..atomik_device_sdk::MAX_STEPS)
+                .filter(|s| p.steps[l][*s].velocity > 0)
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn seeds_write_different_rhythms_at_the_default_density_for_every_style() {
+    let base = DrumPattern::default();
+    for style in DrumStyle::ALL {
+        let masks: std::collections::BTreeSet<Vec<Vec<usize>>> = (0..21)
+            .map(|seed| hit_mask(&generate_pattern(&base, style, 0.0, seed)))
+            .collect();
+        assert!(masks.len() >= 18, "{style:?}: only {} rhythms", masks.len());
+    }
+}
+
+#[test]
+fn variation_keeps_the_backbeat_and_the_kick_on_the_one() {
+    let base = DrumPattern::default();
+    let lane_of = |role: DrumRole| base.lanes.iter().position(|l| l.role == role).unwrap();
+    for style in DrumStyle::ALL {
+        let (role, backbeat): (DrumRole, &[usize]) = match style {
+            DrumStyle::FourOnTheFloor => (DrumRole::Clap, &[4, 12]),
+            DrumStyle::BrokenBeat | DrumStyle::Straight => (DrumRole::Snare, &[4, 12]),
+            DrumStyle::HalfTime => (DrumRole::Snare, &[8]),
+        };
+        for seed in 0..40 {
+            let mask = hit_mask(&generate_pattern(&base, style, 0.0, seed));
+            assert!(
+                mask[lane_of(DrumRole::Kick)].contains(&0),
+                "{style:?} {seed}"
+            );
+            let hits = &mask[lane_of(role)];
+            assert!(
+                backbeat.iter().all(|s| hits.contains(s)),
+                "{style:?} {seed}: {hits:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn variation_follows_a_shorter_or_longer_pattern() {
+    let mut base = DrumPattern {
+        length: 32,
+        ..DrumPattern::default()
+    };
+    let g = generate_pattern(&base, DrumStyle::Straight, 0.0, 5);
+    assert!(hit_mask(&g)[0].contains(&16), "the kick on the second bar");
+    base.length = 6;
+    let g = generate_pattern(&base, DrumStyle::Straight, 0.0, 5);
+    assert!(
+        g.steps
+            .iter()
+            .all(|r| r[6..].iter().all(|s| s.velocity == 0))
+    );
 }
 
 #[test]

@@ -799,6 +799,16 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **The drum generator's Generate always wrote the same pattern and Randomise did nothing.** The
+  seed only jittered velocities, and only when the density was not zero, so at the default
+  density the steps never changed. Now every press of GENERATE picks a new seed (written to the
+  Random seed param in the same undo step as the pattern), and the seed varies the rhythm at any
+  density inside the chosen style: ghost notes, extra kicks on weak sixteenths, hat, open hat and
+  percussion variations, dropped weak hits, accents and sometimes a short fill at the end of the
+  pattern. The kick on the one, the strong kicks and the backbeats stay, and the same seed with
+  the same params still writes the same pattern. RANDOMISE now draws the style, density,
+  variation, accent and the pattern's swing as well as the seed, then writes the pattern, all in
+  one undo step. Saved projects store the written patterns and load as they were saved.
 - **A patch dropped on a device loads into it instead of adding a new device.** The drop used to
   load only on the small patch strip of the name plate; anywhere else on the panel it inserted a
   new device. Now a patch for the device's own type loads into the device wherever on its panel
@@ -898,6 +908,12 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **A bigger drum machine panel that shows what is loaded.** The pad grid now takes the width and
+  height of the panel instead of a small corner of it, with the 14 pad knobs and the master level
+  in two columns at the right and the readout and the EDIT, SAMPLE and TO CH buttons under the
+  grid. A pad with a sample is lit in the accent colour and shows the sample's file name (without
+  the extension) on up to two lines, with the pad number small in a corner; an empty pad is dark
+  and says "empty". A file dragged over a pad lights that pad.
 - **The cursor shows what a drag does.** While files are dragged out of the file browser the cursor
   is the copy cursor over a place that takes them and the not-allowed cursor over every other
   place. A device moved in the rack, a clip, a track or a note lane moved in the sequencer show
