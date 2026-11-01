@@ -198,7 +198,11 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
                 bypassed: crate::paint::bypassed(info),
             },
         ),
-        FxKind::AudioTrack => crate::tuner_panel::paint(c, theme, fx, info, p.get("tuner_ref")),
+        FxKind::AudioTrack => {
+            let own = p.get("tuner_ref");
+            let shown = info.analyser.tuner_ref_hz;
+            crate::tuner_panel::paint(c, theme, fx, info, if shown > 0.0 { shown } else { own })
+        }
     }
 }
 

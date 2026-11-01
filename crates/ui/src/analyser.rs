@@ -40,6 +40,9 @@ pub struct AnalyserData {
     pub tuner_on: bool,
     /// What an audio track's tuner reads, `None` for no note.
     pub tuner: Option<atomik_dsp::tuner::Reading>,
+    /// The A4 the tuner reads against in Hz: the track's `tuner_ref` shifted by the master tune.
+    /// 0 shows the track's own `tuner_ref`.
+    pub tuner_ref_hz: f32,
 }
 
 /// How the scope draws a pair of samples.
