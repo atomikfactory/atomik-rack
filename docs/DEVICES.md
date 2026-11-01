@@ -756,6 +756,65 @@ A stereo delay with free or tempo-synced time, feedback, dry/wet mix and ping-po
 
 ---
 
+## Echo: `atomik.echo` (Effect)
+
+A stereo echo whose repeats can be coloured, wobbled, diffused, crushed and ducked, with a normal,
+a triggered and a roll mode. Source: [crates/devices/src/echo.rs](../crates/devices/src/echo.rs),
+the delay line in [crates/dsp/src/echo.rs](../crates/dsp/src/echo.rs).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `in_l`, `in_r` | Audio | in | |
+| `out_l`, `out_r` | Audio | out | |
+| `trigger_in` | CV | in | Gate for the `triggered` mode (high above 0.5); unconnected, the repeats are always heard |
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `time.mode` | 0–1: ms, sync | 1 (sync) | choice | Linear | yes |
+| `time.ms` | 1 to 4000 | 375 | ms | Exp | no |
+| `time.sync` | 0–11 as the stereo delay | 5 (1/8) | choice | Linear | yes |
+| `feedback` | 0 to 0.95 | 0.4 | percent | Linear | no |
+| `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
+| `mode` | 0–2: normal, triggered, roll | 0 | choice | Linear | yes |
+| `color.drive` | 0 to 1 (up to +12 dB into a soft saturator in the loop) | 0 | percent | Linear | no |
+| `color.low` | 20 to 2000 (high-pass in the loop; off at 20) | 20 | Hz | Exp | no |
+| `color.high` | 500 to 20000 (low-pass in the loop; off at 20000) | 20000 | Hz | Exp | no |
+| `diffusion` | 0 to 1 (two allpass sections in the loop) | 0 | percent | Linear | no |
+| `wobble.depth` | 0 to 1 (up to 8 ms of time modulation) | 0 | percent | Linear | no |
+| `wobble.rate` | 0.1 to 8 | 0.6 | Hz | Exp | no |
+| `crush.bits` | 2 to 16 (16 is off) | 16 | none | Linear | yes |
+| `duck` | 0 to 1 | 0 | percent | Linear | no |
+| `ping_pong` | 0 or 1 | 0 | choice | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Time.** `time.ms`, or the `time.sync` note value at the patch tempo. A change glides by at most
+  0.25 samples per sample, so a jump bends the pitch of the repeats by at most 25 %. The line holds
+  4 s and is allocated in `prepare`. Latency is 0.
+- **The loop.** Every pass through the loop goes through the colour saturator
+  (`u/√(1+u²)/g`, unity small-signal gain), the one-pole low and high filters, the bit crusher and
+  the diffusers, then the feedback gain. No stage has a gain above 1, so the loop is stable at the
+  largest feedback, and a held roll stays bounded. The diffusers add a few milliseconds to each
+  pass; at 0 they are skipped.
+- **Wobble.** The line's own sine modulation, inverted between the channels. It is deterministic
+  (the phase restarts on reset).
+- **Duck.** The wet gain is `1 − duck × min(1, 4 × env)`, `env` a follower of the louder input
+  channel (5 ms attack, 150 ms release); the loop keeps running underneath.
+- **Modes.** Normal; triggered: the repeats are heard only while `trigger_in` is high (2 ms fade);
+  roll: the input is cut and the feedback is 100 %, so what the line holds repeats without decay
+  (with colour, crush or diffusion on it evolves).
+- **Mix.** Output = dry × (1 − mix) + wet × duck × gate × mix; `mix` 0 is the dry input bit for bit.
+  Feedback and mix are smoothed over 5 ms.
+- **Not built.** The `loop_send` / `loop_return` breakout jacks (they need a staged device, which
+  the bypass wrapper does not support).
+
+---
+
 ## Reverb: `atomik.reverb` (Effect)
 
 A stereo algorithmic reverb with three algorithms. Source:
@@ -981,7 +1040,7 @@ Oversampled saturation, waveshaping and bitcrushing. Source:
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `curve` | 0–4: soft clip, hard clip, tube, foldback, bitcrush | 0 | choice | Linear | yes |
+| `curve` | 0–9: soft clip, hard clip, tube, foldback, bitcrush, tape, fuzz, modulate, warp, scream | 0 | choice | Linear | yes |
 | `drive` | 0 to 48 | 12 | dB | Linear | no |
 | `bias` | −1 to 1 | 0 | none | Linear | no |
 | `tone` | −1 (dark) to 1 (bright), tilt of ±6 dB around 1 kHz | 0 | none | Linear | no |
@@ -990,6 +1049,12 @@ Oversampled saturation, waveshaping and bitcrushing. Source:
 | `crush.bits` | 1 to 16 | 8 | none | Linear | yes |
 | `crush.rate` | 500 to 96000 (hold rate; at or above the sample rate no hold) | 96000 | Hz | Exp | no |
 | `oversample` | 0–2: off, 2x, 4x | 2 | choice | Linear | yes |
+| `drive_cv_trim`, `mix_cv_trim` | −1 to 1 | 1 | percent | Linear | no |
+| `cut.low` | 20 to 2000 (12 dB/octave high-pass on the wet signal; off at 20) | 20 | Hz | Exp | no |
+| `cut.high` | 1000 to 20000 (12 dB/octave low-pass on the wet signal; off at 20000) | 20000 | Hz | Exp | no |
+| `body.mode` | 0–2: off, resonant, cabinet | 0 | choice | Linear | yes |
+| `body.amount` | 0 to 1 (blend of the body bank into the wet signal) | 0.5 | percent | Linear | no |
+| `body.size` | 0 to 1 (scales every corner by 2^(1 − 2 size); larger is lower) | 0.5 | percent | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
@@ -1001,6 +1066,18 @@ Oversampled saturation, waveshaping and bitcrushing. Source:
   followed by a sample-and-hold at `crush.rate`. `u = x × drive + bias`; the curve value at zero
   input is subtracted so a bias is not a step, and a DC blocker (8 Hz one-pole high-pass) always
   follows.
+- **Tape, fuzz, modulate, warp, scream** (appended after bitcrush, ceiling 1, all in
+  [crates/dsp/src/shaper.rs](../crates/dsp/src/shaper.rs)): tape is the cubic knee `1.5u − 0.5u³`
+  up to ±1; fuzz an asymmetric clip with a pre-gain of 4 and ceilings +1 and −0.6; modulate
+  `u/(1+a²u²)^1.5` (the gain collapses after its peak at 1, so a loud signal folds back); warp the
+  plateau `c(15 − 10c² + 3c⁴)/8` on `c = clamp(u, ±1)`; scream `clamp(3u, −0.5, 1)`. Each runs with
+  first-order antiderivative anti-aliasing between the oversampler's stages (half an oversampled
+  sample of delay, independent of the drive; the reported latency does not change).
+- **Cut and body** (wet signal, after the DC blocker and before the tone tilt; all off by default
+  so older patches render identically). `cut.low` and `cut.high` are 12 dB/octave sections.
+  `body.mode` resonant is three peaks (110, 380, 1500 Hz, Q 4, +9, +8, +7 dB) times the size
+  factor; cabinet is a high-pass at 75 Hz, a +5 dB peak at 120 Hz, a +4 dB presence peak at 2.4 kHz
+  and a 5.2 kHz low-pass, all times the size factor. `body.amount` blends the bank in.
 - **Oversampling.** The three nonlinear curves run between the halfband stages (see below).
   **Bitcrush and its sample-and-hold run at the base rate, without oversampling** (its aliasing is
   the effect); the signal still goes through the oversampler with an identity curve so the timing is
