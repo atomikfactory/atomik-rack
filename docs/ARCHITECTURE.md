@@ -35,8 +35,8 @@ The picture shows the main arrows only; the table below is exact.
 |---|---|---|---|---|
 | `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
-| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables, mip levels by FFT truncation), filters, envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
-| `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
+| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
+| `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
@@ -4656,6 +4656,26 @@ the scales that keep it under a bandwidth limit, so a bright patch plays duller 
 instead of aliasing (no oversampling is needed, the voice stays allocation-free). Its `sound` choice
 works like the guitar amp's `setup`: `expand_setup` turns it into one `Command::Batch` of every
 param of the chosen row of `devices::fm_synth::sounds`.
+
+The poly synth `atomik.poly-synth` is one voice engine that three devices share. Its params after
+`bend.range` were appended (every default reproduces the earlier sound bit for bit, which
+[synth_defaults.rs](../crates/devices/tests/synth_defaults.rs) pins with a hash of a busy render), so
+projects and patches saved before them load unchanged and no format field was needed. `render_batch`
+renders one batch from a `BatchIn` (notes and the CV inputs) into a `BatchOut`, with or without the
+final soft limiter, and `PolySynth::with_descriptor` runs the same engine under another descriptor:
+`atomik.mono-bass` ([mono_bass.rs](../crates/devices/src/mono_bass.rs)) is that engine with the
+defaults of a bass (one voice, legato, glide, the ladder and its drive) built by a `const fn` over the
+poly synth's param table. `atomik.dual-layer` ([dual_layer.rs](../crates/devices/src/dual_layer.rs))
+holds two engines, feeds both the same batch without the limiter, mixes them with the gains of
+`layer.mode` and `layer.morph` and limits the sum once, so each end of the morph is one layer bit for
+bit. Its descriptor is built once on first use from the poly synth's table, with the layer prefixes
+`a.` and `b.` on the keys (the strings are leaked once; a plugin descriptor is interned the same way).
+The additive wave bank (`wave_bank` in `wavetable.rs`, 32 waves written as harmonics and built by
+inverse FFT like the factory tables, read at the mip level its pitch allows) and the 24 dB ladder
+(`ladder.rs`: four TPT stages solved without a delay, `f64` state, an anti-aliased clipper in front)
+are in the DSP crate. New paths use the deterministic `tan` (`Svf::cutoff_to_g_det`) and `2^x`, so
+they are bit-identical on every platform. The generic panel is used for all three devices; the poly
+synth and the mono bass take seven rack units, the dual layer takes more.
 
 The grain sampler `atomik.granular` is registered with samples like the sampler, so the app builds
 its `SampleMap` from its zone (a drop replaces the one zone) and swaps it in with
