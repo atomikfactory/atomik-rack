@@ -100,6 +100,12 @@
 //!   keep their own latency.
 //! * **`gr_cv_out`:** `1 − g`, where `g` is the combined linear gain of gate × compressor
 //!   (0 = no reduction, 0.5 ≈ 6 dB, → 1 when fully closed).
+//! * **Analyser tap** (`internal.tap_live`, set by the app while a window shows the strip, never
+//!   stored): with the switch on, stage 1 pushes the signal after the EQ, the inserts and the
+//!   parallel compressor and before the width, the fader and the pan into a [`ScopeTap`] (a
+//!   lock-free ring the UI analyses), so the spectrum is what the strip hears before its level.
+//!   The ring is allocated in `prepare`; with the switch off nothing is written and the strip is
+//!   bit-identical to one without a tap.
 
 use crate::bus::S_FOLLOW_OUT;
 use crate::cv_in::batch_mean;
@@ -108,12 +114,13 @@ use atomik_core::{
 };
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
-    SocketDescriptor, SocketId, SocketKind,
+    ScopeTap, SocketDescriptor, SocketId, SocketKind,
 };
 use atomik_dsp::{
     BiquadShape, Compressor, DelayLine, Detector, Gate, PassFilter, PassKind, SmoothedBiquad,
     Smoother, fader_gain_vca, pan_constant_power, stereo_width,
 };
+use std::sync::Arc;
 
 /// Number of effect sends.
 pub const SENDS: usize = 8;
@@ -317,7 +324,10 @@ const P_PCOMP_ATTACK: usize = P_PCOMP_ON + 3;
 const P_PCOMP_RELEASE: usize = P_PCOMP_ON + 4;
 const P_PCOMP_MAKEUP: usize = P_PCOMP_ON + 5;
 const P_PCOMP_MIX: usize = P_PCOMP_ON + 6;
-const PARAM_COUNT: usize = P_PCOMP_ON + 7;
+/// The analyser tap switch (`internal.tap_live`: set by the app while a window shows the strip,
+/// never stored): appended last so every existing id is unchanged.
+const P_TAP_LIVE: usize = P_PCOMP_ON + 7;
+const PARAM_COUNT: usize = P_TAP_LIVE + 1;
 
 /// Full-scale swing of `fader_cv_in` in dB.
 const FADER_CV_DB: f32 = 24.0;
@@ -531,6 +541,7 @@ pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
         Taper::Linear,
         Unit::Percent,
     );
+    out[P_TAP_LIVE] = toggle(P_TAP_LIVE as u32, "internal.tap_live", "Analyser tap", 0.0);
     let mut k = 0;
     while k < SENDS {
         out[P_SEND_TRIM_FIRST + k] = cv[k];
@@ -866,6 +877,9 @@ pub struct Channel {
     /// Like `fresh`, for the insert crossfade: its target (return connected or not) is only
     /// known in stage 1, so the first insert return after `prepare`/`reset` snaps it there.
     fresh_insert: bool,
+    /// The analyser ring (allocated in `prepare`): written with the signal after the EQ and
+    /// before the fader while `internal.tap_live` is on.
+    tap: Option<Arc<ScopeTap>>,
 }
 
 impl Default for Channel {
@@ -936,6 +950,7 @@ impl Channel {
             gr: [0.0; BATCH],
             fresh: true,
             fresh_insert: true,
+            tap: None,
         };
         for i in 0..PARAM_COUNT {
             c.apply(i);
@@ -1353,6 +1368,9 @@ impl Channel {
             self.dyn_and_eq(&mut l, &mut r);
         }
         self.parallel_stage(&mut l, &mut r);
+        if let (true, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap) {
+            tap.push(&l, &r);
+        }
         *ctx.output(SocketId(S_GR)) = self.gr;
 
         // Width, fader, mute; then pan for the main output and the send taps.
@@ -1432,6 +1450,9 @@ impl Device for Channel {
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
         self.sample_rate = sr;
+        if self.tap.is_none() {
+            self.tap = Some(Arc::new(ScopeTap::new()));
+        }
         self.delay_l = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
         self.delay_r = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
         for s in self.smoothers_mut() {
@@ -1482,6 +1503,10 @@ impl Device for Channel {
 
     fn latency_frames(&self) -> u32 {
         self.phantom_latency
+    }
+
+    fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        self.tap.clone()
     }
 
     fn variable_latency(&self) -> bool {

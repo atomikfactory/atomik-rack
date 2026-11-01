@@ -118,6 +118,7 @@ fn descriptor_keys_match_contract_exactly() {
         ]
         .map(|p| format!("pcomp.{p}")),
     );
+    params.push("internal.tap_live".into());
     let mut sockets: Vec<String> = [
         "in_l",
         "in_r",
@@ -1614,4 +1615,69 @@ fn nothing_is_written_to_the_parallel_out_while_it_is_not_cabled() {
     let mut h = channel_with_input();
     let o = settled(&mut h, &["parallel_out_l", "parallel_out_r"]);
     assert!(o.iter().all(|v| *v == 0.0), "{o:?}");
+}
+
+fn tap_of(h: &DeviceHarness) -> Arc<ScopeTap> {
+    h.device()
+        .scope_tap()
+        .expect("a prepared channel has a tap")
+}
+
+#[test]
+fn the_tap_is_silent_until_the_switch_and_never_changes_the_output() {
+    let play = |tap_live: bool| {
+        let mut h = channel();
+        h.set_param("eq.on", 1.0);
+        h.set_param("eq.hmf.gain", 9.0);
+        if tap_live {
+            h.set_param("internal.tap_live", 1.0);
+        }
+        let mut out = Vec::new();
+        for i in 0..40 {
+            *h.input_mut("in_l") = [0.5 * (i as f32 * 0.1).sin(); BATCH];
+            *h.input_mut("in_r") = [0.25; BATCH];
+            out.extend(h.render(1, &OUT).into_iter().flatten());
+        }
+        (out, tap_of(&h).head())
+    };
+    let (off, off_head) = play(false);
+    let (on, on_head) = play(true);
+    assert_eq!(off_head, 0, "nothing is written while the switch is off");
+    assert_eq!(on_head, 40 * BATCH as u64);
+    let same = off.iter().zip(&on).all(|(a, b)| a.to_bits() == b.to_bits());
+    assert!(same, "the tap does not touch the signal");
+}
+
+#[test]
+fn the_tap_carries_the_signal_after_the_eq_and_before_the_fader() {
+    let mut h = channel();
+    h.set_param("internal.tap_live", 1.0);
+    h.set_param("fader", 0.0);
+    h.set_param("eq.on", 1.0);
+    h.set_param("eq.lf.gain", 12.0);
+    h.set_param("eq.lf.freq", 100.0);
+    let tone = sine(60.0, 0.1);
+    let n = 300;
+    for i in 0..n {
+        let x: Vec<f32> = (0..BATCH).map(|k| tone(i * BATCH + k)).collect();
+        h.input_mut("in_l").copy_from_slice(&x);
+        h.input_mut("in_r").copy_from_slice(&x);
+        h.render(1, &OUT);
+    }
+    let (mut l, mut r) = (vec![0.0f32; 4096], vec![0.0f32; 4096]);
+    let (got, head) = tap_of(&h).read_latest(&mut l, &mut r);
+    assert_eq!((got, head), (4096, (n * BATCH) as u64));
+    let amp = tone_amplitude(&l, 60.0, n * BATCH - 4096);
+    // The low shelf lifts 60 Hz by close to +12 dB, and the fader at 0 does not show.
+    assert!(
+        db(amp / 0.1) > 8.0 && db(amp / 0.1) < 13.0,
+        "{}",
+        db(amp / 0.1)
+    );
+    assert_eq!(l, r);
+}
+
+#[test]
+fn a_strip_that_was_never_prepared_has_no_tap() {
+    assert!(Channel::new().scope_tap().is_none());
 }

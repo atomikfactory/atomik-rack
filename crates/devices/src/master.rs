@@ -36,6 +36,9 @@
 //! * **Fader:** the same cubic position taper as the channel ([`atomik_dsp::fader_gain`]).
 //! * Every gain and switch is smoothed over [`SMOOTH_MS`] (crossfades for on/off and inserts).
 //!   The first batch after `prepare`/`reset` snaps them all to their targets.
+//! * **Analyser tap** (`internal.tap_live`, set by the app while a window shows the master, never
+//!   stored): stage 2 pushes the signal before the fader into a [`ScopeTap`] for the UI to
+//!   analyse; off, nothing is written and the output is bit-identical.
 
 use crate::channel::{
     SMOOTH_MS, Section, Step, fader, is_silent, pan, send_gain, send_level, smoother, snap, socket,
@@ -44,9 +47,10 @@ use crate::channel::{
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
-    SocketDescriptor, SocketId, SocketKind,
+    ScopeTap, SocketDescriptor, SocketId, SocketKind,
 };
 use atomik_dsp::{Compressor, Detector, Smoother, fader_gain, pan_constant_power};
+use std::sync::Arc;
 
 /// Number of FX returns (and send buses).
 pub const RETURNS: usize = 8;
@@ -126,7 +130,10 @@ const P_MONITOR_DIM: usize = P_FADER + 2;
 const P_MONITOR_SOURCE: usize = P_FADER + 3;
 /// First of the eight `send{k}.level` params (appended after `monitor.source`).
 const P_SEND_FIRST: usize = P_MONITOR_SOURCE + 1;
-const PARAM_COUNT: usize = P_SEND_FIRST + RETURNS;
+/// The analyser tap switch (`internal.tap_live`: set by the app while a window shows the master,
+/// never stored), appended after the sends.
+const P_TAP_LIVE: usize = P_SEND_FIRST + RETURNS;
+const PARAM_COUNT: usize = P_TAP_LIVE + 1;
 
 /// `monitor.source` index of *FX returns*.
 const SRC_RETURNS: usize = 1;
@@ -273,7 +280,8 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
         out[i] = tail[i - P_FADER];
         i += 1;
     }
-    while i < PARAM_COUNT {
+    out[P_TAP_LIVE] = toggle(P_TAP_LIVE as u32, "internal.tap_live", "Analyser tap");
+    while i < P_TAP_LIVE {
         out[i] = sends[i - P_SEND_FIRST];
         i += 1;
     }
@@ -462,6 +470,9 @@ pub struct Master {
     /// Like `fresh`, for the insert crossfade: its target (return connected or not) is only
     /// known in stage 2, so the first insert return after `prepare`/`reset` snaps it there.
     fresh_insert: bool,
+    /// The analyser ring (allocated in `prepare`): written with the signal before the fader
+    /// while `internal.tap_live` is on.
+    tap: Option<Arc<ScopeTap>>,
 }
 
 impl Default for Master {
@@ -506,6 +517,7 @@ impl Master {
             gr: [0.0; BATCH],
             fresh: true,
             fresh_insert: true,
+            tap: None,
         };
         for i in 0..PARAM_COUNT {
             m.apply(i);
@@ -550,7 +562,7 @@ impl Master {
                     .set_target(send_gain(self.values[P_MONITOR_LEVEL]) * dim);
             }
             P_MONITOR_SOURCE => self.select_source(v),
-            _ if (P_SEND_FIRST..PARAM_COUNT).contains(&i) => {
+            _ if (P_SEND_FIRST..P_TAP_LIVE).contains(&i) => {
                 self.send[i - P_SEND_FIRST].set_target(send_gain(v));
             }
             // Insert routing and the key switch are read in `process`.
@@ -725,6 +737,9 @@ impl Master {
             self.comp_stage(&mut l, &mut r);
         }
         *ctx.output(SocketId(S_GR)) = self.gr;
+        if let (true, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap) {
+            tap.push(&l, &r);
+        }
         let (mut rets_l, mut rets_r) = self.tap(self.sel);
         // Mid-crossfade between two taps; settled, the new tap is used as it is (bit-exact).
         let crossfading =
@@ -764,6 +779,9 @@ impl Device for Master {
 
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
+        if self.tap.is_none() {
+            self.tap = Some(Arc::new(ScopeTap::new()));
+        }
         for s in self.smoothers_mut() {
             s.set_time(SMOOTH_MS, sr);
         }
@@ -797,6 +815,10 @@ impl Device for Master {
             self.values[i] = plain;
             self.apply(i);
         }
+    }
+
+    fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        self.tap.clone()
     }
 
     /// Runs all three stages (for hosts that do not split stages, e.g. the test harness).
