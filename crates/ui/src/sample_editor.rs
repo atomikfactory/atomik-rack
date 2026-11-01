@@ -113,6 +113,8 @@ enum Hit {
     Row(usize),
     Loop(LoopMode),
     Trigger(TriggerMode),
+    /// The zone page / synth page switch of the field panel.
+    Page,
     Marker(Marker),
     Field(Field),
 }
@@ -219,6 +221,9 @@ pub struct SampleEditorView {
     drag: Drag,
     hover: Hit,
     drop: Option<DropHover>,
+    /// The field panel shows the synth page (group, crossfade, round-robin, own envelope and
+    /// filter) instead of the zone page.
+    synth_page: bool,
     next_merge: u64,
     focused: bool,
     repaint: bool,
@@ -260,6 +265,7 @@ impl SampleEditorView {
             drag: Drag::None,
             hover: Hit::None,
             drop: None,
+            synth_page: false,
             next_merge: MERGE_BASE,
             focused: false,
             repaint: true,
@@ -601,7 +607,7 @@ impl SampleEditorView {
         let close = Rect::new(b.x1 - 30.0, b.y0 + 5.0, b.x1 - 8.0, b.y0 + 23.0);
         let load = Rect::new(close.x0 - 66.0, b.y0 + 5.0, close.x0 - 6.0, b.y0 + 23.0);
         let per_row = (((b.width() - 2.0 * PAD) / FIELD_WIDTH).floor() as usize).max(1);
-        let rows = Field::ALL.len().div_ceil(per_row);
+        let rows = self.page_fields().len().div_ceil(per_row);
         let fields_h = rows as f64 * FIELD_HEIGHT + 10.0;
         let body0 = top.y1;
         let body1 = (b.y1 - fields_h).max(body0);
@@ -694,9 +700,42 @@ impl SampleEditorView {
         Rect::new(l.list.x0 + 2.0, y, l.list.x1 - 2.0, y + ROW_HEIGHT - 2.0)
     }
 
+    /// The fields the panel shows: [`Field::ALL`], or [`Field::SYNTH`] on the synth page.
+    fn page_fields(&self) -> &'static [Field] {
+        if self.synth_page {
+            &Field::SYNTH
+        } else {
+            &Field::ALL
+        }
+    }
+
+    /// Whether the field panel shows the synth page.
+    pub fn synth_page(&self) -> bool {
+        self.synth_page
+    }
+
+    /// Switches the field panel between the zone page and the synth page.
+    pub fn set_synth_page(&mut self, on: bool) {
+        if self.synth_page != on {
+            self.synth_page = on;
+            self.repaint = true;
+            self.clamp_scrolls();
+        }
+    }
+
+    fn page_rect(&self) -> Rect {
+        let l = self.layout();
+        let x = l.head.x0 + AXIS_WIDTH + 350.0;
+        Rect::new(x, l.head.y0 + 4.0, x + 52.0, l.head.y1 - 3.0)
+    }
+
     fn field_rect(&self, field: Field) -> Rect {
         let l = self.layout();
-        let i = Field::ALL.iter().position(|f| *f == field).unwrap_or(0);
+        let i = self
+            .page_fields()
+            .iter()
+            .position(|f| *f == field)
+            .unwrap_or(0);
         let (col, row) = (i % l.per_row, i / l.per_row);
         let x = l.fields.x0 + PAD + col as f64 * FIELD_WIDTH;
         let y = l.fields.y0 + 5.0 + row as f64 * FIELD_HEIGHT;
@@ -790,6 +829,14 @@ impl SampleEditorView {
                     }
                 },
             )),
+            Hit::Page => Some(Help::new(
+                self.page_rect(),
+                if self.synth_page {
+                    "Back to the zone fields"
+                } else {
+                    "Group, velocity crossfade, round-robin and the zone envelope and filter"
+                },
+            )),
             Hit::Field(f) => Some(Help::new(
                 self.field_rect(f),
                 format!(
@@ -845,6 +892,9 @@ impl SampleEditorView {
                     return Hit::Trigger(m);
                 }
             }
+            if self.page_rect().contains(pos) {
+                return Hit::Page;
+            }
             return Hit::None;
         }
         if l.wave.inflate(EDGE_PX, 0.0).contains(pos)
@@ -853,7 +903,7 @@ impl SampleEditorView {
             return Hit::Marker(m);
         }
         if l.fields.contains(pos) {
-            for f in Field::ALL {
+            for &f in self.page_fields() {
                 if self.field_rect(f).contains(pos) {
                     return Hit::Field(f);
                 }
@@ -939,6 +989,14 @@ impl SampleEditorView {
     fn replaced(&self, i: usize, z: ZoneDoc) -> Vec<ZoneDoc> {
         let mut list = self.zones.clone();
         list[i] = z;
+        list
+    }
+
+    /// [`Self::replaced`] after an edit of `field`: an envelope or filter edit reaches the whole
+    /// group of the zone ([`zone_edit::share_group`]).
+    fn replaced_field(&self, i: usize, z: ZoneDoc, field: Field) -> Vec<ZoneDoc> {
+        let mut list = self.replaced(i, z);
+        zone_edit::share_group(&mut list, i, field);
         list
     }
 
@@ -1056,6 +1114,7 @@ impl SampleEditorView {
                 }
             }
             Hit::Row(i) => self.select(i),
+            Hit::Page => self.set_synth_page(!self.synth_page),
             Hit::Loop(mode) => {
                 if let Some(i) = self.selected {
                     let z = &self.zones[i];
@@ -1086,7 +1145,7 @@ impl SampleEditorView {
                         frames,
                     );
                     if nz != z {
-                        out.extend(self.set_zones(self.replaced(i, nz), None));
+                        out.extend(self.set_zones(self.replaced_field(i, nz, field), None));
                     }
                     return;
                 }
@@ -1216,6 +1275,9 @@ impl SampleEditorView {
                 };
                 let mut list = e.orig.clone();
                 list[e.index] = nz;
+                if let EditKind::Field(f, _) = e.kind {
+                    zone_edit::share_group(&mut list, e.index, f);
+                }
                 if list != e.last {
                     e.last.clone_from(&list);
                     e.emitted = true;
@@ -1321,7 +1383,7 @@ impl SampleEditorView {
                 self.frames_of(&z),
             );
             if nz != z {
-                out.extend(self.set_zones(self.replaced(i, nz), None));
+                out.extend(self.set_zones(self.replaced_field(i, nz, f), None));
             }
         }
         self.clamp_scrolls();

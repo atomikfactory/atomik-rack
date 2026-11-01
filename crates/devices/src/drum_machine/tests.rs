@@ -101,6 +101,7 @@ fn zone(buffer: u32, frames: u64, key: u8) -> Zone {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     }
 }
 
@@ -1482,6 +1483,7 @@ fn arb_zone() -> impl Strategy<Value = Zone> {
                     crossfade: 0,
                     trigger: TriggerMode::Gate,
                     reverse: false,
+                    ext: atomik_device_sdk::ZoneExt::NONE,
                 }
             },
         )

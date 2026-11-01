@@ -7,7 +7,9 @@
 //! key from a file name.
 
 use crate::{AssetMeta, is_valid_asset_hash};
-use atomik_device_sdk::{LoopMode, SampleBuffer, SampleMap, SampleMapError, TriggerMode, Zone};
+use atomik_device_sdk::{
+    LoopMode, SampleBuffer, SampleMap, SampleMapError, TriggerMode, Zone, ZoneExt,
+};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -52,6 +54,9 @@ pub struct ZoneDoc {
     pub trigger: TriggerMode,
     /// Play backwards from `end - 1` down to `start` (loops are then ignored, as in [`Zone`]).
     pub reverse: bool,
+    /// Group, velocity crossfade, round-robin and the zone's own envelope and filter
+    /// ([`ZoneExt`]). Saved only when it differs from [`ZoneExt::NONE`].
+    pub ext: ZoneExt,
 }
 
 impl ZoneDoc {
@@ -78,6 +83,7 @@ impl ZoneDoc {
             crossfade: 0,
             trigger: TriggerMode::Gate,
             reverse: false,
+            ext: ZoneExt::NONE,
         }
     }
 
@@ -102,6 +108,7 @@ impl ZoneDoc {
             crossfade: self.crossfade,
             trigger: self.trigger,
             reverse: self.reverse,
+            ext: self.ext,
         }
     }
 

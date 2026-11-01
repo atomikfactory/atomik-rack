@@ -45,6 +45,7 @@ const IDLE_ZONE: Zone = Zone {
     crossfade: 0,
     trigger: TriggerMode::Gate,
     reverse: false,
+    ext: atomik_device_sdk::ZoneExt::NONE,
 };
 
 /// Global CV modulation of one batch: the linear level gain (`10^(trim * range * cv / 20)`)

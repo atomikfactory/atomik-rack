@@ -95,6 +95,7 @@ fn slice(key: u8, start: u64, end: u64) -> Zone {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     }
 }
 
@@ -456,6 +457,7 @@ fn a_reversed_slice_fades_at_its_start_and_ends_there() {
     let m = flat_slices(0.5, 4000, &[24]);
     let z = Zone {
         reverse: true,
+        ext: atomik_device_sdk::ZoneExt::NONE,
         start: 1000,
         end: 1500,
         ..slice(24, 0, 0)
@@ -884,6 +886,7 @@ fn sixteen_voice_map() -> SampleMapRef {
     let zones: Vec<Zone> = (0..16u64)
         .map(|i| Zone {
             reverse: i % 3 == 0,
+            ext: atomik_device_sdk::ZoneExt::NONE,
             pan: -1.0 + 0.13 * i as f32,
             ..slice(24 + i as u8, 400 * i, 400 * (i + 1) + 1500)
         })
@@ -1003,6 +1006,7 @@ fn arb_zone() -> impl Strategy<Value = Zone> {
                 crossfade: 0,
                 trigger: TriggerMode::Gate,
                 reverse,
+                ext: atomik_device_sdk::ZoneExt::NONE,
             },
         )
 }

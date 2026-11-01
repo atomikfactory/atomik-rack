@@ -4923,8 +4923,8 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   are, so a replacement shorter than a zone or a clip offset needs is refused; the folder search
   matches by file name only (no content search), looks 8 levels deep and at 50 000 entries at most,
   and a bounce still stops with an error naming a missing asset.
-- **Sampler scope.** One interpolation mode (cubic Hermite), no round-robin, release samples,
-  per-zone envelopes or filters, no zero-crossing snap, and zones are RAM-only. A bounce stops with
+- **Sampler scope.** One interpolation mode (cubic Hermite), no release samples, no SoundFont or
+  SFZ import, stereo output only, no zero-crossing snap, and zones are RAM-only. A bounce stops with
   an error on a missing zone asset, while the live app plays silence.
 - **Drum machine and slicer scope.** No flam or ratchets, per-pad filters, kit presets, time-stretch
   inside slices or REX import; the slicer is one loop with at most 64 slices.

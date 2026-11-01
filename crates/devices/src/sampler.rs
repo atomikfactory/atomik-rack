@@ -31,6 +31,19 @@
 //!   `filter.cutoff · 2^(env_amount·6·filter env + key_track·(key − 60)/12 + lfo.to_cutoff·lfo +
 //!   cv.cutoff_amount·cv + 4·filter.velocity·(velocity − 1))`, updated every 16 samples with the
 //!   coefficient interpolated in between (as the poly-synth).
+//! * **Groups, crossfades and round-robin.** A zone belongs to a group (0..32). With a velocity
+//!   crossfade it fades in over the first `vel_xfade` velocities above `vel_lo` and out over the
+//!   last below `vel_hi` on an equal-power curve (neighbours that overlap by the same width sum
+//!   to constant power; a zone at a silent edge starts no voice). A round-robin zone (`rr_len`
+//!   above one) sounds when its group-and-key note counter modulo `rr_len` is its `rr_pos`; the counter counts
+//!   one per note-on of the key that reaches a round-robin zone of the group and is cleared by `reset`, so
+//!   the cycle is the same on every bounce and after every locate.
+//! * **Own envelope and filter.** A zone's `env` replaces the amp envelope for its voices, its
+//!   `filter` (mode, cutoff, resonance, key tracking, envelope amount; the device filter
+//!   envelope) replaces the device filter settings and runs even when `filter.enabled` is off.
+//!   A voice takes both when a note starts on a zone or the voice moves onto another zone after
+//!   a map swap; the filter state restarts whenever the zone's filter changes, so no state
+//!   crosses from one zone to another through stealing or swaps.
 //! * **Sample-accurate starts.** Notes start at their event offset.
 //!
 //! **Swapping maps.** The device holds at most two maps: `current` and `draining`. It
@@ -53,9 +66,9 @@
 
 use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
 use atomik_device_sdk::{
-    Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, LoopMode, PrepareInfo,
-    ProcessContext, SampleMap, SampleMapRef, SocketDescriptor, SocketId, SocketKind, TriggerMode,
-    Zone, velocity_to_7bit,
+    Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, LoopMode, MAX_ZONE_GROUPS,
+    PrepareInfo, ProcessContext, SampleMap, SampleMapRef, SocketDescriptor, SocketId, SocketKind,
+    TriggerMode, Zone, velocity_to_7bit,
 };
 use atomik_dsp::{
     Adsr, FilterMode, Lfo, LfoShape, LoopKind, PlayRegion, Playhead, Smoother, Svf, balance_gains,
@@ -616,6 +629,8 @@ struct Shared {
     /// Set per batch: the resonance / pan CV sockets are cabled.
     cv_resonance_on: bool,
     cv_pan_on: bool,
+    /// The device amp envelope: attack, decay (ms), sustain, release (ms).
+    amp_env: [f32; 4],
 }
 
 /// Per-sample modulation sources of one render segment (aligned with the output slices).
@@ -662,6 +677,7 @@ const IDLE_ZONE: Zone = Zone {
     crossfade: 0,
     trigger: TriggerMode::Gate,
     reverse: false,
+    ext: atomik_device_sdk::ZoneExt::NONE,
 };
 
 fn loop_kind(mode: LoopMode) -> LoopKind {
@@ -752,15 +768,31 @@ impl Voice {
     }
 
     /// Takes zone `zi` of `map`: its parameters and a region over its buffer.
-    fn take_zone(&mut self, map: &SampleMap, zi: usize) -> bool {
+    ///
+    /// The zone's own envelope, if it has one, replaces the device's (`p.amp_env`); the
+    /// velocity crossfade gain is taken at the voice's velocity. A change of the zone's filter
+    /// restarts the filter from a clean state, so no stale state crosses from one zone to
+    /// another (a stolen voice, a rebind after a map swap).
+    fn take_zone(&mut self, map: &SampleMap, zi: usize, p: &Shared) -> bool {
         let Some(&zone) = map.zones().get(zi) else {
             return false;
         };
         let buf = map.buffer_of(&zone);
+        if self.zone.ext.filter != zone.ext.filter {
+            self.filter_ready = false;
+        }
         self.zone = zone;
         self.zone_idx = zi as u32;
         self.stereo = buf.data.len() >= 2;
-        self.zone_gain = db_to_gain(zone.gain_db);
+        let e = zone.ext.env.map_or(p.amp_env, |e| {
+            [e.attack_ms, e.decay_ms, e.sustain, e.release_ms]
+        });
+        self.amp.set_attack_ms(e[0]);
+        self.amp.set_decay_ms(e[1]);
+        self.amp.set_sustain(e[2]);
+        self.amp.set_release_ms(e[3]);
+        self.zone_gain =
+            db_to_gain(zone.gain_db) * zone.velocity_gain(velocity_to_7bit(self.velocity));
         (self.pan_l, self.pan_r) = if self.stereo {
             balance_gains(zone.pan)
         } else {
@@ -776,15 +808,16 @@ impl Voice {
 
     /// Starts a note on zone `zi` from silence (fresh filters and envelopes).
     fn start(&mut self, map: &SampleMap, zi: usize, key: u8, velocity: f32, p: &Shared) {
-        if !self.take_zone(map, zi) {
-            self.kill();
-            return;
-        }
         let velocity = if velocity.is_nan() {
             0.0
         } else {
             velocity.clamp(0.0, 1.0)
         };
+        self.velocity = velocity;
+        if !self.take_zone(map, zi, p) {
+            self.kill();
+            return;
+        }
         self.key = key;
         self.slot = Slot::Current;
         self.pending = None;
@@ -805,8 +838,8 @@ impl Voice {
 
     /// Moves the voice onto zone `zi` of `map` (a changed map that shares the buffer): the
     /// voice adopts the zone's parameters and keeps its position.
-    fn rebind(&mut self, map: &SampleMap, zi: usize) {
-        if !self.take_zone(map, zi) {
+    fn rebind(&mut self, map: &SampleMap, zi: usize, p: &Shared) {
+        if !self.take_zone(map, zi, p) {
             self.kill();
             return;
         }
@@ -894,6 +927,26 @@ impl Voice {
         if p.cv_resonance_on { self.k } else { p.k }
     }
 
+    /// `base` with the filter fields of this voice's zone filter, when it has one: the filter
+    /// runs whatever the device's `filter.enabled` says, with the zone's mode, cutoff,
+    /// resonance, key tracking and envelope amount (and no resonance CV).
+    fn effective(&self, base: &Shared) -> Shared {
+        let Some(f) = self.zone.ext.filter else {
+            return *base;
+        };
+        Shared {
+            filter_on: true,
+            filter_mode: FilterMode::from_index(usize::from(f.mode)),
+            cutoff: f.cutoff,
+            resonance: f.resonance,
+            k: 1.0 / Svf::resonance_to_q(f.resonance),
+            env_amount: f.env_amount,
+            key_track: f.key_track,
+            cv_resonance_on: false,
+            ..*base
+        }
+    }
+
     /// Adds this voice into `out_l`/`out_r`. `own` is the map the voice plays from, `current`
     /// the device's current map (where a pending note starts). The slices are aligned.
     fn render(
@@ -902,12 +955,15 @@ impl Voice {
         current: Option<&SampleMap>,
         out: [&mut [f32]; 2],
         m: &Mods<'_>,
-        p: &Shared,
+        base: &Shared,
     ) {
+        // A zone with its own filter overrides the device's filter settings for its voices.
+        let mut eff = self.effective(base);
         let lfo = m.lfo;
         let [out_l, out_r] = out;
         let mut map = own;
         for n in 0..out_l.len() {
+            let p = &eff;
             if self.countdown == 0 {
                 self.control(m, n, p);
                 self.countdown = CONTROL_INTERVAL;
@@ -981,7 +1037,8 @@ impl Voice {
                 });
                 match started {
                     Some((m, pe)) => {
-                        self.start(m, pe.zone as usize, pe.key, pe.velocity, p);
+                        self.start(m, pe.zone as usize, pe.key, pe.velocity, base);
+                        eff = self.effective(base);
                         map = m;
                     }
                     None => {
@@ -1002,6 +1059,8 @@ pub struct Sampler {
     voices: Vec<Voice>,
     voice_limit: usize,
     next_order: u64,
+    /// Notes counted per zone group and key for round-robin (see `note_on`); cleared by `reset`.
+    round_robin: Vec<u32>,
     lfo: Lfo,
     master: Smoother,
     /// Sustain, volume, expression, pressure and the bend range.
@@ -1054,10 +1113,12 @@ impl Sampler {
                 cv_level_db: CV_LEVEL_RANGE_DB,
                 cv_resonance_on: false,
                 cv_pan_on: false,
+                amp_env: [1.0, 200.0, 1.0, 150.0],
             },
             voices: vec![Voice::new(); MAX_VOICES],
             voice_limit: 32,
             next_order: 0,
+            round_robin: vec![0; MAX_ZONE_GROUPS * 128],
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             ctl: ControllerState::new(),
@@ -1100,10 +1161,34 @@ impl Sampler {
                 .set_target(PARAMS[P_MASTER as usize].db_param_gain(v)),
             P_TUNE_SEMI => s.tune_semi = v,
             P_TUNE_FINE => s.tune_fine = v,
-            P_AMP_A => voices.iter_mut().for_each(|vc| vc.amp.set_attack_ms(v)),
-            P_AMP_D => voices.iter_mut().for_each(|vc| vc.amp.set_decay_ms(v)),
-            P_AMP_S => voices.iter_mut().for_each(|vc| vc.amp.set_sustain(v)),
-            P_AMP_R => voices.iter_mut().for_each(|vc| vc.amp.set_release_ms(v)),
+            P_AMP_A => {
+                s.amp_env[0] = v;
+                voices
+                    .iter_mut()
+                    .filter(|vc| vc.zone.ext.env.is_none())
+                    .for_each(|vc| vc.amp.set_attack_ms(v));
+            }
+            P_AMP_D => {
+                s.amp_env[1] = v;
+                voices
+                    .iter_mut()
+                    .filter(|vc| vc.zone.ext.env.is_none())
+                    .for_each(|vc| vc.amp.set_decay_ms(v));
+            }
+            P_AMP_S => {
+                s.amp_env[2] = v;
+                voices
+                    .iter_mut()
+                    .filter(|vc| vc.zone.ext.env.is_none())
+                    .for_each(|vc| vc.amp.set_sustain(v));
+            }
+            P_AMP_R => {
+                s.amp_env[3] = v;
+                voices
+                    .iter_mut()
+                    .filter(|vc| vc.zone.ext.env.is_none())
+                    .for_each(|vc| vc.amp.set_release_ms(v));
+            }
             P_VEL_AMP => s.velocity_amount = v,
             P_FILTER_ON => s.filter_on = v >= 0.5,
             P_FILTER_MODE => s.filter_mode = FilterMode::from_index(choice(v)),
@@ -1137,7 +1222,12 @@ impl Sampler {
         }
     }
 
-    /// Starts one voice per matching zone of the current map.
+    /// Starts one voice per sounding zone of the current map.
+    ///
+    /// A zone sounds when `key` and velocity are in its ranges, its round-robin slot is the one
+    /// its group's note counter selects and its velocity crossfade gain is above zero. Every
+    /// group that has a round-robin zone in range then counts one note, whichever zone sounded,
+    /// so the cycle is a pure function of the notes played since the last reset.
     fn note_on(&mut self, key: u8, velocity: f32) {
         self.ctl.note_on(key);
         let Some(map) = self.current.as_deref() else {
@@ -1145,8 +1235,19 @@ impl Sampler {
         };
         let p = self.shared;
         let vel7 = velocity_to_7bit(velocity);
+        let mut counted = 0u32;
         for (zi, zone) in map.zones().iter().enumerate() {
             if !zone.contains(key, vel7) {
+                continue;
+            }
+            if zone.ext.round_robin() {
+                let g = usize::from(zone.ext.group).min(MAX_ZONE_GROUPS - 1);
+                counted |= 1 << g;
+                if !zone.rr_turn(self.round_robin[g * 128 + usize::from(key & 127)]) {
+                    continue;
+                }
+            }
+            if zone.velocity_gain(vel7) <= 0.0 {
                 continue;
             }
             let order = self.next_order;
@@ -1163,6 +1264,12 @@ impl Sampler {
                     velocity,
                     zone: zi as u32,
                 });
+            }
+        }
+        for g in 0..MAX_ZONE_GROUPS {
+            if counted >> g & 1 == 1 {
+                let n = &mut self.round_robin[g * 128 + usize::from(key & 127)];
+                *n = n.wrapping_add(1);
             }
         }
     }
@@ -1267,6 +1374,7 @@ impl Device for Sampler {
             v.filter_ready = false;
         }
         self.next_order = 0;
+        self.round_robin.fill(0);
         self.ctl.reset();
         self.shared.bend = 0.0;
         self.lfo.reset();
@@ -1287,6 +1395,7 @@ impl Device for Sampler {
 
     fn swap_samples(&mut self, map: Option<SampleMapRef>) -> Option<SampleMapRef> {
         let sr = self.shared.sample_rate;
+        let shared = self.shared;
         // 1. Voices still draining from the draining map are cut, which frees that map.
         for v in &mut self.voices {
             if v.is_active() && v.slot == Slot::Draining {
@@ -1309,7 +1418,7 @@ impl Device for Sampler {
                         .then_some((new_map, v.zone_idx as usize))
                 });
                 match target {
-                    Some((new_map, zi)) => v.rebind(new_map, zi),
+                    Some((new_map, zi)) => v.rebind(new_map, zi, &shared),
                     None => {
                         v.start_drain(sr);
                         drains = true;

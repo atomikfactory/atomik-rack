@@ -7,7 +7,7 @@ use crate::test_support::{
     harness, off, on, sweep_params_min_max,
 };
 use atomik_core::{NoteEvent, NoteKind};
-use atomik_device_sdk::SampleBuffer;
+use atomik_device_sdk::{SampleBuffer, velocity_fade};
 use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::no_alloc::assert_no_alloc;
 use atomik_testkit::signal::{max_step, peak, rms};
@@ -111,6 +111,7 @@ fn zone(buffer: u32, frames: u64) -> Zone {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     }
 }
 
@@ -1284,6 +1285,7 @@ fn zone_strategy() -> impl Strategy<Value = Zone> {
                         TriggerMode::Gate
                     },
                     reverse: false,
+                    ext: atomik_device_sdk::ZoneExt::NONE,
                 }
             },
         )
@@ -1409,4 +1411,308 @@ fn a_forward_zone_is_unchanged_by_the_reverse_field() {
         render(&mut h, 4).0
     };
     assert_eq!(bits(&run(&a)), bits(&run(&b)));
+}
+
+// ---- groups, velocity crossfade, round-robin, per-zone envelope and filter -----------------------
+
+use atomik_device_sdk::{ZoneEnv, ZoneFilter};
+
+/// The level of the settled output of one short note on `key` (left channel), then the note-off
+/// and a short tail so the next note starts from silence.
+fn note_level(h: &mut DeviceHarness, key: u8, velocity: f32) -> f32 {
+    h.push_note("notes_in", on(0, key, velocity));
+    let (l, _) = render(h, 2);
+    let level = l[SETTLED + 8];
+    h.push_note("notes_in", off(0, key));
+    render(h, 3);
+    level
+}
+
+fn flat_buffers(levels: &[f32], frames: usize) -> Vec<Arc<SampleBuffer>> {
+    levels
+        .iter()
+        .map(|l| buffer(vec![vec![*l; frames]]))
+        .collect()
+}
+
+#[test]
+fn velocity_crossfaded_neighbours_play_at_constant_power() {
+    // Two flat zones, 1..=70 and 60..=127, each fading over the 10 shared velocities.
+    let mk = |lo: u8, hi: u8, xfade: u8| {
+        let mut z = zone(0, 4000);
+        (z.vel_lo, z.vel_hi, z.ext.vel_xfade) = (lo, hi, xfade);
+        map(flat_buffers(&[0.05], 4000), vec![z])
+    };
+    let full = {
+        let (mut h, _) = with_map(&mk(1, 127, 0));
+        note_level(&mut h, 60, 1.0)
+    };
+    assert!(full > 0.0);
+    for vel7 in 60..=70u8 {
+        let v = f32::from(vel7) / 127.0;
+        let level = |m: &SampleMapRef| {
+            let (mut h, _) = with_map(m);
+            note_level(&mut h, 60, v)
+        };
+        let (a, b) = (level(&mk(1, 70, 10)), level(&mk(60, 127, 10)));
+        let (fa, fb) = (
+            velocity_fade(1, 70, 10, vel7),
+            velocity_fade(60, 127, 10, vel7),
+        );
+        assert!((fa * fa + fb * fb - 1.0).abs() < 1e-5);
+        // The level is linear in the gain (the signal is far below the soft limiter).
+        assert!((a - full * fa).abs() < 0.01 * full, "vel {vel7}: {a}");
+        assert!((b - full * fb).abs() < 0.01 * full, "vel {vel7}: {b}");
+        assert!((a * a + b * b - full * full).abs() < 0.02 * full * full);
+    }
+}
+
+#[test]
+fn a_zone_at_the_silent_end_of_its_crossfade_starts_no_voice() {
+    let mut z = zone(0, 4000);
+    (z.vel_lo, z.vel_hi, z.ext.vel_xfade) = (60, 127, 10);
+    let (mut h, probe) = with_map(&map(flat_buffers(&[0.5], 4000), vec![z]));
+    h.push_note("notes_in", on(0, 60, 60.0 / 127.0));
+    render(&mut h, 1);
+    assert_eq!(probe.active(), 0);
+    h.push_note("notes_in", on(0, 60, 61.0 / 127.0));
+    render(&mut h, 1);
+    assert_eq!(probe.active(), 1);
+}
+
+/// Three flat zones of different level on the same key, one round-robin slot each.
+fn rr_map(group: u8) -> SampleMapRef {
+    let zones = (0..3u32)
+        .map(|i| {
+            let mut z = zone(i, 4000);
+            z.ext.group = group;
+            z.ext.rr_len = 3;
+            z.ext.rr_pos = i as u8;
+            z
+        })
+        .collect();
+    map(flat_buffers(&[0.1, 0.2, 0.3], 4000), zones)
+}
+
+#[test]
+fn round_robin_cycles_through_the_slots_and_restarts_on_reset() {
+    let (mut h, _) = with_map(&rr_map(2));
+    let first: Vec<f32> = (0..7).map(|_| note_level(&mut h, 60, 1.0)).collect();
+    // Three distinct levels, repeating.
+    assert!(first[0] < first[1] && first[1] < first[2], "{first:?}");
+    for i in 0..4 {
+        assert_eq!(first[i].to_bits(), first[i + 3].to_bits(), "{first:?}");
+    }
+    // A reset (a locate, the start of a bounce) restarts the cycle: the same notes give the
+    // same sounds, bit for bit.
+    h.device_mut().reset();
+    let again: Vec<f32> = (0..7).map(|_| note_level(&mut h, 60, 1.0)).collect();
+    assert_eq!(bits(&first), bits(&again));
+}
+
+#[test]
+fn round_robin_counts_per_group() {
+    // Group 1: three levels on key 60. Group 5: one zone on key 70 that takes slot 1 of 2.
+    let mut zones: Vec<Zone> = (0..3u32)
+        .map(|i| {
+            let mut z = zone(i, 4000);
+            (z.ext.group, z.ext.rr_len, z.ext.rr_pos) = (1, 3, i as u8);
+            (z.key_lo, z.key_hi) = (60, 60);
+            z
+        })
+        .collect();
+    let mut other = zone(3, 4000);
+    (other.ext.group, other.ext.rr_len, other.ext.rr_pos) = (5, 2, 1);
+    (other.key_lo, other.key_hi) = (70, 70);
+    zones.push(other);
+    let (mut h, _) = with_map(&map(flat_buffers(&[0.1, 0.2, 0.3, 0.4], 4000), zones));
+    let a = note_level(&mut h, 60, 1.0); // group 1, slot 0
+    assert_eq!(
+        note_level(&mut h, 70, 1.0),
+        0.0,
+        "group 5 starts at slot 0, which is empty"
+    );
+    assert!(
+        note_level(&mut h, 70, 1.0) > 0.0,
+        "group 5 is now at slot 1"
+    );
+    let b = note_level(&mut h, 60, 1.0); // group 1, slot 1: group 5 did not move it
+    assert!(a < b);
+}
+
+/// A zone over `buffer` with an own low-pass filter.
+fn filtered_zone(buffer: u32, frames: u64, cutoff: f32) -> Zone {
+    let mut z = zone(buffer, frames);
+    z.ext.filter = Some(ZoneFilter {
+        mode: 0,
+        cutoff,
+        resonance: 0.0,
+        key_track: 0.0,
+        env_amount: 0.0,
+    });
+    z
+}
+
+#[test]
+fn a_zone_filter_runs_with_the_device_filter_off_and_leaves_other_zones_alone() {
+    let n = noise(20_000, 3);
+    let mut a = filtered_zone(0, 20_000, 300.0);
+    (a.key_lo, a.key_hi) = (60, 60);
+    let mut b = zone(0, 20_000);
+    (b.key_lo, b.key_hi) = (62, 62);
+    let play = |zones: Vec<Zone>, key: u8| {
+        let (mut h, _) = with_map(&map(vec![buffer(vec![n.clone()])], zones));
+        h.push_note("notes_in", on(0, key, 1.0));
+        render(&mut h, 40).0
+    };
+    let dark = play(vec![a, b], 60);
+    let open = play(vec![zone(0, 20_000)], 60);
+    assert!(rms(&dark[200..]) < 0.25 * rms(&open[200..]));
+    // The unfiltered zone of the same map is bit-identical to a map without any filter.
+    let plain = play(vec![a, b], 62);
+    assert_eq!(bits(&plain), bits(&play(vec![zone(0, 20_000)], 62)));
+}
+
+#[test]
+fn a_voice_that_changes_zones_carries_no_filter_state_over() {
+    // Zone 0 has a resonant filter, zone 1 none. A voice that played zone 0 and is then started
+    // on zone 1 sounds exactly like a voice that never played zone 0, and the other way round.
+    let mut filtered = filtered_zone(0, 6000, 900.0);
+    filtered.ext.filter.as_mut().unwrap().resonance = 0.9;
+    let m = map(
+        vec![buffer(vec![noise(6000, 11)])],
+        vec![filtered, zone(0, 6000)],
+    );
+    let shared = Sampler::new().shared;
+    let zeros = [0.0f32; 64];
+    let mods = Mods {
+        lfo: &zeros,
+        pitch: &zeros,
+        cutoff: &zeros,
+        resonance: &zeros,
+        pan: &zeros,
+    };
+    let play = |v: &mut Voice| {
+        let (mut l, mut r) = ([0.0f32; 64], [0.0f32; 64]);
+        v.render(&m, Some(&m), [&mut l, &mut r], &mods, &shared);
+        l
+    };
+    let mut used = Voice::new();
+    used.start(&m, 0, 60, 1.0, &shared);
+    for _ in 0..4 {
+        play(&mut used);
+    }
+    for zone_index in [1, 0] {
+        used.start(&m, zone_index, 60, 1.0, &shared);
+        let mut fresh = Voice::new();
+        fresh.start(&m, zone_index, 60, 1.0, &shared);
+        for _ in 0..3 {
+            assert_eq!(bits(&play(&mut used)), bits(&play(&mut fresh)));
+        }
+    }
+}
+
+#[test]
+fn a_filter_dropped_by_a_map_swap_stops_filtering_without_a_click() {
+    let buf = buffer(vec![noise(20_000, 5)]);
+    let with = map(vec![buf.clone()], vec![filtered_zone(0, 20_000, 200.0)]);
+    let without = map(vec![buf], vec![zone(0, 20_000)]);
+    let (mut h, _) = with_map(&with);
+    h.push_note("notes_in", on(0, 60, 1.0));
+    render(&mut h, 20);
+    drop(h.device_mut().swap_samples(Some(without.clone())));
+    let (after, _) = render(&mut h, 10);
+    assert!(after.iter().all(|v| v.is_finite()));
+    // The voice kept its place in the sample; with no filter it now reads it straight.
+    let (mut h2, _) = with_map(&without);
+    h2.push_note("notes_in", on(0, 60, 1.0));
+    render(&mut h2, 20);
+    let (want, _) = render(&mut h2, 10);
+    assert_eq!(bits(&after), bits(&want));
+}
+
+#[test]
+fn a_zone_envelope_replaces_the_device_envelope_for_its_voices_only() {
+    let mut slow = zone(0, 40_000);
+    slow.ext.env = Some(ZoneEnv {
+        attack_ms: 50.0,
+        decay_ms: 200.0,
+        sustain: 1.0,
+        release_ms: 400.0,
+    });
+    (slow.key_lo, slow.key_hi) = (60, 60);
+    let mut quick = zone(0, 40_000);
+    (quick.key_lo, quick.key_hi) = (62, 62);
+    let m = map(flat_buffers(&[0.5], 40_000), vec![slow, quick]);
+    let fresh = || {
+        let (mut h, _) = with_map(&m);
+        // A device change after the map is installed does not touch the zone envelope.
+        h.set_param("env.amp.attack", 0.5);
+        h
+    };
+    let level_at = |key: u8, at: usize| {
+        let mut h = fresh();
+        h.push_note("notes_in", on(0, key, 1.0));
+        render(&mut h, at.div_ceil(BATCH) + 1).0[at]
+    };
+    let (s, q) = (level_at(60, 256), level_at(62, 256));
+    assert!(s < 0.25 * q, "slow {s} quick {q}");
+    // Release: the zone tail (400 ms) still rings 100 ms after the note-off; the device tail
+    // (0.5 ms) is long gone.
+    let tail = |key: u8| {
+        let mut h = fresh();
+        h.push_note("notes_in", on(0, key, 1.0));
+        render(&mut h, 200);
+        h.push_note("notes_in", off(0, key));
+        render(&mut h, 80).0.last().copied().unwrap()
+    };
+    assert!(
+        tail(60).abs() > 0.05 && tail(62) == 0.0,
+        "{} {}",
+        tail(60),
+        tail(62)
+    );
+}
+
+#[test]
+fn sixty_four_voices_of_grouped_filtered_zones_never_allocate() {
+    // The harness runs every `process` under the allocation guard.
+    let zones: Vec<Zone> = (0..4u32)
+        .map(|i| {
+            let mut z = filtered_zone(0, 8000, 500.0 + 700.0 * i as f32);
+            z.ext.group = i as u8;
+            z.ext.rr_len = 2;
+            z.ext.rr_pos = (i % 2) as u8;
+            z.ext.env = Some(ZoneEnv {
+                attack_ms: 1.0,
+                decay_ms: 50.0,
+                sustain: 0.5,
+                release_ms: 30.0,
+            });
+            z.loop_mode = LoopMode::Forward;
+            z.loop_start = 100;
+            z.loop_end = 7000;
+            z
+        })
+        .collect();
+    let (mut h, _) = with_map(&map(vec![buffer(vec![noise(8000, 7)])], zones));
+    h.set_param("voices", 64.0);
+    for round in 0..3u8 {
+        for k in 0..70u8 {
+            h.push_note("notes_in", on(u16::from(k.min(60)), 30 + k, 0.8));
+        }
+        let (l, r) = render(&mut h, 6);
+        assert!(l.iter().chain(&r).all(|v| v.is_finite()), "round {round}");
+    }
+}
+
+#[test]
+fn round_robin_cycles_each_key_on_its_own() {
+    let (mut h, _) = with_map(&rr_map(1));
+    let a0 = note_level(&mut h, 60, 1.0);
+    let b0 = note_level(&mut h, 62, 1.0);
+    let a1 = note_level(&mut h, 60, 1.0);
+    // Key 62 starts its own cycle at slot 0, whatever key 60 has played.
+    assert_eq!(a0.to_bits(), b0.to_bits());
+    assert!(a1 > a0);
 }

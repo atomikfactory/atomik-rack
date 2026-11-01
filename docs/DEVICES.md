@@ -2112,6 +2112,21 @@ when it is built, off the audio thread. A reversed zone plays from `end − 1` d
 the same playhead, with the end fade at `start`; its loop and crossfade fields are ignored and not
 validated (the loop rules apply only when the loop is on and the zone is not reversed).
 
+**Groups, crossfades, round-robin and own synthesis.** A zone also has a **group** (0 to 31), a
+**velocity crossfade** width, a **round-robin** cycle length and slot, and optionally its own
+amplitude envelope and its own filter. With a crossfade of N the zone fades in over the N
+velocities above its lowest and out over the N below its highest on a quarter-sine curve, so two
+neighbours whose ranges overlap by N sum to constant power (a range edge at velocity 1 or 127 stays
+hard, and a zone at a silent edge starts no voice). A round-robin zone (cycle length above one)
+sounds when the number of notes played so far on that key in its group, modulo the cycle length, is
+its slot; the counters clear on every reset, so a bounce and a locate repeat the same cycle. A zone
+envelope replaces the device amp envelope for that zone; a zone filter (low-pass, band-pass or
+high-pass, cutoff, resonance, key tracking, envelope amount using the device filter envelope) runs
+even when `filter.enabled` is off. Filter state restarts whenever a voice changes zone, so stealing
+and map swaps never carry state across. The sample editor's SYNTH page edits all of it; an
+envelope or filter edit reaches every zone of the same non-zero group. Project files write these
+fields only when they are set, so older zone data is unchanged.
+
 ### Behaviour (as built)
 
 - **Pitch.** The playback ratio is 2^((key − root + transpose + `tune.semi` + pitch bend)/12 + (zone
