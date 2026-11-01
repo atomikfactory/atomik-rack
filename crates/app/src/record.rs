@@ -230,6 +230,19 @@ const CTL_COALESCE: i64 = PPQ / 128;
 /// The controller events of one lap, by kind, as `(tick, value)` in arrival order.
 type CtlTake = BTreeMap<ControllerKind, Vec<(i64, f32)>>;
 
+/// The note event of a note-tap message (see `atomik_engine::EngineHandle::tap_notes`): a note on
+/// (`0x90`) or a note off (`0x80`); anything else is `None`.
+pub fn note_of_midi(bytes: &[u8]) -> Option<NoteKind> {
+    match *bytes {
+        [0x90, key, velocity] if velocity > 0 => Some(NoteKind::On {
+            key,
+            velocity: f32::from(velocity) / 127.0,
+        }),
+        [0x80, key, _] | [0x90, key, 0] => Some(NoteKind::Off { key }),
+        _ => None,
+    }
+}
+
 /// The step points of recorded controller events `raw` (arrival order, song ticks), relative to
 /// the clip `start` (the module docs: a burst keeps its last value, repeats are dropped).
 fn record_points(raw: &[(i64, f32)], start: i64) -> Vec<AutomationPoint> {

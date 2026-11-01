@@ -1993,7 +1993,11 @@ the document adds is where a track's notes enter.
   (`push_track`). An entry that is not in the rack, has no engine id or no Notes input plays the
   track's own device. Bounce, freeze and the live engine share this function, so they agree.
 - **Live.** `AppCore::target_of` tries the track's entry, then the device itself, for the live
-  keyboard and the audition; a take records at the entry (the input notes, before the players).
+  keyboard and the audition; a take records at the entry (the input notes, before the players),
+  or, with the track's Direct Record flag (`"direct_record"`, format 39, written only when set),
+  at the instrument: `EngineHandle::tap_notes` copies what the instrument receives into a
+  `MidiTap` and the take records those notes. Send Players to Track (`crates/render/src/players.rs`)
+  renders the document offline with the same tap and writes the notes as a clip on a new lane.
 - **File.** Project format 31: `"notes_to"` after `"no_chase"`, omitted when unset.
 
 ## 3. Inside `Engine::render`
@@ -3685,7 +3689,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (403) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (407) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4962,8 +4966,11 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   the change. No linear-phase EQ, no FFT analyser.
 - **Players.** The step sequencer is monophonic (one note per step, no chords, ratchets or flams),
   has no pattern chains or song mode (the CV sequencer chains patterns) and plays only with the
-  transport; the arpeggiator has no free (Hz) rate and no note filters; neither records its output
-  to a clip. The drum generator (flams, ratchets) and the CV sequencer hold 32 patterns, but the
+  transport; the arpeggiator has no mod or bend CV outputs and no render of its own (Send Players
+  to Track renders a whole stack); a rack-wide player header is not drawn: Direct Record, Send
+  Players to Track, Fold All and Bypass All Players are Track menu items. The note tap is lost if
+  the engine is rebuilt during a take.
+  The drum generator (flams, ratchets) and the CV sequencer hold 32 patterns, but the
   CV sequencer's rack panel and grid editor still show eight slots: later patterns are reached with
   the `pattern` param, the pattern commands and the project file.
 - **Containers.** No standalone container presets, no cut and paste across scopes, no container

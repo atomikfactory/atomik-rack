@@ -1411,6 +1411,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.bypass_players",
+        "Bypass All Players",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.chop_clips",
         "Chop Clips To",
         G::Sequencer,
@@ -1501,6 +1509,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.direct_record",
+        "Direct Record",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.explode_notes",
         "Explode Notes to Lanes",
         G::Sequencer,
@@ -1515,6 +1531,14 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .arg(LANE_FOLD_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.fold_players",
+        "Fold All Players",
+        G::Sequencer,
+        C::Sequencer,
+    )
     .menu()
     .decline(),
     cmd(
@@ -1865,6 +1889,14 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .rep(),
+    cmd(
+        "sequencer.send_players_to_track",
+        "Send Players to Track",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
     cmd(
         "sequencer.set_lane_static",
         "Set Static Value",

@@ -75,6 +75,7 @@ pub fn track(device: &str, lanes: Vec<Lane>) -> Track {
         armed: false,
         chase: true,
         notes_to: None,
+        direct_record: false,
         frozen: None,
         lanes,
     }

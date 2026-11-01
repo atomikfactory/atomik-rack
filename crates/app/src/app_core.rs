@@ -1334,6 +1334,7 @@ impl<S: EngineSink> AppCore<S> {
         let mut stages = Stages::new();
         if self.take.take().is_some() {
             self.sink.set_recording(&[]);
+            self.sink.set_note_taps(&[]);
         }
         self.cancel_automation_take();
         self.cancel_audio_recording();
@@ -2336,6 +2337,18 @@ impl<S: EngineSink> AppCore<S> {
         [entry, key].into_iter().find_map(|k| self.own_target_of(k))
     }
 
+    /// The engine id of the instrument of `track` when it records Direct (its flag is on and a
+    /// player stack sits above the instrument), else `None`.
+    pub(crate) fn direct_instrument(
+        &self,
+        track: &atomik_model::Track,
+    ) -> Option<DeviceInstanceId> {
+        if !track.direct_record || self.doc().notes_entry(track) == &track.device {
+            return None;
+        }
+        self.own_target_of(&track.device).map(|(id, _)| id)
+    }
+
     /// The notes input of device `key` in the engine, if it has one.
     fn own_target_of(&self, key: &DeviceKey) -> Option<Target> {
         // A container's notes go through its `~split` device.
@@ -2845,15 +2858,22 @@ impl<S: EngineSink> AppCore<S> {
         }
         let audio = self.armed_audio_tracks();
         let song = &self.doc().song;
+        // Direct Record: the engine id of the instrument of each such track (its notes input
+        // is tapped, and the take records what arrives there).
+        let mut direct: Vec<DeviceInstanceId> = Vec::new();
         let tracks: Vec<(DeviceInstanceId, DeviceKey, usize)> = song
             .tracks
             .iter()
             .filter(|t| t.armed && !audio.contains(&t.device))
             .filter_map(|t| {
+                let lane = self.arrangement.record_lane(&t.device);
+                if let Some(id) = self.direct_instrument(t) {
+                    direct.push(id);
+                    return Some((id, t.device.clone(), lane));
+                }
                 // The take records what is played into the track's entry: the input notes,
                 // before the players of its stack.
                 let (entry, _) = self.target_of(&t.device)?;
-                let lane = self.arrangement.record_lane(&t.device);
                 Some((entry, t.device.clone(), lane))
             })
             .collect();
@@ -2868,6 +2888,7 @@ impl<S: EngineSink> AppCore<S> {
         let count_in = self.recording_count_in();
         let take = Take::new(tracks, loop_range, meter).counting_in(count_in.is_some());
         self.sink.set_recording(&take.devices());
+        self.sink.set_note_taps(&direct);
         self.take = Some(take);
         if !self.playing {
             self.play_from(count_in);
@@ -2904,6 +2925,7 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         self.sink.set_recording(&[]);
+        self.sink.set_note_taps(&[]);
         self.finish_audio_take();
         self.finish_automation_take(state);
         let stop = SongPosition {
@@ -3112,6 +3134,8 @@ mod setups;
 
 #[path = "app_core_dub.rs"]
 mod dub_ops;
+#[path = "app_core_player_stack.rs"]
+mod player_stack_ops;
 
 #[path = "app_core_mix.rs"]
 mod mix_ops;

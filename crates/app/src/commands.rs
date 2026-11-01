@@ -371,6 +371,14 @@ pub enum AppCommand {
     BounceInPlace,
     /// Track ▸ Bounce in Place and Mute Originals.
     BounceInPlaceMute,
+    /// Track > Direct Record: record the notes the selected tracks' players generate.
+    DirectRecord,
+    /// Track > Send Players to Track: render the players' notes into a new lane.
+    SendPlayersToTrack,
+    /// Track > Fold All Players.
+    FoldPlayers,
+    /// Track > Bypass All Players.
+    BypassPlayers,
     /// Track ▸ Bounce Clips to New Track (Dry): the selected clips as the instrument plays them,
     /// before the channel strip, on a new audio track.
     BounceClipDry,
@@ -733,6 +741,10 @@ impl AppCommand {
             AppCommand::UnfreezeTrackKeep => ("sequencer.unfreeze_track_keep", None),
             AppCommand::BounceInPlace => ("sequencer.bounce_in_place", None),
             AppCommand::BounceInPlaceMute => ("sequencer.bounce_in_place_mute", None),
+            AppCommand::DirectRecord => ("sequencer.direct_record", None),
+            AppCommand::SendPlayersToTrack => ("sequencer.send_players_to_track", None),
+            AppCommand::FoldPlayers => ("sequencer.fold_players", None),
+            AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
             AppCommand::BounceClipDry => ("sequencer.bounce_clip_dry", None),
             AppCommand::FoldLanes(true) => ("sequencer.fold_lanes", Some("fold")),
             AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
@@ -1013,6 +1025,10 @@ impl AppCommand {
             ("sequencer.unfreeze_track_keep", None) => AppCommand::UnfreezeTrackKeep,
             ("sequencer.bounce_in_place", None) => AppCommand::BounceInPlace,
             ("sequencer.bounce_in_place_mute", None) => AppCommand::BounceInPlaceMute,
+            ("sequencer.direct_record", None) => AppCommand::DirectRecord,
+            ("sequencer.send_players_to_track", None) => AppCommand::SendPlayersToTrack,
+            ("sequencer.fold_players", None) => AppCommand::FoldPlayers,
+            ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.bounce_clip_dry", None) => AppCommand::BounceClipDry,
             ("sequencer.fold_lanes", Some("fold")) => AppCommand::FoldLanes(true),
             ("sequencer.fold_lanes", Some("unfold")) => AppCommand::FoldLanes(false),
@@ -1553,6 +1569,14 @@ pub struct FreezeMenu {
     pub busy: bool,
     /// Freezes keep the tail of the chain (the item is checked).
     pub tail: bool,
+    /// A selected track has players above its instrument (the player stack items work).
+    pub players: bool,
+    /// Every selected stack's track records Direct (the item is checked).
+    pub direct_record: bool,
+    /// Every player of the selected stacks is folded.
+    pub players_folded: bool,
+    /// Every player of the selected stacks is bypassed.
+    pub players_bypassed: bool,
 }
 
 /// One menu item.
@@ -2342,6 +2366,27 @@ pub fn menus_with_lists(
                     state.freeze.can_bounce,
                 ),
                 MenuEntry::Separator,
+                enabled(
+                    "Send Players to Track",
+                    AppCommand::SendPlayersToTrack,
+                    state.freeze.players,
+                ),
+                check(
+                    "Direct Record",
+                    AppCommand::DirectRecord,
+                    state.freeze.direct_record,
+                ),
+                enabled(
+                    "Fold All Players",
+                    AppCommand::FoldPlayers,
+                    state.freeze.players,
+                ),
+                enabled(
+                    "Bypass All Players",
+                    AppCommand::BypassPlayers,
+                    state.freeze.players,
+                ),
+                MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
                 MenuEntry::Separator,
@@ -2895,6 +2940,10 @@ mod tests {
             AppCommand::UnfreezeTrackKeep,
             AppCommand::BounceInPlace,
             AppCommand::BounceInPlaceMute,
+            AppCommand::DirectRecord,
+            AppCommand::SendPlayersToTrack,
+            AppCommand::FoldPlayers,
+            AppCommand::BypassPlayers,
             AppCommand::BounceClipDry,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
@@ -3547,6 +3596,10 @@ mod tests {
                 "Bounce in Place",
                 "Bounce in Place and Mute Originals",
                 "Bounce Clips to New Track (Dry)",
+                "Send Players to Track",
+                "Direct Record",
+                "Fold All Players",
+                "Bypass All Players",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",

@@ -299,6 +299,8 @@ pub struct LiveSession<B: AudioBackend> {
     target: Arc<NoteTarget>,
     latency: Arc<AtomicU64>,
     tap: Arc<RecordTap>,
+    /// The note taps the take installed (Direct Record), by device.
+    note_taps: Vec<(DeviceInstanceId, Arc<atomik_device_sdk::MidiTap>)>,
     hub: Arc<ControlHub>,
     /// The overflow counter of the audio recording tap that runs (or ran last).
     audio_tap_overflow: Option<Arc<AtomicU64>>,
@@ -349,6 +351,7 @@ impl<B: AudioBackend> LiveSession<B> {
             target: Arc::new(NoteTarget::new()),
             latency: Arc::new(AtomicU64::new(FALLBACK_LATENCY_FRAMES)),
             tap: Arc::new(RecordTap::new()),
+            note_taps: Vec::new(),
             hub: Arc::new(ControlHub::new()),
             audio_tap_overflow: None,
             tap_overflow_base: 0,
@@ -1096,8 +1099,41 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         self.tap.set_armed(devices);
     }
 
+    fn set_note_taps(&mut self, devices: &[DeviceInstanceId]) {
+        let Some(r) = &mut self.running else {
+            self.note_taps.clear();
+            return;
+        };
+        self.note_taps.retain(|(id, _)| {
+            let keep = devices.contains(id);
+            if !keep {
+                // A full control queue leaves the tap on; it is replaced by the next take.
+                let _ = r.handle.untap_notes(*id);
+            }
+            keep
+        });
+        for id in devices {
+            if self.note_taps.iter().all(|(t, _)| t != id)
+                && let Ok(tap) = r.handle.tap_notes(*id)
+            {
+                self.note_taps.push((*id, tap));
+            }
+        }
+    }
+
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>) {
         self.tap.drain(out);
+        for (device, tap) in &self.note_taps {
+            while let Some(e) = tap.pop() {
+                if let Some(kind) = crate::record::note_of_midi(e.bytes()) {
+                    out.push(RecordedNote {
+                        device: *device,
+                        kind,
+                        frame: e.frame,
+                    });
+                }
+            }
+        }
     }
 
     fn hold_automation(&mut self, lanes: &[(DeviceInstanceId, ParamId)]) {

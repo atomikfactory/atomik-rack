@@ -207,7 +207,12 @@ impl<S: EngineSink> AppCore<S> {
                     && track_chain(doc, &self.registry, &t.device).is_ok()
             })
         });
+        let (players, direct_record, players_folded, players_bypassed) = self.players_menu();
         FreezeMenu {
+            players,
+            direct_record,
+            players_folded,
+            players_bypassed,
             can_freeze: !busy && tracks.iter().any(freezable),
             can_unfreeze: tracks
                 .iter()

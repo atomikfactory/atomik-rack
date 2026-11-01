@@ -10,6 +10,13 @@ may break APIs and the patch and project formats.
 
 ### Added
 - **Sampling into devices.** A SAMPLE button beside EDIT on the sampler, granular, drum machine and
+- **Direct Record, Send Players to Track, Fold All and Bypass All Players.** New Track menu items
+  act on the selected tracks that have players above their instrument. Direct Record makes the
+  take record the notes the players generate (what the instrument receives) instead of the keys
+  you play; the flag is saved with the track only when it is on. Send Players to Track renders
+  the song offline and writes what the stack generated, from the start to the song end, as a clip
+  on a new "Players" lane in one undo step. Fold All and Bypass All fold or bypass every player
+  of the stack, and undo as one step.
 - **Arpeggiator: step pattern, insert, free rate, shift, repeat and input range.** A row of sixteen
   step cells (rest, on, tie, accent; a click cycles them) shapes the rhythm: a rest is silent, a
   tie lengthens the note before it, an accent plays at full velocity. Insert plays the lowest or
