@@ -3023,6 +3023,23 @@ first device that plays shared sample data. The path from a dropped file to a so
   in the document. `UiAction::ImportSamples` runs the import worker and applies the `RegisterAsset`s
   and one `SetZones` as a single undo step. `--stress-sampler` adds 4 samplers of 32 voices to the
   stress song.
+- **Sampling.** The SAMPLE button beside EDIT on the sampler, granular, drum and slicer panels
+  emits `UiAction::SampleInto`
+  ([app_core_sampling.rs](../crates/app/src/app_core_sampling.rs)). The first press opens an engine
+  record tap on the sampling input (a stereo pair or one channel; a right-click cycles it, so it
+  is not a saved setting) with a ring of 30 s allocated off the audio thread; each frame moves the
+  ring into a reserved buffer. The second press, or the 30 s limit, stops the tap, cuts the silence
+  before the first frame at -60 dBFS (`leading_silence`, the detector of strip silence), stores one
+  asset in the project bundle and lands it as one `SetZones` step through the same completion as a
+  dropped file. Esc, an engine restart or a take that starts cancels without touching the document.
+  The tap serves one user at a time, so sampling and recording audio tracks exclude each other.
+- **Sample edits.** `UiAction::EditSample` renders crop, normalise, reverse and fades on the worker
+  `atomik-sample-edit` with the pure functions of `atomik_audio_file::edit` into a new asset and
+  swaps it into the zone (or every zone playing the same asset) as one undo step
+  ([app_core_sample_edit.rs](../crates/app/src/app_core_sample_edit.rs)). `remap_zone` keeps each
+  zone on the same audio (a crop shifts the markers, a reverse mirrors them). The old asset stays
+  in the pool while the history needs it. `RackDoc::asset_usage` counts what uses every pool asset
+  and `Document::remove_asset` drops one nothing needs.
 - **Editor pane.** `Pane::SampleEditor` shows `SampleEditorView`
   ([ui/src/sample_editor.rs](../crates/ui/src/sample_editor.rs)) in place of the arrangement. Opened
   by `UiAction::OpenSampleEditor` (double-click on the panel or its Edit button), closed by
