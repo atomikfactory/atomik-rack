@@ -19,6 +19,8 @@
 //!   times, evenly across the step (a ratchet replaces a flam). The later hits wait in a small
 //!   fixed table (see `hits`) and each ends before the next of its lane starts; a jump, a mute,
 //!   an `AllOff` and a bypass drop them, so every On has its Off.
+//! * **Map.** `map.on` blends the first four patterns by `map.x`/`map.y` (see `algo::MapView`);
+//!   `lock.<role>` keeps a role on the playing pattern, `mirror` flips x, `map.density` 0 is silent.
 //! * **Bars** are counted from tick 0 with the time signature in effect at the start of the
 //!   batch (a meter change mid-song shifts the bar count, documented).
 //! * **Note safety.** Notes are closed on stop, jump, `mute`, `AllOff` on `notes_in` and bypass,
@@ -51,7 +53,7 @@ use crate::note_clock::{
     run_segment, seed_mix,
 };
 use crate::note_fx::PlayerBypass;
-use algo::{Meter, Tuning, hit_velocity};
+use algo::{MapView, Meter, Tuning, hit_velocity, mapped_hit_velocity};
 use hits::{Hit, PendingHits, flam_tick, grace_velocity, ratchet_tick, span_end};
 
 const fn param(
@@ -75,6 +77,11 @@ const fn param(
     }
 }
 
+/// A `lock.<role>` toggle (`n` indexes [`atomik_device_sdk::DrumRole::ALL`]).
+const fn lock_param(n: u32, key: &'static str, name: &'static str) -> ParamDescriptor {
+    param(P_LOCK0 + n, key, name, (0.0, 1.0, 0.0), Unit::Toggle, true)
+}
+
 const SWITCH: Unit = Unit::Choice(&["now", "at-end"]);
 const FILL_EVERY: Unit = Unit::Choice(&["off", "1 bar", "2 bars", "4 bars", "8 bars"]);
 const STYLE: Unit = Unit::Choice(&["four on the floor", "broken beat", "half time", "straight"]);
@@ -92,11 +99,18 @@ const P_SEED: u32 = 9;
 const P_STYLE: u32 = 10;
 const P_MUTE: u32 = 11;
 const P_BYPASS: u32 = 12;
+const P_MAP_ON: u32 = 13;
+const P_MAP_X: u32 = 14;
+const P_MAP_Y: u32 = 15;
+const P_MAP_DENSITY: u32 = 16;
+const P_MIRROR: u32 = 17;
+/// First of the ten `lock.<role>` toggles (ids 18..=27, in `DrumRole::ALL` order).
+const P_LOCK0: u32 = 18;
 
 /// Bars per fill group for each `fill.every` choice.
 const FILL_BARS: [u32; 5] = [0, 1, 2, 4, 8];
 
-static PARAMS: [ParamDescriptor; 13] = [
+static PARAMS: [ParamDescriptor; 28] = [
     param(
         P_PATTERN,
         "pattern",
@@ -180,6 +194,56 @@ static PARAMS: [ParamDescriptor; 13] = [
     param(P_STYLE, "style", "Style", (0.0, 3.0, 0.0), STYLE, true),
     param(P_MUTE, "mute", "Mute", (0.0, 1.0, 0.0), Unit::Toggle, true),
     bypass_param(P_BYPASS),
+    param(
+        P_MAP_ON,
+        "map.on",
+        "Map",
+        (0.0, 1.0, 0.0),
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        P_MAP_X,
+        "map.x",
+        "Map X",
+        (0.0, 1.0, 0.0),
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_MAP_Y,
+        "map.y",
+        "Map Y",
+        (0.0, 1.0, 0.0),
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_MAP_DENSITY,
+        "map.density",
+        "Map density",
+        (0.0, 1.0, 1.0),
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_MIRROR,
+        "mirror",
+        "Mirror",
+        (0.0, 1.0, 0.0),
+        Unit::Toggle,
+        true,
+    ),
+    lock_param(0, "lock.kick", "Lock kick"),
+    lock_param(1, "lock.snare", "Lock snare"),
+    lock_param(2, "lock.clap", "Lock clap"),
+    lock_param(3, "lock.closed-hat", "Lock closed hat"),
+    lock_param(4, "lock.open-hat", "Lock open hat"),
+    lock_param(5, "lock.tom-low", "Lock low tom"),
+    lock_param(6, "lock.tom-mid", "Lock mid tom"),
+    lock_param(7, "lock.tom-high", "Lock high tom"),
+    lock_param(8, "lock.cymbal", "Lock cymbal"),
+    lock_param(9, "lock.percussion", "Lock percussion"),
 ];
 
 /// Static description of the drum generator.
@@ -218,6 +282,14 @@ pub struct DrumGenerator {
     gate: f64,
     mute: bool,
     close_pending: bool,
+    // Map mode (see `algo::MapView`).
+    map_on: bool,
+    map_x: f64,
+    map_y: f64,
+    map_density: f64,
+    mirror: bool,
+    /// Per role: the lane keeps the playing pattern instead of following the map.
+    locked: [bool; 10],
     // Clock state.
     grid: Grid,
     next_step: i64,
@@ -256,6 +328,12 @@ impl DrumGenerator {
             gate: 0.25,
             mute: false,
             close_pending: false,
+            map_on: false,
+            map_x: 0.0,
+            map_y: 0.0,
+            map_density: 1.0,
+            mirror: false,
+            locked: [false; 10],
             grid: Grid::DEFAULT,
             next_step: 0,
             tpf: 1.0,
@@ -324,6 +402,52 @@ impl DrumGenerator {
         self.core.close_all(ctx, frame);
     }
 
+    /// The map of the four corner patterns, when map mode is on and pattern data is installed.
+    fn map_view(&self) -> Option<MapView<'_>> {
+        if !self.map_on {
+            return None;
+        }
+        let d = self.data.as_deref()?.drums()?;
+        let corners = std::array::from_fn(|i| {
+            if i < usize::from(d.count) {
+                d.pattern(i)
+            } else {
+                None
+            }
+        });
+        Some(MapView {
+            corners,
+            x: if self.mirror {
+                1.0 - self.map_x
+            } else {
+                self.map_x
+            },
+            y: self.map_y,
+            density: self.map_density,
+        })
+    }
+
+    /// The velocity of every lane of `p` at step `k` (0 = no hit; muted lanes are silent). Under
+    /// the map a lane follows the blend of the corner patterns unless its role is locked, in
+    /// which case it plays the playing pattern.
+    fn lane_velocities(&self, p: &DrumPattern, k: i64) -> [u8; DRUM_LANES] {
+        let map = self.map_view();
+        let mut out = [0u8; DRUM_LANES];
+        for (lane, slot) in out.iter_mut().enumerate() {
+            if p.lanes[lane].mute {
+                continue;
+            }
+            let ctx = (self.grid, &self.tuning, &self.meter);
+            *slot = match &map {
+                Some(m) if !self.locked[p.lanes[lane].role.index()] => {
+                    mapped_hit_velocity(p, m, lane, k, ctx)
+                }
+                _ => hit_velocity(p, lane, k, self.grid, &self.tuning, &self.meter),
+            };
+        }
+        out
+    }
+
     /// Plays every lane that hits at step `k`.
     fn play_lanes(&mut self, ctx: &mut ProcessContext<'_>, k: i64, tick: f64, frame: usize) {
         let Some(p) = self.pattern(self.cur) else {
@@ -338,12 +462,9 @@ impl DrumGenerator {
         let next = self.grid.start(k + 1);
         let end = self.grid.gate_end_to(tick, next, self.gate * 100.0);
         let mut loudest: Option<(u8, u8)> = None;
-        for lane in 0..DRUM_LANES {
+        let velocities = self.lane_velocities(&p, k);
+        for (lane, &v) in velocities.iter().enumerate() {
             let l = p.lanes[lane];
-            if l.mute {
-                continue;
-            }
-            let v = hit_velocity(&p, lane, k, self.grid, &self.tuning, &self.meter);
             if v == 0 {
                 continue;
             }
@@ -546,6 +667,12 @@ impl Device for DrumGenerator {
                 self.mute = m;
             }
             P_BYPASS => self.bypass.set_param(plain),
+            P_MAP_ON => self.map_on = plain >= 0.5,
+            P_MAP_X => self.map_x = f64::from(plain.clamp(0.0, 1.0)),
+            P_MAP_Y => self.map_y = f64::from(plain.clamp(0.0, 1.0)),
+            P_MAP_DENSITY => self.map_density = f64::from(plain.clamp(0.0, 1.0)),
+            P_MIRROR => self.mirror = plain >= 0.5,
+            i @ P_LOCK0..=27 => self.locked[(i - P_LOCK0) as usize] = plain >= 0.5,
             _ => {}
         }
     }

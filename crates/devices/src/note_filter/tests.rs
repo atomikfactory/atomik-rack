@@ -80,6 +80,11 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "pass.cc",
             "pass.pressure",
             "bypass",
+            "length.mode",
+            "length.ms",
+            "poly.limit",
+            "poly.mode",
+            "hold",
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -375,7 +380,8 @@ fn act() -> impl Strategy<Value = Act> {
         4 => (0u8..128, 1u8..128).prop_map(|(k, v)| Act::On(k, v)),
         4 => (0u8..128).prop_map(Act::Off),
         1 => Just(Act::AllOff),
-        3 => (0usize..14, -200.0f32..200.0).prop_map(|(p, v)| Act::Param(p, v)),
+        3 => (0usize..20, -200.0f32..200.0)
+            .prop_map(|(p, v)| Act::Param(if p == 14 { 19 } else { p }, v)),
         1 => Just(Act::Reset),
     ]
 }
@@ -426,4 +432,152 @@ proptest! {
         apply(&out, &mut count)?;
         prop_assert!(count.iter().all(|c| *c == 0));
     }
+}
+
+/// Runs `n` empty batches and returns the events of each batch flattened.
+fn idle(h: &mut DeviceHarness, n: usize) -> Vec<(usize, K)> {
+    let mut out = Vec::new();
+    for b in 0..n {
+        h.process();
+        for e in h.notes_out("notes_out") {
+            out.push((b * atomik_core::BATCH + usize::from(e.offset), kind_of(e)));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_fixed_length_ends_the_note_by_itself_and_ignores_the_input_off() {
+    let mut h = rig();
+    set(&mut h, "length.mode", 1.0);
+    set(&mut h, "length.ms", 10.0); // 480 frames
+    h.push_note("notes_in", on(5, 60, 0.5));
+    h.process();
+    assert_eq!(
+        h.notes_out("notes_out")
+            .iter()
+            .map(kind_of)
+            .collect::<Vec<_>>(),
+        [K::On(60, 64)]
+    );
+    // The key comes up early: the note still lasts its length.
+    h.push_note("notes_in", off(0, 60));
+    let evs = idle(&mut h, 12);
+    // The first batch of this call is the second batch of the run.
+    assert_eq!(evs, [(485 - atomik_core::BATCH, K::Off(60))]);
+}
+
+#[test]
+fn a_held_key_longer_than_the_length_ends_at_the_length() {
+    let mut h = rig();
+    set(&mut h, "length.mode", 1.0);
+    set(&mut h, "length.ms", 5.0); // 240 frames
+    h.push_note("notes_in", on(0, 60, 0.5));
+    let evs = idle(&mut h, 4);
+    assert_eq!(evs[0], (0, K::On(60, 64)));
+    assert_eq!(evs[1], (240, K::Off(60)));
+    // The Off of the key afterwards sends nothing more.
+    h.push_note("notes_in", off(0, 60));
+    assert!(idle(&mut h, 1).is_empty());
+}
+
+#[test]
+fn retriggering_a_timed_key_restarts_its_length() {
+    let mut h = rig();
+    set(&mut h, "length.mode", 1.0);
+    set(&mut h, "length.ms", 10.0);
+    h.push_note("notes_in", on(0, 60, 0.5));
+    idle(&mut h, 1);
+    h.push_note("notes_in", off(0, 60));
+    h.push_note("notes_in", on(0, 60, 0.5));
+    let evs = idle(&mut h, 12);
+    assert_eq!(
+        evs.iter().map(|(_, k)| *k).collect::<Vec<_>>(),
+        [K::Off(60), K::On(60, 64), K::Off(60)]
+    );
+    assert_eq!(evs[2].0 - evs[1].0, 480);
+}
+
+#[test]
+fn the_polyphony_limit_steals_the_oldest_or_ignores_the_new_note() {
+    let mut h = rig();
+    set(&mut h, "poly.limit", 2.0);
+    let out = run(&mut h, &[on(0, 60, 0.5), on(1, 62, 0.5), on(2, 64, 0.5)]);
+    assert_eq!(
+        out,
+        [K::On(60, 64), K::On(62, 64), K::Off(60), K::On(64, 64)]
+    );
+    // Closing the stolen key's input sends nothing; the others close normally.
+    assert!(run(&mut h, &[off(0, 60)]).is_empty());
+    assert_eq!(
+        run(&mut h, &[off(0, 62), off(1, 64)]),
+        [K::Off(62), K::Off(64)]
+    );
+
+    let mut h = rig();
+    set(&mut h, "poly.limit", 2.0);
+    set(&mut h, "poly.mode", 1.0);
+    let out = run(&mut h, &[on(0, 60, 0.5), on(1, 62, 0.5), on(2, 64, 0.5)]);
+    assert_eq!(out, [K::On(60, 64), K::On(62, 64)]);
+    assert!(
+        run(&mut h, &[off(0, 64)]).is_empty(),
+        "the dropped note's Off is dropped"
+    );
+    assert_eq!(run(&mut h, &[off(0, 60)]), [K::Off(60)]);
+    // Room again: a new note plays.
+    assert_eq!(run(&mut h, &[on(0, 65, 0.5)]), [K::On(65, 64)]);
+}
+
+#[test]
+fn hold_keeps_the_notes_until_it_is_turned_off() {
+    let mut h = rig();
+    set(&mut h, "hold", 1.0);
+    assert_eq!(run(&mut h, &[on(0, 60, 0.5), on(0, 64, 0.5)]).len(), 2);
+    assert!(run(&mut h, &[off(0, 60), off(0, 64)]).is_empty());
+    // Pressing a latched key again retriggers it.
+    assert_eq!(run(&mut h, &[on(0, 60, 0.5)]), [K::Off(60), K::On(60, 64)]);
+    set(&mut h, "hold", 0.0);
+    // The latched key 64 is released; 60 is still down (its Off came before the press).
+    assert_eq!(batch(&mut h), [K::Off(64)]);
+    assert_eq!(run(&mut h, &[off(0, 60)]), [K::Off(60)]);
+}
+
+#[test]
+fn all_off_and_reset_release_latched_and_timed_notes() {
+    let mut h = rig();
+    set(&mut h, "hold", 1.0);
+    run(&mut h, &[on(0, 60, 0.5), off(1, 60)]);
+    assert_eq!(
+        run(&mut h, &[ev(0, NoteKind::AllOff)]),
+        [K::Off(60), K::AllOff]
+    );
+    run(&mut h, &[on(0, 62, 0.5), off(1, 62)]);
+    h.device_mut().reset();
+    assert_eq!(batch(&mut h), [K::AllOff]);
+}
+
+#[test]
+fn the_shaping_features_are_off_by_default_and_change_nothing() {
+    let mut h = rig();
+    let out = run(
+        &mut h,
+        &[
+            on(0, 60, 0.5),
+            on(1, 62, 0.5),
+            off(2, 60),
+            on(3, 62, 0.5),
+            off(4, 62),
+        ],
+    );
+    assert_eq!(
+        out,
+        [
+            K::On(60, 64),
+            K::On(62, 64),
+            K::Off(60),
+            K::Off(62),
+            K::On(62, 64),
+            K::Off(62)
+        ]
+    );
 }

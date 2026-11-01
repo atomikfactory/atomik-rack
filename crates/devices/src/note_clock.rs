@@ -491,6 +491,12 @@ impl NoteCore {
         true
     }
 
+    /// Forwards an input event to `notes_out` unchanged (no pending off, no gate): the caller
+    /// owes the matching Off.
+    pub fn thru(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, kind: NoteKind) {
+        self.emit(ctx, frame, kind);
+    }
+
     /// Emits a note-off for `key` and lowers the gate count.
     pub fn note_off(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, key: u8) {
         if self.emit(ctx, frame, NoteKind::Off { key }) {
