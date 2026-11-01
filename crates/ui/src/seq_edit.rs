@@ -418,9 +418,10 @@ pub fn make_legato(
     normalize_notes(out, sel)
 }
 
-/// Joins the `sel` notes of one key that touch or overlap into one note from the earliest start
-/// to the latest end, keeping the first note's velocity and mute. Selected notes of one key
-/// with a gap between them stay apart. The selection becomes the joined notes.
+/// Joins the `sel` notes of one key into one note from the earliest start to the latest end,
+/// keeping the first note's velocity and mute: touching and overlapping notes merge, and a gap
+/// between them is filled (the first note is stretched to the end of the last). Notes of different
+/// keys stay apart. The selection becomes the joined notes.
 pub fn join_notes(notes: &[Note], sel: &BTreeSet<usize>) -> (Vec<Note>, BTreeSet<usize>) {
     let mut chosen: Vec<(usize, Note)> = sel
         .iter()
@@ -430,7 +431,7 @@ pub fn join_notes(notes: &[Note], sel: &BTreeSet<usize>) -> (Vec<Note>, BTreeSet
     let mut joined: Vec<Note> = Vec::with_capacity(chosen.len());
     for (_, n) in chosen {
         match joined.last_mut() {
-            Some(last) if last.key == n.key && n.tick <= last.tick + last.length => {
+            Some(last) if last.key == n.key => {
                 last.length = last.length.max(n.tick + n.length - last.tick);
             }
             _ => joined.push(n),
@@ -1040,12 +1041,12 @@ mod tests {
     }
 
     #[test]
-    fn join_merges_touching_and_overlapping_notes_of_one_key() {
+    fn join_merges_notes_of_one_key_and_fills_the_gaps() {
         let notes = [
             nt(0, 100, 60),
             nt(100, 50, 60),  // touches
             nt(120, 100, 60), // overlaps the joined run
-            nt(500, 10, 60),  // gap: stays apart
+            nt(500, 10, 60),  // gap: the run stretches to it
             nt(0, 100, 64),   // another key: stays
         ];
         let (out, sel) = join_notes(&notes, &all_of(&notes));
@@ -1053,13 +1054,17 @@ mod tests {
             out.iter()
                 .map(|n| (n.tick, n.length, n.key))
                 .collect::<Vec<_>>(),
-            vec![(0, 220, 60), (0, 100, 64), (500, 10, 60)]
+            vec![(0, 510, 60), (0, 100, 64)]
         );
-        assert_eq!(sel.len(), 3);
+        assert_eq!(sel.len(), 2);
         assert!(one_per_place(&out));
-        // One selected note, or notes with gaps, change nothing.
+        // One selected note changes nothing.
         let (same, _) = join_notes(&notes, &[3usize].into_iter().collect());
         assert_eq!(same, normalize_notes(notes.to_vec(), &BTreeSet::new()).0);
+        // Notes of different keys with a gap stay apart.
+        let apart = [nt(0, 10, 60), nt(100, 10, 62)];
+        let (out, _) = join_notes(&apart, &all_of(&apart));
+        assert_eq!(out.len(), 2);
     }
 
     #[test]

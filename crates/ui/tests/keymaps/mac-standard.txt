@@ -23,12 +23,13 @@ editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left
 editor.fold_toggle | editor | Shift+F
 editor.join_notes | editor | Cmd+J
+editor.legato none | editor | Cmd+Shift+J
 editor.nudge_left | editor | Cmd+Left
 editor.nudge_left_beat | editor | Cmd+Shift+Left
-editor.nudge_left_tick | editor | Cmd+Opt+Left
+editor.nudge_left_tick | editor | Cmd+Opt+Shift+Left
 editor.nudge_right | editor | Cmd+Right
 editor.nudge_right_beat | editor | Cmd+Shift+Right
-editor.nudge_right_tick | editor | Cmd+Opt+Right
+editor.nudge_right_tick | editor | Cmd+Opt+Shift+Right
 editor.octave_down | editor | Cmd+Shift+Down
 editor.octave_up | editor | Cmd+Shift+Up
 editor.quantize | sequencer | Cmd+K
@@ -128,14 +129,14 @@ sequencer.follow | global | F
 sequencer.group_tracks | sequencer | Cmd+Shift+T
 sequencer.join | sequencer | Cmd+J
 sequencer.merge_note_lanes | sequencer | Cmd+R
-sequencer.move_track_down | sequencer | Cmd+Opt+Down
-sequencer.move_track_up | sequencer | Cmd+Opt+Up
+sequencer.move_track_down | sequencer | Cmd+Opt+Shift+Down
+sequencer.move_track_up | sequencer | Cmd+Opt+Shift+Up
 sequencer.nudge_left | sequencer | Cmd+Left
 sequencer.nudge_left_beat | sequencer | Cmd+Shift+Left
-sequencer.nudge_left_tick | sequencer | Cmd+Opt+Left
+sequencer.nudge_left_tick | sequencer | Cmd+Opt+Shift+Left
 sequencer.nudge_right | sequencer | Cmd+Right
 sequencer.nudge_right_beat | sequencer | Cmd+Shift+Right
-sequencer.nudge_right_tick | sequencer | Cmd+Opt+Right
+sequencer.nudge_right_tick | sequencer | Cmd+Opt+Shift+Right
 sequencer.open_clip | sequencer | Enter
 sequencer.select_next_clip | sequencer | Right
 sequencer.select_next_track | sequencer | Down

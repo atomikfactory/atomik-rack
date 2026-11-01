@@ -3034,6 +3034,15 @@ impl<S: EngineSink> AppCore<S> {
             self.engine_result(result);
         }
     }
+
+    /// Sends one live note to the notes input of the pad or key owner `device` itself
+    /// ([`Self::own_audition_targets`]).
+    pub(super) fn live_note_own(&mut self, device: &DeviceKey, kind: NoteKind) {
+        for target in self.own_audition_targets(device) {
+            let result = self.sink.live_note(target, kind);
+            self.engine_result(result);
+        }
+    }
 }
 
 /// The command that starts playback, with a count-in when there is one.

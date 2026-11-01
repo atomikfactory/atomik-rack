@@ -424,6 +424,9 @@ pub struct Shell<B: AudioBackend> {
     repaint: bool,
     /// What holds the pointer, and the window the press happened in.
     capture: Option<(WindowKind, Capture)>,
+    /// The pane the pointer is over while a pane holds the capture (a drag that can leave the
+    /// pane it started in); `None` over no pane.
+    capture_over: Option<Pane>,
     focus: Pane,
     /// The window that has the OS focus (the keys come from it).
     focused: WindowKind,
@@ -621,6 +624,7 @@ impl<B: AudioBackend> Shell<B> {
             crash_context: String::new(),
             repaint: true,
             capture: None,
+            capture_over: None,
             focus: Pane::Rack,
             focused: WindowKind::Main,
             geom_dirty: false,
@@ -3375,6 +3379,7 @@ impl<B: AudioBackend> Shell<B> {
             let released = matches!(event, UiEvent::PointerUp { .. });
             match capture {
                 Capture::Pane(pane) => {
+                    self.capture_over = self.hit_in(window, pos).and_then(Result::ok);
                     self.forward(pane, event);
                 }
                 Capture::Divider { grab } => self.drag_divider(pos, grab, released),
@@ -3385,6 +3390,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             if released {
                 self.capture = None;
+                self.capture_over = None;
                 self.file_drag = None;
             }
             return Vec::new();
@@ -6200,15 +6206,73 @@ impl<B: AudioBackend> Shell<B> {
         self.cursor_in(WindowKind::Main)
     }
 
-    /// The mouse cursor to show in `window`: the detached panes ask for the arrow.
+    /// The mouse cursor to show in `window`. A drag in progress decides first
+    /// ([`Self::drag_cursor`]); else the pane under the pointer: the rack's (the open hand over
+    /// a draggable device), the piano roll's or the arrangement's while it is the visible song
+    /// pane, the arrow elsewhere.
     pub fn cursor_in(&self, window: WindowKind) -> CursorHint {
-        if window != WindowKind::Main || !self.ui.show_song {
-            return CursorHint::Default;
+        if let Some(hint) = self.drag_cursor() {
+            return hint;
         }
-        match self.song_pane() {
-            Pane::PianoRoll => self.core.piano_roll().cursor(),
-            Pane::Arrangement => self.core.arrangement().cursor(),
+        match window {
+            WindowKind::Rack => self.core.view().cursor(),
+            WindowKind::Main if self.ui.show_song => {
+                let song = match self.song_pane() {
+                    Pane::PianoRoll => self.core.piano_roll().cursor(),
+                    Pane::Arrangement => self.core.arrangement().cursor(),
+                    _ => CursorHint::Default,
+                };
+                if song == CursorHint::Default && !self.rack_detached() {
+                    self.core.view().cursor()
+                } else {
+                    song
+                }
+            }
+            WindowKind::Main if !self.rack_detached() => self.core.view().cursor(),
             _ => CursorHint::Default,
+        }
+    }
+
+    /// The cursor of a drag that carries something, `None` when no such drag runs. Files
+    /// dragged out of the file browser: the copy cursor over a place that takes them, the
+    /// not-allowed cursor over every other place. A drag held by a pane (a device, a clip, a
+    /// track, a palette row): the pane's own cursor, which turns not-allowed while the pointer
+    /// is over another pane.
+    fn drag_cursor(&self) -> Option<CursorHint> {
+        match self.capture? {
+            (_, Capture::FileDrag) => {
+                let drag = self.file_drag.as_ref().filter(|d| !d.cancelled)?;
+                let Some((window, pos)) = drag.pos else {
+                    return Some(CursorHint::NotAllowed);
+                };
+                let target = self.file_target_in(window, pos);
+                let library =
+                    !drag.paths.is_empty() && drag.paths.iter().all(|p| is_library_item(p));
+                let library_ok = match target {
+                    Some(Pane::Rack) => true,
+                    Some(Pane::Arrangement) => self.core.arrangement().clip_drop_hover().is_some(),
+                    _ => false,
+                };
+                Some(crate::drag_cursor::file_drop_hint(
+                    target.is_some(),
+                    library,
+                    library_ok,
+                ))
+            }
+            (_, Capture::Pane(pane)) => {
+                let hint = match pane {
+                    Pane::Rack => self.core.view().cursor(),
+                    Pane::Arrangement => self.core.arrangement().cursor(),
+                    Pane::PianoRoll => self.core.piano_roll().cursor(),
+                    _ => return None,
+                };
+                Some(if self.capture_over == Some(pane) {
+                    hint
+                } else {
+                    hint.outside_own_pane()
+                })
+            }
+            (_, Capture::Divider { .. }) => None,
         }
     }
 
@@ -6701,3 +6765,7 @@ mod piano_keys_tests;
 #[cfg(test)]
 #[path = "shell_interface_tests.rs"]
 mod interface_tests;
+
+#[cfg(test)]
+#[path = "shell_edit_keys_tests.rs"]
+mod edit_keys_tests;

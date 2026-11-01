@@ -7,7 +7,7 @@ mod support;
 use atomik_model::{ClipContent, ClipId, Command, Curve, LaneKind, SongCommand, WorkflowCommand};
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::timeline::Snap;
-use atomik_ui::{Key, Modifiers, TrackButton, TransportAction, UiAction, UiEvent};
+use atomik_ui::{Key, Modifiers, Tool, TrackButton, TransportAction, UiAction, UiEvent};
 use support::song::*;
 use support::*;
 
@@ -160,9 +160,10 @@ fn param_picker_adds_an_automation_lane() {
 // ---------------------------------------------------------------- drawing clips
 
 #[test]
-fn dragging_on_an_empty_lane_draws_a_snapped_clip() {
+fn the_pencil_dragging_on_an_empty_lane_draws_a_snapped_clip() {
     let (doc, reg) = (song_doc(), registry());
     let mut v = arrangement(&doc, &reg);
+    v.set_tool(Tool::Pencil);
     v.set_snap(Snap::Beat);
     let lane = v.lane_rect(&key("lead"), 0).unwrap();
     let y = lane.center().y;
@@ -189,9 +190,10 @@ fn dragging_on_an_empty_lane_draws_a_snapped_clip() {
 }
 
 #[test]
-fn drawing_on_an_automation_lane_makes_an_automation_clip() {
+fn the_pencil_on_an_automation_lane_makes_an_automation_clip() {
     let (doc, reg) = (song_doc(), registry());
     let mut v = arrangement(&doc, &reg);
+    v.set_tool(Tool::Pencil);
     v.set_snap(Snap::Bar);
     let lane = v.lane_rect(&key("bass"), 1).unwrap();
     let y = lane.center().y;

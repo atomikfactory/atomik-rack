@@ -1090,3 +1090,58 @@ fn generate_refuses_other_devices_and_missing_patterns() {
         atomik_model::DrumPatternDoc::default()
     );
 }
+
+/// The engine ids that received a live note, in order.
+fn live_note_ids(calls: &[SinkCall]) -> Vec<u32> {
+    calls
+        .iter()
+        .filter_map(|x| match x {
+            SinkCall::LiveNote { target, .. } => Some(target.0.0),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_pad_click_reaches_the_drum_machine_not_the_generator_cabled_above_it() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.drum-machine", "kit");
+    c.apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+        device: key("kit"),
+    }))
+    .unwrap();
+    c.select(Some(key("kit")));
+    let generator = create_player(&mut c, DRUMS, "kit");
+    let kit = c.device_id(&key("kit")).unwrap();
+    let gen_id = c.device_id(&generator).unwrap();
+    // The track's notes enter at the generator now; a pad click is not played through it.
+    assert_eq!(c.notes_target().unwrap().0, gen_id);
+    c.sink_mut().take();
+    for on in [true, false] {
+        c.handle_action(UiAction::AuditionVelocity {
+            device: key("kit"),
+            key: 36,
+            velocity: 100,
+            on,
+        });
+    }
+    assert_eq!(live_note_ids(&c.sink_mut().take()), vec![kit.0, kit.0]);
+}
+
+#[test]
+fn a_pad_click_reaches_a_cabled_drum_machine_itself() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.drum-machine", "kit");
+    add(&mut c, DRUMS, "g");
+    c.apply_command(cable(("g", "notes_out"), ("kit", "notes_in")))
+        .unwrap();
+    let kit = c.device_id(&key("kit")).unwrap();
+    c.sink_mut().take();
+    c.handle_action(UiAction::AuditionVelocity {
+        device: key("kit"),
+        key: 38,
+        velocity: 90,
+        on: true,
+    });
+    assert_eq!(live_note_ids(&c.sink_mut().take()), vec![kit.0]);
+}

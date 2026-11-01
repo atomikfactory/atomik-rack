@@ -125,7 +125,8 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ audition
 
     /// Plays (`on`) or releases a key on a device at a 7-bit velocity through the live note
-    /// path (the sample editor's velocity-aware audition: `velocity / 127`).
+    /// path (the sample editor's velocity-aware audition: `velocity / 127`). The note goes to
+    /// the device's own notes input: a pad or key click never goes through a player stack.
     pub fn audition_velocity(&mut self, device: &DeviceKey, key: u8, velocity: u8, on: bool) {
         let kind = if on {
             NoteKind::On {
@@ -135,7 +136,7 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             NoteKind::Off { key }
         };
-        self.live_note_to(device, kind);
+        self.live_note_own(device, kind);
     }
 
     // ------------------------------------------------------------------ sample maps

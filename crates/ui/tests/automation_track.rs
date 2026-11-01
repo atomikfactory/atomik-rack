@@ -330,8 +330,9 @@ fn folder_solo_and_arm_leave_an_automation_track_alone_and_mute_includes_it() {
 }
 
 #[test]
-fn drawing_on_the_first_lane_makes_an_automation_clip_there() {
+fn the_pencil_on_the_first_lane_makes_an_automation_clip_there() {
     let (d, reg, mut v) = setup();
+    v.set_tool(atomik_ui::Tool::Pencil);
     v.set_snap(atomik_ui::timeline::Snap::Bar);
     let lane = v.lane_rect(&delay(), 0).unwrap();
     let y = lane.center().y;

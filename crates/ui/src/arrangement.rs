@@ -743,6 +743,9 @@ pub struct ArrangementView {
     /// The automation lane that follows the selected parameter (view state): drawn highlighted
     /// and shown open even when it is folded.
     follow: Option<(DeviceKey, String)>,
+    /// The followed lane was folded by hand: it stays folded until the followed parameter
+    /// changes or the lane is unfolded (view state).
+    follow_folded: bool,
     /// Selecting a track does not arm it (the app's Manual Rec switch): view state.
     manual_rec: bool,
     /// The track that receives the master keyboard (its header arrow is lit): view state set by
@@ -761,6 +764,9 @@ pub struct ArrangementView {
     /// The automation lane whose header was pressed last (view state): what the lane items of
     /// the track header menu act on.
     picked_lane: Option<(DeviceKey, String)>,
+    /// The extra note lane whose header was pressed last (view state): Delete removes it, not
+    /// its track.
+    picked_note_lane: Option<(DeviceKey, usize)>,
     /// The selected automation points of one clip (positions in its point list).
     point_sel: Option<(ClipId, BTreeSet<usize>)>,
     menu: Option<Menu>,
@@ -884,6 +890,7 @@ impl ArrangementView {
             lane_params: Vec::new(),
             collapsed: BTreeSet::new(),
             follow: None,
+            follow_folded: false,
             manual_rec: false,
             keys_track: None,
             keys_separated: false,
@@ -892,6 +899,7 @@ impl ArrangementView {
             selected_track: None,
             note_lane_sel: BTreeMap::new(),
             picked_lane: None,
+            picked_note_lane: None,
             point_sel: None,
             menu: None,
             drag: Drag::None,
@@ -1372,6 +1380,7 @@ impl ArrangementView {
     pub fn follow_lane(&mut self, target: Option<(DeviceKey, String)>) {
         if self.follow != target {
             self.follow = target;
+            self.follow_folded = false;
             self.synced = false;
             self.repaint = true;
         }
@@ -1388,7 +1397,11 @@ impl ArrangementView {
     /// document's to open (`SongCommand::SetGroupCollapsed`); a lane that does not exist is
     /// followed once it does.
     pub fn reveal_lane(&mut self, device: &DeviceKey, param: &str) {
-        self.follow = Some((device.clone(), param.to_owned()));
+        let target = Some((device.clone(), param.to_owned()));
+        if self.follow != target {
+            self.follow_folded = false;
+        }
+        self.follow = target;
         self.collapsed.remove(device);
         self.reveal_pending = true;
         self.synced = false;
@@ -2773,6 +2786,7 @@ impl ArrangementView {
         // A press anywhere but on a header forgets the automation lane picked before.
         if !matches!(hit, Hit::Header(_) | Hit::LaneButton(..)) {
             self.picked_lane = None;
+            self.picked_note_lane = None;
         }
         let tool = self.vp.effective_tool(modifiers);
         // The hand and the magnifier take every press over the lanes (a clip's mute button
@@ -3043,6 +3057,7 @@ impl ArrangementView {
         }
         // The automation lane whose header was pressed is the one the lane items of the menu act
         // on (none when the press was on a track header or a note lane).
+        self.picked_note_lane = None;
         self.picked_lane = self.row_at(pos.y).and_then(|r| match r.kind {
             RowKind::Lane { track: t, lane } if t == track && lane > 0 => self.lane_id(t, lane),
             RowKind::Lane { track: t, lane: 0 } if t == track && self.is_automation_track(t) => {
@@ -3131,6 +3146,7 @@ impl ArrangementView {
     }
 
     fn lane_button(&mut self, track: usize, lane: usize, b: LaneButton, out: &mut Vec<UiAction>) {
+        self.picked_note_lane = None;
         self.picked_lane = self.lane_id(track, lane);
         if b == LaneButton::Mute {
             self.lane_mute_button(track, lane, out);
@@ -3147,12 +3163,22 @@ impl ArrangementView {
                 }));
             }
             LaneButton::Fold => {
-                let folded = !self.song.lane_folded(&device, &param);
-                out.push(song_cmd(SongCommand::SetLaneFolded {
-                    device,
-                    param,
-                    folded,
-                }));
+                // The click acts on what is drawn: the followed lane is open whatever the
+                // project says, and a click folds it (it stays folded until another parameter
+                // is followed).
+                let folded = !self.is_lane_folded(track, lane);
+                if self.is_followed(track, lane) {
+                    self.follow_folded = folded;
+                    self.synced = false;
+                    self.repaint = true;
+                }
+                if self.song.lane_folded(&device, &param) != folded {
+                    out.push(song_cmd(SongCommand::SetLaneFolded {
+                        device,
+                        param,
+                        folded,
+                    }));
+                }
             }
             LaneButton::Mute => {}
             LaneButton::Arm => out.push(UiAction::ToggleLaneArm { device, param }),
@@ -3769,6 +3795,42 @@ impl ArrangementView {
             .max(1)
     }
 
+    /// The command for a click on empty automation lane: a clip over the bar holding `t0` with
+    /// one point at the click (the tick snapped to the grid, the value from the pointer's
+    /// height), as a single undo step. `None` when the lane is not shown.
+    fn new_automation_point(
+        &self,
+        device: &DeviceKey,
+        lane: usize,
+        t0: i64,
+        at: Point,
+        modifiers: Modifiers,
+    ) -> Option<UiAction> {
+        let track = self.song.tracks.iter().position(|t| &t.device == device)?;
+        let row = self.row_rect(self.row_of(track, lane)?);
+        let bar = self.bars.bar_of(t0.max(0));
+        let start = self.bars.bar_start(bar).max(0);
+        let length = (self.bars.next_bar_line(start) - start).max(1);
+        let UiAction::Command(Command::Song(SongCommand::AddClip { mut clip, .. })) =
+            new_clip_cmd(device.clone(), lane, true, start, length)
+        else {
+            return None;
+        };
+        let (top, bottom) = value_range(self.clip_rect_in(row, &clip));
+        let param = self.param_of(track, lane);
+        let tick = (snap_round(t0, self.step(modifiers)) - start).clamp(0, length - 1);
+        clip.content = ClipContent::Automation(vec![AutomationPoint {
+            tick,
+            value: seq_edit::value_from_y(&param, at.y, top, bottom - top),
+            curve: Curve::Linear,
+        }]);
+        Some(song_cmd(SongCommand::AddClip {
+            device: device.clone(),
+            lane,
+            clip,
+        }))
+    }
+
     /// Starts the speaker on an audio clip: from the frame the clip plays at the pressed tick
     /// to the end of what it plays, as it is in its file, until the button is released.
     fn start_audition(&mut self, clip: &Clip, pos: Point, out: &mut Vec<UiAction>) {
@@ -3897,6 +3959,17 @@ impl ArrangementView {
         ) {
             self.locator_move(pos, modifiers, out);
             return;
+        }
+        // The Select tool's plain press on an empty lane is a click until the pointer travels;
+        // then it is the rubber band (only the pencil draws a clip by dragging).
+        if let Drag::Draw {
+            start,
+            pencil: false,
+            ..
+        } = self.drag
+            && pos.distance(start) > DRAG_THRESHOLD
+        {
+            self.start_marquee(start, false);
         }
         if matches!(self.drag, Drag::Marquee { .. }) {
             self.marquee_move(pos);
@@ -4312,6 +4385,15 @@ impl ArrangementView {
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
             Drag::Pan { .. } => CursorHint::Grabbing,
+            // Clips, tracks and note lanes carried to another place: the closed hand, or the
+            // copy cursor while the drop leaves the originals where they are.
+            Drag::TrackMove | Drag::LaneMove => CursorHint::Dragging,
+            Drag::Move {
+                moved: true,
+                copy: true,
+                ..
+            } => CursorHint::Copy,
+            Drag::Move { moved: true, .. } => CursorHint::Dragging,
             Drag::Zoom { .. } => CursorHint::Magnifier,
             Drag::Marquee { erase: true, .. } => CursorHint::Eraser,
             Drag::Audio {
@@ -4514,6 +4596,7 @@ impl ArrangementView {
                 }
             }
             Drag::Draw {
+                start,
                 device,
                 lane,
                 automation,
@@ -4522,11 +4605,20 @@ impl ArrangementView {
                 moved,
                 modifiers,
                 pencil,
-                ..
             } => {
                 if !moved {
                     self.selection.clear();
                     self.point_sel = None;
+                    if automation && !pencil {
+                        // A click on empty automation lane draws: a clip over the bar clicked,
+                        // with a point where the pointer is.
+                        if let Some(add) =
+                            self.new_automation_point(&device, lane, t0, start, modifiers)
+                        {
+                            out.push(add);
+                        }
+                        return;
+                    }
                     if pencil {
                         // The pencil draws with a plain click: a one-bar clip.
                         let start = snap_floor(t0, self.step(modifiers)).max(0);
@@ -4729,6 +4821,28 @@ impl ArrangementView {
                 let ids: Vec<ClipId> = self.selected_in_order().iter().map(|c| c.id).collect();
                 match ids.as_slice() {
                     [] => {
+                        // A picked lane goes alone: its track stays (an automation-only track
+                        // goes with its last lane, as in Remove Automation Lane).
+                        if let Some((device, param)) = self.picked_automation_lane().cloned() {
+                            self.picked_lane = None;
+                            return CommandOutcome::Handled(vec![song_cmd(
+                                SongCommand::RemoveAutomationLane { device, param },
+                            )]);
+                        }
+                        // The same for a picked extra note lane; when it cannot go (the track
+                        // is frozen) nothing is deleted, not the track.
+                        if let Some((device, lane)) = self.picked_note_lane.take() {
+                            let can = self.song.track(&device).is_some_and(|t| {
+                                t.frozen.is_none()
+                                    && t.is_note_lane(lane)
+                                    && t.note_lane_count() > 1
+                            });
+                            return CommandOutcome::Handled(if can {
+                                vec![song_cmd(SongCommand::RemoveNoteLane { device, lane })]
+                            } else {
+                                Vec::new()
+                            });
+                        }
                         // A selected folder is dissolved, not deleted: its tracks stay.
                         if let Some(group) = self.og.group.take() {
                             return CommandOutcome::Handled(vec![song_cmd(SongCommand::Ungroup {

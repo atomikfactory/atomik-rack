@@ -176,7 +176,7 @@ fn legato_join_and_chop_are_single_note_list_edits() {
         CommandOutcome::Declined
     );
 
-    // Join needs a selection; two touching notes of one key become one.
+    // Join needs a selection; the notes of one key become one, a gap filled.
     let mut doc2 = song_doc();
     doc2.song_mut().tracks[0].lanes[0].clips[0].content = ClipContent::Notes(
         vec![
@@ -195,9 +195,9 @@ fn legato_join_and_chop_are_single_note_list_edits() {
     let out = handled(v2.command("editor.join_notes", None, &doc2, &reg));
     let c = contents(&out);
     assert_eq!(c.len(), 1);
-    assert_eq!(c[0].0.len(), 2);
-    assert_eq!(c[0].0[0].length, 2 * PPQ);
-    assert_eq!(v2.selected_notes(), vec![0, 1]);
+    assert_eq!(c[0].0.len(), 1);
+    assert_eq!(c[0].0[0].length, 5 * PPQ);
+    assert_eq!(v2.selected_notes(), vec![0]);
 
     // Chop at 1/8 notes: every beat-long note becomes two.
     let mut v3 = piano_roll(&doc2, &reg);

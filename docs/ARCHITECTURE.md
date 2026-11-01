@@ -1370,7 +1370,8 @@ a clip's `StepGrid` swing, which is a different scale and never edits a note.)
   its uses and passes the count as the seed, so each run is a new take, and it computes the same
   result (`apply_note_tool_indexed`) to keep its selection on the same notes. Legato, join and
   chop are pure list edits in [seq_edit.rs](../crates/ui/src/seq_edit.rs) (`make_legato`,
-  `join_notes`, `chop_notes`), each one `SetClipContent`. The velocity lane is a pencil on its
+  `join_notes` merges the selected notes of one key into one, a gap filled; Ctrl+J and Ctrl+Shift+J
+  run join and legato; `chop_notes`), each one `SetClipContent`. The velocity lane is a pencil on its
   empty part: a drag sets every bar it passes, Shift draws a straight line from the press and Alt
   limits the stroke to the selected notes (`velocity_stroke`); a stroke is one merged undo step.
   `AppCore::sync_roll_labels` names the keys of a drum machine track after its pad files on the
@@ -1455,8 +1456,9 @@ bounce.
   the place of the first one and the new folder goes inside that folder), `Ungroup` (the tracks and
   sub-folders go into the folder's parent, no track is deleted: this is also what Delete does to a
   folder), `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack` and `MoveGroup` (one
-  place up or down: a track passes its neighbour, leaves a folder at its edge and enters a folder it
-  meets, a folder moves with everything in it and leaves its parent at the edge;
+  place up or down: a track passes its neighbour, leaves a folder at its edge (one press, so it
+  shows above the folder or below its last track) and enters an open folder it meets, or hops over a collapsed
+  one, which would hide it; a folder moves with everything in it and leaves its parent at the edge;
   `Song::can_move_track` and `can_move_group` say whether it would), `MoveTracks` (several tracks
   to one place: `TrackPlace { to_index, into }` counts the places among the tracks that stay and
   names the folder they join; a place in the middle of another folder, a frozen track and a move
@@ -1515,7 +1517,7 @@ bounce.
   the rows that are not the targets' first lanes, at the current vertical zoom) among the targets,
   within 24 to 400 px.
 - **Commands and menus.** `sequencer.group_tracks` (Cmd+Shift+T), `ungroup_tracks`, `toggle_folder`,
-  `rename_folder`, `move_track_up` and `move_track_down` (Cmd+Alt+Up, Cmd+Alt+Down), `rename_track`,
+  `rename_folder`, `move_track_up` and `move_track_down` (Cmd+Shift+Alt+Up, Cmd+Shift+Alt+Down), `rename_track`,
   `track_comment`, `track_color` (the marker palette and `none`), `fold_lanes` (`fold` or `unfold`)
   and `track_height` are registry commands; all but `track_color` are in the Track menu (enabled
   from `ArrangementView::org_menu`), and the track header and folder row context menus carry them
@@ -2816,8 +2818,9 @@ as before (`crates/render/tests/macros.rs`).
   something is written**; never while an automation take records), opens the folders that hide the
   track (`SetGroupCollapsed`, they are the project's) and tells the arrangement to `reveal_lane`.
   The arrangement outlines the followed lane, shows its track's lanes (a collapse is view state) and
-  **shows a folded lane open without changing the project's fold**, scrolls it to a third of the way
-  down when it is out of sight, and follows the lane that appears later. Selecting a device in the
+  **shows a folded lane open without changing the project's fold** (its own chevron still folds it,
+  until another parameter is followed), scrolls it to a third of the way down when it is out of
+  sight, and follows the lane that appears later. Selecting a device in the
   rack or a track in the arrangement shows the lane of the last param touched on it **when that lane
   exists** (a selection never adds a lane). View > Show Automation Lane does the same for the
   selected device on demand and explains why it cannot for an effect. The **Edit Automation** item
@@ -3937,7 +3940,14 @@ creation chain in the **Creation chain** bullet.
   visible song pane and `platform/app.rs` sets the winit cursor when it changes: the OS icon
   (`translate::cursor_icon`), or for the tool hints a custom cursor drawn by `cursor_art`
   (`translate::cursor_art`; a bitmap per picture and scale, made once with `create_custom_cursor`
-  and cached in `App.custom_cursors`). The **alternate-tool role** (a hold) switches the tool for
+  and cached in `App.custom_cursors`). A drag that carries something has its own hints
+  (`CursorHint::Dragging` the closed hand, `Copy`, `NotAllowed`), decided in `Shell::cursor_in`
+  before the pane under the pointer: files dragged out of the file browser show `Copy` over a
+  place that takes them and `NotAllowed` elsewhere (`drag_cursor::file_drop_hint`); a device, a
+  clip, a track or a palette row held by one pane shows that pane's hint (`RackView::cursor`,
+  `ArrangementView::cursor`), turned into `NotAllowed` by `CursorHint::outside_own_pane` while
+  the pointer is over another pane; the plate of a device that can be dragged shows `Hand`. The
+  **alternate-tool role** (a hold) switches the tool for
   one gesture (Select -> Pencil, any other tool -> Select) and shows on the toolbar from
   `ModifiersChanged` alone (`Shell::forward_modifiers`); **disable snap** is the Ctrl+Alt hold
   (`Roles`; the legacy roles keep Alt alone for it and have no alternate tool, `Roles::legacy`).
@@ -3951,10 +3961,11 @@ creation chain in the **Creation chain** bullet.
   `editor.nudge_left/right` move the selected notes by the snap step,
   `editor.nudge_left_beat/right_beat` by one beat of the meter (`Meter::beat_ticks`, the Beat snap
   step) and `editor.nudge_left_tick/right_tick` by one tick, whatever the snap (Shift+arrow and
-  Alt+arrow in the legacy profile, `Cmd+Shift+arrow` and `Cmd+Alt+arrow` in the standard one). All
+  Alt+arrow in the legacy profile, `Cmd+Shift+arrow` and `Cmd+Shift+Alt+arrow` in the standard one;
+  the tick keys avoid Ctrl+Alt+arrow, which graphics drivers take on Windows). All
   are repeatable, clamp the group at tick 0 and are one undo step per press (`move_selection`). The
   arrangement nudges clips the same way: `sequencer.nudge_left/right` (and `_beat`, `_tick`;
-  `Cmd+arrow`, `Cmd+Shift+arrow`, `Cmd+Alt+arrow` in both profiles) move the selected clips as one
+  `Cmd+arrow`, `Cmd+Shift+arrow`, `Cmd+Shift+Alt+arrow` in both profiles) move the selected clips as one
   `Batch` of `SetClipGeometry` and stop the group at tick 0. **Clip gestures.** The left edge of any
   clip trims it (note and automation clips: `WorkflowCommand::TrimClips`, which moves the start,
   keeps the end and moves the content offset; a clip that grows left past content tick 0 shifts its
@@ -3998,8 +4009,9 @@ creation chain in the **Creation chain** bullet.
   `DisconnectDevice`); a group drag ends in one `MoveDevicesToSlot` (`MoveDevices` inside a
   container; never a no-op). The arrangement gained a track selection (header click, Up and Down)
   and an automation-point selection; its clip selection takes Shift and Ctrl clicks across tracks
-  and a rubber band (`Drag::Marquee`: below the last track, or with Shift or Ctrl on a lane, since a
-  plain drag on a lane draws); dragging clips onto another track ends in `MoveClips` (one
+  and a rubber band (`Drag::Marquee`: a plain drag on a lane with the Select tool, or below the last
+  track; the pencil, Alt and a double-click create clips instead); dragging clips onto another track
+  ends in `MoveClips` (one
   `ClipMove { id, track, start }` per clip: the grabbed clip's track change applies to all, each
   clip takes the lane of its own `LaneKind` on the target track, one without such a lane rejects the
   command and the view does not emit it), Ctrl at the press makes it a copy (fresh ids from
@@ -4477,8 +4489,10 @@ items are ordinary project texts, plus one small new file type.
   item's bundle), and a patch that changes nothing is rejected. `ResetDevice` applies
   `DeviceSnapshot::defaults` (a new device's sound) and `SetPatchName` sets the name alone.
   `ItemSummary::device_type` and `ItemInfo::device_type` carry the type id of a one-device patch. In
-  the app, `LoadTarget::Device(key)` (a drop on a device's patch strip,
-  `UiAction::ApplyLibraryPatch`) applies a patch file and says why when it holds several devices or
+  the app, `LoadTarget::Device(key)` (a drop on a device's patch strip, or anywhere on the panel of
+  a device of the patch's own type, `UiAction::ApplyLibraryPatch`; a patch dropped on a panel of
+  another type is inserted below it) applies a patch file and says why when it holds several
+  devices or
   is for another type; `save_device_patch` writes one device as a patch named after the file the
   platform's save dialog picked (`ShellRequest::PickSavePatch`, which confirms an overwrite) and
   keeps the name on the device; `step_patch` walks the patches of the device's type in the folder of

@@ -799,6 +799,44 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **A patch dropped on a device loads into it instead of adding a new device.** The drop used to
+  load only on the small patch strip of the name plate; anywhere else on the panel it inserted a
+  new device. Now a patch for the device's own type loads into the device wherever on its panel
+  it lands (the panel is outlined while the file hovers, instead of the insertion line), from the
+  file browser or the desktop. A patch for another type is inserted right below the device under
+  the pointer, as before.
+- **Clicking a drum machine pad plays the pad when the notes are cabled in.** A pad, sample key or
+  slice pad click sent its note to the top of the track's player stack, so a drum generator in
+  front of the drum machine swallowed it and nothing sounded. The click now goes to the device
+  that owns the pad.
+- **Nudge and track move keys no longer use Ctrl+Alt.** Graphics drivers can take Ctrl+Alt with the
+  arrow keys on Windows (they rotate the screen), so the app may never see them. The
+  tick nudge of clips and notes is now Ctrl+Shift+Alt+Left and Right (Cmd+Shift+Opt on macOS), and
+  Move Track Up and Down are Ctrl+Shift+Alt+Up and Down. Ctrl+Left and Right (the snap step) and
+  Ctrl+Shift+Left and Right (one beat) are unchanged and now have tests that drive the real key
+  path.
+- **A track moved up or down never vanishes into a collapsed folder.** The move keys used to put
+  the track inside a collapsed folder, where it was hidden; it now hops over the whole folder. A
+  track at the edge of an open folder leaves it in one press, above the folder or below its last
+  track, and a track above an open folder moves into it.
+- **Join Notes joins across a gap.** Ctrl+J in the note editor (and the Join Notes menu item) merges the
+  selected notes of one key into one note from the first start to the last end, where it used to
+  do nothing unless the notes touched. Make Legato, which stretches each note to the next one,
+  has a key of its own, Ctrl+Shift+J.
+- **The Select tool never creates a clip by dragging.** A plain drag on an empty lane is the rubber
+  band, across lanes and tracks, like the piano roll's (Shift or Ctrl adds to the selection, a
+  plain band replaces it). A click on empty lane area clears the clip selection (an empty
+  automation lane still takes the point). Clips come from the Pencil tool, from holding the
+  alternate-tool key (Alt) over the Select tool, or from a double-click on the lane.
+- **Delete on a lane deletes the lane.** With an automation lane header picked, Edit > Delete (and the
+  Delete key) removes that lane alone, as one undo step; an extra note lane goes the same way, and
+  a track is only removed when its own header is picked.
+- **A click on an empty automation lane draws.** With the Select tool, a click without a drag on
+  empty lane area adds a clip over the bar clicked with a point at the pointer, as one undo step;
+  a click inside a clip still adds a point there.
+- **The followed automation lane can be folded.** The lane that follows the selected parameter is
+  kept open, but its fold chevron now folds it; it stays folded until another parameter is followed
+  or the lane is unfolded.
 - **Joining clips no longer makes muted notes audible.** The notes of a muted clip used to be
   folded into the audible clip a Join made. A join now leaves muted clips where they are (muted
   clips on their own still join into a muted clip), and a looped clip is unrolled instead of being
@@ -865,6 +903,12 @@ may break APIs and the patch and project formats.
   their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
   seconds after the bypass is fully engaged (see Effect bypass in DEVICES). The two-second rule can
   change the tail heard when an effect is switched back on.
+- **The cursor shows what a drag does.** While files are dragged out of the file browser the cursor
+  is the copy cursor over a place that takes them and the not-allowed cursor over every other
+  place. A device moved in the rack, a clip, a track or a note lane moved in the sequencer show
+  the closed hand (the copy cursor while the drop copies), and the not-allowed cursor while the
+  pointer is over a pane that takes nothing. A device palette row dragged out shows the copy
+  cursor over the rack. The plate of a device that can be dragged shows the open hand.
 - **Importing audio holds about one copy of it, and big projects open about four times faster.** An
   import used to copy the audio five times (every check copied the buffer, and a file already at
   the project rate was cloned by the resampler); it now peaks at about 1.03 times the decoded size
