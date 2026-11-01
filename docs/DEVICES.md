@@ -3112,6 +3112,14 @@ the searchable list with every param (also the editor for a plugin without a win
   second after the plugin says it changed, before an engine restart or the removal of its device,
   and stored in the project (never an undo step). A state that failed to restore is kept as it was
   and shown as FAILED until RELOAD.
+- **Presets.** The PARAMS pane shows a preset bar (`<`, the name, `>`; the name opens the list) for
+  a plugin that offers presets. Loading one, or stepping with the arrows (round the list), puts the
+  plugin in that state as one undo step; undo gives the previous state back to the plugin. VST3
+  presets are the `.vstpreset` files under `Documents/VST3 Presets/<vendor>/<plugin>` (Windows),
+  `~/Library/Audio/Presets/...` (macOS) and `~/.vst3/presets/...` (Linux), also the system
+  folders; `ATOMIK_VST3_PRESET_DIRS` replaces the list. A sandboxed plugin lists and loads them
+  through the same protocol. CLAP presets and VST3 program lists are not listed yet, and the rack
+  knobs of a plugin show the values they had before the preset until they are touched.
 - **Missing plugins.** A plugin that is not installed, disabled, or on a machine without plugins
   enabled opens as a stand-in (an instrument is silent, an effect passes its dry input) with MISSING
   and the reason; cables, console channel, track, automation, macro targets, pins and state are kept
@@ -3119,7 +3127,10 @@ the searchable list with every param (also the editor for a plugin without a win
   with its saved state.
 - **Editor.** OPEN GUI opens the plugin's own window (a separate native window per plugin, never
   inside the rack window). Parameter changes made there are one undo step per gesture; a patch
-  change inside the plugin is not undoable. VST3 editors are hosted the same way (`HWND`, `NSView`,
+  change made inside the plugin (a preset picked in its window) becomes one undo step too, when the
+  state is next captured, when the window closes or before an undo. A window opens where the last
+  window of the same plugin was (position and size, kept in `ui-state.json`, only on a screen that
+  still exists). VST3 editors are hosted the same way (`HWND`, `NSView`,
   an X11 window id) and follow the window's size both ways. On a Wayland session a sandboxed
   plugin's editor runs through XWayland (needs `DISPLAY`); an in-process plugin, or a session
   without `DISPLAY`, has no embedding: use PARAMS there (or run Atomik under XWayland). On Linux the

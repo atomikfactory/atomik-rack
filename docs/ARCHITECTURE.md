@@ -3467,7 +3467,12 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   per project. On restore the state goes first and the rack's saved params after. Edits made in the
   plugin's own window become `SetParam`s through a gesture merger (merge ids from 8 x 2^40, one
   gesture is one undo step, flagged so they are not echoed back to the plugin); a patch change
-  inside the plugin is not undoable.
+  inside the plugin (a preset picked in its window, say) is one undo step too: `PluginCommand::SetState`
+  (undoable, merge ids from `8 x 2^40 + 2^38`) at the next quiet capture, when the editor closes
+  and before an undo, unless a param was turned meanwhile; undo gives the old blob back to the live
+  plugin through `SyncOp::PluginStateChanged`. Presets: `PluginInstance::list_presets` /
+  `load_preset` (VST3 `.vstpreset` files; the null backend has fixed ones), the sandbox messages
+  `ListPresets`, `LoadPreset` and `Presets`, and `AppCore::load_plugin_preset` as one `SetState`.
 - **Format v9.** `plugin` is written after `inner`: format, id, name, vendor, version, `path_hint`
   (shown, never used), a compact `layout` (sockets and **only the used param rows**), base64
   `state`, pins, run mode, powered. Params are saved sparsely. Canonical save, load, save is
@@ -4957,11 +4962,11 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   Bit-identical output is guaranteed only for plugins that are deterministic functions of their
   inputs (the test plugins); real plugins that use time or random seeds are not, and a bounce is not
   guaranteed to equal what was heard.  no Wayland embedding in process or without `DISPLAY` (the
-  PARAMS pane is the fallback), a patch change made in the plugin's own window is not undoable, a
-  change made there outside a gesture is not shown until the state is captured, pins default to the
-  first eight params (not the plugin's remote-controls page), window positions are not remembered
-  across runs, recovery snapshots hold the project file without its audio bundle, and surround,
-  multi-output and MPE are not supported.
+  PARAMS pane is the fallback), a change made in the plugin's own window outside a gesture is not
+  shown until the state is captured, pins default to the first eight params (not the plugin's
+  remote-controls page), CLAP presets and VST3 program lists are not listed (only `.vstpreset`
+  files), the Windows DPI choice per plugin is not offered, recovery snapshots hold the project
+  file without its audio bundle, and surround, multi-output and MPE are not supported.
 - **File browser.** Tags and favourites are keyed by path, so moving or renaming a file outside the
   app loses them. A preview plays at 0 dB with no level control and no cue output, and the browser
   shows no waveform. The tree does not expand to reveal the folder shown in the list. Folders are
