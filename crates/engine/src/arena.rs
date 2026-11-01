@@ -418,6 +418,22 @@ impl Arena {
         None
     }
 
+    /// The latest batch device `id` wrote to its output `socket`: valid after the routing has
+    /// run. `None` for a device that is not in the arena or not routed, a socket that does not
+    /// exist, is not an audio or CV output, or has not run this batch. Binary search only; no
+    /// allocation.
+    pub(crate) fn output(&self, id: DeviceInstanceId, socket: SocketId) -> Option<&Batch> {
+        let slot = self.slot_of(id)?;
+        let node = self.nodes.get(slot)?.as_deref()?;
+        let i = usize::from(socket.0);
+        let desc = node.sockets.get(i)?;
+        (node.routed
+            && !node.faulted
+            && desc.direction == Direction::Output
+            && desc.kind != SocketKind::Notes)
+            .then(|| node.signals.get(i))?
+    }
+
     /// The arena slot of device `id`.
     pub(crate) fn slot_of(&self, id: DeviceInstanceId) -> Option<usize> {
         let k = self.index.binary_search_by_key(&id, |e| e.0).ok()?;
