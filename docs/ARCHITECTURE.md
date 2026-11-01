@@ -3940,7 +3940,14 @@ creation chain in the **Creation chain** bullet.
   visible song pane and `platform/app.rs` sets the winit cursor when it changes: the OS icon
   (`translate::cursor_icon`), or for the tool hints a custom cursor drawn by `cursor_art`
   (`translate::cursor_art`; a bitmap per picture and scale, made once with `create_custom_cursor`
-  and cached in `App.custom_cursors`). The **alternate-tool role** (a hold) switches the tool for
+  and cached in `App.custom_cursors`). A drag that carries something has its own hints
+  (`CursorHint::Dragging` the closed hand, `Copy`, `NotAllowed`), decided in `Shell::cursor_in`
+  before the pane under the pointer: files dragged out of the file browser show `Copy` over a
+  place that takes them and `NotAllowed` elsewhere (`drag_cursor::file_drop_hint`); a device, a
+  clip, a track or a palette row held by one pane shows that pane's hint (`RackView::cursor`,
+  `ArrangementView::cursor`), turned into `NotAllowed` by `CursorHint::outside_own_pane` while
+  the pointer is over another pane; the plate of a device that can be dragged shows `Hand`. The
+  **alternate-tool role** (a hold) switches the tool for
   one gesture (Select -> Pencil, any other tool -> Select) and shows on the toolbar from
   `ModifiersChanged` alone (`Shell::forward_modifiers`); **disable snap** is the Ctrl+Alt hold
   (`Roles`; the legacy roles keep Alt alone for it and have no alternate tool, `Roles::legacy`).
@@ -4482,8 +4489,10 @@ items are ordinary project texts, plus one small new file type.
   item's bundle), and a patch that changes nothing is rejected. `ResetDevice` applies
   `DeviceSnapshot::defaults` (a new device's sound) and `SetPatchName` sets the name alone.
   `ItemSummary::device_type` and `ItemInfo::device_type` carry the type id of a one-device patch. In
-  the app, `LoadTarget::Device(key)` (a drop on a device's patch strip,
-  `UiAction::ApplyLibraryPatch`) applies a patch file and says why when it holds several devices or
+  the app, `LoadTarget::Device(key)` (a drop on a device's patch strip, or anywhere on the panel of
+  a device of the patch's own type, `UiAction::ApplyLibraryPatch`; a patch dropped on a panel of
+  another type is inserted below it) applies a patch file and says why when it holds several
+  devices or
   is for another type; `save_device_patch` writes one device as a patch named after the file the
   platform's save dialog picked (`ShellRequest::PickSavePatch`, which confirms an overwrite) and
   keeps the name on the device; `step_patch` walks the patches of the device's type in the folder of

@@ -799,6 +799,16 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **A patch dropped on a device loads into it instead of adding a new device.** The drop used to
+  load only on the small patch strip of the name plate; anywhere else on the panel it inserted a
+  new device. Now a patch for the device's own type loads into the device wherever on its panel
+  it lands (the panel is outlined while the file hovers, instead of the insertion line), from the
+  file browser or the desktop. A patch for another type is inserted right below the device under
+  the pointer, as before.
+- **Clicking a drum machine pad plays the pad when the notes are cabled in.** A pad, sample key or
+  slice pad click sent its note to the top of the track's player stack, so a drum generator in
+  front of the drum machine swallowed it and nothing sounded. The click now goes to the device
+  that owns the pad.
 - **Nudge and track move keys no longer use Ctrl+Alt.** Graphics drivers can take Ctrl+Alt with the
   arrow keys on Windows (they rotate the screen), so the app may never see them. The
   tick nudge of clips and notes is now Ctrl+Shift+Alt+Left and Right (Cmd+Shift+Opt on macOS), and
@@ -888,6 +898,12 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **The cursor shows what a drag does.** While files are dragged out of the file browser the cursor
+  is the copy cursor over a place that takes them and the not-allowed cursor over every other
+  place. A device moved in the rack, a clip, a track or a note lane moved in the sequencer show
+  the closed hand (the copy cursor while the drop copies), and the not-allowed cursor while the
+  pointer is over a pane that takes nothing. A device palette row dragged out shows the copy
+  cursor over the rack. The plate of a device that can be dragged shows the open hand.
 - **Importing audio holds about one copy of it, and big projects open about four times faster.** An
   import used to copy the audio five times (every check copied the buffer, and a file already at
   the project rate was cloned by the resampler); it now peaks at about 1.03 times the decoded size
