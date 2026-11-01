@@ -4,8 +4,8 @@
 //! ```text
 //! LFO 1   [shape][morph][rate][sync][div][phase][amount][polarity][key sync][rate CV]
 //! LFO 2   [shape][morph][rate][sync][div][phase][amount][polarity][key sync][rate CV]
-//! ENVELOPE [A][D][S][R][amount][mode]          SHAPES  [LFO 1 curve] [LFO 2 curve]
-//! SCOPE   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//! ENVELOPE [A][D][S][R][amount][mode]  MODULATION [2>1 rate][2>1 level][lag][key follow]
+//! SCOPE   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    SHAPES  [LFO 1 curve] [LFO 2 curve]
 //! ```
 //!
 //! The controls are the device's params, placed by the generic widgets. The shape displays draw
@@ -59,6 +59,13 @@ const LFO_KEYS: [&str; 10] = [
     "key_sync",
     "rate_cv_trim",
 ];
+/// The params after the envelope: LFO 2 into LFO 1, the output lag and the key follow.
+const MOD_KEYS: [&str; 4] = [
+    "lfo2_to_lfo1_rate",
+    "lfo2_to_lfo1_level",
+    "lag",
+    "key_follow",
+];
 /// The envelope params, in cell order.
 const ENV_KEYS: [&str; 6] = [
     "env_attack",
@@ -85,6 +92,16 @@ pub struct ModSourcePanel {
 
 /// The short label of a param control (`None` for a key that is not this device's).
 pub fn modsrc_label(key: &str) -> Option<String> {
+    let extra = match key {
+        "lfo2_to_lfo1_rate" => Some("2>1 rate"),
+        "lfo2_to_lfo1_level" => Some("2>1 level"),
+        "lag" => Some("Lag"),
+        "key_follow" => Some("Key follow"),
+        _ => None,
+    };
+    if let Some(label) = extra {
+        return Some(label.to_string());
+    }
     let k = key
         .strip_prefix("lfo1_")
         .or_else(|| key.strip_prefix("lfo2_"))
@@ -152,28 +169,38 @@ pub fn modsrc_layout(desc: &DeviceDescriptor) -> PanelSpec {
         label: "ENVELOPE".to_string(),
         rect: Rect::new(x0, y, x0 + env_w, y + TITLE_H),
     });
-    let shapes_x = x0 + env_w + 8.0;
+    let mod_x = x0 + env_w;
+    front.extend(place_controls(
+        desc,
+        &MOD_KEYS,
+        mod_x,
+        COL_W,
+        4,
+        y + TITLE_H,
+    ));
+    sections.push(Section {
+        label: "MODULATION".to_string(),
+        rect: Rect::new(mod_x, y, mod_x + 4.0 * COL_W, y + TITLE_H),
+    });
+    y += TITLE_H + ROW_H + 2.0;
+    // The scope on the left of the last row, the two shape displays on its right.
+    let box_w = 72.0;
+    let shapes_x = x1 - 2.0 * box_w - 4.0;
+    sections.push(Section {
+        label: "SCOPE".to_string(),
+        rect: Rect::new(x0, y, shapes_x - 8.0, y + TITLE_H),
+    });
     sections.push(Section {
         label: "SHAPES".to_string(),
         rect: Rect::new(shapes_x, y, x1, y + TITLE_H),
     });
-    let box_w = (x1 - shapes_x - 4.0) / 2.0;
+    let bottom = f64::from(MODSRC_UNITS) * f64::from(atomik_device_sdk::RACK_UNIT) - 4.0;
     let box_y = y + TITLE_H + 3.0;
     let shapes = [0.0, 1.0].map(|i| {
         let bx = shapes_x + i * (box_w + 4.0);
-        Rect::new(bx, box_y, bx + box_w, box_y + ROW_H - 6.0)
+        Rect::new(bx, box_y, bx + box_w, bottom.min(box_y + ROW_H - 6.0))
     });
-    y += TITLE_H + ROW_H + 2.0;
-    sections.push(Section {
-        label: "SCOPE".to_string(),
-        rect: Rect::new(x0, y, x1, y + TITLE_H),
-    });
-    let scope = Rect::new(
-        x0,
-        y + TITLE_H + 2.0,
-        x1,
-        f64::from(MODSRC_UNITS) * f64::from(atomik_device_sdk::RACK_UNIT) - 4.0,
-    );
+    let scope = Rect::new(x0, y + TITLE_H + 2.0, shapes_x - 8.0, bottom);
 
     // Back: one row of cells per section.
     let (back, back_sections) = back_cells(desc);

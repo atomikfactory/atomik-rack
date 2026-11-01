@@ -1,15 +1,16 @@
-//! The drum generator's rack panel (four rack units): the eight pattern slots, a name line, the
-//! step grid (16 lanes by 16 visible steps with a page selector), the pattern buttons
-//! (ADD, DUP, DEL, COPY, PASTE, CLEAR), GENERATE and RANDOMISE, a length stepper and the twelve
-//! knobs.
+//! The drum generator's rack panel (four rack units): eight pattern slots of the shown bank (A to
+//! D, 32 patterns in all), a name line, a resolution and a shuffle stepper, the step grid (16
+//! lanes by 16 visible steps with a page selector), the pattern buttons (ADD, DUP, DEL, COPY,
+//! PASTE, CLEAR), GENERATE, RANDOMISE and the cell mode, a length stepper and the twelve knobs.
 //!
 //! ```text
 //! STEPS                                  PATTERNS
 //! kick    [M] [] [] [] [] ...16 steps    [1][2][3][4][5][6][7][8]
-//! snare   [M] [] [] [] [] ...            Groove  ·  16 x 1/16  ·  swing 0 %
-//! ...                                    [ADD][DUP][DEL][COPY][PASTE][CLEAR]
-//! 16 lanes                               [GENERATE] [RANDOMISE]
-//! [1-16][17-32][33-48][49-64]   LEN - +  knobs
+//! snare   [M] [] [] [] [] ...            Groove  ·  16 steps        [A][B][C][D]
+//! ...                                    [< RES 1/16 >]  [- SHUF 0 % +]
+//! 16 lanes                               [ADD][DUP][DEL][COPY][PASTE][CLEAR]
+//! [1-16][17-32][33-48][49-64]   LEN - +  [GENERATE] [RANDOMISE] [VEL]
+//!                                        knobs
 //! ```
 //!
 //! # Meaning of the grid
@@ -21,6 +22,18 @@
 //! lane label is the pad name of the drum machine the generator is cabled to (directly or through
 //! other players) for the keys 36 to 51, else the note name of the lane's key; the square left of
 //! the cells mutes the lane.
+//!
+//! The mode button next to RANDOMISE chooses what the cells edit: **VEL** (velocity, as above),
+//! **FLAM** or **RATCH**. In those two modes only a cell with a hit takes the press: a click steps
+//! through the flam values (0, 12, 25, 50 %) or the ratchet values (0, 2, 3, 4, 6, 8 hits), a
+//! vertical drag sets the value (100 px are the whole flam range, 12 px a ratchet hit); each is
+//! one undo step. A flam shows as a bar along the bottom edge of the cell, a ratchet as one tick
+//! per hit.
+//!
+//! The bank buttons A to D show eight patterns each (the slot buttons then number 1 to 8, 9 to 16,
+//! ...); a click on a bank selects the same slot in it, or its last pattern when it is only partly
+//! filled, and a bank without a pattern does nothing. RES steps the edited pattern through the
+//! resolutions 1/4 to 1/32T and SHUF moves its swing by 5 % (Shift: 1 %).
 //!
 //! The panel distinguishes the **edited** pattern (view state; the grid, the name line and the
 //! buttons act on it) from the **playing** one (the device's `pattern` param, a dot on its slot)
@@ -34,7 +47,8 @@ use crate::paint::{button_sized, edit_button, fit_label};
 use crate::seq_panel::{PlayerInfo, back_layout, place_controls, play_state, resolution_label};
 use crate::theme::{Theme, mix};
 use atomik_device_sdk::{DRUM_LANES, RACK_UNIT};
-use atomik_model::{DrumDoc, DrumPatternDoc, MAX_PATTERNS};
+use atomik_device_sdk::{MAX_FLAM, MAX_RATCHET};
+use atomik_model::{DrumDoc, DrumPatternDoc, MAX_DRUM_PATTERNS, SeqResolution};
 use vello::kurbo::{BezPath, Circle, Rect, RoundedRect};
 use vello::peniko::Color;
 
@@ -49,7 +63,13 @@ pub const PAGES: usize = 4;
 /// Velocity of a hit placed by a click.
 pub const DEFAULT_VELOCITY: u8 = 100;
 /// Pattern slots.
-pub const SLOTS: usize = MAX_PATTERNS;
+pub const SLOTS: usize = 8;
+/// Banks of pattern slots (the slot buttons show one bank of [`SLOTS`] at a time).
+pub const BANKS: usize = MAX_DRUM_PATTERNS / SLOTS;
+/// What a click on a cell sets in the flam mode, in percent of the step.
+pub const FLAM_CLICKS: [u8; 4] = [0, 12, 25, MAX_FLAM];
+/// What a click on a cell sets in the ratchet mode, in hits per step.
+pub const RATCHET_CLICKS: [u8; 6] = [0, 2, 3, 4, 6, MAX_RATCHET];
 
 const SLOT_GAP: f64 = 2.0;
 const LABEL_W: f64 = 52.0;
@@ -108,6 +128,18 @@ pub enum DrumButton {
     Page(u8),
     /// The mute square of lane `0..16`.
     Mute(u8),
+    /// Bank `0..4` of pattern slots.
+    Bank(u8),
+    /// The previous step resolution of the edited pattern.
+    ResDec,
+    /// The next step resolution of the edited pattern.
+    ResInc,
+    /// Less shuffle (swing) on the edited pattern (Shift: finer).
+    ShufDec,
+    /// More shuffle (swing) on the edited pattern (Shift: finer).
+    ShufInc,
+    /// What the cells edit: velocity, flam or ratchet.
+    Mode,
     /// The step cells.
     Grid,
 }
@@ -151,6 +183,22 @@ pub struct DrumGenPanel {
     pub len_inc: Rect,
     /// The length read-out between the two.
     pub len_text: Rect,
+    /// The four bank buttons.
+    pub banks: [Rect; BANKS],
+    /// Previous resolution.
+    pub res_dec: Rect,
+    /// The resolution read-out.
+    pub res_text: Rect,
+    /// Next resolution.
+    pub res_inc: Rect,
+    /// Less shuffle.
+    pub shuf_dec: Rect,
+    /// The shuffle read-out.
+    pub shuf_text: Rect,
+    /// More shuffle.
+    pub shuf_inc: Rect,
+    /// The cell edit mode button.
+    pub mode: Rect,
 }
 
 impl DrumGenPanel {
@@ -174,6 +222,12 @@ impl DrumGenPanel {
                 .enumerate()
                 .map(|(i, r)| (DrumButton::Mute(i as u8), *r)),
         );
+        v.extend(
+            self.banks
+                .iter()
+                .enumerate()
+                .map(|(i, r)| (DrumButton::Bank(i as u8), *r)),
+        );
         v.extend([
             (DrumButton::Add, self.add),
             (DrumButton::Duplicate, self.duplicate),
@@ -185,6 +239,11 @@ impl DrumGenPanel {
             (DrumButton::Randomise, self.randomise),
             (DrumButton::LenDec, self.len_dec),
             (DrumButton::LenInc, self.len_inc),
+            (DrumButton::ResDec, self.res_dec),
+            (DrumButton::ResInc, self.res_inc),
+            (DrumButton::ShufDec, self.shuf_dec),
+            (DrumButton::ShufInc, self.shuf_inc),
+            (DrumButton::Mode, self.mode),
         ]);
         v
     }
@@ -203,6 +262,12 @@ impl DrumGenPanel {
             DrumButton::Randomise => self.randomise,
             DrumButton::LenDec => self.len_dec,
             DrumButton::LenInc => self.len_inc,
+            DrumButton::ResDec => self.res_dec,
+            DrumButton::ResInc => self.res_inc,
+            DrumButton::ShufDec => self.shuf_dec,
+            DrumButton::ShufInc => self.shuf_inc,
+            DrumButton::Mode => self.mode,
+            DrumButton::Bank(i) => self.banks[usize::from(i).min(BANKS - 1)],
             DrumButton::Page(i) => self.pages[usize::from(i).min(PAGES - 1)],
             DrumButton::Mute(i) => self.mutes[usize::from(i).min(DRUM_LANES - 1)],
             DrumButton::Grid => self.grid,
@@ -237,7 +302,30 @@ pub fn drum_gen_layout(desc: &atomik_device_sdk::DeviceDescriptor) -> PanelSpec 
         let x = KNOBS_X + i as f64 * (slot_w + SLOT_GAP);
         Rect::new(x, top + 2.0, x + slot_w, top + 20.0)
     });
-    let name = Rect::new(KNOBS_X, top + 24.0, KNOBS_X + RIGHT_W, top + 38.0);
+    // The name line, with the four bank buttons at its right end.
+    let bank_w = 16.0;
+    let name = Rect::new(
+        KNOBS_X,
+        top + 24.0,
+        KNOBS_X + RIGHT_W - BANKS as f64 * (bank_w + 2.0),
+        top + 38.0,
+    );
+    let banks = std::array::from_fn(|i| {
+        let x = KNOBS_X + RIGHT_W - (BANKS - i) as f64 * (bank_w + 2.0) + 2.0;
+        Rect::new(x, top + 24.0, x + bank_w, top + 38.0)
+    });
+    // The groove row: resolution and shuffle steppers.
+    let groove = (top + 42.0, top + 58.0);
+    let gh = (RIGHT_W - 8.0) / 2.0;
+    let stepper = |x: f64| {
+        (
+            Rect::new(x, groove.0, x + 16.0, groove.1),
+            Rect::new(x + 18.0, groove.0, x + gh - 18.0, groove.1),
+            Rect::new(x + gh - 16.0, groove.0, x + gh, groove.1),
+        )
+    };
+    let (res_dec, res_text, res_inc) = stepper(KNOBS_X);
+    let (shuf_dec, shuf_text, shuf_inc) = stepper(KNOBS_X + gh + 8.0);
     let grid = Rect::new(
         GRID_X,
         top + 2.0,
@@ -266,7 +354,7 @@ pub fn drum_gen_layout(desc: &atomik_device_sdk::DeviceDescriptor) -> PanelSpec 
     let len_dec = Rect::new(len_x, page_y.0, len_x + 18.0, page_y.1);
     let len_text = Rect::new(len_x + 20.0, page_y.0, len_x + 60.0, page_y.1);
     let len_inc = Rect::new(len_x + 62.0, page_y.0, len_x + 80.0, page_y.1);
-    let row1 = (top + 42.0, top + 60.0);
+    let row1 = (top + 62.0, top + 80.0);
     let btn_w = (RIGHT_W - 5.0 * SLOT_GAP) / 6.0;
     let mut bx = KNOBS_X;
     let mut small = |_: ()| {
@@ -282,10 +370,21 @@ pub fn drum_gen_layout(desc: &atomik_device_sdk::DeviceDescriptor) -> PanelSpec 
         small(()),
         small(()),
     );
-    let row2 = (top + 64.0, top + 82.0);
-    let half = (RIGHT_W - SLOT_GAP) / 2.0;
-    let generate = Rect::new(KNOBS_X, row2.0, KNOBS_X + half, row2.1);
-    let randomise = Rect::new(KNOBS_X + half + SLOT_GAP, row2.0, KNOBS_X + RIGHT_W, row2.1);
+    let row2 = (top + 84.0, top + 102.0);
+    let third = (RIGHT_W - 2.0 * SLOT_GAP) / 3.0;
+    let generate = Rect::new(KNOBS_X, row2.0, KNOBS_X + third, row2.1);
+    let randomise = Rect::new(
+        KNOBS_X + third + SLOT_GAP,
+        row2.0,
+        KNOBS_X + 2.0 * third + SLOT_GAP,
+        row2.1,
+    );
+    let mode = Rect::new(
+        KNOBS_X + 2.0 * (third + SLOT_GAP),
+        row2.0,
+        KNOBS_X + RIGHT_W,
+        row2.1,
+    );
     let panel = DrumGenPanel {
         title: Rect::new(x0, MARGIN_TOP, GRID_X + GRID_W, MARGIN_TOP + TITLE_H),
         slots,
@@ -305,8 +404,16 @@ pub fn drum_gen_layout(desc: &atomik_device_sdk::DeviceDescriptor) -> PanelSpec 
         len_dec,
         len_inc,
         len_text,
+        banks,
+        res_dec,
+        res_text,
+        res_inc,
+        shuf_dec,
+        shuf_text,
+        shuf_inc,
+        mode,
     };
-    let front = place_controls(desc, &DRUM_GEN_PARAMS, KNOBS_X, COL_W, PER_ROW, top + 86.0);
+    let front = place_controls(desc, &DRUM_GEN_PARAMS, KNOBS_X, COL_W, PER_ROW, top + 106.0);
     let front_sections = vec![
         Section {
             label: "STEPS".to_string(),
@@ -398,6 +505,70 @@ pub fn resized(p: &DrumPatternDoc, delta: i32) -> DrumPatternDoc {
     }
 }
 
+/// The bank (0-based) holding pattern `index`.
+pub fn bank_of(index: usize) -> usize {
+    (index / SLOTS).min(BANKS - 1)
+}
+
+/// The pattern slot `slot` of the bank that holds `edit` selects.
+pub fn slot_pattern(edit: usize, slot: usize) -> usize {
+    bank_of(edit) * SLOTS + slot.min(SLOTS - 1)
+}
+
+/// The pattern a click on bank button `bank` selects when `edit` is the edited one: the same
+/// slot in that bank, or the last pattern when the bank is only partly filled; `None` for a bank
+/// with no pattern yet.
+pub fn bank_target(edit: usize, bank: usize, count: usize) -> Option<usize> {
+    let first = bank * SLOTS;
+    (first < count).then(|| (first + edit % SLOTS).min(count - 1))
+}
+
+/// `p` with its resolution moved by `delta` entries of [`SeqResolution::ALL`] (clamped).
+pub fn stepped_resolution(p: &DrumPatternDoc, delta: i32) -> DrumPatternDoc {
+    let i = SeqResolution::ALL
+        .iter()
+        .position(|r| *r == p.resolution)
+        .unwrap_or(3) as i32;
+    let i = (i + delta).clamp(0, SeqResolution::ALL.len() as i32 - 1) as usize;
+    DrumPatternDoc {
+        resolution: SeqResolution::ALL[i],
+        ..p.clone()
+    }
+}
+
+/// `p` with its swing moved by `delta` percent (0 to 75).
+pub fn with_swing(p: &DrumPatternDoc, delta: i32) -> DrumPatternDoc {
+    DrumPatternDoc {
+        swing: (i32::from(p.swing) + delta).clamp(0, 75) as u8,
+        ..p.clone()
+    }
+}
+
+/// What the cells edit.
+pub const MODE_LABELS: [&str; 3] = ["VEL", "FLAM", "RATCH"];
+
+/// The flam or ratchet a click leaves on a step that has `now`: the next of the click values.
+pub fn clicked_fx(mode: u8, now: u8) -> u8 {
+    let list: &[u8] = if mode == 1 {
+        &FLAM_CLICKS
+    } else {
+        &RATCHET_CLICKS
+    };
+    list.iter().copied().find(|v| *v > now).unwrap_or(0)
+}
+
+/// The flam (mode 1, 100 px = the whole range) or ratchet (mode 2, 12 px per hit) of a step
+/// dragged `dy` logical pixels upwards from `start`.
+pub fn dragged_fx(mode: u8, start: u8, dy: f64) -> u8 {
+    if mode == 1 {
+        (f64::from(start) + dy * f64::from(MAX_FLAM) / 100.0)
+            .round()
+            .clamp(0.0, f64::from(MAX_FLAM)) as u8
+    } else {
+        (f64::from(start) + (dy / 12.0).round()).clamp(0.0, f64::from(MAX_RATCHET)) as u8
+    }
+}
+
 // ------------------------------------------------------------------ painting
 
 /// Draws the panel's extras.
@@ -415,6 +586,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     let edit = info.edit.min(count.saturating_sub(1));
     let state = play_state(pattern_param, info.meters, count);
     paint_slots(c, theme, panel, count, edit, &state, accent);
+    paint_banks(c, theme, panel, count, edit, &state, accent);
     let pattern = doc.patterns.get(edit);
     paint_name(c, theme, panel, pattern, info, accent);
     if let Some(p) = pattern {
@@ -422,9 +594,10 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         let cursor = state.cursor.filter(|_| state.playing == edit);
         paint_grid(c, theme, panel, p, page, cursor, info.pad_names, accent);
         paint_pages(c, theme, panel, p, page);
+        paint_groove(c, theme, panel, p);
     }
     let one = count <= 1;
-    let full = count >= MAX_PATTERNS;
+    let full = count >= MAX_DRUM_PATTERNS;
     edit_button(c, theme, panel.add, "ADD", !full);
     edit_button(c, theme, panel.duplicate, "DUP", !full);
     edit_button(c, theme, panel.remove, "DEL", !one);
@@ -433,6 +606,15 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     edit_button(c, theme, panel.clear, "CLEAR", true);
     button_sized(c, theme, panel.generate, "GENERATE", true, 9.0, 1.0);
     button_sized(c, theme, panel.randomise, "RANDOMISE", true, 9.0, 1.0);
+    let mode = usize::from(info.fx_mode).min(MODE_LABELS.len() - 1);
+    button_sized(c, theme, panel.mode, MODE_LABELS[mode], true, 9.0, 1.0);
+    if mode > 0 {
+        c.stroke_with(
+            RoundedRect::from_rect(panel.mode.inset(-0.5), 3.5),
+            1.5,
+            theme.highlight,
+        );
+    }
 }
 
 fn paint_slots<C: Canvas + ?Sized>(
@@ -444,7 +626,8 @@ fn paint_slots<C: Canvas + ?Sized>(
     state: &crate::seq_panel::PlayState,
     accent: Color,
 ) {
-    for (i, r) in panel.slots.iter().enumerate() {
+    for (slot, r) in panel.slots.iter().enumerate() {
+        let i = slot_pattern(edit, slot);
         let exists = i < count;
         let edited = i == edit;
         let face = if !exists {
@@ -509,16 +692,7 @@ fn paint_name<C: Canvas + ?Sized>(
     );
     let (text, col) = match (info.rename, pattern) {
         (Some(t), _) => (format!("{t}|"), accent),
-        (None, Some(p)) => (
-            format!(
-                "{}  ·  {} x {}  ·  swing {} %",
-                p.name,
-                p.length,
-                resolution_label(p.resolution),
-                p.swing
-            ),
-            theme.text,
-        ),
+        (None, Some(p)) => (format!("{}  ·  {} steps", p.name, p.length), theme.text),
         (None, None) => (String::new(), theme.text),
     };
     c.text(&TextRun::new(
@@ -601,6 +775,7 @@ fn paint_grid<C: Canvas + ?Sized>(
                     * if live { 1.0 } else { 0.25 }
                     * dim;
                 c.fill_with(RoundedRect::from_rect(r, 1.5), accent.with_alpha(a));
+                paint_cell_fx(c, theme, r, &s, if live { 1.0 } else { 0.25 } * dim);
                 if s.prob < 100 {
                     c.fill_with(
                         Rect::new(r.x0 + 2.0, r.y0 + 1.0, r.x1 - 2.0, r.y0 + 2.5),
@@ -642,4 +817,114 @@ fn paint_pages<C: Canvas + ?Sized>(
         )
         .align(Align::Center),
     );
+}
+
+fn paint_banks<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    panel: &DrumGenPanel,
+    count: usize,
+    edit: usize,
+    state: &crate::seq_panel::PlayState,
+    accent: Color,
+) {
+    for (b, r) in panel.banks.iter().enumerate() {
+        let exists = b * SLOTS < count;
+        let active = b == bank_of(edit);
+        let face = if active {
+            mix(theme.button, accent, 0.4)
+        } else if exists {
+            theme.button
+        } else {
+            theme.lcd.with_alpha(0.7)
+        };
+        c.fill_with(RoundedRect::from_rect(*r, 3.0), face);
+        c.stroke_with(
+            RoundedRect::from_rect(r.inset(-0.5), 3.5),
+            if active { 2.0 } else { 1.0 },
+            if active { accent } else { theme.bevel_dark },
+        );
+        c.text(
+            &TextRun::new(
+                char::from(b'A' + b as u8).to_string(),
+                pt(r.center().x, r.center().y + 3.2),
+                8.5,
+                if exists {
+                    theme.text
+                } else {
+                    theme.text_muted.with_alpha(0.45)
+                },
+            )
+            .align(Align::Center)
+            .weight(700),
+        );
+        if exists && bank_of(state.playing) == b && state.playing < count {
+            c.fill_with(Circle::new(pt(r.x1 - 3.5, r.y0 + 3.5), 1.8), accent);
+        }
+    }
+}
+
+fn paint_groove<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    panel: &DrumGenPanel,
+    p: &DrumPatternDoc,
+) {
+    edit_button(
+        c,
+        theme,
+        panel.res_dec,
+        "<",
+        p.resolution != SeqResolution::ALL[0],
+    );
+    edit_button(
+        c,
+        theme,
+        panel.res_inc,
+        ">",
+        p.resolution != SeqResolution::ALL[SeqResolution::ALL.len() - 1],
+    );
+    edit_button(c, theme, panel.shuf_dec, "-", p.swing > 0);
+    edit_button(c, theme, panel.shuf_inc, "+", p.swing < 75);
+    for (r, text) in [
+        (
+            panel.res_text,
+            format!("RES {}", resolution_label(p.resolution)),
+        ),
+        (panel.shuf_text, format!("SHUF {} %", p.swing)),
+    ] {
+        c.fill_with(RoundedRect::from_rect(r, 3.0), theme.lcd);
+        c.text(
+            &TextRun::new(text, pt(r.center().x, r.center().y + 3.0), 8.0, theme.text)
+                .align(Align::Center),
+        );
+    }
+}
+
+/// Marks a hit's flam (a bar at the left edge, as long as the flam) and ratchet (one tick per
+/// hit along the bottom) inside its cell.
+fn paint_cell_fx<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    s: &atomik_model::DrumStepDoc,
+    alpha: f32,
+) {
+    if s.flam > 0 {
+        let w = (r.width() - 2.0) * f64::from(s.flam) / f64::from(MAX_FLAM);
+        c.fill_with(
+            Rect::new(r.x0 + 1.0, r.y1 - 3.5, r.x0 + 1.0 + w.max(1.5), r.y1 - 2.0),
+            theme.text.with_alpha(0.9 * alpha),
+        );
+    }
+    if s.ratchet > 1 {
+        let n = f64::from(s.ratchet.min(MAX_RATCHET));
+        for j in 0..s.ratchet.min(MAX_RATCHET) {
+            let x = r.x0 + 1.0 + (r.width() - 2.0) * f64::from(j) / n;
+            c.fill_with(
+                Rect::new(x, r.y1 - 5.0, x + 1.0, r.y1 - 1.5),
+                theme.text.with_alpha(0.9 * alpha),
+            );
+        }
+    }
 }

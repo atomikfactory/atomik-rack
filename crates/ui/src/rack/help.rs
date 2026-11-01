@@ -41,6 +41,20 @@ fn drum_button(b: DrumButton) -> Option<Cow<'static, str>> {
         DrumButton::Randomise => "Write the pattern again from the next seed",
         DrumButton::LenDec => "One step shorter (Shift: four)",
         DrumButton::LenInc => "One step longer (Shift: four)",
+        DrumButton::Bank(n) => {
+            return Some(Cow::Owned(format!(
+                "Patterns {} to {}",
+                u32::from(n) * 8 + 1,
+                u32::from(n) * 8 + 8
+            )));
+        }
+        DrumButton::ResDec => "Previous step resolution of the edited pattern",
+        DrumButton::ResInc => "Next step resolution of the edited pattern",
+        DrumButton::ShufDec => "Less shuffle (Shift: finer steps)",
+        DrumButton::ShufInc => "More shuffle (Shift: finer steps)",
+        DrumButton::Mode => {
+            "What the cells edit: velocity, flam (click or drag a hit) or ratchet (click or drag a hit)"
+        }
         DrumButton::Page(n) => {
             return Some(Cow::Owned(format!(
                 "Show steps {} to {}",

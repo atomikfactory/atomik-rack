@@ -49,7 +49,7 @@ fn check(name: &str, actual: &str) {
 }
 
 fn hit(velocity: u8, prob: u8) -> DrumStepDoc {
-    DrumStepDoc { velocity, prob }
+    DrumStepDoc::hit(velocity, prob)
 }
 
 /// "Groove": 16 x 1/16, a kick on the beats, a snare on the backbeats, a 50 % ghost, a muted
@@ -693,4 +693,240 @@ fn preview_pngs() {
         )
         .unwrap();
     }
+}
+
+// ------------------------------------------------------------------ banks, groove, flam, ratchet
+
+/// The generator with `n` patterns (the first three as in `drums_doc`).
+fn many(n: usize) -> RackDoc {
+    let mut doc = only();
+    let g = doc
+        .devices
+        .iter_mut()
+        .find(|d| d.key == key("gen"))
+        .unwrap();
+    let list = &mut g.drums.as_mut().unwrap().patterns;
+    while list.len() < n {
+        let name = format!("Pattern {}", list.len() + 1);
+        list.push(DrumPatternDoc::new(name));
+    }
+    doc
+}
+
+fn pad_step(device: &str, index: u8, lane: u8, step: u8, velocity: u8) -> Command {
+    Command::SetDrumStep {
+        device: key(device),
+        index,
+        lane,
+        step,
+        velocity,
+        prob: 100,
+        merge: None,
+    }
+}
+
+fn selected(out: &[UiAction], want: u8) -> bool {
+    out.iter()
+        .any(|a| matches!(a, UiAction::SelectPattern { index, .. } if *index == want))
+}
+
+#[test]
+fn the_slots_show_the_bank_of_the_edited_pattern_and_the_banks_switch() {
+    let (mut d, mut v) = setup(many(20));
+    let texts = texts_of(&mut v, &d);
+    for want in ["A", "B", "C", "D", "1", "8"] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    // Bank B holds patterns 9 to 16: the slot buttons relabel and select there.
+    let p = center(&v, DrumButton::Bank(1));
+    let out = click(&mut v, &mut d, p);
+    assert!(selected(&out, 8), "{out:?}");
+    let texts = texts_of(&mut v, &d);
+    assert!(texts.iter().any(|t| t == "9") && texts.iter().any(|t| t == "16"));
+    let p = center(&v, DrumButton::Slot(3));
+    let out = click(&mut v, &mut d, p);
+    assert!(selected(&out, 11), "{out:?}");
+    // Bank C is partly filled: the click lands on its last pattern.
+    let p = center(&v, DrumButton::Bank(2));
+    let out = click(&mut v, &mut d, p);
+    assert!(selected(&out, 19), "{out:?}");
+    // Bank D has no pattern yet: nothing happens.
+    let p = center(&v, DrumButton::Bank(3));
+    let out = click(&mut v, &mut d, p);
+    assert!(
+        out.iter()
+            .all(|a| !matches!(a, UiAction::SelectPattern { .. }))
+    );
+    // An edit in a later bank goes to that pattern.
+    let p = cell(&v, 1, 2);
+    let out = click(&mut v, &mut d, p);
+    assert_eq!(commands(&out), [pad_step("gen", 19, 1, 2, 100)]);
+    assert_eq!(drums(&d).patterns[19].steps[1][2].velocity, 100);
+}
+
+#[test]
+fn add_and_duplicate_run_to_thirty_two_patterns() {
+    let (mut d, mut v) = setup(many(31));
+    let p = center(&v, DrumButton::Add);
+    let out = click(&mut v, &mut d, p);
+    assert!(matches!(
+        commands(&out)[..],
+        [Command::AddDrumPattern { .. }]
+    ));
+    assert_eq!(drums(&d).patterns.len(), 32);
+    for b in [DrumButton::Add, DrumButton::Duplicate] {
+        let p = center(&v, b);
+        let out = click(&mut v, &mut d, p);
+        assert!(commands(&out).is_empty(), "{b:?} is refused at 32");
+    }
+}
+
+#[test]
+fn the_groove_steppers_change_the_resolution_and_the_shuffle() {
+    let (mut d, mut v) = setup(only());
+    let reg = registry();
+    let texts = texts_of(&mut v, &d);
+    assert!(texts.iter().any(|t| t == "RES 1/16"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "SHUF 0 %"));
+    let p = center(&v, DrumButton::ResInc);
+    click(&mut v, &mut d, p);
+    assert_eq!(
+        drums(&d).patterns[0].resolution,
+        atomik_model::SeqResolution::SixteenthTriplet
+    );
+    let p = center(&v, DrumButton::ResDec);
+    for _ in 0..2 {
+        click(&mut v, &mut d, p);
+    }
+    assert_eq!(
+        drums(&d).patterns[0].resolution,
+        atomik_model::SeqResolution::EighthTriplet
+    );
+    let p = center(&v, DrumButton::ShufInc);
+    click(&mut v, &mut d, p);
+    assert_eq!(drums(&d).patterns[0].swing, 5);
+    let mut out = v.handle(
+        &UiEvent::PointerDown {
+            pos: p,
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: Modifiers {
+                shift: true,
+                ..Modifiers::NONE
+            },
+            clicks: 1,
+        },
+        d.doc(),
+        &reg,
+    );
+    out.extend(v.handle(&up(p), d.doc(), &reg));
+    apply(&mut d, &mut v, &out);
+    assert_eq!(drums(&d).patterns[0].swing, 6, "Shift steps by one");
+    let p = center(&v, DrumButton::ShufDec);
+    for _ in 0..3 {
+        click(&mut v, &mut d, p);
+    }
+    assert_eq!(drums(&d).patterns[0].swing, 0, "clamped at zero");
+    d.undo(&reg).unwrap();
+    assert_eq!(drums(&d).patterns[0].swing, 1);
+}
+
+#[test]
+fn the_mode_button_cycles_and_a_click_sets_the_next_flam_or_ratchet() {
+    let (mut d, mut v) = setup(only());
+    let reg = registry();
+    assert!(texts_of(&mut v, &d).iter().any(|t| t == "VEL"));
+    // Velocity mode first; one press gives the flam mode.
+    let m = center(&v, DrumButton::Mode);
+    click(&mut v, &mut d, m);
+    assert!(texts_of(&mut v, &d).iter().any(|t| t == "FLAM"));
+    // The kick on step 4 has a hit: clicks walk 0, 12, 25, 50 and back to 0.
+    let p = cell(&v, 0, 4);
+    for want in [12u8, 25, 50, 0] {
+        let out = click(&mut v, &mut d, p);
+        assert!(
+            matches!(commands(&out)[..], [Command::SetDrumStepFx { flam, .. }] if flam == want),
+            "{:?}",
+            commands(&out)
+        );
+        assert_eq!(drums(&d).patterns[0].steps[0][4].flam, want);
+    }
+    // An empty cell ignores the press in this mode.
+    let empty = cell(&v, 5, 5);
+    assert!(commands(&click(&mut v, &mut d, empty)).is_empty());
+    // The ratchet mode.
+    click(&mut v, &mut d, m);
+    assert!(texts_of(&mut v, &d).iter().any(|t| t == "RATCH"));
+    for want in [2u8, 3, 4, 6, 8, 0] {
+        click(&mut v, &mut d, p);
+        assert_eq!(drums(&d).patterns[0].steps[0][4].ratchet, want);
+    }
+    // Back to the velocity mode: a click toggles again.
+    click(&mut v, &mut d, m);
+    let out = click(&mut v, &mut d, p);
+    assert!(matches!(
+        commands(&out)[..],
+        [Command::SetDrumStep { velocity: 0, .. }]
+    ));
+    d.undo(&reg).unwrap();
+}
+
+#[test]
+fn a_drag_in_the_flam_and_ratchet_modes_is_one_undo_step() {
+    let (mut d, mut v) = setup(only());
+    let reg = registry();
+    let before = d.doc().clone();
+    let m = center(&v, DrumButton::Mode);
+    click(&mut v, &mut d, m); // flam
+    let p = cell(&v, 0, 4);
+    let mut out = v.handle(&down(p), d.doc(), &reg);
+    for dy in [-10.0, -40.0] {
+        out.extend(v.handle(&mv(Point::new(p.x, p.y + dy)), d.doc(), &reg));
+    }
+    out.extend(v.handle(&up(Point::new(p.x, p.y - 40.0)), d.doc(), &reg));
+    apply(&mut d, &mut v, &out);
+    assert_eq!(
+        drums(&d).patterns[0].steps[0][4].flam,
+        20,
+        "100 px is the whole range"
+    );
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before, "one undo step");
+    v.sync(d.doc(), &reg);
+    click(&mut v, &mut d, m); // ratchet
+    let mut out = v.handle(&down(p), d.doc(), &reg);
+    out.extend(v.handle(&mv(Point::new(p.x, p.y - 36.0)), d.doc(), &reg));
+    out.extend(v.handle(&up(Point::new(p.x, p.y - 36.0)), d.doc(), &reg));
+    apply(&mut d, &mut v, &out);
+    let s = drums(&d).patterns[0].steps[0][4];
+    assert_eq!(
+        (s.ratchet, s.velocity),
+        (3, 110),
+        "12 px per hit, the hit stays"
+    );
+    // Esc restores.
+    let mut out = v.handle(&down(p), d.doc(), &reg);
+    out.extend(v.handle(&mv(Point::new(p.x, p.y - 100.0)), d.doc(), &reg));
+    out.extend(v.handle(&press(Key::Escape, Modifiers::NONE), d.doc(), &reg));
+    apply(&mut d, &mut v, &out);
+    assert_eq!(drums(&d).patterns[0].steps[0][4].ratchet, 3);
+}
+
+#[test]
+fn flam_and_ratchet_show_on_the_cells() {
+    let mut p = groove();
+    p.steps[0][0].flam = 25;
+    p.steps[0][4].ratchet = 4;
+    let mut doc = only();
+    doc.devices
+        .iter_mut()
+        .find(|d| d.key == key("gen"))
+        .unwrap()
+        .drums = Some(DrumDoc { patterns: vec![p] });
+    let (d, mut v) = setup(doc);
+    let mut marked = DisplayList::new();
+    v.paint(&mut marked, d.doc(), &registry());
+    let (d2, mut v2) = setup(only());
+    let mut other = DisplayList::new();
+    v2.paint(&mut other, d2.doc(), &registry());
+    assert_ne!(marked.to_json(), other.to_json());
 }

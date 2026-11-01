@@ -623,7 +623,7 @@ pub(crate) fn fit_rows_between(
 /// Type id of the drum machine, which has its own panel ([`drum_layout`]).
 pub const DRUM_TYPE: &str = "atomik.drum-machine";
 /// Height of the drum panel in rack units.
-pub const DRUM_UNITS: u8 = 3;
+pub const DRUM_UNITS: u8 = 4;
 /// Packing index of the global CV trim knob `i` (`DRUM_TRIM_ITEM + i`: 0 level, 1 pitch), above
 /// any socket.
 const DRUM_TRIM_ITEM: usize = 10_000;
@@ -640,9 +640,11 @@ pub const DRUM_PAD_CELL: (f64, f64) = (54.0, 48.0);
 const DRUM_COL_W: f64 = 64.0;
 const DRUM_KNOBS_X: f64 = CONTENT_X.0 + 4.0 * DRUM_PAD_CELL.0 + 16.0;
 const DRUM_MASTER_X: f64 = DRUM_KNOBS_X + 4.0 * DRUM_COL_W + 16.0;
-/// The per-pad params of the drum panel, in layout order (knobs left to right, two rows).
-pub const DRUM_PAD_PARAMS: [&str; 8] = [
-    "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity",
+/// The per-pad params of the drum panel, in layout order (knobs left to right, four rows: the
+/// pad, then its tone, cuts, drive and sends).
+pub const DRUM_PAD_PARAMS: [&str; 14] = [
+    "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity", "tone", "lowcut",
+    "highcut", "drive", "send1", "send2",
 ];
 
 /// Geometry of the drum panel's extras (front, panel coordinates).
@@ -769,9 +771,9 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         pads,
         info: Rect::new(
             DRUM_KNOBS_X,
-            top + 2.0 * ROW_H + 8.0,
+            top + 4.0 * ROW_H + 8.0,
             DRUM_KNOBS_X + knobs_w,
-            top + 2.0 * ROW_H + 44.0,
+            top + 4.0 * ROW_H + 44.0,
         ),
         pad_title: Rect::new(
             DRUM_KNOBS_X,

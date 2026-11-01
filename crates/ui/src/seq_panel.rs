@@ -580,6 +580,8 @@ pub struct PlayerInfo<'a> {
     pub rename: Option<&'a str>,
     /// The visible page of steps (drum generator panel), 0-based.
     pub page: usize,
+    /// What the cells of the drum generator panel edit: 0 velocity, 1 flam, 2 ratchet.
+    pub fx_mode: u8,
     /// The pad names of the drum machine a drum generator is cabled to (empty without one).
     pub pad_names: &'a [String],
 }
