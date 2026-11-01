@@ -4888,6 +4888,20 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            // The player stack commands act on the selected tracks and are one undo step each.
+            AppCommand::DirectRecord
+            | AppCommand::SendPlayersToTrack
+            | AppCommand::FoldPlayers
+            | AppCommand::BypassPlayers => {
+                match command {
+                    AppCommand::DirectRecord => self.core.toggle_direct_record(),
+                    AppCommand::SendPlayersToTrack => self.core.send_players_to_track(),
+                    AppCommand::FoldPlayers => self.core.fold_all_players(),
+                    _ => self.core.bypass_all_players(),
+                }
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::AudioReverse
             | AppCommand::AudioWarp
             | AppCommand::AudioWarpMode(_)

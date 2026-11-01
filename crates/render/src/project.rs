@@ -827,9 +827,15 @@ pub(crate) struct Extra<'a> {
     /// Devices (flat keys) whose published meter values and scope frames are read when the
     /// render ends ([`Core::meters`], [`probe_devices`]).
     pub meter_probes: Vec<DeviceKey>,
+    /// Devices (flat keys) whose received notes are captured with their host frames
+    /// ([`Core::notes`]): what a player stack generates for its instrument.
+    pub note_taps: Vec<DeviceKey>,
     /// Progress and cancel.
     pub control: crate::plugin_pass::RenderControl<'a>,
 }
+
+/// The notes a tapped device received: `(host frame, MIDI bytes)` in arrival order.
+pub(crate) type TappedNotes = Vec<(u64, Vec<u8>)>;
 
 /// A finished [`render_core`].
 pub(crate) struct Core {
@@ -840,6 +846,9 @@ pub(crate) struct Core {
     /// What each of `Extra::meter_probes` showed when the render ended (devices that are not
     /// built are left out).
     pub meters: Vec<DeviceProbe>,
+    /// The notes each of `Extra::note_taps` received, as `(host frame, MIDI bytes)` (devices that
+    /// are not built are left out).
+    pub notes: Vec<(DeviceKey, TappedNotes)>,
 }
 
 /// Frames of a device's scope tap kept by a probe (the largest analysis window).
@@ -975,6 +984,42 @@ pub(crate) fn render_core(
             edit: HotEdit::Transport(command),
         })
         .collect();
+    // Note taps: the engine queues what the tapped devices receive; the progress callback (every
+    // few batches) and the end of the render move it out, so a long song never fills a queue.
+    let mut note_taps = Vec::new();
+    for key in &extra.note_taps {
+        if let Some(id) = ids.get(key) {
+            let tap = handle
+                .tap_notes(*id)
+                .map_err(|e| RenderError::Project(format!("engine: {e}")))?;
+            note_taps.push((key.clone(), tap));
+        }
+    }
+    let captured: std::sync::Mutex<Vec<TappedNotes>> =
+        std::sync::Mutex::new(vec![Vec::new(); note_taps.len()]);
+    let drain_notes = || {
+        let mut all = captured.lock().unwrap_or_else(|e| e.into_inner());
+        for (k, (_, tap)) in note_taps.iter().enumerate() {
+            while let Some(e) = tap.pop() {
+                all[k].push((e.frame, e.bytes().to_vec()));
+            }
+        }
+    };
+    let user_progress = extra.control.progress;
+    let tapped_progress = |fraction: f32| {
+        drain_notes();
+        if let Some(p) = user_progress {
+            p(fraction);
+        }
+    };
+    let control = if note_taps.is_empty() {
+        extra.control
+    } else {
+        crate::plugin_pass::RenderControl {
+            cancel: extra.control.cancel,
+            progress: Some(&tapped_progress),
+        }
+    };
     let job = OfflineJob {
         frames: plan.frames,
         host_block: options.host_block.get(),
@@ -995,7 +1040,7 @@ pub(crate) fn render_core(
                 snapshot,
                 edits,
                 &mut pass,
-                &extra.control,
+                &control,
             );
             warnings.append(&mut pass.warnings);
             channels
@@ -1011,7 +1056,7 @@ pub(crate) fn render_core(
             edits,
             topology,
             &mut warnings,
-            &extra.control,
+            &control,
         ),
     };
     let latencies = extra
@@ -1047,6 +1092,12 @@ pub(crate) fn render_core(
             })
         })
         .collect();
+    drain_notes();
+    let notes = note_taps
+        .iter()
+        .map(|(k, _)| k.clone())
+        .zip(captured.lock().unwrap_or_else(|e| e.into_inner()).drain(..))
+        .collect();
     // The devices go away with the engine; the plugins are destroyed on this (the main) thread.
     drop(engine);
     drop(handle);
@@ -1064,6 +1115,7 @@ pub(crate) fn render_core(
         },
         latencies,
         meters,
+        notes,
     }))
 }
 

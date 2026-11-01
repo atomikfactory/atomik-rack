@@ -35,6 +35,8 @@ const SLOT_GHOST_VEL: u64 = 0x400;
 const SLOT_ADD: u64 = 0x500;
 const SLOT_REMOVE: u64 = 0x600;
 const SLOT_FILL: u64 = 0x700;
+/// Slot of the map draw (the lane in the low byte).
+const SLOT_MAP: u64 = 0x900;
 /// Slot of the per-bar variation draw (lane 0).
 const SLOT_VARIED: u64 = 0x800;
 
@@ -225,6 +227,47 @@ impl Rules<'_> {
     }
 }
 
+/// The map: four corner patterns blended by an XY position. Corner A (pattern 1) sits at the
+/// origin, B (pattern 2) at x = 1, C (pattern 3) at y = 1 and D (pattern 4) at both; a missing
+/// corner is empty.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MapView<'a> {
+    pub corners: [Option<&'a DrumPattern>; 4],
+    /// 0..=1 (already mirrored).
+    pub x: f64,
+    /// 0..=1.
+    pub y: f64,
+    /// 0..=1: scales every hit chance (0 is silent).
+    pub density: f64,
+}
+
+/// The base velocity (0 = no hit) of a lane under the map: each corner contributes the hit its
+/// own pattern would play with weight `w_c` (the bilinear weight of the corner); the hit plays
+/// when a hash of the seed, the global step and the lane is below the summed weight of the
+/// corners that hit, times `density`; its velocity is the weighted mean of those corners'.
+/// At a corner the weight is 0 or 1, so the hits are that pattern's own.
+fn map_base(map: &MapView<'_>, lane: usize, k: i64, grid: Grid, t: &Tuning, m: &Meter) -> u8 {
+    let (x, y) = (map.x.clamp(0.0, 1.0), map.y.clamp(0.0, 1.0));
+    let weights = [(1.0 - x) * (1.0 - y), x * (1.0 - y), (1.0 - x) * y, x * y];
+    let mut blend = 0.0;
+    let mut vel_sum = 0.0;
+    for (corner, w) in map.corners.iter().zip(weights) {
+        let Some(p) = corner else { continue };
+        if w <= 0.0 {
+            continue;
+        }
+        let v = Rules { p, grid, t, m }.base(lane, k);
+        if v > 0 {
+            blend += w;
+            vel_sum += w * f64::from(v);
+        }
+    }
+    if blend <= 0.0 || unit(t.seed_mix, k, SLOT_MAP + lane as u64) >= blend * map.density {
+        return 0;
+    }
+    (vel_sum / blend).round().clamp(1.0, 127.0) as u8
+}
+
 /// The velocity (0 = no hit) of `lane` at global step `k` of `p`, whose grid is `grid`.
 pub(crate) fn hit_velocity(
     p: &DrumPattern,
@@ -234,12 +277,36 @@ pub(crate) fn hit_velocity(
     t: &Tuning,
     m: &Meter,
 ) -> u8 {
+    let base = Rules { p, grid, t, m }.base(lane, k);
+    hit_velocity_from(p, lane, k, (grid, t, m), base)
+}
+
+/// [`hit_velocity`] under the map for a lane the map does not lock.
+pub(crate) fn mapped_hit_velocity(
+    p: &DrumPattern,
+    map: &MapView<'_>,
+    lane: usize,
+    k: i64,
+    (grid, t, m): (Grid, &Tuning, &Meter),
+) -> u8 {
+    let base = map_base(map, lane, k, grid, t, m);
+    hit_velocity_from(p, lane, k, (grid, t, m), base)
+}
+
+/// The rules after the written hit: `base` is what step 1 gave.
+fn hit_velocity_from(
+    p: &DrumPattern,
+    lane: usize,
+    k: i64,
+    (grid, t, m): (Grid, &Tuning, &Meter),
+    base: u8,
+) -> u8 {
     let r = Rules { p, grid, t, m };
     let role = p.lanes[lane].role;
     let s = r.spot(k);
     let w = role_weight(role, s.pos, s.late);
     let lane_slot = lane as u64;
-    let mut vel = f64::from(r.base(lane, k));
+    let mut vel = f64::from(base);
 
     // Density.
     if vel == 0.0 && t.density > 0.0 {

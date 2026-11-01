@@ -26,6 +26,9 @@
 //!   chords that share a key keep it sounding until the last of them is released. `AllOff`
 //!   closes everything and passes on; a `reset` leaves an `AllOff` for the next batch when a
 //!   note sounded.
+//! * **Custom scale, alter, size.** `scale.custom` replaces the scale kind with the twelve
+//!   `scale.note.N` toggles (an empty set restricts nothing); `chord.alter` moves the third or fifth
+//!   of the chord by a semitone; `chord.notes` keeps the lowest n notes (0 = all).
 //! * **Bypass** (`bypass`, last param): see `crate::note_fx::PlayerBypass`.
 
 use atomik_core::theory::{
@@ -146,8 +149,31 @@ const P_VOICING: u32 = 6;
 const P_OCTAVE: u32 = 7;
 const P_VELOCITY: u32 = 8;
 const P_BYPASS: u32 = 9;
+const P_CUSTOM: u32 = 10;
+/// First of the twelve `scale.note.N` toggles (ids 11..=22, one per pitch class from C).
+const P_NOTE0: u32 = 11;
+const P_ALTER: u32 = 23;
+const P_NOTES: u32 = 24;
 
-static PARAMS: [ParamDescriptor; 10] = [
+const ALTERS: Unit = Unit::Choice(&["off", "major 3rd", "minor 3rd", "sus4", "flat 5", "sharp 5"]);
+
+/// The custom scale a project starts with: C major.
+const C_MAJOR: u16 = 0b1010_1011_0101;
+
+macro_rules! note_param {
+    ($n:expr, $key:expr, $name:expr, $on:expr) => {
+        param(
+            P_NOTE0 + $n,
+            $key,
+            $name,
+            (0.0, 1.0, $on),
+            Unit::Toggle,
+            true,
+        )
+    };
+}
+
+static PARAMS: [ParamDescriptor; 25] = [
     param(
         P_ROOT,
         "scale.root",
@@ -214,6 +240,42 @@ static PARAMS: [ParamDescriptor; 10] = [
         false,
     ),
     bypass_param(P_BYPASS),
+    param(
+        P_CUSTOM,
+        "scale.custom",
+        "Custom scale",
+        (0.0, 1.0, 0.0),
+        Unit::Toggle,
+        true,
+    ),
+    note_param!(0, "scale.note.0", "Scale note C", 1.0),
+    note_param!(1, "scale.note.1", "Scale note C#", 0.0),
+    note_param!(2, "scale.note.2", "Scale note D", 1.0),
+    note_param!(3, "scale.note.3", "Scale note D#", 0.0),
+    note_param!(4, "scale.note.4", "Scale note E", 1.0),
+    note_param!(5, "scale.note.5", "Scale note F", 1.0),
+    note_param!(6, "scale.note.6", "Scale note F#", 0.0),
+    note_param!(7, "scale.note.7", "Scale note G", 1.0),
+    note_param!(8, "scale.note.8", "Scale note G#", 0.0),
+    note_param!(9, "scale.note.9", "Scale note A", 1.0),
+    note_param!(10, "scale.note.10", "Scale note A#", 0.0),
+    note_param!(11, "scale.note.11", "Scale note B", 1.0),
+    param(
+        P_ALTER,
+        "chord.alter",
+        "Alter",
+        (0.0, 5.0, 0.0),
+        ALTERS,
+        true,
+    ),
+    param(
+        P_NOTES,
+        "chord.notes",
+        "Chord notes",
+        (0.0, 5.0, 0.0),
+        Unit::None,
+        true,
+    ),
 ];
 
 /// Static description of the Key & Chord device.
@@ -279,11 +341,21 @@ pub struct KeyChord {
     voicing: Voicing,
     octave: i32,
     added_velocity: f32,
+    /// The twelve toggles replace the scale kind; an empty set restricts nothing.
+    custom: bool,
+    custom_mask: u16,
+    alter: u8,
+    /// Chord size limit; 0 = the whole chord.
+    chord_notes: usize,
 }
 
 impl KeyChord {
     fn new() -> Self {
         Self {
+            custom: false,
+            custom_mask: C_MAJOR,
+            alter: 0,
+            chord_notes: 0,
             router: NoteRouter::new(),
             bypass: PlayerBypass::new(),
             flush_alloff: false,
@@ -298,23 +370,50 @@ impl KeyChord {
         }
     }
 
+    fn in_scale(&self, key: u8) -> bool {
+        if self.custom {
+            self.custom_mask == 0 || self.custom_mask & (1 << (key % 12)) != 0
+        } else {
+            self.scale.contains(key)
+        }
+    }
+
+    /// The in-scale key nearest to `key`, ties down.
+    fn nearest(&self, key: u8) -> u8 {
+        if !self.custom {
+            return self.scale.nearest(key);
+        }
+        for d in 0..12u8 {
+            if let Some(k) = key.checked_sub(d)
+                && self.in_scale(k)
+            {
+                return k;
+            }
+            let up = key.saturating_add(d);
+            if up <= MAX_KEY && self.in_scale(up) {
+                return up;
+            }
+        }
+        key
+    }
+
     /// The in-scale key at or above `key`, if the range has one.
     fn up_from(&self, key: u8) -> Option<u8> {
-        (key..=MAX_KEY).find(|k| self.scale.contains(*k))
+        (key..=MAX_KEY).find(|k| self.in_scale(*k))
     }
 
     /// The in-scale key at or below `key`, if the range has one.
     fn down_from(&self, key: u8) -> Option<u8> {
-        (0..=key).rev().find(|k| self.scale.contains(*k))
+        (0..=key).rev().find(|k| self.in_scale(*k))
     }
 
     /// The key the scale stage gives `key`, or `None` when the filter drops it.
     fn scale_stage(&self, key: u8) -> Option<u8> {
         match self.mode {
             ScaleMode::Off => Some(key),
-            ScaleMode::Filter => self.scale.contains(key).then_some(key),
+            ScaleMode::Filter => self.in_scale(key).then_some(key),
             ScaleMode::Snap => match self.snap {
-                Snap::Nearest => Some(self.scale.nearest(key)),
+                Snap::Nearest => Some(self.nearest(key)),
                 Snap::Up => self.up_from(key).or_else(|| self.down_from(key)),
                 Snap::Down => self.down_from(key).or_else(|| self.up_from(key)),
             },
@@ -323,13 +422,38 @@ impl KeyChord {
 
     /// The chord keys on `base` (ascending, at most eight) before voicing.
     fn chord_keys(&self, base: u8, out: &mut [u8; MAX_CHORD_KEYS]) -> usize {
+        let n = self.chord_keys_all(base, out);
+        // Alter the chord, then keep its lowest `chord.notes` keys.
+        if self.alter > 0 {
+            for k in &mut out[..n] {
+                let rel = (*k + 12 - base % 12) % 12;
+                let shift: i16 = match (self.alter, rel) {
+                    (1, 3) => 1,
+                    (2, 4) => -1,
+                    (3, 3) => 2,
+                    (3, 4) => 1,
+                    (4, 7) => -1,
+                    (5, 7) => 1,
+                    _ => 0,
+                };
+                *k = (i16::from(*k) + shift).clamp(0, i16::from(MAX_KEY)) as u8;
+            }
+        }
+        if self.chord_notes > 0 {
+            n.min(self.chord_notes)
+        } else {
+            n
+        }
+    }
+
+    fn chord_keys_all(&self, base: u8, out: &mut [u8; MAX_CHORD_KEYS]) -> usize {
         match self.chord {
             ChordSel::Off => {
                 out[0] = base;
                 1
             }
             ChordSel::Fixed(kind) => chord_into(base, kind, self.inversion, out),
-            ChordSel::Diatonic(size) if self.scale.is_chromatic() => {
+            ChordSel::Diatonic(size) if self.custom || self.scale.is_chromatic() => {
                 let kind = match size {
                     DiatonicSize::Triad => ChordKind::Major,
                     DiatonicSize::Seventh => ChordKind::MajorSeventh,
@@ -509,6 +633,17 @@ impl Device for KeyChord {
             P_OCTAVE => self.octave = int(-2.0, 2.0),
             P_VELOCITY => self.added_velocity = plain.clamp(0.0, 1.0),
             P_BYPASS => self.bypass.set_param(plain),
+            P_CUSTOM => self.custom = plain >= 0.5,
+            i @ P_NOTE0..=22 => {
+                let bit = 1u16 << (i - P_NOTE0);
+                if plain >= 0.5 {
+                    self.custom_mask |= bit;
+                } else {
+                    self.custom_mask &= !bit;
+                }
+            }
+            P_ALTER => self.alter = int(0.0, 5.0) as u8,
+            P_NOTES => self.chord_notes = int(0.0, 5.0) as usize,
             _ => {}
         }
     }

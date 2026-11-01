@@ -376,6 +376,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Track, "armed", 1),
     field(Track, "no_chase", 17),
     field(Track, "notes_to", 31),
+    field(Track, "direct_record", 39).ignorable(),
     field(Track, "group", 22),
     field(Track, "color", 22),
     field(Track, "comment", 22),

@@ -567,6 +567,10 @@ pub struct Track {
     /// A device that is not in the document any more counts as `None`
     /// ([`crate::RackDoc::notes_entry`]).
     pub notes_to: Option<DeviceKey>,
+    /// Direct Record: while recording, the track records the notes its player stack generates
+    /// (what the instrument receives) instead of the notes played into the top of the stack. Off
+    /// by default; written only when set (project format 39, an optional field).
+    pub direct_record: bool,
     /// The track is frozen: its instrument and the first effects of its channel's insert chain
     /// are rendered to the audio held here, which plays instead of them (see
     /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.
@@ -610,6 +614,14 @@ pub struct FrameClock {
 }
 
 impl FrameClock {
+    /// The tick at a song frame (rounded to the nearest tick): the inverse of [`Self::at`].
+    pub fn tick_at(&self, frame: u64) -> i64 {
+        self.table
+            .map()
+            .tick(frame as f64, self.sample_rate)
+            .round() as i64
+    }
+
     /// The song frame of a tick: what [`Song::frame_at`] returns.
     pub fn at(&self, tick: i64) -> u64 {
         self.table.map().song_frame(tick, self.sample_rate)
@@ -732,6 +744,14 @@ pub enum SongCommand {
         device: DeviceKey,
         /// Chase notes that span the play position.
         chase: bool,
+    },
+    /// Switch Direct Record of a track on or off (see [`Track::direct_record`]); a note track with
+    /// a player stack only.
+    SetDirectRecord {
+        /// Device (track).
+        device: DeviceKey,
+        /// Record the generated notes.
+        on: bool,
     },
     /// Add a note lane after the track's last note lane (before its automation lanes), with a
     /// name (trimmed; blank or `None` leaves it unnamed). One undo step. The track must exist,

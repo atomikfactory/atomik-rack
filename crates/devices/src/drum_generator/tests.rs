@@ -145,7 +145,22 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "random.seed",
             "style",
             "mute",
-            "bypass"
+            "bypass",
+            "map.on",
+            "map.x",
+            "map.y",
+            "map.density",
+            "mirror",
+            "lock.kick",
+            "lock.snare",
+            "lock.clap",
+            "lock.closed-hat",
+            "lock.open-hat",
+            "lock.tom-low",
+            "lock.tom-mid",
+            "lock.tom-high",
+            "lock.cymbal",
+            "lock.percussion"
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -1054,4 +1069,170 @@ fn pattern_numbers_run_to_thirty_two() {
         evs.iter().any(|e| e.k == K::On(37, 10 + 31)),
         "pattern 32 plays: {evs:?}"
     );
+}
+
+fn corner_patterns() -> [DrumPattern; 4] {
+    let a = pat(16, &[(0, 0, 100), (0, 8, 100), (2, 4, 90)]);
+    let b = pat(16, &[(0, 0, 110), (0, 6, 70), (6, 2, 80), (6, 10, 80)]);
+    let c = pat(16, &[(2, 4, 120), (2, 12, 120), (6, 0, 60)]);
+    let d = pat(
+        16,
+        &[(0, 3, 127), (2, 7, 64), (6, 4, 90), (6, 5, 90), (0, 15, 50)],
+    );
+    [a, b, c, d]
+}
+
+fn sorted_hits(h: &mut DeviceHarness, bars: u64) -> Vec<(i64, u8, u8)> {
+    let evs = collect(h, batches_for(bars * 16 * 3_840, 48_000, 120));
+    let mut got = hits(&evs);
+    got.retain(|(s, ..)| *s < (bars * 16) as i64);
+    got.sort_unstable();
+    got
+}
+
+#[test]
+fn map_corners_reproduce_the_source_patterns_exactly() {
+    let corners = corner_patterns();
+    for (i, (x, y)) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let mut plain = rig(48_000.0, 120.0, &corners);
+        set(&mut plain, "pattern", (i + 1) as f32);
+        let want = sorted_hits(&mut plain, 2);
+        let mut mapped = rig(48_000.0, 120.0, &corners);
+        set(&mut mapped, "map.on", 1.0);
+        set(&mut mapped, "map.x", x);
+        set(&mut mapped, "map.y", y);
+        let got = sorted_hits(&mut mapped, 2);
+        assert!(!want.is_empty());
+        assert_eq!(got, want, "corner {i}");
+    }
+}
+
+#[test]
+fn map_off_ignores_the_position() {
+    let corners = corner_patterns();
+    let mut plain = rig(48_000.0, 120.0, &corners);
+    let want = sorted_hits(&mut plain, 2);
+    let mut h = rig(48_000.0, 120.0, &corners);
+    set(&mut h, "map.x", 1.0);
+    set(&mut h, "map.y", 1.0);
+    assert_eq!(sorted_hits(&mut h, 2), want);
+}
+
+#[test]
+fn map_density_zero_silences_the_generator() {
+    let mut h = rig(48_000.0, 120.0, &corner_patterns());
+    set(&mut h, "map.on", 1.0);
+    set(&mut h, "map.x", 0.5);
+    set(&mut h, "map.y", 0.5);
+    set(&mut h, "map.density", 0.0);
+    assert!(sorted_hits(&mut h, 4).is_empty());
+}
+
+#[test]
+fn the_middle_of_the_map_draws_from_every_corner_deterministically() {
+    let corners = corner_patterns();
+    let run = |seed: f32| {
+        let mut h = rig(48_000.0, 120.0, &corners);
+        set(&mut h, "map.on", 1.0);
+        set(&mut h, "map.x", 0.5);
+        set(&mut h, "map.y", 0.5);
+        set(&mut h, "random.seed", seed);
+        sorted_hits(&mut h, 8)
+    };
+    let a = run(3.0);
+    assert_eq!(a, run(3.0), "the same seed plays the same hits");
+    assert_ne!(a, run(4.0), "another seed plays others");
+    // Only steps some corner writes can play.
+    let written: std::collections::BTreeSet<(usize, usize)> = corners
+        .iter()
+        .flat_map(|p| {
+            (0..16usize).flat_map(move |lane| {
+                (0..16usize)
+                    .filter(move |s| p.steps[lane][*s].velocity > 0)
+                    .map(move |s| (lane, s))
+            })
+        })
+        .collect();
+    let key_lane = |key: u8| {
+        DrumPattern::default()
+            .lanes
+            .iter()
+            .position(|l| l.key == key)
+            .unwrap()
+    };
+    for (step, key, _) in &a {
+        assert!(written.contains(&(key_lane(*key), (*step % 16) as usize)));
+    }
+    // Somewhere between the corners: more than one corner contributes hits.
+    assert!(a.len() > 4);
+}
+
+#[test]
+fn a_locked_role_keeps_the_playing_pattern_while_the_rest_follow_the_map() {
+    let corners = corner_patterns();
+    let mut h = rig(48_000.0, 120.0, &corners);
+    set(&mut h, "map.on", 1.0);
+    set(&mut h, "map.x", 1.0); // corner B
+    set(&mut h, "lock.kick", 1.0);
+    let got = sorted_hits(&mut h, 2);
+    let mut a = rig(48_000.0, 120.0, &corners);
+    let from_a = sorted_hits(&mut a, 2);
+    let mut b = rig(48_000.0, 120.0, &corners);
+    set(&mut b, "pattern", 2.0);
+    let from_b = sorted_hits(&mut b, 2);
+    let kick = |v: &[(i64, u8, u8)]| v.iter().copied().filter(|h| h.1 == 36).collect::<Vec<_>>();
+    let rest = |v: &[(i64, u8, u8)]| v.iter().copied().filter(|h| h.1 != 36).collect::<Vec<_>>();
+    assert_eq!(
+        kick(&got),
+        kick(&from_a),
+        "the kick lane stays on the playing pattern"
+    );
+    assert_eq!(rest(&got), rest(&from_b), "the other lanes follow the map");
+    assert_ne!(kick(&from_a), kick(&from_b));
+}
+
+#[test]
+fn mirror_swaps_left_and_right() {
+    let corners = corner_patterns();
+    let play = |x: f32, mirror: f32| {
+        let mut h = rig(48_000.0, 120.0, &corners);
+        set(&mut h, "map.on", 1.0);
+        set(&mut h, "map.x", x);
+        set(&mut h, "map.y", 0.3);
+        set(&mut h, "mirror", mirror);
+        sorted_hits(&mut h, 4)
+    };
+    assert_eq!(play(0.2, 1.0), play(0.8, 0.0));
+    assert_ne!(play(0.2, 0.0), play(0.2, 1.0));
+}
+
+#[test]
+fn the_map_lands_on_the_same_hits_after_a_locate() {
+    let (sr, bpm, s) = (48_000u64, 120u64, 3_840u64);
+    let corners = corner_patterns();
+    let configure = |h: &mut DeviceHarness| {
+        set(h, "map.on", 1.0);
+        set(h, "map.x", 0.4);
+        set(h, "map.y", 0.6);
+        set(h, "random.seed", 5.0);
+    };
+    let mut cont = rig(sr as f64, bpm as f64, &corners);
+    configure(&mut cont);
+    let all = hits(&collect(&mut cont, batches_for(160 * s, sr, bpm)));
+    let from = 70i64;
+    let mut located = rig(sr as f64, bpm as f64, &corners);
+    configure(&mut located);
+    located.time_mut().tick = (from as u64 * s) as f64 - 100.0;
+    let got = hits(&collect(&mut located, batches_for(60 * s, sr, bpm)));
+    let pick = |v: Vec<(i64, u8, u8)>| -> Vec<_> {
+        v.into_iter()
+            .filter(|(st, ..)| *st >= from && *st < from + 55)
+            .collect()
+    };
+    let want = pick(all);
+    assert!(!want.is_empty());
+    assert_eq!(pick(got), want);
 }

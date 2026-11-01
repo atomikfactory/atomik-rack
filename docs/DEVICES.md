@@ -698,6 +698,18 @@ Then:
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
 | `master.level` | −60 to 6 (−60 = silent) | 0 | dB | dB | no |
+| `ch{n}.aux` (six, after `master.level`) | −60 to 6 (−60 = off) | −60 | dB | dB | no |
+| `aux.pre` | 0 or 1 | 0 | toggle | Linear | yes |
+| `aux.return.level` | −60 to 6 (−60 = silent) | 0 | dB | dB | no |
+
+Sockets after `master_r`: `aux_send_l` and `aux_send_r` (audio out), `aux_return_l` and
+`aux_return_r` (audio in).
+
+**Aux.** Each channel sends its signal times `ch{n}.aux` to the aux outputs. A post-fader send
+(default) follows the channel's level, pan, CV, mute and solo; with `aux.pre` the send takes the
+input before level, pan and CV but is still silenced by mute and by another channel's solo.
+`aux_return_l` and `aux_return_r` come back into the master sum at `aux.return.level`, before the
+master level; an unconnected return adds nothing, so a mixer without an aux sums exactly as before.
 
 ### Behaviour (as built)
 
@@ -2525,6 +2537,23 @@ The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, 
 | `run` | 0–1: transport, always | 1 (always) | choice | Linear | yes |
 | `random.seed` | 0 to 999 | 0 | none | Linear | yes |
 | `bypass` | 0 or 1 (see [Player bypass](#player-bypass)) | 0 | toggle | Linear | yes |
+| `pattern.on` | 0 or 1 (play the step pattern) | 0 | toggle | Linear | yes |
+| `step.1` to `step.16` | 0–3: rest, on, tie, accent | 1 (on) | choice | Linear | yes |
+| `insert` | 0–3: off, low, high, low+oct | 0 | choice | Linear | yes |
+| `rate.mode` | 0–1: synced, free | 0 | choice | Linear | yes |
+| `rate.hz` | 0.25 to 32 (steps per second in free mode) | 8 | none | Linear | no |
+| `shift` | −24 to 24 (semitones, folded by octaves into 0..127) | 0 | none | Linear | yes |
+| `input.low` | 0 to 127 | 0 | none | Linear | yes |
+| `input.high` | 0 to 127 | 127 | none | Linear | yes |
+| `repeat` | 1 to 4 (times each note of the figure plays) | 1 | none | Linear | yes |
+
+**Step pattern.** With `pattern.on` the global step number modulo 16 picks one of the sixteen
+`step.N` values: a rest is silent, a tie extends the note before it to the end of the tie, an accent
+plays at full velocity; rests and ties do not advance the figure. **Insert** plays the lowest key,
+the highest key or the lowest key an octave up between every two notes of the figure (chord mode
+takes no inserts). **Free rate** makes a step 1 / `rate.hz` seconds at the current tempo (rounded to
+ticks). **Input range:** keys outside `input.low` to `input.high` are not arpeggiated but passed to
+`notes_out` as played (their Off follows; `AllOff`, bypass and a `reset` close them).
 
 ### Behaviour (as built)
 
@@ -2582,6 +2611,19 @@ Source: [crates/devices/src/note_filter.rs](../crates/devices/src/note_filter.rs
 | `pass.cc` | 0 or 1 | 1 | toggle | Linear | yes |
 | `pass.pressure` | 0 or 1 | 1 | toggle | Linear | yes |
 | `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+| `length.mode` | 0–1: input, fixed | 0 (input) | choice | Linear | yes |
+| `length.ms` | 1 to 5000 | 250 | none | Linear | no |
+| `poly.limit` | 0 to 16 (0 = no limit) | 0 | none | Linear | yes |
+| `poly.mode` | 0–1: steal oldest, ignore new | 0 | choice | Linear | yes |
+| `hold` | 0 or 1 | 0 | toggle | Linear | yes |
+
+**Shaping stage** (after the key map; off by default, then every event passes unchanged). With
+`length.mode` fixed a note ends `length.ms` after its start whatever the input key does (the input
+Off is ignored; pressing the key again restarts it). With a polyphony limit the next note either
+closes the oldest sounding note or is dropped with its Off. `hold` keeps notes until it is turned
+off: an Off only latches the key, `AllOff` and a `reset` release everything, and a latched key
+pressed again is retriggered. The lengths run on a device frame clock, so a bounce is a pure
+function of the batch sequence; the table holds one slot per key and cannot overflow.
 
 `key.low` and `key.high` swap their roles when `key.low` is the larger, and so do the two velocity limits.
 
@@ -2641,6 +2683,14 @@ stateless per-event map. Source:
 | `chord.octave` | -2 to 2 | 0 | octaves | Linear | yes |
 | `chord.velocity` | 0 to 1 (shown 0 to 100 %) | 1 | percent | Linear | no |
 | `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+| `scale.custom` | 0 or 1 (use the twelve toggles below instead of `scale.kind`) | 0 | toggle | Linear | yes |
+| `scale.note.0` to `scale.note.11` | 0 or 1 (pitch classes C to B) | 1 for C D E F G A B (C major) | toggle | Linear | yes |
+| `chord.alter` | 0–5: off, major 3rd, minor 3rd, sus4, flat 5, sharp 5 | 0 | choice | Linear | yes |
+| `chord.notes` | 0 to 5 (0 = the whole chord, else the lowest *n* notes) | 0 | none | Linear | yes |
+
+A custom scale with no note switched on restricts nothing; diatonic chords on a custom scale stack
+the major shapes like on the chromatic scale. `chord.alter` moves the chord's third or fifth by
+semitones before voicing (a chord without that interval is unchanged).
 
 The choice labels are the labels of `atomik_core::theory` (`ScaleKind::label`,
 `DiatonicSize::label`, `ChordKind::label`); a test pins them equal, so the device, the piano roll
@@ -2718,6 +2768,8 @@ with the Note Delay is [crates/devices/src/note_queue.rs](../crates/devices/src/
 | `gate` | 0.05 to 1 (shown 5 to 100 %) | 0.5 | percent | Linear | no |
 | `dry` | 0 or 1 | 1 | toggle | Linear | yes |
 | `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+| `repeat.mask` | 0 to 65535 (bit *n* − 1 set: repeat *n* plays) | 65535 | none | Linear | yes |
+| `time.chord` | 0 or 1 (repeats start together with the note: a chord) | 0 | toggle | Linear | yes |
 
 The scale choices are the tables of Key & Chord (one place, pinned to the core theory by a test there).
 
@@ -2923,6 +2975,25 @@ at every step that hits, pitch and velocity follow the loudest hit of that step.
 | `style` | 0-3: four on the floor, broken beat, half time, straight | 0 | choice | Linear | yes |
 | `mute` | 0 to 1 | 0 | toggle | Linear | yes |
 | `bypass` | 0 or 1 (see [Player bypass](#player-bypass)) | 0 | toggle | Linear | yes |
+| `map.on` | 0 or 1 | 0 | toggle | Linear | yes |
+| `map.x` | 0 to 1 | 0 | percent | Linear | no |
+| `map.y` | 0 to 1 | 0 | percent | Linear | no |
+| `map.density` | 0 to 1 (0 = silent) | 1 | percent | Linear | no |
+| `mirror` | 0 or 1 | 0 | toggle | Linear | yes |
+| `lock.kick`, `lock.snare`, `lock.clap`, `lock.closed-hat`, `lock.open-hat`, `lock.tom-low`, | 0 or 1 | 0 | toggle | Linear | yes |
+| `lock.tom-mid`, `lock.tom-high`, `lock.cymbal`, `lock.percussion` (ten params, in this order) | 0 or 1 | 0 | toggle | Linear | yes |
+
+**Map mode** (`map.on`, off by default: the generator then plays the playing pattern as before). The
+first four patterns are the corners of an XY map: pattern 1 at the origin, 2 at x = 1, 3 at y = 1 and
+4 at both (a missing pattern is an empty corner). A corner contributes the hit its own pattern would
+play (written step, movement and probability) with its bilinear weight; a hit plays when
+hash64(seed, global step, 0x900 + lane) is below the summed weight of the corners that hit times
+`map.density`, with the weighted mean velocity of those corners. At a corner the weight is 0 or 1, so
+the hits are that pattern's own; `map.density` 0 silences the map. The lanes (keys, roles, mutes)
+come from the playing pattern, and the rest of the rules (density, variation, fills, accent) still
+apply on top. A `lock.<role>` toggle keeps every lane of that role on the playing pattern instead of
+the map. `mirror` reads the map from the other side (x becomes 1 − x). All of it is a pure function
+of the step, so a locate or a different block size plays the same hits.
 
 ### Behaviour (as built)
 

@@ -113,8 +113,8 @@ fn the_layout_places_every_param_once_and_the_extras_do_not_overlap() {
     let reg = registry();
     let desc = reg.get(ARP_TYPE).unwrap().descriptor;
     let spec = arp_layout(desc);
-    assert_eq!(spec.height_units, 2);
-    // mode, rate and octaves are drawn by the panel itself, the other seven are controls.
+    assert_eq!(spec.height_units, 4);
+    // mode, rate, octaves and the step cells are drawn by the panel itself, the rest are controls.
     let mut keys: Vec<&str> = spec
         .front
         .iter()
@@ -126,8 +126,16 @@ fn the_layout_places_every_param_once_and_the_extras_do_not_overlap() {
         [
             "gate",
             "hold",
+            "input.high",
+            "input.low",
+            "insert",
+            "pattern.on",
             "random.seed",
+            "rate.hz",
+            "rate.mode",
+            "repeat",
             "run",
+            "shift",
             "swing",
             "velocity.fixed",
             "velocity.mode"
@@ -142,6 +150,7 @@ fn the_layout_places_every_param_once_and_the_extras_do_not_overlap() {
     let content = Rect::new(CONTENT_X.0, 0.0, CONTENT_X.1, spec.height());
     let mut rects: Vec<Rect> = panel.modes.to_vec();
     rects.extend(panel.rates);
+    rects.extend(panel.steps);
     rects.extend([
         panel.octave_dec,
         panel.octave_value,
@@ -191,7 +200,7 @@ fn the_panel_shows_the_modes_the_rates_the_octaves_and_the_controls() {
         assert!(t.iter().any(|x| x == s), "missing {s:?}: {t:?}");
     }
     let r = v.device_rect(&key("arp")).unwrap();
-    assert!((r.height() - 2.0 * 76.0).abs() < 1e-9, "{r:?}");
+    assert!((r.height() - 4.0 * 76.0).abs() < 1e-9, "{r:?}");
 }
 
 // ------------------------------------------------------------------ mode, rate, octaves
@@ -265,6 +274,7 @@ fn every_button_emits_a_value_the_model_accepts() {
     points.extend((0..7).filter_map(|i| v.arp_rate_center(&d, i)));
     points.extend(v.arp_octave_center(&d, true));
     points.extend(v.arp_octave_center(&d, false));
+    points.extend((0..16).filter_map(|i| v.arp_step_center(&d, i)));
     for p in points {
         let a = click(&mut v, document.doc(), p);
         for c in commands(&a) {
@@ -374,4 +384,41 @@ proptest! {
         v.paint(&mut dl, &doc, &registry());
         prop_assert!(!dl.is_empty());
     }
+}
+
+// ------------------------------------------------------------------ step pattern
+
+#[test]
+fn a_step_cell_cycles_rest_on_tie_accent() {
+    let (doc, mut v) = setup();
+    let d = key("arp");
+    let p = v.arp_step_center(&d, 4).unwrap();
+    // Every step starts as "on" (1): the next click makes it a tie (2).
+    let a = click(&mut v, &doc, p);
+    assert_eq!(commands(&a), vec![set_param("step.5", 2.0)], "{a:?}");
+    assert!(v.arp_step_center(&d, 16).is_none());
+}
+
+#[test]
+fn the_pattern_row_is_dim_until_the_pattern_is_on() {
+    let (doc, mut v) = setup();
+    let mut off = DisplayList::new();
+    v.paint(&mut off, &doc, &registry());
+    let reg = registry();
+    let mut d = Document::new(doc.clone());
+    d.apply(
+        Command::SetParam {
+            key: key("arp"),
+            param: "pattern.on".to_string(),
+            value: 1.0,
+            merge: None,
+        },
+        &reg,
+    )
+    .unwrap();
+    let doc2 = d.doc().clone();
+    let mut v2 = view(&doc2, &reg);
+    let mut on = DisplayList::new();
+    v2.paint(&mut on, &doc2, &reg);
+    assert_ne!(off.to_json(), on.to_json());
 }

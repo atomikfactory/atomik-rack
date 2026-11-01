@@ -56,6 +56,7 @@ pub mod note_filter;
 mod note_fx;
 mod note_queue;
 pub mod note_repeater;
+mod note_shape;
 pub mod note_split;
 pub mod phase_meter;
 pub mod poly_synth;

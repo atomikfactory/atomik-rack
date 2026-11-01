@@ -293,6 +293,12 @@ enum ControlOp {
     },
     /// Fade the preview out.
     PreviewStop,
+    /// Put a tap on the notes device `id` receives (or, with `None`, take it off); the tap it
+    /// replaces is retired.
+    NoteTap {
+        id: DeviceInstanceId,
+        tap: Option<std::sync::Arc<atomik_device_sdk::MidiTap>>,
+    },
 }
 
 /// A complete arena plus routing. Travels to the engine as the new state and back to the handle
@@ -311,6 +317,7 @@ pub(crate) enum Retired {
     Samples(#[allow(dead_code)] SampleMapRef),
     PlayerData(#[allow(dead_code)] PlayerDataRef),
     Preview(#[allow(dead_code)] crate::PreviewStream),
+    NoteTap(#[allow(dead_code)] std::sync::Arc<atomik_device_sdk::MidiTap>),
 }
 
 /// Something the engine must hand back instead of dropping.
@@ -853,6 +860,36 @@ impl EngineHandle {
         let (rt, tap) = crate::record::new_gained_tap(channels, controls, capacity_frames);
         self.push(0, ControlOp::Tap(Some(rt)))?;
         Ok(tap)
+    }
+
+    /// Taps the notes device `id` receives from now on: every note on and off of its notes input
+    /// is queued with its host frame (as MIDI messages, see [`atomik_device_sdk::MidiTap`]). The
+    /// tap sits on the device's node, so a new plan (`submit_plan`) drops it. Applied at the next
+    /// batch boundary; call [`Self::untap_notes`] to stop it.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn tap_notes(
+        &mut self,
+        id: DeviceInstanceId,
+    ) -> Result<std::sync::Arc<atomik_device_sdk::MidiTap>, EngineError> {
+        let tap = std::sync::Arc::new(atomik_device_sdk::MidiTap::new());
+        self.push(
+            0,
+            ControlOp::NoteTap {
+                id,
+                tap: Some(tap.clone()),
+            },
+        )?;
+        Ok(tap)
+    }
+
+    /// Takes the note tap off device `id` (the engine retires it).
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn untap_notes(&mut self, id: DeviceInstanceId) -> Result<(), EngineError> {
+        self.push(0, ControlOp::NoteTap { id, tap: None })
     }
 
     /// Stops the record tap at the next batch boundary (the engine hands it back). Frames
@@ -1453,6 +1490,11 @@ impl Engine {
             ControlOp::PreviewStop => {
                 if let Some(cut) = self.preview.stop() {
                     self.retire(Garbage::Retired(Retired::Preview(cut)));
+                }
+            }
+            ControlOp::NoteTap { id, tap } => {
+                if let Some(old) = self.arena.set_note_tap(id, tap) {
+                    self.retire(Garbage::Retired(Retired::NoteTap(old)));
                 }
             }
             ControlOp::Tap(new) => {

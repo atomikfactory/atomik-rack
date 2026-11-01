@@ -109,6 +109,10 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::Player(_, PlayerBtn::Rate(m)) => ARP_RATES
             .get(usize::from(m))
             .map(|n| Cow::Owned(format!("Arpeggio rate: {n} note"))),
+        Hit::Player(_, PlayerBtn::Step(n)) => Some(Cow::Owned(format!(
+            "Arpeggio step {}: click to cycle rest, on, tie, accent",
+            n + 1
+        ))),
         Hit::Player(_, PlayerBtn::OctaveDec) => s("Fewer octaves"),
         Hit::Player(_, PlayerBtn::OctaveInc) => s("More octaves"),
         Hit::Player(_, PlayerBtn::FromClip) => {

@@ -37,6 +37,7 @@
 //!                                                                     (v22; written only when non-empty),
 //!             "tracks": [{ "device", "muted", "solo", "armed", "no_chase"? (v17),
 //!                          "notes_to"? (v31, a device key: where the track's notes enter),
+//!                          "direct_record"? (v39, `true`: record the notes the players generate),
 //!                          "group"?, "color"?, "comment"? (v22), "frozen"? (v25),
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio",
 //!                                      "name"?, "muted"? (v30, notes lanes, after "kind"),

@@ -1,7 +1,9 @@
-//! The drum generator's rack panel (four rack units): eight pattern slots of the shown bank (A to
+//! The drum generator's rack panel (five rack units): eight pattern slots of the shown bank (A to
 //! D, 32 patterns in all), a name line, a resolution and a shuffle stepper, the step grid (16
 //! lanes by 16 visible steps with a page selector), the pattern buttons (ADD, DUP, DEL, COPY,
-//! PASTE, CLEAR), GENERATE, RANDOMISE and the cell mode, a length stepper and the twelve knobs.
+//! PASTE, CLEAR), GENERATE, RANDOMISE and the cell mode, a length stepper and the knobs (the map
+//! mode toggle, position, density and mirror are the last five; the `lock.<role>` toggles have no
+//! control on the panel).
 //!
 //! ```text
 //! STEPS                                  PATTERNS
@@ -55,7 +57,7 @@ use vello::peniko::Color;
 /// Type id of the drum generator.
 pub const DRUM_GEN_TYPE: &str = "atomik.drum-generator";
 /// Height of the panel in rack units.
-pub const DRUM_GEN_UNITS: u8 = 4;
+pub const DRUM_GEN_UNITS: u8 = 5;
 /// Steps shown at once.
 pub const VISIBLE_STEPS: usize = 16;
 /// Pages of the step selector (64 steps).
@@ -84,7 +86,7 @@ const COL_W: f64 = 64.0;
 const PER_ROW: usize = 5;
 
 /// The drum generator's device params in front layout order (five per row).
-pub const DRUM_GEN_PARAMS: [&str; 12] = [
+pub const DRUM_GEN_PARAMS: [&str; 17] = [
     "pattern",
     "pattern.switch",
     "mute",
@@ -97,6 +99,11 @@ pub const DRUM_GEN_PARAMS: [&str; 12] = [
     "accent",
     "velocity.scale",
     "gate",
+    "map.on",
+    "map.x",
+    "map.y",
+    "map.density",
+    "mirror",
 ];
 
 /// A button or area of the drum generator panel.
@@ -292,7 +299,7 @@ impl DrumGenPanel {
     }
 }
 
-/// The panel of `atomik.drum-generator` (four rack units, see the module documentation); the
+/// The panel of `atomik.drum-generator` (five rack units, see the module documentation); the
 /// back is the generic socket layout.
 pub fn drum_gen_layout(desc: &atomik_device_sdk::DeviceDescriptor) -> PanelSpec {
     let top = MARGIN_TOP + TITLE_H;

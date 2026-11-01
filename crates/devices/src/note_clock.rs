@@ -491,6 +491,12 @@ impl NoteCore {
         true
     }
 
+    /// Forwards an input event to `notes_out` unchanged (no pending off, no gate): the caller
+    /// owes the matching Off.
+    pub fn thru(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, kind: NoteKind) {
+        self.emit(ctx, frame, kind);
+    }
+
     /// Emits a note-off for `key` and lowers the gate count.
     pub fn note_off(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, key: u8) {
         if self.emit(ctx, frame, NoteKind::Off { key }) {
@@ -538,6 +544,15 @@ impl NoteCore {
     pub fn pop_earliest(&mut self, ctx: &mut ProcessContext<'_>, frame: usize) {
         if let Some((i, _)) = self.pending.earliest() {
             let key = self.pending.take(i);
+            self.note_off(ctx, frame, key);
+        }
+    }
+
+    /// Closes `key` at `frame` if a note of it still sounds, so a note of the same key from
+    /// another path can start without a second On.
+    pub fn close_key(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, key: u8) {
+        if let Some(i) = self.pending.find_key(key) {
+            self.pending.take(i);
             self.note_off(ctx, frame, key);
         }
     }

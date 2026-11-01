@@ -150,7 +150,31 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "velocity.fixed",
             "run",
             "random.seed",
-            "bypass"
+            "bypass",
+            "pattern.on",
+            "step.1",
+            "step.2",
+            "step.3",
+            "step.4",
+            "step.5",
+            "step.6",
+            "step.7",
+            "step.8",
+            "step.9",
+            "step.10",
+            "step.11",
+            "step.12",
+            "step.13",
+            "step.14",
+            "step.15",
+            "step.16",
+            "insert",
+            "rate.mode",
+            "rate.hz",
+            "shift",
+            "input.low",
+            "input.high",
+            "repeat"
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -843,4 +867,299 @@ fn arpeggiator_bypass_passes_notes_through_and_leaves_nothing_hanging() {
     let evs = collect(&mut h, 400);
     track(&mut sounding, &evs);
     assert!(ons(&evs).iter().all(|(_, k)| *k == 72) && !ons(&evs).is_empty());
+}
+
+fn steps_of(h: &mut DeviceHarness, pattern: &[f32]) {
+    set(h, "pattern.on", 1.0);
+    for (i, v) in pattern.iter().enumerate() {
+        set(h, &format!("step.{}", i + 1), *v);
+    }
+}
+
+#[test]
+fn the_defaults_of_the_added_params_leave_the_figure_unchanged() {
+    let plain = played_keys("up", &[60, 64, 67], 1, 12);
+    let mut h = rig();
+    set(&mut h, "pattern.on", 1.0); // every step defaults to "on"
+    press(&mut h, &[60, 64, 67]);
+    let evs = collect(&mut h, batches_for(13, 3_840));
+    let with: Vec<u8> = ons(&evs).into_iter().map(|(_, k)| k).take(12).collect();
+    assert_eq!(plain, with);
+}
+
+#[test]
+fn rests_skip_steps_without_advancing_the_figure_and_ties_lengthen_notes() {
+    let mut h = rig();
+    // on, rest, on, tie: the bar then repeats.
+    steps_of(&mut h, &[1.0, 0.0, 1.0, 2.0]);
+    set(&mut h, "gate", 50.0);
+    press(&mut h, &[60, 64, 67]);
+    let evs = collect(&mut h, batches_for(5, 3_840));
+    let on_at: Vec<(u64, u8)> = ons(&evs).into_iter().take(3).collect();
+    assert_eq!(on_at[0], (0, 60));
+    assert_eq!(on_at[1].1, 64);
+    assert_eq!(on_at[1].0, due(2 * 3_840), "the rest took step 1");
+    // The tie after step 2 keeps key 64 until the middle of step 3 (50 % gate).
+    let off64 = evs
+        .iter()
+        .find(|e| e.k == K::Off(64))
+        .expect("the tied note ends")
+        .tick;
+    assert!(
+        (off64 - (3.0 * 3_840.0 + 1_920.0)).abs() < 1.0,
+        "off at {off64}"
+    );
+    // The step after the tie plays the next note.
+    assert_eq!(on_at[2].1, 67);
+    assert_eq!(on_at[2].0, due(4 * 3_840));
+}
+
+#[test]
+fn an_accent_plays_at_full_velocity() {
+    let mut h = rig();
+    steps_of(&mut h, &[3.0, 1.0]);
+    press(&mut h, &[60]);
+    let evs = collect(&mut h, batches_for(3, 3_840));
+    let vels: Vec<u8> = evs
+        .iter()
+        .filter_map(|e| if let K::On(_, v) = e.k { Some(v) } else { None })
+        .take(2)
+        .collect();
+    assert_eq!(vels, [127, 102]);
+}
+
+fn first_keys(h: &mut DeviceHarness, n: usize) -> Vec<u8> {
+    let evs = collect(h, batches_for(n as u64 + 1, 3_840));
+    ons(&evs).into_iter().map(|(_, k)| k).take(n).collect()
+}
+
+#[test]
+fn insert_alternates_the_figure_with_the_lowest_or_highest_key() {
+    let mut h = rig();
+    set(&mut h, "insert", 1.0); // low
+    press(&mut h, &[60, 64, 67]);
+    assert_eq!(first_keys(&mut h, 8), [60, 60, 64, 60, 67, 60, 60, 60]);
+    let mut h = rig();
+    set(&mut h, "insert", 2.0); // high
+    press(&mut h, &[60, 64, 67]);
+    assert_eq!(first_keys(&mut h, 4), [60, 67, 64, 67]);
+    let mut h = rig();
+    set(&mut h, "insert", 3.0); // low + octave
+    press(&mut h, &[60]);
+    assert_eq!(first_keys(&mut h, 3), [60, 72, 60]);
+}
+
+#[test]
+fn shift_transposes_and_repeat_plays_each_note_several_times() {
+    let mut h = rig();
+    set(&mut h, "shift", -12.0);
+    set(&mut h, "repeat", 2.0);
+    press(&mut h, &[60, 64]);
+    assert_eq!(first_keys(&mut h, 4), [48, 48, 52, 52]);
+    // Shifting past the key range folds by octaves.
+    let mut h = rig();
+    set(&mut h, "shift", 24.0);
+    press(&mut h, &[120]);
+    assert_eq!(first_keys(&mut h, 1), [120]);
+}
+
+#[test]
+fn the_free_rate_follows_hertz_at_the_tempo() {
+    let mut h = rig();
+    set(&mut h, "rate.mode", 1.0);
+    set(&mut h, "rate.hz", 4.0);
+    press(&mut h, &[60]);
+    let evs = collect(&mut h, 3_000);
+    let frames: Vec<u64> = ons(&evs).into_iter().map(|(f, _)| f).collect();
+    // 120 bpm = 30 720 ticks per second: 4 steps per second is 7 680 ticks per step.
+    assert!(frames.len() >= 4);
+    for w in frames.windows(2) {
+        assert_eq!(w[1] - w[0], SR / 4, "a step every quarter second");
+    }
+}
+
+#[test]
+fn keys_outside_the_input_range_play_themselves() {
+    let mut h = rig();
+    set(&mut h, "input.low", 60.0);
+    set(&mut h, "input.high", 72.0);
+    h.push_note("notes_in", on(0, 40, 0.8));
+    let evs = batch(&mut h);
+    assert_eq!(
+        evs.iter().map(|e| e.k).collect::<Vec<_>>(),
+        [K::On(40, 102)]
+    );
+    h.push_note("notes_in", off(0, 40));
+    let evs = batch(&mut h);
+    assert_eq!(evs.iter().map(|e| e.k).collect::<Vec<_>>(), [K::Off(40)]);
+    // An in-range key is arpeggiated.
+    press(&mut h, &[64]);
+    let evs = collect(&mut h, 200);
+    assert!(!ons(&evs).is_empty());
+    assert!(ons(&evs).iter().all(|(_, k)| *k == 64));
+}
+
+#[test]
+fn a_held_outside_key_is_closed_by_all_off_and_by_reset() {
+    let mut h = rig();
+    set(&mut h, "input.low", 60.0);
+    press(&mut h, &[40]);
+    batch(&mut h);
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::AllOff,
+        },
+    );
+    let evs = batch(&mut h);
+    assert!(evs.iter().any(|e| e.k == K::Off(40)));
+    press(&mut h, &[41]);
+    batch(&mut h);
+    h.device_mut().reset();
+    let evs = batch(&mut h);
+    assert!(evs.iter().any(|e| e.k == K::AllOff));
+}
+
+/// Balance of On/Off per key over `evs`; panics when a key is sounded twice.
+fn tally(count: &mut [i32; 128], evs: &[Ev]) {
+    for e in evs {
+        match e.k {
+            K::On(k, _) => {
+                count[usize::from(k)] += 1;
+                assert!(count[usize::from(k)] <= 1, "double on {k}");
+            }
+            K::Off(k) => {
+                count[usize::from(k)] -= 1;
+                assert!(count[usize::from(k)] >= 0, "off without on {k}");
+            }
+            K::AllOff => *count = [0; 128],
+        }
+    }
+}
+
+#[test]
+fn a_key_pressed_again_outside_a_moved_input_range_is_never_sounded_twice() {
+    // The arpeggio sounds 39, the range then moves below it and 39 is pressed again: the key
+    // plays itself, and the arpeggio note of the same key is closed first.
+    let mut h = rig();
+    let mut count = [0i32; 128];
+    set(&mut h, "gate", 100.0);
+    press(&mut h, &[39]);
+    tally(&mut count, &collect(&mut h, batches_for(1, 240)));
+    assert_eq!(count[39], 1, "the arpeggio sounds the key");
+    set(&mut h, "input.high", 0.0);
+    press(&mut h, &[39]);
+    tally(&mut count, &collect(&mut h, 2));
+    assert_eq!(count[39], 1, "one sounding note of the key");
+    h.push_note("notes_in", off(0, 39));
+    tally(&mut count, &collect(&mut h, 2));
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::AllOff,
+        },
+    );
+    tally(&mut count, &collect(&mut h, 1));
+    assert!(count.iter().all(|c| *c == 0), "a note hangs");
+}
+
+#[test]
+fn a_key_that_went_through_is_closed_when_the_range_widens_and_the_arpeggio_takes_it() {
+    let mut h = rig();
+    let mut count = [0i32; 128];
+    set(&mut h, "input.high", 0.0);
+    press(&mut h, &[39]);
+    tally(&mut count, &collect(&mut h, 1));
+    assert_eq!(count[39], 1, "the key went through");
+    set(&mut h, "input.high", 127.0);
+    press(&mut h, &[39, 41]);
+    tally(&mut count, &collect(&mut h, batches_for(4, 240)));
+    assert!(count[39] <= 1);
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::AllOff,
+        },
+    );
+    tally(&mut count, &collect(&mut h, 1));
+    assert!(count.iter().all(|c| *c == 0), "a note hangs");
+}
+
+#[derive(Debug, Clone)]
+enum PAct {
+    Run,
+    Press(u8),
+    Release(u8),
+    AllOff,
+    Param(usize, i8),
+    Locate(u32),
+}
+
+fn pact() -> impl Strategy<Value = PAct> {
+    prop_oneof![
+        6 => Just(PAct::Run),
+        4 => (30u8..90).prop_map(PAct::Press),
+        4 => (30u8..90).prop_map(PAct::Release),
+        1 => Just(PAct::AllOff),
+        4 => (11usize..35, -30i8..30).prop_map(|(i, v)| PAct::Param(i, v)),
+        1 => (0u32..200_000).prop_map(PAct::Locate),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
+    #[test]
+    fn pattern_insert_and_split_never_hang_or_double_a_note(
+        acts in proptest::collection::vec(pact(), 5..140),
+        mode in 0u8..6,
+    ) {
+        let mut h = rig();
+        set(&mut h, "mode", f32::from(mode));
+        let mut count = [0i32; 128];
+        for a in acts {
+            match a {
+                PAct::Run => {}
+                PAct::Press(k) => h.push_note("notes_in", on(0, k, 0.7)),
+                PAct::Release(k) => h.push_note("notes_in", off(0, k)),
+                PAct::AllOff => h.push_note(
+                    "notes_in",
+                    NoteEvent { offset: 0, kind: NoteKind::AllOff },
+                ),
+                PAct::Param(i, v) => {
+                    let p = &DESCRIPTOR.params[i];
+                    h.set_param(p.key, f32::from(v).clamp(p.min, p.max));
+                }
+                PAct::Locate(t) => h.time_mut().tick = f64::from(t),
+            }
+            let evs = batch(&mut h);
+            for e in &evs {
+                match e.k {
+                    K::On(k, _) => {
+                        count[usize::from(k)] += 1;
+                        prop_assert!(count[usize::from(k)] <= 1, "double on {k}");
+                    }
+                    K::Off(k) => {
+                        count[usize::from(k)] -= 1;
+                        prop_assert!(count[usize::from(k)] >= 0, "off without on {k}");
+                    }
+                    K::AllOff => count = [0; 128],
+                }
+            }
+        }
+        // Stopping the input closes everything.
+        h.push_note("notes_in", NoteEvent { offset: 0, kind: NoteKind::AllOff });
+        let evs = batch(&mut h);
+        for e in &evs {
+            match e.k {
+                K::On(k, _) => count[usize::from(k)] += 1,
+                K::Off(k) => count[usize::from(k)] -= 1,
+                K::AllOff => count = [0; 128],
+            }
+        }
+        prop_assert!(count.iter().all(|c| *c == 0), "a note hangs");
+    }
 }

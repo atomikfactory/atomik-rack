@@ -520,6 +520,20 @@ impl Arena {
         }
     }
 
+    /// Sets (or clears) the note tap of device `id`; returns the tap it replaces, which the
+    /// caller retires instead of dropping.
+    pub(crate) fn set_note_tap(
+        &mut self,
+        id: DeviceInstanceId,
+        tap: Option<std::sync::Arc<atomik_device_sdk::MidiTap>>,
+    ) -> Option<std::sync::Arc<atomik_device_sdk::MidiTap>> {
+        match self.node_by_id(id) {
+            Some(node) => std::mem::replace(&mut node.note_tap, tap),
+            // No such device: the tap goes back to be retired.
+            None => tap,
+        }
+    }
+
     /// Hands `pb` to a routed device as this batch's playback (see `Node::playback`).
     pub(crate) fn set_playback(&mut self, id: DeviceInstanceId, pb: &[Batch; 2]) {
         if let Some(node) = self.node_by_id(id)

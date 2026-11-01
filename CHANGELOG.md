@@ -10,6 +10,35 @@ may break APIs and the patch and project formats.
 
 ### Added
 - **Sampling into devices.** A SAMPLE button beside EDIT on the sampler, granular, drum machine and
+- **Direct Record, Send Players to Track, Fold All and Bypass All Players.** New Track menu items
+  act on the selected tracks that have players above their instrument. Direct Record makes the
+  take record the notes the players generate (what the instrument receives) instead of the keys
+  you play; the flag is saved with the track only when it is on. Send Players to Track renders
+  the song offline and writes what the stack generated, from the start to the song end, as a clip
+  on a new "Players" lane in one undo step. Fold All and Bypass All fold or bypass every player
+  of the stack, and undo as one step.
+- **Arpeggiator: step pattern, insert, free rate, shift, repeat and input range.** A row of sixteen
+  step cells (rest, on, tie, accent; a click cycles them) shapes the rhythm: a rest is silent, a
+  tie lengthens the note before it, an accent plays at full velocity. Insert plays the lowest or
+  highest key between the notes, shift transposes the figure, repeat plays each note up to four
+  times, and a free rate sets the step in steps per second. Keys outside an input range are passed
+  through as played. With all of it off the arpeggiator plays as before.
+- **Note filter: fixed note length, polyphony limit and hold.** A fixed length ends each note by
+  itself whatever the key does, a limit of 1 to 16 voices either steals the oldest note or ignores
+  the new one, and hold keeps notes until it is switched off. No note hangs on an all-off or a
+  reset.
+- **Key & Chord: custom scale, chord alter and chord size.** Twelve toggles define a scale of your
+  own (an empty set restricts nothing), alter moves the third or fifth of a chord (major or minor
+  3rd, sus4, flat or sharp 5), and a size limit keeps the lowest one to five notes.
+- **Note repeater: repeat mask and chord mode.** A 16-bit mask picks which repeats play (the
+  others keep their place and decay), and chord mode starts every repeat with the note.
+- **Drum generator: map mode.** The first four patterns become the corners of an XY map; position,
+  density and mirror blend them with seeded randomness, so the corners play their own pattern
+  exactly and the same hits come back after a locate. A lock per drum role keeps that role on the
+  playing pattern. The panel is one rack unit taller for the map knobs.
+- **Line Mixer: aux send and return.** Every channel gets an aux send (post-fader, or pre-fader
+  with one switch) into two new aux outputs, and two aux inputs come back into the master at their
+  own level. A mixer without a return sums exactly as before.
   loop slicer panels records from an audio input pair into a 30 s ring, cuts the silence before the
   sound and lands the sample in the device as one undo step (a drum machine puts it on the selected
   pad). A second press stops, Esc cancels, a right-click picks the next input pair or single

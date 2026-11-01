@@ -174,6 +174,7 @@ pub fn render_freeze(
         ),
         probes,
         meter_probes: Vec::new(),
+        note_taps: Vec::new(),
         control,
     };
     let Some(Core {

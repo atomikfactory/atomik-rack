@@ -11,6 +11,8 @@
 //!   `1 - velocity.decay` (repeats stop below velocity 1/127). It ends `max(1, D * gate)`
 //!   frames later. A repeat is its own note: the input `Off` does not touch it, so repeats ring
 //!   out after the key is released, across a loop wrap, and while the transport is stopped.
+//! * **Mask and chord.** Bit n-1 of `repeat.mask` set lets repeat n play (the others stay silent but
+//!   keep their place and decay); `time.chord` starts the repeats together with the note.
 //! * **Dry.** With `dry` off the original note is not passed, only its repeats.
 //! * **Clock and queue.** Repeats live in a [`NoteQueue`](crate::note_queue::NoteQueue) on a
 //!   device-owned frame clock that advances every batch, so the device behaves the same with the
@@ -88,6 +90,8 @@ const P_KIND: u32 = 8;
 const P_GATE: u32 = 9;
 const P_DRY: u32 = 10;
 const P_BYPASS: u32 = 11;
+const P_MASK: u32 = 12;
+const P_CHORD: u32 = 13;
 
 #[allow(clippy::too_many_arguments)]
 const fn param(
@@ -112,7 +116,7 @@ const fn param(
     }
 }
 
-static PARAMS: [ParamDescriptor; 12] = [
+static PARAMS: [ParamDescriptor; 14] = [
     param(
         P_SYNC,
         "time.sync",
@@ -213,6 +217,24 @@ static PARAMS: [ParamDescriptor; 12] = [
         true,
     ),
     bypass_param(P_BYPASS),
+    param(
+        P_MASK,
+        "repeat.mask",
+        "Repeat mask",
+        (0.0, 65_535.0, 65_535.0),
+        Taper::Linear,
+        Unit::None,
+        true,
+    ),
+    param(
+        P_CHORD,
+        "time.chord",
+        "Chord (no spacing)",
+        (0.0, 1.0, 0.0),
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
 ];
 
 /// Static description of the Note Repeater device.
@@ -260,6 +282,10 @@ pub struct NoteRepeater {
     scale: Scale,
     gate: f32,
     dry: bool,
+    /// Bit `n - 1` set: repeat `n` plays.
+    mask: u32,
+    /// Repeats start together with the note.
+    chord: bool,
 }
 
 impl NoteRepeater {
@@ -282,6 +308,8 @@ impl NoteRepeater {
             scale: Scale::new(0, ScaleKind::Major),
             gate: 0.5,
             dry: true,
+            mask: 0xFFFF,
+            chord: false,
         }
     }
 
@@ -323,10 +351,17 @@ impl NoteRepeater {
             if v < MIN_VELOCITY {
                 break;
             }
+            if self.mask & (1 << (n - 1)) == 0 {
+                continue;
+            }
             let Some(k) = self.repeat_key(key, n) else {
                 continue;
             };
-            let start = frame + u64::from(n) * d;
+            let start = if self.chord {
+                frame
+            } else {
+                frame + u64::from(n) * d
+            };
             if !self.queue.push_pair(start, start + len, k, v.min(1.0)) {
                 break;
             }
@@ -397,6 +432,8 @@ impl Device for NoteRepeater {
             P_GATE => self.gate = plain.clamp(0.05, 1.0),
             P_DRY => self.dry = plain >= 0.5,
             P_BYPASS => self.bypass.set_param(plain),
+            P_MASK => self.mask = int(0.0, 65_535.0) as u32,
+            P_CHORD => self.chord = plain >= 0.5,
             _ => {}
         }
     }

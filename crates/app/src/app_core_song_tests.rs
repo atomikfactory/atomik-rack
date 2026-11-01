@@ -770,6 +770,218 @@ fn recording_through_a_player_stack_records_the_input_notes() {
     assert_eq!((notes.len(), notes[0].key), (1, 45));
 }
 
+/// With Direct Record on, the take records at the instrument, not at the top of the stack: the
+/// sink taps the instrument's notes input, and the generated notes land in the track's clip.
+#[test]
+fn direct_record_records_the_notes_the_players_generate() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    apply(
+        &mut c,
+        Command::Workflow(atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: "atomik.arpeggiator".into(),
+            target: atomik_model::CreateTarget::Selected(key("a")),
+            options: atomik_model::CreateOptions::default(),
+        }),
+    );
+    apply(
+        &mut c,
+        Command::Song(SongCommand::SetDirectRecord {
+            device: key("a"),
+            on: true,
+        }),
+    );
+    c.set_input_quantize(InputQuantize::OFF);
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    assert_eq!(calls[0], SinkCall::Recording(vec![id(1)]), "the instrument");
+    assert_eq!(c.sink_mut().note_taps, vec![id(1)]);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.sink_mut().recorded = vec![
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::On {
+                key: 52,
+                velocity: 0.5,
+            },
+            frame: frame(PPQ),
+        },
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::Off { key: 52 },
+            frame: frame(PPQ + PPQ / 4),
+        },
+    ];
+    c.frame();
+    c.sink_mut().state = TransportState {
+        tick: BAR,
+        engine_frame: frame(BAR),
+        song_frame: frame(BAR) - 1000,
+        ..start
+    };
+    transport(&mut c, TransportAction::Stop);
+    assert!(c.sink_mut().note_taps.is_empty(), "the tap comes off");
+    let lane = &c.doc().song.track(&key("a")).unwrap().lanes[0];
+    let ClipContent::Notes(notes) = &lane.clips[0].content else {
+        panic!("note clip")
+    };
+    assert_eq!((notes.len(), notes[0].key), (1, 52));
+    assert_eq!(notes[0].length, PPQ / 4);
+}
+
+/// A track that does not record Direct keeps recording the input notes.
+#[test]
+fn direct_record_off_taps_nothing() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.sink_mut().take();
+    transport(&mut c, TransportAction::ToggleRecord);
+    assert!(c.sink_mut().note_taps.is_empty());
+}
+
+fn with_stack(type_id: &str) -> AppCore<RecordingSink> {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        Command::Workflow(atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: type_id.into(),
+            target: atomik_model::CreateTarget::Selected(key("a")),
+            options: atomik_model::CreateOptions::default(),
+        }),
+    );
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    c
+}
+
+fn lane_count(c: &AppCore<RecordingSink>) -> usize {
+    c.doc().song.track(&key("a")).unwrap().note_lane_count()
+}
+
+#[test]
+fn the_player_stack_commands_need_a_stack() {
+    let mut c = with_track();
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    let revision = c.doc().song.clone();
+    for f in [
+        AppCore::toggle_direct_record,
+        AppCore::fold_all_players,
+        AppCore::bypass_all_players,
+        AppCore::send_players_to_track,
+    ] {
+        f(&mut c);
+        assert!(c.last_rejection().is_some_and(|m| m.contains("players")));
+    }
+    assert_eq!(*c.doc().song, *revision);
+    assert_eq!(c.players_menu(), (false, false, false, false));
+}
+
+#[test]
+fn direct_record_toggles_on_the_selected_stack_in_one_step() {
+    let mut c = with_stack("atomik.arpeggiator");
+    assert_eq!(c.players_menu(), (true, false, false, false));
+    c.toggle_direct_record();
+    assert!(c.doc().song.track(&key("a")).unwrap().direct_record);
+    assert!(c.players_menu().1);
+    c.toggle_direct_record();
+    assert!(!c.doc().song.track(&key("a")).unwrap().direct_record);
+    c.undo();
+    assert!(
+        c.doc().song.track(&key("a")).unwrap().direct_record,
+        "one undo step"
+    );
+}
+
+#[test]
+fn fold_all_and_bypass_all_players_toggle_every_player_of_the_stack() {
+    let mut c = with_stack("atomik.arpeggiator");
+    apply(
+        &mut c,
+        Command::Workflow(atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: "atomik.note-filter".into(),
+            target: atomik_model::CreateTarget::Selected(key("a")),
+            options: atomik_model::CreateOptions::default(),
+        }),
+    );
+    let t = c.doc().song.track(&key("a")).unwrap().clone();
+    let stack = atomik_model::player_stack(c.doc(), &default_registry(), &t);
+    assert_eq!(stack.len(), 2);
+    c.fold_all_players();
+    assert!(stack.iter().all(|k| c.doc().device(k).unwrap().folded));
+    assert!(c.players_menu().2);
+    c.fold_all_players();
+    assert!(stack.iter().all(|k| !c.doc().device(k).unwrap().folded));
+    c.bypass_all_players();
+    let bypassed = |c: &AppCore<RecordingSink>| {
+        stack
+            .iter()
+            .all(|k| c.doc().device(k).unwrap().params.get("bypass") == Some(&1.0))
+    };
+    assert!(bypassed(&c) && c.players_menu().3);
+    c.undo();
+    assert!(!bypassed(&c), "all of them in one undo step");
+    c.bypass_all_players();
+    c.bypass_all_players();
+    assert!(!c.players_menu().3, "a second press releases them");
+}
+
+#[test]
+fn send_players_to_track_writes_the_generated_notes_to_a_new_lane_in_one_step() {
+    let mut c = with_stack("atomik.note-filter");
+    let filter = c
+        .doc()
+        .song
+        .track(&key("a"))
+        .unwrap()
+        .notes_to
+        .clone()
+        .unwrap();
+    apply(
+        &mut c,
+        Command::SetParam {
+            key: filter,
+            param: "transpose".into(),
+            value: 7.0,
+            merge: None,
+        },
+    );
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 48), (PPQ, 52)]),
+        }),
+    );
+    assert_eq!(lane_count(&c), 1);
+    c.send_players_to_track();
+    assert!(
+        !c.last_rejection().is_some_and(|m| m.contains("failed")),
+        "{:?}",
+        c.last_rejection()
+    );
+    assert_eq!(lane_count(&c), 2);
+    let t = c.doc().song.track(&key("a")).unwrap();
+    assert_eq!(t.lanes[1].name.as_deref(), Some("Players"));
+    let ClipContent::Notes(notes) = &t.lanes[1].clips[0].content else {
+        panic!("note clip")
+    };
+    let got: Vec<(i64, i64, u8)> = notes.iter().map(|n| (n.tick, n.length, n.key)).collect();
+    assert_eq!(got, vec![(0, PPQ / 2, 55), (PPQ, PPQ / 2, 59)]);
+    assert_eq!(
+        t.lanes[1].clips[0].length % BAR,
+        0,
+        "rounded out to whole bars"
+    );
+    c.undo();
+    assert_eq!(lane_count(&c), 1, "the lane and the clip are one undo step");
+}
+
 /// Pitch bend and a CC recorded with the notes land in the clip's controller lanes, reach the
 /// engine's song input and undo with the take.
 #[test]

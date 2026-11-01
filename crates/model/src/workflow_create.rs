@@ -827,6 +827,25 @@ pub(crate) fn notes_successor(
         .filter(|d| doc.device(d).is_some())
 }
 
+/// The note players of the stack of `track`, from the top (where its notes enter) down to the
+/// device above the instrument; empty for a track that enters at its own device. A stale entry
+/// (a device that is gone) gives an empty stack.
+pub fn player_stack(doc: &RackDoc, registry: &Registry, track: &crate::Track) -> Vec<DeviceKey> {
+    let mut stack = Vec::new();
+    let mut at = doc.notes_entry(track).clone();
+    while at != track.device && stack.len() <= doc.devices.len() {
+        if !is_player_device(doc, registry, &at) {
+            return Vec::new();
+        }
+        stack.push(at.clone());
+        match notes_successor(doc, registry, &at) {
+            Some(next) => at = next,
+            None => break,
+        }
+    }
+    stack
+}
+
 /// The top of the player chain feeding `device`: up the cables into its Notes input while the
 /// feeder is a note player. `None` when no player feeds it (a track then enters at the
 /// device itself).

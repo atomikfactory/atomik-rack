@@ -108,6 +108,21 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "chord.octave",
             "chord.velocity",
             "bypass",
+            "scale.custom",
+            "scale.note.0",
+            "scale.note.1",
+            "scale.note.2",
+            "scale.note.3",
+            "scale.note.4",
+            "scale.note.5",
+            "scale.note.6",
+            "scale.note.7",
+            "scale.note.8",
+            "scale.note.9",
+            "scale.note.10",
+            "scale.note.11",
+            "chord.alter",
+            "chord.notes",
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -568,4 +583,77 @@ proptest! {
         apply(&out, &mut count)?;
         prop_assert!(count.iter().all(|c| *c == 0));
     }
+}
+
+#[test]
+fn a_custom_scale_snaps_and_filters_to_the_toggled_pitch_classes() {
+    let mut h = rig();
+    set(&mut h, "scale.custom", 1.0);
+    // Keep only C, E and G (the defaults are C major).
+    for pc in [2, 5, 9, 11] {
+        set(&mut h, &format!("scale.note.{pc}"), 0.0);
+    }
+    // D (62) is between C and E: nearest ties down to C.
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 62, 0.5)])), [60]);
+    // F (65) is next to E (64) and G (67): nearest is E.
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 65, 0.5)])), [64]);
+    set(&mut h, "scale.mode", 2.0); // filter
+    assert!(on_keys(&run(&mut h, &[on(0, 62, 0.5)])).is_empty());
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 67, 0.5)])), [67]);
+}
+
+#[test]
+fn an_empty_custom_scale_restricts_nothing() {
+    let mut h = rig();
+    set(&mut h, "scale.custom", 1.0);
+    for pc in 0..12 {
+        set(&mut h, &format!("scale.note.{pc}"), 0.0);
+    }
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 61, 0.5)])), [61]);
+}
+
+#[test]
+fn the_custom_scale_is_off_by_default() {
+    // C major by default: C# snaps to C or D; the custom toggles do nothing until switched on.
+    let mut h = rig();
+    set(&mut h, "scale.note.1", 1.0);
+    assert_eq!(on_keys(&run(&mut h, &[on(0, 61, 0.5)])), [60]);
+}
+
+#[test]
+fn chord_notes_limits_the_chord_to_its_lowest_notes() {
+    let mut h = rig();
+    set(&mut h, "scale.mode", 0.0);
+    set(&mut h, "chord", 17.0); // 9
+    let all = on_keys(&run(&mut h, &[on(0, 60, 0.5)]));
+    run(&mut h, &[off(0, 60)]);
+    assert!(all.len() >= 5);
+    set(&mut h, "chord.notes", 3.0);
+    let three = on_keys(&run(&mut h, &[on(0, 60, 0.5)]));
+    assert_eq!(three.len(), 3);
+    assert!(three.iter().all(|k| all.contains(k)));
+}
+
+#[test]
+fn chord_alter_moves_the_third_and_the_fifth() {
+    let mut h = rig();
+    set(&mut h, "scale.mode", 0.0);
+    set(&mut h, "chord", 4.0); // major
+    let sorted = |v: Vec<u8>| {
+        let mut v = v;
+        v.sort_unstable();
+        v
+    };
+    let mut play_alter = |alter: f32| {
+        set(&mut h, "chord.alter", alter);
+        let out = run(&mut h, &[on(0, 60, 0.5)]);
+        run(&mut h, &[off(0, 60)]);
+        sorted(on_keys(&out))
+    };
+    assert_eq!(play_alter(0.0), [60, 64, 67]);
+    assert_eq!(play_alter(2.0), [60, 63, 67], "minor 3rd");
+    assert_eq!(play_alter(3.0), [60, 65, 67], "sus4");
+    assert_eq!(play_alter(4.0), [60, 64, 66], "flat 5");
+    assert_eq!(play_alter(5.0), [60, 64, 68], "sharp 5");
+    assert_eq!(play_alter(1.0), [60, 64, 67], "no minor third to raise");
 }

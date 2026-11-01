@@ -196,11 +196,11 @@ fn the_live_panel_with_pad_names_and_the_cursor_matches_golden() {
 // ------------------------------------------------------------------ layout
 
 #[test]
-fn the_layout_is_four_units_with_every_param_placed_once() {
+fn the_layout_is_five_units_with_every_param_but_the_locks_placed_once() {
     let reg = registry();
     let desc = reg.get(GEN_TYPE).unwrap().descriptor;
     let spec = drum_gen_layout(desc);
-    assert_eq!(spec.height_units, 4);
+    assert_eq!(spec.height_units, 5);
     let mut keys: Vec<&str> = spec
         .front
         .iter()
@@ -210,8 +210,15 @@ fn the_layout_is_four_units_with_every_param_placed_once() {
     let mut want: Vec<&str> = DRUM_GEN_PARAMS.to_vec();
     want.sort_unstable();
     assert_eq!(keys, want);
-    // Every param but the strip's bypass is a knob of the panel.
-    assert_eq!(DRUM_GEN_PARAMS.len() + 1, desc.params.len());
+    // Every param but the strip's bypass and the ten role locks is a knob of the panel.
+    assert_eq!(DRUM_GEN_PARAMS.len() + 1 + 10, desc.params.len());
+    assert!(
+        desc.params
+            .iter()
+            .filter(|p| p.key.starts_with("lock."))
+            .count()
+            == 10
+    );
     assert!(desc.params.iter().any(|p| p.key == "bypass"));
     let mut sockets: Vec<usize> = spec.back.iter().map(|s| s.socket).collect();
     sockets.sort_unstable();

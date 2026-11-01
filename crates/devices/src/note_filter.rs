@@ -18,6 +18,8 @@
 //!   while keys are held never leaves a stuck or doubled note: the Off releases the pitch the On
 //!   sent. `AllOff` closes everything and passes on; a `reset` leaves an `AllOff` for the next
 //!   batch when a note sounded.
+//! * **Shaping** (after the map, off by default): fixed note length, a polyphony limit and hold, see
+//!   `crate::note_shape`.
 //! * **Bypass** (`bypass`, last param): see `crate::note_fx::PlayerBypass`.
 
 use atomik_core::{NoteBuffer, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
@@ -29,6 +31,7 @@ use atomik_dsp::exp2_det;
 
 use crate::bypass::bypass_param;
 use crate::note_fx::{NoteRouter, PlayerBypass, push_sorted};
+use crate::note_shape::{NoteShape, Overflow};
 
 const NOTES_IN: SocketId = SocketId(0);
 const NOTES_OUT: SocketId = SocketId(1);
@@ -88,8 +91,16 @@ const P_PASS_BEND: u32 = 11;
 const P_PASS_CC: u32 = 12;
 const P_PASS_PRESSURE: u32 = 13;
 const P_BYPASS: u32 = 14;
+const P_LENGTH_MODE: u32 = 15;
+const P_LENGTH_MS: u32 = 16;
+const P_POLY_LIMIT: u32 = 17;
+const P_POLY_MODE: u32 = 18;
+const P_HOLD: u32 = 19;
 
-static PARAMS: [ParamDescriptor; 15] = [
+const LENGTH_MODES: Unit = Unit::Choice(&["input", "fixed"]);
+const POLY_MODES: Unit = Unit::Choice(&["steal oldest", "ignore new"]);
+
+static PARAMS: [ParamDescriptor; 20] = [
     param(
         P_TRANSPOSE,
         "transpose",
@@ -203,6 +214,39 @@ static PARAMS: [ParamDescriptor; 15] = [
         true,
     ),
     bypass_param(P_BYPASS),
+    param(
+        P_LENGTH_MODE,
+        "length.mode",
+        "Length mode",
+        (0.0, 1.0, 0.0),
+        LENGTH_MODES,
+        true,
+    ),
+    param(
+        P_LENGTH_MS,
+        "length.ms",
+        "Length",
+        (1.0, 5_000.0, 250.0),
+        Unit::None,
+        false,
+    ),
+    param(
+        P_POLY_LIMIT,
+        "poly.limit",
+        "Polyphony limit",
+        (0.0, 16.0, 0.0),
+        Unit::None,
+        true,
+    ),
+    param(
+        P_POLY_MODE,
+        "poly.mode",
+        "Polyphony mode",
+        (0.0, 1.0, 0.0),
+        POLY_MODES,
+        true,
+    ),
+    param(P_HOLD, "hold", "Hold", (0.0, 1.0, 0.0), Unit::Toggle, true),
 ];
 
 /// Static description of the note filter.
@@ -254,11 +298,25 @@ pub struct NoteFilter {
     pass_bend: bool,
     pass_cc: bool,
     pass_pressure: bool,
+    shape: NoteShape,
+    /// What the router wrote for one input event, before the shaping stage.
+    scratch: NoteBuffer,
+    sample_rate: f64,
+    length_fixed: bool,
+    length_ms: f32,
+    /// Hold was just turned off: release the latched keys at the start of the batch.
+    unhold: bool,
 }
 
 impl NoteFilter {
     fn new() -> Self {
         Self {
+            shape: NoteShape::new(),
+            scratch: NoteBuffer::with_capacity(512),
+            sample_rate: 48_000.0,
+            length_fixed: false,
+            length_ms: 250.0,
+            unhold: false,
             router: NoteRouter::new(),
             bypass: PlayerBypass::new(),
             flush_alloff: false,
@@ -278,6 +336,11 @@ impl NoteFilter {
             pass_cc: true,
             pass_pressure: true,
         }
+    }
+
+    fn refresh_length(&mut self) {
+        let ms = self.length_fixed.then_some(self.length_ms);
+        self.shape.set_length_ms(ms, self.sample_rate);
     }
 
     // The exact comparisons detect the untouched defaults.
@@ -377,16 +440,20 @@ impl Device for NoteFilter {
         &DESCRIPTOR
     }
 
-    fn prepare(&mut self, _info: &PrepareInfo) {
+    fn prepare(&mut self, info: &PrepareInfo) {
+        self.sample_rate = info.sample_rate.hz();
+        self.refresh_length();
         self.reset();
         self.flush_alloff = false;
     }
 
     fn reset(&mut self) {
-        if self.router.any_sounding() {
+        if self.router.any_sounding() || self.shape.any_sounding() {
             self.flush_alloff = true;
         }
         self.router.clear();
+        self.shape.clear();
+        self.unhold = false;
         if self.bypass.reset() {
             self.flush_alloff = true;
         }
@@ -419,6 +486,29 @@ impl Device for NoteFilter {
             P_PASS_CC => self.pass_cc = plain >= 0.5,
             P_PASS_PRESSURE => self.pass_pressure = plain >= 0.5,
             P_BYPASS => self.bypass.set_param(plain),
+            P_LENGTH_MODE => {
+                self.length_fixed = plain >= 0.5;
+                self.refresh_length();
+            }
+            P_LENGTH_MS => {
+                self.length_ms = plain.clamp(1.0, 5_000.0);
+                self.refresh_length();
+            }
+            P_POLY_LIMIT => self.shape.limit = int(0.0, 16.0) as usize,
+            P_POLY_MODE => {
+                self.shape.overflow = if plain >= 0.5 {
+                    Overflow::Ignore
+                } else {
+                    Overflow::Steal
+                }
+            }
+            P_HOLD => {
+                let h = plain >= 0.5;
+                if self.shape.hold && !h {
+                    self.unhold = true;
+                }
+                self.shape.hold = h;
+            }
             _ => {}
         }
     }
@@ -436,15 +526,27 @@ impl Device for NoteFilter {
         }
         if self.bypass.begin_batch(ctx.notes_out(NOTES_OUT)) {
             // The switch closes what the filter sent and starts it from nothing.
-            self.router.close_all(ctx.notes_out(NOTES_OUT), 0);
+            self.shape.close_all(ctx.notes_out(NOTES_OUT), 0);
             self.router.clear();
         }
+        if self.unhold {
+            self.unhold = false;
+            self.shape.release_latched(ctx.notes_out(NOTES_OUT), 0);
+        }
+        // The router writes into the scratch buffer; the shaping stage forwards to the output.
+        let mut scratch = std::mem::replace(&mut self.scratch, NoteBuffer::with_capacity(0));
         for i in 0..ctx.notes_in(NOTES_IN).len() {
             let e = ctx.notes_in(NOTES_IN)[i];
             if let Some(e) = self.bypass.route(ctx.notes_out(NOTES_OUT), e) {
-                self.apply(ctx.notes_out(NOTES_OUT), e);
+                scratch.clear();
+                self.apply(&mut scratch, e);
+                for s in scratch.as_slice() {
+                    self.shape.event(ctx.notes_out(NOTES_OUT), *s);
+                }
             }
         }
+        self.scratch = scratch;
+        self.shape.end_batch(ctx.notes_out(NOTES_OUT));
     }
 }
 

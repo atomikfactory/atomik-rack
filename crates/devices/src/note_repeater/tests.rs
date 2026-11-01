@@ -105,6 +105,8 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "gate",
             "dry",
             "bypass",
+            "repeat.mask",
+            "time.chord",
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -501,6 +503,8 @@ fn act() -> impl Strategy<Value = Act> {
         (36u8..84).prop_map(Act::Off),
         Just(Act::AllOff),
         (0usize..DESCRIPTOR.params.len() - 1, 0.0f32..=1.0).prop_map(|(p, n)| {
+            // The bypass (id 11) passes input through unchanged and is tested apart.
+            let p = if p == 11 { 13 } else { p };
             let d = &DESCRIPTOR.params[p];
             Act::Param(p, d.min + n * (d.max - d.min))
         }),
@@ -558,4 +562,50 @@ proptest! {
         // And nothing comes after the AllOff.
         prop_assert!(play(&mut h, 4_000, &[]).is_empty());
     }
+}
+
+#[test]
+fn the_repeat_mask_skips_repeats_but_keeps_their_timing_and_decay() {
+    let mut h = rig();
+    h.set_param("repeats", 4.0);
+    h.set_param("velocity.decay", 0.5);
+    // Repeats 1 and 3 only.
+    h.set_param("repeat.mask", 0b0101 as f32);
+    let seen = play(&mut h, 3000, &[(0, on_k(60, 1.0))]);
+    let got = ons(&seen);
+    // The dry note, repeat 1 at one eighth (24 000 / 2 frames... D = 1/8 dotted default) and 3.
+    assert_eq!(got.len(), 3);
+    let d = got[1].0;
+    assert_eq!(got[2].0, 3 * d, "repeat 3 keeps its place");
+    assert_eq!(got[1].2, 64, "repeat 1 is half the velocity");
+    assert_eq!(got[2].2, 16, "repeat 3 is an eighth of the velocity");
+}
+
+#[test]
+fn the_default_mask_plays_every_repeat() {
+    let mut h = rig();
+    let seen = play(&mut h, 3000, &[(0, on_k(60, 1.0))]);
+    assert_eq!(ons(&seen).len(), 4);
+}
+
+#[test]
+fn chord_mode_starts_the_repeats_with_the_note() {
+    let mut h = rig();
+    h.set_param("time.chord", 1.0);
+    h.set_param("pitch.step", 4.0);
+    h.set_param("repeats", 2.0);
+    let seen = play(&mut h, 1000, &[(0, on_k(60, 1.0))]);
+    let got = ons(&seen);
+    let keys: Vec<(u64, u8)> = got.iter().map(|(f, k, _)| (*f, *k)).collect();
+    assert_eq!(keys, [(0, 60), (0, 64), (0, 68)]);
+    // Every note ends: nothing hangs.
+    let mut count = [0i32; 128];
+    for (_, k) in &seen {
+        match k {
+            K::On(key, _) => count[usize::from(*key)] += 1,
+            K::Off(key) => count[usize::from(*key)] -= 1,
+            _ => {}
+        }
+    }
+    assert!(count.iter().all(|c| *c <= 0 || *c == 1) && count[64] == 0 && count[68] == 0);
 }

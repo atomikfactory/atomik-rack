@@ -72,6 +72,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         armed: false,
         chase: true,
         notes_to: None,
+        direct_record: false,
         frozen: None,
         lanes: vec![Lane::notes()],
     }
@@ -82,6 +83,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
 pub(crate) fn new_note_track(doc: &RackDoc, registry: &Registry, device: DeviceKey) -> Track {
     Track {
         notes_to: crate::workflow_create::stack_top(doc, registry, &device),
+        direct_record: false,
         ..new_track(device)
     }
 }
@@ -95,6 +97,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         armed: false,
         chase: true,
         notes_to: None,
+        direct_record: false,
         frozen: None,
         lanes: vec![Lane::audio()],
     }
@@ -110,6 +113,7 @@ pub(crate) fn new_automation_track(device: DeviceKey, lane: Lane) -> Track {
         armed: false,
         chase: true,
         notes_to: None,
+        direct_record: false,
         frozen: None,
         lanes: vec![lane],
     }
@@ -944,6 +948,17 @@ pub(crate) fn plan(
                 device,
                 old: t.chase,
                 new: chase,
+            }
+        }
+        SongCommand::SetDirectRecord { device, on } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            if t.is_audio() || t.is_automation_only() {
+                return Err(bad(format!("{device} has no note lane to record into")));
+            }
+            Edit::TrackDirectRecord {
+                device,
+                old: t.direct_record,
+                new: on,
             }
         }
         SongCommand::AddNoteLane { device, name } => {

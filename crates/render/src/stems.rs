@@ -219,6 +219,7 @@ pub fn render_stems(
                 Vec::new()
             },
             meter_probes: Vec::new(),
+            note_taps: Vec::new(),
             control: RenderControl {
                 cancel: control.cancel,
                 progress: control.progress.map(|_| &scaled as &(dyn Fn(f32) + Sync)),

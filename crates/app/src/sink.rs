@@ -73,6 +73,10 @@ pub trait EngineSink {
     /// Arms (non-empty) or disarms (empty) MIDI recording: live notes routed to one of
     /// `devices` are captured with their engine frame.
     fn set_recording(&mut self, devices: &[DeviceInstanceId]);
+    /// Taps the notes the engine devices `devices` receive (empty removes every tap): what a
+    /// player stack generates for its instrument, for Direct Record. The notes come back from
+    /// [`Self::drain_recorded`] with the device id. The default does nothing (no engine).
+    fn set_note_taps(&mut self, _devices: &[DeviceInstanceId]) {}
     /// Moves the captured live notes into `out` (oldest first).
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>);
     /// [`atomik_engine::EngineHandle::hold_automation`]: the song player leaves these
@@ -321,6 +325,8 @@ pub struct RecordingSink {
     pub recorded: Vec<RecordedNote>,
     /// The devices armed for recording ([`EngineSink::set_recording`]).
     pub armed: Vec<DeviceInstanceId>,
+    /// The devices whose received notes are tapped ([`EngineSink::set_note_taps`]).
+    pub note_taps: Vec<DeviceInstanceId>,
     /// The engine frame [`EngineSink::play_note`] stamps on a note it captures (tests move it).
     pub live_frame: u64,
     /// What [`EngineSink::fill_latencies`] reports per device (tests script latencies).
@@ -498,6 +504,10 @@ impl EngineSink for RecordingSink {
 
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>) {
         out.append(&mut self.recorded);
+    }
+
+    fn set_note_taps(&mut self, devices: &[DeviceInstanceId]) {
+        self.note_taps = devices.to_vec();
     }
 
     fn hold_automation(&mut self, lanes: &[(DeviceInstanceId, ParamId)]) {

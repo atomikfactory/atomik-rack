@@ -1221,7 +1221,9 @@ mod tests {
     #[test]
     fn heights_are_compact() {
         assert_eq!(auto_layout(&stereo_delay::DESCRIPTOR).height_units, 1);
-        assert_eq!(auto_layout(&line_mixer::DESCRIPTOR).height_units, 2);
+        // The line mixer grew an aux send per channel, the pre-fader switch and the return level
+        // (eight more knobs), which takes a third unit.
+        assert_eq!(auto_layout(&line_mixer::DESCRIPTOR).height_units, 3);
         // The synths have the most params: the poly synth and the mono bass (the same params)
         // fit in 7 units, the two layers of the dual layer in 16 (the most a panel can take).
         assert!(auto_layout(&poly_synth::DESCRIPTOR).height_units <= 7);

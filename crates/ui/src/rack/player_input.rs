@@ -79,6 +79,13 @@ impl RackView {
         Some(self.view_center(d, r))
     }
 
+    /// Centre of step cell `step` (0..16) of an arpeggiator panel.
+    pub fn arp_step_center(&self, key: &DeviceKey, step: u8) -> Option<Point> {
+        let d = self.front_device(key)?;
+        let r = *d.spec.arp?.steps.get(usize::from(step))?;
+        Some(self.view_center(d, r))
+    }
+
     /// Centre of the octave stepper's plus (`up`) or minus button.
     pub fn arp_octave_center(&self, key: &DeviceKey, up: bool) -> Option<Point> {
         let d = self.front_device(key)?;
@@ -241,6 +248,11 @@ impl RackView {
             PlayerBtn::Drum(db) => self.drum_down(i, db, modifiers, clicks, out),
             PlayerBtn::Mode(m) => self.choose(i, "mode", m, out),
             PlayerBtn::Rate(m) => self.choose(i, "rate", m, out),
+            PlayerBtn::Step(n) => {
+                let param = format!("step.{}", u32::from(n) + 1);
+                let now = self.param_value(i, &param).round() as i32;
+                out.push(param_cmd(&key, &param, ((now + 1) % 4) as f32, None));
+            }
             PlayerBtn::FromClip => {
                 if let Some(scale) = self.clip_scale {
                     let cmd = crate::key_chord_panel::from_clip_command(&key, scale);
