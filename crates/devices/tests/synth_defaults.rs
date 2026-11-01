@@ -2,6 +2,11 @@
 //! both envelopes, the LFO to pitch and cutoff, resonance, CV, a voice steal and a release)
 //! renders to the same bits it did before the oscillator, filter, LFO, envelope, play, spread and
 //! effect params were appended. The hash was taken from the synth before they existed.
+//!
+//! The exact bits depend on the platform maths library, so like the render goldens it runs only
+//! on the platform the hash was taken on.
+#![cfg(all(target_os = "windows", target_arch = "x86_64"))]
+
 atomik_testkit::install_alloc_guard!();
 
 use atomik_core::{BATCH, NoteEvent, NoteKind};
