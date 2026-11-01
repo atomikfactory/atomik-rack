@@ -14,6 +14,10 @@
 //!   asks `PluginManager::param_text` and answers with [`PluginParamsView::set_texts`]. A text
 //!   is only shown for the value it was asked for; after an edit the number is shown until the
 //!   new text arrives.
+//! * A plugin that offers presets gets a preset bar in the search row (`<`, the name, `>`; the
+//!   name opens a list): [`PluginParamsView::set_presets`] gives the list and the preset
+//!   loaded last, and the pane answers with [`UiAction::LoadPluginPreset`] or
+//!   [`UiAction::StepPluginPreset`].
 //!
 //! ```text
 //! PLUGIN PARAMS   Test Synth  ·  Atomik Test  CLAP                          [x]
@@ -69,6 +73,7 @@ use vello::kurbo::{Point, Rect};
 use vello::peniko::Color;
 
 mod paint;
+mod presets;
 
 /// Height of the top bar.
 pub const TOP_BAR_HEIGHT: f64 = 28.0;
@@ -126,6 +131,14 @@ pub enum Hit {
     Map(u32),
     /// A row's free space (name and value text).
     Row(u32),
+    /// The `<` of the preset bar.
+    PresetPrev,
+    /// The `>` of the preset bar.
+    PresetNext,
+    /// The preset name button (opens the list).
+    PresetName,
+    /// A row of the open preset list (index into the list).
+    PresetRow(usize),
     /// A row of the open macro menu.
     MenuRow(usize),
 }
@@ -238,6 +251,7 @@ pub struct PluginParamsView {
     texts: BTreeMap<u32, (u32, String)>,
     requested: BTreeSet<(u32, u32)>,
     menu: Option<Menu>,
+    presets: presets::PresetBar,
     drag: Drag,
     hover: Hit,
     toast: Option<String>,
@@ -302,6 +316,7 @@ impl PluginParamsView {
             texts: BTreeMap::new(),
             requested: BTreeSet::new(),
             menu: None,
+            presets: presets::PresetBar::default(),
             drag: Drag::None,
             hover: Hit::None,
             toast: None,
@@ -684,12 +699,23 @@ impl PluginParamsView {
                 "Show this parameter's automation lane in the arrangement",
             ),
             Hit::Map(id) => help(self.map_rect(id), "Drive this parameter from a macro"),
-            Hit::None | Hit::Search | Hit::Slider(_) | Hit::Row(_) | Hit::MenuRow(_) => None,
+            Hit::PresetPrev => help(self.preset_prev_rect(), "Load the previous preset"),
+            Hit::PresetNext => help(self.preset_next_rect(), "Load the next preset"),
+            Hit::PresetName => help(self.preset_name_rect(), "Choose a preset of this plugin"),
+            Hit::None
+            | Hit::Search
+            | Hit::Slider(_)
+            | Hit::Row(_)
+            | Hit::MenuRow(_)
+            | Hit::PresetRow(_) => None,
         }
     }
 
     /// What is at `pos`.
     pub fn hit(&self, pos: Point) -> Hit {
+        if let Some(h) = self.preset_hit(pos) {
+            return h;
+        }
         if let Some(m) = &self.menu
             && m.rect.contains(pos)
         {
@@ -1080,6 +1106,9 @@ impl PluginParamsView {
             }
             return;
         }
+        if self.preset_hover(pos) {
+            self.repaint = true;
+        }
         if let Some(m) = &mut self.menu {
             let hover = (0..m.entries.len()).find(|&i| Self::menu_row(m.rect, i).contains(pos));
             if hover != m.hover {
@@ -1115,6 +1144,10 @@ impl PluginParamsView {
         self.repaint = true;
         self.toast = None;
         let hit = self.hit(pos);
+        // The preset list and bar answer first; a press anywhere closes an open list.
+        if button == PointerButton::Primary && self.preset_press(hit, out) {
+            return;
+        }
         // A press while the menu is open applies a row or just closes the menu.
         if let Some(menu) = self.menu.take() {
             if let Hit::MenuRow(i) = hit {
@@ -1156,7 +1189,14 @@ impl PluginParamsView {
         }
         let _ = modifiers;
         match hit {
-            Hit::None | Hit::Search | Hit::Row(_) | Hit::MenuRow(_) => {}
+            Hit::None
+            | Hit::Search
+            | Hit::Row(_)
+            | Hit::MenuRow(_)
+            | Hit::PresetPrev
+            | Hit::PresetNext
+            | Hit::PresetName
+            | Hit::PresetRow(_) => {}
             Hit::Close => out.push(UiAction::ClosePluginParams),
             Hit::Slider(id) => self.slider_down(id, pos, clicks, out),
             Hit::StepDec(id) => self.step(id, -1.0, out),
@@ -1348,6 +1388,9 @@ impl PluginParamsView {
         _doc: &RackDoc,
         out: &mut Vec<UiAction>,
     ) {
+        if self.preset_wheel(dy, pos) {
+            return;
+        }
         self.menu = None;
         self.repaint = true;
         let fine = if modifiers.shift { FINE } else { 1.0 };
@@ -1403,7 +1446,7 @@ impl PluginParamsView {
                         out.extend(self.set_cmd(d.id, d.start, Some(d.merge)));
                         out.push(UiAction::EndMerge);
                     }
-                } else if self.menu.take().is_some() {
+                } else if self.preset_escape() || self.menu.take().is_some() {
                 } else if !self.query.is_empty() {
                     self.query.clear();
                     self.rebuild_items();

@@ -400,6 +400,21 @@ pub enum UiAction {
         /// The plugin device (path key).
         device: DeviceKey,
     },
+    /// A preset of the plugin was chosen in the parameter pane: the app loads it into the live
+    /// plugin as one undo step.
+    LoadPluginPreset {
+        /// The plugin device (path key).
+        device: DeviceKey,
+        /// The preset id the app gave ([`crate::plugin_data::PresetItem::id`]).
+        preset: String,
+    },
+    /// The `<` or `>` of the preset bar: load the preset `delta` places on (wrapping round).
+    StepPluginPreset {
+        /// The plugin device (path key).
+        device: DeviceKey,
+        /// -1 or 1.
+        delta: i32,
+    },
     /// The parameter pane's "automate" shortcut: the app adds an automation lane for the plugin
     /// param `p<param>` on the song track of the selected clip when there is one (the UI does
     /// not know the selection), as one undo step.

@@ -43,23 +43,26 @@ pub enum PluginEntryStatus {
     Disabled,
     /// Found but unusable (the reason).
     Failed(String),
+    /// The plugin's process ended on its own while it was in use (the reason); RETRY clears it.
+    Crashed(String),
 }
 
 impl PluginEntryStatus {
     /// The status word of the settings list.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Ok => "OK",
+            Self::Ok => "ENABLED",
             Self::Unsupported(_) => "UNSUPPORTED",
             Self::Disabled => "DISABLED",
-            Self::Failed(_) => "FAILED",
+            Self::Failed(_) => "COULD NOT LOAD",
+            Self::Crashed(_) => "CRASHED",
         }
     }
 
     /// The reason, for the states that have one.
     pub fn reason(&self) -> Option<&str> {
         match self {
-            Self::Unsupported(r) | Self::Failed(r) => Some(r),
+            Self::Unsupported(r) | Self::Failed(r) | Self::Crashed(r) => Some(r),
             _ => None,
         }
     }
@@ -252,6 +255,8 @@ pub enum PluginSettingsAction {
     },
     /// Take one failed file off the blacklist and scan it again.
     RetryFile(String),
+    /// Clear the CRASHED mark of one plugin (type id) so it is used again as any other.
+    RetryPlugin(String),
 }
 
 /// What the project banner asks the app to do.
@@ -267,4 +272,15 @@ pub enum PluginBannerAction {
     KeepCrashed,
     /// After an unclean exit: open the newest recovery snapshot.
     OpenRecovery,
+}
+
+/// One preset of a plugin as the parameter pane lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresetItem {
+    /// The id the app loads it by.
+    pub id: String,
+    /// The name to show.
+    pub name: String,
+    /// The folder or program list it belongs to (empty for none).
+    pub group: String,
 }

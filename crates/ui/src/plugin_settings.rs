@@ -35,8 +35,8 @@
 //!   with the matching [`crate::plugin_data::PluginRescan`]; while a scan runs they are dim and
 //!   the progress bar and `CANCEL` show. The timeout steps by 5 s (Shift: 30 s) within 5 to 300.
 //! * **Lists.** Each plugin has a DISABLE check (`SetPluginDisabled`), each failed file its
-//!   reason and a RETRY (`RetryFile`). The list is scrolled with the wheel; only the rows in
-//!   view are painted.
+//!   reason and a RETRY (`RetryFile`); a plugin row marked CRASHED has a RETRY of its own
+//!   (`RetryPlugin`). The list is scrolled with the wheel; only the rows in view are painted.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt};
@@ -367,6 +367,16 @@ impl PluginSettingsView {
         Some(Rect::new(r.x0 + 2.0, r.y0 + 4.0, r.x0 + 16.0, r.y0 + 18.0))
     }
 
+    /// The RETRY button of plugin row `i`, only for a plugin marked CRASHED.
+    pub fn crash_retry_rect(&self, i: usize) -> Option<Rect> {
+        let (_, r) = self.find(Item::Plugin(i))?;
+        matches!(
+            self.data.plugins.get(i)?.status,
+            PluginEntryStatus::Crashed(_)
+        )
+        .then(|| Rect::new(r.x1 - 64.0, r.y0 + 3.0, r.x1 - 4.0, r.y1 - 3.0))
+    }
+
     /// The RETRY button of failed file `i`.
     pub fn retry_rect(&self, i: usize) -> Option<Rect> {
         let (_, r) = self.find(Item::Failed(i))?;
@@ -445,9 +455,15 @@ impl PluginSettingsView {
             let found = match *item {
                 Item::Folder(i) => at(self.folder_remove_rect(i), "Remove this search folder"),
                 Item::Plugin(i) => at(
-                    self.plugin_toggle_rect(i),
-                    "Disable this plugin: it stays installed but is not offered",
-                ),
+                    self.crash_retry_rect(i),
+                    "Use this plugin again after it crashed",
+                )
+                .or_else(|| {
+                    at(
+                        self.plugin_toggle_rect(i),
+                        "Disable this plugin: it stays installed but is not offered",
+                    )
+                }),
                 Item::Failed(i) => at(self.retry_rect(i), "Try this file again"),
                 _ => None,
             };
@@ -567,6 +583,12 @@ impl PluginSettingsView {
                         disabled: row.status != PluginEntryStatus::Disabled,
                     },
                 );
+                return;
+            }
+        }
+        for (i, row) in self.data.plugins.clone().into_iter().enumerate() {
+            if self.crash_retry_rect(i).is_some_and(|r| r.contains(pos)) {
+                Self::emit(out, PluginSettingsAction::RetryPlugin(row.plugin.type_id()));
                 return;
             }
         }
@@ -858,10 +880,15 @@ impl PluginSettingsView {
                     status_col,
                     Align::Start,
                 );
+                let retry = self.crash_retry_rect(i);
+                let retry_w = if retry.is_some() { 70.0 } else { 0.0 };
+                if let Some(x) = retry {
+                    sp::button(c, st, x, "RETRY", None, self.hovered(x));
+                }
                 if let Some(reason) = row.status.reason() {
                     label(
                         c,
-                        &fit_label(reason, r.x1 - (r.x0 + 560.0), 9.0),
+                        &fit_label(reason, r.x1 - (r.x0 + 560.0) - retry_w, 9.0),
                         r.x0 + 560.0,
                         y,
                         9.0,
