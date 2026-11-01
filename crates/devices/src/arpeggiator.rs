@@ -607,6 +607,24 @@ impl Arpeggiator {
         }
     }
 
+    /// Starts an arpeggio note. A key that went through outside the input range and is still
+    /// down is closed first, so `notes_out` never sees two Ons of one key.
+    fn sound_on(
+        &mut self,
+        ctx: &mut ProcessContext<'_>,
+        frame: usize,
+        key: u8,
+        velocity: f32,
+        end: f64,
+    ) {
+        let k = usize::from(key);
+        if self.thru_down[k] {
+            self.thru_down[k] = false;
+            self.core.thru(ctx, frame, NoteKind::Off { key });
+        }
+        self.core.note_on(ctx, frame, key, velocity, end);
+    }
+
     fn refresh_grid(&mut self, tick: f64, jump: bool) {
         let g = self.param_grid();
         if jump || g != self.grid {
@@ -629,6 +647,9 @@ impl Arpeggiator {
                     if k < self.in_low || k > self.in_high {
                         // Outside the input range: the key plays itself.
                         if !self.thru_down[usize::from(k)] {
+                            // An arpeggio note of this key may still sound (the range moved
+                            // while the key was held): close it, never sound the key twice.
+                            self.core.close_key(ctx, at, k);
                             self.thru_down[usize::from(k)] = true;
                             self.core.thru(ctx, at, e.kind);
                         }
@@ -823,7 +844,7 @@ impl StepHost for Run<'_, '_> {
             for &base in &sorted[..m] {
                 let key = shifted(fold(u32::from(base) + o), shift);
                 let vel = velocity_of(s, base);
-                s.core.note_on(self.ctx, frame, key, vel, end);
+                s.sound_on(self.ctx, frame, key, vel, end);
                 s.core.trigger(self.ctx, frame, key, vel);
             }
         } else {
@@ -838,7 +859,7 @@ impl StepHost for Run<'_, '_> {
             );
             let key = shifted(key, shift);
             let vel = velocity_of(s, base);
-            s.core.note_on(self.ctx, frame, key, vel, end);
+            s.sound_on(self.ctx, frame, key, vel, end);
             s.core.trigger(self.ctx, frame, key, vel);
         }
     }
