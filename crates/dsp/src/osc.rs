@@ -89,6 +89,65 @@ impl PolyBlepOsc {
         self.phase
     }
 
+    /// The phase increment per sample (cycles), `0..=0.5`.
+    #[inline]
+    pub fn increment(&self) -> f64 {
+        self.inc
+    }
+
+    /// Sets the phase increment per sample directly (clamped to `0..=0.5`; NaN gives 0). For
+    /// per-sample frequency modulation without a divide.
+    #[inline]
+    pub fn set_increment(&mut self, inc: f64) {
+        self.inc = if inc.is_finite() {
+            inc.clamp(0.0, 0.5)
+        } else {
+            0.0
+        };
+    }
+
+    /// Advances the phase by one increment without producing a sample (for a table read at
+    /// [`PolyBlepOsc::phase`]). Returns whether the phase wrapped past 1.
+    #[inline]
+    pub fn advance(&mut self) -> bool {
+        self.phase += self.inc;
+        if self.phase >= 1.0 {
+            self.phase -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The BLEP residual that smooths a step of `step` (the jump of the naive waveform) that
+    /// happened `elapsed` of a sample ago (`0..1`), for the first sample after it. Used to
+    /// soften a hard-sync reset; the sample before the step is not corrected.
+    #[inline]
+    pub fn step_residual(step: f32, elapsed: f32) -> f32 {
+        let x = f64::from(elapsed.clamp(0.0, 1.0));
+        // The textbook residual for t < dt with dt = 1: 2x - x^2 - 1.
+        (f64::from(step) * 0.5 * (2.0 * x - x * x - 1.0)) as f32
+    }
+
+    /// The naive (not band-limited) value of the current waveform at `phase`, for sizing the
+    /// jump of a hard-sync reset.
+    #[inline]
+    pub fn naive_at(&self, phase: f64) -> f32 {
+        let p = phase.rem_euclid(1.0);
+        (match self.wave {
+            Waveform::Saw => 2.0 * p - 1.0,
+            Waveform::Square => {
+                if p < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            Waveform::Triangle => 1.0 - 4.0 * (p - 0.5).abs(),
+            Waveform::Sine => crate::det_trig::sin_cycles(p),
+        }) as f32
+    }
+
     /// Produces one sample and advances the phase.
     #[inline]
     pub fn next_sample(&mut self) -> f32 {
@@ -290,5 +349,38 @@ mod tests {
                 .map(|_| o.next_sample())
                 .all(|s| s.is_finite() && s.abs() <= 2.0)
         );
+    }
+
+    #[test]
+    fn advance_walks_the_phase_like_next_sample_and_reports_wraps() {
+        let mut a = PolyBlepOsc::new(Waveform::Saw);
+        let mut b = a;
+        a.set_frequency(1_234.0, SR);
+        b.set_frequency(1_234.0, SR);
+        let mut wraps = 0;
+        for _ in 0..4_800 {
+            b.next_sample();
+            if a.advance() {
+                wraps += 1;
+            }
+            assert_eq!(a.phase().to_bits(), b.phase().to_bits());
+        }
+        assert_eq!(
+            wraps, 123,
+            "10 cycles per 1000 samples of 1.234 kHz at 48 kHz"
+        );
+        a.set_increment(f64::NAN);
+        assert_eq!(a.increment(), 0.0);
+        a.set_increment(0.9);
+        assert_eq!(a.increment(), 0.5);
+    }
+
+    #[test]
+    fn step_residual_fades_the_step_out_over_one_sample() {
+        // A step of -2 that just happened leaves +1 of the jump; one sample later nothing.
+        assert!((PolyBlepOsc::step_residual(-2.0, 0.0) - 1.0).abs() < 1e-6);
+        assert!(PolyBlepOsc::step_residual(-2.0, 1.0).abs() < 1e-6);
+        let o = PolyBlepOsc::new(Waveform::Saw);
+        assert!((o.naive_at(0.0) + 1.0).abs() < 1e-6 && (o.naive_at(0.75) - 0.5).abs() < 1e-6);
     }
 }

@@ -545,6 +545,206 @@ impl Synth {
     }
 }
 
+// ------------------------------------------------------------------------- the additive waves
+
+/// Number of waveforms in the additive bank ([`wave_bank`]).
+pub const WAVE_COUNT: usize = 32;
+/// The additive waveform names, in bank order.
+pub const WAVE_NAMES: [&str; WAVE_COUNT] = [
+    "sine",
+    "saw",
+    "square",
+    "triangle",
+    "pulse 25",
+    "pulse 10",
+    "octave saw",
+    "soft saw",
+    "soft square",
+    "bright saw",
+    "hollow",
+    "organ 1",
+    "organ 2",
+    "organ 3",
+    "sine 2nd",
+    "sine 3rd",
+    "vowel a",
+    "vowel e",
+    "vowel i",
+    "vowel o",
+    "vowel u",
+    "peak 4",
+    "peak 8",
+    "peak 16",
+    "triple",
+    "pairs",
+    "bell",
+    "random a",
+    "random b",
+    "random c",
+    "random d",
+    "buzz",
+];
+/// Seed of the "random" waves' spectra.
+const WAVE_SEED: u64 = 0x5741_5645_424F_4E4B;
+
+/// A spectrum of a few partials `(harmonic, amplitude)`.
+fn partials(list: &[(usize, f64)]) -> Spectrum {
+    let mut s = silent();
+    for (h, a) in list {
+        s[*h].re = *a;
+    }
+    s
+}
+
+/// A pulse of duty `d` (a spectrum with sine and cosine terms, as in the pulse-width table).
+fn pulse(d: f64) -> Spectrum {
+    let mut s = silent();
+    for (h, x) in s.iter_mut().enumerate().skip(1) {
+        let turn = h as f64 * d;
+        let pi_h = std::f64::consts::PI * h as f64;
+        x.re = 2.0 * (1.0 - cos_cycles(turn)) / pi_h;
+        x.im = 2.0 * sin_cycles(turn) / pi_h;
+    }
+    s
+}
+
+/// Spectrum of vowel `v` (0..5) written for a 110 Hz cycle, like the vowel table.
+fn vowel(v: usize) -> Spectrum {
+    let (gain, width) = ([1.0, 0.7, 0.4], [110.0, 160.0, 260.0]);
+    sines(|h| {
+        let hz = 110.0 * h as f64;
+        let peaks: f64 = (0..3)
+            .map(|k| gain[k] * gauss((hz - VOWELS[v][k]) / width[k]))
+            .sum();
+        (0.03 + peaks) / h as f64
+    })
+}
+
+/// A resonant peak at harmonic `centre` over a falling slope.
+fn peak(centre: f64) -> Spectrum {
+    let width = 1.0 + 0.15 * centre;
+    sines(|h| (0.4 + 6.0 * gauss((h as f64 - centre) / width)) / h as f64)
+}
+
+/// A seeded random spectrum over the first 24 harmonics.
+fn random_wave(index: usize) -> Spectrum {
+    let mut rng = Rng::new(WAVE_SEED ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let mut s = silent();
+    for (h, x) in s.iter_mut().enumerate().take(25).skip(1) {
+        let amp = f64::from(rng.next_f32());
+        let amp = amp * amp / (h as f64).sqrt();
+        let turn = f64::from(rng.next_f32());
+        x.re = amp * cos_cycles(turn);
+        x.im = amp * sin_cycles(turn);
+    }
+    s
+}
+
+/// Spectrum of additive wave `index` before the level scaling.
+fn wave_spectrum(index: usize) -> Spectrum {
+    use std::f64::consts::PI;
+    match index {
+        0 => partials(&[(1, 1.0)]),
+        1 => sines(|h| 1.0 / h as f64),
+        2 => sines(|h| if odd(h) { 1.0 / h as f64 } else { 0.0 }),
+        3 => sines(|h| {
+            if odd(h) {
+                let sign = if (h / 2) % 2 == 0 { 1.0 } else { -1.0 };
+                8.0 / (PI * PI) * sign / (h * h) as f64
+            } else {
+                0.0
+            }
+        }),
+        4 => pulse(0.25),
+        5 => pulse(0.1),
+        6 => sines(|h| if odd(h) { 0.0 } else { 1.0 / h as f64 }),
+        7 => sines(|h| 1.0 / (h * h) as f64),
+        8 => sines(|h| if odd(h) { 1.0 / (h * h) as f64 } else { 0.0 }),
+        9 => sines(|h| 1.0 / (h as f64).sqrt()),
+        10 => sines(|h| if odd(h) && h > 1 { 1.0 / h as f64 } else { 0.0 }),
+        11 => partials(&[(1, 1.0), (2, 0.8), (3, 0.6), (4, 0.4)]),
+        12 => partials(&[(1, 1.0), (3, 0.7), (5, 0.5)]),
+        13 => partials(&[(1, 1.0), (2, 0.8), (4, 0.6), (8, 0.5)]),
+        14 => partials(&[(1, 1.0), (2, 0.5)]),
+        15 => partials(&[(1, 1.0), (3, 0.5)]),
+        16..=20 => vowel(index - 16),
+        21 => peak(4.0),
+        22 => peak(8.0),
+        23 => peak(16.0),
+        24 => sines(|h| if h % 3 == 0 { 1.0 / h as f64 } else { 0.0 }),
+        25 => sines(|h| if (h - 1) % 4 < 2 { 1.0 / h as f64 } else { 0.0 }),
+        26 => partials(&[(1, 1.0), (2, 0.7), (4, 0.6), (5, 0.4), (7, 0.3)]),
+        27..=30 => random_wave(index),
+        _ => sines(|h| if h <= 24 { 1.0 } else { 0.0 }),
+    }
+}
+
+/// The additive bank: [`WAVE_COUNT`] single cycles, each at every mip level (the layout of one
+/// frame of a [`Wavetable`]).
+#[derive(Debug)]
+pub struct WaveBank {
+    data: Box<[f32]>,
+}
+
+impl WaveBank {
+    /// Builds every wave (a few hundred microseconds each): call it off the audio thread, or
+    /// use [`wave_bank`], which does it once.
+    pub fn build() -> Self {
+        let mut synth = Synth::new();
+        let mut data = vec![0.0f32; WAVE_COUNT * FRAME_FLOATS];
+        for wave in 0..WAVE_COUNT {
+            let spec = wave_spectrum(wave);
+            let gain = synth.peak_gain(&spec);
+            for level in 0..LEVELS {
+                let at = wave * FRAME_FLOATS + LEVEL_OFFSET[level];
+                synth.render(
+                    &spec,
+                    LEVEL_HARMONICS[level],
+                    gain,
+                    &mut data[at..at + LEVEL_LEN[level]],
+                );
+            }
+        }
+        Self {
+            data: data.into_boxed_slice(),
+        }
+    }
+
+    /// The cycle of wave `index` (clamped) at mip `level` (clamped).
+    pub fn cycle(&self, index: usize, level: usize) -> &[f32] {
+        let level = level.min(LEVELS - 1);
+        let at = index.min(WAVE_COUNT - 1) * FRAME_FLOATS + LEVEL_OFFSET[level];
+        &self.data[at..at + LEVEL_LEN[level]]
+    }
+
+    /// Reads wave `index` at `phase` (cycles, only the fractional part counts) from mip
+    /// `level` with a four-point Hermite. Allocation-free.
+    #[inline]
+    pub fn read(&self, index: usize, level: usize, phase: f64) -> f32 {
+        let level = level.min(LEVELS - 1);
+        let len = LEVEL_LEN[level];
+        let x = (phase - phase.floor()) * len as f64;
+        let i = (x as usize).min(len - 1);
+        let frac = (x - i as f64) as f32;
+        let base = index.min(WAVE_COUNT - 1) * FRAME_FLOATS + LEVEL_OFFSET[level];
+        let cycle = &self.data[base..base + len];
+        let mask = len - 1;
+        hermite4(
+            cycle[(i + len - 1) & mask],
+            cycle[i],
+            cycle[(i + 1) & mask],
+            cycle[(i + 2) & mask],
+            frac,
+        )
+    }
+}
+
+/// The additive bank, built on first use and shared by every device and thread.
+pub fn wave_bank() -> &'static WaveBank {
+    static BANK: OnceLock<WaveBank> = OnceLock::new();
+    BANK.get_or_init(WaveBank::build)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -769,5 +969,67 @@ mod tests {
                 "table {t}"
             );
         }
+    }
+
+    #[test]
+    fn the_additive_bank_has_32_distinct_peak_normalised_waves() {
+        assert_eq!(WAVE_NAMES.len(), WAVE_COUNT);
+        let b = wave_bank();
+        for (w, name) in WAVE_NAMES.iter().enumerate() {
+            let peak = b.cycle(w, 0).iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            assert!((peak - 1.0).abs() < 1e-3, "{}: peak {peak}", name);
+            let mean = b.cycle(w, 0).iter().sum::<f32>() / CYCLE_LEN as f32;
+            assert!(mean.abs() < 1e-4, "{}: dc {mean}", name);
+            for v in 0..w {
+                assert_ne!(b.cycle(v, 0), b.cycle(w, 0), "{v} == {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_additive_bank_is_deterministic_and_band_limits_by_level() {
+        let again = WaveBank::build();
+        let b = wave_bank();
+        for w in 0..WAVE_COUNT {
+            for l in 0..LEVELS {
+                assert_eq!(b.cycle(w, l), again.cycle(w, l), "wave {w} level {l}");
+            }
+        }
+        // The top level is a sine at the fundamental for every wave: its read is a pure tone.
+        for w in 1..WAVE_COUNT {
+            let top = b.cycle(w, LEVELS - 1);
+            let n = top.len();
+            let fund: f64 = (0..n)
+                .map(|i| f64::from(top[i]) * sin_cycles(i as f64 / n as f64))
+                .sum::<f64>()
+                * 2.0
+                / n as f64;
+            let fund_c: f64 = (0..n)
+                .map(|i| f64::from(top[i]) * cos_cycles(i as f64 / n as f64))
+                .sum::<f64>()
+                * 2.0
+                / n as f64;
+            let rest: f64 = (0..n)
+                .map(|i| {
+                    let p = i as f64 / n as f64;
+                    let r = f64::from(top[i]) - fund * sin_cycles(p) - fund_c * cos_cycles(p);
+                    r * r
+                })
+                .sum::<f64>();
+            assert!(rest < 1e-8, "wave {w}: {rest}");
+        }
+    }
+
+    #[test]
+    fn the_additive_saw_and_square_have_the_expected_shape() {
+        let b = wave_bank();
+        // Wave 1 is a rising... falling saw (sine series 1/h): value falls through zero at
+        // phase 0.5 and is positive just after 0.
+        assert!(b.read(1, 0, 0.02) > 0.5 && b.read(1, 0, 0.98) < -0.5);
+        assert!(b.read(2, 0, 0.25) > 0.8 && b.read(2, 0, 0.75) < -0.8);
+        assert!(b.read(0, 0, 0.25) > 0.99);
+        // Reads wrap and clamp.
+        assert_eq!(b.read(2, 0, 1.25), b.read(2, 0, 0.25));
+        assert_eq!(b.read(99, 0, 0.3), b.read(WAVE_COUNT - 1, 0, 0.3));
     }
 }
