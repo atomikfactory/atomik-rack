@@ -1092,3 +1092,22 @@ fn sample_rate_scales_the_attack_and_fade_lengths() {
     assert!((o[0][47] - 0.5).abs() < 1e-5 && o[0][23] < 0.3);
     let _ = SR;
 }
+
+#[test]
+fn master_tune_pitches_the_slices_like_tune_semi() {
+    let m = four_slices(|_| {});
+    let play = |master: f32, semi: f32| {
+        let (mut h, _) = with_map(&m);
+        h.set_param("tune.semi", semi);
+        h.time_mut().tune_cents = master;
+        h.push_note("notes_in", on(0, 24, 1.0));
+        render(&mut h, 6)
+    };
+    // An octave of master tune is an octave of tune.semi, bit for bit.
+    let (a, b) = (play(1200.0, 0.0), play(0.0, 12.0));
+    assert_eq!(bits(&a.0), bits(&b.0));
+    assert_eq!(bits(&a.1), bits(&b.1));
+    assert_ne!(bits(&a.0), bits(&play(0.0, 0.0).0));
+    // A tune of zero is no tune.
+    assert_eq!(bits(&play(0.0, 0.0).0), bits(&play(-0.0, 0.0).0));
+}

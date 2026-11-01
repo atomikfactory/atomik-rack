@@ -1334,3 +1334,55 @@ fn the_sounds_do_what_their_names_say() {
     h.render(seconds(0.2), &OUT);
     assert_eq!(probe.active(), 1);
 }
+
+#[test]
+fn master_tune_shifts_the_carrier_by_the_cents_ratio_and_not_a_fixed_operator() {
+    for cents in [50.0f32, -100.0, 100.0] {
+        let (mut h, _) = synth();
+        pure(&mut h);
+        h.time_mut().tune_cents = cents;
+        h.push_note("notes_in", on(0, 69, 1.0));
+        let o = h.render(seconds(1.0), &OUT);
+        let f = dominant_frequency(&o[0][4_800..4_800 + 32_768], SR);
+        let want = 440.0 * 2f64.powf(f64::from(cents) / 1200.0);
+        assert!((f - want).abs() < 0.5, "{cents} cents: {f} vs {want}");
+    }
+    // A fixed-frequency operator keeps its own Hz.
+    let (mut h, _) = synth();
+    pure(&mut h);
+    h.set_param("op1.fixed", 1.0);
+    h.set_param("op1.coarse", 1.0);
+    let plain = {
+        h.push_note("notes_in", on(0, 69, 1.0));
+        let o = h.render(seconds(1.0), &OUT);
+        dominant_frequency(&o[0][4_800..4_800 + 32_768], SR)
+    };
+    let (mut h, _) = synth();
+    pure(&mut h);
+    h.set_param("op1.fixed", 1.0);
+    h.set_param("op1.coarse", 1.0);
+    h.time_mut().tune_cents = 100.0;
+    h.push_note("notes_in", on(0, 69, 1.0));
+    let o = h.render(seconds(1.0), &OUT);
+    let tuned = dominant_frequency(&o[0][4_800..4_800 + 32_768], SR);
+    assert!((plain - tuned).abs() < 0.5, "{plain} vs {tuned}");
+}
+
+#[test]
+fn a_tune_of_zero_renders_the_same_bits_as_no_tune() {
+    let run = |set: bool| {
+        let (mut h, _) = synth();
+        pure(&mut h);
+        if set {
+            h.time_mut().tune_cents = 0.0;
+        }
+        h.push_note("notes_in", on(0, 60, 1.0));
+        h.render(seconds(0.3), &OUT)
+    };
+    let (a, b) = (run(false), run(true));
+    assert!(
+        a[0].iter()
+            .zip(&b[0])
+            .all(|(x, y)| x.to_bits() == y.to_bits())
+    );
+}

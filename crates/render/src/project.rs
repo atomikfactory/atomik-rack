@@ -970,7 +970,12 @@ pub(crate) fn render_core(
         worker_linger_spins: 0,
     };
     let (mut engine, mut handle) = new_engine_with_options(built.config, engine_options);
+    // The project's master tune is in force from the first batch (no glide), as a playback that
+    // loaded the same project has it.
     let queued = handle.submit_plan(built.plan).and_then(|()| {
+        if doc.tune_cents.to_bits() != 0 {
+            handle.set_master_tune(doc.tune_cents, false)?;
+        }
         plan.setup
             .iter()
             .try_for_each(|&command| handle.transport(command))
