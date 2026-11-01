@@ -38,10 +38,10 @@ mod threads;
 mod wire;
 
 pub use backend::{
-    ActivateConfig, BackendError, EditorKind, EventList, HostHandle, NativeParent, NullBackend,
-    NullBehavior, NullPlugin, NullStats, PluginBackend, PluginEvent, PluginEventKind,
-    PluginInstance, PluginIo, PluginProcessor, PluginTransport, ProcessStatus, ScannedPlugin,
-    SleepRule, TailLength,
+    ActivateConfig, BackendError, EditorKind, EventList, HostHandle, NULL_PRESETS, NativeParent,
+    NullBackend, NullBehavior, NullPlugin, NullStats, PluginBackend, PluginEvent, PluginEventKind,
+    PluginInstance, PluginIo, PluginProcessor, PluginTransport, PresetInfo, ProcessStatus,
+    ScannedPlugin, SleepRule, TailLength,
 };
 pub use cache::{
     BlacklistEntry, CACHE_VERSION, CachedFile, FileStamp, LoadStatus, PluginCache, SCANNER_VERSION,

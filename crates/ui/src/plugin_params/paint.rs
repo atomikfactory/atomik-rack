@@ -45,6 +45,7 @@ pub(super) fn paint(v: &PluginParamsView, c: &mut dyn Canvas) {
     }
     chrome(v, c);
     menu(v, c);
+    v.paint_preset_list(c);
     // The help line (what undo covers), replaced by the message of a refused gesture.
     let footer = Rect::new(b.x0, b.y1 - super::FOOTER_HEIGHT, b.x1, b.y1);
     sp::rect(c, footer, v.st.header);
@@ -168,6 +169,7 @@ fn chrome(v: &PluginParamsView, c: &mut dyn Canvas) {
         t.text_muted,
         Align::Start,
     );
+    v.paint_preset_bar(c);
     sp::line(c, row.x0, row.y1 - 0.5, row.x1, row.y1 - 0.5, st.separator);
 }
 

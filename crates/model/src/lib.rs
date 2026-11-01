@@ -767,6 +767,7 @@ pub enum Command {
 /// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
 /// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
+/// | `SetState` (also undo/redo) | `PluginStateChanged` |
 /// | `SyncState`, `SyncLayout` | none (not undo steps) |
 /// | `ApplyPatch`, `ResetDevice` (also undo/redo) | `ParamChanged` per changed param, `ZonesChanged`, `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the patch name); a container's inside: `DeviceRemoved` and `DeviceAdded` for the container |
 /// | `SetPatchName` (also undo/redo) | `ViewChanged` |
@@ -1079,6 +1080,8 @@ enum MergeKey {
     Splits(u64, DeviceKey),
     /// `SetMacro` on one target (container, macro, device, param).
     Macro(u64, DeviceKey, u8, DeviceKey, String),
+    /// `PluginCommand::SetState` on one plugin device.
+    PluginState(u64, DeviceKey),
 }
 
 impl Document {
@@ -1308,6 +1311,11 @@ impl Document {
                 target.device.clone(),
                 target.param.clone(),
             )),
+            Command::Plugin(PluginCommand::SetState {
+                device,
+                merge: Some(m),
+                ..
+            }) => Some(MergeKey::PluginState(*m, device.clone())),
             _ => None,
         };
         let label = command.label();
@@ -1385,6 +1393,11 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::Macro { new, .. }), Edit::Macro { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::PluginState { new, .. }), Edit::PluginState { new: latest, .. })
+                if merged =>
+            {
                 new.clone_from(latest);
             }
             (Some(Edit::TempoMap { new, .. }), Edit::TempoMap { new: latest, .. }) if merged => {

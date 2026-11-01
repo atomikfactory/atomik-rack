@@ -258,6 +258,7 @@ fn the_vst3_editor_opens_in_a_window_is_sized_by_the_plugin_and_shown() {
             device,
             title,
             remembered,
+            at: _,
         },
     ] = asked.as_slice()
     else {

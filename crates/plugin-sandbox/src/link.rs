@@ -381,6 +381,7 @@ impl Shared {
             | FromChild::Text { id, .. }
             | FromChild::Latency { id, .. }
             | FromChild::Pins { id, .. }
+            | FromChild::Presets { id, .. }
             | FromChild::LayoutChanged { id, .. }
             | FromChild::GuiOpened { id, .. } => *id,
             FromChild::ParamEdit {

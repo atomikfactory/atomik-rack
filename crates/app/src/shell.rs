@@ -4009,6 +4009,9 @@ impl<B: AudioBackend> Shell<B> {
         self.ui.file_browser_tree_fraction = view.tree_fraction();
         self.ui.file_browser_auto_preview = view.auto_preview();
         self.ui.patch_folders.clone_from(self.core.patch_folders());
+        self.ui
+            .plugin_windows
+            .clone_from(self.core.plugin_window_geoms());
         if let Some(path) = &self.ui_state_path
             && let Err(e) = self.ui.save(path)
         {
@@ -4692,6 +4695,7 @@ impl<B: AudioBackend> Shell<B> {
         view.set_auto_preview(ui.file_browser_auto_preview);
         self.core.set_file_browser_folder(ui.file_browser_folder);
         self.core.set_patch_folders(ui.patch_folders);
+        self.core.set_plugin_window_geoms(ui.plugin_windows);
         if ui.file_browser_visible {
             self.core.set_file_browser_visible(true);
         }
@@ -5846,6 +5850,10 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.save_click_level();
         self.core.plugin_tick(now_seconds);
+        // A plugin window closed somewhere new: the position is kept for next time.
+        if self.core.take_plugin_geoms_changed() {
+            self.save_ui_state();
+        }
         self.core.piano_roll_tick(now_seconds);
         self.tick_tooltip(now_seconds);
         // A pointer resting on another row of a context menu switches its submenu.

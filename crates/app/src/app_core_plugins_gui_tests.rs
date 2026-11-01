@@ -78,6 +78,7 @@ fn open_gui_asks_for_a_window_then_embeds_the_view_and_sizes_and_shows_it() {
             device: dev.clone(),
             title: "Atomik Test Gain - Echo".to_string(),
             remembered: None,
+            at: None,
         }]
     );
     assert!(core.plugin_gui_open(&dev), "opening");
@@ -907,4 +908,49 @@ fn a_plugin_that_fails_at_run_time_shows_failed_with_the_reason_and_reload_tries
     );
     settle(&mut core);
     assert!(core.plugin_failure(&key("bad")).is_some());
+}
+
+// ------------------------------------------------------------------ window geometry
+
+#[test]
+fn a_window_closed_where_the_user_left_it_opens_there_for_the_next_plugin_of_its_type() {
+    let mut core = gain_core();
+    let dev = key("echo");
+    open_editor(&mut core, &dev);
+    core.plugin_window_resized(&dev, 700, 500);
+    core.take_plugin_window_requests();
+    core.plugin_window_moved(&dev, -300, 40);
+    assert!(!core.take_plugin_geoms_changed(), "nothing until it closes");
+    core.plugin_window_closed(&dev);
+    assert!(core.take_plugin_geoms_changed());
+    let geoms = core.plugin_window_geoms().clone();
+    let geom = geoms[GAIN];
+    assert_eq!((geom.x, geom.y), (-300, 40));
+    assert!(geom.w > 0 && geom.h > 0);
+
+    // Another device of the same plugin, and a new run that read the saved geometry.
+    let mut next = plugin_core(OfflineSink::new());
+    next.set_plugin_window_geoms(geoms);
+    add_plugin(&mut next, GAIN, "again");
+    next.frame();
+    next.handle_action(UiAction::OpenPluginGui {
+        device: key("again"),
+    });
+    let asked = next.take_plugin_window_requests();
+    let [PluginWindowRequest::Open { remembered, at, .. }] = asked.as_slice() else {
+        panic!("{asked:?}");
+    };
+    assert_eq!(*at, Some((-300, 40)));
+    assert_eq!(*remembered, Some((geom.w, geom.h)));
+}
+
+#[test]
+fn a_window_that_is_still_open_counts_when_the_geometry_is_read() {
+    let mut core = gain_core();
+    let dev = key("echo");
+    open_editor(&mut core, &dev);
+    core.plugin_window_resized(&dev, 640, 480);
+    core.plugin_window_moved(&dev, 10, 20);
+    let geom = core.plugin_window_geoms()[GAIN];
+    assert_eq!((geom.x, geom.y), (10, 20));
 }

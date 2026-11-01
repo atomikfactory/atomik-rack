@@ -1010,3 +1010,125 @@ proptest! {
         run(&steps, big_rack(), "big");
     }
 }
+
+// ---- the preset bar ---------------------------------------------------------------------
+
+fn presets(n: usize) -> Vec<atomik_ui::plugin_data::PresetItem> {
+    (0..n)
+        .map(|i| atomik_ui::plugin_data::PresetItem {
+            id: format!("p{i}"),
+            name: format!("Preset {i}"),
+            group: if i % 2 == 0 {
+                "Factory".into()
+            } else {
+                String::new()
+            },
+        })
+        .collect()
+}
+
+#[test]
+fn a_plugin_without_presets_has_no_bar_and_keeps_its_look() {
+    let d = plugin_rack();
+    let v = pane_on(d.doc(), "synth");
+    assert!(v.preset_name_rect().is_none() && v.preset_prev_rect().is_none());
+    assert!(matches!(v.hit(Point::new(600.0, 20.0 + 28.0)), Hit::None));
+}
+
+#[test]
+fn the_arrows_step_and_a_row_of_the_list_loads_that_preset() {
+    let d = plugin_rack();
+    let mut v = pane_on(d.doc(), "synth");
+    v.set_presets(presets(30), Some("p3".into()));
+    assert_eq!(v.preset_name(), Some("Preset 3"));
+    let acts = click_on(&mut v, d.doc(), |v| v.preset_next_rect().unwrap());
+    assert_eq!(
+        acts,
+        [UiAction::StepPluginPreset {
+            device: key("synth"),
+            delta: 1
+        }]
+    );
+    let acts = click_on(&mut v, d.doc(), |v| v.preset_prev_rect().unwrap());
+    assert_eq!(
+        acts,
+        [UiAction::StepPluginPreset {
+            device: key("synth"),
+            delta: -1
+        }]
+    );
+    // The name opens the list; its rows are the first sixteen; a press on one loads it.
+    assert!(click_on(&mut v, d.doc(), |v| v.preset_name_rect().unwrap()).is_empty());
+    assert!(v.preset_list_open());
+    let row = v.preset_row_rect(5).unwrap();
+    assert!(matches!(v.hit(center(row)), Hit::PresetRow(5)));
+    let acts = click_at(&mut v, d.doc(), center(row));
+    assert_eq!(
+        acts,
+        [UiAction::LoadPluginPreset {
+            device: key("synth"),
+            preset: "p5".into()
+        }]
+    );
+    assert!(!v.preset_list_open(), "the list closes");
+}
+
+#[test]
+fn the_list_scrolls_with_the_wheel_and_closes_on_escape_or_an_outside_press() {
+    let d = plugin_rack();
+    let mut v = pane_on(d.doc(), "synth");
+    v.set_presets(presets(30), None);
+    click_on(&mut v, d.doc(), |v| v.preset_name_rect().unwrap());
+    let at = center(v.preset_row_rect(0).unwrap());
+    feed(
+        &mut v,
+        d.doc(),
+        UiEvent::Wheel {
+            delta: Vec2::new(0.0, 1.0),
+            pos: at,
+            modifiers: Modifiers::NONE,
+        },
+    );
+    assert!(
+        v.preset_list_open(),
+        "the wheel scrolled the list, not closed it"
+    );
+    let acts = click_on(&mut v, d.doc(), |v| v.preset_row_rect(0).unwrap());
+    assert_eq!(
+        acts,
+        [UiAction::LoadPluginPreset {
+            device: key("synth"),
+            preset: "p3".into()
+        }],
+        "three rows further on"
+    );
+    click_on(&mut v, d.doc(), |v| v.preset_name_rect().unwrap());
+    press(&mut v, d.doc(), Key::Escape);
+    assert!(!v.preset_list_open());
+    click_on(&mut v, d.doc(), |v| v.preset_name_rect().unwrap());
+    assert!(click_at(&mut v, d.doc(), Point::new(10.0, 300.0)).is_empty());
+    assert!(!v.preset_list_open(), "a press elsewhere only closes it");
+}
+
+#[test]
+fn the_preset_bar_and_list_are_painted() {
+    let d = plugin_rack();
+    let mut v = pane_on(d.doc(), "synth");
+    v.set_presets(presets(6), Some("p2".into()));
+    click_on(&mut v, d.doc(), |v| v.preset_name_rect().unwrap());
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    check("plugin_params_presets_1x.json", &dl.to_json());
+}
+
+fn click_on(
+    v: &mut PluginParamsView,
+    doc: &RackDoc,
+    rect: impl Fn(&PluginParamsView) -> Rect,
+) -> Vec<UiAction> {
+    let p = center(rect(v));
+    click_at(v, doc, p)
+        .into_iter()
+        .filter(|a| !matches!(a, UiAction::PluginParamTexts { .. }))
+        .collect()
+}

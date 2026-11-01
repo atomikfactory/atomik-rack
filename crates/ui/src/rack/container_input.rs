@@ -626,6 +626,15 @@ impl RackView {
                 device: k(device),
                 powered,
             },
+            PluginCommand::SetState {
+                device,
+                state,
+                merge,
+            } => PluginCommand::SetState {
+                device: k(device),
+                state,
+                merge,
+            },
             PluginCommand::Relink {
                 device,
                 plugin,

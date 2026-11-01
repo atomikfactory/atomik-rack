@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Plugin presets, patch steps and plugin window geometry.** The PARAMS pane of a plugin that
+  offers presets has a preset bar: `<` and `>` load the previous or next preset (round the list),
+  the name opens the list. A preset is loaded into the live plugin as one undo step, and undo and
+  redo hand the state back to the plugin. VST3 presets are the `.vstpreset` files in the platform's
+  preset folders (`ATOMIK_VST3_PRESET_DIRS` replaces them); a sandboxed plugin lists and loads
+  them through new `ListPresets` and `LoadPreset` messages. A patch changed inside the plugin's
+  own window is now an undo step too (stored at the next quiet capture, when the window closes and
+  before an undo; a param gesture stays its own step). A plugin's window opens where the last
+  window of the same plugin was, position and size, kept in `ui-state.json` and only on a screen
+  that still exists. The plugin list of Settings shows ENABLED, DISABLED, UNSUPPORTED, COULD NOT
+  LOAD or CRASHED for each plugin; a plugin whose process ended on its own stays CRASHED, also
+  after a restart, until RETRY in its row clears it. Not in this version: CLAP presets, VST3
+  program lists, presets in the browser, the mini toolbar of the plugin window (Automate, Remote,
+  Screenshot), the per-plugin Windows DPI choice, and the panel screenshot.
 - **Browser organisation: filters, history, info and favourite lists.** The search field takes
   `kind:` (`audio`, `wav`, `flac`, `folder`, `patch`, `clip`, `item`, ...), `cat:`, `author:`,
   `in:` (a folder the file lies in) and `tag:` next to words, `#tag` and `fav`; all tokens must

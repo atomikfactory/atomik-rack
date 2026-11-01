@@ -1713,3 +1713,33 @@ Hand checks, not automated (they need a real window, your mouse and your ears):
   once (a small click is expected, the cut has no crossfade) and the input passes straight to the
   output; the body of the panel is veiled. Click again: the inside returns. Put a macro on the
   container's `bypass` through a macro bank and check the button is locked while it drives it.
+
+## Plugin presets, patch steps and window parity
+
+What is automated: `crates/model/tests/plugin.rs` (`SetState`: one undo step, merge ids, size caps),
+`crates/plugin-vst3/tests/presets.rs` and the unit tests in `plugin-vst3/src/presets.rs` (a
+`.vstpreset` written from a saved state, listed from a folder, loaded into the test plugin, which then
+saves the same component state; wrong class, damaged files and paths outside the folder are refused),
+`crates/plugin-sandbox/src/tests/rpc.rs` (the `ListPresets` and `LoadPreset` messages through the
+fake child), `crates/plugin-host/tests/manager.rs` (the null backend's presets), and in
+`crates/app/src/app_core_plugins_sandbox_tests.rs` the load, step, undo and redo of a preset, a patch
+changed in the plugin window becoming an undo step, a param gesture staying one step, the CRASHED
+mark and RETRY. The window geometry is in `app_core_plugins_gui_tests.rs` and `ui_state.rs`; the
+preset bar in `crates/ui/tests/plugin_params.rs` (golden `plugin_params_presets_1x.json`).
+
+Hand checks, on macOS and on Linux (X11) as well as Windows, with a VST3 plugin that has preset files
+and with a sandboxed and an in-process plugin:
+
+- Put a `.vstpreset` of the plugin in the folder named in DEVICES.md. Open PARAMS: the bar shows the
+  file; the arrows and the list load it; the sound changes; `Ctrl+Z` (`Cmd+Z`) puts the old sound back
+  in the plugin, and so does redo the new one.
+- Open the plugin's own window, pick another patch inside it, wait a second, press undo: the old patch
+  returns in the window's plugin. Turn a knob in the window: one undo step for the whole turn.
+- Move and resize a plugin window, close it, open another device of the same plugin: it opens at the
+  same place and size. Quit and start: still there. Unplug the monitor it was on: the window opens on
+  a visible screen.
+- A sandboxed editor stays in front of the app window on Windows; on macOS and X11 it may sit behind
+  (known): note what you see for each OS.
+- Kill the plugin's process from the task manager while it plays: Settings > Plugins shows CRASHED
+  with the reason, the device shows CRASHED, RELOAD brings it back, and RETRY in the list clears the
+  CRASHED word (it survives a restart of the app until then).

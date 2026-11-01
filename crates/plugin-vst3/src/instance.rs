@@ -7,8 +7,10 @@
 //! reverse.
 
 use crate::host::{ComponentHandler, ConnectionProxy, HostApplication, Hub, PlugFrame};
+use crate::ids;
 use crate::layout::{self, ClassInfo, Read, owned};
 use crate::module::Module;
+use crate::presets;
 use crate::processor::{self, Vst3Processor};
 use crate::stream::MemStream;
 use crate::util::utf16_text;
@@ -16,7 +18,7 @@ use crate::values;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, NativeParent, PluginInstance as HostInstance, PluginProcessor,
-    assert_main_thread, is_main_thread,
+    PresetInfo, assert_main_thread, is_main_thread,
 };
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
@@ -88,6 +90,7 @@ pub(crate) struct Vst3Instance {
     active: bool,
     gui_open: bool,
     has_view: bool,
+    pub(crate) preset_roots: Option<Vec<std::path::PathBuf>>,
     _module: Arc<Module>,
 }
 
@@ -220,6 +223,7 @@ impl Vst3Instance {
             active: false,
             gui_open: false,
             has_view: false,
+            preset_roots: None,
             _module: Arc::clone(module),
         };
         let plan = layout::negotiate(&instance.component, &instance.processor)
@@ -266,6 +270,13 @@ impl Vst3Instance {
             // SAFETY: a live controller, on the main thread.
             unsafe { c.setParamNormalized(id, n) };
         }
+    }
+
+    /// The folders the presets of this plugin are looked for in.
+    fn preset_roots(&self) -> Vec<std::path::PathBuf> {
+        self.preset_roots
+            .clone()
+            .unwrap_or_else(|| presets::roots(&self.class.vendor, &self.class.name))
     }
 
     fn setup(&self, cfg: &ActivateConfig) -> ProcessSetup {
@@ -430,6 +441,22 @@ impl HostInstance for Vst3Instance {
             self.latency = unsafe { self.processor.getLatencySamples() };
         }
         Ok(())
+    }
+
+    fn list_presets(&mut self) -> Vec<PresetInfo> {
+        assert_main_thread("listing the presets of a VST3 plugin");
+        presets::list(&self.preset_roots())
+    }
+
+    fn load_preset(&mut self, id: &str) -> Result<(), BackendError> {
+        assert_main_thread("loading a VST3 preset");
+        let roots = self.preset_roots();
+        let path = presets::resolve(&roots, id)
+            .ok_or_else(|| BackendError::Failed(format!("no preset `{id}`")))?;
+        let bytes = presets::read_file(&path).map_err(BackendError::Failed)?;
+        let (component, controller) = presets::parse(&bytes, &ids::class_id_hex(&self.class.cid))
+            .map_err(BackendError::Failed)?;
+        self.restore_state(&PluginStateBlob(pack_state(&component, &controller)))
     }
 
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String> {

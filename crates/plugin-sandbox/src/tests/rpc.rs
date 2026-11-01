@@ -364,3 +364,33 @@ fn the_block_file_is_unlinked_once_the_child_has_greeted_and_before_any_activate
         atomik_plugin_host::ProcessStatus::Continue
     );
 }
+
+#[test]
+fn presets_are_listed_and_loaded_through_the_child() {
+    let mut r = rig(FakeOptions::default());
+    let presets = r.instance.list_presets();
+    assert_eq!(presets.len(), 2);
+    assert_eq!(presets[0].name, "Init");
+    assert_eq!(presets[0].group, "Factory");
+    assert_eq!(presets[1].id, "b");
+    r.instance.load_preset("b").unwrap();
+    assert_eq!(r.fake.ctl.restored(), vec![b"preset:b".to_vec()]);
+}
+
+#[test]
+fn a_preset_the_child_refuses_keeps_its_error() {
+    let mut r = rig(FakeOptions::default().script(|req, _| match req {
+        ToChild::LoadPreset { id, .. } => Some(Action::Reply(vec![(
+            FromChild::Err {
+                id: *id,
+                kind: WireErrorKind::Failed,
+                text: "no such preset".into(),
+            },
+            None,
+        )])),
+        _ => None,
+    }));
+    let e = r.instance.load_preset("zzz").unwrap_err();
+    assert!(e.to_string().contains("no such preset"), "{e}");
+    assert!(!r.instance.is_lost());
+}

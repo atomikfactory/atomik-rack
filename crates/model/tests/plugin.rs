@@ -1255,3 +1255,57 @@ fn register_stand_ins_adds_the_missing_plugin_types_from_the_saved_layouts() {
             .is_empty()
     );
 }
+
+// ---- SetState ---------------------------------------------------------------------------------
+
+fn set_state(device: &str, bytes: &[u8], merge: Option<u64>) -> Command {
+    Command::Plugin(PluginCommand::SetState {
+        device: key(device),
+        state: PluginStateBlob(bytes.to_vec()),
+        merge,
+    })
+}
+
+#[test]
+fn set_state_is_one_undoable_step_that_reports_the_state() {
+    let r = plugin_registry();
+    let mut d = plugin_chain(&r);
+    d.apply(sync_state("synth", b"one"), &r).unwrap();
+    let ops = d.apply(set_state("synth", b"two", None), &r).unwrap();
+    assert!(
+        ops.iter()
+            .any(|o| matches!(o, SyncOp::PluginStateChanged { .. }))
+    );
+    assert_eq!(d.undo_label(), Some("Change Plugin Patch"));
+    d.undo(&r).unwrap();
+    assert_eq!(
+        plugin_of(d.doc(), "synth").state.as_deref(),
+        Some(&PluginStateBlob(b"one".to_vec()))
+    );
+    d.redo(&r).unwrap();
+    assert_eq!(
+        plugin_of(d.doc(), "synth").state.as_deref(),
+        Some(&PluginStateBlob(b"two".to_vec()))
+    );
+}
+
+#[test]
+fn set_state_with_one_merge_id_folds_and_obeys_the_caps() {
+    let r = plugin_registry();
+    let mut d = plugin_chain(&r);
+    d.apply(sync_state("synth", b"one"), &r).unwrap();
+    for s in [&b"a"[..], b"b", b"c"] {
+        d.apply(set_state("synth", s, Some(7)), &r).unwrap();
+    }
+    d.undo(&r).unwrap();
+    assert_eq!(
+        plugin_of(d.doc(), "synth").state.as_deref(),
+        Some(&PluginStateBlob(b"one".to_vec())),
+        "three captures of one gesture are one step"
+    );
+    let e = rejects(&mut d, set_state("ghost", b"x", None), &r);
+    assert_eq!(e, ModelError::UnknownDevice("ghost".into()));
+    let max = usize::try_from(MAX_PLUGIN_STATE_BYTES).unwrap();
+    let e = rejects(&mut d, set_state("fx", &vec![0; max + 1], None), &r);
+    assert!(bad_plugin(&e).contains("16 MiB"), "{e}");
+}

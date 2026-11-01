@@ -7,7 +7,7 @@
 use atomik_device_sdk::{
     Channels, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
 };
-use atomik_plugin_host::{BackendError, LogLevel, NativeParent, ParamPhase};
+use atomik_plugin_host::{BackendError, LogLevel, NativeParent, ParamPhase, PresetInfo};
 use serde::{Deserialize, Serialize};
 
 /// Parent to child.
@@ -68,6 +68,18 @@ pub enum ToChild {
     DefaultPins {
         /// Request id.
         id: u64,
+    },
+    /// Asks for the presets the plugin offers; the answer is [`FromChild::Presets`].
+    ListPresets {
+        /// Request id.
+        id: u64,
+    },
+    /// Loads one preset (an id from [`FromChild::Presets`]) into the instance.
+    LoadPreset {
+        /// Request id.
+        id: u64,
+        /// The preset's id.
+        preset: String,
     },
     /// Asks whether the param table changed (and clears the flag).
     TakeLayoutChanged {
@@ -168,6 +180,13 @@ pub enum FromChild {
         /// Param ids.
         pins: Vec<u32>,
     },
+    /// The presets of the plugin, at most [`MAX_PRESETS`].
+    Presets {
+        /// The request's id.
+        id: u64,
+        /// The presets in the plugin's order.
+        presets: Vec<WirePreset>,
+    },
     /// Whether the param table changed, and the new table when it did.
     LayoutChanged {
         /// The request's id.
@@ -221,6 +240,54 @@ pub enum FromChild {
         /// The line.
         text: String,
     },
+}
+
+/// Most presets one answer lists; the child cuts the list there.
+pub const MAX_PRESETS: usize = 2000;
+
+/// Longest preset id, name or group on the wire, in bytes (cut at a character boundary).
+pub const MAX_PRESET_TEXT: usize = 160;
+
+/// A [`PresetInfo`] on the wire.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WirePreset {
+    /// The id the backend loads it by.
+    pub id: String,
+    /// The name to show.
+    pub name: String,
+    /// The folder or program list.
+    pub group: String,
+}
+
+fn cut(mut s: String) -> String {
+    if s.len() > MAX_PRESET_TEXT {
+        let mut end = MAX_PRESET_TEXT;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
+}
+
+impl From<PresetInfo> for WirePreset {
+    fn from(p: PresetInfo) -> Self {
+        Self {
+            id: cut(p.id),
+            name: cut(p.name),
+            group: cut(p.group),
+        }
+    }
+}
+
+impl From<WirePreset> for PresetInfo {
+    fn from(p: WirePreset) -> Self {
+        Self {
+            id: p.id,
+            name: p.name,
+            group: p.group,
+        }
+    }
 }
 
 /// The window an editor is owned by ([`NativeParent`] on the wire).
@@ -605,6 +672,14 @@ mod tests {
             ),
             (ToChild::LatencyFrames { id: 3 }, None),
             (ToChild::DefaultPins { id: 3 }, None),
+            (ToChild::ListPresets { id: 3 }, None),
+            (
+                ToChild::LoadPreset {
+                    id: 3,
+                    preset: "factory/warm pad".into(),
+                },
+                None,
+            ),
             (ToChild::TakeLayoutChanged { id: 3 }, None),
             (
                 ToChild::OpenGui {
@@ -667,6 +742,17 @@ mod tests {
             ),
             (FromChild::Text { id: 5, text: None }, None),
             (FromChild::Latency { id: 5, frames: 17 }, None),
+            (
+                FromChild::Presets {
+                    id: 5,
+                    presets: vec![WirePreset {
+                        id: "p1".into(),
+                        name: "Warm pad".into(),
+                        group: "Factory".into(),
+                    }],
+                },
+                None,
+            ),
             (
                 FromChild::Pins {
                     id: 5,

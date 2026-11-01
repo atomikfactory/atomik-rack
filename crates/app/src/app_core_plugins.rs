@@ -39,8 +39,24 @@
 //!
 //! `ManagerEvent::ParamEdit` markers become `SetParam`s through the UI's gesture merger: one
 //! gesture is one undo step; the commands carry a "from plugin" flag so the sync op does not echo
-//! the value back. A change outside a gesture is dropped (a patch change inside the plugin is
-//! not undoable and not stored).
+//! the value back. A param change outside a gesture is dropped. A patch change made in the
+//! plugin window (a preset picked in it, say) is stored as one undo step (`SetState`) at the
+//! next quiet capture, when the editor closes and before an undo, unless the user turned a param
+//! in the window meanwhile (that gesture is its own step); undo hands the old state back to the
+//! live plugin.
+//!
+//! # Presets
+//!
+//! [`AppCore::plugin_presets`] lists what the plugin offers (read once per instance),
+//! [`AppCore::load_plugin_preset`] and [`AppCore::step_plugin_preset`] load one into the live
+//! plugin and store the new state as one undo step. The parameter pane shows the list and
+//! the one loaded last.
+//!
+//! # Window geometry
+//!
+//! Position and size of each editor window are kept per plugin type when it closes
+//! ([`AppCore::plugin_window_geoms`], saved in `ui-state.json`); the next window of that type
+//! opens there, on a screen that still exists.
 //!
 //! # Where plugins run
 //!
@@ -69,22 +85,25 @@
 use super::AppCore;
 use crate::recovery::{RecoveryWriter, SessionMarker};
 use crate::sink::EngineSink;
+use crate::ui_state::PluginWindowGeom;
 use atomik_device_sdk::{Device, DeviceDescriptor, PluginRef, RunMode};
 use atomik_engine::DeviceInstanceId;
 use atomik_model::{
-    Command, DeviceKey, Document, ExpandedDevice, ModelError, PluginCommand, PluginDoc, RackDoc,
-    SyncOp, register_stand_ins,
+    Command, DeviceKey, Document, ExpandedDevice, ModelError, PLUGIN_GESTURE_MERGE_BASE,
+    PluginCommand, PluginDoc, RackDoc, SyncOp, register_stand_ins,
 };
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
     CrashJournal, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest, LOST,
     ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle,
-    PluginSettings, PluginStatus, RecoveryDir, RescanMode, ScanJob, ScanRunner, blacklist_in_use,
+    PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob, ScanRunner,
+    blacklist_in_use,
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
     FailedFileInfo, PluginBannerAction, PluginDeviceStatus, PluginEntryInfo, PluginEntryStatus,
-    PluginRescan, PluginSettingsAction, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
+    PluginRescan, PluginSettingsAction, PluginSettingsData, PresetItem, ScanProgressInfo,
+    SettingsPluginRow,
 };
 use atomik_ui::{BannerKind, PluginGestureMerger, PluginParamsView, UiAction};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -101,6 +120,10 @@ pub const RECOVERY_KEEP: usize = 3;
 pub const STATE_QUIET_SECS: f64 = 1.0;
 /// Lines of the bounded plugin log shown in Settings.
 pub const LOG_CAPACITY: usize = 200;
+/// Merge ids of the undo steps that capture a patch change made in a plugin window.
+const STATE_MERGE_BASE: u64 = PLUGIN_GESTURE_MERGE_BASE + (1 << 38);
+/// Captures further apart than this are separate undo steps.
+const STATE_STEP_GAP_SECS: f64 = 5.0;
 /// How many times in a row a plugin that stopped answering audio is reloaded without the user.
 const MAX_AUTO_RELOADS: u8 = 2;
 
@@ -169,6 +192,8 @@ pub enum PluginWindowRequest {
         title: String,
         /// The last size of this device's window (logical pixels), when it was open before.
         remembered: Option<(u32, u32)>,
+        /// Where this plugin's window was last (physical pixels), when it was open before.
+        at: Option<(i32, i32)>,
     },
     /// Resize the window's content area to this size (pixels), because the plugin asked or
     /// because its view reported another size.
@@ -280,6 +305,15 @@ pub(super) struct PluginState {
     merger: PluginGestureMerger,
     open_gestures: BTreeSet<(DeviceKey, u32)>,
     from_plugin: bool,
+    /// Devices whose params the user edited in the plugin window since the last state capture:
+    /// their state change is already an undo step of its own (the param gesture).
+    pub(super) gesture_touched: BTreeSet<DeviceKey>,
+    /// The presets each live device's plugin offers (read when the pane or a step asks).
+    presets: BTreeMap<DeviceKey, Vec<PresetInfo>>,
+    /// The preset loaded last into each device, until anything else changes its state.
+    preset_current: BTreeMap<DeviceKey, String>,
+    /// Merge id of the state captures that make one undo step, and when the last one was.
+    state_merge: (u64, f64),
     /// The next engine restart drops the instances instead of keeping them (a new document).
     discard: bool,
     /// Instances whose state the plugin flagged dirty, with the time of the last flag.
@@ -293,6 +327,12 @@ pub(super) struct PluginState {
     log: VecDeque<String>,
     windows: BTreeMap<DeviceKey, EditorWindow>,
     remembered: BTreeMap<DeviceKey, (u32, u32)>,
+    /// The outer position of each open editor window, as the platform reported it.
+    window_pos: BTreeMap<DeviceKey, (i32, i32)>,
+    /// Where each plugin type's window was last (kept in `ui-state.json`).
+    geoms: BTreeMap<String, PluginWindowGeom>,
+    /// A geometry changed since the shell last read them.
+    geoms_changed: bool,
     window_requests: Vec<PluginWindowRequest>,
     /// The app window's native handle: the owner of external editors.
     editor_owner: Option<NativeParent>,
@@ -331,6 +371,10 @@ impl PluginState {
             merger: PluginGestureMerger::new(),
             open_gestures: BTreeSet::new(),
             from_plugin: false,
+            gesture_touched: BTreeSet::new(),
+            presets: BTreeMap::new(),
+            preset_current: BTreeMap::new(),
+            state_merge: (STATE_MERGE_BASE, f64::NEG_INFINITY),
             discard: false,
             dirty: BTreeMap::new(),
             clock: 0.0,
@@ -342,6 +386,9 @@ impl PluginState {
             log: VecDeque::new(),
             windows: BTreeMap::new(),
             remembered: BTreeMap::new(),
+            window_pos: BTreeMap::new(),
+            geoms: BTreeMap::new(),
+            geoms_changed: false,
             window_requests: Vec::new(),
             editor_owner: None,
             settings_changed: false,
@@ -851,7 +898,7 @@ impl<S: EngineSink> AppCore<S> {
         for id in due {
             self.plugins.dirty.remove(&id);
             if let Some(key) = self.plugins.keys.get(&id).cloned() {
-                self.capture_instance(&key);
+                self.capture_instance_as(&key, true);
             }
         }
         let loaded = !self.plugins.instances.is_empty();
@@ -977,6 +1024,16 @@ impl<S: EngineSink> AppCore<S> {
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
                     self.plugins.log(format!("[{key}] crashed: {reason}"));
                     self.plugins.failed.remove(&key);
+                    if let Some(type_id) = self
+                        .doc()
+                        .resolve(&key)
+                        .and_then(|d| d.plugin.as_ref())
+                        .map(|p| p.type_id())
+                    {
+                        // Kept in the settings: CRASHED in the plugin list until RETRY.
+                        self.plugins.settings.mark_crashed(&type_id, &reason);
+                        self.plugins.settings_changed = true;
+                    }
                     let hung = reason.starts_with(HUNG);
                     self.plugins.crashed.insert(key.clone(), reason);
                     if hung {
@@ -1127,6 +1184,8 @@ impl<S: EngineSink> AppCore<S> {
             restore_error,
         } = handle;
         self.plugins.instances.insert(key.clone(), id);
+        self.plugins.presets.remove(key);
+        self.plugins.preset_current.remove(key);
         self.plugins.keys.insert(id, key.clone());
         self.adopt_descriptor(&type_id, descriptor);
         // The full param table and the real vendor and version; not an undo step.
@@ -1234,6 +1293,15 @@ impl<S: EngineSink> AppCore<S> {
     /// (`SyncState`, not an undo step). A failed capture or an instance whose restore failed
     /// keeps the saved blob.
     pub(super) fn capture_instance(&mut self, key: &DeviceKey) -> bool {
+        self.capture_instance_as(key, false)
+    }
+
+    /// [`Self::capture_instance`]; with `undoable` a state that differs from the stored one
+    /// becomes one undo step (`SetState`, the captures of one burst folded together) unless
+    /// the user turned a param in the plugin window since the last capture (that gesture is
+    /// its own step). A device with no stored state yet has nothing to go back to and is
+    /// stored silently.
+    fn capture_instance_as(&mut self, key: &DeviceKey, undoable: bool) -> bool {
         let Some(id) = self.plugins.instances.get(key).copied() else {
             return false;
         };
@@ -1248,13 +1316,28 @@ impl<S: EngineSink> AppCore<S> {
                 return false;
             }
         };
-        let changed = self
+        self.store_captured(key, blob, undoable)
+    }
+
+    /// Puts a state the live plugin gave into the document (see [`Self::capture_instance_as`]).
+    fn store_captured(
+        &mut self,
+        key: &DeviceKey,
+        blob: atomik_device_sdk::PluginStateBlob,
+        undoable: bool,
+    ) -> bool {
+        let stored = self
             .doc()
             .resolve(key)
             .and_then(|d| d.plugin.as_ref())
-            .is_none_or(|p| p.state.as_deref() != Some(&blob));
+            .map(|p| p.state.clone());
+        let changed = stored.as_ref().is_none_or(|s| s.as_deref() != Some(&blob));
+        let touched = self.plugins.gesture_touched.remove(key);
         if !changed {
             return true;
+        }
+        if undoable && !touched && matches!(stored, Some(Some(_))) {
+            return self.apply_state_step(key, blob);
         }
         match self.sync_silent(Command::Plugin(PluginCommand::SyncState {
             device: key.clone(),
@@ -1273,6 +1356,124 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Stores `blob` as the device's state in one undo step. The live instance already holds
+    /// it, so the sync op that follows must not restore it into the plugin again.
+    fn apply_state_step(
+        &mut self,
+        key: &DeviceKey,
+        blob: atomik_device_sdk::PluginStateBlob,
+    ) -> bool {
+        let clock = self.plugins.clock;
+        let (id, last) = self.plugins.state_merge;
+        let id = if clock - last > STATE_STEP_GAP_SECS {
+            id + 1
+        } else {
+            id
+        };
+        self.plugins.state_merge = (id, clock);
+        self.plugins.from_plugin = true;
+        let done = self.apply_command(Command::Plugin(PluginCommand::SetState {
+            device: key.clone(),
+            state: blob,
+            merge: Some(id),
+        }));
+        self.plugins.from_plugin = false;
+        self.plugins.preset_current.remove(key);
+        if let Some(r) = &mut self.plugins.recovery {
+            r.wanted = true;
+        }
+        done.is_ok()
+    }
+
+    // ------------------------------------------------------------------ presets
+
+    /// The presets the plugin behind `device` offers, read once per instance. Empty for a
+    /// device without a live instance or for a plugin with none.
+    pub fn plugin_presets(&mut self, device: &DeviceKey) -> Vec<PresetInfo> {
+        if let Some(list) = self.plugins.presets.get(device) {
+            return list.clone();
+        }
+        let Some(id) = self.plugins.instances.get(device).copied() else {
+            return Vec::new();
+        };
+        let list = self.plugins.host.manager().list_presets(id);
+        self.plugins.presets.insert(device.clone(), list.clone());
+        list
+    }
+
+    /// The id of the preset loaded last into `device` and still in place.
+    pub fn plugin_preset_current(&self, device: &DeviceKey) -> Option<&str> {
+        self.plugins.preset_current.get(device).map(String::as_str)
+    }
+
+    /// Loads the preset `preset` into the plugin behind `device` as one undo step: undo puts
+    /// the previous state back into the live plugin. A refusal shows as a toast and changes
+    /// nothing.
+    pub fn load_plugin_preset(&mut self, device: &DeviceKey, preset: &str) -> bool {
+        let Some(id) = self.plugins.instances.get(device).copied() else {
+            self.reject("the plugin is not running".to_string());
+            return false;
+        };
+        // The step must go back to what the plugin holds now, whatever it did since the last
+        // capture.
+        self.capture_instance(device);
+        if let Err(e) = self.plugins.host.manager().load_preset(id, preset) {
+            self.reject(e.to_string());
+            return false;
+        }
+        let blob = match self.plugins.host.manager().capture_state(id) {
+            Ok(b) => b,
+            Err(e) => {
+                self.reject(format!("cannot read the plugin after loading: {e}"));
+                return false;
+            }
+        };
+        self.plugins.dirty.retain(|i, _| *i != id);
+        self.plugins.no_capture.remove(device);
+        self.plugins.from_plugin = true;
+        // One step per load: no merge id.
+        let done = self.apply_command(Command::Plugin(PluginCommand::SetState {
+            device: device.clone(),
+            state: blob,
+            merge: None,
+        }));
+        self.plugins.from_plugin = false;
+        match done {
+            Ok(()) => {
+                self.plugins
+                    .preset_current
+                    .insert(device.clone(), preset.to_string());
+                true
+            }
+            Err(e) => {
+                self.reject(e.to_string());
+                false
+            }
+        }
+    }
+
+    /// Loads the preset `delta` places after (negative: before) the one loaded last, wrapping
+    /// round the list; with none loaded yet a step forward loads the first and a step back the
+    /// last.
+    pub fn step_plugin_preset(&mut self, device: &DeviceKey, delta: i32) -> bool {
+        let list = self.plugin_presets(device);
+        if list.is_empty() {
+            self.reject("this plugin offers no presets".to_string());
+            return false;
+        }
+        let len = list.len() as i64;
+        let at = self
+            .plugin_preset_current(device)
+            .and_then(|c| list.iter().position(|p| p.id == c));
+        let next = match at {
+            Some(i) => (i as i64 + i64::from(delta)).rem_euclid(len),
+            None if delta >= 0 => 0,
+            None => len - 1,
+        };
+        let id = list[next as usize].id.clone();
+        self.load_plugin_preset(device, &id)
+    }
+
     /// Captures every live instance (before a save, a recovery snapshot, an engine restart).
     pub fn plugins_capture_all(&mut self) {
         let keys: Vec<DeviceKey> = self.plugins.instances.keys().cloned().collect();
@@ -1283,8 +1484,9 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Captures the instances whose plugin flagged its state dirty (before a command or an undo
-    /// that could remove a device, so the removal's undo brings the latest state back).
-    pub(super) fn plugins_flush_dirty(&mut self) {
+    /// that could remove a device, so the removal's undo brings the latest state back). With
+    /// `undoable` (an undo) a patch change made in the plugin window becomes its own step first.
+    pub(super) fn plugins_flush_dirty(&mut self, undoable: bool) {
         if self.plugins.dirty.is_empty() {
             return;
         }
@@ -1292,7 +1494,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.dirty.clear();
         for id in ids {
             if let Some(key) = self.plugins.keys.get(&id).cloned() {
-                self.capture_instance(&key);
+                self.capture_instance_as(&key, undoable);
             }
         }
     }
@@ -1346,6 +1548,11 @@ impl<S: EngineSink> AppCore<S> {
     /// live instance restores it. A device without an instance takes the document's state when
     /// one is created, and a state of `None` (a reset) leaves the instance as it is.
     pub(super) fn plugin_state_changed(&mut self, device: &DeviceKey) {
+        self.plugins.preset_current.remove(device);
+        if self.plugins.from_plugin {
+            // The state came from the live plugin: it already holds it.
+            return;
+        }
         let blob = self
             .doc()
             .resolve(device)
@@ -1385,6 +1592,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         let actions = match phase {
             ParamPhase::Begin => {
+                self.plugins.gesture_touched.insert(key.clone());
                 self.plugins.open_gestures.insert((key.clone(), param));
                 self.plugins.merger.begin(&key, param)
             }
@@ -1460,6 +1668,14 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ReloadPlugin { device } => {
                 self.plugins.auto_reloads.remove(device);
                 self.reload_plugin(device);
+            }
+            UiAction::LoadPluginPreset { device, preset } => {
+                self.load_plugin_preset(device, preset);
+                self.feed_preset_bar();
+            }
+            UiAction::StepPluginPreset { device, delta } => {
+                self.step_plugin_preset(device, *delta);
+                self.feed_preset_bar();
             }
             UiAction::AutomatePluginParam { device, param } => {
                 self.automate_plugin_param(device, *param);
@@ -1599,6 +1815,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugin_params.open(device.clone());
         self.plugin_params_open = true;
         self.plugin_params.sync(self.document.doc(), &self.registry);
+        self.feed_preset_bar();
     }
 
     /// Closes the parameter pane.
@@ -1622,6 +1839,27 @@ impl<S: EngineSink> AppCore<S> {
     /// The parameter pane, mutably.
     pub fn plugin_params_mut(&mut self) -> &mut PluginParamsView {
         &mut self.plugin_params
+    }
+
+    /// Gives the parameter pane the presets of the plugin it shows and the one loaded last.
+    fn feed_preset_bar(&mut self) {
+        if !self.plugin_params_open {
+            return;
+        }
+        let Some(device) = self.plugin_params.device().cloned() else {
+            return;
+        };
+        let list = self
+            .plugin_presets(&device)
+            .into_iter()
+            .map(|p| PresetItem {
+                id: p.id,
+                name: p.name,
+                group: p.group,
+            })
+            .collect();
+        let current = self.plugin_preset_current(&device).map(str::to_string);
+        self.plugin_params.set_presets(list, current);
     }
 
     /// Answers the pane's display-text requests from the plugin (main thread, once per request).
@@ -1719,6 +1957,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Feeds the views what the app knows: the catalog, the blacklist and each plugin device's
     /// status (only what changed).
     fn feed_plugin_views(&mut self) {
+        self.feed_preset_bar();
         if self.plugins.catalog_dirty {
             self.plugins.catalog_dirty = false;
             let catalog = self.plugins.host.catalog();
@@ -1787,7 +2026,15 @@ impl<S: EngineSink> AppCore<S> {
                     name: e.name.clone(),
                     vendor: e.vendor.clone(),
                     version: e.version.clone(),
-                    status: entry_status(&e.status),
+                    status: match (
+                        &e.status,
+                        self.plugins.settings.crashed.get(&e.plugin.type_id()),
+                    ) {
+                        (PluginStatus::Ok, Some(reason)) => {
+                            PluginEntryStatus::Crashed(reason.clone())
+                        }
+                        (status, _) => entry_status(status),
+                    },
                 })
                 .collect(),
             failed: catalog
@@ -1849,6 +2096,11 @@ impl<S: EngineSink> AppCore<S> {
                     self.plugins.settings.disabled.remove(type_id);
                 }
                 self.settings_changed();
+            }
+            PluginSettingsAction::RetryPlugin(type_id) => {
+                if self.plugins.settings.clear_crashed(type_id) {
+                    self.plugins.settings_changed = true;
+                }
             }
             PluginSettingsAction::RetryFile(path) => {
                 if self.plugins.cache.unblacklist(Path::new(path)) {
@@ -2153,11 +2405,26 @@ impl<S: EngineSink> AppCore<S> {
         let Some(d) = self.doc().resolve(device) else {
             return;
         };
+        let geom = d
+            .plugin
+            .as_ref()
+            .and_then(|p| self.plugins.geoms.get(&p.type_id()))
+            .copied();
+        let size = self
+            .plugins
+            .remembered
+            .get(device)
+            .copied()
+            .or(geom.map(|g| (g.w, g.h)));
+        let at = geom.map(|g| (g.x, g.y));
         let title = format!(
             "{} - {}",
             d.plugin.as_ref().map_or("plugin", |p| p.name()),
             d.name
         );
+        if let Some(s) = size {
+            self.plugins.remembered.insert(device.clone(), s);
+        }
         self.plugins
             .windows
             .insert(device.clone(), EditorWindow::Opening);
@@ -2166,7 +2433,8 @@ impl<S: EngineSink> AppCore<S> {
             .push(PluginWindowRequest::Open {
                 device: device.clone(),
                 title,
-                remembered: self.plugins.remembered.get(device).copied(),
+                remembered: size,
+                at,
             });
     }
 
@@ -2256,6 +2524,58 @@ impl<S: EngineSink> AppCore<S> {
         self.reject(format!("cannot open the plugin editor window: {reason}"));
     }
 
+    /// The user moved the window: `x` and `y` are the outer frame's top-left corner in physical
+    /// pixels. It is kept for the next window of this plugin type.
+    pub fn plugin_window_moved(&mut self, device: &DeviceKey, x: i32, y: i32) {
+        if self.plugins.windows.get(device) == Some(&EditorWindow::Open) {
+            self.plugins.window_pos.insert(device.clone(), (x, y));
+        }
+    }
+
+    /// Writes the position and size of `device`'s window into the geometry of its plugin type.
+    fn commit_window_geometry(&mut self, device: &DeviceKey) {
+        let (Some((x, y)), Some((w, h))) = (
+            self.plugins.window_pos.get(device).copied(),
+            self.plugins.remembered.get(device).copied(),
+        ) else {
+            return;
+        };
+        let Some(type_id) = self
+            .doc()
+            .resolve(device)
+            .and_then(|d| d.plugin.as_ref())
+            .map(|p| p.type_id())
+        else {
+            return;
+        };
+        let geom = PluginWindowGeom { x, y, w, h };
+        if self.plugins.geoms.get(&type_id) != Some(&geom) {
+            self.plugins.geoms.insert(type_id, geom);
+            self.plugins.geoms_changed = true;
+        }
+    }
+
+    /// Where each plugin type's editor window was last, the open windows included (what
+    /// `ui-state.json` keeps).
+    pub fn plugin_window_geoms(&mut self) -> &BTreeMap<String, PluginWindowGeom> {
+        let open: Vec<DeviceKey> = self.plugins.window_pos.keys().cloned().collect();
+        for device in open {
+            self.commit_window_geometry(&device);
+        }
+        &self.plugins.geoms
+    }
+
+    /// Restores the geometries read from `ui-state.json`.
+    pub fn set_plugin_window_geoms(&mut self, geoms: BTreeMap<String, PluginWindowGeom>) {
+        self.plugins.geoms = geoms;
+        self.plugins.geoms_changed = false;
+    }
+
+    /// True once (and clears) when a window closed with a geometry other than the one kept.
+    pub fn take_plugin_geoms_changed(&mut self) -> bool {
+        std::mem::take(&mut self.plugins.geoms_changed)
+    }
+
     /// The user resized the window: the plugin may adjust the size; the adjusted size is asked
     /// of the platform when it differs.
     pub fn plugin_window_resized(&mut self, device: &DeviceKey, w: u32, h: u32) {
@@ -2299,28 +2619,17 @@ impl<S: EngineSink> AppCore<S> {
         let Some(window) = self.plugins.windows.remove(device) else {
             return;
         };
+        self.commit_window_geometry(device);
+        self.plugins.window_pos.remove(device);
         // An external editor is a window of the plugin's process: nothing to destroy here.
         let destroy_window = destroy_window && window != EditorWindow::External;
         if let Some(id) = self.plugins.instances.get(device).copied() {
             match self.plugins.host.manager().close_gui(id) {
                 Ok(Some(blob)) if !self.plugins.no_capture.contains(device) => {
-                    let changed = self
-                        .doc()
-                        .resolve(device)
-                        .and_then(|d| d.plugin.as_ref())
-                        .is_none_or(|p| p.state.as_deref() != Some(&blob));
-                    if changed
-                        && let Err(e) =
-                            self.sync_silent(Command::Plugin(PluginCommand::SyncState {
-                                device: device.clone(),
-                                state: blob,
-                            }))
-                    {
-                        self.reject(e.to_string());
-                    }
-                    if let Some(r) = &mut self.plugins.recovery {
-                        r.wanted = true;
-                    }
+                    // The user closing the window ends a patch change made in it: its own
+                    // undo step. A close the app asked for (a new project, a rebuild) only
+                    // keeps the state.
+                    self.store_captured(device, blob, !destroy_window);
                 }
                 _ => {}
             }

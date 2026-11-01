@@ -34,9 +34,24 @@ mod instance;
 mod layout;
 mod module;
 mod params;
+mod presets;
 mod processor;
 mod stream;
 mod util;
 mod values;
 
 pub use backend::Vst3Backend;
+
+/// A `.vstpreset` file for the plugin with class id `class_id` (32 hex digits) holding the
+/// state a plugin saved: the way to write a preset a host or another tool can open again.
+///
+/// # Errors
+/// The blob is not a VST3 state of this host.
+pub fn vstpreset_from_state(
+    class_id: &str,
+    state: &atomik_device_sdk::PluginStateBlob,
+) -> Result<Vec<u8>, String> {
+    let (component, controller) =
+        instance::unpack_state(&state.0).ok_or_else(|| "not a VST3 state".to_string())?;
+    Ok(presets::write(class_id, component, controller))
+}

@@ -33,8 +33,8 @@ pub use layout::{
     MAX_GUI_DIMENSION, MAX_LOG_BYTES, MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION,
 };
 pub use message::{
-    FromChild, ToChild, WireChannels, WireErrorKind, WireKind, WireLayout, WireLevel, WireParam,
-    WireParent, WirePhase, into_backend_error,
+    FromChild, MAX_PRESET_TEXT, MAX_PRESETS, ToChild, WireChannels, WireErrorKind, WireKind,
+    WireLayout, WireLevel, WireParam, WireParent, WirePhase, WirePreset, into_backend_error,
 };
 pub use parent::{DeathHandle, ParentPort, Poll, ProcessorInfo, Response, Ticket};
 pub use stdio::take_frame_stdout;

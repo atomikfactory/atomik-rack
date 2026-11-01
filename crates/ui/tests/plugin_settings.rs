@@ -327,10 +327,10 @@ fn the_plugin_list_shows_format_vendor_version_and_status_with_reasons() {
         "Atomik Test",
         "1.2.0",
         "CLAP",
-        "OK",
+        "ENABLED",
         "UNSUPPORTED",
         "surround only",
-        "FAILED",
+        "COULD NOT LOAD",
         "duplicate id",
         "DISABLED",
     ] {
@@ -709,4 +709,32 @@ fn the_banner_matches_goldens() {
     .paint(&mut dl);
     check("plugin_banner_crash_1x.json", &dl.to_json());
     let _ = PointerButton::Primary;
+}
+
+#[test]
+fn the_status_column_says_enabled_disabled_could_not_load_or_crashed() {
+    let mut data = on_data();
+    data.plugins[1].status = PluginEntryStatus::Crashed("exited with code 3".into());
+    let mut v = view(data);
+    let t = texts_of(&v);
+    for word in [
+        "ENABLED",
+        "DISABLED",
+        "UNSUPPORTED",
+        "COULD NOT LOAD",
+        "CRASHED",
+    ] {
+        assert!(has(&t, word), "{word} in {t:?}");
+    }
+    assert!(has(&t, "exited with code 3"), "the reason shows");
+    // Only the crashed row has a RETRY, and it clears the mark.
+    assert!(v.crash_retry_rect(0).is_none() && v.crash_retry_rect(2).is_none());
+    let acts = {
+        let p = v.crash_retry_rect(1).unwrap().center();
+        click_at(&mut v, p)
+    };
+    assert_eq!(
+        settings(&acts),
+        [PluginSettingsAction::RetryPlugin("clap.org.test.fx".into())]
+    );
 }

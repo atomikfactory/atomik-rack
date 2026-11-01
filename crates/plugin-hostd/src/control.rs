@@ -16,7 +16,7 @@ use atomik_plugin_host::{
     PluginInstance, PluginMessage, plugin_channel,
 };
 use atomik_plugin_ipc::{
-    FromChild, PROTOCOL_VERSION, ToChild, WireErrorKind, WireLayout, write_frame,
+    FromChild, MAX_PRESETS, PROTOCOL_VERSION, ToChild, WireErrorKind, WireLayout, write_frame,
 };
 use atomik_plugin_vst3::Vst3Backend;
 use std::io::Write;
@@ -311,6 +311,19 @@ impl Control {
                 id,
                 pins: instance.default_pins(),
             },
+            ToChild::ListPresets { id } => FromChild::Presets {
+                id,
+                presets: instance
+                    .list_presets()
+                    .into_iter()
+                    .take(MAX_PRESETS)
+                    .map(Into::into)
+                    .collect(),
+            },
+            ToChild::LoadPreset { id, preset } => {
+                instance.load_preset(&preset)?;
+                FromChild::Ok { id }
+            }
             ToChild::TakeLayoutChanged { id } => FromChild::LayoutChanged {
                 id,
                 layout: instance
@@ -423,6 +436,8 @@ fn request_id(msg: &ToChild) -> u64 {
         | ToChild::ParamText { id, .. }
         | ToChild::LatencyFrames { id }
         | ToChild::DefaultPins { id }
+        | ToChild::ListPresets { id }
+        | ToChild::LoadPreset { id, .. }
         | ToChild::TakeLayoutChanged { id }
         | ToChild::OpenGui { id, .. }
         | ToChild::CloseGui { id }
