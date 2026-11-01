@@ -60,6 +60,9 @@ use vello::kurbo::{Point, Rect};
 use crate::action::UiAction;
 use crate::canvas::Canvas;
 
+/// How many places the back button remembers.
+const MAX_HISTORY: usize = 64;
+
 /// The roots of the tree, refreshed by the app when the library or the drives change.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PlacesData {
@@ -128,6 +131,14 @@ enum EntryKind {
     RenameTag(String),
     /// Rename the library item in `Entry::targets`.
     RenameItem,
+    /// Set the author of the files in `Entry::targets`.
+    Author,
+    /// Set the categories (comma-separated) of the files in `Entry::targets`.
+    Categories,
+    /// Make a favourite list; with `Entry::targets` the files go into it.
+    NewList,
+    /// Rename the favourite list of this name.
+    RenameList(String),
 }
 
 /// The inline text entry for "New tag..." and "Rename...".
@@ -169,6 +180,13 @@ pub struct FileBrowserView {
     tree_cursor: Option<tree::Key>,
     tree_scroll: f64,
     location: Option<Place>,
+    /// The places shown so far, oldest first (see `Self::set_location`).
+    history: Vec<Place>,
+    /// The position in `history` of the place shown.
+    history_at: usize,
+    /// The history position a back or forward step is going to (so the answer does not
+    /// start a new branch).
+    history_jump: Option<usize>,
     // List.
     rows: Vec<FileRow>,
     view: Vec<u32>,
@@ -229,6 +247,9 @@ impl FileBrowserView {
             tree_cursor: None,
             tree_scroll: 0.0,
             location: None,
+            history: Vec::new(),
+            history_at: 0,
+            history_jump: None,
             rows: Vec::new(),
             view: Vec::new(),
             sort_key: SortKey::Name,
@@ -343,12 +364,40 @@ impl FileBrowserView {
         self.rebuild_tree();
     }
 
-    /// The place the list shows (highlighted in the tree, shown in the path bar).
+    /// The place the list shows (highlighted in the tree, shown in the path bar). Every new
+    /// place joins the history the back and forward buttons walk; going somewhere new after
+    /// stepping back drops the places that were ahead.
     pub fn set_location(&mut self, place: Place) {
-        if self.location.as_ref() != Some(&place) {
-            self.location = Some(place);
-            self.dirty = true;
+        if self.location.as_ref() == Some(&place) {
+            return;
         }
+        match self.history_jump.take() {
+            Some(at) if self.history.get(at) == Some(&place) => self.history_at = at,
+            _ => {
+                if !self.history.is_empty() {
+                    self.history.truncate(self.history_at + 1);
+                }
+                self.history.push(place.clone());
+                if self.history.len() > MAX_HISTORY {
+                    self.history.remove(0);
+                }
+                self.history_at = self.history.len() - 1;
+            }
+        }
+        self.location = Some(place);
+        self.dirty = true;
+    }
+
+    /// The place the back button goes to, if any.
+    pub fn back_place(&self) -> Option<&Place> {
+        self.history_at
+            .checked_sub(1)
+            .and_then(|at| self.history.get(at))
+    }
+
+    /// The place the forward button goes to, if any.
+    pub fn forward_place(&self) -> Option<&Place> {
+        self.history.get(self.history_at + 1)
     }
 
     /// The place the list shows.

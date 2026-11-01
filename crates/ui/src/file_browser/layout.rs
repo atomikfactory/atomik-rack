@@ -41,6 +41,8 @@ pub(super) const PATH_FONT: f64 = 10.0;
 pub(super) const SEP_W: f64 = 12.0;
 /// Width of the leading ellipsis of a shortened path.
 pub(super) const ELLIPSIS_W: f64 = 14.0;
+/// Width of the back and forward buttons at the left of the path bar.
+pub(super) const NAV_W: f64 = 18.0;
 
 /// The regions of the panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -61,6 +63,12 @@ pub(super) struct Layout {
     pub splitter: Rect,
     /// Path bar.
     pub path: Rect,
+    /// Back button of the path bar.
+    pub back_btn: Rect,
+    /// Forward button of the path bar.
+    pub fwd_btn: Rect,
+    /// The part of the path bar the folder segments use (right of the buttons).
+    pub path_text: Rect,
     /// Column header.
     pub colhdr: Rect,
     /// Row area of the list.
@@ -112,6 +120,19 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool) -> Layout {
     let tree = Rect::new(bounds.x0, header.y1, right, header.y1 + tree_h);
     let splitter = Rect::new(bounds.x0, tree.y1, right, bottom(tree.y1 + SPLIT_H));
     let path = Rect::new(bounds.x0, splitter.y1, right, bottom(splitter.y1 + PATH_H));
+    let back_btn = Rect::new(
+        path.x0 + 3.0,
+        path.y0 + 2.0,
+        (path.x0 + 3.0 + NAV_W).min(path.x1),
+        (path.y1 - 2.0).max(path.y0),
+    );
+    let fwd_btn = Rect::new(
+        (back_btn.x1 + 1.0).min(path.x1),
+        back_btn.y0,
+        (back_btn.x1 + 1.0 + NAV_W).min(path.x1),
+        back_btn.y1,
+    );
+    let path_text = Rect::new(fwd_btn.x1, path.y0, path.x1.max(fwd_btn.x1), path.y1);
     let colhdr = Rect::new(bounds.x0, path.y1, right, bottom(path.y1 + COLHDR_H));
     let list = Rect::new(bounds.x0, colhdr.y1, right, bounds.y1.max(colhdr.y1));
     let handle = Rect::new(bounds.x1 - HANDLE_W, bounds.y0, bounds.x1, bounds.y1);
@@ -124,6 +145,9 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool) -> Layout {
         tree,
         splitter,
         path,
+        back_btn,
+        fwd_btn,
+        path_text,
         colhdr,
         list,
         handle,

@@ -294,6 +294,7 @@ impl FileBrowserView {
         let ix = ax + lay::ARROW_W + 6.0;
         match &item.key {
             tree::Key::Favorites => c.fill_with(star(ix, cy, 5.0), t.warning),
+            tree::Key::List(_) => c.fill_with(star(ix, cy, 4.0), t.warning.with_alpha(0.6)),
             tree::Key::TagsHeader | tree::Key::Tag(_) => {
                 let accent = match &item.key {
                     tree::Key::Tag(name) => t.accent_for_type(name),
@@ -356,11 +357,23 @@ impl FileBrowserView {
         let bar = lay.path;
         c.fill_with(bar, t.lcd);
         c.push_clip(&bar.into());
+        if self.entry.is_none() {
+            self.paint_nav_buttons(c, lay);
+        }
         if let Some(e) = &self.entry {
             let label = match e.kind {
                 super::EntryKind::NewTag => "New tag",
-                super::EntryKind::RenameTag(_) | super::EntryKind::RenameItem => "Rename",
+                super::EntryKind::RenameTag(_)
+                | super::EntryKind::RenameItem
+                | super::EntryKind::RenameList(_) => "Rename",
+                super::EntryKind::Author => "Author",
+                super::EntryKind::Categories => "Categories",
+                super::EntryKind::NewList => "New list",
             };
+            // The field starts after the label; long labels push it right.
+            let label_w = (label.chars().count() as f64 * f64::from(SMALL_FONT) * lay::CHAR_EM
+                + 8.0)
+                .max(52.0);
             c.text(&TextRun::new(
                 label,
                 pt(bar.x0 + lay::PAD, baseline(bar, SMALL_FONT)),
@@ -368,7 +381,7 @@ impl FileBrowserView {
                 t.text_muted,
             ));
             let field = Rect::new(
-                bar.x0 + lay::PAD + 52.0,
+                bar.x0 + lay::PAD + label_w,
                 bar.y0 + 2.0,
                 bar.x1 - lay::PAD,
                 bar.y1 - 2.0,
@@ -384,6 +397,7 @@ impl FileBrowserView {
         } else {
             match &self.location {
                 Some(Place::Folder(p)) => {
+                    let bar = lay.path_text;
                     let pb = lay::path_segments(p, bar);
                     let base = baseline(bar, lay::PATH_FONT as f32);
                     if pb.ellipsis {
@@ -414,14 +428,42 @@ impl FileBrowserView {
                         ));
                     }
                 }
-                Some(Place::Favorites) => self.paint_place_title(c, bar, "Favourites"),
-                Some(Place::Tag(tag)) => self.paint_place_title(c, bar, &format!("#{tag}")),
-                Some(Place::List(list)) => self.paint_place_title(c, bar, list),
-                Some(Place::Library(section)) => self.paint_place_title(c, bar, section.title()),
-                None => self.paint_place_title(c, bar, "No folder"),
+                Some(Place::Favorites) => self.paint_place_title(c, lay.path_text, "Favourites"),
+                Some(Place::Tag(tag)) => {
+                    self.paint_place_title(c, lay.path_text, &format!("#{tag}"))
+                }
+                Some(Place::List(list)) => self.paint_place_title(c, lay.path_text, list),
+                Some(Place::Library(section)) => {
+                    self.paint_place_title(c, lay.path_text, section.title())
+                }
+                None => self.paint_place_title(c, lay.path_text, "No folder"),
             }
         }
         c.pop_clip();
+    }
+
+    /// The back and forward buttons: dim when there is nowhere to go.
+    fn paint_nav_buttons(&self, c: &mut dyn Canvas, lay: &Layout) {
+        let t = &self.theme;
+        for (rect, glyph, enabled) in [
+            (lay.back_btn, "<", self.back_place().is_some()),
+            (lay.fwd_btn, ">", self.forward_place().is_some()),
+        ] {
+            c.text(
+                &TextRun::new(
+                    glyph,
+                    pt(rect.center().x, baseline(rect, lay::PATH_FONT as f32)),
+                    lay::PATH_FONT as f32,
+                    if enabled {
+                        t.text
+                    } else {
+                        t.text_muted.with_alpha(0.4)
+                    },
+                )
+                .weight(700)
+                .align(Align::Center),
+            );
+        }
     }
 
     fn paint_place_title(&self, c: &mut dyn Canvas, bar: Rect, text: &str) {

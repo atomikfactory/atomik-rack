@@ -29,6 +29,8 @@ pub(super) enum Key {
     Library(LibrarySection),
     /// The Favourites entry.
     Favorites,
+    /// One named favourite list.
+    List(String),
     /// The expandable Tags entry.
     TagsHeader,
     /// One tag.
@@ -48,6 +50,7 @@ impl Key {
         match self {
             Key::Library(section) => Some(Place::Library(*section)),
             Key::Favorites => Some(Place::Favorites),
+            Key::List(name) => Some(Place::List(name.clone())),
             Key::Tag(t) => Some(Place::Tag(t.clone())),
             Key::Folder { path, .. } => Some(Place::Folder(path.clone())),
             Key::Heading(_) | Key::TagsHeader => None,
@@ -160,6 +163,17 @@ pub(super) fn build(src: &Source<'_>) -> Vec<Item> {
         expanded: false,
         loading: false,
     });
+    for (name, n) in &places.lists {
+        out.push(Item {
+            key: Key::List(name.clone()),
+            depth: 1,
+            label: name.clone(),
+            count: Some(*n),
+            expandable: false,
+            expanded: false,
+            loading: false,
+        });
+    }
     let tags_open = src.tags_open && !places.tags.is_empty();
     out.push(Item {
         key: Key::TagsHeader,

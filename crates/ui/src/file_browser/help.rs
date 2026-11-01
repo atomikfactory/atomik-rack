@@ -52,10 +52,30 @@ impl FileBrowserView {
                 }
             }
         }
+        if l.back_btn.contains(pos) {
+            return Some(Help::new(
+                l.back_btn,
+                if self.back_place().is_some() {
+                    "Go back to the previous place"
+                } else {
+                    "Nothing to go back to yet"
+                },
+            ));
+        }
+        if l.fwd_btn.contains(pos) {
+            return Some(Help::new(
+                l.fwd_btn,
+                if self.forward_place().is_some() {
+                    "Go forward again"
+                } else {
+                    "Nothing to go forward to"
+                },
+            ));
+        }
         if l.path.contains(pos)
             && let Some(Place::Folder(path)) = &self.location
         {
-            let bar = lay::path_segments(path, l.path);
+            let bar = lay::path_segments(path, l.path_text);
             if let Some(seg) = bar.segments.iter().find(|s| s.rect.contains(pos)) {
                 return Some(Help::new(seg.rect, "Go to this folder"));
             }
