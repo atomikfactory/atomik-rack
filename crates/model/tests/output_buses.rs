@@ -784,14 +784,22 @@ fn bus_cables_are_console_links_and_the_rest_are_not() {
     assert_eq!(kind("master:main_l", "interface:out_1"), None);
     assert_eq!(kind("bus:out_l", "interface:out_3"), None);
     assert_eq!(kind("a:out_l", "channel:in_l"), None);
-    // Every cable of the project is classified once: 3 channels and 2 buses, 18 each.
+    // Every cable of the project is classified once: 3 channels and 2 buses, 18 each, and the two
+    // follow links of the strips that play into a bus (the project follows buses).
     let doc = d.doc();
     let links = doc
         .cables
         .iter()
         .filter(|c| link_kind(doc, c).is_some())
         .count();
-    assert_eq!(links, 5 * 18);
+    assert_eq!(links, 5 * 18 + 2);
+    assert_eq!(
+        doc.cables
+            .iter()
+            .filter(|c| link_kind(doc, c) == Some(LinkKind::FollowLink))
+            .count(),
+        2
+    );
 }
 
 #[test]

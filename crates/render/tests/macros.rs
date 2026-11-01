@@ -346,7 +346,7 @@ fn a_version_28_file_without_macros_bounces_as_it_always_did() {
     let d = song();
     let text = save_project(d.doc());
     assert!(!text.contains("\"macros\""));
-    let old = text.replace("\"version\": 38", "\"version\": 28");
+    let old = text.replace("\"version\": 39", "\"version\": 28");
     let loaded = load_project(&old, &default_registry()).unwrap();
     same(&bounce(&loaded), &bounce(d.doc()), "a version 28 file");
 }

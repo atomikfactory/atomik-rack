@@ -152,9 +152,9 @@ pub fn plugin_texts(text: &str) -> Vec<String> {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 38);
+    assert_eq!(PROJECT_VERSION, 39);
     let r = plugin_registry();
-    assert!(text(&r).contains("\"version\": 38"));
+    assert!(text(&r).contains("\"version\": 39"));
 }
 
 #[test]
@@ -447,7 +447,7 @@ fn versions_one_to_eight_still_load_and_resave_as_v11() {
         let t = fixture(name);
         let doc = load_project(&t, reg).unwrap_or_else(|e| panic!("{name}: {e}"));
         let again = save_project(&doc);
-        assert!(again.contains("\"version\": 38"), "{name}");
+        assert!(again.contains("\"version\": 39"), "{name}");
         assert_eq!(load_project(&again, reg).unwrap(), doc, "{name}");
         assert_eq!(save_project(&load_project(&again, reg).unwrap()), again);
         if from >= 6 {

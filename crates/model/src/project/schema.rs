@@ -294,6 +294,8 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Console, "returns", 1).req(),
     field(Console, "compensation", 1).req(),
     field(Console, "align_returns", 37),
+    field(Console, "send_follow", 39),
+    field(Console, "parallels", 39),
     field(Channel, "channel", 1).req(),
     field(Channel, "source", 1).req(),
     field(Bus, "bus", 1).req(),

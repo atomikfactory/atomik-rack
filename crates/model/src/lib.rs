@@ -16,6 +16,7 @@ mod clip_transform;
 mod console_bus;
 mod console_cmd;
 mod console_insert;
+mod console_mix;
 mod console_settings;
 mod console_snapshot;
 mod console_vca;
@@ -1858,10 +1859,23 @@ impl Document {
                 } else {
                     name.to_owned()
                 };
-                Edit::Name {
-                    old: device.name.clone(),
-                    new,
-                    key,
+                if doc.console.parallels_of(&key).next().is_some() && new != device.name {
+                    // The parallel channels of a strip carry its name: they follow.
+                    let old = device.name.clone();
+                    let mut p = console_cmd::Planner::new(doc, registry);
+                    p.push(Edit::Name {
+                        old: old.clone(),
+                        new: new.clone(),
+                        key: key.clone(),
+                    });
+                    console_mix::follow_names(&mut p, &key, &old, &new)?;
+                    p.finish()
+                } else {
+                    Edit::Name {
+                        old: device.name.clone(),
+                        new,
+                        key,
+                    }
                 }
             }
             Command::SetColor { key, color } => Edit::Color {
@@ -2150,7 +2164,7 @@ pub fn empty_doc() -> RackDoc {
 /// one `atomik.master` device keyed `master` (named "Master") placed first, so it sits directly
 /// under Audio I/O, with the cables `master:main_l -> interface:out_1` and
 /// `master:main_r -> interface:out_2` (the second skipped below two outputs). No channels, no
-/// returns, compensation and return alignment on, one transport track as in `empty_doc`. It is built by the same code
+/// returns, compensation, return alignment and send follow on, one transport track as in `empty_doc`. It is built by the same code
 /// that creates the master with the first channel, is deterministic and saves byte-identically.
 /// It also turns on note tails ([`Song::tails`]). [`empty_doc`] is unchanged; loaders and Open
 /// never call this.
@@ -2161,6 +2175,8 @@ pub fn new_project_doc() -> RackDoc {
     doc.song_mut().tails = true;
     // ...and aligns FX returns and sidechain keys with the dry path; a loaded one keeps its own.
     doc.console.align_returns = true;
+    // ...and lets the sends of a strip that plays into a bus follow the bus; a loaded one keeps its own.
+    doc.console.send_follow = true;
     doc
 }
 

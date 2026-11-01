@@ -439,8 +439,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// snapshots) and 27 (no MIDI mappings) and 28 (no macros) and 29 (one note lane per track) and
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
 /// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
-/// information).
-pub const PROJECT_VERSION: u32 = 38;
+/// information) and 39 (no send follow, no parallel channels).
+pub const PROJECT_VERSION: u32 = 39;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

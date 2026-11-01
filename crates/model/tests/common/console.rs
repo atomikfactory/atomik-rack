@@ -695,7 +695,7 @@ static CHANNEL_PARAMS: [ParamDescriptor; 68] = [
     ),
 ];
 
-static CHANNEL_SOCKETS: [SocketDescriptor; 26] = [
+static CHANNEL_SOCKETS: [SocketDescriptor; 29] = [
     socket(0, "in_l", SocketKind::Audio, Direction::Input),
     socket(1, "in_r", SocketKind::Audio, Direction::Input),
     socket(2, "key_in", SocketKind::Audio, Direction::Input),
@@ -722,10 +722,13 @@ static CHANNEL_SOCKETS: [SocketDescriptor; 26] = [
     socket(23, "out_l", SocketKind::Audio, Direction::Output),
     socket(24, "out_r", SocketKind::Audio, Direction::Output),
     socket(25, "gr_cv_out", SocketKind::Cv, Direction::Output),
+    socket(26, "parallel_out_l", SocketKind::Audio, Direction::Output),
+    socket(27, "parallel_out_r", SocketKind::Audio, Direction::Output),
+    socket(28, "follow_in", SocketKind::Cv, Direction::Input),
 ];
 
 /// `atomik.bus`: the channel's sockets minus `in_l/in_r`, plus the summing input `bus_l/bus_r`.
-static BUS_SOCKETS: [SocketDescriptor; 26] = [
+static BUS_SOCKETS: [SocketDescriptor; 30] = [
     socket(0, "bus_l", SocketKind::Audio, Direction::SummingInput),
     socket(1, "bus_r", SocketKind::Audio, Direction::SummingInput),
     socket(2, "key_in", SocketKind::Audio, Direction::Input),
@@ -752,6 +755,10 @@ static BUS_SOCKETS: [SocketDescriptor; 26] = [
     socket(23, "out_l", SocketKind::Audio, Direction::Output),
     socket(24, "out_r", SocketKind::Audio, Direction::Output),
     socket(25, "gr_cv_out", SocketKind::Cv, Direction::Output),
+    socket(26, "parallel_out_l", SocketKind::Audio, Direction::Output),
+    socket(27, "parallel_out_r", SocketKind::Audio, Direction::Output),
+    socket(28, "follow_in", SocketKind::Cv, Direction::Input),
+    socket(29, "follow_out", SocketKind::Cv, Direction::Output),
 ];
 
 static MASTER_PARAMS: [ParamDescriptor; 37] = [
@@ -1233,11 +1240,24 @@ static MASTER_SOCKETS: [SocketDescriptor; 60] = [
 /// `atomik.channel` stages, in socket order: stage 0 is the
 /// inputs and the insert send; stage 1 the insert return, sends, outputs and GR CV.
 #[rustfmt::skip]
-static CHANNEL_STAGES: [u8; 26] = [
+static CHANNEL_STAGES: [u8; 29] = [
     0, 0, 0, 0, 0,                                  // in_l, in_r, key_in, insert_send_l/r
     1, 1,                                           // insert_return_l/r
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // send1_l .. send8_r
     1, 1, 1,                                        // out_l, out_r, gr_cv_out
+    1, 1, 1,                                        // parallel_out_l/r, follow_in
+];
+
+/// `atomik.bus` stages: the follow gain (`follow_in`, `follow_out`) is stage 0, the channel's
+/// two stages are 1 and 2.
+#[rustfmt::skip]
+static BUS_STAGES: [u8; 30] = [
+    1, 1, 1, 1, 1,                                  // bus_l, bus_r, key_in, insert_send_l/r
+    2, 2,                                           // insert_return_l/r
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // send1_l .. send8_r
+    2, 2, 2,                                        // out_l, out_r, gr_cv_out
+    2, 2,                                           // parallel_out_l/r
+    0, 0,                                           // follow_in, follow_out
 ];
 
 /// `atomik.master` stages, in this stub's socket order: stage 0 the send buses and FX
@@ -1268,7 +1288,7 @@ pub static CHANNEL: DeviceDescriptor = DeviceDescriptor {
 
 /// Stub `atomik.bus` (the channel's params and stages, the bus sockets).
 pub static BUS: DeviceDescriptor = DeviceDescriptor {
-    stages: &CHANNEL_STAGES,
+    stages: &BUS_STAGES,
     type_id: "atomik.bus",
     name: "Bus",
     kind: DeviceKind::Mixer,

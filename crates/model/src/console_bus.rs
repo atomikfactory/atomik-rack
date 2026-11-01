@@ -249,7 +249,7 @@ pub(crate) fn set_output(
     for cable in wanted {
         p.connect(cable)?;
     }
-    Ok(())
+    crate::console_mix::sync_follow(p, &strip)
 }
 
 /// The rack index a new bus goes to: after the last bus device, else the end of the rack.
@@ -338,9 +338,10 @@ pub(crate) fn rename_bus(
     if device_name != name {
         p.push(Edit::Name {
             key: bus.clone(),
-            old: device_name,
-            new: name,
+            old: device_name.clone(),
+            new: name.clone(),
         });
+        crate::console_mix::follow_names(p, bus, &device_name, &name)?;
     }
     Ok(())
 }
@@ -365,6 +366,12 @@ pub(crate) fn reorder_bus(
 
 /// Plans `DeleteBus`, which is also what removing a bus device does.
 pub(crate) fn delete_bus(p: &mut Planner<'_>, bus: &DeviceKey) -> Result<(), ModelError> {
+    p.doc()
+        .console
+        .bus_index(bus)
+        .ok_or_else(|| bad(format!("{bus} is not a console bus")))?;
+    // The parallel channels of the bus go with it.
+    crate::console_mix::detach(p, bus, crate::console_cmd::remove_channel_at)?;
     let index = p
         .doc()
         .console
@@ -391,6 +398,7 @@ pub(crate) fn delete_bus(p: &mut Planner<'_>, bus: &DeviceKey) -> Result<(), Mod
         OutputDest::AudioIo(n) if feeders.len() == 1 => OutputDest::AudioIo(n),
         _ => OutputDest::Master,
     };
+    let feeder_keys: Vec<DeviceKey> = feeders.iter().map(|k| (*k).clone()).collect();
     let old = doc.console.buses[index].clone();
     p.push(Edit::ConsoleBus {
         index,
@@ -416,6 +424,10 @@ pub(crate) fn delete_bus(p: &mut Planner<'_>, bus: &DeviceKey) -> Result<(), Mod
             }
         };
         p.connect(wire(cable.from, to))?;
+    }
+    // The feeders follow the bus they play into now.
+    for feeder in feeder_keys {
+        crate::console_mix::sync_follow(p, &feeder)?;
     }
     Ok(())
 }
@@ -491,6 +503,26 @@ pub(crate) fn solo_silence(doc: &RackDoc, registry: &Registry) -> Vec<(DeviceKey
                         stack.push(f.clone());
                     }
                 }
+            }
+        }
+    }
+    // A parallel channel plays with its parent: it and the buses on its path stay audible while
+    // the parent is (a soloed parent leaves its copy audible).
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (parent, child) in &doc.console.parallels {
+            if !audible.contains(parent) {
+                continue;
+            }
+            let mut at = Some(child.clone());
+            let mut walked = BTreeSet::new();
+            while let Some(k) = at {
+                if !walked.insert(k.clone()) {
+                    break;
+                }
+                changed |= audible.insert(k.clone());
+                at = parent_of(doc, &k);
             }
         }
     }

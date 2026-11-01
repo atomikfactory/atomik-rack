@@ -124,6 +124,14 @@ pub struct Console {
     /// FX returns and sidechain keys are delay-compensated like the summing inputs (see the
     /// engine's console docs). Off in a project saved before it existed, on in a new one.
     pub align_returns: bool,
+    /// The sends of a strip that plays into a bus follow the bus: a post-fader send is scaled by
+    /// the bus fader and mute (and by the buses above it), see [`LinkKind::FollowLink`]. Off in
+    /// a project saved before it existed, on in a new one.
+    pub send_follow: bool,
+    /// Parallel channels as `(parent strip, child channel)` pairs, in creation order: the child
+    /// is a source-less channel fed from the parent's parallel output. Names follow the parent
+    /// and the child goes with it (see `ConsoleCommand::CreateParallel`).
+    pub parallels: Vec<(DeviceKey, DeviceKey)>,
 }
 
 impl Default for Console {
@@ -138,6 +146,8 @@ impl Default for Console {
             returns: Default::default(),
             compensation: true,
             align_returns: false,
+            send_follow: false,
+            parallels: Vec::new(),
         }
     }
 }
@@ -174,6 +184,25 @@ impl Console {
         self.channels
             .iter()
             .find(|c| c.source.as_ref() == Some(source))
+    }
+
+    /// The parallel channels hanging off `parent`, in creation order.
+    pub fn parallels_of<'a>(
+        &'a self,
+        parent: &'a DeviceKey,
+    ) -> impl Iterator<Item = &'a DeviceKey> {
+        self.parallels
+            .iter()
+            .filter(move |(p, _)| p == parent)
+            .map(|(_, c)| c)
+    }
+
+    /// The strip `child` is a parallel channel of, if it is one.
+    pub fn parallel_parent(&self, child: &DeviceKey) -> Option<&DeviceKey> {
+        self.parallels
+            .iter()
+            .find(|(_, c)| c == child)
+            .map(|(p, _)| p)
     }
 
     /// The return slot holding `effect`, if any.
@@ -229,7 +258,17 @@ pub enum LinkKind {
     BusToBus,
     /// Bus `send{k}_{l,r} -> send_bus{k}_{l,r}` of the master, `k` in 1..=8.
     BusSend(u8),
+    /// Bus `follow_out -> follow_in` of a strip that plays into it (a channel or another bus):
+    /// the bus gain the strip's post-fader sends follow (see [`Console::send_follow`]).
+    FollowLink,
 }
+
+/// Socket key of the bus gain a strip's sends follow (a bus output, a strip input).
+pub const FOLLOW_OUT: &str = "follow_out";
+/// See [`FOLLOW_OUT`].
+pub const FOLLOW_IN: &str = "follow_in";
+/// Socket keys of a strip's parallel output (the signal before the fader, before the pan).
+pub const PARALLEL_OUT: [&str; 2] = ["parallel_out_l", "parallel_out_r"];
 
 /// The number in `text` when it is canonical decimal (no sign, no leading zero) and in `1..=8`.
 fn send_number(text: &str) -> Option<usize> {
@@ -249,6 +288,13 @@ pub fn link_kind(doc: &RackDoc, cable: &Cable) -> Option<LinkKind> {
     let from_channel = is_channel(doc, &cable.from.device);
     if !from_channel && !is_bus(doc, &cable.from.device) {
         return None;
+    }
+    if cable.from.socket == FOLLOW_OUT {
+        let valid = !from_channel
+            && cable.to.socket == FOLLOW_IN
+            && cable.to.device != cable.from.device
+            && is_strip(doc, &cable.to.device);
+        return valid.then_some(LinkKind::FollowLink);
     }
     let to_master = doc.console.master.as_ref() == Some(&cable.to.device);
     if !to_master && (cable.to.device == cable.from.device || !is_bus(doc, &cable.to.device)) {
@@ -413,6 +459,26 @@ pub enum ConsoleCommand {
         /// Channel name, or `None` for the default.
         name: Option<String>,
     },
+    /// Create a Mix Channel: an `atomik.channel` with no source, wired to the master and its
+    /// sends like any channel (the master is created when missing), named `name` (the default
+    /// name when empty) and placed after the last channel in the rack. Its `in_l`/`in_r` are the
+    /// Direct In: cable anything there. One undo step.
+    AddMixChannel {
+        /// The channel name.
+        name: String,
+    },
+    /// Create a parallel channel of `strip` (a console channel or bus): a source-less channel fed
+    /// from the strip's `parallel_out_l/r`, named `P<n>: <strip name>`, routed where the strip is
+    /// routed. It is recorded in [`Console::parallels`]: the name follows the strip's renames,
+    /// and removing the strip removes the copy. A parallel channel can have parallel channels
+    /// of its own. One undo step.
+    CreateParallel {
+        /// Channel or bus device key.
+        strip: DeviceKey,
+    },
+    /// Switch the sends of strips that play into a bus following the bus fader and mute on or off
+    /// (see [`Console::send_follow`]); the follow links are made or removed in the same step.
+    SetSendFollow(bool),
     /// Remove a channel strip (and its device and cables).
     RemoveChannel {
         /// Channel device key.

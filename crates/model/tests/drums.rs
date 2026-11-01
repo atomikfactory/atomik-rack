@@ -109,7 +109,7 @@ fn set_step(k: &str, index: u8, lane: u8, step: u8, velocity: u8, merge: Option<
 
 #[test]
 fn the_format_is_version_33() {
-    assert_eq!(PROJECT_VERSION, 38);
+    assert_eq!(PROJECT_VERSION, 39);
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn drum_doc_round_trips_in_project_and_patch() {
     let d = project(&r);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 38);
+    assert_eq!(v["version"], 39);
     let devices = v["devices"].as_array().unwrap();
     assert!(
         devices[0].get("drums").is_none(),
@@ -231,7 +231,7 @@ fn old_projects_load_without_drums() {
         plain.apply(add(i, t, Some(k)), &r).unwrap();
     }
     let text = save_project(plain.doc());
-    let old = text.replacen("\"version\": 38", "\"version\": 32", 1);
+    let old = text.replacen("\"version\": 39", "\"version\": 32", 1);
     assert_ne!(old, text);
     let doc = load_project(&old, &r).unwrap();
     assert_eq!(device(&doc, "m").drums, None);

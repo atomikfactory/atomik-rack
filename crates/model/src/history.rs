@@ -282,6 +282,16 @@ pub(crate) enum Edit {
         old: bool,
         new: bool,
     },
+    /// Whether the sends of a strip follow the bus it plays into.
+    SendFollow {
+        old: bool,
+        new: bool,
+    },
+    /// The console's whole parallel channel list.
+    ConsoleParallels {
+        old: Vec<(DeviceKey, DeviceKey)>,
+        new: Vec<(DeviceKey, DeviceKey)>,
+    },
     /// The delay compensation switch.
     Compensation {
         old: bool,
@@ -734,6 +744,8 @@ impl Edit {
             },
             Edit::Compensation { old, new } => Edit::Compensation { old: new, new: old },
             Edit::AlignReturns { old, new } => Edit::AlignReturns { old: new, new: old },
+            Edit::SendFollow { old, new } => Edit::SendFollow { old: new, new: old },
+            Edit::ConsoleParallels { old, new } => Edit::ConsoleParallels { old: new, new: old },
             Edit::Zones { key, old, new } => Edit::Zones {
                 key,
                 old: new,
@@ -1261,6 +1273,14 @@ impl Edit {
                     return fail(format!("there is no FX return {slot}"));
                 };
                 returned.clone_from(new);
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::SendFollow { new, .. } => {
+                doc.console.send_follow = *new;
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::ConsoleParallels { new, .. } => {
+                doc.console.parallels.clone_from(new);
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::AlignReturns { new, .. } => {
