@@ -205,6 +205,7 @@ fn clicking_the_panel_focuses_it_and_clicking_elsewhere_takes_the_focus_back() {
 #[test]
 fn the_rack_still_gets_its_clicks_with_the_column_shifted() {
     let mut s = shown();
+    s.handle(&UiEvent::Resize(Size::new(1000.0, 1600.0)));
     s.core_mut()
         .apply_command(atomik_model::Command::AddDevice {
             index: usize::MAX,

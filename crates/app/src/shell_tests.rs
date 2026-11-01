@@ -225,6 +225,8 @@ fn menu_bar_clicks_run_commands_and_never_reach_the_rack() {
 #[test]
 fn rack_events_are_offset_below_the_menu_bar() {
     let mut s = shell();
+    // The poly synth is seven rack units: tall enough to show its plate.
+    s.handle(&UiEvent::Resize(Size::new(1000.0, 1600.0)));
     add(&mut s, "synth");
     let key = DeviceKey("synth".into());
     // The plate centre in view coordinates, moved to window coordinates.

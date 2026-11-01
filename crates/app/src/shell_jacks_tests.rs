@@ -20,7 +20,7 @@ fn shell() -> Shell<NullBackend> {
             library_root: None,
         },
     );
-    s.handle(&UiEvent::Resize(Size::new(1400.0, 3000.0)));
+    s.handle(&UiEvent::Resize(Size::new(1400.0, 5000.0)));
     for (t, k) in [
         ("atomik.poly-synth", "synth"),
         ("atomik.stereo-delay", "delay"),
