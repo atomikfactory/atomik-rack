@@ -3,10 +3,11 @@
 //! compiled lane clips (see [`crate::takes`]).
 
 use crate::history::Edit;
-use crate::song::{Clip, ClipId, LaneKind, SongCommand};
-use crate::song_cmd::{bad, check_new_clip, range, track_index};
+use crate::song::{Clip, ClipContent, ClipId, LaneKind, MAX_TICK, SongCommand};
+use crate::song_cmd::{bad, check_audio, check_new_clip, range, track_index};
 use crate::takes::{
-    CompSegment, TakeGroup, check_comp, comp_clips, comp_without_take, layered_comp, set_segment,
+    CompSegment, TakeGroup, check_comp, clear_segment, comp_clips, comp_with_take_inserted,
+    comp_with_take_moved, comp_within, comp_without_take, layered_comp, set_segment,
 };
 use crate::{DeviceKey, ModelError, RackDoc};
 use atomik_device_sdk::Registry;
@@ -31,6 +32,18 @@ fn find(doc: &RackDoc, id: u32) -> Result<(DeviceKey, usize, &TakeGroup), ModelE
         .take_group(id)
         .map(|(t, lane, g)| (t.device.clone(), lane, g))
         .ok_or_else(|| ModelError::UnknownKey(format!("take group {id}")))
+}
+
+/// `take` must be a take of `g`.
+fn check_take(g: &TakeGroup, take: usize) -> Result<(), ModelError> {
+    if take >= g.takes.len() {
+        return Err(range(format!(
+            "group {} has {} takes, not take {take}",
+            g.id,
+            g.takes.len()
+        )));
+    }
+    Ok(())
 }
 
 /// The edit that replaces group `old` (`None`: a new group) of lane `lane` by `new` (`None`: the
@@ -298,7 +311,7 @@ pub(crate) fn plan(
             }
             let (start, end) = g.range();
             let mut new = g.clone();
-            new.comp = vec![CompSegment { take, start, end }];
+            new.comp = vec![CompSegment::new(take, start, end)];
             build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
         }
         SongCommand::SetCompSegment {
@@ -332,23 +345,158 @@ pub(crate) fn plan(
                     new.takes.remove(take);
                     new.comp = comp;
                     // The range may have shrunk; segments outside it are cut back to it.
-                    let (rs, re) = new.range();
-                    let cut: Vec<CompSegment> = new
-                        .comp
-                        .iter()
-                        .filter_map(|s| {
-                            let (a, b) = (s.start.max(rs), s.end.min(re));
-                            (a < b).then_some(CompSegment {
-                                start: a,
-                                end: b,
-                                ..*s
-                            })
-                        })
-                        .collect();
-                    new.comp = cut;
+                    new.comp = comp_within(&new.comp, new.range());
                     build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
                 }
             }
+        }
+        SongCommand::DuplicateTake { group, take } => {
+            let (device, lane, g) = find(doc, group)?;
+            check_take(g, take)?;
+            if g.takes.len() >= MAX_TAKES {
+                return Err(range(format!(
+                    "a take group holds at most {MAX_TAKES} takes"
+                )));
+            }
+            let id = doc.song.next_clip_id;
+            let next = id
+                .checked_add(1)
+                .ok_or_else(|| bad("clip ids are exhausted"))?;
+            let mut copy = g.takes[take].clone();
+            copy.id = ClipId(id);
+            let mut new = g.clone();
+            new.takes.insert(take + 1, copy);
+            new.comp = comp_with_take_inserted(&g.comp, take + 1);
+            let mut scratch = doc.clone();
+            scratch.song_mut().next_clip_id = next;
+            let edit = build(
+                &scratch,
+                &device,
+                lane,
+                Some(g),
+                Some(new),
+                Clips::Recompile,
+            )?;
+            Ok(Edit::Compound(vec![
+                Edit::NextClipId { old: id, new: next },
+                edit,
+            ]))
+        }
+        SongCommand::MoveTake { group, take, to } => {
+            let (device, lane, g) = find(doc, group)?;
+            check_take(g, take)?;
+            check_take(g, to)?;
+            if take == to {
+                return Err(range(format!("take {take} is already at index {to}")));
+            }
+            let mut new = g.clone();
+            let moved = new.takes.remove(take);
+            new.takes.insert(to, moved);
+            new.comp = comp_with_take_moved(&g.comp, take, to);
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::DeleteUnusedTakes { group } => {
+            let (device, lane, g) = find(doc, group)?;
+            let used: Vec<bool> = (0..g.takes.len())
+                .map(|t| g.comp.iter().any(|s| s.take == t))
+                .collect();
+            let unused = used.iter().filter(|u| !**u).count();
+            if unused == 0 {
+                return Err(bad(format!("every take of group {group} is used")));
+            }
+            if unused == g.takes.len() {
+                return Err(bad(format!("group {group} plays no take: nothing to keep")));
+            }
+            let mut new = g.clone();
+            let renumber: Vec<usize> = used
+                .iter()
+                .scan(0usize, |n, u| {
+                    let at = *n;
+                    *n += usize::from(*u);
+                    Some(at)
+                })
+                .collect();
+            new.takes = g
+                .takes
+                .iter()
+                .zip(&used)
+                .filter(|(_, u)| **u)
+                .map(|(t, _)| t.clone())
+                .collect();
+            new.comp = g
+                .comp
+                .iter()
+                .map(|s| CompSegment {
+                    take: renumber[s.take],
+                    ..*s
+                })
+                .collect();
+            new.comp = comp_within(&new.comp, new.range());
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::SetCompXfade { group, at, xfade } => {
+            let (device, lane, g) = find(doc, group)?;
+            if xfade > MAX_TICK as u64 {
+                return Err(range(format!("crossfade of {xfade} ticks is too long")));
+            }
+            let Some(i) = g.comp.iter().position(|s| s.start == at) else {
+                return Err(bad(format!(
+                    "group {group} has no segment starting at {at}"
+                )));
+            };
+            if !g.takes.iter().all(|t| t.content.is_audio()) {
+                return Err(bad("only audio takes crossfade"));
+            }
+            if g.comp[i].xfade == xfade {
+                return Err(bad(format!("the cut at {at} already has that crossfade")));
+            }
+            let mut new = g.clone();
+            new.comp[i].xfade = xfade;
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::SetCompSilence { group, start, end } => {
+            let (device, lane, g) = find(doc, group)?;
+            if start >= end {
+                return Err(range(format!("silent range [{start}, {end}) is empty")));
+            }
+            let (rs, re) = g.range();
+            if start < rs || end > re {
+                return Err(range(format!(
+                    "silent range [{start}, {end}) is outside the group's range [{rs}, {re})"
+                )));
+            }
+            let mut new = g.clone();
+            clear_segment(&mut new.comp, start, end);
+            if new.comp == g.comp {
+                return Err(bad("that range is already silent"));
+            }
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::SetTake {
+            group,
+            take,
+            gain_db,
+            source_offset_delta,
+        } => {
+            let (device, lane, g) = find(doc, group)?;
+            check_take(g, take)?;
+            let ClipContent::Audio(audio) = &g.takes[take].content else {
+                return Err(bad("only an audio take has a level and an offset"));
+            };
+            let offset = audio
+                .source_offset
+                .checked_add_signed(source_offset_delta)
+                .ok_or_else(|| range("the offset would move before the start of the asset"))?;
+            let mut content = audio.clone();
+            content.gain_db = gain_db;
+            content.source_offset = offset;
+            check_audio(doc, &content)?;
+            if content == *audio {
+                return Err(bad("the take already has that level and offset"));
+            }
+            let mut new = g.clone();
+            new.takes[take].content = ClipContent::Audio(content);
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
         }
         SongCommand::FlattenTakes { group } => {
             let (device, lane, g) = find(doc, group)?;

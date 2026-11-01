@@ -445,3 +445,61 @@ fn a_note_comp_bounces_exactly_like_the_plain_clips_it_compiles_to() {
     plain_doc.devices[0].params = pick.doc().devices[0].params.clone();
     assert!(bounce(&plain_doc, 512, 0) == bounce(pick.doc(), 512, 0));
 }
+
+// ---- crossfaded cuts ----------------------------------------------------------------------------
+
+#[test]
+fn a_crossfaded_cut_renders_the_equal_power_mix_of_the_two_takes() {
+    let t = TempDir::new("xfade");
+    let (mut d, bundle, _) = comped_audio(&t.0.join("song"));
+    let plain = render(d.doc(), &bundle, 512, 0);
+    // A quarter note: 24 000 frames at 120 BPM and 48 kHz.
+    let n = BAR_FRAMES / 4;
+    apply(
+        &mut d,
+        song(SongCommand::SetCompXfade {
+            group: 1,
+            at: BAR,
+            xfade: PPQ as u64,
+        }),
+    );
+    let mixed = render(d.doc(), &bundle, 512, 0).channels.remove(0);
+    let tone = |hz: f64, i: usize| 0.5 * (2.0 * std::f64::consts::PI * hz * i as f64 / SR).sin();
+    // Take B plays bar 1 and runs on under take A, which fades in over the first quarter note
+    // (the audio track's centre pan law is -3 dB).
+    for i in 0..n {
+        let at = BAR_FRAMES + i;
+        let fade_in = FadeCurve::EqualPower.eval(i as f64 / n as f64);
+        let fade_out = FadeCurve::EqualPower.eval((n - i) as f64 / n as f64);
+        let want = std::f64::consts::FRAC_1_SQRT_2
+            * (tone(HZ_A, at) * fade_in + tone(HZ_B, at) * fade_out);
+        assert!(
+            (f64::from(mixed[at]) - want).abs() < 2e-4,
+            "frame {i}: {} against {want}",
+            mixed[at]
+        );
+    }
+    // Before the cut and after the crossfade the samples are the plain comp's, bit for bit
+    // except around the second cut, which still dips.
+    let before = plain.channels[0][..BAR_FRAMES - 400].to_vec();
+    assert_eq!(&mixed[..BAR_FRAMES - 400], &before[..]);
+    let after = BAR_FRAMES + n + 100;
+    assert_eq!(
+        &mixed[after..2 * BAR_FRAMES - 400],
+        &plain.channels[0][after..2 * BAR_FRAMES - 400]
+    );
+    assert_eq!(
+        &mixed[3 * BAR_FRAMES..],
+        &plain.channels[0][3 * BAR_FRAMES..]
+    );
+    // Setting the crossfade back to none bounces the old comp exactly.
+    apply(
+        &mut d,
+        song(SongCommand::SetCompXfade {
+            group: 1,
+            at: BAR,
+            xfade: 0,
+        }),
+    );
+    assert_eq!(bits(&render(d.doc(), &bundle, 512, 0)), bits(&plain));
+}

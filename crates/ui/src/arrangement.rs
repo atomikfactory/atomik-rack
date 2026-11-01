@@ -402,6 +402,8 @@ enum MenuKind {
     Param,
     /// Choose the audio input; row `i` selects `options[i]`.
     Input(Vec<InputSel>),
+    /// Run the command of row `i` on a take group (the menu of a take row or comp strip).
+    Takes(Vec<SongCommand>),
 }
 
 impl Menu {
@@ -682,6 +684,7 @@ enum Drag {
         t0: i64,
         t1: i64,
         moved: bool,
+        mode: takes::CompDrag,
     },
     /// Dragging the horizontal scrollbar thumb; `grab` is the x offset inside the thumb.
     HScroll {
@@ -2745,6 +2748,11 @@ impl ArrangementView {
                             SongCommand::AddAutomationLane { device, param }
                         }));
                     }
+                    MenuKind::Takes(commands) => {
+                        if let Some(cmd) = commands.get(i) {
+                            out.push(song_cmd(cmd.clone()));
+                        }
+                    }
                     MenuKind::Input(options) => {
                         let (current, source) = self
                             .audio_header(&m.device)
@@ -2899,6 +2907,12 @@ impl ArrangementView {
                 let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers)).max(0);
                 out.push(UiAction::Transport(TransportAction::Locate(t)));
                 self.drag = Drag::Playhead { grab: 0, last: t };
+            }
+            Hit::TakePick(..) | Hit::TakeDelete(..) | Hit::TakeSpan(..) | Hit::TakeStrip(_)
+                if button == PointerButton::Secondary =>
+            {
+                self.selected_track = None;
+                self.takes_menu(&hit, pos);
             }
             Hit::TakeToggle(_)
             | Hit::TakeFlatten(_)
@@ -4369,8 +4383,9 @@ impl ArrangementView {
                 t0,
                 t1,
                 moved,
+                mode,
                 ..
-            } => self.comp_up(group, take, (t0, t1), moved, out),
+            } => self.comp_up(group, take, (t0, t1), moved, mode, out),
             Drag::Move {
                 originals,
                 merge,
@@ -5719,8 +5734,92 @@ impl ArrangementView {
     ) {
         let st = &self.st;
         let g = self.audio_geo(r, clip, a, tl);
-        let meta = self.assets.get(&a.asset);
         let (top, bottom) = value_range(r);
+        self.paint_audio_wave(c, vis, body, clip, a, accent, muted, tl, &g);
+        let curve = a.fade_curve;
+        if a.fade_in > 0 && g.fade_in_x > r.x0 {
+            let (path, line) = fade_paths(r.x0, g.fade_in_x, top, bottom, curve, true);
+            c.fill_with(path, st.fade_shade);
+            c.stroke(
+                &line.into(),
+                &Stroke::new(1.0),
+                &st.base.text.with_alpha(0.7).into(),
+            );
+        }
+        if a.fade_out > 0 && g.fade_out_x < r.x1 {
+            let (path, line) = fade_paths(g.fade_out_x, r.x1, top, bottom, curve, false);
+            c.fill_with(path, st.fade_shade);
+            c.stroke(
+                &line.into(),
+                &Stroke::new(1.0),
+                &st.base.text.with_alpha(0.7).into(),
+            );
+        }
+        if clip.id == FROZEN_CLIP {
+            // A render has no fades, gain or envelope to grab.
+            return;
+        }
+        self.paint_audio_edits(c, r, vis, clip, a, &g);
+        let hover = match &self.hover {
+            Some(Hit::Clip { id, part, .. }) if *id == clip.id => Some(*part),
+            _ => None,
+        };
+        let lit = |part: ClipPart| {
+            if hover == Some(part) {
+                st.selection
+            } else {
+                st.handle.with_alpha(0.85)
+            }
+        };
+        let gy = g.gain_y.round() + 0.5;
+        sp::line(c, vis.x0, gy, vis.x1, gy, st.gain_line.with_alpha(0.55));
+        if let Some(h) = g.gain {
+            let shape = RoundedRect::from_rect(h, 2.0);
+            let col = if hover == Some(ClipPart::Gain) {
+                st.handle
+            } else {
+                st.gain_line
+            };
+            c.fill_with(shape, col.with_alpha(0.9));
+            c.stroke_with(shape, 1.0, st.base.plate);
+        }
+        for (rect, part) in [
+            (g.fade_in, ClipPart::FadeIn),
+            (g.fade_out, ClipPart::FadeOut),
+        ] {
+            let mut tri = BezPath::new();
+            let (l, rr, t, b) = (rect.x0, rect.x1, rect.y0, rect.y1);
+            if part == ClipPart::FadeIn {
+                tri.move_to(pt(l, b));
+                tri.line_to(pt(rr, t));
+                tri.line_to(pt(rr, b));
+            } else {
+                tri.move_to(pt(l, t));
+                tri.line_to(pt(rr, b));
+                tri.line_to(pt(l, b));
+            }
+            tri.close_path();
+            c.fill_with(tri, lit(part));
+        }
+    }
+
+    /// Paints the waveform of an audio clip (or of a take of a comp row) inside `body`: the
+    /// part of the asset the clip plays, its end, and the placeholder when the peaks are missing.
+    #[allow(clippy::too_many_arguments, reason = "painting inputs")]
+    fn paint_audio_wave(
+        &self,
+        c: &mut dyn Canvas,
+        vis: Rect,
+        body: Rect,
+        clip: &Clip,
+        a: &AudioClipContent,
+        accent: Color,
+        muted: bool,
+        tl: Rect,
+        g: &AudioGeo,
+    ) {
+        let st = &self.st;
+        let meta = self.assets.get(&a.asset);
         let x_start = vis.x0.max(tl.x0).floor();
         let x_end = vis.x1.min(tl.x1).ceil();
         // Source frame under a logical x: the offset plus the real time since the clip start.
@@ -5845,71 +5944,6 @@ impl ArrangementView {
                 st.record,
                 Align::Start,
             );
-        }
-        let curve = a.fade_curve;
-        if a.fade_in > 0 && g.fade_in_x > r.x0 {
-            let (path, line) = fade_paths(r.x0, g.fade_in_x, top, bottom, curve, true);
-            c.fill_with(path, st.fade_shade);
-            c.stroke(
-                &line.into(),
-                &Stroke::new(1.0),
-                &st.base.text.with_alpha(0.7).into(),
-            );
-        }
-        if a.fade_out > 0 && g.fade_out_x < r.x1 {
-            let (path, line) = fade_paths(g.fade_out_x, r.x1, top, bottom, curve, false);
-            c.fill_with(path, st.fade_shade);
-            c.stroke(
-                &line.into(),
-                &Stroke::new(1.0),
-                &st.base.text.with_alpha(0.7).into(),
-            );
-        }
-        if clip.id == FROZEN_CLIP {
-            // A render has no fades, gain or envelope to grab.
-            return;
-        }
-        self.paint_audio_edits(c, r, vis, clip, a, &g);
-        let hover = match &self.hover {
-            Some(Hit::Clip { id, part, .. }) if *id == clip.id => Some(*part),
-            _ => None,
-        };
-        let lit = |part: ClipPart| {
-            if hover == Some(part) {
-                st.selection
-            } else {
-                st.handle.with_alpha(0.85)
-            }
-        };
-        let gy = g.gain_y.round() + 0.5;
-        sp::line(c, vis.x0, gy, vis.x1, gy, st.gain_line.with_alpha(0.55));
-        if let Some(h) = g.gain {
-            let shape = RoundedRect::from_rect(h, 2.0);
-            let col = if hover == Some(ClipPart::Gain) {
-                st.handle
-            } else {
-                st.gain_line
-            };
-            c.fill_with(shape, col.with_alpha(0.9));
-            c.stroke_with(shape, 1.0, st.base.plate);
-        }
-        for (rect, part) in [
-            (g.fade_in, ClipPart::FadeIn),
-            (g.fade_out, ClipPart::FadeOut),
-        ] {
-            let mut tri = BezPath::new();
-            let (l, rr, t, b) = (rect.x0, rect.x1, rect.y0, rect.y1);
-            if part == ClipPart::FadeIn {
-                tri.move_to(pt(l, b));
-                tri.line_to(pt(rr, t));
-                tri.line_to(pt(rr, b));
-            } else {
-                tri.move_to(pt(l, t));
-                tri.line_to(pt(rr, b));
-                tri.line_to(pt(l, b));
-            }
-            tri.close_path();
-            c.fill_with(tri, lit(part));
         }
     }
 

@@ -186,11 +186,13 @@
 //! `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no
 //! lanes, and only note clips take it. **Version 19** files have no take groups: from version 20
 //! a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start,
-//! end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are
+//! end[, crossfade]]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are
 //! whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among
 //! all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`);
 //! `"comp"` lists segments of take indices over the group's range (the earliest take start to the
-//! latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from
+//! latest take end), sorted, disjoint and non-empty, a fourth element being the crossfade in ticks
+//! at the segment's start (written only when above 0; audio takes, added under version 39);
+//! `"clips"` names the lane clips compiled from
 //! the comp (an id that is not on the lane, a comp clip removed or moved since, is dropped on
 //! load and not written). The field is omitted when the lane has no groups; a loaded song numbers
 //! its groups from 1 in file order (ids are not stored). **Version 20** files have no groove

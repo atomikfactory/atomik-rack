@@ -1193,17 +1193,29 @@ recording are unchanged: a track with one pass still gets one plain clip.
   neighbours of the same take. `DeleteTake { group, take }` gives its ranges to the take below it
   (above it for the bottom take) and renumbers the takes above it; the last take takes the group and
   its clips with it. `FlattenTakes { group }` drops the group and keeps the compiled clips as plain
-  clips (no `SongChanged`: the sound does not change). Take clips count as referenced assets (the
-  bundle keeps their files and undo finds them) and `RelinkAsset` swaps them too.
+  clips (no `SongChanged`: the sound does not change). `DuplicateTake` puts a copy of a take just
+  above it, `MoveTake { group, take, to }` reorders the stack (both renumber the comp so what plays
+  does not change), `DeleteUnusedTakes` drops the takes no segment names, `SetCompSilence` cuts a gap
+  out of the comp, `SetCompXfade { group, at, xfade }` sets the crossfade of the cut at tick `at`
+  and `SetTake { group, take, gain_db, source_offset_delta }` sets the level of an audio take and
+  moves its audio inside the asset (the take keeps its start). Take clips count as referenced
+  assets (the bundle keeps their files and undo finds them) and `RelinkAsset` swaps them too.
 - **Audio boundaries.** A comp cut that is not the natural edge of its take (a segment that begins
   or ends strictly inside the take) gets a fade of `COMP_FADE_FRAMES` (240, 5 ms at 48 kHz, at most
   half the piece), equal power; a natural edge keeps the own fade of the take. Overlapping audio
-  clips never sum in the engine (a later clip hides an earlier one), so the boundary between two
-  takes is a fade out followed by a fade in, a dip of a few milliseconds, not an overlapped
-  crossfade. An overlapped constant-power crossfade would need the engine to mix two regions; it is
-  on the roadmap.
+  clips hide an earlier one where they overlap unless the later one has an `xfade`, so by default
+  the boundary between two takes is a fade out followed by a fade in, a dip of a few milliseconds.
+  A cut can carry a **crossfade** instead: `CompSegment.xfade` is a length in ticks at the segment's
+  start (0 is the dip). `comp_clips` then lets the clip before the cut run on past it by that
+  length and gives the clip after the cut `xfade: Some(EqualPower)` and no dip, so `flatten_audio`
+  makes two overlapping regions (the engine has mixed overlapped audio regions since format 23)
+  whose equal-power gains square-sum to 1. The length is clamped to the later segment and to what
+  is left of the earlier take after the cut; it applies only where one segment ends exactly where
+  another of a different audio take starts. A comp without `xfade` compiles as before.
 - **Project format 20** saves a lane's `"take_groups"` after its `"clips"`:
-  `{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}`. The take clips use the
+  `{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}`; a segment with a crossfade
+  has a fourth element, its length in ticks (written only when above 0; a reader of this build
+  accepts three or four). The take clips use the
   lane's clip fields and ids from the same pool (unique, below `next_clip_id`, none in `"clips"`);
   `"clips"` must name clips of the same lane, each at most once. The field is omitted for a lane
   without groups and unknown in version 19 and older, which load without groups.
@@ -1258,7 +1270,12 @@ recording are unchanged: a track with one pass still gets one plain clip.
   its take) and, when the group is opened with the chevron in the strip's header, one row per take
   (saved with the project, see 2.16). A click on the name of a take, or inside its row, picks it; a
   drag across a take row comps the snapped range from it (one `SetCompSegment` on release, Escape
-  cancels); the cross in the header of a take deletes it and FLATTEN dissolves the group. The
+  cancels); the cross in the header of a take deletes it and FLATTEN dissolves the group. An audio
+  take row draws its waveform. A drag across the strip silences the range, a drag of a cut between
+  two takes moves it (one `SetCompSegment` for the take that grows) and the tail of a crossfade
+  has a handle for its length; the right-click menus of the strip and of a take row offer the
+  crossfade lengths, duplicate, move, silence, delete unused, and for audio a level and offset
+  step (each a single command). The
   compiled clips stay ordinary clips on the lane: they can be moved, split or edited like any, but
   the next take command on the group recompiles them from the takes and replaces such edits (undo
   brings them back); flatten first to keep an edit. A take cannot be opened in the piano roll yet.

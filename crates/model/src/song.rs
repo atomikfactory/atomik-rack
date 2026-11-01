@@ -1213,6 +1213,67 @@ pub enum SongCommand {
         /// Take index.
         take: usize,
     },
+    /// Put a copy of a take just above it as a new take (a new clip id; the comp is unchanged,
+    /// so nothing sounds different until the copy is edited or picked). A group holds at most
+    /// 256 takes. One undo step.
+    DuplicateTake {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+    },
+    /// Move a take to another place in the stack: `to` is its index in the reordered list. The
+    /// comp follows the takes, so what plays does not change. One undo step.
+    MoveTake {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+        /// New index (`to != take`, below the take count).
+        to: usize,
+    },
+    /// Delete the takes the comp does not use. An error when every take is used, or when none is
+    /// (an all-silent comp keeps its takes). One undo step.
+    DeleteUnusedTakes {
+        /// Group id.
+        group: u32,
+    },
+    /// Set the crossfade at a cut: the segment of the comp that starts at tick `at` crossfades
+    /// in over `xfade` ticks (0 is the short dip). An error when no segment starts at `at` or
+    /// the group's takes are not audio. One undo step.
+    SetCompXfade {
+        /// Group id.
+        group: u32,
+        /// Start tick of the segment that crossfades in.
+        at: i64,
+        /// Length in ticks (at most the largest tick; clamped when the comp compiles).
+        xfade: u64,
+    },
+    /// Make `[start, end)` of the comp silent (a gap): the range is cut out of whatever played
+    /// there. `start < end` within the group's range. One undo step.
+    SetCompSilence {
+        /// Group id.
+        group: u32,
+        /// First tick.
+        start: i64,
+        /// End tick (exclusive).
+        end: i64,
+    },
+    /// Set the level of an audio take and move its audio in time: `gain_db` is the take clip's
+    /// gain (within the clip gain range) and `source_offset_delta` frames are added to its
+    /// source offset (positive plays later audio at the same song position; the take keeps its
+    /// start). The result must stay inside the asset. An error for a notes take or when nothing
+    /// changes. One undo step.
+    SetTake {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+        /// Gain in dB.
+        gain_db: f32,
+        /// Frames added to the source offset (negative moves it back).
+        source_offset_delta: i64,
+    },
     /// Dissolve a group: its comp clips stay on the lane as plain clips, the takes are dropped.
     /// One undo step.
     FlattenTakes {

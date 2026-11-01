@@ -396,7 +396,13 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 SongCommand::MoveNoteLane {
                     device, to_device, ..
                 } => track_frozen(device).or_else(|| track_frozen(to_device)),
-                SongCommand::AddTake { group, .. } => doc
+                SongCommand::AddTake { group, .. }
+                | SongCommand::DuplicateTake { group, .. }
+                | SongCommand::MoveTake { group, .. }
+                | SongCommand::DeleteUnusedTakes { group }
+                | SongCommand::SetCompXfade { group, .. }
+                | SongCommand::SetCompSilence { group, .. }
+                | SongCommand::SetTake { group, .. } => doc
                     .song
                     .take_group(*group)
                     .and_then(|(t, _, _)| track_frozen(&t.device)),

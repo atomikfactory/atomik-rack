@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Comp rows: crossfades, silence, take level and offset, and a take menu.** A cut between two
+  audio takes in a comp can have a crossfade: the take before the cut runs on past it and the
+  take after it fades in over it (equal power, two overlapping regions in the engine, no dip), up
+  to the length of the segment after the cut and what is left of the take before it. A cut with
+  no crossfade is the 5 ms dip as before, and such projects bounce bit for bit as they did. In
+  the comp strip a drag across it silences the range, a drag of a cut moves it, and a crossfade
+  has a handle on its tail; the strip's right-click menu sets the crossfade of the nearest cut
+  (None, 1/32 to 1/4 note), silences a segment and deletes the takes the comp does not use. An
+  audio take row now draws its waveform, and the right-click menu of a take row duplicates the
+  take, moves it up or down (what plays does not change), deletes it, and for audio steps its
+  level by 3 dB and its audio by 10 ms inside the file. New commands: `DuplicateTake`,
+  `MoveTake`, `DeleteUnusedTakes`, `SetCompSilence`, `SetCompXfade` and `SetTake`, each one undo
+  step. A comp segment saved with a crossfade has a fourth element (ticks); one without it is
+  written as before, so the project format is unchanged (still version 39) and a file without
+  crossfades opens in older builds. Copying takes between groups and songs, importing a file as
+  a take, a razor tool and keys to step between take rows are not in this version.
 - **Resampling.** An audio track can record the output of a mixer strip instead of its inputs: the
   input menu in the track header lists `Channel: name`, `Bus: name` and `Master: name` after the
   inputs, and arming and recording then prints that strip. The engine copies the strip's output at

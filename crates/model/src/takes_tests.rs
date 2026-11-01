@@ -3,7 +3,7 @@ use crate::song::Note;
 use crate::{AssetMeta, empty_doc};
 
 fn seg(take: usize, start: i64, end: i64) -> CompSegment {
-    CompSegment { take, start, end }
+    CompSegment::new(take, start, end)
 }
 
 fn notes_take(start: i64, length: i64) -> Clip {

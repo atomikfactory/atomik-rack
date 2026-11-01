@@ -82,7 +82,7 @@ fn rejects(d: &mut Document, cmd: Command, reg: &Registry) -> ModelError {
 }
 
 fn seg(take: usize, start: i64, end: i64) -> CompSegment {
-    CompSegment { take, start, end }
+    CompSegment::new(take, start, end)
 }
 
 // ---- NewTakeGroup -----------------------------------------------------------------------------

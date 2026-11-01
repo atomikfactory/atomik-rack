@@ -1125,6 +1125,12 @@ pub(crate) fn plan(
         | SongCommand::PickTake { .. }
         | SongCommand::SetCompSegment { .. }
         | SongCommand::DeleteTake { .. }
+        | SongCommand::DuplicateTake { .. }
+        | SongCommand::MoveTake { .. }
+        | SongCommand::DeleteUnusedTakes { .. }
+        | SongCommand::SetCompXfade { .. }
+        | SongCommand::SetCompSilence { .. }
+        | SongCommand::SetTake { .. }
         | SongCommand::FlattenTakes { .. } => crate::takes_cmd::plan(doc, registry, command)?,
         SongCommand::GroupTracks { .. }
         | SongCommand::Ungroup { .. }
