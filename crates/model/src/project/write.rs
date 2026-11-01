@@ -201,12 +201,17 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
         let sep = if i == 0 { "" } else { "," };
         let _ = write!(
             w,
-            "{sep}\n      {{\n        \"device\": {}, \"muted\": {}, \"solo\": {}, \"armed\": {},{}{}{}{}{}{}\n        \"lanes\": [",
+            "{sep}\n      {{\n        \"device\": {}, \"muted\": {}, \"solo\": {}, \"armed\": {},{}{}{}{}{}{}{}\n        \"lanes\": [",
             json_str(&t.device.0),
             t.muted,
             t.solo,
             t.armed,
             if t.chase { "" } else { " \"no_chase\": true," },
+            if t.direct_record {
+                " \"direct_record\": true,"
+            } else {
+                ""
+            },
             t.notes_to
                 .as_ref()
                 .filter(|k| **k != t.device)

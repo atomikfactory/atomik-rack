@@ -116,6 +116,12 @@ pub(crate) enum Edit {
         old: bool,
         new: bool,
     },
+    /// Track Direct Record flag.
+    TrackDirectRecord {
+        device: DeviceKey,
+        old: bool,
+        new: bool,
+    },
     /// Where a track's notes enter (`None`: its own device).
     TrackEntry {
         device: DeviceKey,
@@ -633,6 +639,11 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::TrackDirectRecord { device, old, new } => Edit::TrackDirectRecord {
+                device,
+                old: new,
+                new: old,
+            },
             Edit::TrackEntry { device, old, new } => Edit::TrackEntry {
                 device,
                 old: new,
@@ -1038,6 +1049,10 @@ impl Edit {
             }
             Edit::TrackChase { device, new, .. } => {
                 track_mut(doc, device)?.chase = *new;
+                vec![SyncOp::SongChanged]
+            }
+            Edit::TrackDirectRecord { device, new, .. } => {
+                track_mut(doc, device)?.direct_record = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::TrackEntry { device, new, .. } => {

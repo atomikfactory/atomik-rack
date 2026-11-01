@@ -264,6 +264,7 @@ pub(super) fn load_track(
         armed: flag(obj, path, "armed")?,
         chase: !flag(obj, path, "no_chase")?,
         notes_to,
+        direct_record: flag(obj, path, "direct_record")?,
         frozen,
         lanes,
     };
@@ -274,6 +275,7 @@ pub(super) fn load_track(
             ("armed", track.armed),
             ("no_chase", !track.chase),
             ("notes_to", track.notes_to.is_some()),
+            ("direct_record", track.direct_record),
             ("frozen", track.frozen.is_some()),
         ] {
             if set {
