@@ -1665,6 +1665,9 @@ pub struct PolySynth {
     chorus_mix: f32,
     delay: [DelayLine; 2],
     delay_mix: f32,
+    /// The echo lines may hold sound (they are cleared only then, so an unused echo never touches
+    /// its memory).
+    delay_used: bool,
     delay_samples: f32,
     delay_feedback: f32,
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
@@ -1753,6 +1756,7 @@ impl PolySynth {
             chorus_mix: 0.0,
             delay: [DelayLine::new(48_000), DelayLine::new(48_000)],
             delay_mix: 0.0,
+            delay_used: false,
             delay_samples: 14_400.0,
             delay_feedback: 0.35,
             fresh: true,
@@ -1929,8 +1933,9 @@ impl PolySynth {
             P_CHORUS_RATE => self.chorus.set_rate_hz(v),
             P_CHORUS_DEPTH => self.chorus.set_depth_ms(v * CHORUS_DEPTH_MS),
             P_DELAY_MIX => {
-                if v <= 0.0 && self.delay_mix > 0.0 {
+                if v <= 0.0 && self.delay_used {
                     self.delay.iter_mut().for_each(DelayLine::clear);
+                    self.delay_used = false;
                 }
                 self.delay_mix = v;
             }
@@ -1950,6 +1955,7 @@ impl PolySynth {
         for line in &mut self.delay {
             line.resize(lines);
         }
+        self.delay_used = false;
     }
 
     fn note_on(&mut self, key: u8, velocity: f32) {
@@ -2177,6 +2183,9 @@ impl PolySynth {
                 mix_r[n] *= gr;
             }
         }
+        if self.delay_mix > 0.0 {
+            self.delay_used = true;
+        }
         if self.chorus_mix > 0.0 || self.delay_mix > 0.0 {
             for n in 0..BATCH {
                 let (mut l, mut r) = (mix[n], mix_r[n]);
@@ -2285,7 +2294,10 @@ impl Device for PolySynth {
         self.lfo.reset();
         self.lfo2.reset();
         self.chorus.reset();
-        self.delay.iter_mut().for_each(DelayLine::clear);
+        if self.delay_used {
+            self.delay.iter_mut().for_each(DelayLine::clear);
+            self.delay_used = false;
+        }
         let m = self.master.target();
         self.master.set_immediate(m);
         self.fresh = true;
