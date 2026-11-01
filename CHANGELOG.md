@@ -814,6 +814,19 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Importing audio holds about one copy of it, and big projects open about four times faster.** An
+  import used to copy the audio five times (every check copied the buffer, and a file already at
+  the project rate was cloned by the resampler); it now peaks at about 1.03 times the decoded size
+  at 44.1 and 48 kHz instead of 3.2 times, and a file's declared length sizes the buffers once.
+  WAV files are written and read in 64 KiB blocks (a minute of stereo reads about five times
+  faster), and a streamed asset reads ahead 4,096 frames, so playing it costs one read per block
+  instead of one per chunk. Opening a project no longer builds a heap path for every note and
+  point and judges a rack's thousands of cables as one set: a 200 000-note project opens in 78 ms
+  instead of 291 ms, with 1.3 allocations per note instead of 6.3, and the 2 000-note bench
+  project in 7.7 ms instead of 39 ms. The project writer streams each note and point into the
+  output. File bytes, content hashes, asset ids and load error messages do not change. Comparing
+  tags no longer allocates, and the planners of Strip Silence, split, comp rows and clip growth
+  compile the tempo map once instead of once per cut.
 - **The arrangement draws playback from cached layers.** The lanes with their clips, notes and
   waveforms, and the track list, are recorded into display lists that stay between frames, so a
   frame in which only the playhead moved draws the playhead line, the ruler flag, the marker
