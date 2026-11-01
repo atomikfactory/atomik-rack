@@ -3044,7 +3044,10 @@ the shared map builder are unchanged. What they add:
   pad are inside the device ([drum_machine.rs](../crates/devices/src/drum_machine.rs)).
 - **Individual outputs and several channels per source.** The drum machine has `pad1_out_l` to
   `pad16_out_r` besides `out_l`/`out_r` (35 audio sockets), global `level_cv_in` and `pitch_cv_in`,
-  and a `padN_gate_cv_in` and `padN_gate_cv_out` per pad (69 sockets in all). A pad whose output is
+  a `padN_gate_cv_in` and `padN_gate_cv_out` per pad and four shared send outputs (73 sockets in
+  all). A pad also has a tone, low and high cut, drive and two send levels (`PadFx`,
+  [pad_fx.rs](../crates/devices/src/drum_machine/pad_fx.rs)); a pad with all of them at their
+  defaults is not touched, so existing projects render as before. A pad whose output is
   connected on either side plays only there; the soft limiter and master level apply to the main mix
   only. `ConsoleCommand::AddChannelFor { source, out_l, out_r, name }`
   ([model/src/console_cmd.rs](../crates/model/src/console_cmd.rs)) makes a console channel fed by
@@ -3657,7 +3660,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (399) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (403) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4623,7 +4626,7 @@ arrangement and edits one note clip of an `atomik.drum-machine` as a grid of 16 
 and `SetClipGeometry` (the clip length follows the grid) and swing as merged `SetClipGrid` drags;
 notes the grid cannot show are kept untouched. The drum machine has its own rack panel
 (`autolayout::drum_layout`): a 4×4 pad grid (click selects and auditions, drops load the pad), the
-eight knobs of the selected pad (view state, remapped onto `padN.*`), master level and an Edit
+fourteen knobs of the selected pad (view state, remapped onto `padN.*`), master level and an Edit
 button, and a back panel that groups the sockets per pad (outputs and gates) with the two global CV
 jacks and trims in a CV section.
 
@@ -4926,7 +4929,7 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
 - **Sampler scope.** One interpolation mode (cubic Hermite), no release samples, no SoundFont or
   SFZ import, stereo output only, no zero-crossing snap, and zones are RAM-only. A bounce stops with
   an error on a missing zone asset, while the live app plays silence.
-- **Drum machine and slicer scope.** No flam or ratchets, per-pad filters, kit presets, time-stretch
+- **Drum machine and slicer scope.** No kit presets, per-pad envelopes or sample-start, time-stretch
   inside slices or REX import; the slicer is one loop with at most 64 slices.
 - **Effects.** The limiter's true-peak detection is the BS.1770 4x one; a 16x oversampled reference
   reads full-band white noise up to about 1 dB over the ceiling. Changing the compressor look-ahead
@@ -4935,7 +4938,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
 - **Players.** The step sequencer is monophonic (one note per step, no chords, ratchets or flams),
   has no pattern chains or song mode (the CV sequencer chains patterns) and plays only with the
   transport; the arpeggiator has no free (Hz) rate and no note filters; neither records its output
-  to a clip.
+  to a clip. The drum generator (flams, ratchets) and the CV sequencer hold 32 patterns, but the
+  CV sequencer's rack panel and grid editor still show eight slots: later patterns are reached with
+  the `pattern` param, the pattern commands and the project file.
 - **Containers.** No standalone container presets, no cut and paste across scopes, no container
   level or CPU meter, linear macros only, one split per target instrument, a combine keeps one
   song track, channel or FX return and drops the automation lanes of the device that had them,
