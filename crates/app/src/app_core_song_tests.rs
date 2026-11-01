@@ -2188,3 +2188,94 @@ fn dub_in_the_middle_of_a_take_splits_it_between_the_layers_without_losing_notes
     };
     assert_eq!((keys(0), keys(1)), (vec![45], vec![52]));
 }
+
+fn only_clip(c: &AppCore<RecordingSink>) -> Clip {
+    c.document().doc().song.track(&key("a")).unwrap().lanes[0].clips[0].clone()
+}
+
+fn stretch(c: &mut AppCore<RecordingSink>, percent: f64, from_start: bool) {
+    let id = only_clip(c).id;
+    c.handle_action(UiAction::StretchStep {
+        ids: vec![id],
+        percent,
+        from_start,
+    });
+}
+
+#[test]
+fn a_stretch_preview_follows_the_pointer_from_the_original_and_is_one_undo_step() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(BAR, &[(0, 60), (PPQ, 62)]),
+        }),
+    );
+    let undo_before = c.document().undo_depth();
+    // Twice as long, then back to a quarter longer: each step is from the original clip.
+    stretch(&mut c, 50.0, false);
+    assert_eq!(only_clip(&c).length, 2 * BAR);
+    stretch(&mut c, 80.0, false);
+    assert_eq!(only_clip(&c).length, BAR * 100 / 80);
+    // The preview is no undo step and the engine got the song each time.
+    assert_eq!(c.document().undo_depth(), undo_before);
+    assert!(
+        c.sink_mut()
+            .take()
+            .iter()
+            .any(|call| matches!(call, SinkCall::Song(_)))
+    );
+    c.handle_action(UiAction::StretchEnd { commit: true });
+    assert_eq!(c.document().undo_depth(), undo_before + 1);
+    assert_eq!(only_clip(&c).length, BAR * 100 / 80);
+    // One undo gives the clip back.
+    c.handle_action(UiAction::Undo);
+    let clip = only_clip(&c);
+    assert_eq!((clip.start, clip.length), (BAR, BAR));
+}
+
+#[test]
+fn cancelling_a_stretch_puts_the_clip_back_and_a_later_command_accepts_the_preview() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(BAR, &[(0, 60)]),
+        }),
+    );
+    let undo_before = c.document().undo_depth();
+    stretch(&mut c, 50.0, true);
+    assert_eq!(only_clip(&c).start, 0);
+    c.handle_action(UiAction::StretchEnd { commit: false });
+    let clip = only_clip(&c);
+    assert_eq!((clip.start, clip.length), (BAR, BAR));
+    assert_eq!(c.document().undo_depth(), undo_before);
+    // Another command while a preview is open keeps the preview as its own step first.
+    stretch(&mut c, 50.0, false);
+    apply(&mut c, song(SongCommand::SetSongEnd(8 * BAR)));
+    assert_eq!(c.document().undo_depth(), undo_before + 2);
+    assert_eq!(only_clip(&c).length, 2 * BAR);
+}
+
+#[test]
+fn a_refused_insert_or_remove_at_the_locators_says_why() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::SetLoop {
+            range: (200 * BAR, 201 * BAR),
+            enabled: true,
+        }),
+    );
+    // Nothing is at or after the locators (far past the song): the command is refused and the reason is shown, not lost.
+    for id in ["sequencer.insert_bars", "sequencer.remove_bars"] {
+        let taken = c.pane_command(Pane::Arrangement, id, None);
+        assert!(taken.is_some(), "{id} is the arrangement's");
+        let message = c.last_rejection().expect("a visible message");
+        assert!(message.contains("nothing"), "{id}: {message}");
+    }
+}
