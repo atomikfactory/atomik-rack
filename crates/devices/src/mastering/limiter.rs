@@ -110,9 +110,16 @@ pub struct Limiter {
 }
 
 impl Limiter {
-    /// A limiter for sample rate `sr` (allocates; non-RT).
+    /// A limiter for sample rate `sr` with the default look-ahead (allocates; non-RT).
     pub fn new(sr: f32) -> Self {
-        let la = ((LOOKAHEAD_MS * 0.001 * sr).round() as usize).max(2);
+        Self::with_lookahead(sr, LOOKAHEAD_MS)
+    }
+
+    /// A limiter with a look-ahead of `ms` milliseconds (at least 2 samples; allocates; non-RT).
+    /// The latency is `DETECT_DELAY + round(ms * sr)` samples and the ceiling guarantee holds at
+    /// every look-ahead.
+    pub fn with_lookahead(sr: f32, ms: f32) -> Self {
+        let la = ((ms * 0.001 * sr).round() as usize).max(2);
         let delay = DETECT_DELAY + la;
         let len = (delay + 2).next_power_of_two();
         Self {

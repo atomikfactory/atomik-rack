@@ -30,7 +30,12 @@
 //!   `mono_below` > 0 high-passes the side signal with an LR4 high-pass at that frequency (the
 //!   side is attenuated 6 dB at the corner, 24 dB one octave below it and 48 dB two octaves
 //!   below), keeping the low end mono.
-//! * **Limiter.** See `limiter.rs`: 4x oversampled true-peak detection, 1.5 ms look-ahead,
+//! * **Soft clip** (`softclip` above 0, between the width and the limiter): `x / sqrt(1 + (x/c)^2)`
+//!   with `c = 2^(1 - 2 amount)`, unity for small signals, first-order ADAA; off is bit-exact.
+//! * **Split-band width** (`width.split`): mid and side are split at `width.freq` (LR4); the side
+//!   bands get `width.lo` and `width.hi` instead of `width`; `width.solo` keeps one band.
+//! * **Limiter.** See `limiter.rs`: 4x oversampled true-peak detection, a look-ahead of 0.5, 1.5
+//!   (default) or 4 ms (`lookahead`, three limiters built in `prepare`, only the chosen one runs),
 //!   `ceiling` in dBTP, `release` (exponential). The `output` gain is applied **after** the
 //!   limiter (as the chain says), so the final ceiling is `ceiling + output`; leave `output`
 //!   at 0 dB to guarantee the ceiling.
@@ -38,7 +43,7 @@
 //!   maximum (unrefined, as in Annex 2) of the **output**. `meter.reset` is a momentary toggle:
 //!   a rising edge (0 to 1) clears the integrated loudness, the windows and the true-peak
 //!   maximum (as does `reset()`); the transport does not reset it. Leave it at 0 afterwards.
-//! * **Latency** `DETECT_DELAY (17) + round(1.5 ms * sr)` samples (89 at 48 kHz, 83 at 44.1 kHz,
+//! * **Latency** `DETECT_DELAY (17) + round(look-ahead * sr)` samples (89 at 48 kHz for 1.5 ms, 83 at 44.1 kHz,
 //!   161 at 96 kHz), constant and set in `prepare`: it is the whole audio path (the oversampler
 //!   is only used for detection; the audio never goes through it).
 //! * **Meter values** (8): `[momentary LUFS, short-term LUFS, integrated LUFS, true peak dBTP,
@@ -84,6 +89,14 @@ const P_CEILING: u32 = 24;
 const P_RELEASE: u32 = 25;
 const P_OUTPUT: u32 = 26;
 const P_METER_RESET: u32 = 27;
+// The soft clip, look-ahead and split-band width sit before the bypass param (id 35).
+const P_SOFTCLIP: u32 = 28;
+const P_LOOKAHEAD: u32 = 29;
+const P_SPLIT: u32 = 30;
+const P_SPLIT_FREQ: u32 = 31;
+const P_WIDTH_LO: u32 = 32;
+const P_WIDTH_HI: u32 = 33;
+const P_SOLO: u32 = 34;
 
 #[allow(clippy::too_many_arguments)]
 const fn param(
@@ -252,7 +265,7 @@ const B3: [ParamDescriptor; 6] = band_params(
     100.0,
 );
 
-static PARAMS: [ParamDescriptor; 29] = [
+static PARAMS: [ParamDescriptor; 36] = [
     param(
         P_INPUT,
         "input",
@@ -381,7 +394,84 @@ static PARAMS: [ParamDescriptor; 29] = [
         Unit::Toggle,
         true,
     ),
-    bypass_param(28),
+    param(
+        P_SOFTCLIP,
+        "softclip",
+        "Soft clip",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_LOOKAHEAD,
+        "lookahead",
+        "Look-ahead",
+        0.0,
+        2.0,
+        1.0,
+        Taper::Linear,
+        Unit::Choice(&["0.5 ms", "1.5 ms", "4 ms"]),
+        true,
+    ),
+    param(
+        P_SPLIT,
+        "width.split",
+        "Split width",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        P_SPLIT_FREQ,
+        "width.freq",
+        "Width split",
+        40.0,
+        2_000.0,
+        250.0,
+        Taper::Exponential,
+        Unit::Hz,
+        false,
+    ),
+    param(
+        P_WIDTH_LO,
+        "width.lo",
+        "Low width",
+        0.0,
+        2.0,
+        1.0,
+        Taper::Linear,
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_WIDTH_HI,
+        "width.hi",
+        "High width",
+        0.0,
+        2.0,
+        1.0,
+        Taper::Linear,
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_SOLO,
+        "width.solo",
+        "Width solo",
+        0.0,
+        2.0,
+        0.0,
+        Taper::Linear,
+        Unit::Choice(&["off", "low", "high"]),
+        true,
+    ),
+    bypass_param(35),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -486,6 +576,38 @@ impl Lr4 {
     }
 }
 
+/// The three limiters, one per `lookahead` choice (0.5, 1.5 and 4 ms), built in `prepare`; only
+/// the chosen one runs, so a change of the choice is a change of the reported latency and no
+/// allocation.
+fn limiters_for(sr: f32) -> [Limiter; 3] {
+    [0.5, 1.5, 4.0].map(|ms| Limiter::with_lookahead(sr, ms))
+}
+
+/// The split-band width filters of the mid or the side signal: a low-pass and a high-pass
+/// Linkwitz-Riley section at `width.freq`.
+#[derive(Debug, Clone, Copy, Default)]
+struct WidthBand {
+    lp: Lr4,
+    hp: Lr4,
+}
+
+/// The soft clip at one sample: `x / sqrt(1 + (x/c)^2)`, first-order antiderivative
+/// anti-aliased (`x1` is the previous input; the mean of the curve over the step). Unity gain for
+/// small signals, `c` is the ceiling it approaches.
+#[inline]
+fn soft_clip_adaa(x: f64, x1: f64, c: f64) -> f64 {
+    let d = x - x1;
+    if d.abs() < 1.0e-3 {
+        let m = 0.5 * (x + x1) / c;
+        return 0.5 * (x + x1) / (1.0 + m * m).sqrt();
+    }
+    let big = |v: f64| {
+        let t = v / c;
+        c * c * ((1.0 + t * t).sqrt() - 1.0)
+    };
+    (big(x) - big(x1)) / d
+}
+
 /// The crossover filters of one channel.
 #[derive(Debug, Clone, Copy, Default)]
 struct Split {
@@ -551,7 +673,18 @@ pub struct Mastering {
     output_sm: BlockSmoother,
     width_sm: BlockSmoother,
     band_gain_sm: [BlockSmoother; 3],
-    limiter: Limiter,
+    limiters: [Limiter; 3],
+    la_idx: usize,
+    softclip: f32,
+    sc_x1: [f64; 2],
+    wsplit_on: bool,
+    wsplit_hz: f32,
+    width_lo: f32,
+    width_hi: f32,
+    solo: usize,
+    wband: [WidthBand; 2],
+    c_wlp: BiquadCoeffs,
+    c_whp: BiquadCoeffs,
     meter: LoudnessMeter,
     tp: [PeakDetector; 2],
     tp_max: f32,
@@ -608,7 +741,18 @@ impl Mastering {
             output_sm: BlockSmoother::new(1.0),
             width_sm: BlockSmoother::new(1.0),
             band_gain_sm: [BlockSmoother::new(1.0); 3],
-            limiter: Limiter::new(48_000.0),
+            limiters: limiters_for(48_000.0),
+            la_idx: 1,
+            softclip: 0.0,
+            sc_x1: [0.0; 2],
+            wsplit_on: false,
+            wsplit_hz: 250.0,
+            width_lo: 1.0,
+            width_hi: 1.0,
+            solo: 0,
+            wband: [WidthBand::default(); 2],
+            c_wlp: BiquadCoeffs::IDENTITY,
+            c_whp: BiquadCoeffs::IDENTITY,
             meter: LoudnessMeter::new(48_000.0),
             tp: [PeakDetector::new(BATCH), PeakDetector::new(BATCH)],
             tp_max: 0.0,
@@ -643,6 +787,20 @@ impl Mastering {
             0.0,
             sr64,
         );
+        self.c_wlp = BiquadCoeffs::design(
+            BiquadShape::Lowpass,
+            f64::from(self.wsplit_hz),
+            q,
+            0.0,
+            sr64,
+        );
+        self.c_whp = BiquadCoeffs::design(
+            BiquadShape::Highpass,
+            f64::from(self.wsplit_hz),
+            q,
+            0.0,
+            sr64,
+        );
         for k in 0..3 {
             self.att[k] = alpha(self.bands[k].attack_ms, sr);
             self.rel[k] = alpha(self.bands[k].release_ms, sr);
@@ -658,7 +816,7 @@ impl Device for Mastering {
 
     fn prepare(&mut self, info: &PrepareInfo) {
         self.sample_rate = info.sample_rate.hz() as f32;
-        self.limiter = Limiter::new(self.sample_rate);
+        self.limiters = limiters_for(self.sample_rate);
         self.meter = LoudnessMeter::new(info.sample_rate.hz());
         let sr = self.sample_rate;
         self.input_sm.set_time(20.0, sr, BATCH);
@@ -675,7 +833,11 @@ impl Device for Mastering {
         self.split = [Split::default(); 2];
         self.band_state = [BandState::default(); 3];
         self.side_hp = Lr4::default();
-        self.limiter.reset();
+        for l in &mut self.limiters {
+            l.reset();
+        }
+        self.sc_x1 = [0.0; 2];
+        self.wband = [WidthBand::default(); 2];
         self.meter.reset();
         for t in &mut self.tp {
             t.reset();
@@ -705,6 +867,13 @@ impl Device for Mastering {
                     _ => b.on = v >= 0.5,
                 }
             }
+            P_SOFTCLIP => self.softclip = v.clamp(0.0, 1.0),
+            P_LOOKAHEAD => self.la_idx = (v.round() as usize).min(2),
+            P_SPLIT => self.wsplit_on = v >= 0.5,
+            P_SPLIT_FREQ => self.wsplit_hz = v.clamp(40.0, 2_000.0),
+            P_WIDTH_LO => self.width_lo = v.clamp(0.0, 2.0),
+            P_WIDTH_HI => self.width_hi = v.clamp(0.0, 2.0),
+            P_SOLO => self.solo = (v.round() as usize).min(2),
             P_WIDTH => self.width = v.clamp(0.0, 2.0),
             P_MONO_BELOW => self.mono_below = v.clamp(0.0, 500.0),
             P_CEILING => self.ceiling_db = v.clamp(-12.0, 0.0),
@@ -763,11 +932,17 @@ impl Device for Mastering {
         let mb_on = self.mb_on;
         let mono_on = self.mono_below > 0.0;
         let one = 1.0f32.to_bits();
-        let width_unity =
-            width_ramp.at(0).to_bits() == one && width_ramp.at(BATCH).to_bits() == one && !mono_on;
+        let split_on = self.wsplit_on;
+        let width_unity = width_ramp.at(0).to_bits() == one
+            && width_ramp.at(BATCH).to_bits() == one
+            && !mono_on
+            && !split_on;
         if !mono_on {
             self.side_hp = Lr4::default();
         }
+        let sc_on = self.softclip > 0.0;
+        let sc_c = f64::from(exp2_det(1.0 - 2.0 * self.softclip));
+        let (lo_w, hi_w) = (f64::from(self.width_lo), f64::from(self.width_hi));
         let mut pre = [[0.0f32; BATCH]; 2];
         let mut cv_mb = [1.0f32; BATCH];
         let mut gr_band = [0.0f64; 3];
@@ -828,7 +1003,31 @@ impl Device for Mastering {
             }
             let mut l = y[0] as f32;
             let mut r = y[1] as f32;
-            if !width_unity {
+            if split_on {
+                // Split-band width: mid and side are each split at `width.freq`; the side's
+                // bands take their own width (`width.lo`, `width.hi`, the plain width is not
+                // used); a solo keeps one band of both.
+                let m = 0.5 * f64::from(l + r);
+                let mut s = 0.5 * f64::from(l - r);
+                if mono_on {
+                    s = self.side_hp.process(&self.c_side, s);
+                }
+                let (ml, mh) = (
+                    self.wband[0].lp.process(&self.c_wlp, m),
+                    self.wband[0].hp.process(&self.c_whp, m),
+                );
+                let (sl, sh) = (
+                    self.wband[1].lp.process(&self.c_wlp, s) * lo_w,
+                    self.wband[1].hp.process(&self.c_whp, s) * hi_w,
+                );
+                let (m2, s2) = match self.solo {
+                    1 => (ml, sl),
+                    2 => (mh, sh),
+                    _ => (ml + mh, sl + sh),
+                };
+                l = (m2 + s2) as f32;
+                r = (m2 - s2) as f32;
+            } else if !width_unity {
                 let w = width_ramp.at(n);
                 let m = 0.5 * (l + r);
                 let mut s = 0.5 * (l - r);
@@ -839,6 +1038,14 @@ impl Device for Mastering {
                 l = m + s;
                 r = m - s;
             }
+            if sc_on {
+                let (xl, xr) = (f64::from(l), f64::from(r));
+                l = soft_clip_adaa(xl, self.sc_x1[0], sc_c) as f32;
+                r = soft_clip_adaa(xr, self.sc_x1[1], sc_c) as f32;
+                self.sc_x1 = [xl, xr];
+            } else {
+                self.sc_x1 = [f64::from(l), f64::from(r)];
+            }
             pre[0][n] = l;
             pre[1][n] = r;
         }
@@ -848,7 +1055,7 @@ impl Device for Mastering {
         let mut lim = [[0.0f32; BATCH]; 2];
         let mut env = [1.0f32; BATCH];
         let [lim_l, lim_r] = &mut lim;
-        let lim_gr = self.limiter.process(
+        let lim_gr = self.limiters[self.la_idx].process(
             [&pre[0], &pre[1]],
             ceiling,
             self.rel_limiter,
@@ -902,7 +1109,7 @@ impl Device for Mastering {
     }
 
     fn latency_frames(&self) -> u32 {
-        self.limiter.latency()
+        self.limiters[self.la_idx].latency()
     }
 
     fn variable_latency(&self) -> bool {
