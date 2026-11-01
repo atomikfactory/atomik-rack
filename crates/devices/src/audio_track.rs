@@ -19,6 +19,10 @@
 //! project written before they existed loads at 0 dB with clip-safe off. The device only uses
 //! the gain; the clip-safe limiter works on the recorded take, never on the monitor.
 //!
+//! `rec_source` (0..2000) says what the take records: 0 the cabled inputs, otherwise the output
+//! of a console strip (see `atomik_model::RecSource`). It is an additive param the app reads when
+//! a take starts; the device ignores it, and a project written before it loads at 0.
+//!
 //! **Tuner.** The device keeps a [`ScopeTap`] of its input after the gain (what the performer hears
 //! and what is recorded, whether or not the track is armed or monitored) and pushes it every
 //! batch; the app runs the pitch analysis on the UI side from it ([`atomik_dsp::tuner`]), so the
@@ -38,7 +42,7 @@
 
 use atomik_core::{
     BATCH, ParamDescriptor, ParamId, REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB,
-    REC_GAIN_PARAM, Taper, Unit,
+    REC_GAIN_PARAM, REC_SOURCE_MAX, REC_SOURCE_PARAM, Taper, Unit,
 };
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -59,6 +63,7 @@ const P_REC_CLIP_SAFE: u32 = 3;
 const P_TUNER_LIVE: u32 = 4;
 const P_TUNER_MUTE: u32 = 5;
 const P_TUNER_REF: u32 = 6;
+const P_REC_SOURCE: u32 = 7;
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
@@ -80,7 +85,7 @@ const fn socket(
     }
 }
 
-static PARAMS: [ParamDescriptor; 7] = [
+static PARAMS: [ParamDescriptor; 8] = [
     ParamDescriptor {
         id: ParamId(P_MONITOR),
         key: "monitor",
@@ -156,6 +161,18 @@ static PARAMS: [ParamDescriptor; 7] = [
         default: 440.0,
         taper: Taper::Linear,
         unit: Unit::Hz,
+        discrete: true,
+    },
+    // Read by the app (which tap the take records); the device itself ignores it.
+    ParamDescriptor {
+        id: ParamId(P_REC_SOURCE),
+        key: REC_SOURCE_PARAM,
+        name: "Record source",
+        min: 0.0,
+        max: REC_SOURCE_MAX,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::None,
         discrete: true,
     },
 ];
@@ -338,6 +355,7 @@ mod tests {
                 "internal.tuner_live",
                 "tuner_mute",
                 "tuner_ref",
+                "rec_source",
             ],
             &["in_l", "in_r", "out_l", "out_r"],
         );

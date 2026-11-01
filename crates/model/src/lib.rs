@@ -58,6 +58,7 @@ mod project;
 mod rack_columns;
 mod rate_convert;
 mod read_limit;
+mod rec_source;
 mod record_over;
 mod relink;
 mod replace_device;
@@ -84,6 +85,7 @@ mod zones;
 pub use patch::{
     MAX_OUTPUT_CHANNELS, PATCH_FORMAT, PATCH_VERSION, SAMPLE_RATES, SAVE_LENGTH_BEATS,
 };
+pub use rec_source::{RecSource, rec_source, source_label, source_options, source_refusal};
 
 pub mod console;
 pub mod song;
