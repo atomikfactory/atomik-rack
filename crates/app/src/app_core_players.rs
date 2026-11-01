@@ -231,4 +231,18 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.player_audition_targets(device)
     }
+
+    /// Where a click on a pad or key OF `device` goes: the device's own notes input, never the
+    /// top of its track's player stack (a generator above a drum machine does not pass a pad's
+    /// note through, so a cabled drum machine would fall silent). A note player forwards to
+    /// what it is cabled to, as [`Self::audition_targets`] does.
+    pub(super) fn own_audition_targets(&self, device: &DeviceKey) -> Vec<Target> {
+        let Some(d) = self.doc().resolve(device) else {
+            return Vec::new();
+        };
+        if atomik_devices::is_player(&d.type_id) {
+            return self.player_audition_targets(device);
+        }
+        self.own_target_of(device).into_iter().collect()
+    }
 }
