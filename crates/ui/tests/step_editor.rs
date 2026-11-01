@@ -11,7 +11,9 @@ use atomik_model::{ClipContent, ClipId, Command, Document, Note, RackDoc, SongCo
 use atomik_model::{StepGrid, StepResolution, pad_key};
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::step_editor::{DEFAULT_GRID, VELOCITY_DRAG_PIXELS};
-use atomik_ui::{DisplayList, Key, Modifiers, StepEditorView, UiAction, UiEvent, VelocityLevel};
+use atomik_ui::{
+    DisplayList, Key, Modifiers, StepEditorView, ToolButton, UiAction, UiEvent, VelocityLevel,
+};
 use proptest::prelude::*;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -993,5 +995,142 @@ proptest! {
             prop_assert!(g.validate().is_ok());
             prop_assert_eq!(clip.length, i64::from(g.steps) * g.resolution.ticks());
         }
+    }
+}
+
+// ------------------------------------------------------------------ step tools
+
+/// Applies the commands among `actions` to the document.
+fn apply_all(d: &mut Document, reg: &Registry, actions: &[UiAction]) {
+    for c in commands(actions) {
+        d.apply(c, reg).unwrap();
+    }
+}
+
+fn cells_of(d: &Document) -> BTreeSet<(u8, i64)> {
+    notes_of(d)
+        .iter()
+        .map(|n| (n.key, n.tick / 3_840))
+        .collect()
+}
+
+#[test]
+fn the_shift_buttons_move_every_hit_one_step_and_wrap() {
+    let (mut d, reg, mut v) = setup();
+    let before = cells_of(&d);
+    let p = v.tool_button_center(ToolButton::ShiftRight);
+    let out = ck!(v, d, reg, p);
+    assert_eq!(commands(&out).len(), 1, "one SetClipContent, one undo step");
+    apply_all(&mut d, &reg, &out);
+    let after = cells_of(&d);
+    assert_ne!(before, after);
+    let want: BTreeSet<(u8, i64)> = before.iter().map(|(k, s)| (*k, (s + 1) % 16)).collect();
+    assert_eq!(after, want);
+    // Back with the other button.
+    let p = v.tool_button_center(ToolButton::ShiftLeft);
+    let out = ck!(v, d, reg, p);
+    apply_all(&mut d, &reg, &out);
+    assert_eq!(cells_of(&d), before);
+    // One undo step each.
+    d.undo(&reg).unwrap();
+    assert_eq!(cells_of(&d), want);
+}
+
+#[test]
+fn invert_swaps_hits_and_gaps_on_the_pads_in_use_only() {
+    let (mut d, reg, mut v) = setup();
+    let p = v.tool_button_center(ToolButton::Invert);
+    let out = ck!(v, d, reg, p);
+    apply_all(&mut d, &reg, &out);
+    let cells = cells_of(&d);
+    // Pad 1 had four kicks: 12 cells remain. Pads without a hit stay empty.
+    assert_eq!(cells.iter().filter(|(k, _)| *k == pad_key(1)).count(), 12);
+    assert!(
+        cells
+            .iter()
+            .all(|(k, _)| [pad_key(1), pad_key(2), pad_key(6)].contains(k))
+    );
+    assert!(!cells.contains(&(pad_key(1), 0)) && cells.contains(&(pad_key(1), 1)));
+    // Inverting twice restores the cells.
+    let out = ck!(v, d, reg, p);
+    apply_all(&mut d, &reg, &out);
+    let (_, _, fresh) = setup();
+    let want: BTreeSet<(u8, i64)> = fresh
+        .notes()
+        .iter()
+        .map(|n| (n.key, n.tick / 3_840))
+        .collect();
+    assert_eq!(cells_of(&d), want);
+}
+
+#[test]
+fn randomise_and_alter_are_deterministic_takes_that_differ_per_press() {
+    let run_once = |button: ToolButton, presses: usize| {
+        let (mut d, reg, mut v) = setup();
+        for _ in 0..presses {
+            let p = v.tool_button_center(button);
+            let out = ck!(v, d, reg, p);
+            apply_all(&mut d, &reg, &out);
+        }
+        cells_of(&d)
+    };
+    for button in [ToolButton::Randomise, ToolButton::Alter] {
+        let first = run_once(button, 1);
+        assert_eq!(first, run_once(button, 1), "same seed, same take");
+        assert_ne!(first, run_once(button, 2), "the next press is another take");
+    }
+    // Randomise stays on the pads in use.
+    let cells = run_once(ToolButton::Randomise, 1);
+    assert!(
+        cells
+            .iter()
+            .all(|(k, _)| [pad_key(1), pad_key(2), pad_key(6)].contains(k))
+    );
+}
+
+#[test]
+fn the_step_commands_run_the_same_tools_through_the_registry() {
+    let (mut d, reg, mut v) = setup();
+    let before = cells_of(&d);
+    let out = v.command("editor.step_shift", Some("left"), d.doc(), &reg);
+    let atomik_ui::keymap::CommandOutcome::Handled(actions) = out else {
+        panic!("handled")
+    };
+    apply_all(&mut d, &reg, &actions);
+    let want: BTreeSet<(u8, i64)> = before
+        .iter()
+        .map(|(k, s)| (*k, (s - 1).rem_euclid(16)))
+        .collect();
+    assert_eq!(cells_of(&d), want);
+    for id in [
+        "editor.step_invert",
+        "editor.step_randomise",
+        "editor.step_alter",
+    ] {
+        let out = v.command(id, None, d.doc(), &reg);
+        let atomik_ui::keymap::CommandOutcome::Handled(actions) = out else {
+            panic!("{id} handled")
+        };
+        assert_eq!(commands(&actions).len(), 1, "{id}");
+        apply_all(&mut d, &reg, &actions);
+    }
+    let declined = v.command("editor.nothing", None, d.doc(), &reg);
+    assert!(matches!(
+        declined,
+        atomik_ui::keymap::CommandOutcome::Declined
+    ));
+}
+
+#[test]
+fn the_tool_buttons_are_on_the_toolbar_with_tooltips() {
+    let (d, reg, mut v) = setup();
+    let t = texts(&mut v, &d, &reg);
+    for s in ["<", ">", "RND", "ALT", "INV"] {
+        assert!(t.iter().any(|x| x == s), "{s}: {t:?}");
+    }
+    for b in ToolButton::ALL {
+        let c = v.tool_button_center(b);
+        assert!(c.x > 0.0 && c.x < 1000.0, "{b:?} at {c:?}");
+        assert!(v.help_at(c).is_some(), "{b:?} has a tooltip");
     }
 }

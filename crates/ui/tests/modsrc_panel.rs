@@ -175,8 +175,25 @@ fn the_panel_shows_its_sections_labels_and_the_back_sockets() {
     let (doc, mut v) = setup();
     let t = texts_of(&mut v, &doc);
     for s in [
-        "LFO 1", "LFO 2", "ENVELOPE", "SHAPES", "SCOPE", "Shape", "Morph", "Rate", "Division",
-        "Key sync", "Rate CV", "Attack", "Release", "Mode",
+        "LFO 1",
+        "LFO 2",
+        "ENVELOPE",
+        "SHAPES",
+        "SCOPE",
+        "Shape",
+        "Morph",
+        "Rate",
+        "Division",
+        "Key sync",
+        "Rate CV",
+        "Attack",
+        "Release",
+        "Mode",
+        "MODULATION",
+        "2>1 rate",
+        "2>1 level",
+        "Lag",
+        "Key follow",
     ] {
         assert!(t.iter().any(|x| x == s), "missing {s:?}: {t:?}");
     }
@@ -199,7 +216,16 @@ fn the_panel_shows_its_sections_labels_and_the_back_sockets() {
 #[test]
 fn the_controls_are_on_the_panel() {
     let (_, v) = setup();
-    for k in ["lfo1_shape", "lfo2_rate_cv_trim", "env_attack", "env_mode"] {
+    for k in [
+        "lfo1_shape",
+        "lfo2_rate_cv_trim",
+        "env_attack",
+        "env_mode",
+        "lfo2_to_lfo1_rate",
+        "lfo2_to_lfo1_level",
+        "lag",
+        "key_follow",
+    ] {
         assert!(v.control_center(&key("mod"), k).is_some(), "{k}");
     }
 }

@@ -277,6 +277,8 @@ pub const ARP_OCTAVE_ARGS: &[&str] = &["1", "2", "3"];
 pub const STRUM_AMOUNT_ARGS: &[&str] = &["128", "64", "32", "16"];
 /// The values of `editor.set_strum_direction`.
 pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
+/// The values of `editor.step_shift`: which way the hits of the step editor's grid move.
+pub const STEP_SHIFT_ARGS: &[&str] = &["right", "left"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
@@ -667,6 +669,18 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .arg(STRUM_DIRECTION_ARGS),
+    cmd("editor.step_alter", "Alter Steps", G::Editor, C::Editor).decline(),
+    cmd("editor.step_invert", "Invert Steps", G::Editor, C::Editor).decline(),
+    cmd(
+        "editor.step_randomise",
+        "Randomise Steps",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd("editor.step_shift", "Shift Steps", G::Editor, C::Editor)
+        .arg(STEP_SHIFT_ARGS)
+        .decline(),
     cmd("editor.strum", "Strum Selection", G::Editor, C::Editor),
     cmd(
         "editor.toggle_note_mute",

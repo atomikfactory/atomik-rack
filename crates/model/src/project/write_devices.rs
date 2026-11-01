@@ -159,8 +159,16 @@ pub(crate) fn write_drums(w: &mut String, drums: &DrumDoc, ind: &str) {
             w,
             &c,
             p.lanes.iter().zip(&p.steps).map(|(l, row)| {
+                // The format 39 flam and ratchet rows are written only when a step uses them.
+                let mut fx = String::new();
+                if row.iter().any(|s| s.flam != 0) {
+                    let _ = write!(fx, ", \"flam\": [{}]", numbers(row, |s| s.flam));
+                }
+                if row.iter().any(|s| s.ratchet != 0) {
+                    let _ = write!(fx, ", \"ratchet\": [{}]", numbers(row, |s| s.ratchet));
+                }
                 format!(
-                    "{{\"key\": {}, \"role\": \"{}\", \"mute\": {}, \"velocity\": [{}], \"prob\": [{}]}}",
+                    "{{\"key\": {}, \"role\": \"{}\", \"mute\": {}, \"velocity\": [{}], \"prob\": [{}]{fx}}}",
                     l.key,
                     l.role.name(),
                     l.mute,

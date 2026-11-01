@@ -139,9 +139,9 @@ pub(crate) fn load_steps(v: &Value, path: &JsonPath) -> Result<StepSeqDoc, Model
     let o = schema::current(v, path, Obj::Patterns)?;
     let list_path = path.field("patterns");
     let list = array(&o["patterns"], &list_path)?;
-    if !(1..=MAX_PATTERNS).contains(&list.len()) {
+    if !(1..=MAX_CV_PATTERNS).contains(&list.len()) {
         return Err(list_path.error(format!(
-            "{} patterns is outside 1..={MAX_PATTERNS}",
+            "{} patterns is outside 1..={MAX_CV_PATTERNS}",
             list.len()
         )));
     }
@@ -202,9 +202,9 @@ pub(crate) fn load_curves(v: &Value, path: &JsonPath) -> Result<CurveDoc, ModelE
     let o = schema::current(v, path, Obj::Patterns)?;
     let list_path = path.field("patterns");
     let list = array(&o["patterns"], &list_path)?;
-    if !(1..=MAX_PATTERNS).contains(&list.len()) {
+    if !(1..=MAX_CV_PATTERNS).contains(&list.len()) {
         return Err(list_path.error(format!(
-            "{} patterns is outside 1..={MAX_PATTERNS}",
+            "{} patterns is outside 1..={MAX_CV_PATTERNS}",
             list.len()
         )));
     }
@@ -253,9 +253,9 @@ pub(crate) fn load_drums(v: &Value, path: &JsonPath) -> Result<DrumDoc, ModelErr
     let o = schema::current(v, path, Obj::Patterns)?;
     let list_path = path.field("patterns");
     let list = array(&o["patterns"], &list_path)?;
-    if !(1..=MAX_PATTERNS).contains(&list.len()) {
+    if !(1..=MAX_DRUM_PATTERNS).contains(&list.len()) {
         return Err(list_path.error(format!(
-            "{} patterns is outside 1..={MAX_PATTERNS}",
+            "{} patterns is outside 1..={MAX_DRUM_PATTERNS}",
             list.len()
         )));
     }
@@ -316,11 +316,33 @@ pub(crate) fn load_drums(v: &Value, path: &JsonPath) -> Result<DrumDoc, ModelErr
                     )));
                 }
             }
+            let fx = |name: &str, hi: u64| -> Result<Option<Vec<u8>>, ModelError> {
+                let Some(v) = l.get(name) else {
+                    return Ok(None);
+                };
+                let at = lp.field(name);
+                let raw = array(v, &at)?;
+                if raw.len() != MAX_STEPS {
+                    return Err(at.error(format!(
+                        "{} entries, exactly {MAX_STEPS} are required ({name})",
+                        raw.len()
+                    )));
+                }
+                let mut out = Vec::with_capacity(MAX_STEPS);
+                for (k, n) in raw.iter().enumerate() {
+                    out.push(ranged(n, &at.index(k), 0, hi)?);
+                }
+                Ok(Some(out))
+            };
+            let flam = fx("flam", u64::from(MAX_FLAM))?;
+            let ratchet = fx("ratchet", u64::from(MAX_RATCHET))?;
             let mut row = Vec::with_capacity(MAX_STEPS);
             for k in 0..MAX_STEPS {
                 row.push(DrumStepDoc {
                     velocity: ranged(&vel[k], &vel_path.index(k), 0, 127)?,
                     prob: ranged(&prob[k], &prob_path.index(k), 0, 100)?,
+                    flam: flam.as_ref().map_or(0, |f| f[k]),
+                    ratchet: ratchet.as_ref().map_or(0, |r| r[k]),
                 });
             }
             steps.push(row);

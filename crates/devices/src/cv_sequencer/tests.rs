@@ -910,3 +910,59 @@ proptest! {
         }
     }
 }
+
+/// 32 one-step patterns, pattern `i` on key `30 + i` with its own curve value.
+fn bank_data() -> CvSeqData {
+    let pats: Vec<PatternData> = (0..32)
+        .map(|i| full(SeqResolution::Sixteenth, 1, 0, 30 + i as u8, 50))
+        .collect();
+    let mut d = cv_data(&pats);
+    for (i, rows) in d.curves.iter_mut().enumerate() {
+        rows[0][0] = curve(i as i8 * 3 - 40, false);
+    }
+    d
+}
+
+#[test]
+fn the_pattern_and_chain_params_reach_thirty_two() {
+    let pattern = DESCRIPTOR.param_by_key("pattern").unwrap();
+    let chain = DESCRIPTOR.param_by_key("chain").unwrap();
+    assert_eq!((pattern.max, chain.max), (32.0, 32.0));
+}
+
+#[test]
+fn all_thirty_two_patterns_and_their_curves_play() {
+    let mut h = rig_with(SR as f64, BPM as f64, bank_data());
+    set(&mut h, "pattern.switch", 0.0);
+    set(&mut h, "pattern", 32.0);
+    let evs = collect(&mut h, batches_for(2 * 3_840));
+    assert_eq!(ons(&evs)[0].1, 30 + 31);
+    // Curve A of pattern 32 holds its value from the first step.
+    let a = samples(&mut h, "curve_a_cv_out", 2);
+    assert!(
+        (a[10] - (31.0 * 3.0 - 40.0) / 100.0).abs() < 1e-6,
+        "{}",
+        a[10]
+    );
+    // A pattern in the fourth bank.
+    let mut h = rig_with(SR as f64, BPM as f64, bank_data());
+    set(&mut h, "pattern.switch", 0.0);
+    set(&mut h, "pattern", 25.0);
+    assert_eq!(ons(&collect(&mut h, batches_for(3_840)))[0].1, 30 + 24);
+}
+
+#[test]
+fn a_chain_runs_across_banks_and_wraps_at_the_count() {
+    let mut h = rig_with(SR as f64, BPM as f64, bank_data());
+    set(&mut h, "pattern", 30.0);
+    set(&mut h, "pattern.switch", 0.0);
+    set(&mut h, "chain", 12.0);
+    let evs = collect(&mut h, batches_for(14 * 3_840));
+    let keys: Vec<u8> = ons(&evs).iter().map(|(_, k)| *k).collect();
+    // Patterns 30, 31, 32, then back to 1..=9, then 30 again.
+    let want: Vec<u8> = [29u8, 30, 31, 0, 1, 2, 3, 4, 5, 6, 7, 8, 29, 30]
+        .iter()
+        .map(|i| 30 + i)
+        .collect();
+    assert_eq!(&keys[..14], &want[..]);
+}

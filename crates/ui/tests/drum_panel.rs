@@ -172,7 +172,8 @@ fn the_knobs_follow_the_selected_pad() {
     let (doc, mut v) = rack();
     let d = key("drums");
     for suffix in [
-        "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity",
+        "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity", "tone", "lowcut",
+        "highcut", "drive", "send1", "send2",
     ] {
         assert!(
             v.control_center(&d, &format!("pad1.{suffix}")).is_some(),
@@ -190,7 +191,7 @@ fn the_knobs_follow_the_selected_pad() {
         Some(at_pad1),
         "same place, other pad"
     );
-    // Only the selected pad's 8 knobs and the master are on the panel.
+    // Only the selected pad's 14 knobs and the master are on the panel.
     let t = texts_of(&mut v, &doc);
     assert!(t.iter().any(|x| x == "PAD 2"), "{t:?}");
     assert!(t.iter().any(|x| x == "PAD 2  ·  C#2"), "{t:?}");
@@ -397,7 +398,7 @@ fn the_selected_pad_is_not_lost_when_the_document_changes() {
 // ------------------------------------------------------------------ back
 
 #[test]
-fn all_69_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
+fn all_73_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
     let (doc, mut v) = rack();
     v.set_flip(Flip::Back);
     let d = key("drums");
@@ -412,7 +413,8 @@ fn all_69_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
         names.push(format!("pad{n}_gate_cv_in"));
         names.push(format!("pad{n}_gate_cv_out"));
     }
-    assert_eq!(names.len(), 69);
+    names.extend(["send1_l", "send1_r", "send2_l", "send2_r"].map(String::from));
+    assert_eq!(names.len(), 73);
     let panel = v.device_rect(&d).unwrap();
     let mut centres = Vec::new();
     for n in &names {

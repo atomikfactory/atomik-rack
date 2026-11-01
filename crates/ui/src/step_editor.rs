@@ -13,6 +13,7 @@
 //! ```text
 //! top bar     STEP EDITOR  <device> · <steps> x <res> · swing                       [x]
 //! toolbar     GRID [1/8][1/16][1/32]  STEPS [16][32][48][64]  SWING [ 25 % ]  VEL [SOFT][MED][HARD]   n off-grid
+//!             (after VEL, to the right of the SOFT, MED and HARD buttons: [<][>][RND][ALT][INV])
 //! ruler       (header column)  step numbers at beats, bar starts marked
 //! rows        pad 16 (top) ... pad 1 (bottom, key 36, the GM kick); header: pad number + name
 //! ```
@@ -55,6 +56,13 @@
 //!   a drag restores the notes of the press.
 //! * **Row header:** press auditions the pad ([`UiAction::AuditionVelocity`] at velocity 100,
 //!   note off on release).
+//! * **Step tools:** `<` and `>` move every hit one step earlier or later (wrapping around the
+//!   grid, offsets inside a step kept), RND replaces the pads in use (the pads with a sound while
+//!   none is in use) with random hits, ALT flips a few cells of the pads in use, INV swaps hits and
+//!   gaps on them ([`atomik_model::apply_step_tool`]). The random tools count a seed up per press,
+//!   so a press is reproducible and the next one another take. Each is one `SetClipContent`, one
+//!   undo step, and the commands `editor.step_shift` (argument `left` or `right`),
+//!   `editor.step_randomise`, `editor.step_alter` and `editor.step_invert` run the same tools.
 //! * **Swing:** drag the swing field horizontally (1 px = 1 %, Shift = 0.1 %), double-click
 //!   resets, wheel steps by 1; every move is `SetClipGrid` with one merge id per drag.
 //! * **Drop:** files over a row header emit [`UiAction::ImportSamples`] with
@@ -80,7 +88,7 @@ use atomik_core::PPQ;
 use atomik_device_sdk::Registry;
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, DeviceKey, Note, PAD_COUNT, RackDoc, SongCommand, StepGrid,
-    StepResolution, pad_key, pad_of_key, pad_zones,
+    StepResolution, StepTool, apply_step_tool, pad_key, pad_of_key, pad_zones, pads_in_use,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{Point, Rect};
@@ -172,6 +180,97 @@ impl VelocityLevel {
     }
 }
 
+/// The step tools of the toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolButton {
+    /// Every hit one step earlier.
+    ShiftLeft,
+    /// Every hit one step later.
+    ShiftRight,
+    /// New random hits on the pads in use.
+    Randomise,
+    /// Flip a few cells of the pads in use.
+    Alter,
+    /// Swap hits and gaps on the pads in use.
+    Invert,
+}
+
+/// What a tool button runs; the random tools take their seed from the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolKind {
+    /// A shift by this many steps.
+    Shift(i32),
+    /// Random hits.
+    Randomise,
+    /// A few flipped cells.
+    Alter,
+    /// Hits and gaps swapped.
+    Invert,
+}
+
+/// The chance of a cell holding a hit after RND.
+pub const RANDOMISE_DENSITY: f32 = 0.35;
+/// The chance of a cell flipping under ALT.
+pub const ALTER_CHANCE: f32 = 0.15;
+
+impl ToolButton {
+    /// Every button, left to right.
+    pub const ALL: [ToolButton; 5] = [
+        ToolButton::ShiftLeft,
+        ToolButton::ShiftRight,
+        ToolButton::Randomise,
+        ToolButton::Alter,
+        ToolButton::Invert,
+    ];
+
+    /// The label on the button.
+    pub fn label(self) -> &'static str {
+        match self {
+            ToolButton::ShiftLeft => "<",
+            ToolButton::ShiftRight => ">",
+            ToolButton::Randomise => "RND",
+            ToolButton::Alter => "ALT",
+            ToolButton::Invert => "INV",
+        }
+    }
+
+    /// The tooltip.
+    pub fn help(self) -> &'static str {
+        match self {
+            ToolButton::ShiftLeft => "Move every hit one step earlier, wrapping around",
+            ToolButton::ShiftRight => "Move every hit one step later, wrapping around",
+            ToolButton::Randomise => {
+                "Replace the pads in use with random hits (press again for another take)"
+            }
+            ToolButton::Alter => {
+                "Flip a few cells of the pads in use (press again for another take)"
+            }
+            ToolButton::Invert => "Swap hits and gaps on the pads in use",
+        }
+    }
+
+    /// What the button runs.
+    pub fn tool(self) -> ToolKind {
+        match self {
+            ToolButton::ShiftLeft => ToolKind::Shift(-1),
+            ToolButton::ShiftRight => ToolKind::Shift(1),
+            ToolButton::Randomise => ToolKind::Randomise,
+            ToolButton::Alter => ToolKind::Alter,
+            ToolButton::Invert => ToolKind::Invert,
+        }
+    }
+
+    fn x_width(self) -> (f64, f64) {
+        match self {
+            ToolButton::ShiftLeft => (0.0, 22.0),
+            ToolButton::ShiftRight => (24.0, 22.0),
+            ToolButton::Randomise => (52.0, 34.0),
+            ToolButton::Alter => (90.0, 34.0),
+            ToolButton::Invert => (128.0, 34.0),
+        }
+    }
+}
+
 /// What the pointer is over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
@@ -182,6 +281,8 @@ enum Hit {
     Steps(u16),
     Swing,
     Level(VelocityLevel),
+    /// A tool button of the toolbar: shift left, shift right, randomise, alter, invert.
+    Tool(ToolButton),
     Header(u8),
     Cell(u8, u16),
 }
@@ -272,6 +373,8 @@ pub struct StepEditorView {
     hover: Hit,
     drop: Option<DropHover>,
     next_merge: u64,
+    /// Seed of the next random tool run (it counts up, so a repeat is another take).
+    tool_seed: u32,
     focused: bool,
     repaint: bool,
 }
@@ -310,6 +413,7 @@ impl StepEditorView {
             hover: Hit::None,
             drop: None,
             next_merge: MERGE_BASE,
+            tool_seed: 1,
             focused: false,
             repaint: true,
         }
@@ -582,6 +686,57 @@ impl StepEditorView {
         self.swing_rect().center()
     }
 
+    /// The toolbar rectangle of a tool button (after the velocity buttons).
+    fn tool_rect(&self, t: ToolButton) -> Rect {
+        let (dx, w) = t.x_width();
+        self.btn(self.bounds.x0 + PAD + 684.0 + dx, w)
+    }
+
+    /// Centre of a tool button.
+    pub fn tool_button_center(&self, t: ToolButton) -> Point {
+        self.tool_rect(t).center()
+    }
+
+    /// Runs a step tool on the open clip: one `SetClipContent`, so one undo step; `None` when
+    /// nothing changes. The random tools use the pads in use, or the pads with a sound when none
+    /// is in use yet, and a new seed every run.
+    fn run_tool(&mut self, kind: ToolKind) -> Option<UiAction> {
+        let grid = self.grid();
+        let in_use = pads_in_use(self.notes(), grid);
+        let sounding = (1..=PAD_COUNT)
+            .filter(|p| self.pad_has_sound(*p))
+            .fold(0u16, |bits, p| bits | 1 << (p - 1));
+        let seed = self.tool_seed;
+        let (tool, pads) = match kind {
+            ToolKind::Shift(by) => (StepTool::Shift(by), u16::MAX),
+            ToolKind::Invert => (StepTool::Invert, in_use),
+            ToolKind::Randomise => (
+                StepTool::Randomise {
+                    density: RANDOMISE_DENSITY,
+                    seed,
+                },
+                if in_use != 0 { in_use } else { sounding },
+            ),
+            ToolKind::Alter => (
+                StepTool::Alter {
+                    chance: ALTER_CHANCE,
+                    seed,
+                },
+                if in_use != 0 { in_use } else { sounding },
+            ),
+        };
+        if matches!(kind, ToolKind::Randomise | ToolKind::Alter) {
+            self.tool_seed = self.tool_seed.wrapping_add(1);
+        }
+        let notes = apply_step_tool(self.notes(), grid, tool, pads, self.level.velocity());
+        self.repaint = true;
+        let mut before = self.notes().to_vec();
+        before.sort_by(|a, b| a.tick.cmp(&b.tick).then(a.key.cmp(&b.key)));
+        (notes != before)
+            .then(|| self.content(notes, None))
+            .flatten()
+    }
+
     /// Centre of a velocity level button.
     pub fn level_button_center(&self, level: VelocityLevel) -> Point {
         self.level_rect(level).center()
@@ -759,6 +914,7 @@ impl StepEditorView {
                 self.swing_rect(),
                 "Swing: drag or scroll to change, double-click to reset",
             ),
+            Hit::Tool(t) => help(self.tool_rect(t), t.help()),
             Hit::Level(lv) => help(
                 self.level_rect(lv),
                 match lv {
@@ -811,6 +967,11 @@ impl StepEditorView {
             for lv in VelocityLevel::ALL {
                 if self.level_rect(lv).contains(pos) {
                     return Hit::Level(lv);
+                }
+            }
+            for t in ToolButton::ALL {
+                if self.tool_rect(t).contains(pos) {
+                    return Hit::Tool(t);
                 }
             }
             return Hit::None;
@@ -1003,6 +1164,7 @@ impl StepEditorView {
             }
             Hit::Steps(steps) => out.extend(self.grid_batch(StepGrid { steps, ..g })),
             Hit::Level(level) => self.set_default_level(level),
+            Hit::Tool(t) => out.extend(self.run_tool(t.tool())),
             Hit::Swing => {
                 if clicks >= 2 {
                     if g.swing != 0 || !self.has_grid() {
@@ -1239,14 +1401,26 @@ impl StepEditorView {
     /// Runs a registry command the shell offers to this view. `editor.toggle_note_mute`
     /// toggles the notes of the cell under the pointer (the grid has no selection): all muted
     /// becomes unmuted, else all become muted; one `SetClipContent`. No on cell under the
-    /// pointer is a quiet no-op; any other command is declined.
+    /// pointer is a quiet no-op. `editor.step_shift` (argument `left` or `right`, default right),
+    /// `editor.step_randomise`, `editor.step_alter` and `editor.step_invert` run the step tools of
+    /// the toolbar; any other command is declined.
     pub fn command(
         &mut self,
         id: &str,
-        _arg: Option<&str>,
+        arg: Option<&str>,
         doc: &RackDoc,
         registry: &Registry,
     ) -> CommandOutcome {
+        if let Some(kind) = match id {
+            "editor.step_shift" => Some(ToolKind::Shift(if arg == Some("left") { -1 } else { 1 })),
+            "editor.step_randomise" => Some(ToolKind::Randomise),
+            "editor.step_alter" => Some(ToolKind::Alter),
+            "editor.step_invert" => Some(ToolKind::Invert),
+            _ => None,
+        } {
+            self.sync(doc, registry);
+            return CommandOutcome::Handled(self.run_tool(kind).into_iter().collect());
+        }
         if id != "editor.toggle_note_mute" {
             return CommandOutcome::Declined;
         }

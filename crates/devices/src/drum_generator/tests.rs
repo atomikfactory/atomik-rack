@@ -45,6 +45,7 @@ fn pat(len: u8, hits: &[(usize, usize, u8)]) -> DrumPattern {
         p.steps[lane][step] = DrumStep {
             velocity: v,
             prob: 100,
+            ..DrumStep::default()
         };
     }
     p
@@ -793,6 +794,8 @@ fn random_pattern(seed: u8, res: SeqResolution) -> DrumPattern {
                 p.steps[lane][i] = DrumStep {
                     velocity: 1 + ((i * 13 + lane) % 127) as u8,
                     prob: if i % 4 == 0 { 60 } else { 100 },
+                    flam: if i % 5 == 1 { (i * 7 % 51) as u8 } else { 0 },
+                    ratchet: if i % 3 == 0 { (i % 9) as u8 } else { 0 },
                 };
             }
         }
@@ -893,4 +896,162 @@ proptest! {
             }
         }
     }
+}
+
+/// A pattern whose lane 0 hits step `step` at `velocity` with a flam and a ratchet.
+fn fx_pat(len: u8, step: usize, velocity: u8, flam: u8, ratchet: u8) -> DrumPattern {
+    let mut p = pat(len, &[(0, step, velocity)]);
+    p.steps[0][step].flam = flam;
+    p.steps[0][step].ratchet = ratchet;
+    p
+}
+
+#[test]
+fn a_ratchet_plays_evenly_spaced_hits_each_with_its_own_end() {
+    for (sr, bpm) in [(44_100u64, 97u64), (48_000, 120), (96_000, 200)] {
+        let mut h = rig(sr as f64, bpm as f64, &[fx_pat(4, 1, 100, 0, 4)]);
+        let evs = collect(&mut h, batches_for(4 * 3_840, sr, bpm));
+        // Four hits of 960 ticks, each lasting 25 % of its 960 ticks.
+        let base = 3_840u64;
+        let mut want = Vec::new();
+        for j in 0..4u64 {
+            want.push((due(base + j * 960, sr, bpm), K::On(36, 100)));
+            want.push((due(base + j * 960 + 240, sr, bpm), K::Off(36)));
+        }
+        let limit = due(4 * 3_840, sr, bpm);
+        let got: Vec<_> = plain(&evs)
+            .into_iter()
+            .filter(|(f, _)| *f < limit)
+            .take(8)
+            .collect();
+        assert_eq!(got, want, "sr {sr} bpm {bpm}");
+    }
+}
+
+#[test]
+fn a_legato_ratchet_ends_each_hit_where_the_next_starts() {
+    let mut h = rig(48_000.0, 120.0, &[fx_pat(4, 0, 90, 0, 3)]);
+    set(&mut h, "gate", 1.0);
+    let evs = collect(&mut h, batches_for(2 * 3_840, 48_000, 120));
+    let got: Vec<_> = plain(&evs).into_iter().take(6).collect();
+    let at = |t: u64| due(t, 48_000, 120);
+    // 3 840 / 3 = 1 280 ticks; the Off comes before the next On at the same frame.
+    assert_eq!(
+        got,
+        [
+            (at(0), K::On(36, 90)),
+            (at(1_280), K::Off(36)),
+            (at(1_280), K::On(36, 90)),
+            (at(2_560), K::Off(36)),
+            (at(2_560), K::On(36, 90)),
+            (at(3_840), K::Off(36)),
+        ]
+    );
+}
+
+#[test]
+fn a_flam_plays_a_soft_grace_hit_then_the_full_hit() {
+    let (sr, bpm) = (48_000u64, 120u64);
+    let mut h = rig(sr as f64, bpm as f64, &[fx_pat(4, 0, 100, 25, 0)]);
+    let evs = collect(&mut h, batches_for(2 * 3_840, sr, bpm));
+    let at = |t: u64| due(t, sr, bpm);
+    let got: Vec<_> = plain(&evs).into_iter().take(4).collect();
+    // The grace hit is half the velocity and ends where the full hit starts (25 % of 3 840).
+    assert_eq!(
+        got,
+        [
+            (at(0), K::On(36, 50)),
+            (at(960), K::Off(36)),
+            (at(960), K::On(36, 100)),
+            (at(960 + 960), K::Off(36)),
+        ]
+    );
+}
+
+#[test]
+fn a_ratchet_replaces_a_flam() {
+    let mut a = rig(48_000.0, 120.0, &[fx_pat(4, 0, 100, 40, 2)]);
+    let mut b = rig(48_000.0, 120.0, &[fx_pat(4, 0, 100, 0, 2)]);
+    assert_eq!(
+        plain(&collect(&mut a, 100)),
+        plain(&collect(&mut b, 100)),
+        "a ratchet ignores the flam"
+    );
+}
+
+#[test]
+fn a_ratchet_of_zero_or_one_is_a_plain_hit() {
+    let want = plain(&collect(
+        &mut rig(48_000.0, 120.0, &[pat(4, &[(0, 0, 100)])]),
+        60,
+    ));
+    for ratchet in [0u8, 1] {
+        let mut h = rig(48_000.0, 120.0, &[fx_pat(4, 0, 100, 0, ratchet)]);
+        assert_eq!(plain(&collect(&mut h, 60)), want);
+    }
+}
+
+#[test]
+fn ratchets_and_flams_land_on_the_same_hits_after_a_locate() {
+    let (sr, bpm, s) = (48_000u64, 120u64, 3_840u64);
+    let mut p = pat(8, &[(0, 0, 100), (0, 3, 90), (2, 5, 80), (6, 6, 70)]);
+    p.steps[0][0].ratchet = 5;
+    p.steps[0][3].flam = 30;
+    p.steps[2][5].ratchet = 3;
+    p.steps[6][6].flam = 12;
+    let ticks = |evs: &[Ev]| -> Vec<(i64, u8, u8)> {
+        evs.iter()
+            .filter_map(|e| match e.k {
+                K::On(k, v) => Some((e.tick.round() as i64, k, v)),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut cont = rig(sr as f64, bpm as f64, &[p]);
+    let all = ticks(&collect(&mut cont, batches_for(80 * s, sr, bpm)));
+    let from = (16 * s) as i64;
+    let mut located = rig(sr as f64, bpm as f64, &[p]);
+    located.time_mut().tick = from as f64;
+    let got = ticks(&collect(&mut located, batches_for(40 * s, sr, bpm)));
+    let window = |v: &[(i64, u8, u8)]| -> Vec<(i64, u8, u8)> {
+        v.iter()
+            .copied()
+            .filter(|(t, ..)| *t >= from && *t < from + 30 * s as i64)
+            .collect()
+    };
+    assert!(window(&all).len() > 20);
+    assert_eq!(window(&got), window(&all));
+}
+
+#[test]
+fn a_mute_drops_the_hits_still_to_come() {
+    let mut h = rig(48_000.0, 120.0, &[fx_pat(4, 0, 100, 0, 8)]);
+    let first = batch(&mut h);
+    assert!(matches!(first[0].k, K::On(36, 100)));
+    set(&mut h, "mute", 1.0);
+    let evs = collect(&mut h, 200);
+    assert!(
+        evs.iter().all(|e| !matches!(e.k, K::On(..))),
+        "no parked hit sounds after a mute: {evs:?}"
+    );
+    assert!(
+        evs.iter().any(|e| e.k == K::Off(36)),
+        "the first hit is closed"
+    );
+}
+
+#[test]
+fn pattern_numbers_run_to_thirty_two() {
+    let mut pats = Vec::new();
+    for i in 0..32usize {
+        pats.push(pat(4, &[(0, 0, 100), (1, 1, 10 + i as u8)]));
+    }
+    let mut h = rig(48_000.0, 120.0, &pats);
+    set(&mut h, "pattern.switch", 0.0);
+    set(&mut h, "pattern", 32.0);
+    let evs = collect(&mut h, 300);
+    assert!(
+        evs.iter().any(|e| e.k == K::On(37, 10 + 31)),
+        "pattern 32 plays: {evs:?}"
+    );
 }

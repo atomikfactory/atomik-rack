@@ -293,6 +293,8 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(DrumLane, "mute", 1).req(),
     field(DrumLane, "velocity", 1).req(),
     field(DrumLane, "prob", 1).req(),
+    field(DrumLane, "flam", 39),
+    field(DrumLane, "ratchet", 39),
     // The asset pool.
     field(Asset, "channels", 1).req(),
     field(Asset, "sample_rate", 1).req(),

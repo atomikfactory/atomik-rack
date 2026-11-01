@@ -4,7 +4,7 @@
 
 use crate::curves::{CurveDoc, CurvePatternDoc};
 use crate::history::Edit;
-use crate::steps::{MAX_NAME_CHARS, MAX_PATTERNS, PatternDoc, StepSeqDoc};
+use crate::steps::{MAX_NAME_CHARS, PatternDoc, StepSeqDoc, pattern_cap};
 use crate::{Command, DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::Registry;
 
@@ -21,7 +21,7 @@ fn current(
     doc: &RackDoc,
     registry: &Registry,
     key: &DeviceKey,
-) -> Result<(Option<StepSeqDoc>, StepSeqDoc), ModelError> {
+) -> Result<(Option<StepSeqDoc>, StepSeqDoc, usize), ModelError> {
     let d = rules::resolve(doc, key)?;
     if registry.takes_drums(&d.type_id) {
         return Err(bad(format!(
@@ -37,7 +37,7 @@ fn current(
     }
     let stored = d.steps.clone();
     let working = stored.clone().unwrap_or_default();
-    Ok((stored, working))
+    Ok((stored, working, pattern_cap(registry, &d.type_id)))
 }
 
 fn index_in(seq: &StepSeqDoc, index: u8, what: &str) -> Result<usize, ModelError> {
@@ -52,8 +52,8 @@ fn index_in(seq: &StepSeqDoc, index: u8, what: &str) -> Result<usize, ModelError
     }
 }
 
-fn too_many() -> ModelError {
-    bad(format!("a sequencer holds at most {MAX_PATTERNS} patterns"))
+fn too_many(cap: usize) -> ModelError {
+    bad(format!("a sequencer holds at most {cap} patterns"))
 }
 
 fn steps(key: DeviceKey, old: Option<StepSeqDoc>, new: StepSeqDoc) -> Edit {
@@ -101,26 +101,26 @@ pub(crate) fn plan(
             pattern,
             ..
         } => {
-            let (old, mut new) = current(doc, registry, &device)?;
+            let (old, mut new, _) = current(doc, registry, &device)?;
             let i = index_in(&new, index, "SetPattern")?;
             new.patterns[i] = pattern;
             new.check().map_err(bad)?;
             Ok(steps(device, old, new))
         }
         Command::AddPattern { device } => {
-            let (old, mut new) = current(doc, registry, &device)?;
-            if new.patterns.len() >= MAX_PATTERNS {
-                return Err(too_many());
+            let (old, mut new, cap) = current(doc, registry, &device)?;
+            if new.patterns.len() >= cap {
+                return Err(too_many(cap));
             }
             let name = format!("Pattern {}", new.patterns.len() + 1);
             new.patterns.push(PatternDoc::new(name));
             Ok(steps(device, old, new))
         }
         Command::DuplicatePattern { device, index } => {
-            let (old, mut new) = current(doc, registry, &device)?;
+            let (old, mut new, cap) = current(doc, registry, &device)?;
             let i = index_in(&new, index, "DuplicatePattern")?;
-            if new.patterns.len() >= MAX_PATTERNS {
-                return Err(too_many());
+            if new.patterns.len() >= cap {
+                return Err(too_many(cap));
             }
             let mut copy = new.patterns[i].clone();
             copy.name = format!("{} copy", copy.name)
@@ -131,7 +131,7 @@ pub(crate) fn plan(
             new.patterns.push(copy);
             // The copy of the curves lands at the same new index.
             let curves = curves_edit(doc, &device, |c| {
-                if i < c.patterns.len() && count < MAX_PATTERNS {
+                if i < c.patterns.len() && count < cap {
                     while c.patterns.len() < count {
                         c.patterns.push(CurvePatternDoc::default());
                     }
@@ -142,7 +142,7 @@ pub(crate) fn plan(
             Ok(with_curves(steps(device, old, new), curves))
         }
         Command::RemovePattern { device, index } => {
-            let (old, mut new) = current(doc, registry, &device)?;
+            let (old, mut new, _) = current(doc, registry, &device)?;
             let i = index_in(&new, index, "RemovePattern")?;
             if new.patterns.len() == 1 {
                 return Err(bad("the last pattern cannot be removed"));

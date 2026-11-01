@@ -3,7 +3,7 @@
 
 use crate::drums::{DrumDoc, DrumPatternDoc, DrumStepDoc};
 use crate::history::Edit;
-use crate::steps::{MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS};
+use crate::steps::{MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_STEPS};
 use crate::steps_cmd::{bad, lower_pattern_param};
 use crate::{Command, DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::{DRUM_LANES, Registry};
@@ -74,7 +74,39 @@ pub(crate) fn plan(
                     "SetDrumStep: lane {lane} step {step} is outside 0..{DRUM_LANES} x 0..{MAX_STEPS}"
                 )));
             }
-            let value = DrumStepDoc { velocity, prob };
+            // The flam and the ratchet of the step stay.
+            let kept = new.patterns[i].steps[l][s];
+            let value = DrumStepDoc {
+                velocity,
+                prob,
+                ..kept
+            };
+            value.check().map_err(bad)?;
+            new.patterns[i].steps[l][s] = value;
+            Ok(edit(device, old, new))
+        }
+        Command::SetDrumStepFx {
+            device,
+            index,
+            lane,
+            step,
+            flam,
+            ratchet,
+            ..
+        } => {
+            let (old, mut new) = current(doc, registry, &device)?;
+            let i = index_in(&new, index, "SetDrumStepFx")?;
+            let (l, s) = (usize::from(lane), usize::from(step));
+            if l >= DRUM_LANES || s >= MAX_STEPS {
+                return Err(bad(format!(
+                    "SetDrumStepFx: lane {lane} step {step} is outside 0..{DRUM_LANES} x 0..{MAX_STEPS}"
+                )));
+            }
+            let value = DrumStepDoc {
+                flam,
+                ratchet,
+                ..new.patterns[i].steps[l][s]
+            };
             value.check().map_err(bad)?;
             new.patterns[i].steps[l][s] = value;
             Ok(edit(device, old, new))
@@ -113,7 +145,7 @@ pub(crate) fn plan(
         }
         Command::AddDrumPattern { device } => {
             let (old, mut new) = current(doc, registry, &device)?;
-            if new.patterns.len() >= MAX_PATTERNS {
+            if new.patterns.len() >= MAX_DRUM_PATTERNS {
                 return Err(too_many());
             }
             let name = format!("Pattern {}", new.patterns.len() + 1);
@@ -123,7 +155,7 @@ pub(crate) fn plan(
         Command::DuplicateDrumPattern { device, index } => {
             let (old, mut new) = current(doc, registry, &device)?;
             let i = index_in(&new, index, "DuplicateDrumPattern")?;
-            if new.patterns.len() >= MAX_PATTERNS {
+            if new.patterns.len() >= MAX_DRUM_PATTERNS {
                 return Err(too_many());
             }
             let mut copy = new.patterns[i].clone();
@@ -155,5 +187,7 @@ pub(crate) fn plan(
 }
 
 fn too_many() -> ModelError {
-    bad(format!("a generator holds at most {MAX_PATTERNS} patterns"))
+    bad(format!(
+        "a generator holds at most {MAX_DRUM_PATTERNS} patterns"
+    ))
 }

@@ -7,8 +7,15 @@
 
 use std::sync::Arc;
 
+/// Pattern slots held by every kind of player data (the capacity of the fixed arrays); what a
+/// device may use is [`MAX_STEP_PATTERNS`], [`MAX_CV_PATTERNS`] or [`MAX_DRUM_PATTERNS`].
+pub const MAX_PATTERNS: usize = 32;
 /// Patterns per step sequencer.
-pub const MAX_PATTERNS: usize = 8;
+pub const MAX_STEP_PATTERNS: usize = 8;
+/// Patterns per CV sequencer (four banks of eight).
+pub const MAX_CV_PATTERNS: usize = 32;
+/// Patterns per drum generator.
+pub const MAX_DRUM_PATTERNS: usize = 32;
 /// Steps per pattern (the pattern's `length` selects how many play).
 pub const MAX_STEPS: usize = 64;
 
@@ -117,7 +124,7 @@ impl Default for PatternData {
 pub struct StepSeqData {
     /// Pattern slots; only the first `count` are valid.
     pub patterns: [PatternData; MAX_PATTERNS],
-    /// Number of valid patterns, 1..=[`MAX_PATTERNS`].
+    /// Number of valid patterns, 1..=[`MAX_PATTERNS`] (the device caps it lower).
     pub count: u8,
 }
 
@@ -307,13 +314,26 @@ pub struct DrumStep {
     pub velocity: u8,
     /// Probability in percent, 0..=100.
     pub prob: u8,
+    /// Flam, 0..=[`MAX_FLAM`]: a soft grace hit at the step start and the full hit this many
+    /// percent of the step later; 0 plays the hit alone.
+    pub flam: u8,
+    /// Ratchet, 0..=[`MAX_RATCHET`]: the hit repeats this many times evenly across the step;
+    /// 0 and 1 play it once. A ratchet takes the place of a flam.
+    pub ratchet: u8,
 }
+
+/// Largest flam of a drum step, in percent of the step.
+pub const MAX_FLAM: u8 = 50;
+/// Largest ratchet of a drum step (hits per step).
+pub const MAX_RATCHET: u8 = 8;
 
 impl Default for DrumStep {
     fn default() -> Self {
         Self {
             velocity: 0,
             prob: 100,
+            flam: 0,
+            ratchet: 0,
         }
     }
 }
@@ -356,7 +376,7 @@ impl Default for DrumPattern {
 pub struct DrumData {
     /// Pattern slots; only the first `count` are valid.
     pub patterns: [DrumPattern; MAX_PATTERNS],
-    /// Number of valid patterns, 1..=[`MAX_PATTERNS`].
+    /// Number of valid patterns, 1..=[`MAX_DRUM_PATTERNS`].
     pub count: u8,
 }
 
@@ -449,8 +469,8 @@ mod tests {
             count: 200,
             ..StepSeqData::default()
         };
-        assert!(d.pattern(7).is_some());
-        assert!(d.pattern(8).is_none());
+        assert!(d.pattern(MAX_PATTERNS - 1).is_some());
+        assert!(d.pattern(MAX_PATTERNS).is_none());
     }
 
     #[test]

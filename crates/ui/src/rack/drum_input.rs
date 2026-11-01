@@ -7,7 +7,7 @@ use super::{Drag, RackView, Rename, RenameKind, UiAction, param_cmd, pattern_cou
 use crate::drum_gen_panel::{self, DrumButton, VISIBLE_STEPS};
 use crate::event::{Key, Modifiers};
 use crate::seq_panel::{self, RenameKey};
-use atomik_model::{Command, DeviceKey, DrumPatternDoc, DrumStepDoc, MAX_PATTERNS};
+use atomik_model::{Command, DeviceKey, DrumPatternDoc, DrumStepDoc, MAX_DRUM_PATTERNS};
 use vello::kurbo::Point;
 
 /// A cell of the drum grid is pressed: a release in place toggles the step, a drag sets its
@@ -22,6 +22,13 @@ pub(super) struct DrumDrag {
     /// The velocity the cell had when it was pressed (0 for an empty step).
     start: u8,
     prob: u8,
+    /// What the cells edited when the press began: 0 velocity, 1 flam, 2 ratchet.
+    mode: u8,
+    /// The flam and ratchet the cell had.
+    flam: u8,
+    ratchet: u8,
+    /// The flam or ratchet the drag has set so far (the mode's own).
+    fx: u8,
     merge: u64,
     moved: bool,
     velocity: u8,
@@ -45,6 +52,29 @@ fn set_step(
         step,
         velocity: s.velocity,
         prob: s.prob,
+        merge,
+    })
+}
+
+fn velocity_of(velocity: u8, prob: u8) -> DrumStepDoc {
+    DrumStepDoc::hit(velocity, prob)
+}
+
+/// Sets the flam (mode 1) or the ratchet (mode 2) of the pressed cell to `value`, keeping the
+/// other.
+fn set_fx(device: &DeviceKey, d: &DrumDrag, value: u8, merge: Option<u64>) -> UiAction {
+    let (flam, ratchet) = if d.mode == 1 {
+        (value, d.ratchet)
+    } else {
+        (d.flam, value)
+    };
+    UiAction::Command(Command::SetDrumStepFx {
+        device: device.clone(),
+        index: d.index,
+        lane: d.lane,
+        step: d.step,
+        flam,
+        ratchet,
         merge,
     })
 }
@@ -155,7 +185,7 @@ impl RackView {
         };
         match b {
             DrumButton::Slot(n) => {
-                let n = usize::from(n);
+                let n = drum_gen_panel::slot_pattern(edit, usize::from(n));
                 if n >= count {
                     return;
                 }
@@ -176,13 +206,13 @@ impl RackView {
                 }
             }
             DrumButton::Add => {
-                if count < MAX_PATTERNS {
+                if count < MAX_DRUM_PATTERNS {
                     out.push(UiAction::Command(Command::AddDrumPattern { device: key }));
                     self.select_pattern(i, count, out);
                 }
             }
             DrumButton::Duplicate => {
-                if count < MAX_PATTERNS {
+                if count < MAX_DRUM_PATTERNS {
                     out.push(UiAction::Command(Command::DuplicateDrumPattern {
                         device: key,
                         index: edit as u8,
@@ -242,11 +272,42 @@ impl RackView {
                     }));
                 }
             }
+            DrumButton::Bank(bank) => {
+                if let Some(n) = drum_gen_panel::bank_target(edit, usize::from(bank), count) {
+                    self.select_pattern(i, n, out);
+                }
+            }
+            DrumButton::ResDec | DrumButton::ResInc => {
+                let delta = if b == DrumButton::ResInc { 1 } else { -1 };
+                let pattern = drum_gen_panel::stepped_resolution(&target, delta);
+                if pattern != target {
+                    out.push(set_pattern(&key, edit, pattern));
+                }
+            }
+            DrumButton::ShufDec | DrumButton::ShufInc => {
+                let step = if modifiers.shift { 1 } else { 5 };
+                let delta = if b == DrumButton::ShufInc {
+                    step
+                } else {
+                    -step
+                };
+                let pattern = drum_gen_panel::with_swing(&target, delta);
+                if pattern != target {
+                    out.push(set_pattern(&key, edit, pattern));
+                }
+            }
+            DrumButton::Mode => {
+                let next = (self.devices[i].fx_mode + 1) % drum_gen_panel::MODE_LABELS.len() as u8;
+                self.devices[i].fx_mode = next;
+                self.fx_modes.insert(key, next);
+                self.bump(i);
+            }
             DrumButton::Grid => self.drum_cell_down(i, edit, &target),
         }
     }
 
     /// A press on the cells: remembers the cell; the command comes with the release or the drag.
+    /// In the flam and ratchet modes only a cell with a hit takes the press.
     fn drum_cell_down(&mut self, i: usize, edit: usize, target: &DrumPatternDoc) {
         let rp = self.view_to_rack(self.pointer);
         let panel_pos = rp - self.devices[i].offset();
@@ -261,6 +322,10 @@ impl RackView {
             return;
         }
         let s = target.steps[lane][step];
+        let mode = self.devices[i].fx_mode;
+        if mode > 0 && s.velocity == 0 {
+            return;
+        }
         let merge = self.next_merge;
         self.next_merge += 1;
         self.drag = Drag::Drum(DrumDrag {
@@ -271,20 +336,37 @@ impl RackView {
             start_y: self.pointer.y,
             start: s.velocity,
             prob: s.prob,
+            mode,
+            flam: s.flam,
+            ratchet: s.ratchet,
             merge,
             moved: false,
             velocity: s.velocity,
+            fx: if mode == 1 { s.flam } else { s.ratchet },
         });
     }
 
     /// The pointer moved with a cell pressed: past the threshold the cell follows the pointer's
-    /// height as a velocity (an empty step starts at the default velocity).
+    /// height as a velocity, a flam or a ratchet by the mode (an empty step starts at the
+    /// default velocity).
     pub(super) fn drum_move(&mut self, mut d: DrumDrag, pos: Point, out: &mut Vec<UiAction>) {
         if !d.moved && (pos.y - d.start_y).abs() < DRAG_THRESHOLD {
             self.drag = Drag::Drum(d);
             return;
         }
         d.moved = true;
+        let key = self.devices[d.dev].key.clone();
+        if d.mode > 0 {
+            let start = if d.mode == 1 { d.flam } else { d.ratchet };
+            let v = drum_gen_panel::dragged_fx(d.mode, start, d.start_y - pos.y);
+            if v != d.fx {
+                out.push(set_fx(&key, &d, v, Some(d.merge)));
+                d.fx = v;
+            }
+            self.drag = Drag::Drum(d);
+            self.repaint = true;
+            return;
+        }
         let base = if d.start == 0 {
             drum_gen_panel::DEFAULT_VELOCITY
         } else {
@@ -292,41 +374,65 @@ impl RackView {
         };
         let v = drum_gen_panel::dragged_velocity(base, d.start_y - pos.y);
         if v != d.velocity {
-            let key = self.devices[d.dev].key.clone();
-            let s = DrumStepDoc {
-                velocity: v,
-                prob: d.prob,
-            };
-            out.push(set_step(&key, d.index, d.lane, d.step, s, Some(d.merge)));
+            out.push(set_step(
+                &key,
+                d.index,
+                d.lane,
+                d.step,
+                velocity_of(v, d.prob),
+                Some(d.merge),
+            ));
             d.velocity = v;
         }
         self.drag = Drag::Drum(d);
         self.repaint = true;
     }
 
-    /// The release: without a drag the step toggles.
+    /// The release: without a drag the step toggles (velocity mode) or takes the next flam or
+    /// ratchet of the click values.
     pub(super) fn drum_up(&mut self, d: &DrumDrag, out: &mut Vec<UiAction>) {
         let key = self.devices[d.dev].key.clone();
         if d.moved {
             out.push(UiAction::EndMerge);
             return;
         }
-        let s = DrumStepDoc {
-            velocity: drum_gen_panel::toggled(d.start),
-            prob: d.prob,
-        };
-        out.push(set_step(&key, d.index, d.lane, d.step, s, None));
+        if d.mode > 0 {
+            let now = if d.mode == 1 { d.flam } else { d.ratchet };
+            out.push(set_fx(
+                &key,
+                d,
+                drum_gen_panel::clicked_fx(d.mode, now),
+                None,
+            ));
+            return;
+        }
+        out.push(set_step(
+            &key,
+            d.index,
+            d.lane,
+            d.step,
+            velocity_of(drum_gen_panel::toggled(d.start), d.prob),
+            None,
+        ));
     }
 
-    /// Esc during a drag: the step goes back to the velocity it had.
+    /// Esc during a drag: the step goes back to the velocity, flam or ratchet it had.
     pub(super) fn drum_cancel(&mut self, d: &DrumDrag, out: &mut Vec<UiAction>) {
-        if d.moved && d.velocity != d.start {
-            let key = self.devices[d.dev].key.clone();
-            let s = DrumStepDoc {
-                velocity: d.start,
-                prob: d.prob,
-            };
-            out.push(set_step(&key, d.index, d.lane, d.step, s, Some(d.merge)));
+        let key = self.devices[d.dev].key.clone();
+        if d.moved && d.mode > 0 {
+            let start = if d.mode == 1 { d.flam } else { d.ratchet };
+            if d.fx != start {
+                out.push(set_fx(&key, d, start, Some(d.merge)));
+            }
+        } else if d.moved && d.velocity != d.start {
+            out.push(set_step(
+                &key,
+                d.index,
+                d.lane,
+                d.step,
+                velocity_of(d.start, d.prob),
+                Some(d.merge),
+            ));
         }
         out.push(UiAction::EndMerge);
     }

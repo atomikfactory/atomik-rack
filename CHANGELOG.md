@@ -9,6 +9,25 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Drum generator: 32 patterns, flams, ratchets and a resolution and shuffle per pattern.** A step
+  can carry a flam (a soft grace hit and the full hit up to half a step later) or a ratchet (two to
+  eight even hits across the step). The panel shows 32 patterns as four banks of eight, has RES and
+  SHUF steppers for the edited pattern's resolution and swing, and a mode button that makes the
+  cells edit velocity, flam or ratchet. The later hits of a flam or ratchet always end, even across
+  a jump, a mute or a bypass. Flams and ratchets are saved as optional lane rows, only when a step
+  uses them; the CV sequencer also holds 32 patterns (its panel shows the first eight).
+- **Drum machine: tone, low and high cut, drive and two sends per pad.** Each pad gets a tilt
+  tone, a low cut, a high cut, a drive and two send levels that feed four new shared send outputs
+  (`send1_l`, `send1_r`, `send2_l`, `send2_r`). A pad with every effect at its default renders
+  exactly as before; the drum panel is one rack unit taller for the extra knobs.
+- **Step editor: shift, randomise, alter and invert.** Toolbar buttons and the commands
+  `editor.step_shift`, `editor.step_randomise`, `editor.step_alter` and `editor.step_invert` move
+  every hit a step, replace the pads in use with random hits, flip a few cells or swap hits and
+  gaps. Each is one undo step; the random tools are seeded, so a repeat press gives another take
+  and the same press always the same one.
+- **Mod Source: LFO cross-modulation, lag, key follow and a 1 kHz rate.** LFO 2 can bend the rate
+  and dip the level of LFO 1, a lag smooths all three outputs, key follow scales the free LFO rate
+  with the latest key, and a free LFO runs up to 1000 Hz. All new params default to no change.
 - **Sampler: zone groups, velocity crossfades, round-robin and per-zone envelope and filter.** A
   zone can belong to a group, fade in and out over a velocity range with an equal-power curve,
   take a slot in a round-robin cycle (counted per group and key, so a bounce and a locate repeat

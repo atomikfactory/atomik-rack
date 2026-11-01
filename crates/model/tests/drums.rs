@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 const DRUMS: &str = "atomik.drum-generator";
 
 fn step(velocity: u8, prob: u8) -> DrumStepDoc {
-    DrumStepDoc { velocity, prob }
+    DrumStepDoc::hit(velocity, prob)
 }
 
 /// A pattern with a kick on every fourth step, a snare line with a probability, a renamed lane
@@ -258,7 +258,7 @@ fn the_loader_checks_drum_shapes_and_ranges() {
         (
             "devices[1].drums.patterns",
             Box::new(|v| v["devices"][1]["drums"]["patterns"] = json!([])),
-            "outside 1..=8",
+            "outside 1..=32",
         ),
         (
             "devices[1].drums.patterns[0].lanes",
@@ -474,12 +474,12 @@ fn add_duplicate_and_remove_pattern_move_the_param_in_one_undo_step() {
     assert_eq!(doc.patterns.len(), 3);
     assert_eq!(doc.patterns[2].name, "Groove 1 copy");
     assert_eq!(doc.patterns[2].steps, doc.patterns[1].steps);
-    for _ in 0..5 {
+    for _ in 0..29 {
         d.apply(Command::AddDrumPattern { device: key("g") }, &r)
             .unwrap();
     }
-    assert_eq!(drums(&d, "g").patterns.len(), 8);
-    assert_eq!(drums(&d, "g").patterns[7].name, "Pattern 8");
+    assert_eq!(drums(&d, "g").patterns.len(), 32);
+    assert_eq!(drums(&d, "g").patterns[31].name, "Pattern 32");
     for c in [
         Command::AddDrumPattern { device: key("g") },
         Command::DuplicateDrumPattern {
@@ -489,23 +489,23 @@ fn add_duplicate_and_remove_pattern_move_the_param_in_one_undo_step() {
     ] {
         let e = d.apply(c, &r).unwrap_err();
         assert!(
-            matches!(&e, ModelError::BadPatterns(m) if m.contains("at most 8")),
+            matches!(&e, ModelError::BadPatterns(m) if m.contains("at most 32")),
             "{e:?}"
         );
     }
     // Removing the pattern the param points at lowers the param in the same step.
-    d.apply(set_param("g", "pattern", 8.0), &r).unwrap();
+    d.apply(set_param("g", "pattern", 32.0), &r).unwrap();
     let before = d.doc().clone();
     d.apply(
         Command::RemoveDrumPattern {
             device: key("g"),
-            index: 7,
+            index: 31,
         },
         &r,
     )
     .unwrap();
-    assert_eq!(drums(&d, "g").patterns.len(), 7);
-    assert_eq!(device(d.doc(), "g").params.get("pattern"), Some(&7.0));
+    assert_eq!(drums(&d, "g").patterns.len(), 31);
+    assert_eq!(device(d.doc(), "g").params.get("pattern"), Some(&31.0));
     d.undo(&r).unwrap();
     assert_eq!(d.doc(), &before);
     // The last pattern stays.
@@ -610,6 +610,144 @@ fn drum_doc_check_names_the_field() {
     let doc = DrumDoc {
         patterns: Vec::new(),
     };
-    assert!(doc.check().unwrap_err().contains("outside 1..=8"));
+    assert!(doc.check().unwrap_err().contains("outside 1..=32"));
     assert!(DrumDoc::default().check().is_ok());
+}
+
+fn fx_command(k: &str, index: u8, lane: u8, step: u8, flam: u8, ratchet: u8) -> Command {
+    Command::SetDrumStepFx {
+        device: key(k),
+        index,
+        lane,
+        step,
+        flam,
+        ratchet,
+        merge: None,
+    }
+}
+
+#[test]
+fn flam_and_ratchet_are_saved_only_where_a_lane_uses_them() {
+    let r = registry();
+    let mut d = project(&r);
+    let plain = save_project(d.doc());
+    assert!(
+        !plain.contains("\"flam\"") && !plain.contains("\"ratchet\""),
+        "a project without them differs from its older file in the version line alone"
+    );
+    d.apply(fx_command("g", 0, 0, 4, 30, 0), &r).unwrap();
+    d.apply(fx_command("g", 1, 2, 12, 0, 6), &r).unwrap();
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let lanes = &v["devices"][1]["drums"]["patterns"][0]["lanes"];
+    assert_eq!(lanes[0]["flam"][4], 30);
+    assert!(lanes[0].get("ratchet").is_none());
+    assert!(lanes[1].get("flam").is_none(), "only the lane that uses it");
+    let second = &v["devices"][1]["drums"]["patterns"][1]["lanes"];
+    assert_eq!(second[2]["ratchet"][12], 6);
+    assert_eq!(second[2]["ratchet"].as_array().unwrap().len(), 64);
+    let back = load_project(&text, &r).unwrap();
+    assert_eq!(&back, d.doc());
+    assert_eq!(save_project(&back), text, "canonical text");
+    // The engine value carries them.
+    let PlayerData::Drums(data) = &*player_data_for(device(d.doc(), "g"), &r).unwrap() else {
+        panic!("drum data")
+    };
+    assert_eq!(data.patterns[0].steps[0][4].flam, 30);
+    assert_eq!(data.patterns[1].steps[2][12].ratchet, 6);
+}
+
+#[test]
+fn flam_and_ratchet_commands_are_one_undo_step_and_keep_the_hit() {
+    let r = registry();
+    let mut d = project(&r);
+    let before = d.doc().clone();
+    d.apply(fx_command("g", 0, 0, 0, 12, 3), &r).unwrap();
+    let s = drums(&d, "g").patterns[0].steps[0][0];
+    assert_eq!((s.velocity, s.prob, s.flam, s.ratchet), (110, 100, 12, 3));
+    // Setting the velocity afterwards keeps the flam and the ratchet.
+    d.apply(set_step("g", 0, 0, 0, 80, None), &r).unwrap();
+    let s = drums(&d, "g").patterns[0].steps[0][0];
+    assert_eq!((s.velocity, s.flam, s.ratchet), (80, 12, 3));
+    d.undo(&r).unwrap();
+    d.undo(&r).unwrap();
+    assert_eq!(d.doc(), &before);
+    for (flam, ratchet) in [(51, 0), (0, 9)] {
+        let e = d
+            .apply(fx_command("g", 0, 0, 0, flam, ratchet), &r)
+            .unwrap_err();
+        assert!(matches!(e, ModelError::BadPatterns(_)), "{e:?}");
+    }
+    assert!(d.apply(fx_command("g", 0, 16, 0, 0, 2), &r).is_err());
+    assert!(d.apply(fx_command("g", 9, 0, 0, 0, 2), &r).is_err());
+    assert!(d.apply(fx_command("q", 0, 0, 0, 0, 2), &r).is_err());
+    assert_eq!(d.doc(), &before, "a rejected command changes nothing");
+}
+
+#[test]
+fn the_loader_checks_flam_and_ratchet_rows() {
+    let r = registry();
+    let mut d = project(&r);
+    d.apply(fx_command("g", 0, 0, 4, 30, 2), &r).unwrap();
+    let text = save_project(d.doc());
+    reject(
+        &edited(&text, |v| {
+            v["devices"][1]["drums"]["patterns"][0]["lanes"][0]["flam"][4] = json!(51)
+        }),
+        "devices[1].drums.patterns[0].lanes[0].flam[4]",
+        "outside 0..=50",
+    );
+    reject(
+        &edited(&text, |v| {
+            v["devices"][1]["drums"]["patterns"][0]["lanes"][0]["ratchet"][1] = json!(9)
+        }),
+        "devices[1].drums.patterns[0].lanes[0].ratchet[1]",
+        "outside 0..=8",
+    );
+    reject(
+        &edited(&text, |v| {
+            v["devices"][1]["drums"]["patterns"][0]["lanes"][0]["ratchet"]
+                .as_array_mut()
+                .unwrap()
+                .pop();
+        }),
+        "devices[1].drums.patterns[0].lanes[0].ratchet",
+        "exactly 64",
+    );
+}
+
+#[test]
+fn a_generator_holds_thirty_two_patterns_and_they_survive_a_round_trip() {
+    let r = registry();
+    let mut d = project(&r);
+    for _ in 2..32 {
+        d.apply(Command::AddDrumPattern { device: key("g") }, &r)
+            .unwrap();
+    }
+    for i in 0..32u8 {
+        d.apply(set_step("g", i, 5, i, 100 - i, None), &r).unwrap();
+    }
+    let text = save_project(d.doc());
+    let back = load_project(&text, &r).unwrap();
+    assert_eq!(&back, d.doc());
+    assert_eq!(drums(&d, "g").patterns.len(), 32);
+    let PlayerData::Drums(data) = &*player_data_for(device(d.doc(), "g"), &r).unwrap() else {
+        panic!("drum data")
+    };
+    assert_eq!(data.count, 32);
+    assert_eq!(data.patterns[31].steps[5][31].velocity, 69);
+    let e = d
+        .apply(Command::AddDrumPattern { device: key("g") }, &r)
+        .unwrap_err();
+    assert!(matches!(&e, ModelError::BadPatterns(m) if m.contains("at most 32")));
+    // A 33rd pattern in a file is refused.
+    reject(
+        &edited(&text, |v| {
+            let list = v["devices"][1]["drums"]["patterns"].as_array_mut().unwrap();
+            let extra = list[0].clone();
+            list.push(extra);
+        }),
+        "devices[1].drums.patterns",
+        "outside 1..=32",
+    );
 }

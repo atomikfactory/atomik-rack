@@ -53,6 +53,14 @@ fn descriptor_validates() {
     for k in ["attack", "decay", "sustain", "release", "amount", "mode"] {
         params.push(format!("env_{k}"));
     }
+    for k in [
+        "lfo2_to_lfo1_rate",
+        "lfo2_to_lfo1_level",
+        "lag",
+        "key_follow",
+    ] {
+        params.push(k.to_string());
+    }
     let params: Vec<&str> = params.iter().map(String::as_str).collect();
     assert_keys(
         &DESCRIPTOR,
@@ -75,7 +83,7 @@ fn descriptor_validates() {
         assert!(s.kind == SocketKind::Cv || s.key == "notes_in", "{}", s.key);
     }
     let rate = DESCRIPTOR.param_by_key("lfo1_rate").unwrap();
-    assert_eq!((rate.min, rate.max), (0.01, 40.0));
+    assert_eq!((rate.min, rate.max), (0.01, 1_000.0));
     assert_eq!(DIV_LABELS.len(), 30);
     let div = DESCRIPTOR.param_by_key("lfo1_div").unwrap();
     assert_eq!(DIV_LABELS[div.default as usize], "1/4");
@@ -853,8 +861,8 @@ proptest! {
 
     #[test]
     fn outputs_stay_in_range_for_any_params_and_cv(
-        values in proptest::collection::vec(0.0f32..=1.0, 26),
-        extreme in proptest::collection::vec(proptest::bool::ANY, 26),
+        values in proptest::collection::vec(0.0f32..=1.0, 30),
+        extreme in proptest::collection::vec(proptest::bool::ANY, 30),
         cv in -4.0f32..4.0,
         gate in -1.0f32..2.0,
         sync_playing in proptest::bool::ANY,
@@ -896,4 +904,204 @@ proptest! {
             prop_assert!((0.0..=1.0).contains(&v), "{v}");
         }
     }
+}
+
+// ---- LFO cross-modulation, lag, key follow and the 1 kHz rate ------------------------------
+
+/// LFO 2 as a +1 pulse for its first second (0.5 Hz, 50 % width), LFO 1 a 1 Hz sine.
+fn pulse_over_sine() -> DeviceHarness {
+    let mut hh = h();
+    hh.set_param("lfo2_shape", 4.0);
+    hh
+}
+
+#[test]
+fn the_free_rate_reaches_one_kilohertz() {
+    let mut hh = h();
+    hh.set_param("lfo1_rate", 1_000.0);
+    let x = lfo1(&mut hh, 75); // 4800 samples: 100 cycles of 48 samples
+    assert!(close(x[12], 1.0, 1e-3), "{}", x[12]);
+    assert!(close(x[36], -1.0, 1e-3), "{}", x[36]);
+    let crossings = x.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
+    assert!((99..=100).contains(&crossings), "{crossings}");
+    // Beyond the range clamps.
+    hh.set_param("lfo1_rate", 5_000.0);
+    assert!(lfo1(&mut hh, 4).iter().all(|s| s.abs() <= 1.0));
+}
+
+#[test]
+fn lfo_two_bends_the_rate_of_lfo_one_in_octaves() {
+    let mut hh = pulse_over_sine();
+    hh.set_param("lfo2_to_lfo1_rate", 1.0); // +4 octaves while LFO 2 is +1: 16 Hz
+    let x = lfo1(&mut hh, 30);
+    assert!(
+        close(x[750], 1.0, 2e-2),
+        "a 16 Hz quarter cycle: {}",
+        x[750]
+    );
+    // Half the amount is two octaves.
+    let mut hh = pulse_over_sine();
+    hh.set_param("lfo2_to_lfo1_rate", 0.5);
+    let x = lfo1(&mut hh, 60);
+    assert!(
+        close(x[3_000], 1.0, 2e-2),
+        "a 4 Hz quarter cycle: {}",
+        x[3_000]
+    );
+    // A negative amount slows it down.
+    let mut hh = pulse_over_sine();
+    hh.set_param("lfo2_to_lfo1_rate", -0.25); // one octave down
+    let x = lfo1(&mut hh, 400);
+    assert!(
+        close(x[24_000], 1.0, 2e-2),
+        "a 0.5 Hz quarter cycle: {}",
+        x[24_000]
+    );
+}
+
+#[test]
+fn a_silent_source_leaves_lfo_one_untouched_bit_for_bit() {
+    let mut plain = h();
+    let want = lfo1(&mut plain, 100);
+    let mut hh = h();
+    hh.set_param("lfo2_amount", 0.0);
+    hh.set_param("lfo2_to_lfo1_rate", 1.0);
+    assert_eq!(
+        lfo1(&mut hh, 100)
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>(),
+        want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+    );
+    // And the defaults of the new params change nothing either.
+    let mut hh = pulse_over_sine();
+    let with = lfo1(&mut hh, 100);
+    assert_eq!(
+        with.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+        want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn lfo_two_dips_the_level_of_lfo_one() {
+    // LFO 2 sits at +1: a positive amount keeps full level, a negative one silences LFO 1.
+    let mut hh = pulse_over_sine();
+    hh.set_param("lfo2_to_lfo1_level", 1.0);
+    let kept = lfo1(&mut hh, 200);
+    assert!(close(kept[12_000], 1.0, 1e-3), "{}", kept[12_000]);
+    let mut hh = pulse_over_sine();
+    hh.set_param("lfo2_to_lfo1_level", -1.0);
+    let dipped = lfo1(&mut hh, 200);
+    assert!(dipped.iter().all(|s| s.abs() < 1e-6));
+    let mut hh = pulse_over_sine();
+    hh.set_param("lfo2_to_lfo1_level", -0.5);
+    let half = lfo1(&mut hh, 200);
+    assert!(close(half[12_000], 0.5, 1e-3), "{}", half[12_000]);
+}
+
+#[test]
+fn cross_modulation_stays_in_range_and_deterministic() {
+    let run = || {
+        let mut hh = h_seed(9);
+        hh.set_param("lfo1_shape", 5.0);
+        hh.set_param("lfo2_shape", 6.0);
+        hh.set_param("lfo2_to_lfo1_rate", 0.8);
+        hh.set_param("lfo2_to_lfo1_level", 0.7);
+        hh.set_param("lfo1_sync", 1.0);
+        hh.render(200, &OUTS)
+    };
+    let a = run();
+    assert_eq!(a, run());
+    assert!(a.iter().flatten().all(|s| (-1.0..=1.0).contains(s)));
+}
+
+#[test]
+fn lag_smooths_the_outputs_with_a_one_pole_of_the_set_time() {
+    let mut hh = h();
+    hh.set_param("env_attack", 1.0);
+    hh.set_param("env_sustain", 1.0);
+    hh.set_param("lag", 100.0);
+    hh.input_mut("gate_cv_in").fill(1.0);
+    let env = hh.render(80, &["env_cv_out"]).remove(0);
+    // One time constant after the start the output has covered 1 - 1/e of the way.
+    assert!(
+        close(env[4_800], 1.0 - (-1.0f32).exp(), 0.03),
+        "{}",
+        env[4_800]
+    );
+    assert!(
+        env.windows(2).all(|w| w[1] >= w[0] - 1e-6),
+        "monotonic rise"
+    );
+    // With the lag off the same envelope is at full level within a few milliseconds.
+    let mut hh = h();
+    hh.set_param("env_attack", 1.0);
+    hh.set_param("env_sustain", 1.0);
+    hh.input_mut("gate_cv_in").fill(1.0);
+    let env = hh.render(80, &["env_cv_out"]).remove(0);
+    assert!(env[4_800] > 0.99);
+}
+
+#[test]
+fn lag_never_leaves_the_range_and_resets_cleanly() {
+    let mut hh = h();
+    hh.set_param("lag", 2_000.0);
+    hh.set_param("lfo1_shape", 4.0);
+    hh.set_param("lfo1_rate", 40.0);
+    let x = lfo1(&mut hh, 200);
+    assert!(x.iter().all(|s| (-1.0..=1.0).contains(s)));
+    let mut again = h();
+    again.set_param("lag", 2_000.0);
+    again.set_param("lfo1_shape", 4.0);
+    again.set_param("lfo1_rate", 40.0);
+    assert_eq!(x, lfo1(&mut again, 200));
+    assert_no_alloc(|| {
+        for _ in 0..20 {
+            hh.process();
+        }
+    });
+}
+
+#[test]
+fn key_follow_scales_the_free_rate_with_the_latest_key() {
+    let mut hh = h();
+    hh.set_param("key_follow", 1.0);
+    hh.push_note("notes_in", on(0, 72, 1.0)); // an octave up: 2 Hz
+    let x = lfo1(&mut hh, 150);
+    assert!(
+        close(x[6_000], 1.0, 2e-3),
+        "a 2 Hz quarter cycle: {}",
+        x[6_000]
+    );
+    // Half follow is half an octave per octave.
+    let mut hh = h();
+    hh.set_param("key_follow", 0.5);
+    hh.push_note("notes_in", on(0, 72, 1.0));
+    let x = lfo1(&mut hh, 200);
+    let want = (48_000.0 / 2.0f32.sqrt() / 4.0).round() as usize;
+    assert!(close(x[want], 1.0, 5e-3), "{} at {want}", x[want]);
+    // Below the reference key it slows down.
+    let mut hh = h();
+    hh.set_param("key_follow", 1.0);
+    hh.push_note("notes_in", on(0, 48, 1.0)); // an octave down: 0.5 Hz
+    let x = lfo1(&mut hh, 800);
+    assert!(close(x[24_000], 1.0, 5e-3), "{}", x[24_000]);
+    // With no follow a note changes nothing.
+    let mut hh = h();
+    hh.push_note("notes_in", on(0, 72, 1.0));
+    let x = lfo1(&mut hh, 190);
+    assert!(close(x[12_000], 1.0, 1e-4));
+}
+
+#[test]
+fn key_follow_leaves_a_tempo_locked_lfo_alone() {
+    let run = |follow: f32| {
+        let mut hh = h();
+        hh.set_param("lfo1_sync", 1.0);
+        hh.set_param("key_follow", follow);
+        hh.time_mut().playing = true;
+        hh.push_note("notes_in", on(0, 84, 1.0));
+        hh.render(100, &["lfo1_cv_out"])
+    };
+    assert_eq!(run(0.0), run(1.0));
 }

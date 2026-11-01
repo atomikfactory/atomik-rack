@@ -68,6 +68,7 @@ mod slices;
 mod song_cmd;
 mod song_info;
 pub mod stems;
+mod step_tools;
 mod steps;
 mod steps_cmd;
 pub mod stress;
@@ -142,9 +143,10 @@ pub use song_info::{
     MAX_INFO_URL_CHARS, SongInfo,
 };
 pub use stems::{StemKind, StemSource, safe_file_name, stem_file_names, stem_sources};
+pub use step_tools::{StepTool, apply_step_tool, pads_in_use};
 pub use steps::{
-    MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
-    player_data_for,
+    MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc,
+    SeqResolution, StepDoc, StepSeqDoc, pattern_cap, player_data_for,
 };
 pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, neighbour_clip,
@@ -650,6 +652,25 @@ pub enum Command {
         /// Drag-merge group, or `None` for a standalone step.
         merge: Option<u64>,
     },
+    /// Set the flam and the ratchet of one step of one lane of drum pattern `index` (one undo
+    /// step); the velocity and probability stay. Merges like [`Command::SetDrumStep`]. Reports
+    /// [`SyncOp::PatternsChanged`].
+    SetDrumStepFx {
+        /// The drum generator.
+        device: DeviceKey,
+        /// Pattern index, below the pattern count.
+        index: u8,
+        /// Lane, 0..16.
+        lane: u8,
+        /// Step, 0..64.
+        step: u8,
+        /// Flam, 0..=50 percent of the step (0 = none).
+        flam: u8,
+        /// Ratchet, 0..=8 hits per step (0 and 1 = a single hit).
+        ratchet: u8,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
     /// Replace the key, role and mute of one lane of drum pattern `index` (one undo step).
     /// Reports [`SyncOp::PatternsChanged`].
     SetDrumLane {
@@ -675,12 +696,12 @@ pub enum Command {
         merge: Option<u64>,
     },
     /// Append an empty 16-step 1/16 pattern (`Pattern N`) to a drum generator (one undo step);
-    /// refused at [`MAX_PATTERNS`]. Reports [`SyncOp::PatternsChanged`].
+    /// refused at the device's pattern cap. Reports [`SyncOp::PatternsChanged`].
     AddDrumPattern {
         /// The drum generator.
         device: DeviceKey,
     },
-    /// Append a copy of drum pattern `index` (one undo step); refused at [`MAX_PATTERNS`].
+    /// Append a copy of drum pattern `index` (one undo step); refused at the device's pattern cap.
     /// Reports [`SyncOp::PatternsChanged`].
     DuplicateDrumPattern {
         /// The drum generator.
@@ -698,7 +719,7 @@ pub enum Command {
         index: u8,
     },
     /// Append an empty 16-step 1/16 pattern (`Pattern N`) to a sequencer (one
-    /// undo step); refused at [`MAX_PATTERNS`]. Reports [`SyncOp::PatternsChanged`].
+    /// undo step); refused at the device's pattern cap. Reports [`SyncOp::PatternsChanged`].
     AddPattern {
         /// The sequencer.
         device: DeviceKey,
@@ -715,7 +736,7 @@ pub enum Command {
     },
     /// Append a copy of pattern `index` (named `<name> copy`, cut to
     /// [`MAX_NAME_CHARS`]) at the end, so the numbers of the existing patterns stay as they
-    /// are; refused at [`MAX_PATTERNS`] (one undo step). Reports [`SyncOp::PatternsChanged`].
+    /// are; refused at the device's pattern cap (one undo step). Reports [`SyncOp::PatternsChanged`].
     DuplicatePattern {
         /// The sequencer.
         device: DeviceKey,
@@ -1288,6 +1309,12 @@ impl Document {
                 merge: Some(m),
                 ..
             }
+            | Command::SetDrumStepFx {
+                device,
+                index,
+                merge: Some(m),
+                ..
+            }
             | Command::SetDrumPattern {
                 device,
                 index,
@@ -1705,6 +1732,7 @@ impl Document {
                             | Command::SetPattern { .. }
                             | Command::SetCurves { .. }
                             | Command::SetDrumStep { .. }
+                            | Command::SetDrumStepFx { .. }
                             | Command::SetDrumLane { .. }
                             | Command::SetDrumPattern { .. }
                             | Command::AddDrumPattern { .. }
@@ -1985,6 +2013,7 @@ impl Document {
             | Command::RemovePattern { .. }
             | Command::DuplicatePattern { .. }) => steps_cmd::plan(doc, registry, command)?,
             command @ (Command::SetDrumStep { .. }
+            | Command::SetDrumStepFx { .. }
             | Command::SetDrumLane { .. }
             | Command::SetDrumPattern { .. }
             | Command::AddDrumPattern { .. }

@@ -99,15 +99,17 @@
 //! full. Only a device whose type takes pattern data may have `"steps"` (a sequencer without it
 //! plays one empty pattern); files before version 7 take none (unknown field).
 //!
-//! A CV sequencer's `"curves"` (v32) is `{"patterns": [...]}` with 1 to 8 patterns, each
+//! A CV sequencer's `"curves"` (v32) is `{"patterns": [...]}` with 1 to 32 patterns, each
 //! `{"a": [...], "b": [...]}` of exactly 64 steps `{"value": -100..=100, "slide"}` (every field
 //! required). Only a device whose type takes curves may have `"curves"`; one without it has flat
 //! curves. Files before version 32 take none (unknown field).
 //!
-//! A drum generator's `"drums"` (v33) is `{"patterns": [...]}` with 1 to 8 patterns, each
+//! A drum generator's `"drums"` (v33) is `{"patterns": [...]}` with 1 to 32 patterns, each
 //! `{"name", "length", "resolution", "swing", "lanes": [...]}` with exactly 16 lanes
 //! `{"key", "role", "mute", "velocity": [64 numbers], "prob": [64 numbers]}` (every field
-//! required). Only a device whose type takes drum data may have `"drums"`, and it has no
+//! required; a lane of version 39 or later may add `"flam"` (0..=50) and `"ratchet"` (0..=8), each
+//! 64 numbers, written only when a step of the lane uses it). Only a device whose type takes
+//! drum data may have `"drums"`, and it has no
 //! `"steps"`. Files before version 33 take none (unknown field).
 //!
 //! A container's `"inner"` (v8, only on devices whose type is a container, always written
@@ -389,7 +391,8 @@ use crate::song_cmd::{
     is_audio_track_type, length_ok, name_ok, tick_ok,
 };
 use crate::steps::{
-    MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
+    MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_STEPS, PatternDoc, SeqResolution,
+    StepDoc, StepSeqDoc,
 };
 use crate::takes::{CompSegment, TakeGroup, check_comp};
 use crate::takes_cmd::MAX_TAKES;
@@ -398,7 +401,7 @@ use crate::warp::{MAX_WARP_MARKERS, WARP_TRANSPOSE_MAX_CENTS, WarpMarker, WarpMo
 use crate::{AssetMeta, ZoneDoc, is_valid_asset_hash};
 use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, WriteMode, rules};
 use atomik_core::{VCA_MAX_DB, VCA_MIN_DB};
-use atomik_device_sdk::{DRUM_LANES, DrumRole, Registry};
+use atomik_device_sdk::{DRUM_LANES, DrumRole, MAX_FLAM, MAX_RATCHET, Registry};
 use atomik_device_sdk::{LoopMode, TriggerMode};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};

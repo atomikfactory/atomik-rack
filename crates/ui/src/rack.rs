@@ -272,6 +272,8 @@ struct DeviceView {
     edit: usize,
     /// Drum generator panel: the visible page of steps, 0-based (view state).
     page: usize,
+    /// Drum generator panel: what the cells edit, 0 velocity, 1 flam, 2 ratchet (view state).
+    fx_mode: u8,
     /// The effect kind with a visual (`atomik.reverb`, ...).
     fx: Option<FxKind>,
     /// Effect panels: display meter values (see [`fx::update_display`]); player panels: the
@@ -578,6 +580,8 @@ pub struct RackView {
     drum_clip: Option<atomik_model::DrumPatternDoc>,
     /// The visible page of each drum generator panel (view state).
     pages: BTreeMap<DeviceKey, usize>,
+    /// What the cells of each drum generator panel edit (survives rebuilds).
+    fx_modes: BTreeMap<DeviceKey, u8>,
     /// The pattern name (or macro name) being edited on a panel.
     rename: Option<Rename>,
     /// The hover tooltips of the BYPASS and EDIT buttons show (the "Show tooltips" setting).
@@ -792,6 +796,7 @@ impl RackView {
             pattern_clip: None,
             drum_clip: None,
             pages: BTreeMap::new(),
+            fx_modes: BTreeMap::new(),
             rename: None,
             button_tips: true,
             value_tips: false,
@@ -1275,6 +1280,7 @@ impl RackView {
             sens: autolayout::DEFAULT_SLICE_SENSITIVITY,
             edit: 0,
             page: 0,
+            fx_mode: 0,
             fx: None,
             meters: Vec::new(),
             scope: crate::modsrc_panel::Scope::new(),
@@ -1363,6 +1369,7 @@ impl RackView {
             } else {
                 0
             };
+            let fx_mode = self.fx_modes.get(&d.key).copied().unwrap_or(0);
             let fx = FxKind::of(&d.type_id);
             let sc = if fx == Some(FxKind::Compressor) {
                 sidechain::current_name(doc, &d.key)
@@ -1436,6 +1443,7 @@ impl RackView {
                 sens,
                 edit,
                 page,
+                fx_mode,
                 fx,
                 meters,
                 scope,
@@ -1489,6 +1497,7 @@ impl RackView {
                 sens: autolayout::DEFAULT_SLICE_SENSITIVITY,
                 edit: 0,
                 page: 0,
+                fx_mode: 0,
                 fx: None,
                 meters: Vec::new(),
                 scope: crate::modsrc_panel::Scope::new(),
@@ -4095,6 +4104,7 @@ impl RackView {
                         edit: d.edit,
                         meters: &d.meters,
                         page: d.page,
+                        fx_mode: d.fx_mode,
                         pad_names: &d.pad_names,
                         scope: d.spec.modsrc.is_some().then_some(&d.scope),
                         rename: self

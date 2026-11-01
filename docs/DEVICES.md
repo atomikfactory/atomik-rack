@@ -1348,7 +1348,7 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
 |---|---|---|---|---|---|
 | `lfoN_shape` | 0–6: sine, triangle, saw up, saw down, pulse, sample & hold, smooth random | 0 (LFO 2: 1) | choice | Linear | yes |
 | `lfoN_morph` | −1 to 1 (0 is neutral) | 0 | none | Linear | no |
-| `lfoN_rate` | 0.01 to 40 (free rate) | 1 (LFO 2: 0.5) | Hz | Exp | no |
+| `lfoN_rate` | 0.01 to 1000 (free rate) | 1 (LFO 2: 0.5) | Hz | Exp | no |
 | `lfoN_sync` | 0 (free) or 1 (tempo-synced) | 0 | toggle | Linear | yes |
 | `lfoN_div` | 0–29: 1/64 to 8 bars, each as triplet, straight and dotted | 13 (1/4) | choice | Linear | yes |
 | `lfoN_phase` | 0 to 1 (cycles) | 0 | none | Linear | no |
@@ -1362,6 +1362,10 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
 | `env_release` | 1 to 10000 | 300 | ms | Exp | no |
 | `env_amount` | 0 to 1 | 1 | percent | Linear | no |
 | `env_mode` | 0–1: retrigger, legato | 0 | choice | Linear | yes |
+| `lfo2_to_lfo1_rate` | −1 to 1 | 0 | none | Linear | no |
+| `lfo2_to_lfo1_level` | −1 to 1 | 0 | none | Linear | no |
+| `lag` | 0 to 2000 | 0 | ms | Linear | no |
+| `key_follow` | 0 to 1 | 0 | percent | Linear | no |
 
 ### Behaviour (as built)
 
@@ -1382,6 +1386,15 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
   non-zero `lfoN_rate_cv_trim`) the phase is integrated at the bent rate and re-aligned to the song
   at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its
   last phase. A free LFO ignores the transport.
+- **Cross-modulation.** LFO 2 is computed first and can move LFO 1: `lfo2_to_lfo1_rate` bends the
+  rate of LFO 1 by LFO 2's output times that amount times 4 octaves (like a rate CV), and
+  `lfo2_to_lfo1_level` dips LFO 1's level by up to the amount's size: the sign picks the side of
+  LFO 2 at which LFO 1 stays at full level (positive: the top). Both at 0 change nothing.
+- **Lag.** `lag` smooths all three outputs with a one-pole of that time constant (0 is off and
+  leaves the signal untouched); a smoothed output never leaves its range.
+- **Key follow.** `key_follow` moves the rate of a free-running LFO by that many octaves per octave
+  from the latest note-on (key 60 is neutral), at the rate of a batch. A tempo-locked LFO ignores
+  it.
 - **Key sync.** Each note-on restarts the LFO at phase 0 (plus `lfoN_phase`) at its sample offset;
   random shapes draw new values after each restart.
 - **Random.** Sample & hold and smooth random values are `hash64(seed, lfo, cycle)`: reproducible
@@ -2214,11 +2227,13 @@ zone for its velocity does nothing (no choke, no retrigger). Source:
 | `level_cv_in` | CV | in | Level of all pads: `master.level_cv_trim` × 24 × CV decibels (socket 35). |
 | `pitch_cv_in` | CV | in | Pitch of all pads: `pitch_cv_trim` × 24 × CV semitones (socket 36). |
 | `pad1_gate_cv_in`, `pad1_gate_cv_out` … `pad16_gate_cv_in`, `pad16_gate_cv_out` | CV | in, out | Gate in (triggers pad *n*) and gate out (high while pad *n* is triggered); sockets 37 to 68, in, out per pad in this order. |
+| `send1_l`, `send1_r`, `send2_l`, `send2_r` | Audio | out | The two shared send outputs: the sum of every pad times its `padN.send1` or `padN.send2`, after the pad's effects (sockets 69 to 72). Not limited, not scaled by `master.level`. |
 
 ### Params
 
 `master.level` first, then eight params per pad *N* = 1 to 16 in this order, then
-`master.level_cv_trim` and `pitch_cv_trim` (131 params; ids follow the order):
+`master.level_cv_trim` and `pitch_cv_trim`, then six effect params per pad (227 params; ids follow
+the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -2233,6 +2248,12 @@ zone for its velocity does nothing (no choke, no retrigger). Source:
 | `padN.velocity` | 0 to 1 | 0.7 | percent | Linear | no |
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `padN.tone` | −1 to 1 | 0 | none | Linear | no |
+| `padN.lowcut` | 20 to 2000 (20 = off) | 20 | Hz | Exp | no |
+| `padN.highcut` | 500 to 20000 (20000 = off) | 20000 | Hz | Exp | no |
+| `padN.drive` | 0 to 1 | 0 | percent | Linear | no |
+| `padN.send1` | 0 to 1 | 0 | percent | Linear | no |
+| `padN.send2` | 0 to 1 | 0 | percent | Linear | no |
 
 ### Behaviour (as built)
 
@@ -2300,6 +2321,14 @@ zone for its velocity does nothing (no choke, no retrigger). Source:
   its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level`
   and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither
   scaled nor limited (non-finite values become 0).
+- **Pad effects.** A pad with an effect or a send set runs its voices through, in order, a 12
+  dB/oct low cut (`padN.lowcut`), a 12 dB/oct high cut (`padN.highcut`), a tilt around 1 kHz of
+  up to ±6 dB (`padN.tone`, positive brightens) and a level-compensated soft-clip drive of up to
+  30 dB (`padN.drive`). A stage at its default is skipped, so a pad with every effect at its
+  default is not touched and the device renders as it did before the effects existed. The
+  processed pair goes to the pad's individual outputs when they are cabled, else into the main
+  mix, and, times `padN.send1` and `padN.send2`, into the shared send outputs. The filters use
+  deterministic coefficients; their state is cleared by `reset`.
 - **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one
   draining map and hands one back per swap. A voice whose zone index exists in the new map with a
   pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's
@@ -2795,9 +2824,9 @@ outputs of the two rows (-1 to 1 bipolar, 0 to 1 unipolar, times the amount).
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `pattern` | 1 to 8 | 1 | none | Linear | yes |
+| `pattern` | 1 to 32 | 1 | none | Linear | yes |
 | `pattern.switch` | 0-1: now, at-end | 1 (at-end) | choice | Linear | yes |
-| `chain` | 1 to 8 | 1 | none | Linear | yes |
+| `chain` | 1 to 32 | 1 | none | Linear | yes |
 | `transpose` | -24 to 24 | 0 | semitones | Linear | yes |
 | `follow` | 0-1: off, transpose | 0 (off) | choice | Linear | yes |
 | `probability.amount` | 0 to 1 | 1 | percent | Linear | no |
@@ -2816,6 +2845,9 @@ outputs of the two rows (-1 to 1 bipolar, 0 to 1 unipolar, times the amount).
 - **Notes.** Played by the step sequencer's rules (one shared function): gate, tie, probability,
   `transpose`, `follow`, `velocity.scale`, `gate.scale`, the same CV outputs. For a chain of one
   pattern with an even length the note row is the step sequencer's, event for event.
+- **Patterns.** Up to 32 (four banks of eight), curves included; a step sequencer keeps its 8.
+  The rack panel and the grid editor show the first eight; the others are reached with the
+  `pattern` param, the pattern commands and the project file.
 - **Chain.** `chain` patterns play in order from `pattern`, wrapping at the pattern count (3
   patterns, `pattern` 3, `chain` 3: 3, 1, 2), each in its own resolution and swing, then the chain
   repeats. The position is a pure function of the tick: the chain repeats every *P* ticks (the sum
@@ -2857,7 +2889,7 @@ preview. The grid editor shows two more lanes, CURVE A and CURVE B: press sets t
 
 ## Drum Generator: `atomik.drum-generator` (Utility, "Players")
 
-A drum pattern player that varies what is written. It plays up to 8 patterns of 16 lanes (one key
+A drum pattern player that varies what is written. It plays up to 32 patterns of 16 lanes (one key
 each, by default the 16 pads of the [drum machine](#drum-machine-atomikdrum-machine-instrument),
 keys 36 to 51) and 1 to 64 steps, on the step sequencer's clock, and adds density, variation, fills
 and accents on top of the written hits. The data is `DrumData` (`PlayerData::Drums`, registered with
@@ -2878,7 +2910,7 @@ at every step that hits, pitch and velocity follow the loudest hit of that step.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `pattern` | 1 to 8 | 1 | none | Linear | yes |
+| `pattern` | 1 to 32 | 1 | none | Linear | yes |
 | `pattern.switch` | 0-1: now, at-end | 1 (at-end) | choice | Linear | yes |
 | `density` | -1 to 1 | 0 | percent | Linear | no |
 | `variation` | 0 to 1 | 0 | percent | Linear | no |
@@ -2903,6 +2935,17 @@ at every step that hits, pitch and velocity follow the loudest hit of that step.
   at that velocity (`velocity.scale` multiplies it, 1 to 127), for `gate` of a step (never past the
   next step). Every lane plays its own key; a muted lane plays nothing. Two lanes on one key close
   each other's hit first, so a receiver never sees two Ons of one key.
+- **Flam and ratchet.** A step may carry a flam (0 to 50 % of the step) or a ratchet (2 to 8 hits).
+  With a flam the step plays a soft grace hit (half the velocity) when it starts and the full hit
+  that many percent of the step later; the grace hit ends where the full hit starts. With a
+  ratchet of *n* the hit repeats *n* times evenly across the step, each for `gate` of its share
+  (at `gate` 1 each ends where the next starts); a ratchet replaces a flam. The later hits wait in
+  a fixed table of 256 slots (a hit that does not fit is dropped) and sound when due; every one has
+  its note end scheduled when it starts, and a jump, `mute`, `AllOff`, bypass and `reset` drop the
+  hits still to come, so every On has its Off. A ratchet or flam on a hit that density or fills
+  add does not exist; they follow the written step. Each hit fires the trig output.
+- **Patterns.** Up to 32 patterns (four banks of eight in the rack panel); the panel's RES and
+  SHUF steppers set the edited pattern's resolution and swing.
 - **A pure function of the position.** What a lane plays at a step depends only on the step, the
   pattern, the params, the seed and the time signature, never on what played before, so a bounce is
   bit-identical at any block size and worker count. Every chance is `hash64(seed, step, slot)`;

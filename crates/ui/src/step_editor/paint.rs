@@ -1,7 +1,8 @@
 //! Painting of the step editor (see the parent module for the layout).
 
 use super::{
-    Drag, HEADER_WIDTH, Hit, ROW_HEIGHT, STEP_CHOICES, SWING_MAX, StepEditorView, VelocityLevel,
+    Drag, HEADER_WIDTH, Hit, ROW_HEIGHT, STEP_CHOICES, SWING_MAX, StepEditorView, ToolButton,
+    VelocityLevel,
 };
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::paint::fit_label;
@@ -134,6 +135,16 @@ fn toolbar(v: &StepEditorView, c: &mut dyn Canvas) {
             lv.label(),
             lit,
             v.hover == Hit::Level(lv),
+        );
+    }
+    for t in ToolButton::ALL {
+        sp::button(
+            c,
+            st,
+            v.tool_rect(t),
+            t.label(),
+            None,
+            v.hover == Hit::Tool(t),
         );
     }
     let off = v.off_grid_count();
