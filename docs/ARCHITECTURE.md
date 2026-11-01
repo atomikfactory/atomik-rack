@@ -223,7 +223,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 39 (older versions still load; version 39
-  adds the console's `"send_follow": true` (the sends of a strip that plays into a bus follow the
+  adds the root's `"tune_cents"` after `"info"` (the master tune in cents, written only when not 0, a file
+  without it loads at 0, refused in a version 38 file; see 3, "Master tune") and
+  the console's `"send_follow": true` (the sends of a strip that plays into a bus follow the
   bus fader and mute; written only when on, a file without it loads with it off) and
   `"parallels": [[parent, child], ...]` (the parallel channels, written only when there are some;
   both refused in a version 38 file; see 5, "Mix channels and parallel channels"); version 38
@@ -2070,6 +2072,21 @@ The app side is [app_core_cpu.rs](../crates/app/src/app_core_cpu.rs): once per f
 samples, forms a load once 200 ms of audio have passed, smooths it, and hands the loads to the rack
 view, which draws them on the name plates over the cached panels; a container shows the sum of the
 devices inside it. The switch is not saved.
+
+### Master tune
+
+The project's tune (`RackDoc::tune_cents`, -100 to +100 cents around A = 440 Hz, set by
+`Command::SetMasterTune`, one undo step) reaches the devices as `TimeInfo::tune_cents`. The app sends it
+through the ordered control queue (`EngineHandle::set_master_tune`): with a glide for an edit (about 20 ms,
+one exponential step per batch, so held notes do not step) and without one for a fresh engine and for
+`render_core`, which queues the document's value before the first batch of a bounce. It is never a live
+atomic: every batch carries one value that changed at a batch boundary, so a bounce is the same for any host
+block size and a project at 0 renders bit for bit as before (every device adds a literal 0 cents). The
+synths add it as the cents offset of `note_to_hz`; the sampler, drum machine, loop slicer and grain sampler
+add it to their playback ratio; the tuner in the app reads against `tuner_ref` shifted by it. Audio tracks
+and plugins are not touched. The per-device audit is in [DEVICES.md](DEVICES.md#master-tune). The Audio
+tab of Settings edits the open project's tune and, once changed there, keeps the value as the tune new
+projects start with (`master_tune_cents` in the settings file).
 
 ## 4. Threading model
 
