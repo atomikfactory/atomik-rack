@@ -210,8 +210,9 @@ pub struct AppCore<S: EngineSink> {
     midi: midimap::MidiControl,
     /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
     macros: macro_ops::MacroState,
-    /// The control surface driving the console, if one is set up (see `app_core_surface.rs`).
-    surface: Option<crate::surface::SurfaceHost>,
+    /// The control surfaces that are set up, each with its own driver and ports (see
+    /// `app_core_surface.rs`).
+    surfaces: Vec<crate::surface::SurfaceHost>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
     rack_focus_request: bool,
     /// `follow_console_selection` saw a new console selection (cleared by the pane event).
@@ -458,7 +459,7 @@ impl<S: EngineSink> AppCore<S> {
             snapshot_hint: None,
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
-            surface: None,
+            surfaces: Vec::new(),
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),

@@ -119,7 +119,8 @@ pub use midi_import::{ImportedTrack, MidiImport};
 pub use midi_map::{
     DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
     MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource, MidiTarget, PAIR_WINDOW_SECONDS,
-    PICKUP_WINDOW, PresetMap, PresetTarget, RelativeKind, SourceKind, TransportTarget, note_name,
+    PICKUP_WINDOW, PresetMap, PresetTarget, RelativeKind, RemoteCommand, SourceKind,
+    TransportTarget, note_name,
 };
 pub use midi_map_io::{MIDI_PRESET_FORMAT, load_midi_preset, save_midi_preset};
 pub use midi_out::{MAX_MIDI_OUT_PORT_CHARS, MIDI_OUT_TYPE, MidiOutDoc};

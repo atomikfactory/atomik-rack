@@ -400,7 +400,7 @@ pub struct Shell<B: AudioBackend> {
     ports_listed_at: Option<std::time::Instant>,
     settings_path: Option<PathBuf>,
     /// The surface settings the control surface was last set up with.
-    surface_applied: SurfaceSettings,
+    surface_applied: Vec<SurfaceSettings>,
     ui_state_path: Option<PathBuf>,
     ui: UiState,
     /// The open windows: the main window always, a detached pane's while it is detached.
@@ -609,7 +609,7 @@ impl<B: AudioBackend> Shell<B> {
             split_before: None,
             ports_listed_at: None,
             settings_path: options.settings_path,
-            surface_applied: SurfaceSettings::default(),
+            surface_applied: Vec::new(),
             ui_state_path: options.ui_state_path,
             ui,
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
@@ -5458,6 +5458,14 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_midi_maps();
                 Vec::new()
             }
+            AppCommand::MapCommand(c) => {
+                self.core.midi_arm(atomik_model::MidiTarget::Command(c));
+                Vec::new()
+            }
+            AppCommand::LockSurfaces => {
+                self.core.toggle_surface_locks();
+                Vec::new()
+            }
             AppCommand::MacroPanel => {
                 self.open_macros();
                 Vec::new()
@@ -5917,37 +5925,37 @@ impl<B: AudioBackend> Shell<B> {
         self.fold_repaint();
     }
 
-    /// Opens the control surface the settings name (its driver and ports), or closes it. Nothing
-    /// happens when the settings are the ones it already runs with. A port that cannot be opened
-    /// is reported, and a surface with no open port is not set up.
+    /// Opens the control surfaces the settings name (each with its driver and ports), or closes
+    /// them. Nothing happens when the settings are the ones they already run with. A port that
+    /// cannot be opened is reported, and a surface with no open port is not set up.
     fn configure_surface(&mut self) {
-        let wanted = self.core.sink().settings().surface.clone();
+        let wanted: Vec<SurfaceSettings> = self.core.sink().settings().surfaces.clone();
         if wanted == self.surface_applied {
             return;
         }
         self.surface_applied = wanted.clone();
-        let Some(id) = wanted.driver.as_deref() else {
-            self.core.set_surface(None);
-            return;
-        };
-        let Some(driver) = atomik_midi_io::surface::driver_by_id(id) else {
-            self.core.set_surface(None);
-            self.notify(format!("unknown control surface {id:?}"));
-            return;
-        };
-        let (link, problems) =
-            crate::surface::SystemLink::open(wanted.input.as_deref(), wanted.output.as_deref());
-        if let Some(problem) = problems.first() {
-            self.notify(problem.clone());
+        let mut hosts = Vec::new();
+        for s in wanted.iter().filter(|s| s.runs()) {
+            let Some(id) = s.driver.as_deref() else {
+                continue;
+            };
+            let Some(driver) = atomik_midi_io::surface::driver_by_id(id) else {
+                self.notify(format!("unknown control surface {id:?}"));
+                continue;
+            };
+            let (link, problems) =
+                crate::surface::SystemLink::open(s.input.as_deref(), s.output.as_deref());
+            if let Some(problem) = problems.first() {
+                self.notify(format!("{}: {problem}", s.name));
+            }
+            if link.is_open() {
+                let port = s.input.as_deref().unwrap_or(&s.name);
+                hosts.push(
+                    crate::surface::SurfaceHost::new(driver, Box::new(link)).named(&s.name, port),
+                );
+            }
         }
-        if link.is_open() {
-            self.core.set_surface(Some(crate::surface::SurfaceHost::new(
-                driver,
-                Box::new(link),
-            )));
-        } else {
-            self.core.set_surface(None);
-        }
+        self.core.set_surfaces(hosts);
     }
 
     /// The click-level slider changed the metronome level: keep it in `settings.json` once the

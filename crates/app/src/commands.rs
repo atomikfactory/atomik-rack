@@ -10,8 +10,8 @@ use crate::windows::WindowKind;
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::keymap::{
-    APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS,
-    TEMPLATE_ARGS,
+    APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, OUTPUT_CHANNEL_ARGS, RATE_ARGS,
+    RECENT_ARGS, TEMPLATE_ARGS,
 };
 use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
 use std::borrow::Cow;
@@ -229,6 +229,12 @@ pub enum AppCommand {
     MidiLearn,
     /// Mixer > MIDI Mappings...: the panel that lists the project's mappings.
     MidiMappings,
+    /// Mixer > Map Command: the next control moved on the hardware runs this command (undo, redo,
+    /// previous or next track or preset).
+    MapCommand(atomik_model::RemoteCommand),
+    /// Mixer > Lock Surfaces to Selection (on/off): each control surface acts on the selected
+    /// device whatever is selected later, or follows the selection again.
+    LockSurfaces,
     /// Mixer > Export MIDI Mapping Preset...: the mappings as a preset file, by role.
     ExportMidiPreset,
     /// Mixer > Import MIDI Mapping Preset...: a preset file's mappings, added to the project.
@@ -535,6 +541,28 @@ fn arg_of<N: ToString>(args: &'static [&'static str], n: N) -> Option<&'static s
     args.iter().copied().find(|a| *a == n)
 }
 
+/// The `midi.map_command` argument of a command a control can be mapped to.
+fn map_command_arg(c: atomik_model::RemoteCommand) -> Option<&'static str> {
+    use atomik_model::RemoteCommand as R;
+    Some(match c {
+        R::Undo => "undo",
+        R::Redo => "redo",
+        R::SelectTrack { delta: -1 } => "track_prev",
+        R::SelectTrack { delta: 1 } => "track_next",
+        R::SelectPreset { delta: -1 } => "preset_prev",
+        R::SelectPreset { delta: 1 } => "preset_next",
+        _ => return None,
+    })
+    .filter(|a| MAP_COMMAND_ARGS.contains(a))
+}
+
+/// The command a `midi.map_command` argument spells.
+fn map_command_from_arg(a: &str) -> Option<atomik_model::RemoteCommand> {
+    atomik_model::RemoteCommand::ALL
+        .into_iter()
+        .find(|c| map_command_arg(*c) == Some(a))
+}
+
 /// The number an entry of `args` spells (`None` for a value `args` does not list).
 fn num_arg<N: std::str::FromStr>(args: &[&str], a: &str) -> Option<N> {
     args.contains(&a).then(|| a.parse().ok())?
@@ -703,6 +731,8 @@ impl AppCommand {
             AppCommand::ToggleReturnAlignment => ("mixer.toggle_return_alignment", None),
             AppCommand::MidiLearn => ("midi.learn", None),
             AppCommand::MidiMappings => ("midi.mappings", None),
+            AppCommand::MapCommand(c) => ("midi.map_command", Some(map_command_arg(*c)?)),
+            AppCommand::LockSurfaces => ("midi.lock_surfaces", None),
             AppCommand::ExportMidiPreset => ("midi.export_preset", None),
             AppCommand::ImportMidiPreset => ("midi.import_preset", None),
             AppCommand::ClearMidiMaps => ("midi.clear_maps", None),
@@ -988,6 +1018,8 @@ impl AppCommand {
             ("mixer.toggle_return_alignment", None) => AppCommand::ToggleReturnAlignment,
             ("midi.learn", None) => AppCommand::MidiLearn,
             ("midi.mappings", None) => AppCommand::MidiMappings,
+            ("midi.map_command", Some(a)) => AppCommand::MapCommand(map_command_from_arg(a)?),
+            ("midi.lock_surfaces", None) => AppCommand::LockSurfaces,
             ("midi.export_preset", None) => AppCommand::ExportMidiPreset,
             ("midi.import_preset", None) => AppCommand::ImportMidiPreset,
             ("midi.clear_maps", None) => AppCommand::ClearMidiMaps,
@@ -1458,6 +1490,10 @@ pub struct MidiMenu {
     pub learning: bool,
     /// The project has mappings: export and clear work.
     pub has_maps: bool,
+    /// A control surface is set up: Lock Surfaces works.
+    pub surfaces: bool,
+    /// At least one surface is locked to a device (the item is checked).
+    pub locked: bool,
 }
 
 /// What the Mixer menu needs to know to store, recall, compare and delete mixer snapshots.
@@ -2229,6 +2265,27 @@ pub fn menus_with_lists(
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
+                MenuEntry::Submenu(Submenu {
+                    label: "Map Command",
+                    entries: atomik_model::RemoteCommand::ALL
+                        .iter()
+                        .map(|c| {
+                            MenuEntry::Item(MenuItem {
+                                label: Cow::Owned(c.label()),
+                                command: AppCommand::MapCommand(*c),
+                                shortcut: None,
+                                checked: None,
+                                enabled: true,
+                            })
+                        })
+                        .collect(),
+                }),
+                make(
+                    "Lock Surfaces to Selection",
+                    AppCommand::LockSurfaces,
+                    Some(state.midi.locked),
+                    state.midi.surfaces,
+                ),
                 enabled(
                     "Export MIDI Mapping Preset\u{2026}",
                     AppCommand::ExportMidiPreset,
@@ -2915,6 +2972,7 @@ mod tests {
             AppCommand::ToggleSendFollow,
             AppCommand::MidiLearn,
             AppCommand::MidiMappings,
+            AppCommand::LockSurfaces,
             AppCommand::ExportMidiPreset,
             AppCommand::ImportMidiPreset,
             AppCommand::ClearMidiMaps,
@@ -3008,6 +3066,9 @@ mod tests {
         }
         for n in [1, 2, 4, 8, 16, 32] {
             v.push(AppCommand::OutputChannels(n));
+        }
+        for c in atomik_model::RemoteCommand::ALL {
+            v.push(AppCommand::MapCommand(c));
         }
         for step in [GainStep::Up, GainStep::Down, GainStep::Reset] {
             v.push(AppCommand::AudioGain(step));
@@ -3568,6 +3629,13 @@ mod tests {
                 "Sends Follow Bus",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
+                "Previous track",
+                "Next track",
+                "Undo",
+                "Redo",
+                "Previous preset",
+                "Next preset",
+                "Lock Surfaces to Selection",
                 "Export MIDI Mapping Preset\u{2026}",
                 "Import MIDI Mapping Preset\u{2026}",
                 "Clear MIDI Mappings",

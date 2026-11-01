@@ -368,11 +368,11 @@ fn preset_files_round_trip_through_the_shell_and_a_second_project() {
 fn the_surface_settings_open_a_surface_or_say_why_not() {
     let mut s = shell();
     let with = |driver: Option<&str>, input: Option<&str>| AudioSettings {
-        surface: crate::settings::SurfaceSettings {
+        surfaces: vec![crate::settings::SurfaceSettings {
             driver: driver.map(Into::into),
             input: input.map(Into::into),
-            output: None,
-        },
+            ..crate::settings::SurfaceSettings::named("Desk")
+        }],
         ..AudioSettings::default()
     };
     // No driver: no surface.
@@ -390,12 +390,7 @@ fn the_surface_settings_open_a_surface_or_say_why_not() {
     // A driver whose port is not there is not set up, and the problem is shown.
     s.apply_settings(with(Some("mcu"), Some("No Such Surface Port")));
     assert!(s.core().surface().is_none());
-    assert!(
-        s.core()
-            .last_rejection()
-            .unwrap()
-            .starts_with("surface input")
-    );
+    assert!(s.core().last_rejection().unwrap().contains("surface input"));
     // Applying the same settings again does not try again (no second message).
     s.core_mut().report("cleared");
     s.apply_settings(with(Some("mcu"), Some("No Such Surface Port")));

@@ -648,6 +648,7 @@ fn a_mapping_restricted_to_a_port_consumes_only_that_ports_messages() {
             port: Some("Pad".into()),
             channel: None,
             kind: SourceKind::Cc(1),
+            surface: None,
         },
         param("channel", "pan"),
     );

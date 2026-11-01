@@ -95,6 +95,7 @@ fn mapped() -> (Document, Registry) {
                 port: Some("Pad Controller".into()),
                 channel: Some(9),
                 kind: SourceKind::Note(36),
+                surface: None,
             },
             MidiTarget::Transport(TransportTarget::Play),
         ),
@@ -697,4 +698,199 @@ fn mapping_ids_are_not_the_device_keys_a_project_keeps_after_undo() {
     run_map(&mut loaded, &r, MidiMapCommand::Remove { id: 4 }).unwrap();
     loaded.undo(&r).unwrap();
     assert_eq!(loaded.doc().midi_maps, d.doc().midi_maps);
+}
+
+/// A project with one mapping of each new kind: a surface-tied source, a focused-device param
+/// and every remote command.
+fn surfaced() -> (Document, Registry) {
+    let (mut d, r) = project();
+    let from = |surface: &str, n: u8| MidiSource {
+        surface: Some(surface.into()),
+        ..cc(0, n)
+    };
+    add_map(
+        &mut d,
+        &r,
+        mapping(
+            from("Pads", 20),
+            MidiTarget::Focused {
+                param: "filter.cutoff".into(),
+            },
+        ),
+    );
+    add_map(
+        &mut d,
+        &r,
+        mapping(
+            from("Faders", 20),
+            MidiTarget::Focused {
+                param: "filter.cutoff".into(),
+            },
+        ),
+    );
+    for (n, command) in atomik_model::RemoteCommand::ALL.into_iter().enumerate() {
+        add_map(
+            &mut d,
+            &r,
+            MidiMapping {
+                options: MapOptions {
+                    mode: MapMode::Momentary,
+                    ..MapOptions::default()
+                },
+                ..mapping(
+                    MidiSource::any_port(Some(1), SourceKind::Note(36 + n as u8)),
+                    MidiTarget::Command(command),
+                )
+            },
+        );
+    }
+    (d, r)
+}
+
+#[test]
+fn surface_sources_focused_params_and_commands_round_trip_in_a_stable_text() {
+    let (d, r) = surfaced();
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let maps = v["midi_maps"].as_array().unwrap();
+    assert_eq!(maps.len(), 8);
+    assert_eq!(maps[0]["source"]["surface"], "Pads");
+    assert_eq!(maps[0]["target"]["kind"], "focused");
+    assert_eq!(maps[0]["target"]["param"], "filter.cutoff");
+    assert_eq!(maps[1]["source"]["surface"], "Faders");
+    assert_eq!(maps[2]["target"]["kind"], "command");
+    assert_eq!(maps[2]["target"]["command"], "select_track");
+    assert_eq!(maps[2]["target"]["delta"], -1);
+    assert_eq!(maps[4]["target"]["command"], "undo");
+    assert!(maps[4]["target"].get("delta").is_none());
+    assert_eq!(maps[7]["target"]["command"], "select_preset");
+    let loaded = load_project(&text, &r).unwrap();
+    assert_eq!(loaded.midi_maps, d.doc().midi_maps);
+    assert_eq!(save_project(&loaded), text);
+    // A project without them writes no `surface` key anywhere.
+    let (plain, _) = mapped();
+    assert!(!save_project(plain.doc()).contains("\"surface\""));
+}
+
+#[test]
+fn bad_surface_and_command_mappings_are_refused_on_load_with_their_json_path() {
+    let (d, r) = surfaced();
+    let text = save_project(d.doc());
+    let err = |t: String| load_project(&t, &r).unwrap_err().to_string();
+    let e = err(text.replacen("\"surface\": \"Pads\"", "\"surface\": \"\"", 1));
+    assert!(e.contains("midi_maps[0].source.surface"), "{e}");
+    let e = err(text.replacen("\"surface\": \"Pads\"", "\"surface\": 4", 1));
+    assert!(e.contains("midi_maps[0].source.surface"), "{e}");
+    let e = err(text.replacen("\"delta\": -1", "\"delta\": 0", 1));
+    assert!(e.contains("midi_maps[2].target.command"), "{e}");
+    let e = err(text.replacen("\"delta\": -1", "\"delta\": 99", 1));
+    assert!(e.contains("midi_maps[2].target.command"), "{e}");
+    let e = err(text.replacen("\"command\": \"undo\"", "\"command\": \"explode\"", 1));
+    assert!(e.contains("midi_maps[4].target.command"), "{e}");
+    let e = err(text.replacen(
+        "\"command\": \"redo\"",
+        "\"command\": \"redo\", \"delta\": 1",
+        1,
+    ));
+    assert!(e.contains("midi_maps[5].target.command"), "{e}");
+    let e = err(text.replacen(
+        "\"command\": \"select_preset\"",
+        "\"command\": \"select_preset\", \"extra\": 1",
+        1,
+    ));
+    assert!(e.contains("midi_maps[6]"), "{e}");
+}
+
+#[test]
+fn a_surface_source_hears_its_own_surface_only() {
+    use atomik_core::ChannelMessage;
+    let msg = ChannelMessage::cc(0, 20, 64);
+    let tied = MidiSource {
+        surface: Some("Pads".into()),
+        ..cc(0, 20)
+    };
+    assert!(tied.matches_from("Any Port", Some("Pads"), &msg));
+    assert!(!tied.matches_from("Any Port", Some("Faders"), &msg));
+    assert!(
+        !tied.matches("Any Port", &msg),
+        "a plain port is not a surface"
+    );
+    let open = cc(0, 20);
+    assert!(open.matches("Any Port", &msg));
+    assert!(
+        open.matches_from("Any Port", Some("Pads"), &msg),
+        "an untied source hears all"
+    );
+    assert_eq!(tied.describe(), "CC 20 ch 1 [Pads]");
+}
+
+#[test]
+fn a_preset_keeps_focused_and_command_targets_and_drops_the_surface() {
+    let (d, r) = surfaced();
+    let (preset, notes) = d.doc().midi_preset("kit", &[]);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert!(
+        preset
+            .maps
+            .iter()
+            .all(|m| m.source.surface.is_none() && m.source.port.is_none())
+    );
+    assert!(matches!(
+        preset.maps[0].target,
+        PresetTarget::Focused { .. }
+    ));
+    assert!(matches!(preset.maps[3].target, PresetTarget::Command(_)));
+    let text = save_midi_preset(&preset);
+    assert_eq!(load_midi_preset(&text).unwrap(), preset);
+    let (maps, notes) = d.doc().resolve_preset(&r, &preset);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(maps.len(), 8);
+    assert_eq!(
+        maps[2].target,
+        MidiTarget::Command(atomik_model::RemoteCommand::ALL[0])
+    );
+    // A preset file has no surface.
+    let with_surface = text.replacen(
+        "\"kind\": \"cc\"",
+        "\"surface\": \"x\", \"kind\": \"cc\"",
+        1,
+    );
+    let e = load_midi_preset(&with_surface).unwrap_err().to_string();
+    assert!(e.contains("surface"), "{e}");
+}
+
+#[test]
+fn focused_params_need_a_real_param_key_and_commands_have_labels() {
+    let (mut d, r) = project();
+    let bad = |p: &str| mapping(cc(0, 1), MidiTarget::Focused { param: p.into() });
+    let e = run_map(&mut d, &r, MidiMapCommand::Add(bad("")))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not a parameter"), "{e}");
+    let e = run_map(&mut d, &r, MidiMapCommand::Add(bad("internal.tap_live")))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not a parameter"), "{e}");
+    add_map(&mut d, &r, bad("filter.cutoff"));
+    let labels: Vec<String> = atomik_model::RemoteCommand::ALL
+        .iter()
+        .map(|c| c.label())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Previous track",
+            "Next track",
+            "Undo",
+            "Redo",
+            "Previous preset",
+            "Next preset"
+        ]
+    );
+    assert_eq!(
+        atomik_model::RemoteCommand::SelectTrack { delta: 3 }.label(),
+        "Track +3"
+    );
+    assert!(MidiTarget::Command(atomik_model::RemoteCommand::Undo).is_trigger());
+    assert!(!MidiTarget::Focused { param: "x".into() }.is_trigger());
 }

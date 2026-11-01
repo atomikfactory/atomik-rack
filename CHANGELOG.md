@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Several control surfaces, generic controllers and command mappings.** Settings > Surfaces now
+  lists any number of surfaces (up to eight), each with its own driver, ports and an on/off
+  switch; an older settings file with one surface loads as a list of one. A new Generic
+  controller driver has no fixed layout: its controls are mapped with MIDI Learn, and a mapping
+  learnt from a surface hears that surface only, so two controllers can send the same controller
+  numbers to two devices at once. A mapping can address the focused device (the device selected
+  in the rack) and Mixer > Lock Surfaces to Selection pins each surface to that device while the
+  selection moves on. A control can also run a command: undo, redo, previous or next track,
+  previous or next preset of the focused device (Mixer > Map Command arms one for the next
+  control moved). Undo from a control takes back a whole mapped sweep as one step. The new
+  mapping fields are written only when used, so older projects load and bounce unchanged.
 - **Spectrum EQ window.** View > Spectrum EQ (F2) opens a floating, resizable window with a
   real-time analyser of the selected mixer strip, measured after its EQ and before its fader, and
   the strip's filters and EQ drawn as a response curve. Drag the HF, HMF, LMF and LF points (Shift
