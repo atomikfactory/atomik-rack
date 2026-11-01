@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 pub struct Vst3Backend {
     index: Mutex<BTreeMap<String, PathBuf>>,
     modules: Mutex<BTreeMap<PathBuf, Arc<Module>>>,
+    preset_roots: Option<Vec<PathBuf>>,
 }
 
 impl std::fmt::Debug for Vst3Backend {
@@ -39,6 +40,14 @@ impl Vst3Backend {
     /// A backend that knows no plugin files yet.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Looks for `.vstpreset` files in `roots` (each one holding the files directly or in
+    /// folders) instead of the platform's preset folders and `ATOMIK_VST3_PRESET_DIRS`.
+    #[must_use]
+    pub fn with_preset_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.preset_roots = Some(roots);
+        self
     }
 
     /// Records that the plugin with class id `id` (32 hex digits) lives in `path`, without
@@ -158,6 +167,8 @@ impl PluginBackend for Vst3Backend {
             .find(|c| c.cid == want)
             .ok_or_else(|| BackendError::UnknownPlugin(plugin.id.clone()))?;
         let hub = Hub::new(host.messenger().clone());
-        Ok(Box::new(Vst3Instance::create(&module, &class, hub)?))
+        let mut instance = Vst3Instance::create(&module, &class, hub)?;
+        instance.preset_roots.clone_from(&self.preset_roots);
+        Ok(Box::new(instance))
     }
 }

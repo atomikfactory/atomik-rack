@@ -560,3 +560,16 @@ fn the_editor_kind_and_the_external_editor_route_to_the_instance() {
     assert_eq!(stats.external_opens(), 1);
     assert_eq!(m.editor_kind(atomik_plugin_host::InstanceId(999)), None);
 }
+
+#[test]
+fn presets_are_listed_and_loaded_through_the_manager() {
+    let (mut m, stats) = manager();
+    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    assert!(m.list_presets(id).is_empty(), "off by default");
+    assert!(m.load_preset(id, "init").is_err());
+    stats.set_presets(true);
+    assert_eq!(m.list_presets(id).len(), 3);
+    m.load_preset(id, "warm").unwrap();
+    assert_eq!(m.capture_state(id).unwrap().0, b"preset:warm");
+    assert!(m.load_preset(id, "nope").is_err());
+}

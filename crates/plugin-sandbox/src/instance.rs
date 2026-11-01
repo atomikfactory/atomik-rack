@@ -13,7 +13,7 @@ use atomik_core::BATCH;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, EditorKind, HostMessenger, LogLevel, NativeParent,
-    PluginInstance, PluginMessage, PluginProcessor, warmed,
+    PluginInstance, PluginMessage, PluginProcessor, PresetInfo, warmed,
 };
 use atomik_plugin_ipc::{FromChild, ParentPort, ToChild, WireParent};
 use std::collections::BTreeMap;
@@ -235,6 +235,38 @@ impl PluginInstance for RemoteInstance {
             Ok(())
         } else {
             Err(self.link.unexpected("RestoreState", &reply.msg))
+        }
+    }
+
+    fn list_presets(&mut self) -> Vec<PresetInfo> {
+        match self.link.call(
+            "ListPresets",
+            self.timeouts().create,
+            |id| ToChild::ListPresets { id },
+            None,
+        ) {
+            Ok(Reply {
+                msg: FromChild::Presets { presets, .. },
+                ..
+            }) => presets.into_iter().map(Into::into).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn load_preset(&mut self, preset: &str) -> Result<(), BackendError> {
+        let reply = self.link.call(
+            "LoadPreset",
+            self.timeouts().create,
+            |id| ToChild::LoadPreset {
+                id,
+                preset: preset.to_string(),
+            },
+            None,
+        )?;
+        if Self::is_ok(&reply) {
+            Ok(())
+        } else {
+            Err(self.link.unexpected("LoadPreset", &reply.msg))
         }
     }
 

@@ -368,6 +368,18 @@ impl HostHandle {
     }
 }
 
+/// One preset a plugin offers: a CLAP preset found by discovery, a VST3 program of a unit's
+/// program list or a `.vstpreset` file.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PresetInfo {
+    /// Opaque id the backend understands (given back to [`PluginInstance::load_preset`]).
+    pub id: String,
+    /// The name to show.
+    pub name: String,
+    /// The folder or program list it belongs to (empty for none).
+    pub group: String,
+}
+
 /// The main-thread half of one plugin. Every method is `[main-thread]`.
 pub trait PluginInstance {
     /// The plugin's layout.
@@ -382,6 +394,18 @@ pub trait PluginInstance {
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError>;
     /// Restores a saved state.
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError>;
+    /// The presets the plugin offers, in its own order (empty when it has none or the format
+    /// cannot list them).
+    fn list_presets(&mut self) -> Vec<PresetInfo> {
+        Vec::new()
+    }
+    /// Loads the preset `id` (from [`PluginInstance::list_presets`]) into the live instance.
+    /// The new state is read with [`PluginInstance::capture_state`] afterwards.
+    fn load_preset(&mut self, _id: &str) -> Result<(), BackendError> {
+        Err(BackendError::Unsupported(
+            "this plugin has no presets the host can load".to_string(),
+        ))
+    }
     /// The display text of a param value, from the plugin.
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String>;
     /// Opens the editor inside `parent`; returns its size in pixels.
@@ -478,6 +502,13 @@ pub enum NullBehavior {
     Gain(f32),
 }
 
+/// The presets a [`NullStats::set_presets`] null instance offers: `(id, name, group)`.
+pub const NULL_PRESETS: [(&str, &str, &str); 3] = [
+    ("init", "Init", "Factory"),
+    ("warm", "Warm", "Factory"),
+    ("bright", "Bright", "Factory"),
+];
+
 /// A virtual plugin of the [`NullBackend`].
 #[derive(Debug, Clone)]
 pub struct NullPlugin {
@@ -507,6 +538,7 @@ pub struct NullStats {
     lost: AtomicBool,
     external_editor: AtomicBool,
     external_opens: AtomicUsize,
+    presets: AtomicBool,
 }
 
 impl NullStats {
@@ -548,6 +580,11 @@ impl NullStats {
     /// Makes every null instance have an [`EditorKind::External`] editor.
     pub fn set_external_editor(&self, external: bool) {
         self.external_editor.store(external, Ordering::Relaxed);
+    }
+    /// Makes every null instance offer [`NULL_PRESETS`]; loading one sets the state to
+    /// `preset:<id>`.
+    pub fn set_presets(&self, on: bool) {
+        self.presets.store(on, Ordering::Relaxed);
     }
     /// How many times an external editor was opened.
     pub fn external_opens(&self) -> usize {
@@ -678,6 +715,33 @@ impl PluginInstance for NullInstance {
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
         self.state = state.clone();
+        Ok(())
+    }
+
+    fn list_presets(&mut self) -> Vec<PresetInfo> {
+        if !self.stats.presets.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        NULL_PRESETS
+            .iter()
+            .map(|(id, name, group)| PresetInfo {
+                id: (*id).to_string(),
+                name: (*name).to_string(),
+                group: (*group).to_string(),
+            })
+            .collect()
+    }
+
+    fn load_preset(&mut self, id: &str) -> Result<(), BackendError> {
+        if !self.stats.presets.load(Ordering::Relaxed) {
+            return Err(BackendError::Unsupported(
+                "the null plugin has no presets".to_string(),
+            ));
+        }
+        if !NULL_PRESETS.iter().any(|(p, _, _)| *p == id) {
+            return Err(BackendError::Failed(format!("no preset `{id}`")));
+        }
+        self.state = PluginStateBlob(format!("preset:{id}").into_bytes());
         Ok(())
     }
 

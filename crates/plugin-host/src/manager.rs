@@ -388,6 +388,25 @@ impl PluginManager {
         Ok(self.get(id)?.instance.restore_state(state)?)
     }
 
+    /// The presets the plugin offers (empty for an unknown instance).
+    pub fn list_presets(&mut self, id: InstanceId) -> Vec<crate::PresetInfo> {
+        assert_main_thread("PluginManager::list_presets");
+        self.instances
+            .get_mut(&id)
+            .map(|m| m.instance.list_presets())
+            .unwrap_or_default()
+    }
+
+    /// Loads a preset into a living instance; read the new state with
+    /// [`PluginManager::capture_state`] afterwards.
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said.
+    pub fn load_preset(&mut self, id: InstanceId, preset: &str) -> Result<(), ManagerError> {
+        assert_main_thread("PluginManager::load_preset");
+        Ok(self.get(id)?.instance.load_preset(preset)?)
+    }
+
     /// The plugin's display text of a param value (never asked on the audio thread).
     pub fn param_text(&mut self, id: InstanceId, param: u32, plain: f64) -> Option<String> {
         assert_main_thread("PluginManager::param_text");

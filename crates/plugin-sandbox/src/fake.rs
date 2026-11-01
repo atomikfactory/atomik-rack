@@ -15,7 +15,7 @@ use atomik_plugin_host::{
 };
 use atomik_plugin_ipc::{
     AudioOp, ChildPort, Doorbell, DoorbellName, FromChild, PROTOCOL_VERSION, ParentPort,
-    ProcessorInfo, SharedBlock, ToChild, WireChannels, WireKind, WireLayout, WireParam,
+    ProcessorInfo, SharedBlock, ToChild, WireChannels, WireKind, WireLayout, WireParam, WirePreset,
     block_file_name, default_block_dir, read_frame, write_frame,
 };
 use std::io::{PipeReader, PipeWriter, Write};
@@ -259,6 +259,25 @@ fn default_script(ctl: &Control, req: &ToChild, blob: Option<&[u8]>) -> Action {
             id: *id,
             pins: vec![1, 2],
         }),
+        ToChild::ListPresets { id } => reply(FromChild::Presets {
+            id: *id,
+            presets: vec![
+                WirePreset {
+                    id: "a".into(),
+                    name: "Init".into(),
+                    group: "Factory".into(),
+                },
+                WirePreset {
+                    id: "b".into(),
+                    name: "Warm".into(),
+                    group: String::new(),
+                },
+            ],
+        }),
+        ToChild::LoadPreset { id, preset } => {
+            lock(&ctl.restored).push(format!("preset:{preset}").into_bytes());
+            reply(FromChild::Ok { id: *id })
+        }
         ToChild::TakeLayoutChanged { id } => reply(FromChild::LayoutChanged {
             id: *id,
             layout: None,
