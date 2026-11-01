@@ -36,7 +36,7 @@ impl RackView {
             return;
         }
         self.devices[i].meters = q;
-        self.devices[i].revision += 1;
+        self.devices[i].bump_live();
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, 0.0)).y,
             self.view_to_rack(Point::new(0.0, self.size.height)).y,

@@ -947,6 +947,15 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **The rack navigator is a miniature of the real rack.** The strip at the right edge of the rack
+  no longer shows colour blocks: every device is drawn as a scaled-down picture of its own panel
+  (plate, name, knobs, faders and displays as they stand, a folded panel folded), so you can tell
+  the devices apart and find the one you want at a glance. Text too small to read becomes a bar
+  and very small details are left out; when the rack is so tall that a panel would be only a few
+  pixels high the strip falls back to a flat block of the device colour. Clicking and dragging
+  move the view exactly as before, and the viewport rectangle and the selection outlines stay on
+  top. The miniature is recorded once per panel change, not per frame, and the live meters and
+  scopes do not make it redraw during playback (the strip keeps its 136 px width).
 - **Spider Audio and Spider CV are now Audio Split/Merge and CV Split/Merge.** Only the names
   shown in the browser, the panels and the documentation change; the device ids are the same, so
   saved projects and patches load as before.
