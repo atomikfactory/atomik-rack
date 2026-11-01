@@ -5,7 +5,7 @@ mod common;
 
 use atomik_model::{
     Command, Document, ModelError, PROJECT_VERSION, PatternDoc, RackDoc, SeqResolution, StepDoc,
-    StepSeqDoc, empty_doc, load_project, save_project,
+    StepSeqDoc, empty_doc, load_project, player_data_for, save_project,
 };
 use common::*;
 use proptest::prelude::*;
@@ -223,7 +223,7 @@ fn bad_steps_are_rejected_with_paths() {
         (
             Box::new(|v| v["devices"][1]["steps"]["patterns"] = json!([])),
             "devices[1].steps.patterns",
-            "1..=8",
+            "1..=32",
         ),
         (
             Box::new(|v| {
@@ -456,4 +456,63 @@ proptest! {
         prop_assert_eq!(&back, &doc);
         prop_assert_eq!(save_project(&back), text);
     }
+}
+
+// ------------------------------------------------------------------ pattern caps per kind of data
+
+#[test]
+fn a_cv_sequencer_holds_32_patterns_and_a_step_sequencer_8() {
+    let r = registry();
+    let mut d = Document::new(empty_doc());
+    for (i, (t, k)) in [("atomik.cv-sequencer", "cv"), (SEQ, "q")]
+        .into_iter()
+        .enumerate()
+    {
+        d.apply(add(i, t, Some(k)), &r).unwrap();
+    }
+    for k in ["cv", "q"] {
+        for _ in 1..8 {
+            d.apply(Command::AddPattern { device: key(k) }, &r).unwrap();
+        }
+    }
+    let e = d
+        .apply(Command::AddPattern { device: key("q") }, &r)
+        .unwrap_err();
+    assert!(
+        matches!(&e, ModelError::BadPatterns(m) if m.contains("at most 8")),
+        "{e:?}"
+    );
+    for _ in 8..32 {
+        d.apply(Command::AddPattern { device: key("cv") }, &r)
+            .unwrap();
+    }
+    let e = d
+        .apply(Command::AddPattern { device: key("cv") }, &r)
+        .unwrap_err();
+    assert!(
+        matches!(&e, ModelError::BadPatterns(m) if m.contains("at most 32")),
+        "{e:?}"
+    );
+    // The copy of a pattern goes to the end and the engine value has them all.
+    let cv = d.doc().device(&key("cv")).unwrap();
+    assert_eq!(cv.steps.as_ref().unwrap().patterns.len(), 32);
+    let atomik_device_sdk::PlayerData::CvSeq(data) = &*player_data_for(cv, &r).unwrap() else {
+        panic!("cv data")
+    };
+    assert_eq!(data.notes.count, 32);
+    // The file round-trips with 32 patterns.
+    let text = save_project(d.doc());
+    let back = load_project(&text, &r).unwrap();
+    assert_eq!(&back, d.doc());
+    // A step sequencer with nine patterns in a file is refused, a CV sequencer is not.
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let list = v["devices"][1]["steps"]["patterns"].as_array_mut().unwrap();
+    let extra = list[0].clone();
+    list.push(extra);
+    let e = load_project(&v.to_string(), &r).expect_err("nine patterns");
+    let ModelError::Load { path, message } = &e else {
+        panic!("{e:?}")
+    };
+    assert_eq!(path.to_string(), "devices[1].steps.patterns");
+    assert!(message.contains("outside 1..=8"), "{message}");
 }

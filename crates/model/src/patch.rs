@@ -467,7 +467,7 @@ pub(crate) fn load_device(
                 let steps = crate::project::load_steps(v, &steps_path)?;
                 let cap = crate::steps::pattern_cap(registry, type_id);
                 if steps.patterns.len() > cap {
-                    return Err(steps_path.error(format!(
+                    return Err(steps_path.field("patterns").error(format!(
                         "{} patterns is outside 1..={cap} for {type_id}",
                         steps.patterns.len()
                     )));
