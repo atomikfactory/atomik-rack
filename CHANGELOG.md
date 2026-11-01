@@ -686,6 +686,13 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **The arrangement draws playback from cached layers.** The lanes with their clips, notes and
+  waveforms, and the track list, are recorded into display lists that stay between frames, so a
+  frame in which only the playhead moved draws the playhead line, the ruler flag, the marker
+  strip and the tempo lane over them instead of walking every clip again, and the GPU keeps the
+  encoding of the same lists. A moving track meter re-records the track list alone. Any edit,
+  scroll, zoom, selection, hover, tool, drag, theme, scale or size change records both layers
+  again, and what is drawn is exactly what it was.
 - **Live rendering leaves a core to the audio thread.** The app and `atomik-play` start at most as
   many render workers as the machine has cores minus one, and the audio thread, when it waits for
   a worker, yields its core after a short spin instead of spinning on without end (a worker that

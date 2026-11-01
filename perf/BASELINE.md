@@ -132,6 +132,23 @@ A playhead that moves inside one pixel no longer raises a repaint in the arrange
 roll, and `AppCore::frame` skips the shown-value pass while the revision, position and play state
 are unchanged (tests `playhead_repaint`, `app_core::autoview_tests`).
 
+## Arrangement playback frames
+
+Same machine, release profile, a 64-track, 2,000-clip, 20,000-note song at 1920x1080, a
+playhead moving a few pixels per frame, medians of 120 frames
+(`cargo test -p atomik-ui --release --test bench_arrangement -- --ignored --nocapture`). "record"
+paints into a display list (the cached layers are copied in); "record + encode" paints into a GPU
+scene with the scene cache, as the app does.
+
+```text
+case                                   layers off    layers cached
+record, per frame                      3.25 ms       1.37 ms (copying the 9,140 recorded ops)
+record + encode, per frame             3.79 ms       0.135 ms
+```
+
+Lane and track list layers are recorded again only when something they draw changed; the
+waveform columns of a clip are part of the lanes layer, so playback does not recompute them.
+
 ## Engine scheduling
 
 Same machine, bench profile, medians (`cargo bench -p atomik-render --bench render_batch -- lanes`).
