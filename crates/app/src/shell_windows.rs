@@ -21,6 +21,8 @@ pub(super) const MAIN_SIZE: Size = Size::new(1280.0, 800.0);
 const RACK_SIZE: Size = Size::new(1280.0, 720.0);
 /// The size a detached console window opens with when no geometry was saved.
 const CONSOLE_SIZE: Size = Size::new(1280.0, 520.0);
+/// The size the Spectrum EQ window opens with when no geometry was saved.
+const SPECTRUM_EQ_SIZE: (f64, f64) = atomik_ui::spectrum_eq::DEFAULT_SIZE;
 
 /// The longest time between two writes of the window geometry caused by moving or resizing.
 const GEOM_SAVE_SECONDS: f64 = 2.0;
@@ -56,6 +58,7 @@ impl WinState {
 fn pane_of(kind: WindowKind) -> Pane {
     match kind {
         WindowKind::Console => Pane::Console,
+        WindowKind::SpectrumEq => Pane::SpectrumEq,
         WindowKind::Main | WindowKind::Rack => Pane::Rack,
     }
 }
@@ -152,6 +155,7 @@ impl<B: AudioBackend> Shell<B> {
         match pane {
             Pane::Rack if self.rack_detached() => WindowKind::Rack,
             Pane::Console if self.console_detached() => WindowKind::Console,
+            Pane::SpectrumEq => WindowKind::SpectrumEq,
             _ => WindowKind::Main,
         }
     }
@@ -202,7 +206,11 @@ impl<B: AudioBackend> Shell<B> {
     /// Opens the state of the windows saved in `ui-state.json`: each detached pane gets its
     /// window state, sized from the saved geometry. Called once, before the first layout.
     pub(super) fn restore_windows(&mut self) {
-        for kind in [WindowKind::Rack, WindowKind::Console] {
+        for kind in [
+            WindowKind::Rack,
+            WindowKind::Console,
+            WindowKind::SpectrumEq,
+        ] {
             if self.detached(kind) {
                 self.open_window(kind);
             }
@@ -231,6 +239,7 @@ impl<B: AudioBackend> Shell<B> {
             .map(|g| Size::new(g.width, g.height));
         let size = saved.unwrap_or(match kind {
             WindowKind::Console => CONSOLE_SIZE,
+            WindowKind::SpectrumEq => Size::new(SPECTRUM_EQ_SIZE.0, SPECTRUM_EQ_SIZE.1),
             WindowKind::Main | WindowKind::Rack => RACK_SIZE,
         });
         let scale = self.scale();
@@ -249,6 +258,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.handle_event(&UiEvent::ScaleChanged(scale));
             }
             WindowKind::Console => self.core.console_mut().set_scale(scale),
+            WindowKind::SpectrumEq => self.core.spectrum_eq_mut().set_scale(scale),
             WindowKind::Main => {
                 self.core.arrangement_mut().set_scale(scale);
                 self.core.piano_roll_mut().set_scale(scale);
@@ -319,6 +329,24 @@ impl<B: AudioBackend> Shell<B> {
         self.capture = None;
         self.leave_all_hover();
         self.ui.windows.set_detached(kind, detached);
+        if kind == WindowKind::SpectrumEq {
+            // A floating window with no place in the main layout: it opens and closes on its own.
+            if detached {
+                self.open_window(kind);
+            } else {
+                self.wins.remove(&kind);
+                if self.focus == pane {
+                    let back = self.live_pane(Pane::Arrangement);
+                    self.set_focus(back);
+                }
+            }
+            self.layout_view();
+            self.core.set_spectrum_eq_shown(detached);
+            self.focused = self.window_of(self.focus);
+            self.save_ui_state();
+            self.repaint = true;
+            return;
+        }
         if detached {
             self.settle_detached_layout();
             self.open_window(kind);
@@ -330,7 +358,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui.show_song = true;
                     self.ui.show_console = true;
                 }
-                WindowKind::Main => {}
+                WindowKind::Main | WindowKind::SpectrumEq => {}
             }
             self.seq_only_prev = None;
             self.apply_scale(WindowKind::Main);
@@ -388,6 +416,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Main => self.live_pane(Pane::Arrangement),
                 WindowKind::Rack => Pane::Rack,
                 WindowKind::Console => Pane::Console,
+                WindowKind::SpectrumEq => Pane::SpectrumEq,
             }
         };
         self.set_focus(pane);

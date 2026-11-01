@@ -95,6 +95,8 @@ pub enum Pane {
     FileBrowser,
     /// The Piano Keys strip, docked above the status bar.
     PianoKeys,
+    /// The Spectrum EQ window: it fills a window of its own.
+    SpectrumEq,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 32;
@@ -359,6 +361,9 @@ pub struct AppCore<S: EngineSink> {
     file_browser: atomik_ui::FileBrowserView,
     /// The Piano Keys strip and the router that keeps its note offs with their note ons.
     piano_keys: atomik_ui::PianoKeysView,
+    /// The Spectrum EQ window: its view and what the analyser feed remembers.
+    spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView,
+    speq: spectrum_eq::SpectrumEqState,
     keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
     /// The templates folder as it was last listed ([`AppCore::templates`]).
@@ -513,6 +518,8 @@ impl<S: EngineSink> AppCore<S> {
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
             piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
+            spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView::new(Theme::dark()),
+            speq: spectrum_eq::SpectrumEqState::default(),
             keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
             templates: templates::TemplatesState::default(),
@@ -801,6 +808,8 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::SetMasterKeyboard(track) => self.set_master_keyboard_track(track),
             UiAction::ToggleManualRec => self.set_manual_rec(!self.manual_rec),
             UiAction::ToggleTempoArm => self.toggle_tempo_arm(),
+            UiAction::SpectrumEqStep(delta) => self.spectrum_eq_step(delta),
+            UiAction::SpectrumEqFollow(follow) => self.spectrum_eq_follow(follow),
             UiAction::ToggleLaneArm { device, param } => {
                 self.toggle_automation_arm(&device, &param);
             }
@@ -969,6 +978,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PluginParams => self.plugin_params.help_at(pos),
             Pane::FileBrowser => self.file_browser.help_at(pos),
             Pane::PianoKeys => self.piano_keys.help_at(pos),
+            Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
         }
     }
 
@@ -1002,6 +1012,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.handle(event),
             Pane::PianoKeys => self.piano_keys.handle(event),
+            Pane::SpectrumEq => self.spectrum_eq.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -1358,6 +1369,7 @@ impl<S: EngineSink> AppCore<S> {
         self.fx_meter_seq.clear();
         self.analysers.restart();
         self.tuners.restart();
+        self.speq.restart();
         self.next_id = 1;
         self.sent_loop = None;
         // Containers are compiled away: the engine gets the expanded rack.
@@ -1423,6 +1435,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_device_meters();
         self.feed_device_scopes();
         self.feed_tuners();
+        self.feed_spectrum_eq();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
@@ -2440,6 +2453,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.paint(canvas),
             Pane::PianoKeys => self.piano_keys.paint(canvas),
+            Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
         }
     }
 
@@ -3114,6 +3128,9 @@ mod sample_edit;
 mod sampling;
 pub use sampling::{SAMPLE_SECONDS, SamplingInput, TRIGGER_DB, sampling_inputs};
 
+#[path = "app_core_spectrum_eq.rs"]
+mod spectrum_eq;
+
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
@@ -3245,6 +3262,10 @@ mod sample_edit_tests;
 #[cfg(test)]
 #[path = "app_core_sampling_tests.rs"]
 mod sampling_tests;
+
+#[cfg(test)]
+#[path = "app_core_spectrum_eq_tests.rs"]
+mod spectrum_eq_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]

@@ -29,6 +29,7 @@
         { "command": "view.toggle_browser", "context": "global", "chords": ["F3", "Cmd+F", "Cmd+B"], "os": { "mac": ["F3", "Cmd+F", "Cmd+B", "Cmd+Alt+Digit3"] } },
         { "command": "view.toggle_file_browser", "context": "global", "chords": ["F9"], "os": { "mac": ["F9", "Cmd+Alt+Digit9"] } },
         { "command": "view.toggle_piano_keys", "context": "global", "chords": ["F4"], "os": { "mac": ["F4", "Cmd+Alt+Digit4"] } },
+        { "command": "view.toggle_spectrum_eq", "context": "global", "chords": ["F2"], "os": { "mac": ["F2", "Cmd+Alt+Digit2"] } },
         { "command": "view.focus_browser_search", "context": "global", "chords": ["Cmd+Shift+F"] },
         { "command": "view.find_parameter", "context": "global", "chords": ["Cmd+Shift+P"] },
         { "command": "view.toggle_console", "context": "global", "chords": ["F5"], "os": { "mac": ["F5", "Cmd+Alt+Digit5"] } },

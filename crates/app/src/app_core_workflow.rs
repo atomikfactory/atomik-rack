@@ -29,6 +29,7 @@ impl<S: EngineSink> AppCore<S> {
         self.console.set_theme(theme.clone());
         self.plugin_params.set_theme(theme.clone());
         self.file_browser.set_theme(theme.clone());
+        self.spectrum_eq.set_theme(theme.clone());
         self.piano_keys.set_theme(theme);
     }
 
@@ -292,6 +293,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio_editor.set_roles(roles.clone());
         self.view.set_roles(roles.clone());
         self.console.set_roles(roles.clone());
+        self.spectrum_eq.set_roles(roles.clone());
     }
 
     /// Sets the start state of follow in the arrangement and the piano roll (the Workflow

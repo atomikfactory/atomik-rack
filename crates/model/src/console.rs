@@ -69,6 +69,9 @@ pub const VCA_DB_PARAM: &str = "internal.vca_db";
 pub const VCA_MUTE_PARAM: &str = "internal.vca_mute";
 /// See [`VCA_DB_PARAM`].
 pub const VCA_SOLO_PARAM: &str = "internal.vca_solo";
+/// The channel and master param the app sets to 1 while a window analyses the strip: the device
+/// then writes its analyser tap (nothing otherwise); never stored.
+pub const TAP_LIVE_PARAM: &str = "internal.tap_live";
 /// Params with this key prefix are set by the app, never by the user: they are not stored in
 /// documents, not saved, not undoable and cannot be automated.
 pub const INTERNAL_PARAM_PREFIX: &str = "internal.";

@@ -58,9 +58,9 @@ impl Role {
             Role::ToggleSelect | Role::RangeSelect => &["rack/selection"],
             Role::CopyDrag => &["arrangement", "piano_roll"],
             Role::FineAdjust => &["rack/selection", "console"],
-            Role::ResetParam => &["rack/selection", "console"],
+            Role::ResetParam => &["rack/selection", "console", "spectrum_eq"],
             Role::EditAutomation => &["rack/selection", "console"],
-            Role::Constrain => &["arrangement", "piano_roll", "audio_editor"],
+            Role::Constrain => &["arrangement", "piano_roll", "audio_editor", "spectrum_eq"],
             Role::SelectedOnly => &["piano_roll"],
             Role::FlatRange => &["arrangement"],
         }
@@ -457,6 +457,7 @@ mod tests {
             "console" => include_str!("../console.rs"),
             "piano_roll" => include_str!("../piano_roll.rs"),
             "audio_editor" => include_str!("../audio_editor.rs"),
+            "spectrum_eq" => include_str!("../spectrum_eq.rs"),
             other => panic!("no source registered for {other}"),
         }
     }

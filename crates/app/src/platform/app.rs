@@ -259,6 +259,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     for kind in &cli.detach {
         let command = match kind {
             WindowKind::Console => AppCommand::DetachConsole,
+            WindowKind::SpectrumEq => AppCommand::ToggleSpectrumEq,
             WindowKind::Main | WindowKind::Rack => AppCommand::DetachRack,
         };
         if *kind != WindowKind::Main && !shell.detached(*kind) {

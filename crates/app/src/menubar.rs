@@ -663,6 +663,7 @@ mod tests {
             rack: true,
             rack_detached: false,
             console_detached: false,
+            spectrum_eq: false,
             sequencer_only: false,
             editor: false,
             missing_audio: false,

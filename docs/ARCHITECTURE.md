@@ -2930,6 +2930,23 @@ already had (format 37 reads it, older readers refuse it).
   `internal.monitor_live` (the arm flag) decides. A change is a 5 ms crossfade. It has one stage and
   no latency.
 
+### The Spectrum EQ window
+
+View > Spectrum EQ (F2) opens a floating window of its own (an OS window, so it resizes and moves
+freely; closing it ends it) that shows one console strip. The channel, bus and master devices
+([channel.rs](../crates/devices/src/channel.rs), [master.rs](../crates/devices/src/master.rs)) each
+own a `ScopeTap` allocated in `prepare`; with the app-set `internal.tap_live` param at 1 they push
+the signal after the EQ and before the fader, and with it at 0 (the default) they write nothing, so
+a strip with no window is allocation-free and bit-identical. The app
+([app_core_spectrum_eq.rs](../crates/app/src/app_core_spectrum_eq.rs)) switches the param on for
+the shown strip only, runs the FFT on its own thread (4096 frames, the spectrum device's
+analysis) and draws the strip's filters and EQ from `StripCurve` in
+[strip_eq.rs](../crates/dsp/src/strip_eq.rs), built on `magnitude_db`; a test measures the strip
+with a sweep against it. The view ([spectrum_eq.rs](../crates/ui/src/spectrum_eq.rs)) emits
+`SetParam` commands under one merge id (a band's frequency and gain as one batch), so a drag is one
+undo step and records automation. Follow Selection tracks the mixer's primary strip. The master
+shows the analyser only. The same tap switch is what the EQ device's own analyser can gate.
+
 ### The app: workers and rules
 
 [crates/app](../crates/app): `AppCore` (no window, no GPU) owns the document, the registry, the
@@ -3689,7 +3706,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (407) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (408) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

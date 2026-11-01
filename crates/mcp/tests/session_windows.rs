@@ -257,7 +257,7 @@ fn window_unknown_name_is_refused() {
     let mut s = attached();
     let m = fails(&mut s, "session_texts", json!({"window": "sidebar"}));
     assert!(
-        m.contains("main, rack or console") && m.contains("sidebar"),
+        m.contains("main, rack, console or spectrum-eq") && m.contains("sidebar"),
         "{m}"
     );
     let m = fails(

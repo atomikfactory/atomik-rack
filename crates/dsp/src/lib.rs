@@ -63,6 +63,7 @@ pub mod spectral;
 pub mod spectrum;
 pub mod stereo_meter;
 pub mod stretch;
+pub mod strip_eq;
 mod svf;
 pub mod tuner;
 pub mod wavetable;
@@ -71,7 +72,8 @@ pub mod wobble;
 pub use adsr::{Adsr, AdsrStage, STEAL_FADE_MS};
 pub use allpass::Allpass;
 pub use biquad::{
-    Biquad, BiquadCoeffs, BiquadShape, COEFF_UPDATE_INTERVAL, EQ_SMOOTH_MS, SmoothedBiquad,
+    Biquad, BiquadCoeffs, BiquadParams, BiquadShape, COEFF_UPDATE_INTERVAL, EQ_SMOOTH_MS,
+    SmoothedBiquad, magnitude_db,
 };
 pub use bitcrush::Bitcrush;
 pub use block_smoother::{BlockSmoother, Ramp};
@@ -101,7 +103,7 @@ pub use onset::detect_onsets;
 pub use osc::{PolyBlepOsc, Waveform};
 pub use pan::{pan_constant_power, stereo_width};
 pub use parabolic_lfo::ParabolicLfo;
-pub use pass_filter::{PASS_FILTER_SLOPE_DB_PER_OCT, PassFilter, PassKind};
+pub use pass_filter::{PASS_FILTER_SLOPE_DB_PER_OCT, PassFilter, PassKind, pass_magnitude_db};
 pub use phaser::Phaser;
 pub use pitch::note_to_hz;
 pub use ringmod::RingMod;

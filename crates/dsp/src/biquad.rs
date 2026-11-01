@@ -177,6 +177,33 @@ impl BiquadCoeffs {
     }
 }
 
+/// The settings of one biquad section, for [`magnitude_db`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BiquadParams {
+    /// Centre or corner frequency in Hz.
+    pub freq: f64,
+    /// Q (the section's resonance or bandwidth).
+    pub q: f64,
+    /// Gain in dB (ignored by the pass shapes).
+    pub gain_db: f64,
+    /// The sample rate the section runs at.
+    pub sample_rate: f64,
+}
+
+/// The magnitude response in dB at `hz` of a section of `shape` with `params`: the
+/// response of the coefficients [`BiquadCoeffs::design`] makes, so a drawn curve is exactly what
+/// the DSP does (pure, allocation-free).
+pub fn magnitude_db(shape: BiquadShape, hz: f64, params: &BiquadParams) -> f64 {
+    BiquadCoeffs::design(
+        shape,
+        params.freq,
+        params.q,
+        params.gain_db,
+        params.sample_rate,
+    )
+    .response_db(hz, params.sample_rate)
+}
+
 /// Flushes values in the denormal range to zero.
 #[inline]
 fn flush(v: f64) -> f64 {

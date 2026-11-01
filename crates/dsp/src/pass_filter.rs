@@ -6,7 +6,7 @@
 //! `1/((s+1)(s²+s+1))`: maximally flat, −3.01 dB at the corner, 18 dB/octave asymptotic slope.
 //! Frequency changes are smoothed like the EQ (see [`crate::SmoothedBiquad`]).
 
-use crate::biquad::{BiquadShape, SmoothedBiquad};
+use crate::biquad::{BiquadParams, BiquadShape, SmoothedBiquad, magnitude_db};
 
 /// Which side of the corner passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +78,22 @@ impl PassFilter {
         let (l, r) = self.first.process(l, r);
         self.second.process(l, r)
     }
+}
+
+/// The magnitude response in dB at `hz` of a settled [`PassFilter`] of `kind` with its corner
+/// at `corner` Hz, without building one (what a window draws for the strip's HPF and LPF).
+pub fn pass_magnitude_db(kind: PassKind, corner: f64, hz: f64, sample_rate: f64) -> f64 {
+    let (s1, s2) = match kind {
+        PassKind::Highpass => (BiquadShape::FirstOrderHighpass, BiquadShape::Highpass),
+        PassKind::Lowpass => (BiquadShape::FirstOrderLowpass, BiquadShape::Lowpass),
+    };
+    let params = BiquadParams {
+        freq: corner,
+        q: f64::from(SECOND_ORDER_Q),
+        gain_db: 0.0,
+        sample_rate,
+    };
+    magnitude_db(s1, hz, &params) + magnitude_db(s2, hz, &params)
 }
 
 #[cfg(test)]

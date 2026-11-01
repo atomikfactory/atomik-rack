@@ -3815,7 +3815,7 @@ both device types run). The console creates buses; you do not add one from the b
 - **Same strip, same keys.** The input trim and polarity (`input.gain`, `input.phase`) and the
   parallel compressor (`pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`,
   `pcomp.release`, `pcomp.makeup`, `pcomp.mix`; off by default) are the channel's too. Params, ids,
-  defaults, internal params (`internal.solo_silence`, the VCA feed `internal.vca_db`,
+  defaults, internal params (`internal.solo_silence`, `internal.tap_live`, the VCA feed `internal.vca_db`,
   `internal.vca_mute` and `internal.vca_solo`, the CV trims), the 8 sends (`send{k}.on/level/pre`),
   insert loop, key input, `gr_cv_out`, CV inputs, stages and latency adjust are exactly the
   channel's, so settings copy across both types. The channel's tables are in the module docs of

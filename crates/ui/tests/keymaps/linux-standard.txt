@@ -208,6 +208,7 @@ view.toggle_file_browser | global | F9
 view.toggle_flip | global | Tab
 view.toggle_piano_keys | global | F4
 view.toggle_rack | global | F6
+view.toggle_spectrum_eq | global | F2
 view.zoom_in | global | Ctrl+=, Ctrl++, Ctrl+Shift+=, Ctrl+Shift++, Ctrl+Alt+=, Ctrl+Alt++
 view.zoom_in | sequencer | H
 view.zoom_in | editor | H

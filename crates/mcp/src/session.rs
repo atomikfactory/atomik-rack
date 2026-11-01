@@ -313,6 +313,7 @@ fn window_name(kind: WindowKind) -> &'static str {
         WindowKind::Main => "main",
         WindowKind::Rack => "rack",
         WindowKind::Console => "console",
+        WindowKind::SpectrumEq => "spectrum-eq",
     }
 }
 
@@ -328,8 +329,9 @@ fn parse_window(name: Option<&str>) -> Result<WindowKind, String> {
         None | Some("main") => Ok(WindowKind::Main),
         Some("rack") => Ok(WindowKind::Rack),
         Some("console") => Ok(WindowKind::Console),
+        Some("spectrum-eq") => Ok(WindowKind::SpectrumEq),
         Some(other) => Err(format!(
-            "window must be main, rack or console, not `{other}`"
+            "window must be main, rack, console or spectrum-eq, not `{other}`"
         )),
     }
 }
@@ -988,10 +990,10 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let pane = last.and_then(|p| match window {
         WindowKind::Main => session.shell().hit_pane(p),
         _ => {
-            let pane = if window == WindowKind::Rack {
-                Pane::Rack
-            } else {
-                Pane::Console
+            let pane = match window {
+                WindowKind::Rack => Pane::Rack,
+                WindowKind::SpectrumEq => Pane::SpectrumEq,
+                _ => Pane::Console,
             };
             let (_, rect) = session.shell().pane_rect(pane)?;
             rect.contains(p).then_some(pane)
@@ -1272,7 +1274,7 @@ fn window_def() -> Value {
             (
                 "window",
                 "string",
-                "main, rack or console: the window to act on.",
+                "main, rack, console or spectrum-eq: the window to act on.",
             ),
             ("width", "number", "resize: the logical width (200..8192)."),
             (

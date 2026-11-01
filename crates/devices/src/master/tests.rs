@@ -56,6 +56,7 @@ fn descriptor_keys_match_contract_exactly() {
     for k in 1..=8 {
         params.push(format!("send{k}.level"));
     }
+    params.push("internal.tap_live".into());
     let mut sockets: Vec<String> = vec!["bus_l".into(), "bus_r".into()];
     for prefix in ["send_bus", "fx_send", "return"] {
         for k in 1..=8 {
@@ -625,7 +626,7 @@ fn original_sources_and_zero_db_sends_keep_their_sound_bit_exactly() {
 
 #[test]
 fn send_level_params_are_appended_after_the_monitor_source() {
-    assert_eq!(DESCRIPTOR.params.len(), 37 + 8);
+    assert_eq!(DESCRIPTOR.params.len(), 37 + 8 + 1);
     let src = DESCRIPTOR.param_by_key("monitor.source").unwrap();
     assert_eq!(src.id.0, 36);
     for k in 1..=8u32 {
@@ -861,4 +862,31 @@ fn every_source_gives_the_same_bits_through_process_and_stage_by_stage() {
             }
         }
     }
+}
+
+#[test]
+fn the_master_tap_is_written_only_while_the_switch_is_on() {
+    let play = |tap_live: bool| {
+        let mut h = master();
+        if tap_live {
+            h.set_param("internal.tap_live", 1.0);
+        }
+        let mut out = Vec::new();
+        for i in 0..30 {
+            *h.input_mut("bus_l") = [0.2 + 0.01 * i as f32; BATCH];
+            *h.input_mut("bus_r") = [0.1; BATCH];
+            out.extend(h.render(1, &["main_l", "main_r"]).into_iter().flatten());
+        }
+        let tap = h.device().scope_tap().expect("a prepared master has a tap");
+        let (mut l, mut r) = (vec![0.0f32; BATCH], vec![0.0f32; BATCH]);
+        let got = tap.read_latest(&mut l, &mut r);
+        (out, tap.head(), got, l)
+    };
+    let (off, off_head, ..) = play(false);
+    let (on, on_head, got, l) = play(true);
+    assert_eq!(off_head, 0);
+    assert_eq!(on_head, 30 * BATCH as u64);
+    assert_eq!(got.0, BATCH);
+    assert!(l.iter().all(|x| *x > 0.2), "the bus signal reaches the tap");
+    assert!(off.iter().zip(&on).all(|(a, b)| a.to_bits() == b.to_bits()));
 }

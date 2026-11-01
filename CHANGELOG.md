@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Spectrum EQ window.** View > Spectrum EQ (F2) opens a floating, resizable window with a
+  real-time analyser of the selected mixer strip, measured after its EQ and before its fader, and
+  the strip's filters and EQ drawn as a response curve. Drag the HF, HMF, LMF and LF points (Shift
+  keeps one axis, Alt-drag or the wheel changes a bell's Q, Ctrl-click resets the gain) and the
+  high-pass and low-pass corners; a drag is one undo step and records automation. Checkboxes
+  switch the EQ, the filters and the shelf-or-bell shape of the outer bands, the arrows pick a
+  strip, and Follow Selection keeps the window on the selected one. The master shows the analyser
+  only. The strip writes its analyser tap only while the window shows it, so a closed window costs
+  nothing and renders stay bit-identical.
 - **Sampling into devices.** A SAMPLE button beside EDIT on the sampler, granular, drum machine and
 - **Direct Record, Send Players to Track, Fold All and Bypass All Players.** New Track menu items
   act on the selected tracks that have players above their instrument. Direct Record makes the
