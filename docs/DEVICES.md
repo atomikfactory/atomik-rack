@@ -3260,8 +3260,10 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
 | `mono` | 0 or 1 | 0 | toggle |
 | `bypass` | 0 or 1 | 0 | toggle |
 
-- **Order:** polarity, width, balance, mono, then the mid/side mode. Encode writes
+- **Order:** polarity, width, balance, the mid/side mode, then mono. Encode writes
   `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
+- **Mono** is the last stage: both outputs become `(L + R) / 2` of what the mode produced (10 ms
+  ramp), so the output is mono in every mode, an encoded signal included.
 - **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
   that frequency; only the band above it is widened, the bass stays as it was.
 - Width 1, balance 0, polarity and mono off, mode stereo: the output is the input bit for bit.
@@ -3378,7 +3380,7 @@ Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `gate_cv_in` (CV in),
 - A step-gated variant is not a mode: the step sequencer and CV sequencer gate it through
   `gate_cv_in`.
 
-### Spider Audio: `atomik.spider-audio` (Utility)
+### Audio Split/Merge: `atomik.spider-audio` (Utility)
 
 Four stereo merge inputs and a four-way stereo split.
 Source: [spider.rs](../crates/devices/src/spider.rs).
@@ -3390,7 +3392,7 @@ Sockets: `m1_l`, `m1_r` to `m4_l`, `m4_r` (Audio summing inputs: any number of c
 source endpoints, so the sum is the same for every block size; the delay compensation aligns
 the merged cables like those of a console bus.
 
-### Spider CV: `atomik.spider-cv` (Utility)
+### CV Split/Merge: `atomik.spider-cv` (Utility)
 
 Four trimmed CV merge inputs and two split-and-invert inputs.
 Source: [spider.rs](../crates/devices/src/spider.rs).

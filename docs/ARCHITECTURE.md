@@ -3233,7 +3233,7 @@ parameter tables are in [DEVICES.md](DEVICES.md).
   upgrades, section 5); the strip's own `insert.bypass` is a separate switch that is not delay
   compensated. See [DEVICES.md](DEVICES.md#effect-bypass).
 - **Utility devices.** Gain Tool, Stereo Tool, Gate, Gate + Compressor, Sidechain Tool and Envelope
-  Filter are `Bypassable` effects; Spider Audio and Spider CV are plain utilities whose merge inputs
+  Filter are `Bypassable` effects; Audio Split/Merge and CV Split/Merge are plain utilities whose merge inputs
   are `Direction::SummingInput` (the model's cable rules and the engine's summing and delay
   compensation treat them like a console bus input, in source order). They share the descriptor
   builders of `devices/src/tool_support.rs`, use the deterministic `log2_det`/`exp2_det`, and the
