@@ -400,3 +400,190 @@ fn the_end_grows_when_the_shift_puts_a_clip_past_it() {
     assert!(d.doc().song.end_tick() >= last);
     let _: ClipId = d.last_clip_id().unwrap_or(ClipId(0));
 }
+
+// ------------------------------------------------------------------ audit of the locator commands
+
+/// The chain with a delay track that holds one automation lane (`mix`), one clip ramping 0 to 1
+/// over two bars from bar 2 (zero-based start `2 * BAR`).
+fn delay_ramp_doc() -> (atomik_device_sdk::Registry, Document) {
+    let r = console_registry();
+    let mut d = Document::new(chain(&registry()).doc().clone());
+    run(
+        &mut d,
+        &r,
+        [
+            sc(SongCommand::AddAutomationLane {
+                device: key("delay"),
+                param: "mix".into(),
+            }),
+            add_clip(
+                "delay",
+                0,
+                auto_clip(
+                    2 * BAR,
+                    2 * BAR,
+                    vec![
+                        point(0, 0.0, atomik_model::Curve::Linear),
+                        point(2 * BAR, 1.0, atomik_model::Curve::Linear),
+                    ],
+                ),
+            ),
+        ],
+    );
+    (r, d)
+}
+
+fn delay_curve(d: &Document) -> Vec<(i64, f32)> {
+    let t = d.doc().song.track(&key("delay")).unwrap();
+    atomik_model::song::flatten_automation(t, 0)
+        .iter()
+        .map(|p| (p.0, p.1))
+        .collect()
+}
+
+#[test]
+fn insert_splits_an_automation_only_track_and_the_curve_stays_continuous() {
+    let (r, mut d) = delay_ramp_doc();
+    // The cut is halfway up the ramp: the right half starts at the value the ramp had there.
+    one_step(&mut d, &r, insert(3 * BAR, BAR));
+    let clips: Vec<(i64, i64)> = d.doc().song.track(&key("delay")).unwrap().lanes[0]
+        .clips
+        .iter()
+        .map(|c| (c.start, c.length))
+        .collect();
+    assert_eq!(clips, [(2 * BAR, BAR), (4 * BAR, BAR)]);
+    let curve = delay_curve(&d);
+    let at = |tick: i64| curve.iter().find(|p| p.0 == tick).map(|p| p.1);
+    assert_eq!(at(2 * BAR), Some(0.0));
+    assert!((at(4 * BAR).unwrap() - 0.5).abs() < 1e-3, "{curve:?}");
+    // The left half ends on the value it had at the cut.
+    assert!((at(3 * BAR - 1).unwrap() - 0.5).abs() < 1e-3, "{curve:?}");
+    assert!((curve.last().unwrap().1 - 1.0).abs() < 1e-3);
+}
+
+#[test]
+fn remove_joins_the_automation_at_the_start_with_the_value_from_the_end() {
+    let (r, mut d) = delay_ramp_doc();
+    // Cut the second half bar of the first bar: the join is a value from halfway to the end.
+    one_step(&mut d, &r, remove(2 * BAR + BAR / 2, BAR));
+    let curve = delay_curve(&d);
+    let at = |tick: i64| curve.iter().find(|p| p.0 == tick).map(|p| p.1);
+    // The ramp is 0 to 1 over two bars: a quarter at the cut start's left edge, three quarters
+    // at the right edge of the removed bar.
+    assert!(
+        (at(2 * BAR + BAR / 2 - 1).unwrap() - 0.25).abs() < 1e-3,
+        "{curve:?}"
+    );
+    assert!(
+        (at(2 * BAR + BAR / 2).unwrap() - 0.75).abs() < 1e-3,
+        "{curve:?}"
+    );
+    assert!((curve.last().unwrap().1 - 1.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_tempo_or_meter_change_on_the_point_moves_with_the_music_after_it() {
+    let r = registry();
+    let mut d = song_doc(&r);
+    run(
+        &mut d,
+        &r,
+        [
+            sc(SongCommand::SetTempoMap(vec![
+                TempoEvent::step(0, 120.0),
+                TempoEvent::step(4 * BAR, 90.0),
+            ])),
+            sc(SongCommand::SetMeterMap(vec![
+                MeterEvent::new(1, 4, 4),
+                MeterEvent::new(5, 3, 4),
+            ])),
+        ],
+    );
+    // Bar 5 starts at tick 4 bars: the point is on both changes.
+    one_step(&mut d, &r, insert(4 * BAR, BAR));
+    let s = &d.doc().song;
+    assert_eq!(s.tempo[1].tick, 5 * BAR);
+    assert_eq!(s.tempo[0].tick, 0);
+    assert_eq!(s.meter[1].bar, 6);
+    // The song starts with its first tempo: nothing at tick 0 moves.
+    one_step(&mut d, &r, insert(0, BAR));
+    let s = &d.doc().song;
+    assert_eq!(s.tempo[0].tick, 0);
+    assert_eq!(s.tempo[1].tick, 6 * BAR);
+    assert_eq!(s.meter[0].bar, 1);
+}
+
+#[test]
+fn a_loop_that_starts_on_the_point_moves_unless_it_is_the_range() {
+    let r = registry();
+    let mut d = song_doc(&r);
+    run(
+        &mut d,
+        &r,
+        [sc(SongCommand::SetLoop {
+            range: (4 * BAR, 8 * BAR),
+            enabled: true,
+        })],
+    );
+    one_step(&mut d, &r, insert(4 * BAR, BAR));
+    assert_eq!(d.doc().song.loop_range, (5 * BAR, 9 * BAR));
+    // The loop that is the range stays: the new bars are what it loops.
+    run(
+        &mut d,
+        &r,
+        [sc(SongCommand::SetLoop {
+            range: (4 * BAR, 5 * BAR),
+            enabled: true,
+        })],
+    );
+    one_step(&mut d, &r, insert(4 * BAR, BAR));
+    assert_eq!(d.doc().song.loop_range, (4 * BAR, 5 * BAR));
+}
+
+fn tails_doc(r: &atomik_device_sdk::Registry) -> Document {
+    let mut doc = empty_doc();
+    doc.song_mut().tails = true;
+    let mut d = Document::new(doc);
+    run(
+        &mut d,
+        r,
+        [
+            add(0, SYNTH, Some("synth")),
+            add_track("synth"),
+            // A note that starts a beat before bar 3 and rings two bars.
+            add_clip(
+                "synth",
+                0,
+                notes_clip(0, 4 * BAR, vec![note(3 * BAR - PPQ, 2 * BAR, 60, 0.8)]),
+            ),
+            sc(SongCommand::SetSongEnd(8 * BAR)),
+        ],
+    );
+    d
+}
+
+fn tail_notes(d: &Document) -> Vec<(i64, i64)> {
+    let t = d.doc().song.track(&key("synth")).unwrap();
+    atomik_model::song::flatten_notes_with(t, true)
+        .iter()
+        .map(|n| (n.0, n.1))
+        .collect()
+}
+
+#[test]
+fn insert_keeps_a_note_that_crosses_the_point_whole_and_plays_it_once() {
+    let r = registry();
+    let mut d = tails_doc(&r);
+    one_step(&mut d, &r, insert(3 * BAR, BAR));
+    // Same start, same length, no second attack after the gap: only the gap is new.
+    assert_eq!(tail_notes(&d), [(3 * BAR - PPQ, 2 * BAR)]);
+}
+
+#[test]
+fn remove_shortens_a_note_that_crosses_the_start_of_the_range() {
+    let r = registry();
+    let mut d = tails_doc(&r);
+    one_step(&mut d, &r, remove(3 * BAR, BAR));
+    // It rang into the cut time: it now ends where the cut began.
+    assert_eq!(tail_notes(&d), [(3 * BAR - PPQ, PPQ)]);
+}
