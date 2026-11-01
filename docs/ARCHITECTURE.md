@@ -2710,12 +2710,31 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
   device query goes out on connect and "go offline" on disconnect. Every bank move and a handshake
   make the next pass send the whole surface again. Level meters, flip and the function keys are not
   implemented.
+- **The generic controller** (`Generic`, id `generic`, "Generic controller (mapped)"). It has no
+  layout: its messages are not decoded by the driver (`feeds_mappings`) but parsed by the host and
+  run through the project's MIDI mappings tagged with the surface. A mapping whose source names a
+  surface (`"surface"` in the source, learnt automatically when the control moved is on a surface)
+  hears that surface only; a source without one hears every surface and every port, so older
+  projects map as they did. Two surfaces can drive two devices at the same time with the same
+  controller numbers.
+- **Several surfaces and the focused device.** `settings.json` `"surfaces"` is a list (name, `use`,
+  driver, ports; at most eight); each enabled one runs its own driver and link in
+  `AppCore::surface_frame`, in settings order, and an older file with one `"surface"` loads as a
+  list of one. A mapping target `focused` is a param of the focused device: the device the surface
+  of the message is locked to (`AppCore::lock_surface`, Mixer > Lock Surfaces to Selection; never
+  saved), else the device selected in the rack. A locked surface never falls back to the selection
+  for a device that lacks the param.
+- **Commands as targets.** A `command` target (`RemoteCommand`: select the previous or next track,
+  undo, redo, previous or next preset of the focused device) is a trigger run on the press. It ends
+  an open mapped sweep first, so undo takes back the whole sweep. The preset step uses the plugin
+  presets of a plugin device and the patch list of the library folder for the others. Mixer > Map
+  Command arms one for the next control moved.
 - **Ports and threads.** `SurfaceLink` is the surface's two ports (`SystemLink`: a `midir` listener
   that keeps SysEx and only queues the bytes, and an output; `LoopbackSurface`: the same in memory,
   for tests and the MCP server). `AppCore::surface_frame(now)` runs on the UI thread, never the
   audio thread: it polls the link, hands every message to the driver, applies the actions, and sends
   the feedback at most every 1/30 s. The surface is an **app** setting, not part of the project:
-  `settings.json` `"surface": {"driver", "input", "output"}`, the Surfaces tab of Settings; a port
+  `settings.json` `"surfaces"`, the Surfaces tab of Settings; a port
   that cannot be opened is reported and the surface is not set up.
 
 ### Macro banks, the parameter search and automation that follows the selection
@@ -3709,7 +3728,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (408) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (410) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
