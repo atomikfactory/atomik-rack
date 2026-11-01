@@ -40,8 +40,8 @@
 
 use atomik_core::{BATCH, db_to_gain};
 pub use atomik_core::{REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB, REC_GAIN_PARAM};
-use atomik_device_sdk::Registry;
-use atomik_engine::{SongPosition, TapChannel};
+use atomik_device_sdk::{Registry, SocketId};
+use atomik_engine::{DeviceInstanceId, SongPosition, TapChannel};
 use atomik_model::{DeviceKey, INTERFACE_KEY, RackDoc};
 
 /// Seconds of input the record tap's ring holds (the writer thread drains it continuously).
@@ -137,24 +137,69 @@ pub fn input_peaks(
     match input {
         TrackInput::Mono(a) => ([read(a), 0.0], false),
         TrackInput::Stereo(a, b) => ([read(a), read(b)], true),
+        // A strip has no host peak: the caller reads the strip's own meters.
+        TrackInput::Source { .. } => ([0.0; 2], true),
     }
 }
 
-/// Where an audio track takes its recording from: host input channels (0-based).
+/// Where an audio track takes its recording from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackInput {
-    /// One channel (also: both sockets cabled from the same channel, or only one cabled).
+    /// One host channel (0-based; also: both sockets cabled from the same channel, or only one
+    /// cabled).
     Mono(usize),
-    /// Left and right from two different channels.
+    /// Left and right from two different host channels.
     Stereo(usize, usize),
+    /// The stereo output of a console strip in the engine (resampling).
+    Source {
+        /// The strip's device in the engine.
+        device: DeviceInstanceId,
+        /// Its left output socket.
+        left: SocketId,
+        /// Its right output socket.
+        right: SocketId,
+        /// Frames the strip's signal lags the song timeline by (the delay compensation of its
+        /// path): the take's compensation, in place of the hardware round trip.
+        latency: u32,
+    },
 }
 
 impl TrackInput {
-    /// The host channels, left first.
+    /// The host channels, left first (none for a strip).
     pub fn channels(self) -> Vec<usize> {
         match self {
             Self::Mono(a) => vec![a],
             Self::Stereo(a, b) => vec![a, b],
+            Self::Source { .. } => Vec::new(),
+        }
+    }
+
+    /// The tap channels of this input through strip `strip`, left first.
+    pub fn tap_channels(self, strip: usize) -> Vec<TapChannel> {
+        match self {
+            Self::Source {
+                device,
+                left,
+                right,
+                ..
+            } => vec![
+                TapChannel::source(device, left, strip),
+                TapChannel::source(device, right, strip),
+            ],
+            host => host
+                .channels()
+                .into_iter()
+                .map(|h| TapChannel::host(h, strip))
+                .collect(),
+        }
+    }
+
+    /// The compensation of a recording from this input, when it is not the hardware round trip:
+    /// a strip's is the latency of its path.
+    pub fn compensation(self) -> Option<i64> {
+        match self {
+            Self::Source { latency, .. } => Some(i64::from(latency)),
+            _ => None,
         }
     }
 }
@@ -211,12 +256,7 @@ pub fn plan_tap(tracks: &[(DeviceKey, TrackInput)]) -> TapPlan {
         .enumerate()
         .map(|(strip, (device, input))| {
             let first = channels.len();
-            channels.extend(
-                input
-                    .channels()
-                    .into_iter()
-                    .map(|host| TapChannel { host, strip }),
-            );
+            channels.extend(input.tap_channels(strip));
             PlannedTrack {
                 device: device.clone(),
                 input: *input,

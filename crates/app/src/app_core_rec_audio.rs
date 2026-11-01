@@ -10,6 +10,16 @@
 //!   nothing starts). One engine record tap covers the union of the needed channels (4 s of
 //!   audio), and a writer thread drains it into per-track files in the bundle's `Audio/`
 //!   (the session scratch bundle until the project is saved).
+//! * **Resampling** (the track's `rec_source` param, [`atomik_model::RecSource`]): a track whose
+//!   source is a console strip records that strip's stereo output instead of the inputs: the
+//!   engine tap copies the strip's `out_l`/`out_r` (the master's `main_l`/`main_r`) at the end of
+//!   every batch, sample-exact, through the track's own gain and clip-safe strip like an input.
+//!   The take is placed with the *path's* latency as its compensation (the strip's readout from
+//!   the delay compensation report) instead of the hardware round trip, so a clip lands where
+//!   the strip's audio plays on the timeline; a delay the strip adds without reporting it (a
+//!   positive `latency.adjust`) is part of what is heard, so it is part of the clip. A track
+//!   cannot record a strip it feeds ([`atomik_model::source_refusal`]): it records nothing and
+//!   the message says why. The header meters of such a track show the strip's output.
 //! * **Input gain and clip-safe** ([`crate::audio_record`]): each armed track's `rec_gain` and
 //!   `rec_clip_safe` params go to the tap's strip of that track when the take starts and every
 //!   UI frame after ([`AppCore::feed_take_inputs`]), so the file holds the gained (and, with
@@ -67,12 +77,16 @@
 use super::*;
 use crate::audio_import::{Loaded, ticks_for_frames};
 use crate::audio_record::{
-    TAP_SECONDS, input_peak, input_peaks, input_settings, place_lap, plan_tap, track_input,
+    TAP_SECONDS, TrackInput, input_peak, input_peaks, input_settings, place_lap, plan_tap,
+    track_input,
 };
 use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
 use atomik_engine::TapControls;
+use atomik_model::console::MASTER_TYPE;
 use atomik_model::song::AUDIO_TRACK_TYPE;
-use atomik_model::{AssetMeta, AudioClipContent, Clip, ClipContent, ClipId};
+use atomik_model::{
+    AssetMeta, AudioClipContent, Clip, ClipContent, ClipId, RecSource, rec_source, source_refusal,
+};
 use atomik_ui::{ChannelMeters, MeterSource, RecInput, TrackLevel};
 use std::sync::mpsc::Sender;
 
@@ -118,17 +132,82 @@ impl<S: EngineSink> AppCore<S> {
             .collect()
     }
 
+    /// The input of an audio track that records the console strip `source` names: the strip's
+    /// stereo output in the engine and the latency of its path. `Err` is the reason the track
+    /// cannot record it (module docs).
+    pub(super) fn strip_input(
+        &self,
+        track: &DeviceKey,
+        source: RecSource,
+    ) -> Result<TrackInput, String> {
+        if let Some(reason) = source_refusal(self.doc(), track, source) {
+            return Err(reason);
+        }
+        let strip = source
+            .strip(&self.doc().console)
+            .ok_or_else(|| "its record source is not in the mixer".to_owned())?;
+        let device = self
+            .doc()
+            .device(&strip)
+            .ok_or_else(|| "its record source is not in the mixer".to_owned())?;
+        let master = device.type_id == MASTER_TYPE;
+        let (l, r) = if master {
+            ("main_l", "main_r")
+        } else {
+            ("out_l", "out_r")
+        };
+        let descriptor = self
+            .registry
+            .get(&device.type_id)
+            .map(|f| f.descriptor)
+            .ok_or_else(|| "its record source has no device type".to_owned())?;
+        let (Some(left), Some(right)) = (descriptor.socket_by_key(l), descriptor.socket_by_key(r))
+        else {
+            return Err("its record source has no stereo output".to_owned());
+        };
+        let id = *self
+            .ids
+            .get(&strip)
+            .ok_or_else(|| "its record source is not in the engine yet".to_owned())?;
+        let latency = if master {
+            self.output_latency
+        } else {
+            self.readouts
+                .iter()
+                .find(|(k, _)| *k == strip)
+                .map_or(0, |(_, l)| *l)
+        };
+        Ok(TrackInput::Source {
+            device: id,
+            left: left.id,
+            right: right.id,
+            latency,
+        })
+    }
+
     /// Starts the audio part of a take for the armed audio `tracks` (module docs). False when
     /// nothing records (the reason is reported).
     pub(super) fn start_audio_recording(&mut self, tracks: &[DeviceKey]) -> bool {
         let mut planned = Vec::new();
         let mut names = Vec::new();
         let mut missing = Vec::new();
+        let mut refused = Vec::new();
         for key in tracks {
             let name = self
                 .doc()
                 .device(key)
                 .map_or_else(|| key.0.clone(), |d| d.name.clone());
+            let source = rec_source(self.doc(), key, &self.registry);
+            if source.is_strip() {
+                match self.strip_input(key, source) {
+                    Ok(input) => {
+                        planned.push((key.clone(), input));
+                        names.push(name);
+                    }
+                    Err(reason) => refused.push(format!("{name}: {reason}")),
+                }
+                continue;
+            }
             match track_input(self.doc(), key) {
                 Some(input) => {
                     planned.push((key.clone(), input));
@@ -136,6 +215,9 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 None => missing.push(name),
             }
+        }
+        for reason in refused {
+            self.reject(format!("audio track {reason}: it records nothing"));
         }
         if !missing.is_empty() {
             self.reject(format!(
@@ -256,16 +338,6 @@ impl<S: EngineSink> AppCore<S> {
                 clip_safe: settings.clip_safe,
             }
         });
-        let host = self.host_input_peaks();
-        let peaks: Vec<(DeviceKey, f32)> = armed
-            .iter()
-            .map(|key| {
-                let peak = track_input(self.doc(), key).map_or(0.0, |input| {
-                    input_peak(host, input, input_settings(self.doc(), key, &self.registry))
-                });
-                (key.clone(), peak)
-            })
-            .collect();
         // A click on either meter of a track clears the lamp of the other, so they agree.
         for device in self.arrangement.take_meter_clears() {
             if device.1 == MeterSource::Input {
@@ -277,8 +349,32 @@ impl<S: EngineSink> AppCore<S> {
                 .clear_meter_latch(&device, MeterSource::Input);
         }
         self.transport_bar.set_rec_input(source);
-        self.transport_bar.feed_rec_peaks(&peaks, now_seconds);
         self.feed_track_meters(&armed, now_seconds);
+        // After the headers: the frame's console readings are in, and a track that records a
+        // strip meters that strip.
+        let host = self.host_input_peaks();
+        let peaks: Vec<(DeviceKey, f32)> = armed
+            .iter()
+            .map(|key| {
+                let settings = input_settings(self.doc(), key, &self.registry);
+                let peak = match self.strip_peaks(key) {
+                    Some([l, r]) => l.max(r) * settings.gain(),
+                    None => track_input(self.doc(), key)
+                        .map_or(0.0, |input| input_peak(host, input, settings)),
+                };
+                (key.clone(), peak)
+            })
+            .collect();
+        self.transport_bar.feed_rec_peaks(&peaks, now_seconds);
+    }
+
+    /// This frame's output peaks of the strip an armed audio track records, left and right (not
+    /// gained); `None` when the track records the inputs, or its strip has no reading.
+    fn strip_peaks(&self, track: &DeviceKey) -> Option<[f32; 2]> {
+        let source = rec_source(self.doc(), track, &self.registry);
+        let strip = source.strip(&self.doc().console)?;
+        let (_, m) = self.frame_readings.iter().find(|(k, _)| *k == strip)?;
+        Some([m.out_peak_l, m.out_peak_r])
     }
 
     /// Feeds the meters in the arrangement's audio track headers (module docs): the input of an
@@ -311,6 +407,15 @@ impl<S: EngineSink> AppCore<S> {
             .map(|device| {
                 if armed.contains(&device) {
                     let settings = input_settings(self.doc(), &device, &self.registry);
+                    if let Some([l, r]) = self.strip_peaks(&device) {
+                        let g = settings.gain();
+                        return TrackLevel {
+                            device,
+                            source: MeterSource::Input,
+                            peaks: [l * g, r * g],
+                            stereo: true,
+                        };
+                    }
                     let (peaks, stereo) = track_input(self.doc(), &device)
                         .map_or(([0.0; 2], true), |input| input_peaks(host, input, settings));
                     return TrackLevel {

@@ -322,25 +322,30 @@ fn run(
     }))
 }
 
-/// Cuts every file into laps and stores them.
+/// Cuts every file into laps and stores them. A track that records a console strip is placed with
+/// its own compensation (the latency of the strip's path), the others with the take's.
 fn store_laps(
     config: &WriterConfig,
     first: u64,
     frames: u64,
     finish: &FinishInfo,
 ) -> Result<Vec<RecordedLap>, String> {
-    let range = TakeRange {
-        first_engine_frame: first,
-        frames,
-        compensation: finish.compensation,
-        valid_from: finish.valid_from,
-    };
-    let segments = split_laps(&range, &*finish.position);
     let mut bundle = config.bundle.clone();
     let mut laps = Vec::new();
     for track in &config.tracks {
+        let range = TakeRange {
+            first_engine_frame: first,
+            frames,
+            compensation: track
+                .planned
+                .input
+                .compensation()
+                .unwrap_or(finish.compensation),
+            valid_from: finish.valid_from,
+        };
+        let segments = split_laps(&range, &*finish.position);
         if segments.is_empty() {
-            break;
+            continue;
         }
         let mut reader = WavStreamReader::open(&track.path).map_err(io)?;
         let channels = track.planned.tap_index.len();

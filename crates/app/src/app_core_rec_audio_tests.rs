@@ -1135,3 +1135,215 @@ fn recording_over_an_audio_clip_makes_a_take_group_of_two_takes_in_one_undo_step
             .is_empty()
     );
 }
+
+// ---------------------------------------------------------------- resampling a console strip
+
+/// A bounded, never-silent input.
+fn wobble(c: usize, f: u64) -> f32 {
+    (((f * 7 + c as u64 * 13) % 1_000) as f32) * 1.0e-3 - 0.5
+}
+
+/// Renders `frames` frames and appends the host output to `out` (one vector per channel).
+fn pump_collect(core: &mut AppCore<OfflineSink>, frames: usize, out: &mut Vec<Vec<f32>>) {
+    let mut done = 0;
+    while done < frames {
+        let n = 480.min(frames - done);
+        let block = core.sink_mut().render(n);
+        out.resize_with(block.len(), Vec::new);
+        for (all, b) in out.iter_mut().zip(block) {
+            all.extend(b);
+        }
+        core.frame();
+        done += n;
+    }
+}
+
+fn set_monitor(core: &mut AppCore<impl EngineSink>, key: &DeviceKey, mode: f32) {
+    set_input_param(core, key, "monitor", mode);
+}
+
+/// A project with a monitored source track `a` playing the input, and a printer track `b` whose
+/// channel goes to Audio I/O pair 2 (so it is not in the master), armed with `source`.
+fn printer_core(source: atomik_model::RecSource) -> (AppCore<OfflineSink>, DeviceKey, DeviceKey) {
+    let mut core = core_with(2);
+    core.sink_mut().input = Box::new(wobble);
+    core.apply_command(Command::SetOutputChannels(4)).unwrap();
+    let a = add_audio_track(&mut core, "Source");
+    let b = add_audio_track(&mut core, "Printer");
+    set_monitor(&mut core, &a, 2.0);
+    set_monitor(&mut core, &b, 0.0);
+    let channel = core.doc().console.channel_of(&b).unwrap().channel.clone();
+    core.apply_command(Command::Console(atomik_model::ConsoleCommand::SetOutput {
+        strip: channel,
+        dest: atomik_model::console::OutputDest::AudioIo(2),
+    }))
+    .unwrap();
+    set_input_param(&mut core, &b, "rec_source", source.value());
+    arm(&mut core, &b, true);
+    (core, a, b)
+}
+
+#[test]
+fn recording_the_master_gives_the_rendered_output_sample_for_sample_on_the_timeline() {
+    let (mut core, _a, b) = printer_core(atomik_model::RecSource::Master);
+    let mut out = Vec::new();
+    core.transport_action(TransportAction::ToggleRecord);
+    assert!(core.is_recording(), "{:?}", core.last_rejection());
+    pump_collect(&mut core, 4_800, &mut out);
+    let f_start = start_frame(&core) as usize;
+    pump_collect(&mut core, 48_000, &mut out);
+    core.transport_action(TransportAction::Stop);
+    pump_collect(&mut core, 4_800, &mut out);
+    core.wait_background();
+
+    let list = clips(&core, &b);
+    assert_eq!(list.len(), 1, "{:?}", core.last_rejection());
+    let (hash, offset) = asset_of(&list[0]);
+    assert_eq!((list[0].start, offset), (0, 0));
+    let data = bundle_of(&core).load(hash).unwrap();
+    assert_eq!(data.channels.len(), 2, "a stereo pair");
+    assert!(data.frames() > 48_000);
+    // The master has no latency here, and the host output lags the engine by one batch: asset
+    // frame j is engine frame `f_start + j`, heard at output frame `f_start + j + 64`.
+    let mut audible = 0;
+    for (c, ch) in data.channels.iter().enumerate() {
+        for (j, v) in ch.iter().enumerate() {
+            assert_eq!(
+                v.to_bits(),
+                out[c][f_start + j + 64].to_bits(),
+                "channel {c}, frame {j}"
+            );
+            audible += usize::from(*v != 0.0);
+        }
+    }
+    assert!(audible > 40_000, "the take is not silence: {audible}");
+}
+
+#[test]
+fn a_track_that_feeds_its_own_record_source_is_refused_and_nothing_is_recorded() {
+    let (mut core, _a, b) = printer_core(atomik_model::RecSource::Channel(2));
+    core.transport_action(TransportAction::ToggleRecord);
+    assert!(!core.is_recording());
+    assert!(
+        core.last_rejection()
+            .is_some_and(|m| m.contains("record itself")),
+        "{:?}",
+        core.last_rejection()
+    );
+    assert!(clips(&core, &b).is_empty());
+    // A source that is not in the mixer is refused too.
+    set_input_param(&mut core, &b, "rec_source", 1_005.0);
+    core.transport_action(TransportAction::ToggleRecord);
+    assert!(!core.is_recording());
+    assert!(
+        core.last_rejection()
+            .is_some_and(|m| m.contains("does not exist")),
+        "{:?}",
+        core.last_rejection()
+    );
+}
+
+#[test]
+fn a_strip_with_latency_is_placed_by_its_path_latency() {
+    // Source track `a` plays a ramp through a channel whose insert is a compressor with its 5 ms
+    // lookahead (240 frames, delayed and reported). Printer `b` records that channel: the clip
+    // must hold the ramp at its own song frames, so the strip's reported latency is the take's
+    // compensation.
+    let dir = tmp("strip-latency");
+    let wav = write_ramp(&dir, "ramp.wav", 96_000);
+    let mut core = core_with(2);
+    core.apply_command(Command::SetOutputChannels(4)).unwrap();
+    core.import_audio(vec![wav], atomik_ui::ImportTarget::NewTracks, 0);
+    core.wait_background();
+    let a = core.doc().song.tracks[0].device.clone();
+    let b = add_audio_track(&mut core, "Printer");
+    set_monitor(&mut core, &b, 0.0);
+    let ch_a = core.doc().console.channel_of(&a).unwrap().channel.clone();
+    core.apply_command(Command::AddDevice {
+        key: Some(DeviceKey("comp".to_owned())),
+        type_id: "atomik.compressor".to_owned(),
+        index: usize::MAX,
+    })
+    .unwrap();
+    let comp = DeviceKey("comp".to_owned());
+    for side in ["l", "r"] {
+        for (from, to) in [
+            (
+                (&ch_a, format!("insert_send_{side}")),
+                (&comp, format!("in_{side}")),
+            ),
+            (
+                (&comp, format!("out_{side}")),
+                (&ch_a, format!("insert_return_{side}")),
+            ),
+        ] {
+            core.apply_command(Command::Connect(atomik_model::Cable {
+                from: atomik_model::SocketRef {
+                    device: from.0.clone(),
+                    socket: from.1,
+                },
+                to: atomik_model::SocketRef {
+                    device: to.0.clone(),
+                    socket: to.1,
+                },
+            }))
+            .unwrap();
+        }
+    }
+    // No gain reduction (the ramp peaks at -6 dB), no makeup: the strip only delays.
+    set_input_param(&mut core, &comp, "lookahead", 5.0);
+    set_input_param(&mut core, &comp, "threshold", 0.0);
+    set_input_param(&mut core, &comp, "makeup", 0.0);
+    set_input_param(&mut core, &b, "rec_source", 1.0);
+    arm(&mut core, &b, true);
+    let ch_b = core.doc().console.channel_of(&b).unwrap().channel.clone();
+    core.apply_command(Command::Console(atomik_model::ConsoleCommand::SetOutput {
+        strip: ch_b,
+        dest: atomik_model::console::OutputDest::AudioIo(2),
+    }))
+    .unwrap();
+    // The engine publishes the lookahead while it renders; the app re-routes on the next frames.
+    pump(&mut core, 1_920, 64);
+    let readout = core
+        .latency_readouts()
+        .iter()
+        .find(|(k, _)| *k == ch_a)
+        .map(|(_, l)| *l)
+        .expect("a readout");
+    assert_eq!(readout, 240, "the strip reports the lookahead");
+
+    core.transport_action(TransportAction::ToggleRecord);
+    assert!(core.is_recording(), "{:?}", core.last_rejection());
+    pump(&mut core, 4_800 + 60_000, 480);
+    core.transport_action(TransportAction::Stop);
+    pump(&mut core, 4_800, 480);
+    core.wait_background();
+
+    let list = clips(&core, &b);
+    assert_eq!(list.len(), 1, "{:?}", core.last_rejection());
+    let (hash, offset) = asset_of(&list[0]);
+    let data = bundle_of(&core).load(hash).unwrap();
+    let rate = core.doc().sample_rate;
+    let first = core.doc().song.frame_at(list[0].start, rate) + offset;
+    // The channel scales the ramp by a constant (fader, pan law): find it once, then every
+    // sample of the take must be that constant times the ramp at the same song frame.
+    let ramp = |i: u64| ((i % 977) as f32 / 977.0) - 0.5;
+    let probe = (0..2_000u64)
+        .find(|i| ramp(first + i).abs() > 0.2)
+        .expect("a loud ramp sample");
+    let k = data.channels[0][probe as usize] / ramp(first + probe);
+    assert!(
+        k.abs() > 0.1 && k.abs() < 2.0,
+        "a plausible strip gain: {k}"
+    );
+    for j in 0..40_000u64 {
+        let want = k * ramp(first + j);
+        let got = data.channels[0][j as usize];
+        assert!(
+            (got - want).abs() < 1.0e-4,
+            "song frame {}: {got} vs {want}",
+            first + j
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

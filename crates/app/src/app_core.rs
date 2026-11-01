@@ -322,6 +322,8 @@ pub struct AppCore<S: EngineSink> {
     latency_epoch: u64,
     /// Per-channel latency readouts of the current routing (frames).
     readouts: Vec<(DeviceKey, u32)>,
+    /// Latency of the slowest signal reaching the interface outputs (the master's), in frames.
+    output_latency: u32,
     /// The current routing hit the 10 s compensation limit.
     pdc_limit: bool,
     /// Audio cables of the current routing that arrive later than a sibling cable and are not
@@ -492,6 +494,7 @@ impl<S: EngineSink> AppCore<S> {
             readings_fresh: false,
             latency_epoch: 0,
             readouts: Vec::new(),
+            output_latency: 0,
             pdc_limit: false,
             pdc_misaligned: (0, 0),
             io_meters: io_ops::IoMeters::default(),
@@ -1938,6 +1941,7 @@ impl<S: EngineSink> AppCore<S> {
             .filter(|(k, _)| channels.contains(&k))
             .map(|(k, ends)| (k.clone(), latency_of(ends[0]).unwrap_or(0)))
             .collect();
+        self.output_latency = report.output_latency;
         self.pdc_limit = report.limit_exceeded;
         self.pdc_misaligned = (
             report.misaligned.len(),

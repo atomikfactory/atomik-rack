@@ -521,3 +521,39 @@ fn the_header_meter_reads_each_channel_of_the_input_times_the_gain() {
         [0.0, 0.0]
     );
 }
+
+#[test]
+fn a_strip_input_taps_two_device_sockets_and_carries_its_own_compensation() {
+    use atomik_device_sdk::SocketId;
+    use atomik_engine::{DeviceInstanceId, TapChannel};
+    let strip = TrackInput::Source {
+        device: DeviceInstanceId(7),
+        left: SocketId(2),
+        right: SocketId(3),
+        latency: 240,
+    };
+    assert!(strip.channels().is_empty(), "no host channel");
+    assert_eq!(strip.compensation(), Some(240));
+    assert_eq!(TrackInput::Mono(0).compensation(), None);
+    let plan = plan_tap(&[
+        (key("in"), TrackInput::Stereo(0, 1)),
+        (key("print"), strip),
+        (key("in2"), TrackInput::Mono(1)),
+    ]);
+    assert_eq!(
+        plan.channels,
+        vec![
+            TapChannel::host(0, 0),
+            TapChannel::host(1, 0),
+            TapChannel::source(DeviceInstanceId(7), SocketId(2), 1),
+            TapChannel::source(DeviceInstanceId(7), SocketId(3), 1),
+            TapChannel::host(1, 2),
+        ]
+    );
+    assert_eq!(plan.tracks[1].tap_index, vec![2, 3]);
+    assert_eq!(plan.tracks[2].tap_index, vec![4]);
+    // The host meters have nothing to say about a strip.
+    let unity = InputSettings::default();
+    assert_eq!(input_peaks(&[1.0, 1.0], strip, unity), ([0.0; 2], true));
+    assert_eq!(input_peak(&[1.0, 1.0], strip, unity), 0.0);
+}
