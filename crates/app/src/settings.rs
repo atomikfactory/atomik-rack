@@ -107,6 +107,11 @@ pub const DEFAULT_METRONOME_GAIN: f32 = 0.5;
 pub const MAX_PRE_COUNT_BARS: u8 = 4;
 /// Pre-count lengths offered by the settings dialog (bars; 0 = off).
 pub const PRE_COUNT_CHOICES: [u8; 5] = [0, 1, 2, 3, 4];
+/// Master tunes offered by the settings dialog (cents around A = 440 Hz); the project's own value
+/// is added when it is none of these.
+pub const MASTER_TUNE_CHOICES: [f32; 15] = [
+    -100.0, -50.0, -20.0, -10.0, -5.0, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0,
+];
 /// Settings file name.
 pub const SETTINGS_FILE: &str = "settings.json";
 
@@ -540,6 +545,10 @@ pub struct AudioSettings {
     pub sync: SyncSettings,
     /// Device loss handling and the last working device configuration.
     pub device_loss: DeviceLossSettings,
+    /// The master tune in cents around A = 440 Hz, within +/-100 (default 0). The Audio tab edits
+    /// the open project's tune with it; once changed there, it is also the tune new projects
+    /// start with ([`atomik_model::RackDoc::tune_cents`]).
+    pub master_tune_cents: f32,
 }
 
 impl Default for AudioSettings {
@@ -562,6 +571,7 @@ impl Default for AudioSettings {
             midi_out_port: None,
             sync: SyncSettings::default(),
             device_loss: DeviceLossSettings::default(),
+            master_tune_cents: 0.0,
         }
     }
 }
@@ -625,6 +635,13 @@ impl AudioSettings {
             pre_count_bars: self.pre_count_bars.min(MAX_PRE_COUNT_BARS),
             buffer_frames: self.buffer_frames.clamp(MIN_BUFFER, MAX_BUFFER),
             workers: self.workers.min(MAX_WORKERS),
+            master_tune_cents: if self.master_tune_cents.is_finite()
+                && self.master_tune_cents.abs() <= atomik_model::MASTER_TUNE_MAX_CENTS
+            {
+                self.master_tune_cents
+            } else {
+                0.0
+            },
             metronome_gain: if self.metronome_gain.is_finite() {
                 self.metronome_gain.clamp(0.0, 1.0)
             } else {
@@ -1128,6 +1145,7 @@ mod tests {
                     buffer_frames: 256,
                 }),
             },
+            master_tune_cents: -12.5,
         };
         let json = s.to_json();
         assert!(json.contains("\"host\": \"asio\""), "{json}");
@@ -1459,5 +1477,23 @@ mod tests {
         assert_eq!(s.pre_count_bars, 2);
         let s = AudioSettings::from_json(r#"{"pre_count_bars": 9}"#).unwrap();
         assert_eq!(s.pre_count_bars, MAX_PRE_COUNT_BARS);
+    }
+
+    #[test]
+    fn the_master_tune_defaults_to_zero_and_a_value_out_of_range_is_dropped() {
+        assert!(
+            AudioSettings::from_json("{}")
+                .unwrap()
+                .master_tune_cents
+                .abs()
+                < 1e-9
+        );
+        let s = AudioSettings::from_json(r#"{"master_tune_cents": -12.5}"#).unwrap();
+        assert!((s.master_tune_cents + 12.5).abs() < 1e-6);
+        for bad in ["100.5", "-250", "1e9"] {
+            let s =
+                AudioSettings::from_json(&format!(r#"{{"master_tune_cents": {bad}}}"#)).unwrap();
+            assert!(s.master_tune_cents.abs() < 1e-9, "{bad}");
+        }
     }
 }
