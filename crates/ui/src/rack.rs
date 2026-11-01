@@ -564,6 +564,8 @@ pub struct RackView {
     /// A library item (a patch, a container or a device) is being dragged over the rack: the
     /// drop line follows the pointer.
     lib_drop: bool,
+    /// The device type of the patch file being dragged (read once per drag).
+    patch_peek: Option<(std::path::PathBuf, Option<String>)>,
     /// Selected pad of each drum machine (view state, not in the document).
     pads: BTreeMap<DeviceKey, u8>,
     /// Sensitivity of each loop slicer panel (view state, not in the document).
@@ -808,6 +810,7 @@ impl RackView {
             drop_hover: None,
             drop_pad: None,
             lib_drop: false,
+            patch_peek: None,
             pads: BTreeMap::new(),
             sens: BTreeMap::new(),
             sc_menu: None,
@@ -2852,14 +2855,19 @@ impl RackView {
             }
             UiEvent::FileHover { pos, paths } => {
                 let library = paths.iter().any(|p| library_drop::is_library(p));
-                let line =
-                    library_drop::rack_item(paths).is_some() && self.rack_area().contains(*pos);
+                let into = self.patch_target(paths, *pos);
+                let line = into.is_none()
+                    && library_drop::rack_item(paths).is_some()
+                    && self.rack_area().contains(*pos);
                 if line {
-                    self.pointer = *pos;
+                    self.pointer = self.patch_insert_point(paths, *pos);
                 }
                 self.set_lib_drop(line);
-                // A library item is never a sample: the sampler panel does not light up.
-                let target = if paths.is_empty() || library {
+                // A library item is never a sample: the sampler panel does not light up. A
+                // patch over a device of its own type outlines that device instead of the line.
+                let target = if into.is_some() {
+                    into
+                } else if paths.is_empty() || library {
                     None
                 } else {
                     self.sampler_at(*pos)
@@ -2872,13 +2880,28 @@ impl RackView {
                 self.set_drop_hover(None);
                 self.set_drop_pad(None);
                 self.set_lib_drop(false);
+                self.patch_peek = None;
             }
             UiEvent::FileDrop { pos, paths } => {
                 self.set_lib_drop(false);
                 if paths.iter().any(|p| library_drop::is_library(p)) {
                     self.set_drop_hover(None);
                     self.set_drop_pad(None);
-                    // A patch dropped on the patch strip of a device is for that device.
+                    // A patch dropped on a device of its own type is for that device (anywhere
+                    // on the panel, not only on its patch strip).
+                    let into = self.patch_target(paths, *pos);
+                    self.patch_peek = None;
+                    if let Some(path) = library_drop::patch_item(paths)
+                        && let Some(i) = into
+                    {
+                        out.push(UiAction::ApplyLibraryPatch {
+                            path: path.clone(),
+                            device: self.devices[i].key.clone(),
+                        });
+                        return out;
+                    }
+                    // A patch dropped on the patch strip of a device is for that device (the
+                    // app says why when its type does not fit).
                     if let Some(path) = library_drop::patch_item(paths)
                         && let Some(Hit::Patch(i, _)) = self.hit(*pos)
                     {
@@ -2892,7 +2915,8 @@ impl RackView {
                         && self.rack_area().contains(*pos)
                     {
                         let none = vec![false; self.devices.len()];
-                        let dp = self.drop_point(self.view_to_rack(*pos), &none);
+                        let at = self.patch_insert_point(paths, *pos);
+                        let dp = self.drop_point(self.view_to_rack(at), &none);
                         let index = self.slot_index(doc, &dp, &[]);
                         // Inside a container there is one column: the index counts its devices.
                         let column = if self.scope.is_empty() { dp.column } else { 0 };
@@ -2941,6 +2965,34 @@ impl RackView {
         }
     }
 
+    /// The device panel (device index) a patch in `paths` dropped at `pos` loads into: the
+    /// panel under the pointer when the file holds one device of that panel's type.
+    fn patch_target(&mut self, paths: &[std::path::PathBuf], pos: Point) -> Option<usize> {
+        let path = library_drop::patch_item(paths)?;
+        let i = self.hit(pos)?.device()?;
+        let type_id = self.devices[i].device.as_ref()?.type_id.clone();
+        if self.patch_peek.as_ref().is_none_or(|(p, _)| p != path) {
+            self.patch_peek = Some((path.clone(), library_drop::patch_device_type(path)));
+        }
+        let held = self.patch_peek.as_ref()?.1.as_deref()?;
+        (held == type_id).then_some(i)
+    }
+
+    /// Where a library item dropped at `pos` goes, as a view position: the pointer, except
+    /// for a patch over a device panel that does not take it, which goes right below that
+    /// device.
+    fn patch_insert_point(&self, paths: &[std::path::PathBuf], pos: Point) -> Point {
+        if library_drop::patch_item(paths).is_some()
+            && let Some(i) = self.hit(pos).and_then(Hit::device)
+            && i > 0
+        {
+            let d = &self.devices[i];
+            let rp = self.view_to_rack(pos);
+            return self.rack_to_view(Point::new(rp.x, d.y + d.height / 2.0 + 1.0));
+        }
+        pos
+    }
+
     fn set_lib_drop(&mut self, on: bool) {
         if self.lib_drop != on {
             self.lib_drop = on;
@@ -2971,6 +3023,41 @@ impl RackView {
         if self.drop_hover != target {
             self.drop_hover = target;
             self.repaint = true;
+        }
+    }
+
+    /// The mouse cursor to show. A device dragged past the threshold shows the closed hand over
+    /// the rack and the not-allowed cursor where a release drops it (the navigator, anywhere
+    /// outside the rack area); a palette row dragged out shows the copy cursor over the rack
+    /// (the release inserts a device) and not-allowed elsewhere. Over the plate or the name of
+    /// a device that can be dragged it is the open hand.
+    pub fn cursor(&self) -> crate::CursorHint {
+        use crate::CursorHint;
+        let over_rack = self.rack_area().contains(self.pointer) && !self.in_navigator(self.pointer);
+        match &self.drag {
+            Drag::Move { start, at, .. } if (*at - *start).hypot() > MOVE_THRESHOLD => {
+                if over_rack {
+                    CursorHint::Dragging
+                } else {
+                    CursorHint::NotAllowed
+                }
+            }
+            Drag::Browser { active: true, .. } => {
+                if over_rack {
+                    CursorHint::Copy
+                } else {
+                    CursorHint::NotAllowed
+                }
+            }
+            Drag::None => match self.hover {
+                Some(Hit::Plate(i) | Hit::Name(i))
+                    if self.locked.as_ref() != Some(&self.devices[i].key) =>
+                {
+                    CursorHint::Hand
+                }
+                _ => CursorHint::Default,
+            },
+            _ => CursorHint::Default,
         }
     }
 
