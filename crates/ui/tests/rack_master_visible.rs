@@ -104,6 +104,12 @@ fn the_master_plate_cannot_be_dragged_and_nothing_goes_above_it() {
     let d = two_instruments(&reg);
     let doc = d.doc();
     let mut v = fresh(doc, &reg);
+    // Two seven-unit synths and the master: tall enough to show the master.
+    let _ = v.handle(
+        &UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 1800.0)),
+        doc,
+        &reg,
+    );
     // Dragging the master down emits nothing, but the click still selects it.
     let at = v.plate_center(&key("master")).unwrap();
     let _ = v.handle(&down(at), doc, &reg);

@@ -248,11 +248,17 @@ pub fn paint_rack(v: &mut RackView, doc: &RackDoc) -> DisplayList {
     dl
 }
 
-/// A fresh synced view of `doc`, 1000 x 1200 logical, entered into `scope`.
+/// The size of a scoped view: tall, because a poly synth panel is seven rack units.
+pub const SCOPED: atomik_ui::kurbo::Size = atomik_ui::kurbo::Size::new(1000.0, 1800.0);
+
+/// A fresh synced view of `doc`, 1000 x 1800 logical, entered into `scope`.
 pub fn scoped_view(doc: &RackDoc, scope: &[&str]) -> RackView {
     let reg = registry();
     // The rack with console devices hidden.
-    let mut v = plain_view(doc, &reg);
+    let mut v = RackView::new(Theme::dark());
+    v.set_show_console_devices(false);
+    let _ = v.handle(&UiEvent::Resize(SCOPED), doc, &reg);
+    v.sync(doc, &reg);
     v.set_scope(&path(scope));
     v.sync(doc, &reg);
     v

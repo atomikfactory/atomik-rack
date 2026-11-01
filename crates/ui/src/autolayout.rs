@@ -1077,13 +1077,15 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
 mod tests {
     use super::*;
     use atomik_devices::{
-        duck, dynamics, env_filter, gain_tool, gate, line_mixer, poly_synth, spider, stereo_delay,
-        stereo_tool,
+        dual_layer, duck, dynamics, env_filter, gain_tool, gate, line_mixer, mono_bass, poly_synth,
+        spider, stereo_delay, stereo_tool,
     };
 
-    fn all() -> [&'static DeviceDescriptor; 11] {
+    fn all() -> [&'static DeviceDescriptor; 13] {
         [
             &poly_synth::DESCRIPTOR,
+            &mono_bass::DESCRIPTOR,
+            dual_layer::descriptor(),
             &line_mixer::DESCRIPTOR,
             &stereo_delay::DESCRIPTOR,
             &gain_tool::DESCRIPTOR,
@@ -1218,7 +1220,14 @@ mod tests {
     fn heights_are_compact() {
         assert_eq!(auto_layout(&stereo_delay::DESCRIPTOR).height_units, 1);
         assert_eq!(auto_layout(&line_mixer::DESCRIPTOR).height_units, 2);
-        assert!(auto_layout(&poly_synth::DESCRIPTOR).height_units <= 4);
+        // The synths have the most params: the poly synth and the mono bass (the same params)
+        // fit in 7 units, the two layers of the dual layer in 16 (the most a panel can take).
+        assert!(auto_layout(&poly_synth::DESCRIPTOR).height_units <= 7);
+        assert_eq!(
+            auto_layout(&mono_bass::DESCRIPTOR).height_units,
+            auto_layout(&poly_synth::DESCRIPTOR).height_units
+        );
+        assert!(auto_layout(dual_layer::descriptor()).height_units <= MAX_UNITS);
     }
 
     #[test]

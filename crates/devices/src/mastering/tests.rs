@@ -119,7 +119,7 @@ fn noise(seed: u64, amp: f32) -> impl Fn(usize) -> f32 {
     move |n| v[n % v.len()]
 }
 
-const ALL_KEYS: [&str; 29] = [
+const ALL_KEYS: [&str; 36] = [
     "input",
     "multiband.on",
     "xover.low",
@@ -148,6 +148,13 @@ const ALL_KEYS: [&str; 29] = [
     "release",
     "output",
     "meter.reset",
+    "softclip",
+    "lookahead",
+    "width.split",
+    "width.freq",
+    "width.lo",
+    "width.hi",
+    "width.solo",
     "bypass",
 ];
 
@@ -907,4 +914,237 @@ fn meter_values_layout_and_defaults() {
     let mut small = [9.0f32; 3];
     assert_eq!(h.device().meter_values(&mut small), 3);
     assert_eq!(small, [-120.0; 3]);
+}
+
+// ------------------------------------------------------------------ soft clip, look-ahead, split width
+
+#[test]
+fn the_new_params_at_their_defaults_change_no_bit() {
+    let n = noise(7, 0.8);
+    let run_with = |extra: &[(&str, f32)]| {
+        let mut h = dev();
+        h.set_param("width", 1.3);
+        h.set_param("mono_below", 90.0);
+        for (k, v) in extra {
+            h.set_param(k, *v);
+        }
+        let (l, r) = run(&mut h, &n, &n, 0, 40 * BATCH);
+        l.iter()
+            .chain(&r)
+            .map(|v| v.to_bits())
+            .collect::<Vec<u32>>()
+    };
+    let plain = run_with(&[]);
+    // Explicit defaults, and the split-band controls while the split is off.
+    let defaults = run_with(&[
+        ("softclip", 0.0),
+        ("lookahead", 1.0),
+        ("width.split", 0.0),
+        ("width.freq", 800.0),
+        ("width.lo", 0.2),
+        ("width.hi", 1.9),
+        ("width.solo", 2.0),
+    ]);
+    assert_eq!(plain, defaults);
+}
+
+#[test]
+fn the_soft_clip_is_transparent_when_quiet_and_rounds_the_peaks_when_loud() {
+    let sr = 48_000.0;
+    let quiet = tone(1_000.0, -40.0, sr);
+    let loud = tone(1_000.0, -1.0, sr);
+    let peak_of = |amount: f32, s: Sig| {
+        let mut h = plain(sr);
+        h.set_param("softclip", amount);
+        let (l, _) = run(&mut h, s, s, 0, 24_000);
+        l[12_000..].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    };
+    // Small signals pass with unity gain.
+    let (q0, q1) = (peak_of(0.0, &quiet), peak_of(1.0, &quiet));
+    assert!((q1 / q0 - 1.0).abs() < 0.01, "quiet {q0} vs {q1}");
+    // A loud sine is cut below the ceiling c = 2^(1 - 2 amount) at full amount, and the amount
+    // moves it monotonically.
+    let (l0, l5, l1) = (
+        peak_of(0.0, &loud),
+        peak_of(0.5, &loud),
+        peak_of(1.0, &loud),
+    );
+    assert!(l1 < l5 && l5 < l0, "{l0} {l5} {l1}");
+    assert!(l1 < 0.5, "full amount stays under 0.5: {l1}");
+}
+
+#[test]
+fn the_soft_clip_antiderivative_matches_the_curve_and_lowers_aliasing() {
+    // For a tiny step the ADAA value is the curve at the midpoint; for a slow signal it equals
+    // the point curve to a small error.
+    let c = 0.5f64;
+    let curve = |x: f64| x / (1.0 + (x / c) * (x / c)).sqrt();
+    for x in [-2.0f64, -0.3, 0.0, 0.4, 1.7] {
+        assert!((soft_clip_adaa(x, x, c) - curve(x)).abs() < 1e-12);
+        assert!((soft_clip_adaa(x + 1e-2, x, c) - curve(x + 5e-3)).abs() < 1e-4);
+    }
+    // Aliasing of a 5 kHz sine through the curve at 48 kHz, with and without ADAA.
+    let n = 8192usize;
+    let bin = 853usize;
+    let f0 = bin as f64 * 48_000.0 / n as f64;
+    let x: Vec<f64> = (0..n + 1024)
+        .map(|i| 1.5 * (TAU * f0 * i as f64 / 48_000.0).sin())
+        .collect();
+    let alias = |adaa: bool| {
+        let mut x1 = 0.0;
+        let y: Vec<f32> = x
+            .iter()
+            .map(|&v| {
+                let o = if adaa {
+                    soft_clip_adaa(v, x1, c)
+                } else {
+                    curve(v)
+                };
+                x1 = v;
+                o as f32
+            })
+            .collect();
+        let m = atomik_testkit::signal::magnitude_spectrum(&y[512..512 + n]);
+        let mut e = 0.0f64;
+        for (k, v) in m.iter().enumerate().skip(2) {
+            let near_harmonic = (1..)
+                .map(|h| h * bin)
+                .take_while(|h| *h < n / 2 + bin)
+                .any(|h| k.abs_diff(h) <= 4);
+            if !near_harmonic {
+                e += v * v;
+            }
+        }
+        e
+    };
+    let (plain, adaa) = (alias(false), alias(true));
+    assert!(adaa < plain * 0.5, "{plain} vs {adaa}");
+}
+
+#[test]
+fn the_lookahead_choice_sets_the_reported_latency_exactly() {
+    for sr in [44_100.0f64, 48_000.0, 96_000.0] {
+        for (choice, ms) in [(0.0f32, 0.5f64), (1.0, 1.5), (2.0, 4.0)] {
+            let mut h = dev_at(sr);
+            h.set_param("lookahead", choice);
+            let la = ((ms * 0.001 * sr).round() as usize).max(2);
+            assert_eq!(
+                h.device().latency_frames() as usize,
+                DETECT_DELAY + la,
+                "sr {sr} choice {choice}"
+            );
+            assert!(h.device().variable_latency());
+        }
+    }
+    // The measured delay of an impulse (multiband off, ceiling 0) is that latency.
+    for (choice, want) in [(0.0f32, 17 + 24usize), (1.0, 17 + 72), (2.0, 17 + 192)] {
+        let mut h = plain(48_000.0);
+        h.set_param("lookahead", choice);
+        let imp = |n: usize| if n == 5 { 0.5 } else { 0.0 };
+        let (l, _) = run(&mut h, &imp, &imp, 0, 8 * BATCH);
+        let at = l
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .unwrap()
+            .0;
+        assert_eq!(at, 5 + want, "choice {choice}");
+    }
+}
+
+#[test]
+fn the_limiter_holds_the_ceiling_at_every_lookahead() {
+    let bl = band_limited_noise(5, 120_000);
+    let sig = move |n: usize| bl[n % bl.len()];
+    for choice in [0.0f32, 1.0, 2.0] {
+        for ceiling in [-1.0f32, -6.0] {
+            let mut h = dev();
+            h.set_param("multiband.on", 0.0);
+            h.set_param("input", 9.0);
+            h.set_param("ceiling", ceiling);
+            h.set_param("lookahead", choice);
+            let (tp, _, _) = limited_peak(&mut h, &sig, &sig, 96_000);
+            assert!(
+                tp <= f64::from(ceiling) + 0.1,
+                "choice {choice} ceiling {ceiling}: {tp:.3} dBTP"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_width_scales_the_side_by_band_and_solos_a_band() {
+    let sr = 48_000.0;
+    // A side-only signal (l = -r) at 60 Hz and one at 4 kHz, split at 250 Hz.
+    let side = |hz: f64| {
+        let f = tone(hz, -12.0, sr);
+        move |n: usize| f(n)
+    };
+    let measure = |hz: f64, params: &[(&str, f32)]| {
+        let mut h = plain(sr);
+        h.set_param("width.split", 1.0);
+        for (k, v) in params {
+            h.set_param(k, *v);
+        }
+        let l = side(hz);
+        let r = move |n: usize| -l(n);
+        let l = side(hz);
+        let (ol, _) = run(&mut h, &l, &r, 0, 36_000);
+        tone_amplitude(&ol[24_000..36_000], hz, 24_000)
+    };
+    let unity = measure(60.0, &[]);
+    let narrow_lo = measure(60.0, &[("width.lo", 0.0)]);
+    assert!(narrow_lo < unity * 0.02, "{narrow_lo} vs {unity}");
+    // The high band is not touched by the low width, and the other way round.
+    let hi_unity = measure(4_000.0, &[]);
+    let hi_with_lo_zero = measure(4_000.0, &[("width.lo", 0.0)]);
+    assert!((hi_with_lo_zero / hi_unity - 1.0).abs() < 0.02);
+    let hi_wide = measure(4_000.0, &[("width.hi", 2.0)]);
+    assert!(
+        (hi_wide / hi_unity - 2.0).abs() < 0.05,
+        "{hi_wide} {hi_unity}"
+    );
+    // Solo low drops the high-band material and keeps the low one.
+    assert!(measure(4_000.0, &[("width.solo", 1.0)]) < hi_unity * 0.02);
+    assert!((measure(60.0, &[("width.solo", 1.0)]) / unity - 1.0).abs() < 0.02);
+    assert!(measure(60.0, &[("width.solo", 2.0)]) < unity * 0.02);
+}
+
+#[test]
+fn split_width_sums_flat_for_equal_widths() {
+    // With equal band widths of 100 % the two bands recombine to a flat magnitude (an LR4
+    // allpass), mid and side alike.
+    let sr = 48_000.0;
+    for hz in [60.0f64, 250.0, 1_000.0, 8_000.0] {
+        let mut h = plain(sr);
+        h.set_param("width.split", 1.0);
+        let a = tone(hz, -12.0, sr);
+        let b = tone(hz, -12.0, sr);
+        let (ol, or) = run(&mut h, &a, &|n| b(n) * 0.5, 0, 36_000);
+        let want_l = 10f64.powf(-12.0 / 20.0);
+        let got_l = tone_amplitude(&ol[24_000..36_000], hz, 24_000);
+        let got_r = tone_amplitude(&or[24_000..36_000], hz, 24_000);
+        assert!((got_l / want_l - 1.0).abs() < 0.01, "{hz} Hz L {got_l}");
+        assert!(
+            (got_r / (want_l * 0.5) - 1.0).abs() < 0.01,
+            "{hz} Hz R {got_r}"
+        );
+    }
+}
+
+#[test]
+fn the_new_params_are_allocation_free_and_finite_under_automation() {
+    let mut h = dev();
+    let n = noise(3, 1.0);
+    for i in 0..60usize {
+        h.set_param("softclip", (i % 5) as f32 / 4.0);
+        h.set_param("lookahead", (i / 7 % 3) as f32);
+        h.set_param("width.split", (i / 4 % 2) as f32);
+        h.set_param("width.freq", 40.0 + (i % 9) as f32 * 200.0);
+        h.set_param("width.lo", (i % 7) as f32 / 3.0);
+        h.set_param("width.hi", (i % 5) as f32 / 2.0);
+        h.set_param("width.solo", (i / 3 % 3) as f32);
+        let (l, r) = run(&mut h, &n, &n, i * BATCH, BATCH);
+        assert!(l.iter().chain(&r).all(|v| v.is_finite()));
+    }
 }

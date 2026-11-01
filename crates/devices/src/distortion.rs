@@ -20,6 +20,17 @@
 //!     reflects at +-1);
 //!   * *bitcrush*: `round(u * 2^(bits-1)) / 2^(bits-1)` on `clamp(u, -1, 1)` followed by a
 //!     sample-and-hold at `crush.rate`.
+//!   * five more curves (`tape`, `fuzz`, `modulate`, `warp`, `scream`, appended after `bitcrush`),
+//!     defined in [`atomik_dsp::shaper::CharacterKind`]: each has a unit ceiling and runs between
+//!     the oversampler's halfband stages with **first-order antiderivative anti-aliasing** (the
+//!     mean of the curve over each oversampled step; half an oversampled sample of delay that
+//!     does not depend on the drive, so the reported latency is unchanged).
+//! * **Cut and body** (after the DC blocker, before the tone tilt, wet path only): `cut.low` and
+//!   `cut.high` are 12 dB/octave high-pass and low-pass sections (off at 20 Hz and 20 kHz);
+//!   `body.mode` adds a resonant bank (three peaks at 110, 380 and 1500 Hz times a size factor)
+//!   or a cabinet-like bank (high-pass, a low resonance, a presence peak and a roll-off), blended
+//!   in by `body.amount`; `body.size` scales every corner by `2^(1 - 2 size)` (a larger body is
+//!   lower). All three are off by default, so a patch without them is bit-identical to before.
 //! * **Bias** is added after the drive. The curve's value at zero input, `curve(bias)`, is
 //!   subtracted so a bias never produces a step, and the DC blocker removes what the asymmetry
 //!   still generates.
@@ -60,7 +71,10 @@ use atomik_device_sdk::{
     SocketDescriptor, SocketId, SocketKind,
 };
 use atomik_dsp::oversample::{OversampleFactor, Oversampler};
-use atomik_dsp::{BiquadShape, BlockSmoother, SmoothedBiquad, exp2_det, exp2_det_f64};
+use atomik_dsp::shaper::{CharacterKind, character_adaa, character_curve};
+use atomik_dsp::{
+    Biquad, BiquadCoeffs, BiquadShape, BlockSmoother, SmoothedBiquad, exp2_det, exp2_det_f64,
+};
 
 #[cfg(test)]
 mod tests;
@@ -76,20 +90,41 @@ const P_RATE: u32 = 7;
 const P_OVERSAMPLE: u32 = 8;
 const P_DRIVE_TRIM: u32 = 9;
 const P_MIX_TRIM: u32 = 10;
+// The cut and body sections sit before the bypass param, which stays last (id 16).
+const P_CUT_LOW: u32 = 11;
+const P_CUT_HIGH: u32 = 12;
+const P_BODY_MODE: u32 = 13;
+const P_BODY_AMOUNT: u32 = 14;
+const P_BODY_SIZE: u32 = 15;
 
 /// Range of the drive knob in dB (its CV is applied in normalised space over it).
 const DRIVE_MAX_DB: f32 = 48.0;
 
-static PARAMS: [ParamDescriptor; 12] = [
+/// Below this low-cut corner (Hz) the low cut is off; above this high-cut corner it is off.
+const CUT_LOW_OFF_HZ: f32 = 20.5;
+const CUT_HIGH_OFF_HZ: f32 = 19_500.0;
+
+static PARAMS: [ParamDescriptor; 17] = [
     ParamDescriptor {
         id: ParamId(P_CURVE),
         key: "curve",
         name: "Curve",
         min: 0.0,
-        max: 4.0,
+        max: 9.0,
         default: 0.0,
         taper: Taper::Linear,
-        unit: Unit::Choice(&["soft clip", "hard clip", "tube", "foldback", "bitcrush"]),
+        unit: Unit::Choice(&[
+            "soft clip",
+            "hard clip",
+            "tube",
+            "foldback",
+            "bitcrush",
+            "tape",
+            "fuzz",
+            "modulate",
+            "warp",
+            "scream",
+        ]),
         discrete: true,
     },
     ParamDescriptor {
@@ -202,7 +237,62 @@ static PARAMS: [ParamDescriptor; 12] = [
         unit: Unit::Percent,
         discrete: false,
     },
-    bypass_param(11),
+    ParamDescriptor {
+        id: ParamId(P_CUT_LOW),
+        key: "cut.low",
+        name: "Low cut",
+        min: 20.0,
+        max: 2_000.0,
+        default: 20.0,
+        taper: Taper::Exponential,
+        unit: Unit::Hz,
+        discrete: false,
+    },
+    ParamDescriptor {
+        id: ParamId(P_CUT_HIGH),
+        key: "cut.high",
+        name: "High cut",
+        min: 1_000.0,
+        max: 20_000.0,
+        default: 20_000.0,
+        taper: Taper::Exponential,
+        unit: Unit::Hz,
+        discrete: false,
+    },
+    ParamDescriptor {
+        id: ParamId(P_BODY_MODE),
+        key: "body.mode",
+        name: "Body",
+        min: 0.0,
+        max: 2.0,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::Choice(&["off", "resonant", "cabinet"]),
+        discrete: true,
+    },
+    ParamDescriptor {
+        id: ParamId(P_BODY_AMOUNT),
+        key: "body.amount",
+        name: "Body amount",
+        min: 0.0,
+        max: 1.0,
+        default: 0.5,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
+    ParamDescriptor {
+        id: ParamId(P_BODY_SIZE),
+        key: "body.size",
+        name: "Body size",
+        min: 0.0,
+        max: 1.0,
+        default: 0.5,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
+    bypass_param(16),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -289,6 +379,8 @@ pub enum Curve {
     Fold,
     /// Quantise and sample-and-hold, at the base rate.
     Crush,
+    /// One of the [`CharacterKind`] curves (anti-aliased with first-order ADAA).
+    Character(CharacterKind),
 }
 
 impl Curve {
@@ -298,7 +390,12 @@ impl Curve {
             1 => Self::Hard,
             2 => Self::Tube,
             3 => Self::Fold,
-            _ => Self::Crush,
+            4 => Self::Crush,
+            5 => Self::Character(CharacterKind::Tape),
+            6 => Self::Character(CharacterKind::Fuzz),
+            7 => Self::Character(CharacterKind::Modulate),
+            8 => Self::Character(CharacterKind::Warp),
+            _ => Self::Character(CharacterKind::Scream),
         }
     }
 }
@@ -323,6 +420,7 @@ pub fn shape(curve: Curve, u: f32) -> f32 {
             (m - 2.0).abs() - 1.0
         }
         Curve::Crush => u,
+        Curve::Character(kind) => character_curve(kind, f64::from(u)) as f32,
     }
 }
 
@@ -334,6 +432,9 @@ const TILT_DB: f32 = 6.0;
 const DC_HZ: f64 = 8.0;
 const LOG2_10_20: f32 = 0.166_096_4;
 
+/// Sections of the body bank.
+const BODY_SECTIONS: usize = 4;
+
 #[derive(Debug, Clone)]
 struct Channel {
     os: Oversampler,
@@ -344,6 +445,11 @@ struct Channel {
     hold_acc: f32,
     dc_x1: f64,
     dc_y1: f64,
+    /// The previous driven sample at the oversampled rate (ADAA of the character curves).
+    adaa_u1: f64,
+    cut_low: Biquad,
+    cut_high: Biquad,
+    body: [Biquad; BODY_SECTIONS],
 }
 
 impl Channel {
@@ -356,6 +462,10 @@ impl Channel {
             hold_acc: 0.0,
             dc_x1: 0.0,
             dc_y1: 0.0,
+            adaa_u1: 0.0,
+            cut_low: Biquad::default(),
+            cut_high: Biquad::default(),
+            body: [Biquad::default(); BODY_SECTIONS],
         }
     }
 
@@ -367,6 +477,35 @@ impl Channel {
         self.hold_acc = 0.0;
         self.dc_x1 = 0.0;
         self.dc_y1 = 0.0;
+        self.adaa_u1 = 0.0;
+        self.cut_low.reset();
+        self.cut_high.reset();
+        for b in &mut self.body {
+            b.reset();
+        }
+    }
+}
+
+/// The body bank's sections for `mode` (1 resonant, 2 cabinet) at `size` (0..1; larger is lower),
+/// or `None` for off.
+fn body_design(mode: usize, size: f32, sr: f64) -> Option<[BiquadCoeffs; BODY_SECTIONS]> {
+    // 2^(1 - 2 size): 2 for the smallest body, 0.5 for the largest.
+    let s = f64::from(exp2_det(1.0 - 2.0 * size));
+    let d = |shape, f: f64, q: f64, g: f64| BiquadCoeffs::design(shape, f * s, q, g, sr);
+    match mode {
+        1 => Some([
+            d(BiquadShape::Peaking, 110.0, 4.0, 9.0),
+            d(BiquadShape::Peaking, 380.0, 4.0, 8.0),
+            d(BiquadShape::Peaking, 1_500.0, 4.0, 7.0),
+            BiquadCoeffs::IDENTITY,
+        ]),
+        2 => Some([
+            BiquadCoeffs::design(BiquadShape::Highpass, 75.0 * s, 0.707, 0.0, sr),
+            d(BiquadShape::Peaking, 120.0, 1.2, 5.0),
+            d(BiquadShape::Peaking, 2_400.0, 1.5, 4.0),
+            BiquadCoeffs::design(BiquadShape::Lowpass, 5_200.0 * s, 0.707, 0.0, sr),
+        ]),
+        _ => None,
     }
 }
 
@@ -396,6 +535,14 @@ pub struct Distortion {
     dc_r: f64,
     wpos: usize,
     meters: [f32; 2],
+    cut_low_hz: f32,
+    cut_high_hz: f32,
+    cut_low_c: BiquadCoeffs,
+    cut_high_c: BiquadCoeffs,
+    body_mode: usize,
+    body_amount: f32,
+    body_size: f32,
+    body_c: Option<[BiquadCoeffs; BODY_SECTIONS]>,
 }
 
 impl Default for Distortion {
@@ -431,6 +578,14 @@ impl Distortion {
             dc_r: 0.999,
             wpos: 0,
             meters: [0.0; 2],
+            cut_low_hz: 20.0,
+            cut_high_hz: 20_000.0,
+            cut_low_c: BiquadCoeffs::IDENTITY,
+            cut_high_c: BiquadCoeffs::IDENTITY,
+            body_mode: 0,
+            body_amount: 0.5,
+            body_size: 0.5,
+            body_c: None,
         };
         d.setup(48_000.0);
         d.reset();
@@ -450,6 +605,7 @@ impl Distortion {
         self.low = SmoothedBiquad::new(BiquadShape::LowShelf, 1_000.0, 0.707, 0.0, sample_rate);
         self.high = SmoothedBiquad::new(BiquadShape::HighShelf, 1_000.0, 0.707, 0.0, sample_rate);
         self.apply_tone();
+        self.apply_sections();
         // R = exp(-2 pi fc / sr).
         self.dc_r = exp2_det_f64(
             -std::f64::consts::TAU * DC_HZ / f64::from(sample_rate) * std::f64::consts::LOG2_E,
@@ -457,6 +613,26 @@ impl Distortion {
         for c in &mut self.ch {
             c.os.set_factor(self.factor);
         }
+    }
+
+    /// Designs the cut filters and the body bank for the current settings and sample rate.
+    fn apply_sections(&mut self) {
+        let sr = f64::from(self.sample_rate);
+        self.cut_low_c = BiquadCoeffs::design(
+            BiquadShape::Highpass,
+            f64::from(self.cut_low_hz),
+            0.707,
+            0.0,
+            sr,
+        );
+        self.cut_high_c = BiquadCoeffs::design(
+            BiquadShape::Lowpass,
+            f64::from(self.cut_high_hz),
+            0.707,
+            0.0,
+            sr,
+        );
+        self.body_c = body_design(self.body_mode, self.body_size, sr);
     }
 
     fn apply_tone(&mut self) {
@@ -510,6 +686,23 @@ impl Device for Distortion {
             P_MIX_TRIM => self.mix_trim = v,
             P_BITS => self.bits = v.round().clamp(1.0, 16.0),
             P_RATE => self.rate = v,
+            P_CUT_LOW => {
+                self.cut_low_hz = v;
+                self.apply_sections();
+            }
+            P_CUT_HIGH => {
+                self.cut_high_hz = v;
+                self.apply_sections();
+            }
+            P_BODY_MODE => {
+                self.body_mode = v.round() as usize;
+                self.apply_sections();
+            }
+            P_BODY_AMOUNT => self.body_amount = v,
+            P_BODY_SIZE => {
+                self.body_size = v;
+                self.apply_sections();
+            }
             P_OVERSAMPLE => {
                 self.factor = match v.round() as usize {
                     0 => OversampleFactor::X1,
@@ -566,6 +759,9 @@ impl Device for Distortion {
         // The static offset of the curve at the batch's end bias, so a bias is not a step.
         let c0 = shape(curve, bias.at(BATCH));
         let dc_r = self.dc_r;
+        let cut_low_on = self.cut_low_hz > CUT_LOW_OFF_HZ;
+        let cut_high_on = self.cut_high_hz < CUT_HIGH_OFF_HZ;
+        let body_amount = f64::from(self.body_amount);
         let tilt = self.tone.to_bits() != 0 || !self.low.is_settled() || !self.high.is_settled();
 
         // Stage 1: drive, bias, oversampled curve, per channel.
@@ -584,7 +780,16 @@ impl Device for Distortion {
                 ch.pre[n] = x * drive.at(n) + bias.at(n);
             }
             let hi = ch.os.upsample(&ch.pre);
-            if !crush {
+            if let Curve::Character(kind) = curve {
+                // First-order ADAA at the oversampled rate (half an oversampled sample of delay).
+                let mut u1 = ch.adaa_u1;
+                for v in hi.iter_mut() {
+                    let u = f64::from(*v);
+                    *v = character_adaa(kind, u, u1) as f32;
+                    u1 = if u.is_finite() { u } else { 0.0 };
+                }
+                ch.adaa_u1 = u1;
+            } else if !crush {
                 for v in hi.iter_mut() {
                     *v = shape(curve, *v);
                 }
@@ -612,7 +817,21 @@ impl Device for Distortion {
                 let yd = xd - ch.dc_x1 + dc_r * ch.dc_y1;
                 ch.dc_x1 = xd;
                 ch.dc_y1 = if yd.abs() < 1e-30 { 0.0 } else { yd };
-                wet[c][n] = ch.dc_y1 as f32;
+                let mut w = ch.dc_y1;
+                if cut_low_on {
+                    w = ch.cut_low.process(&self.cut_low_c, w);
+                }
+                if cut_high_on {
+                    w = ch.cut_high.process(&self.cut_high_c, w);
+                }
+                if let Some(sections) = &self.body_c {
+                    let mut b = w;
+                    for (bq, co) in ch.body.iter_mut().zip(sections) {
+                        b = bq.process(co, b);
+                    }
+                    w += body_amount * (b - w);
+                }
+                wet[c][n] = w as f32;
             }
         }
         self.wpos = self.wpos.wrapping_add(BATCH);

@@ -17,7 +17,7 @@ const UPDATE_ENV: &str = "ATOMIK_UPDATE_GOLDEN";
 fn record(scale: f64) -> String {
     let (doc, reg) = (reference_doc(), registry());
     let mut v = RackView::new(Theme::dark());
-    let _ = v.handle(&UiEvent::Resize(Size::new(820.0, 700.0)), &doc, &reg);
+    let _ = v.handle(&UiEvent::Resize(Size::new(820.0, 1000.0)), &doc, &reg);
     let _ = v.handle(&UiEvent::ScaleChanged(scale), &doc, &reg);
     v.set_selected(Some(key("delay")));
     let mut dl = DisplayList::new();

@@ -22,8 +22,10 @@ const COLUMNS: [&str; 6] = [
 
 /// The instruments that keep channel and key pressure as a modulation source (the last column;
 /// each has a test of its own that sends the messages and reads the source).
-const PRESSURE: [&str; 5] = [
+const PRESSURE: [&str; 7] = [
     "atomik.poly-synth",
+    "atomik.mono-bass",
+    "atomik.dual-layer",
     "atomik.wavetable-synth",
     "atomik.fm-synth",
     "atomik.granular",

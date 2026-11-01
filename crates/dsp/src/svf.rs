@@ -9,6 +9,12 @@
 //! * **Denormals:** the two integrator states are flushed to zero when their magnitude drops
 //!   below 1e-20.
 
+use crate::det_math::exp2_det;
+use crate::det_trig::{cos_cycles, sin_cycles};
+
+/// log2(40): the resonance mapping `Q = 0.5·40^r` as a power of two.
+const LOG2_40: f32 = 5.321_928;
+
 /// Which output a single-output call returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterMode {
@@ -99,6 +105,34 @@ impl Svf {
             cutoff_hz.clamp(1.0, hi)
         };
         (std::f32::consts::PI * fc / sample_rate).tan()
+    }
+
+    /// [`Svf::cutoff_to_g`] without a libm call (`tan` from the deterministic sine and cosine),
+    /// so every platform computes the same coefficient. Agrees with `tan` to about 1e-9.
+    #[inline]
+    pub fn cutoff_to_g_det(cutoff_hz: f32, sample_rate: f32) -> f32 {
+        let hi = Self::MAX_CUTOFF_RATIO * sample_rate;
+        let fc = if cutoff_hz.is_nan() {
+            hi
+        } else {
+            cutoff_hz.clamp(1.0, hi)
+        };
+        // pi·fc/sr radians is fc/(2·sr) cycles.
+        let cycles = f64::from(fc) / (2.0 * f64::from(sample_rate));
+        (sin_cycles(cycles) / cos_cycles(cycles)) as f32
+    }
+
+    /// The damping `k = 1/Q` for a resonance in `0..=1` (clamped), the same mapping as
+    /// [`Svf::resonance_to_q`] computed with the deterministic `2^x`.
+    #[inline]
+    pub fn resonance_to_k_det(resonance: f32) -> f32 {
+        let r = if resonance.is_nan() {
+            0.0
+        } else {
+            resonance.clamp(0.0, 1.0)
+        };
+        // k = 2·40^-r = 2·2^(-r·log2(40)).
+        2.0 * exp2_det(-r * LOG2_40)
     }
 
     /// Sets cutoff (Hz), resonance (`0..=1`) and sample rate.

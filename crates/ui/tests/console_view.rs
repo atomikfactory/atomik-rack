@@ -694,7 +694,7 @@ fn rack_cables_to_summing_inputs_add_instead_of_replacing() {
     doc.cables = vec![cable(("bass", "out_l"), ("master", "bus_l"))];
     let mut r = RackView::new(Theme::dark());
     let _ = r.handle(
-        &UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 3000.0)),
+        &UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 5000.0)),
         &doc,
         &reg,
     );

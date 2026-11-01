@@ -33,7 +33,7 @@ const PLAYERS: [&str; 8] = [
 /// The container: its inside is left out while it is bypassed.
 const CONTAINER: &str = "atomik.container";
 
-const EFFECTS: [&str; 17] = [
+const EFFECTS: [&str; 18] = [
     "atomik.reverb",
     "atomik.compressor",
     "atomik.eq",
@@ -51,6 +51,7 @@ const EFFECTS: [&str; 17] = [
     "atomik.dynamics",
     "atomik.duck",
     "atomik.env-filter",
+    "atomik.echo",
 ];
 
 fn one_device(type_id: &str) -> Option<Document> {

@@ -1,4 +1,4 @@
-//! Atomik Rack built-in devices: [`poly_synth`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`granular`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`reverb`], the effects
+//! Atomik Rack built-in devices: [`poly_synth`], [`mono_bass`], [`dual_layer`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`granular`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`echo`], [`reverb`], the effects
 //! [`compressor`], [`eq`], [`distortion`], [`guitar_amp`], [`modulation`] and [`mastering`], the analysers
 //! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
@@ -29,8 +29,10 @@ pub mod cv_sequencer;
 pub mod distortion;
 pub mod drum_generator;
 pub mod drum_machine;
+pub mod dual_layer;
 pub mod duck;
 pub mod dynamics;
+pub mod echo;
 pub mod env_filter;
 pub mod eq;
 pub mod fm_synth;
@@ -47,6 +49,7 @@ pub mod mastering;
 pub mod midi_out;
 pub mod mod_source;
 pub mod modulation;
+pub mod mono_bass;
 mod note_clock;
 pub mod note_delay;
 pub mod note_filter;
@@ -124,6 +127,8 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(arpeggiator::factory())?;
     registry.register(audio_track::factory())?;
     registry.register(poly_synth::factory())?;
+    registry.register(mono_bass::factory())?;
+    registry.register(dual_layer::factory())?;
     registry.register(wavetable_synth::factory())?;
     registry.register(fm_synth::factory())?;
     registry.register_with_samples(sampler::factory())?;
@@ -142,6 +147,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(container::factory())?;
     registry.register(distortion::factory())?;
     registry.register(duck::factory())?;
+    registry.register(echo::factory())?;
     registry.register(dynamics::factory())?;
     registry.register(env_filter::factory())?;
     registry.register(eq::factory())?;
@@ -177,7 +183,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 44] = [
+    const TYPE_IDS: [&str; 47] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -189,8 +195,10 @@ mod tests {
         "atomik.distortion",
         "atomik.drum-generator",
         "atomik.drum-machine",
+        "atomik.dual-layer",
         "atomik.duck",
         "atomik.dynamics",
+        "atomik.echo",
         "atomik.env-filter",
         "atomik.eq",
         "atomik.fm-synth",
@@ -207,6 +215,7 @@ mod tests {
         "atomik.midi-out",
         "atomik.mod-source",
         "atomik.modulation",
+        "atomik.mono-bass",
         "atomik.note-delay",
         "atomik.note-filter",
         "atomik.note-repeater",
@@ -225,7 +234,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all forty-four devices.
+    // Name kept; it now covers all forty-seven devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();

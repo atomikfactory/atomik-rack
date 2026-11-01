@@ -9,6 +9,38 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Effects: more distortion, an echo, a soft clip, split-band width and a choice of look-ahead.**
+  The distortion gains five curves (`tape`, `fuzz`, `modulate`, `warp`, `scream`, each with
+  first-order anti-aliasing), a `cut.low` and `cut.high` pair and a `body` bank (resonant or
+  cabinet-like, with `body.amount` and `body.size`); its panel is three rack units tall now. The
+  new Echo (`atomik.echo`) is a stereo delay whose repeats take a saturator, a low and high cut, a
+  bit crusher, diffusion and wobble in the feedback loop, with ducking by the input level, ping-pong
+  and three modes: normal, triggered (the repeats are heard while a trigger cable is high) and roll
+  (the input is cut and the loop holds). Mastering gains a `softclip` before the limiter, a
+  `lookahead` of 0.5, 1.5 or 4 ms (it changes the reported latency, and the ceiling holds at every
+  one), and a split-band width: `width.split` with `width.freq`, `width.lo`, `width.hi` and a
+  `width.solo` to hear one band; its panel is five rack units tall. Every new param defaults to the
+  old sound bit for bit, so existing projects render as before. Not in this version: the
+  Pulveriser, the echo loop breakout jacks, the extra reverb algorithms with gate and EQ,
+  convolution with impulse responses, the vocoder, the gated filter, the bass amp voicing and the
+  modulation and ensemble additions. The project format is unchanged.
+- **Synth expansion: wave tables, oscillator modes, a second filter, a mono bass and a dual
+  layer.** The poly synth gains params, all defaulting to the old sound bit for bit (existing
+  patches and projects render as before): `osc1.table` and `osc2.table` pick one of 32 additive
+  waves (band-limited by mip level), `osc2.mode` makes oscillator 2 ring, FM or hard-synced to
+  oscillator 1 (`osc2.amount`), `filter.type` swaps the 12 dB filter for a 24 dB ladder with an
+  anti-aliased `filter.drive`, `filter2.*` adds a second filter in series or parallel whose
+  cutoff follows the first one's modulation by `filter.link`, `lfo2.*` is a second LFO (pitch,
+  cutoff, level), `env.mod.*` is a mod envelope with a destination (pitch, osc 2 pitch, osc mix,
+  osc 2 amount, filter 2 cutoff), `glide` and `legato` play like a mono synth, `spread` pans the
+  voices by key into a real stereo pair, `drift` detunes each voice by a slow seeded random
+  amount, and `chorus.*` and `delay.*` are an in-device chorus and ping-pong echo. Two new
+  instruments share the voice: the Mono Bass (one voice, legato, glide, the ladder with drive,
+  a light chorus) and the Dual Layer (two complete poly synth layers with `layer.mode` stack or
+  morph, `layer.morph` and `layer.age`; each end of the morph is one layer exactly). All three
+  use the generic panel for now (the poly synth is seven rack units tall); a hand-drawn panel,
+  a modulation matrix and per-voice layer splits are not in this version. The project format is
+  unchanged.
 - **Plugin presets, patch steps and plugin window geometry.** The PARAMS pane of a plugin that
   offers presets has a preset bar: `<` and `>` load the previous or next preset (round the list),
   the name opens the list. A preset is loaded into the live plugin as one undo step, and undo and

@@ -339,7 +339,9 @@ pub fn assert_audio_invariants(doc: &RackDoc) {
                         let meta = doc.assets.get(&a.asset).expect("asset is pooled");
                         assert!(a.source_offset <= meta.frames);
                         assert!(a.gain_db.is_finite());
-                        assert_eq!((c.offset, c.loop_length), (0, None));
+                        assert_eq!(c.offset, 0);
+                        // An audio clip may loop, but a reversed one cannot.
+                        assert!(!(a.reverse && c.loop_length.is_some()));
                     }
                     _ => assert_ne!(l.kind, LaneKind::Audio),
                 }

@@ -83,10 +83,10 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::Reverb), 2);
     assert_eq!(units(FxKind::Compressor), 3);
     assert_eq!(units(FxKind::Eq), 6);
-    assert_eq!(units(FxKind::Distortion), 2);
+    assert_eq!(units(FxKind::Distortion), 3);
     assert_eq!(units(FxKind::GuitarAmp), 5);
     assert_eq!(units(FxKind::Modulation), 2);
-    assert_eq!(units(FxKind::Mastering), 4);
+    assert_eq!(units(FxKind::Mastering), 5);
     assert_eq!(units(FxKind::Character), 3);
     assert_eq!(units(FxKind::Spectrum), 4);
     assert_eq!(units(FxKind::PhaseMeter), 3);

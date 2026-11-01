@@ -6,7 +6,7 @@
 //! | reverb | decay sketch, output meters | left, 196 wide | SPACE, TONE, BALANCE, OUTPUT |
 //! | compressor | transfer curve, level/GR meters, SC button | left, 172 wide | DETECTOR, GAIN, SIDECHAIN, OUTPUT |
 //! | EQ | response curve, draggable handles, analyser | across the top, 170 high | LOW CUT, LOW SHELF, PEAK 1, PEAK 2, HIGH SHELF, HIGH CUT, OUTPUT |
-//! | distortion | transfer curve, in/out meters | left, 172 wide | DRIVE, TONE, CRUSH, OUTPUT |
+//! | distortion | transfer curve, in/out meters | left, 172 wide | DRIVE, TONE, CUT, BODY, CRUSH, OUTPUT |
 //! | guitar amp | the speakers of the cabinet with the mic, in/out and gate meters | left, 168 wide | SETUP, INPUT, PREAMP, TONE, POWER, CABINET, CHORUS, DELAY, REVERB |
 //! | modulation | LFO sketch (left and right) | left, 196 wide | LFO, VOICE, OUTPUT |
 //! | mastering | crossover and band GR, LUFS readouts, GR meters | across the top, 96 high | INPUT, MULTIBAND, BAND 1-3, STEREO, LIMITER, OUTPUT |
@@ -124,6 +124,8 @@ fn sections(kind: FxKind) -> Def {
         FxKind::Distortion => &[
             ("DRIVE", &["curve", "drive", "drive_cv_trim", "bias"]),
             ("TONE", &["tone"]),
+            ("CUT", &["cut.low", "cut.high"]),
+            ("BODY", &["body.mode", "body.amount", "body.size"]),
             ("CRUSH", &["crush.bits", "crush.rate"]),
             ("OUTPUT", &["output", "mix", "mix_cv_trim", "oversample"]),
         ],
@@ -213,7 +215,17 @@ fn sections(kind: FxKind) -> Def {
                 ],
             ),
             ("STEREO", &["width", "mono_below"]),
-            ("LIMITER", &["ceiling", "release"]),
+            (
+                "SPLIT WIDTH",
+                &[
+                    "width.split",
+                    "width.freq",
+                    "width.lo",
+                    "width.hi",
+                    "width.solo",
+                ],
+            ),
+            ("LIMITER", &["softclip", "lookahead", "ceiling", "release"]),
             ("OUTPUT", &["output", "meter.reset"]),
         ],
     }

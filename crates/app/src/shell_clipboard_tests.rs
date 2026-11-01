@@ -1226,6 +1226,8 @@ impl Lcg {
 fn random_rack_gestures_never_produce_a_refused_command() {
     for seed in 0..12 {
         let mut s = rack3();
+        // Copies pile up below the seven-unit synth: a window tall enough to show them all.
+        s.handle(&UiEvent::Resize(Size::new(1100.0, 4800.0)));
         let mut rng = Lcg(seed + 1);
         let mut steps = 0;
         for _ in 0..40 {
