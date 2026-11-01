@@ -680,8 +680,8 @@ Hand checks, not automated (they need a real window):
   indented one step per level while the clips stay put, drag the window narrower and check the
   folder row and the headers at the default, the smallest and the largest track heights, in the dark
   and light themes.
-- Shift-click and ctrl-click headers, then try Group Tracks, the move keys (Ctrl+Alt+Up and
-  Ctrl+Alt+Down are free on your OS and keyboard layout) and the Track menu, in the in-window menu
+- Shift-click and ctrl-click headers, then try Group Tracks, the move keys (Ctrl+Shift+Alt+Up and
+  Ctrl+Shift+Alt+Down are free on your OS and keyboard layout) and the Track menu, in the in-window menu
   and, on macOS, the native one.
 - Type a long folder name and a long comment, press Escape and Enter, click away while typing, and
   hover the note mark of a comment near the right edge of the window.

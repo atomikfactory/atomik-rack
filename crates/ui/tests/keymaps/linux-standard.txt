@@ -23,12 +23,13 @@ editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left
 editor.fold_toggle | editor | Shift+F
 editor.join_notes | editor | Ctrl+J
+editor.legato none | editor | Ctrl+Shift+J
 editor.nudge_left | editor | Ctrl+Left
 editor.nudge_left_beat | editor | Ctrl+Shift+Left
-editor.nudge_left_tick | editor | Ctrl+Alt+Left
+editor.nudge_left_tick | editor | Ctrl+Alt+Shift+Left
 editor.nudge_right | editor | Ctrl+Right
 editor.nudge_right_beat | editor | Ctrl+Shift+Right
-editor.nudge_right_tick | editor | Ctrl+Alt+Right
+editor.nudge_right_tick | editor | Ctrl+Alt+Shift+Right
 editor.octave_down | editor | Ctrl+Shift+Down
 editor.octave_up | editor | Ctrl+Shift+Up
 editor.quantize | sequencer | Ctrl+K
@@ -128,14 +129,14 @@ sequencer.follow | global | F
 sequencer.group_tracks | sequencer | Ctrl+Shift+T
 sequencer.join | sequencer | Ctrl+J
 sequencer.merge_note_lanes | sequencer | Ctrl+R
-sequencer.move_track_down | sequencer | Ctrl+Alt+Down
-sequencer.move_track_up | sequencer | Ctrl+Alt+Up
+sequencer.move_track_down | sequencer | Ctrl+Alt+Shift+Down
+sequencer.move_track_up | sequencer | Ctrl+Alt+Shift+Up
 sequencer.nudge_left | sequencer | Ctrl+Left
 sequencer.nudge_left_beat | sequencer | Ctrl+Shift+Left
-sequencer.nudge_left_tick | sequencer | Ctrl+Alt+Left
+sequencer.nudge_left_tick | sequencer | Ctrl+Alt+Shift+Left
 sequencer.nudge_right | sequencer | Ctrl+Right
 sequencer.nudge_right_beat | sequencer | Ctrl+Shift+Right
-sequencer.nudge_right_tick | sequencer | Ctrl+Alt+Right
+sequencer.nudge_right_tick | sequencer | Ctrl+Alt+Shift+Right
 sequencer.open_clip | sequencer | Enter
 sequencer.select_next_clip | sequencer | Right
 sequencer.select_next_track | sequencer | Down

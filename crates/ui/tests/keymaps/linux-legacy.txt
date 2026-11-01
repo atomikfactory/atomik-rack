@@ -99,10 +99,10 @@ rack.patch_prev | rack | Ctrl+Left
 rack.uncombine | rack | Ctrl+Shift+U
 sequencer.nudge_left | sequencer | Ctrl+Left
 sequencer.nudge_left_beat | sequencer | Ctrl+Shift+Left
-sequencer.nudge_left_tick | sequencer | Ctrl+Alt+Left
+sequencer.nudge_left_tick | sequencer | Ctrl+Alt+Shift+Left
 sequencer.nudge_right | sequencer | Ctrl+Right
 sequencer.nudge_right_beat | sequencer | Ctrl+Shift+Right
-sequencer.nudge_right_tick | sequencer | Ctrl+Alt+Right
+sequencer.nudge_right_tick | sequencer | Ctrl+Alt+Shift+Right
 sequencer.split_at_playhead | sequencer | Ctrl+E
 sequencer.toggle_mute | sequencer | M
 transport.go_start | rack | Enter, Shift+Enter

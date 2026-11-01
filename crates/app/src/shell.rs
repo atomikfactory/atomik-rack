@@ -6701,3 +6701,7 @@ mod piano_keys_tests;
 #[cfg(test)]
 #[path = "shell_interface_tests.rs"]
 mod interface_tests;
+
+#[cfg(test)]
+#[path = "shell_edit_keys_tests.rs"]
+mod edit_keys_tests;
