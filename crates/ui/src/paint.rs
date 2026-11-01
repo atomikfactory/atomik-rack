@@ -308,6 +308,8 @@ pub struct PanelInfo<'a> {
     pub from_clip: bool,
     /// Granular panel: the published values, the sample and its peaks.
     pub grain: crate::granular_panel::GrainInfo<'a>,
+    /// A sampling runs into this device: its SAMPLE button reads STOP.
+    pub sampling: bool,
 }
 
 /// Fold button centre in panel coordinates.
@@ -901,7 +903,15 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             }
             if let (Some(strip), Some(device)) = (info.spec.samples, info.device) {
                 let granular = info.spec.granular.is_some().then_some(&info.grain);
-                sample_strip(c, theme, strip, device, info.accent, granular);
+                sample_strip(
+                    c,
+                    theme,
+                    strip,
+                    device,
+                    info.sampling,
+                    info.accent,
+                    granular,
+                );
             }
             if let Some(drum) = info.spec.drum {
                 drum_panel(c, theme, drum, info);
@@ -1136,6 +1146,20 @@ fn driven_tags<C: Canvas + ?Sized>(
     }
 }
 
+/// The two halves of a panel's button row: EDIT on the left, SAMPLE on the right.
+pub fn button_halves(b: Rect) -> (Rect, Rect) {
+    let mid = (b.x0 + b.x1) / 2.0;
+    (
+        Rect::new(b.x0, b.y0, mid - 1.0, b.y1),
+        Rect::new(mid + 1.0, b.y0, b.x1, b.y1),
+    )
+}
+
+/// The SAMPLE button beside EDIT: it reads STOP while a sampling runs into the device.
+fn sample_button<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, b: Rect, on: bool) {
+    edit_button(c, theme, b, if on { "STOP" } else { "SAMPLE" }, true);
+}
+
 /// The Edit button of a sample strip (panel coordinates).
 pub fn sample_edit_button(strip: Rect) -> Rect {
     Rect::new(strip.x0, strip.y1 - 22.0, strip.x1, strip.y1 - 2.0)
@@ -1150,6 +1174,7 @@ fn sample_strip<C: Canvas + ?Sized>(
     theme: &Theme,
     strip: Rect,
     device: &RackDevice,
+    sampling: bool,
     accent: Color,
     granular: Option<&crate::granular_panel::GrainInfo<'_>>,
 ) {
@@ -1202,7 +1227,9 @@ fn sample_strip<C: Canvas + ?Sized>(
         8.5,
         theme.text_muted,
     ));
-    edit_button(c, theme, sample_edit_button(strip), "EDIT", true);
+    let (edit, sample) = button_halves(sample_edit_button(strip));
+    edit_button(c, theme, edit, "EDIT", true);
+    sample_button(c, theme, sample, sampling);
 }
 
 /// A panel button (EDIT of the sample strip and the drum panel, TO CH of the drum panel);
@@ -1352,7 +1379,9 @@ fn drum_panel<C: Canvas + ?Sized>(
         8.5,
         theme.text_muted,
     ));
-    edit_button(c, theme, drum.edit, "EDIT", true);
+    let (edit, sample) = button_halves(drum.edit);
+    edit_button(c, theme, edit, "EDIT", true);
+    sample_button(c, theme, sample, info.sampling);
     edit_button(c, theme, drum.to_channel, "TO CH", !info.pad_cabled);
 }
 
@@ -1445,7 +1474,9 @@ fn slicer_panel<C: Canvas + ?Sized>(
     let loaded = !slices.is_empty();
     edit_button(c, theme, panel.slice, "SLICE", loaded);
     edit_button(c, theme, panel.to_track, "TO TRACK", loaded);
-    edit_button(c, theme, panel.edit, "EDIT", true);
+    let (edit, sample) = button_halves(panel.edit);
+    edit_button(c, theme, edit, "EDIT", true);
+    sample_button(c, theme, sample, info.sampling);
 }
 
 fn interface_front<C: Canvas + ?Sized>(
