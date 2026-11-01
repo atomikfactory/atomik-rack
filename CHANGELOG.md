@@ -799,6 +799,11 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **The Select tool never creates a clip by dragging.** A plain drag on an empty lane is the rubber
+  band, across lanes and tracks, like the piano roll's (Shift or Ctrl adds to the selection, a
+  plain band replaces it). A click on empty lane area clears the clip selection (an empty
+  automation lane still takes the point). Clips come from the Pencil tool, from holding the
+  alternate-tool key (Alt) over the Select tool, or from a double-click on the lane.
 - **Delete on a lane deletes the lane.** With an automation lane header picked, Edit > Delete (and the
   Delete key) removes that lane alone, as one undo step; an extra note lane goes the same way, and
   a track is only removed when its own header is picked.

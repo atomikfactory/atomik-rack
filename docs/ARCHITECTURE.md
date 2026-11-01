@@ -3999,8 +3999,9 @@ creation chain in the **Creation chain** bullet.
   `DisconnectDevice`); a group drag ends in one `MoveDevicesToSlot` (`MoveDevices` inside a
   container; never a no-op). The arrangement gained a track selection (header click, Up and Down)
   and an automation-point selection; its clip selection takes Shift and Ctrl clicks across tracks
-  and a rubber band (`Drag::Marquee`: below the last track, or with Shift or Ctrl on a lane, since a
-  plain drag on a lane draws); dragging clips onto another track ends in `MoveClips` (one
+  and a rubber band (`Drag::Marquee`: a plain drag on a lane with the Select tool, or below the last
+  track; the pencil, Alt and a double-click create clips instead); dragging clips onto another track
+  ends in `MoveClips` (one
   `ClipMove { id, track, start }` per clip: the grabbed clip's track change applies to all, each
   clip takes the lane of its own `LaneKind` on the target track, one without such a lane rejects the
   command and the view does not emit it), Ctrl at the press makes it a copy (fresh ids from
