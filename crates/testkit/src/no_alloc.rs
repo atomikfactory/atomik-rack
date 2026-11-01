@@ -31,6 +31,7 @@ thread_local! {
     static WORKER_FORBIDDEN: Cell<bool> = const { Cell::new(false) };
     static LIVE_BYTES: Cell<isize> = const { Cell::new(0) };
     static PEAK_BYTES: Cell<isize> = const { Cell::new(0) };
+    static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
 }
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -51,6 +52,11 @@ fn track(delta: isize) {
 }
 
 #[inline]
+fn count_allocation() {
+    let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
+}
+
+#[inline]
 fn record() {
     INSTALLED.store(true, Ordering::Relaxed);
     let _ = FORBID_DEPTH.try_with(|depth| {
@@ -68,6 +74,7 @@ fn record() {
 unsafe impl GlobalAlloc for GuardAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record();
+        count_allocation();
         // SAFETY: forwarded with the caller's layout.
         let p = unsafe { System.alloc(layout) };
         if !p.is_null() {
@@ -77,6 +84,7 @@ unsafe impl GlobalAlloc for GuardAllocator {
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record();
+        count_allocation();
         // SAFETY: forwarded with the caller's layout.
         let p = unsafe { System.alloc_zeroed(layout) };
         if !p.is_null() {
@@ -91,6 +99,7 @@ unsafe impl GlobalAlloc for GuardAllocator {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        record();
         record();
         // SAFETY: `ptr`/`layout` come from this allocator; `new_size` is the caller's request.
         let p = unsafe { System.realloc(ptr, layout, new_size) };
@@ -145,6 +154,19 @@ pub fn peak_heap_of<R>(f: impl FnOnce() -> R) -> (R, usize) {
     let result = f();
     let peak = PEAK_BYTES.with(Cell::get) - base;
     (result, usize::try_from(peak).unwrap_or(0))
+}
+
+/// Runs `f` and returns its result with the number of heap allocations and reallocations it
+/// made on this thread. Panics if [`install_alloc_guard!`] was not used in this test binary.
+pub fn allocations_of<R>(f: impl FnOnce() -> R) -> (R, u64) {
+    drop(std::hint::black_box(Box::new(0u8))); // marks the guard as installed if it is
+    assert!(
+        INSTALLED.load(Ordering::Relaxed),
+        "atomik_testkit::install_alloc_guard!() is missing from this test binary"
+    );
+    let base = ALLOCATIONS.with(Cell::get);
+    let result = f();
+    (result, ALLOCATIONS.with(Cell::get) - base)
 }
 
 /// Marks the calling thread as allocation-forbidden for the rest of its life. Every

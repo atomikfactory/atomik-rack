@@ -30,11 +30,30 @@ pub const MAX_OUTPUT_CHANNELS: u16 = 32;
 pub const SAVE_LENGTH_BEATS: f64 = 16.0;
 
 /// A JSON path such as `devices[0].params."filter.cutoff"`; the root prints as `$`.
+///
+/// A [`Self::lazy`] path is a placeholder that costs nothing to extend: a loader that reads
+/// very many small items (notes, automation points) checks each with a lazy path first and, only
+/// for the item that fails, reads it again with its real path to get the error with the true
+/// path text. An error made from a lazy path is never shown.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct JsonPath(String);
+pub(crate) struct JsonPath {
+    text: String,
+    lazy: bool,
+}
 
 impl JsonPath {
+    /// The placeholder path (see the type docs).
+    pub(crate) const fn lazy() -> Self {
+        Self {
+            text: String::new(),
+            lazy: true,
+        }
+    }
+
     pub(crate) fn field(&self, name: &str) -> Self {
+        if self.lazy {
+            return Self::lazy();
+        }
         let plain = name
             .chars()
             .next()
@@ -45,15 +64,27 @@ impl JsonPath {
         } else {
             Value::from(name).to_string()
         };
-        if self.0.is_empty() {
-            Self(part)
+        if self.text.is_empty() {
+            Self {
+                text: part,
+                lazy: false,
+            }
         } else {
-            Self(format!("{}.{part}", self.0))
+            Self {
+                text: format!("{}.{part}", self.text),
+                lazy: false,
+            }
         }
     }
 
     pub(crate) fn index(&self, index: usize) -> Self {
-        Self(format!("{}[{index}]", self.0))
+        if self.lazy {
+            return Self::lazy();
+        }
+        Self {
+            text: format!("{}[{index}]", self.text),
+            lazy: false,
+        }
     }
 
     pub(crate) fn error(&self, message: impl std::fmt::Display) -> ModelError {
@@ -66,7 +97,11 @@ impl JsonPath {
 
 impl std::fmt::Display for JsonPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(if self.0.is_empty() { "$" } else { &self.0 })
+        f.write_str(if self.text.is_empty() {
+            "$"
+        } else {
+            &self.text
+        })
     }
 }
 
@@ -180,9 +215,15 @@ pub(crate) fn load(json: &str, registry: &Registry) -> Result<RackDoc, ModelErro
     let root = JsonPath::default();
     let value: Value =
         serde_json::from_str(json).map_err(|e| root.error(format!("invalid JSON: {e}")))?;
+    load_value(&value, registry)
+}
+
+/// [`load`] for text that is already parsed.
+pub(crate) fn load_value(value: &Value, registry: &Registry) -> Result<RackDoc, ModelError> {
+    let root = JsonPath::default();
     let obj = value
         .as_object()
-        .ok_or_else(|| root.error(format!("expected an object, found {}", describe(&value))))?;
+        .ok_or_else(|| root.error(format!("expected an object, found {}", describe(value))))?;
     // The tag and version decide how the rest is read, so they are checked first.
     let null = Value::Null;
     let format_path = root.field("format");
@@ -197,7 +238,7 @@ pub(crate) fn load(json: &str, registry: &Registry) -> Result<RackDoc, ModelErro
             "unsupported version {version}; this reader reads versions 1 and {PATCH_VERSION}"
         )));
     }
-    object(&value, &root, ROOT_FIELDS, ROOT_REQUIRED)?;
+    object(value, &root, ROOT_FIELDS, ROOT_REQUIRED)?;
     let field = |name: &str| (obj.get(name), root.field(name));
     let (v, p) = field("length_beats");
     let length = number(v.unwrap_or(&null), &p)?;
@@ -295,9 +336,32 @@ pub(crate) fn load_rack(
         .map_err(|v| container_io::violation_error(root, &v))?;
     container_io::sort_inner_cables(&mut doc.devices);
     if let (Some(v), p) = field("cables") {
-        for (i, item) in array(v, &p)?.iter().enumerate() {
-            let cable = load_cable(item, &p.index(i), &doc, registry)?;
-            doc.cables.push(cable);
+        let items = array(v, &p)?;
+        // A file of many cables is judged once as a set (see `rules::cables_fit`); any doubt, or
+        // any fault, falls back to one by one, which reports the first bad cable with its path.
+        let lazy = JsonPath::lazy();
+        let parsed: Option<Vec<Cable>> = (items.len() > 1)
+            .then(|| {
+                items
+                    .iter()
+                    .map(|item| {
+                        let obj = object(item, &lazy, &["from", "to"], &["from", "to"]).ok()?;
+                        Some(Cable {
+                            from: endpoint(&obj["from"], &lazy).ok()?,
+                            to: endpoint(&obj["to"], &lazy).ok()?,
+                        })
+                    })
+                    .collect()
+            })
+            .flatten();
+        match parsed {
+            Some(cables) if rules::cables_fit(&doc, registry, &cables) => doc.cables = cables,
+            _ => {
+                for (i, item) in items.iter().enumerate() {
+                    let cable = load_cable(item, &p.index(i), &doc, registry)?;
+                    doc.cables.push(cable);
+                }
+            }
         }
     }
     doc.cables.sort();
@@ -363,22 +427,26 @@ pub(crate) fn load_device(
             params_path.error(format!("expected an object, found {}", describe(v)))
         })?;
         for (key, value) in map {
-            let param_path = params_path.field(key);
-            let plain = number(value, &param_path)?;
+            // The path of a param is built only for an error.
+            let param_path = || params_path.field(key);
+            let plain = match value.as_f64() {
+                Some(n) => n,
+                None => number(value, &param_path())?,
+            };
             let Some(p) = desc.param_by_key(key) else {
                 // A param a newer plugin version dropped is kept as it is.
                 if crate::plugin::is_dead_plugin_param(desc, key) {
                     if !(plain as f32).is_finite() {
-                        return Err(param_path.error(format!("{plain} is out of range")));
+                        return Err(param_path().error(format!("{plain} is out of range")));
                     }
                     params.insert(key.clone(), plain as f32);
                     continue;
                 }
-                return Err(param_path.error(format!("{} has no param {key:?}", desc.type_id)));
+                return Err(param_path().error(format!("{} has no param {key:?}", desc.type_id)));
             };
             if crate::console::is_internal_param(key) {
                 return Err(
-                    param_path.error(format!("{key:?} is set by the app and is never stored"))
+                    param_path().error(format!("{key:?} is set by the app and is never stored"))
                 );
             }
             params.insert(key.clone(), p.clamp(plain as f32));

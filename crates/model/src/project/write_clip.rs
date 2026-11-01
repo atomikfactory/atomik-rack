@@ -62,20 +62,11 @@ pub(super) fn audio_json(a: &AudioClipContent) -> String {
 /// at `indent`, without a trailing newline. Shared by the project and clip file writers.
 pub(crate) fn write_note_clip_tail(w: &mut String, c: &Clip, notes: &[Note], indent: &str) {
     let _ = write!(w, "{indent}\"notes\": ");
-    list(
-        w,
-        indent,
-        notes.iter().map(|n| {
-            format!(
-                "[{}, {}, {}, {}{}]",
-                n.tick,
-                n.length,
-                n.key,
-                f32_text(n.velocity),
-                if n.muted { ", true" } else { "" }
-            )
-        }),
-    );
+    list_each(w, indent, notes, |w, n| {
+        let _ = write!(w, "[{}, {}, {}, ", n.tick, n.length, n.key);
+        write_f32(w, n.velocity);
+        w.push_str(if n.muted { ", true]" } else { "]" });
+    });
     if let Some(g) = &c.grid {
         let resolution = match g.resolution {
             StepResolution::Eighth => "eighth",
@@ -117,17 +108,7 @@ pub(crate) fn write_note_clip_tail(w: &mut String, c: &Clip, notes: &[Note], ind
                 "{sep}
 {indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
             );
-            list(
-                w,
-                &format!("{indent}  "),
-                lane.points.iter().map(|p| {
-                    let curve = match p.curve {
-                        Curve::Linear => "linear",
-                        Curve::Step => "step",
-                    };
-                    format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
-                }),
-            );
+            list_each(w, &format!("{indent}  "), &lane.points, write_point);
             let _ = write!(w, "}}");
         }
         let _ = write!(
@@ -161,17 +142,7 @@ pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
         ClipContent::Notes(notes) => write_note_clip_tail(w, c, notes, indent),
         ClipContent::Automation(points) => {
             let _ = write!(w, "{indent}\"points\": ");
-            list(
-                w,
-                indent,
-                points.iter().map(|p| {
-                    let curve = match p.curve {
-                        Curve::Linear => "linear",
-                        Curve::Step => "step",
-                    };
-                    format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
-                }),
-            );
+            list_each(w, indent, points, write_point);
         }
     }
     let _ = write!(w, "\n              }}");
@@ -223,21 +194,37 @@ pub(super) fn write_take_groups(w: &mut String, lane: &Lane, open: &BTreeSet<u32
 
 /// `items` joined as indented lines inside `[` … `]`, or `[]` when empty.
 pub(crate) fn list(w: &mut String, indent: &str, items: impl IntoIterator<Item = String>) {
+    list_each(w, indent, items, |w, item| w.push_str(&item));
+}
+
+/// [`list`] where `write_item` writes each item straight into the output: no text per item.
+pub(crate) fn list_each<T>(
+    w: &mut String,
+    indent: &str,
+    items: impl IntoIterator<Item = T>,
+    mut write_item: impl FnMut(&mut String, T),
+) {
     let mut any = false;
     for (i, item) in items.into_iter().enumerate() {
-        let sep = if i == 0 { "[" } else { "," };
-        let _ = write!(w, "{sep}\n{indent}  {item}");
+        w.push_str(if i == 0 { "[" } else { "," });
+        let _ = write!(w, "\n{indent}  ");
+        write_item(w, item);
         any = true;
     }
-    let _ = write!(
-        w,
-        "{}",
-        if any {
-            format!("\n{indent}]")
-        } else {
-            "[]".into()
-        }
-    );
+    if any {
+        let _ = write!(w, "\n{indent}]");
+    } else {
+        w.push_str("[]");
+    }
+}
+
+/// [`f32_text`] written into `w`.
+fn write_f32(w: &mut String, x: f32) {
+    if x == 0.0 && x.is_sign_negative() {
+        w.push_str("-0.0");
+    } else {
+        let _ = write!(w, "{x}");
+    }
 }
 
 /// The `, "name": …, "color": …` text a clip adds after its `"muted"` field (empty when it has
@@ -251,4 +238,14 @@ pub(crate) fn clip_meta_text(c: &Clip) -> String {
         let _ = write!(out, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
     }
     out
+}
+
+/// One automation point: `[tick, value, "curve"]`.
+fn write_point(w: &mut String, p: &AutomationPoint) {
+    let _ = write!(w, "[{}, ", p.tick);
+    write_f32(w, p.value);
+    w.push_str(match p.curve {
+        Curve::Linear => ", \"linear\"]",
+        Curve::Step => ", \"step\"]",
+    });
 }
