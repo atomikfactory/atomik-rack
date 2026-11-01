@@ -1144,6 +1144,17 @@ mod tests {
     }
 
     #[test]
+    fn the_stereo_tool_mono_switch_is_a_front_toggle_on_the_mono_param() {
+        let desc = &stereo_tool::DESCRIPTOR;
+        let spec = auto_layout(desc);
+        let mono = desc.params.iter().position(|p| p.key == "mono").unwrap();
+        let placed: Vec<_> = spec.front.iter().filter(|c| c.param == mono).collect();
+        assert_eq!(placed.len(), 1, "one MONO control");
+        assert_eq!(placed[0].kind, ControlKind::Toggle);
+        assert_eq!(desc.params[mono].name, "Mono");
+    }
+
+    #[test]
     fn grouping_and_labels() {
         assert_eq!(group_prefix("env.amp.attack"), "env.amp");
         assert_eq!(group_prefix("osc1.wave"), "osc1");

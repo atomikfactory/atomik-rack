@@ -9,6 +9,10 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **The logo in the About box and in `assets/logo/`.** Help > About now draws the AR monogram at
+  the top. `assets/logo/monogram.png` (transparent) and `assets/logo/monogram-black.png` (the same
+  on opaque black), both 512 pixels, are derived from the master by the `make_icons` example. The
+  headless screenshots draw images too now.
 - **MIDI files in the browser.** The file browser now lists `.mid` and `.midi` files (with a MIDI
   label, and `kind:midi` in the search field). Double-click or Enter, or Import in the row menu,
   imports one as File > Import MIDI does. Drag one from the browser or the system onto the
@@ -806,6 +810,11 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **The Stereo Tool's MONO switch is the last stage.** It used to come before the Mid/side mode,
+  so with Mid/side set to encode the output was the mid on the left and silence on the right.
+  Now the two outputs are the same `(L + R) / 2` of whatever the mode produced, in every mode
+  (once the 10 ms ramp has settled they are bit-identical); a render test checks left equals right
+  with MONO on, and a panel test that MONO is a front toggle on the `mono` param.
 - **The drum generator's Generate always wrote the same pattern and Randomise did nothing.** The
   seed only jittered velocities, and only when the density was not zero, so at the default
   density the steps never changed. Now every press of GENERATE picks a new seed (written to the
@@ -915,6 +924,12 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Spider Audio and Spider CV are now Audio Split/Merge and CV Split/Merge.** Only the names
+  shown in the browser, the panels and the documentation change; the device ids are the same, so
+  saved projects and patches load as before.
+- **The application icon sits on a black background.** The window, taskbar, Explorer, installer,
+  Dock and Linux icons are regenerated from the logo on opaque black so they read on any
+  taskbar.
 - **A bigger drum machine panel that shows what is loaded.** The pad grid now takes the width and
   height of the panel instead of a small corner of it, with the 14 pad knobs and the master level
   in two columns at the right and the readout and the EDIT, SAMPLE and TO CH buttons under the

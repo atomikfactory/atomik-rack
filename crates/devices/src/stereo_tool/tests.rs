@@ -102,6 +102,29 @@ fn width_zero_and_mono_collapse_to_the_mid() {
 }
 
 #[test]
+fn mono_is_the_last_stage_so_the_output_is_mono_in_every_mode() {
+    for mode in [0.0, 1.0, 2.0] {
+        let mut h = tool();
+        h.set_param("mode", mode);
+        h.set_param("mono", 1.0);
+        let (l, r) = run(&mut h, |n| noise(n, 3), |n| noise(n, 4), 40);
+        assert!(
+            l.iter().zip(&r).skip(BATCH * 5).all(|(a, b)| a == b),
+            "mode {mode}: left and right differ"
+        );
+        // The output is not silent: the right channel is no longer lost in encode mode.
+        assert!(l.iter().any(|x| x.abs() > 0.05), "mode {mode}: silent");
+    }
+    // Encode then mono: both channels carry (M + S) / 2 = L / 2 of the input.
+    let mut h = tool();
+    h.set_param("mode", 1.0);
+    h.set_param("mono", 1.0);
+    let (l, r) = run(&mut h, |_| 0.8, |_| 0.2, 120);
+    let want = 0.5 * (0.5 * (0.8 + 0.2) + 0.5 * (0.8 - 0.2));
+    assert!((last(&l) - want).abs() < 1e-6 && (last(&r) - want).abs() < 1e-6);
+}
+
+#[test]
 fn balance_lowers_the_far_side() {
     let mut h = tool();
     h.set_param("balance", -1.0);
