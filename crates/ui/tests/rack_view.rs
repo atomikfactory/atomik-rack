@@ -597,9 +597,9 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let mut v = view(&doc, &reg);
     v.set_browser_visible(true);
     // Two more with the console devices shown (the default).
-    assert_eq!(v.browser_rows(&reg).len(), 33);
+    assert_eq!(v.browser_rows(&reg).len(), 41);
     v.set_show_console_devices(false);
-    assert_eq!(v.browser_rows(&reg).len(), 31); // arpeggiator, line mixer, poly synth, wavetable synth, FM synth, sampler, grain sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, guitar amp, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank, midi out
+    assert_eq!(v.browser_rows(&reg).len(), 39); // arpeggiator, line mixer, poly synth, wavetable synth, FM synth, sampler, grain sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, guitar amp, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank, midi out, gain tool, stereo tool, gate, gate + compressor, sidechain tool, envelope filter, spider audio, spider CV
     for ch in "dela".chars() {
         let _ = v.handle(&key_event(Key::Char(ch), Modifiers::NONE), &doc, &reg);
     }
@@ -611,7 +611,7 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
-    assert_eq!(v.browser_rows(&reg).len(), 31); // as above (31 browsable devices, the container included)
+    assert_eq!(v.browser_rows(&reg).len(), 39); // as above (39 browsable devices, the container included)
     // Select the synth, then double-click the mixer row.
     let p = v.plate_center(&key("synth")).unwrap();
     let _ = v.handle(&down(p), &doc, &reg);

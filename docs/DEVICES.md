@@ -1,12 +1,14 @@
 # Device reference
 
-Atomik Rack ships thirty-four original devices: the poly synth, the wavetable synth, the FM synth,
+Atomik Rack ships forty-two original devices: the poly synth, the wavetable synth, the FM synth,
 the grain sampler, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, compressor, EQ,
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
-machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key &
+machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
+sidechain tool, envelope filter and the two spiders), the note players (step sequencer, arpeggiator,
+note filter, key &
 chord, note repeater and note delay), the container and its internal note split, and the console
 devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
 static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code
@@ -2805,6 +2807,209 @@ Six per slot *k* = 1 to 8, ids `6(k-1)` to `6(k-1)+5`, all discrete, in this ord
 
 ---
 
+## Utility devices
+
+Eight small devices for gain staging, stereo work, dynamics, ducking, routing and CV. Six are
+effects (they end with the `bypass` param, see [Effect bypass](#effect-bypass)); the two spiders
+are plain utilities. None adds latency, none allocates after construction, and all treat
+non-finite input samples as 0. The maths that decides a level, a gain or a time constant is the
+deterministic `log2_det` / `exp2_det`, so a bounce is bit-identical on every platform. Sources:
+[tool_support.rs](../crates/devices/src/tool_support.rs) and one module per device.
+
+### Gain Tool: `atomik.gain-tool` (Effect)
+
+Gain, balance, width and mute, with an optional second stereo input.
+Source: [gain_tool.rs](../crates/devices/src/gain_tool.rs).
+
+Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio out), `gain_cv_in`,
+`pan_cv_in` (CV in).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mode` | 0 to 2: gain, mix, xfade | 0 | choice |
+| `gain` | -60 to 24 | 0 | dB |
+| `pan` | -1 to 1 (balance) | 0 | none |
+| `width` | 0 to 2 | 1 | none |
+| `blend` | 0 to 1 | 0.5 | percent |
+| `mute` | 0 or 1 | 0 | toggle |
+| `gain_cv_trim` | -1 to 1 | 1 | percent |
+| `pan_cv_trim` | -1 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- **Modes.** gain: the input. mix: the input plus the aux input at the `blend` level. xfade: a
+  linear cross-fade from the input to the aux input.
+- **Gain** is `gain` plus the CV (`gain_cv_trim` times the CV times 24 dB); **mute** ramps it to 0.
+  **Balance** is unity at the centre and lowers the far side linearly to silence; its CV adds to
+  `pan` as in [the CV trim convention](#cv-inputs-the-trim-convention). **Width** is mid/side
+  width and is skipped at exactly 1.
+- Gain, balance, width and blend are smoothed per batch over 10 ms. At the defaults the output
+  is the input bit for bit.
+
+### Stereo Tool: `atomik.stereo-tool` (Effect)
+
+Polarity, width with a bass bypass, balance, mono and mid/side conversion.
+Source: [stereo_tool.rs](../crates/devices/src/stereo_tool.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mode` | 0 to 2: stereo, encode, decode | 0 | choice |
+| `invert_l`, `invert_r` | 0 or 1 | 0 | toggle |
+| `width` | 0 to 2 | 1 | none |
+| `low_bypass` | 20 to 500 (20 = off) | 20 | Hz |
+| `balance` | -1 to 1 | 0 | none |
+| `mono` | 0 or 1 | 0 | toggle |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- **Order:** polarity, width, balance, mono, then the mid/side mode. Encode writes
+  `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
+- **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
+  that frequency; only the band above it is widened, the bass stays as it was.
+- Width 1, balance 0, polarity and mono off, mode stereo: the output is the input bit for bit.
+
+### Gate: `atomik.gate` (Effect)
+
+A stereo gate and downward expander with a sidechain key.
+Source: [gate.rs](../crates/devices/src/gate.rs).
+
+Sockets: `in_l`, `in_r`, `sc_in_l`, `sc_in_r` (Audio in), `out_l`, `out_r` (Audio out),
+`gr_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `threshold` | -80 to 0 | -40 | dB |
+| `range` | 0 to 90 | 60 | dB |
+| `hold` | 0 to 2000 | 50 | ms |
+| `attack` | 0.1 to 100 | 1 | ms |
+| `release` | 5 to 2000 | 150 | ms |
+| `expander` | 0 or 1 (2:1 downward expansion instead of a fixed range) | 0 | toggle |
+| `sc_enable` | 0 or 1 | 0 | toggle |
+| `sc_hp` | 20 to 1000 | 20 | Hz |
+| `sc_lp` | 1000 to 20000 | 20000 | Hz |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- The key is the sidechain input (with `sc_enable` and a cable) or the input, filtered by the
+  two key filters, then linked over both channels. It is the gate of `atomik_dsp` in its
+  deterministic mode (the channel strip keeps its own maths and its golden renders).
+- `gr_cv_out` is `1 - gain`: 0 while open. Meter values: input peak, output peak, attenuation (dB).
+
+### Gate + Compressor: `atomik.dynamics` (Effect)
+
+A gate followed by a compressor, with input gain, makeup and mix.
+Source: [dynamics.rs](../crates/devices/src/dynamics.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `gr_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `in_gain` | -24 to 24 | 0 | dB |
+| `gate_threshold` | -80 to 0 (-80 = gate off) | -80 | dB |
+| `gate_range` | 0 to 90 | 40 | dB |
+| `gate_release` | 5 to 2000 | 150 | ms |
+| `threshold` | -60 to 0 | 0 | dB |
+| `ratio` | 1 to 20 | 1 | none |
+| `knee` | 0 to 24 | 6 | dB |
+| `attack` | 0.1 to 200 | 10 | ms |
+| `release` | 5 to 2000 | 150 | ms |
+| `makeup` | 0 to 24 | 0 | dB |
+| `mix` | 0 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- Signal: input gain, gate (fixed 20 ms hold, 1 ms attack), stereo-linked peak compressor with
+  the soft-knee curve and dB-domain ballistics, makeup; the mix blends with the input before the
+  input gain. `gr_cv_out` is the compressor's `1 - gain`. At the defaults the output is the input
+  bit for bit.
+
+### Sidechain Tool: `atomik.duck` (Effect)
+
+Pumping and ducking from the song position, from the hits of a key, or from the key's level.
+Source: [duck.rs](../crates/devices/src/duck.rs).
+
+Sockets: `in_l`, `in_r`, `sc_in_l`, `sc_in_r` (Audio in), `out_l`, `out_r` (Audio out),
+`duck_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mode` | 0 to 2: pump, trigger, classic | 0 | choice |
+| `rate` | 0 to 3: 1/2, 1/4, 1/8, 1/16 (pump) | 1 | choice |
+| `depth` | 0 to 1 | 0.8 | percent |
+| `attack` | 0.1 to 50 | 2 | ms |
+| `time` | 10 to 2000 | 250 | ms |
+| `curve` | 0.25 to 4 | 1 | none |
+| `threshold` | -60 to 0 (trigger, classic) | -30 | dB |
+| `send` | 0 or 1 (audio untouched, only the CV moves) | 0 | toggle |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- The audio is multiplied by `1 - depth * dip`. The dip falls to 1 over `attack`, then recovers
+  over `time`, bent by `curve` (1 is a straight line, above 1 it hangs low).
+- **pump** restarts the curve every `rate` of the song, computed from the transport position of
+  the batch alone, so a locate and a bounce give the same gain; it is open while stopped.
+  **trigger** restarts it when the key (the sidechain, else the input) crosses `threshold` (a hit
+  during a curve continues from the current dip). **classic** follows the key level, 12 dB over
+  the threshold ducking the full depth.
+- `duck_cv_out` is `depth * dip`. The curve is set by `attack`, `time` and `curve`; there is no
+  hand-drawn curve editor yet.
+
+### Envelope Filter: `atomik.env-filter` (Effect)
+
+A state-variable filter whose cutoff an ADSR sweeps, started by a gate, notes or the input level.
+Source: [env_filter.rs](../crates/devices/src/env_filter.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `gate_cv_in` (CV in), `out_l`,
+`out_r` (Audio out), `env_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mode` | 0 to 3: lowpass, bandpass, highpass, notch | 0 | choice |
+| `cutoff` | 20 to 20000 | 400 | Hz |
+| `resonance` | 0 to 1 | 0.3 | percent |
+| `amount` | -6 to 6 | 3 | octaves |
+| `attack` | 0.1 to 2000 | 5 | ms |
+| `decay` | 1 to 5000 | 250 | ms |
+| `sustain` | 0 to 1 | 0 | percent |
+| `release` | 1 to 5000 | 250 | ms |
+| `trigger` | 0 to 1: gate or notes, input level | 0 | choice |
+| `threshold` | -60 to 0 (input level trigger) | -30 | dB |
+| `mix` | 0 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- The cutoff is `cutoff * 2^(amount * envelope)`, refreshed every 8 samples. The gate is the
+  CV (high above 0.5, low under 0.3) or any held note; with `trigger` on the input level, the
+  input peak against `threshold` (re-arming 6 dB lower). `env_cv_out` is the envelope, 0 to 1.
+- A step-gated variant is not a mode: the step sequencer and CV sequencer gate it through
+  `gate_cv_in`.
+
+### Spider Audio: `atomik.spider-audio` (Utility)
+
+Four stereo merge inputs and a four-way stereo split.
+Source: [spider.rs](../crates/devices/src/spider.rs).
+
+Sockets: `m1_l`, `m1_r` to `m4_l`, `m4_r` (Audio summing inputs: any number of cables each),
+`merge_out_l`, `merge_out_r` (the sum of the four pairs, added in order 1 to 4), `split_in_l`,
+`split_in_r` (Audio in), `split1_out_l`, `split1_out_r` to `split4_out_l`, `split4_out_r`
+(copies of the split input). No params. A summing input adds its cables in the order of their
+source endpoints, so the sum is the same for every block size; the delay compensation aligns
+the merged cables like those of a console bus.
+
+### Spider CV: `atomik.spider-cv` (Utility)
+
+Four trimmed CV merge inputs and two split-and-invert inputs.
+Source: [spider.rs](../crates/devices/src/spider.rs).
+
+Sockets: `in1` to `in4` (CV summing inputs), `sum_out`, `split1_in`, `split2_in` (CV in),
+`split1_out`, `split1_inv_out`, `split2_out`, `split2_inv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `trim1` to `trim4` | -1 to 1 | 1 | percent |
+| `split1_level`, `split2_level` | -1 to 1 | 1 | percent |
+
+`sum_out` is the sum of the four inputs, each times its trim (a negative trim inverts, a small one
+attenuates). Each split output is `in * level`, its inverted twin is `-in * level`.
+
+---
+
 ## MIDI
 
 Note events carry more than notes: pitch bend, controllers (CC), channel pressure and polyphonic
@@ -3045,7 +3250,8 @@ same. The code is `PlayerBypass` in
 ## Effect bypass
 
 Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion,
-the guitar amp, modulation, mastering, Character, the spectrum and the phase meter) ends its param
+the guitar amp, modulation, mastering, Character, the spectrum, the phase meter and the utility
+effects gain tool, stereo tool, gate, gate + compressor, sidechain tool and envelope filter) ends its param
 table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key
 and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels
 treat it like any other param. It is appended last, so no existing param id moves, and a project or
