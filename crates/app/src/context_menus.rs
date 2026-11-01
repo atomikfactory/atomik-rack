@@ -771,6 +771,10 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.locator_right_here", true),
                 item("sequencer.marker_end_here", true),
                 Spec::Separator,
+                // The bars between the locators, opened or closed in every track.
+                item("sequencer.insert_bars", true),
+                item("sequencer.remove_bars", true),
+                Spec::Separator,
             ];
             v.extend(
                 METERS

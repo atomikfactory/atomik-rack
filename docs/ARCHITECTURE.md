@@ -4029,11 +4029,16 @@ creation chain in the **Creation chain** bullet.
   (`RemoveClips`, `RemoveTrack`, the points) are workflow commands, so each is one undo step; the
   piano roll duplicates notes (`DuplicateNotes`). The restructuring commands are workflow
   commands too: `InsertTime` and `RemoveTime` (the `time_edit` module of the model) move clips,
-  take groups, markers, ranges, tempo and meter events, the loop and the song End together and are
-  refused while a track is frozen; `ReverseClips`, `ScaleTempo`, `ChopClips` and
+  take groups, markers, ranges, tempo and meter events, the loop and the song End together (what
+  starts on the point moves, but the song's first tempo and meter) and are refused while a track is
+  frozen; `ReverseClips`, `ScaleTempo`, `ChopClips` and
   `CleanupAutomation` (`clip_transform`) work on a selection, and `JoinClips` leaves muted clips
   out and unrolls loops. They act at the loop locators and on the selection through the
-  `sequencer.*` ids the Edit menu and the clip menu use. *Clipboard*
+  `sequencer.*` ids the Edit menu and the clip menu use. `StretchClips` is `ScaleTempo` about each
+  clip's own fixed edge: the gesture is an Alt+drag on a clip edge (`Drag::Stretch`), whose steps
+  reach the app as `UiAction::StretchStep` and run as a `Document::apply_trial` preview
+  (`AppCore::stretch_step`: the trial is cancelled and re-planned from the original at every
+  step, so no undo step exists until the release commits one). *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of

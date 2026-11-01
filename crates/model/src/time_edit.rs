@@ -8,6 +8,15 @@
 //! after it moves back, and the tempo and meter in effect after the gap carry on from `at`.
 //! Both are one `Edit::Compound`, so one undo step.
 //!
+//! Anything that starts exactly on `at` moves (a marker, a tempo or meter change, a range or
+//! loop start) except the song's first tempo and meter, which are the song's own. A note that
+//! crosses `at` stays whole in the left half of its clip on insert (with the song's note tails;
+//! without them it ends at the cut, as it always did) and the right half does not play it
+//! again; on remove a note that would ring into the removed time ends where the cut starts.
+//! An automation clip is cut like any other: each half plays the curve the clip had at its
+//! edge, so the curve stays continuous on insert and joins with the value from the end of the
+//! range on remove.
+//!
 //! What stays consistent, and what is refused:
 //!
 //! * a take group is moved or (inside a removed range) dropped as a whole; one that straddles
@@ -19,7 +28,7 @@
 //!   from the value it had at the end of the range (remove).
 
 use crate::history::Edit;
-use crate::song::{Clip, Marker, MeterEvent, RangeMarker, TempoEvent};
+use crate::song::{Clip, ClipContent, Marker, MeterEvent, Note, RangeMarker, TempoEvent};
 use crate::song_cmd::{check_end, check_geometry, split_pair};
 use crate::takes::TakeGroup;
 use crate::{ClipId, ModelError, RackDoc};
@@ -95,8 +104,42 @@ fn moved(c: &Clip, by: i64) -> Result<Clip, ModelError> {
     Ok(m)
 }
 
+/// The left piece of a clip that a removed range cut: a note that starts in it and would ring
+/// on into the removed time (the song's note tails) ends where the piece does, so nothing of
+/// the cut time is heard. A looped clip repeats its own content and is left alone.
+fn shortened(mut left: Clip) -> Clip {
+    let ClipContent::Notes(notes) = &left.content else {
+        return left;
+    };
+    if left.loop_length.is_some() {
+        return left;
+    }
+    let window_end = left.offset + left.length;
+    let shown = |n: &Note| n.tick >= left.offset && n.tick < window_end;
+    if notes
+        .iter()
+        .all(|n| !shown(n) || n.tick + n.length <= window_end)
+    {
+        return left;
+    }
+    let cut: Vec<Note> = notes
+        .iter()
+        .map(|n| Note {
+            length: if shown(n) {
+                n.length.min(window_end - n.tick)
+            } else {
+                n.length
+            },
+            ..*n
+        })
+        .collect();
+    left.content = ClipContent::Notes(cut.into());
+    left
+}
+
 /// The meter after `bars` whole bars are opened at `at` (`None` when `at` is past every meter
-/// change, so nothing in the map moves).
+/// change, so nothing in the map moves). A change that starts on the bar line `at` itself
+/// moves with the music that follows it; the opened bars take the signature before it.
 fn meter_after_insert(
     doc: &RackDoc,
     at: i64,
@@ -105,11 +148,18 @@ fn meter_after_insert(
     let table = doc.song.meter_table();
     let map = table.map();
     let b0 = map.bar_at(at);
-    if !doc.song.meter.iter().any(|e| e.bar > b0) {
+    let on_line = map.bar_start(b0) == at;
+    // The first signature (bar 1) never moves: the song starts with it.
+    let moves = |e: &MeterEvent| e.bar > b0 || (on_line && e.bar == b0 && b0 > 1);
+    if !doc.song.meter.iter().any(moves) {
         return Ok(None);
     }
-    let bar_ticks = map.bar_ticks_at(at);
-    if map.bar_start(b0) != at || length % bar_ticks != 0 {
+    let bar_ticks = if on_line && b0 > 1 && doc.song.meter.iter().any(|e| e.bar == b0) {
+        map.bar_ticks_at(at - 1)
+    } else {
+        map.bar_ticks_at(at)
+    };
+    if !on_line || length % bar_ticks != 0 {
         return Err(bad(
             "a meter change follows: the range must start on a bar line and be whole bars",
         ));
@@ -120,7 +170,7 @@ fn meter_after_insert(
             .meter
             .iter()
             .map(|e| {
-                if e.bar > b0 {
+                if moves(e) {
                     MeterEvent {
                         bar: e.bar.saturating_add(bars),
                         ..*e
@@ -279,7 +329,9 @@ pub(crate) fn insert_time(
         .tempo
         .iter()
         .map(|e| {
-            if e.tick > at {
+            // A change that starts on `at` moves with the music after it (the opened time keeps
+            // the tempo before it); the first change, at tick 0, is the song's own tempo.
+            if e.tick >= at && e.tick > 0 {
                 TempoEvent {
                     tick: e.tick + length,
                     ..*e
@@ -341,8 +393,11 @@ pub(crate) fn insert_time(
     let (ls, le) = song.loop_range;
     // A loop that is exactly the range stays: the new bars are what it loops.
     if (ls, le) != (at, at + length) {
-        let shift = |t: i64| if t > at { t + length } else { t };
-        let new = (shift(ls), shift(le));
+        // As the ranges: a start on `at` moves, an end on `at` stays.
+        let new = (
+            if ls >= at { ls + length } else { ls },
+            if le > at { le + length } else { le },
+        );
         if new != (ls, le) {
             edits.push(Edit::Loop {
                 old: (song.loop_range, song.loop_enabled),
@@ -402,7 +457,7 @@ pub(crate) fn remove_time(
                     (false, false) => edits.push(put(Some(c.clone()), None)),
                     (true, false) => {
                         let (left, _) = split_pair(doc, c, at)?;
-                        edits.push(put(Some(c.clone()), Some(left)));
+                        edits.push(put(Some(c.clone()), Some(shortened(left))));
                     }
                     (false, true) => {
                         let (_, right) = split_pair(doc, c, cut_end)?;
@@ -415,7 +470,7 @@ pub(crate) fn remove_time(
                             id: ids.alloc()?,
                             ..moved(&right, -length)?
                         };
-                        edits.push(put(Some(c.clone()), Some(left)));
+                        edits.push(put(Some(c.clone()), Some(shortened(left))));
                         edits.push(put(None, Some(right)));
                     }
                 }

@@ -394,6 +394,21 @@ pub enum WorkflowCommand {
         /// The new tempo as a percentage of the old one.
         percent: f64,
     },
+    /// Stretches the listed clips in time by one ratio, the gesture of an edge dragged with the
+    /// stretch role: `percent` is the new tempo as for [`WorkflowCommand::ScaleTempo`] (50 makes
+    /// every clip twice as long). Each clip scales about its own fixed edge: its start stays
+    /// where it is, or with `from_start` (the start edge was dragged) its end does. Notes,
+    /// controller and automation points scale with the clip and an audio clip is warped to
+    /// follow (pitch kept unless its warp mode is Repitch; a clip that plays backwards
+    /// rejects the command). Same range and one undo step as `ScaleTempo`.
+    StretchClips {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// The new tempo as a percentage of the old one.
+        percent: f64,
+        /// The start edge is the one that moves.
+        from_start: bool,
+    },
     /// Cuts every listed clip longer than `length` into pieces of `length` ticks from its own
     /// start (the last piece takes what is left). The new pieces take ids from the song's next
     /// free id in song order. One undo step; a selection with nothing to cut rejects.
@@ -853,6 +868,11 @@ pub(crate) fn plan(
         WorkflowCommand::ScaleTempo { ids, percent } => {
             crate::clip_transform::scale_clips(doc, &ids, percent)
         }
+        WorkflowCommand::StretchClips {
+            ids,
+            percent,
+            from_start,
+        } => crate::clip_transform::stretch_clips(doc, &ids, percent, from_start),
         WorkflowCommand::ExtractNotes {
             clip,
             selection,

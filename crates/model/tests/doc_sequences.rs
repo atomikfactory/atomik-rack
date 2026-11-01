@@ -248,7 +248,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )),
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
-        (0u8..11, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
+        (0u8..12, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
@@ -529,6 +529,11 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 10 => WorkflowCommand::CleanupAutomation {
                     ids,
                     level: atomik_model::ThinLevel::Heavy,
+                },
+                11 => WorkflowCommand::StretchClips {
+                    ids,
+                    percent: if *t % 2 == 0 { 50.0 } else { 200.0 },
+                    from_start: *t % 3 == 0,
                 },
                 k => WorkflowCommand::CutOut {
                     ids,

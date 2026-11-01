@@ -309,6 +309,8 @@ pub struct AppCore<S: EngineSink> {
     /// The next applied command is a step of the open patch trial: no undo entry (see
     /// `Document::apply_trial`).
     trial_next: bool,
+    /// A clip-edge stretch drag is open as a trial (`app_core_workflow`).
+    stretch_open: bool,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
@@ -550,6 +552,7 @@ impl<S: EngineSink> AppCore<S> {
             keep_pending: None,
             join_next: false,
             trial_next: false,
+            stretch_open: false,
             take: None,
             autorec: autorec::AutoRec::new(),
             autoview: autoview::AutoView::default(),
@@ -713,6 +716,7 @@ impl<S: EngineSink> AppCore<S> {
         let trial = std::mem::take(&mut self.trial_next);
         if !trial {
             self.commit_patch_browse();
+            self.commit_stretch();
         }
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
@@ -799,6 +803,12 @@ impl<S: EngineSink> AppCore<S> {
                     let _ = self.apply_command(c);
                 }
             }
+            UiAction::StretchStep {
+                ids,
+                percent,
+                from_start,
+            } => self.stretch_step(ids, percent, from_start),
+            UiAction::StretchEnd { commit } => self.end_stretch(commit),
             UiAction::EndMerge => {
                 if let Some(id) = self.keep_pending.take() {
                     self.complete_note_edit(id);

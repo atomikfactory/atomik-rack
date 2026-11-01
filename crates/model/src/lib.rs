@@ -93,6 +93,7 @@ pub use rec_source::{RecSource, rec_source, source_label, source_options, source
 pub mod console;
 pub mod song;
 
+pub use clip_transform::{SCALE_PERCENT_MAX, SCALE_PERCENT_MIN};
 pub use container::{
     BOUNDARY_KEY, CONTAINER_TYPE, ContainerCommand, ContainerDoc, FORBIDDEN_INSIDE, MACRO_COUNT,
     MAX_CONTAINER_DEPTH, MAX_CONTAINER_TARGETS, MAX_INNER_DEVICES, MAX_MACRO_NAME_CHARS,
