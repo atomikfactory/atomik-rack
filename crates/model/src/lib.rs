@@ -6,6 +6,7 @@
 //!
 //! Public signatures are a stable contract: changes need review.
 
+mod asset_usage;
 mod audio_edit;
 mod audio_notes;
 mod audition;
@@ -81,6 +82,7 @@ pub mod warp;
 mod workflow;
 mod workflow_cmd;
 mod workflow_create;
+mod zone_remap;
 mod zones;
 
 pub use patch::{
@@ -162,9 +164,11 @@ pub use zones::{
     parse_note_name, with_pad_files, zones_for,
 };
 
+pub use asset_usage::{AssetRemoval, AssetUse};
 use atomik_device_sdk::Registry;
 pub use audio_edit::{
-    StripParams, normalise_gain_db, peak, slice_envelope, split_envelope, strip_silence,
+    StripParams, leading_silence, normalise_gain_db, peak, slice_envelope, split_envelope,
+    strip_silence,
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use audition::{AuditionSpan, audition_span};
@@ -217,6 +221,7 @@ pub use warp::{
     WarpMarker, WarpMode, WarpSettings, bpm_for_beats, estimate_bpm, quantize_audio,
     source_at_tick, tick_at_source, warp_job, warp_jobs, warped_at_song_tempo,
 };
+pub use zone_remap::{SampleEdit, remap_zone};
 
 /// Most host input channels a document may ask for (the engine interface's limit).
 pub const MAX_INPUT_CHANNELS: u16 = 32;
