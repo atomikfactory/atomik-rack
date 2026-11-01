@@ -898,6 +898,11 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
+  is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
+  their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
+  seconds after the bypass is fully engaged (see Effect bypass in DEVICES). The two-second rule can
+  change the tail heard when an effect is switched back on.
 - **The cursor shows what a drag does.** While files are dragged out of the file browser the cursor
   is the copy cursor over a place that takes them and the not-allowed cursor over every other
   place. A device moved in the rack, a clip, a track or a note lane moved in the sequencer show

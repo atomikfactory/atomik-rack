@@ -268,6 +268,8 @@ pub struct AppCore<S: EngineSink> {
     analysers: analysers::Analysers,
     /// The audio track tuners that show and what the engine was told about them.
     tuners: tuner::Tuners,
+    /// The EQs whose analyser the engine was told to run.
+    eq_live: eq_live::EqLive,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
     /// The pattern clipboard both sequencer views last agreed on.
@@ -493,6 +495,7 @@ impl<S: EngineSink> AppCore<S> {
             vca_sent: BTreeMap::new(),
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
+            eq_live: eq_live::EqLive::default(),
             sampling: sampling::Sampling::default(),
             pattern_clip_seen: None,
             transport_bar: TransportBar::new(theme.clone()),
@@ -1369,6 +1372,7 @@ impl<S: EngineSink> AppCore<S> {
         self.fx_meter_seq.clear();
         self.analysers.restart();
         self.tuners.restart();
+        self.eq_live.restart();
         self.speq.restart();
         self.next_id = 1;
         self.sent_loop = None;
@@ -1436,6 +1440,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_device_scopes();
         self.feed_tuners();
         self.feed_spectrum_eq();
+        self.feed_eq_analysers();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
@@ -3140,6 +3145,9 @@ pub use sampling::{SAMPLE_SECONDS, SamplingInput, TRIGGER_DB, sampling_inputs};
 #[path = "app_core_spectrum_eq.rs"]
 mod spectrum_eq;
 
+#[path = "app_core_eq_live.rs"]
+mod eq_live;
+
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
@@ -3275,6 +3283,10 @@ mod sampling_tests;
 #[cfg(test)]
 #[path = "app_core_spectrum_eq_tests.rs"]
 mod spectrum_eq_tests;
+
+#[cfg(test)]
+#[path = "app_core_eq_live_tests.rs"]
+mod eq_live_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]

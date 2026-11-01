@@ -115,6 +115,14 @@ fn every_param_and_socket_is_placed_once_and_nothing_overlaps() {
             "{kind:?} places bypass as a control"
         );
         params.push(bypass);
+        // Hidden `internal.` params are set by the app and never placed.
+        params.extend(
+            d.params
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.key.starts_with("internal."))
+                .map(|(i, _)| i),
+        );
         params.sort_unstable();
         assert_eq!(params, (0..d.params.len()).collect::<Vec<_>>(), "{kind:?}");
         let mut sockets: Vec<usize> = spec.back.iter().map(|s| s.socket).collect();
