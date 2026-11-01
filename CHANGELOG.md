@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Sampler: zone groups, velocity crossfades, round-robin and per-zone envelope and filter.** A
+  zone can belong to a group, fade in and out over a velocity range with an equal-power curve,
+  take a slot in a round-robin cycle (counted per group and key, so a bounce and a locate repeat
+  it) and carry its own amplitude envelope and filter. The sample editor has a SYNTH page for them;
+  envelope and filter edits follow the zone's group. New zone fields are written only when set, so
+  existing projects load and render as before. Not in this version: SoundFont and SFZ import,
+  eight sampler outputs and the eight-slot loop slicer.
 - **Effects: more distortion, an echo, a soft clip, split-band width and a choice of look-ahead.**
   The distortion gains five curves (`tape`, `fuzz`, `modulate`, `warp`, `scream`, each with
   first-order anti-aliasing), a `cut.low` and `cut.high` pair and a `body` bank (resonant or
