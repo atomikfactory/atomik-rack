@@ -16,6 +16,7 @@
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
 //!   "audio_editor_mode": "overview",
 //!   "console_notice_seen": false,
+//!   "plugin_windows": { "clap.vendor.synth": { "x": 120, "y": 80, "w": 900, "h": 600 } },
 //!   "windows": { "rack": { "detached": true, "geom": { "x": 40, "y": 60, "width": 1200.0,
 //!                "height": 700.0, "maximised": false, "monitor": "DISPLAY1" } } } }
 //! ```
@@ -36,6 +37,43 @@ pub const UI_STATE_FILE: &str = "ui-state.json";
 pub const DEFAULT_RACK_SPLIT: f64 = 0.5;
 /// Default share of the file browser panel's height given to its tree.
 pub const DEFAULT_TREE_FRACTION: f64 = 0.4;
+
+/// Most plugin types whose window position is kept.
+pub const MAX_PLUGIN_WINDOWS: usize = 256;
+/// The smallest editor window kept, in pixels.
+pub const MIN_PLUGIN_WINDOW: u32 = 64;
+/// The largest editor window kept, in pixels.
+pub const MAX_PLUGIN_WINDOW: u32 = 16_384;
+
+/// Where a plugin's editor window was: the position of its outer frame and the size of the
+/// editor, in physical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginWindowGeom {
+    /// Left edge.
+    pub x: i32,
+    /// Top edge.
+    pub y: i32,
+    /// Editor width.
+    pub w: u32,
+    /// Editor height.
+    pub h: u32,
+}
+
+/// The geometries with sizes inside the limits, and at most [`MAX_PLUGIN_WINDOWS`] of them.
+fn sanitized_geoms(
+    geoms: BTreeMap<String, PluginWindowGeom>,
+) -> BTreeMap<String, PluginWindowGeom> {
+    geoms
+        .into_iter()
+        .filter(|(_, g)| {
+            (MIN_PLUGIN_WINDOW..=MAX_PLUGIN_WINDOW).contains(&g.w)
+                && (MIN_PLUGIN_WINDOW..=MAX_PLUGIN_WINDOW).contains(&g.h)
+                && g.x.unsigned_abs() < 1 << 20
+                && g.y.unsigned_abs() < 1 << 20
+        })
+        .take(MAX_PLUGIN_WINDOWS)
+        .collect()
+}
 
 /// Window state (see the module docs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,6 +137,10 @@ pub struct UiState {
     /// library's Patches folder.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub patch_folders: BTreeMap<String, PathBuf>,
+    /// Where each plugin's editor window was last, per plugin type id: the next window of that
+    /// plugin opens there. Absent entries mean the platform's choice.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_windows: BTreeMap<String, PluginWindowGeom>,
     /// Which panes live in their own window and where every window was. An absent key means
     /// everything attached.
     pub windows: WindowsState,
@@ -131,6 +173,7 @@ impl Default for UiState {
             file_browser_auto_preview: true,
             file_browser_folder: None,
             patch_folders: BTreeMap::new(),
+            plugin_windows: BTreeMap::new(),
             windows: WindowsState::default(),
         }
     }
@@ -209,6 +252,7 @@ impl UiState {
             file_browser_tree_fraction,
             track_zoom,
             piano_roll_key_height,
+            plugin_windows: sanitized_geoms(self.plugin_windows),
             windows: self.windows.sanitized(),
             ..self
         }
@@ -368,6 +412,48 @@ mod tests {
         let low = UiState::load(&path);
         assert_eq!(low.file_browser_tree_fraction, 0.05);
         assert!(low.file_browser_width >= FileBrowserView::MIN_WIDTH);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod plugin_window_tests {
+    use super::*;
+
+    #[test]
+    fn plugin_window_geometry_round_trips_and_an_older_file_has_none() {
+        let dir = std::env::temp_dir().join(format!("atomik-ui-state-pw-{}", std::process::id()));
+        let path = dir.join(UI_STATE_FILE);
+        let mut s = UiState::default();
+        s.plugin_windows.insert(
+            "clap.vendor.synth".into(),
+            PluginWindowGeom {
+                x: -1200,
+                y: 80,
+                w: 900,
+                h: 600,
+            },
+        );
+        s.save(&path).unwrap();
+        assert_eq!(UiState::load(&path), s);
+        std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+        assert!(UiState::load(&path).plugin_windows.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn nonsense_geometry_is_dropped_and_the_rest_kept() {
+        let dir = std::env::temp_dir().join(format!("atomik-ui-state-pw2-{}", std::process::id()));
+        let path = dir.join(UI_STATE_FILE);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"plugin_windows": {"a": {"x":0,"y":0,"w":1,"h":500}, "b": {"x":5,"y":6,"w":800,"h":500}, "c": {"x":99999999,"y":0,"w":800,"h":500}}}"#,
+        )
+        .unwrap();
+        let loaded = UiState::load(&path);
+        assert_eq!(loaded.plugin_windows.len(), 1);
+        assert_eq!(loaded.plugin_windows["b"].x, 5);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

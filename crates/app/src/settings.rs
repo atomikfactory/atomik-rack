@@ -971,6 +971,11 @@ mod tests {
                 extra_paths: vec![PathBuf::from("D:/Plugins/CLAP")],
                 timeout_secs: 60,
                 disabled: ["clap.vendor.broken".to_string()].into(),
+                crashed: [(
+                    "clap.vendor.flaky".to_string(),
+                    "exited with code 3".to_string(),
+                )]
+                .into(),
                 sandbox: false,
             },
             surface: SurfaceSettings {

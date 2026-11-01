@@ -23,7 +23,7 @@ use crate::session::{LiveSession, SystemBackend};
 use atomik_model::DeviceKey;
 use atomik_plugin_host::NativeParent;
 use std::collections::BTreeMap;
-use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -96,7 +96,8 @@ impl PluginWindows {
                     device,
                     title,
                     remembered,
-                } => self.open(event_loop, core, device, &title, remembered),
+                    at,
+                } => self.open(event_loop, core, device, &title, remembered, at),
                 PluginWindowRequest::Resize { device, w, h } => {
                     if let Some(window) = self.windows.get(&device) {
                         let _ = if cfg!(target_os = "macos") {
@@ -129,12 +130,23 @@ impl PluginWindows {
         device: DeviceKey,
         title: &str,
         remembered: Option<(u32, u32)>,
+        at: Option<(i32, i32)>,
     ) {
         let (w, h) = remembered.map_or(DEFAULT_SIZE, |(w, h)| (f64::from(w), f64::from(h)));
-        let attributes = Window::default_attributes()
+        let mut attributes = Window::default_attributes()
             .with_title(title)
             .with_inner_size(LogicalSize::new(w, h))
             .with_visible(false);
+        // The last position, when some screen still shows its top-left corner (a monitor that
+        // was unplugged since must not take the window with it).
+        if let Some((x, y)) = at
+            && event_loop.available_monitors().any(|m| {
+                let (p, s) = (m.position(), m.size());
+                x >= p.x && y >= p.y && x < p.x + s.width as i32 && y < p.y + s.height as i32
+            })
+        {
+            attributes = attributes.with_position(PhysicalPosition::new(x, y));
+        }
         let window = match event_loop.create_window(attributes) {
             Ok(w) => w,
             Err(e) => {
@@ -176,6 +188,7 @@ impl PluginWindows {
                 self.remove(&device);
                 core.plugin_window_closed(&device);
             }
+            WindowEvent::Moved(p) => core.plugin_window_moved(&device, p.x, p.y),
             WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => {
                 let (w, h) = if cfg!(target_os = "macos") {
                     let scale = self

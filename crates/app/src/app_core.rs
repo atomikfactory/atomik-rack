@@ -717,7 +717,7 @@ impl<S: EngineSink> AppCore<S> {
             _ => None,
         };
         // A device that goes away takes its latest plugin state into the undo history.
-        self.plugins_flush_dirty();
+        self.plugins_flush_dirty(false);
         let merge = param_merge(&command);
         let hint = self.snapshot_hint_after(&command);
         let joined = std::mem::take(&mut self.join_next);
@@ -887,6 +887,8 @@ impl<S: EngineSink> AppCore<S> {
             | UiAction::ClosePluginParams
             | UiAction::ReloadPlugin { .. }
             | UiAction::AutomatePluginParam { .. }
+            | UiAction::LoadPluginPreset { .. }
+            | UiAction::StepPluginPreset { .. }
             | UiAction::PluginParamTexts { .. }
             | UiAction::PluginSettings(_)
             | UiAction::PluginBanner(_)) => {
@@ -1022,7 +1024,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Undoes the last step; false when there is nothing to undo.
     pub fn undo(&mut self) -> bool {
         self.commit_patch_browse();
-        self.plugins_flush_dirty();
+        self.plugins_flush_dirty(true);
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo(&self.registry)));
         self.after_history_step(done, "undo")
     }
@@ -1030,7 +1032,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Redoes the last undone step; false when there is nothing to redo.
     pub fn redo(&mut self) -> bool {
         self.commit_patch_browse();
-        self.plugins_flush_dirty();
+        self.plugins_flush_dirty(false);
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo(&self.registry)));
         self.after_history_step(done, "redo")
     }

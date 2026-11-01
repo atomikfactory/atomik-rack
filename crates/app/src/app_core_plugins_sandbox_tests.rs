@@ -371,3 +371,199 @@ fn a_plugin_that_ended_for_another_reason_is_not_reloaded_by_itself() {
     assert_eq!(stats.created(), 1);
     assert!(core.plugin_crash(&dev).is_some());
 }
+
+// ------------------------------------------------------------------ presets and patch steps
+
+fn stored(core: &AppCore<OfflineSink>, device: &DeviceKey) -> Option<Vec<u8>> {
+    core.doc()
+        .resolve(device)
+        .and_then(|d| d.plugin.as_ref())
+        .and_then(|p| p.state.as_deref().map(|b| b.0.clone()))
+}
+
+fn live(core: &mut AppCore<OfflineSink>, device: &DeviceKey) -> Vec<u8> {
+    let id = core.plugin_instance(device).unwrap();
+    core.plugin_host().manager().capture_state(id).unwrap().0
+}
+
+fn preset_core() -> (AppCore<OfflineSink>, Arc<NullStats>, DeviceKey) {
+    let (mut core, stats) = null_core(PluginIsolation::InProcess, PluginPaths::default());
+    stats.set_presets(true);
+    add_plugin(&mut core, GAIN, "echo");
+    core.frame();
+    core.plugins_capture_all();
+    (core, stats, key("echo"))
+}
+
+#[test]
+fn a_loaded_preset_is_one_undo_step_that_reaches_the_live_plugin() {
+    let (mut core, _stats, dev) = preset_core();
+    assert_eq!(core.plugin_presets(&dev).len(), 3);
+    assert!(core.load_plugin_preset(&dev, "warm"));
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"preset:warm"[..]));
+    assert_eq!(live(&mut core, &dev), b"preset:warm");
+    assert_eq!(core.plugin_preset_current(&dev), Some("warm"));
+    assert_eq!(core.document().undo_label(), Some("Change Plugin Patch"));
+    assert!(core.undo());
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+    assert_eq!(
+        live(&mut core, &dev),
+        b"",
+        "undo restored the plugin itself"
+    );
+    assert_eq!(core.plugin_preset_current(&dev), None);
+    assert!(core.redo());
+    assert_eq!(live(&mut core, &dev), b"preset:warm");
+}
+
+#[test]
+fn stepping_goes_round_the_list_and_a_refused_preset_changes_nothing() {
+    let (mut core, stats, dev) = preset_core();
+    assert!(core.step_plugin_preset(&dev, 1));
+    assert_eq!(core.plugin_preset_current(&dev), Some("init"));
+    assert!(core.step_plugin_preset(&dev, -1));
+    assert_eq!(
+        core.plugin_preset_current(&dev),
+        Some("bright"),
+        "wraps back"
+    );
+    assert!(core.step_plugin_preset(&dev, 1));
+    assert_eq!(
+        core.plugin_preset_current(&dev),
+        Some("init"),
+        "and forward"
+    );
+    let before = stored(&core, &dev);
+    assert!(!core.load_plugin_preset(&dev, "nope"));
+    assert!(core.last_rejection().is_some());
+    assert_eq!(stored(&core, &dev), before);
+    stats.set_presets(false);
+    let (mut bare, _s) = null_core(PluginIsolation::InProcess, PluginPaths::default());
+    let d = key("echo");
+    add_plugin(&mut bare, GAIN, "echo");
+    assert!(!bare.step_plugin_preset(&d, 1), "no presets: refused");
+    assert!(bare.last_rejection().is_some());
+}
+
+#[test]
+fn a_patch_changed_in_the_plugin_window_becomes_an_undo_step() {
+    let (mut core, _stats, dev) = preset_core();
+    let id = core.plugin_instance(&dev).unwrap();
+    let patched = atomik_device_sdk::PluginStateBlob(b"patched".to_vec());
+    core.plugin_host()
+        .manager()
+        .restore_state(id, &patched)
+        .unwrap();
+    post(&mut core, &dev, PluginMessage::StateDirty);
+    core.frame();
+    core.plugin_tick(10.0);
+    core.plugin_tick(12.0);
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"patched"[..]));
+    assert_eq!(core.document().undo_label(), Some("Change Plugin Patch"));
+    assert!(core.undo());
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+    assert_eq!(live(&mut core, &dev), b"", "the plugin went back with it");
+}
+
+#[test]
+fn a_param_gesture_state_is_stored_without_a_second_step() {
+    let (mut core, _stats, dev) = preset_core();
+    let id = core.plugin_instance(&dev).unwrap();
+    core.plugins.gesture_touched.insert(dev.clone());
+    core.plugin_host()
+        .manager()
+        .restore_state(id, &atomik_device_sdk::PluginStateBlob(b"turned".to_vec()))
+        .unwrap();
+    post(&mut core, &dev, PluginMessage::StateDirty);
+    core.frame();
+    core.plugin_tick(10.0);
+    core.plugin_tick(12.0);
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"turned"[..]));
+    assert_ne!(
+        core.document().undo_label(),
+        Some("Change Plugin Patch"),
+        "the gesture's own step is the only one"
+    );
+}
+
+#[test]
+fn a_crash_marks_the_plugin_in_the_settings_list_and_retry_clears_the_mark() {
+    use atomik_ui::plugin_data::PluginEntryStatus;
+    let (mut core, stats, dev) = lost_core();
+    let status =
+        |core: &AppCore<OfflineSink>| core.plugin_settings_data().plugins[0].status.clone();
+    assert_eq!(status(&core), PluginEntryStatus::Ok);
+    lose(
+        &mut core,
+        &stats,
+        &dev,
+        "the plugin process exited with code 3 (0x3)",
+    );
+    assert!(matches!(status(&core), PluginEntryStatus::Crashed(r) if r.contains("code 3")));
+    assert_eq!(status(&core).label(), "CRASHED");
+    let saved = core
+        .take_plugin_settings_change()
+        .expect("the mark is saved");
+    assert!(saved.crashed.contains_key(GAIN));
+
+    // A new run reads the mark from the settings; RETRY clears it and saves.
+    let mut again = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
+    let mut c = config(true, &[PKG]);
+    c.settings = saved;
+    again.configure_plugins(c);
+    assert!(matches!(
+        again
+            .plugin_settings_data()
+            .plugins
+            .iter()
+            .find(|p| p.plugin.type_id() == GAIN)
+            .unwrap()
+            .status,
+        PluginEntryStatus::Crashed(_)
+    ));
+    again.handle_action(UiAction::PluginSettings(PluginSettingsAction::RetryPlugin(
+        GAIN.into(),
+    )));
+    let after = again.take_plugin_settings_change().expect("saved");
+    assert!(after.crashed.is_empty());
+    assert!(
+        again
+            .plugin_settings_data()
+            .plugins
+            .iter()
+            .all(|p| p.status == PluginEntryStatus::Ok)
+    );
+}
+
+#[test]
+fn the_parameter_pane_lists_the_presets_and_its_actions_load_them() {
+    let (mut core, _stats, dev) = preset_core();
+    core.open_plugin_params(&dev);
+    let names: Vec<String> = core
+        .plugin_params()
+        .presets()
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    assert_eq!(names, ["Init", "Warm", "Bright"]);
+    assert_eq!(core.plugin_params().preset_name(), None);
+    core.handle_action(UiAction::StepPluginPreset {
+        device: dev.clone(),
+        delta: 1,
+    });
+    assert_eq!(core.plugin_params().preset_name(), Some("Init"));
+    core.handle_action(UiAction::LoadPluginPreset {
+        device: dev.clone(),
+        preset: "bright".into(),
+    });
+    assert_eq!(core.plugin_params().preset_name(), Some("Bright"));
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b"preset:bright"[..]));
+    assert!(core.undo());
+    assert_eq!(live(&mut core, &dev), b"preset:init");
+    core.frame();
+    assert_eq!(
+        core.plugin_params().preset_name(),
+        None,
+        "after an undo the state is not known to be a preset"
+    );
+}
