@@ -854,3 +854,118 @@ fn a_batch_validates_set_zones_against_the_evolving_document() {
     d.undo(&r).unwrap();
     assert_eq!(tune(&d), None);
 }
+
+// ---- project format v39: groups, velocity crossfade, round-robin, zone envelope and filter ----
+
+use atomik_device_sdk::{ZoneEnv, ZoneExt, ZoneFilter};
+
+fn rich_ext() -> ZoneExt {
+    ZoneExt {
+        group: 3,
+        vel_xfade: 10,
+        rr_len: 4,
+        rr_pos: 2,
+        env: Some(ZoneEnv {
+            attack_ms: 2.5,
+            decay_ms: 120.0,
+            sustain: 0.75,
+            release_ms: 900.0,
+        }),
+        filter: Some(ZoneFilter {
+            mode: 2,
+            cutoff: 1200.0,
+            resonance: 0.4,
+            key_track: 0.5,
+            env_amount: -0.25,
+        }),
+    }
+}
+
+#[test]
+fn zone_ext_fields_round_trip_and_are_written_only_when_set() {
+    let r = reg();
+    let mut doc = project_doc(&r);
+    doc.devices[0].zones[1].ext = rich_ext();
+    let text = save_project(&doc);
+    let v: Value = serde_json::from_str(&text).unwrap();
+    // The zone without any of it is byte-for-byte what it was before.
+    let first = v["devices"][0]["zones"][0].as_object().unwrap();
+    assert_eq!(first.len(), 18, "{first:?}");
+    let second = &v["devices"][0]["zones"][1];
+    assert_eq!(second["group"], 3);
+    assert_eq!(second["rr_len"], 4);
+    assert_eq!(second["flt_mode"], 2);
+    assert_eq!(second["env_release"], 900.0);
+    let back = load_project(&text, &r).unwrap();
+    assert_eq!(back, doc);
+    assert_eq!(save_project(&back), text);
+}
+
+#[test]
+fn a_zone_ext_that_breaks_the_sdk_rules_is_rejected_on_set_and_on_load() {
+    let r = reg();
+    let mut d = doc_with_sampler(&r);
+    let cases: [fn(&mut ZoneExt); 7] = [
+        |e| e.group = 32,
+        |e| e.vel_xfade = 127,
+        |e| e.rr_len = 17,
+        |e| {
+            e.rr_len = 2;
+            e.rr_pos = 2;
+        },
+        |e| e.rr_pos = 1,
+        |e| {
+            e.env = Some(ZoneEnv {
+                attack_ms: 0.0,
+                decay_ms: 1.0,
+                sustain: 1.0,
+                release_ms: 1.0,
+            });
+        },
+        |e| {
+            e.filter = Some(ZoneFilter {
+                mode: 3,
+                cutoff: 1000.0,
+                resonance: 0.0,
+                key_track: 0.0,
+                env_amount: 0.0,
+            });
+        },
+    ];
+    for edit in cases {
+        let mut z = zone(1, 1000);
+        edit(&mut z.ext);
+        assert!(d.apply(set(vec![z], None), &r).is_err());
+    }
+    // Each is also a load error, with the zone's path.
+    let mut doc = project_doc(&r);
+    doc.devices[0].zones[0].ext.group = 31;
+    let text = save_project(&doc).replace("\"group\": 31", "\"group\": 32");
+    let err = load_project(&text, &r).unwrap_err().to_string();
+    assert!(err.contains("zones[0]") && err.contains("group"), "{err}");
+}
+
+#[test]
+fn a_filter_or_envelope_needs_all_of_its_fields_on_load() {
+    let r = reg();
+    let mut doc = project_doc(&r);
+    doc.devices[0].zones[0].ext = rich_ext();
+    let text = save_project(&doc);
+    for gone in ["\"env_decay\": 120, ", "\"flt_resonance\": 0.4, "] {
+        assert!(text.contains(gone), "{gone}");
+        let err = load_project(&text.replace(gone, ""), &r)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("is missing"), "{err}");
+    }
+}
+
+#[test]
+fn zone_ext_fields_are_unknown_before_format_39() {
+    let r = reg();
+    let mut doc = project_doc(&r);
+    doc.devices[0].zones[0].ext.group = 1;
+    let text = save_project(&doc).replace("\"version\": 39", "\"version\": 38");
+    let err = load_project(&text, &r).unwrap_err().to_string();
+    assert!(err.contains("group"), "{err}");
+}

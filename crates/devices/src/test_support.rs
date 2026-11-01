@@ -265,6 +265,7 @@ pub fn demo_sample_map() -> atomik_device_sdk::SampleMapRef {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     };
     let looped = |buffer: u32, mode: LoopMode, crossfade: u64| Zone {
         loop_mode: mode,
@@ -329,6 +330,7 @@ pub fn drum_sample_map() -> atomik_device_sdk::SampleMapRef {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     };
     let mut zones = Vec::new();
     for key in 36..=39u8 {
@@ -379,11 +381,13 @@ pub fn slicer_sample_map() -> atomik_device_sdk::SampleMapRef {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     };
     let zones = vec![
         slice(24, 0, 700),
         Zone {
             reverse: true,
+            ext: atomik_device_sdk::ZoneExt::NONE,
             ..slice(25, 700, 1400)
         },
         Zone {

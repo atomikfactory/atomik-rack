@@ -32,8 +32,10 @@ pub use plugin::{
 };
 pub use registry::{DeviceFactory, Registry, RegistryError};
 pub use samples::{
-    LoopMode, SampleBuffer, SampleMap, SampleMapError, SampleMapRef, TriggerMode, ZONE_GAIN_RANGE,
-    ZONE_TRANSPOSE_RANGE, ZONE_TUNE_RANGE, Zone, velocity_to_7bit,
+    LoopMode, MAX_RR_LEN, MAX_VEL_XFADE, MAX_ZONE_GROUPS, SampleBuffer, SampleMap, SampleMapError,
+    SampleMapRef, TriggerMode, ZONE_CUTOFF_RANGE, ZONE_ENV_MS, ZONE_FILTER_MODES, ZONE_GAIN_RANGE,
+    ZONE_TRANSPOSE_RANGE, ZONE_TUNE_RANGE, Zone, ZoneEnv, ZoneExt, ZoneFilter, velocity_fade,
+    velocity_to_7bit,
 };
 pub use scope::{SCOPE_FRAMES, ScopeTap};
 

@@ -289,6 +289,7 @@ proptest! {
                 transpose: 0, tune_cents: 0.0, gain_db: 0.0, pan: 0.0, start: 100, end: 8_900,
                 loop_mode: atomik_device_sdk::LoopMode::Off, loop_start: 0, loop_end: 0,
                 crossfade: 0, trigger: atomik_device_sdk::TriggerMode::Gate, reverse: false,
+                ext: atomik_device_sdk::ZoneExt::NONE,
             };
             let map = std::sync::Arc::new(
                 atomik_device_sdk::SampleMap::new(vec![buffer], vec![zone]).unwrap());

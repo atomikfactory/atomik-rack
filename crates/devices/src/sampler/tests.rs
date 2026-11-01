@@ -111,6 +111,7 @@ fn zone(buffer: u32, frames: u64) -> Zone {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     }
 }
 
@@ -1284,6 +1285,7 @@ fn zone_strategy() -> impl Strategy<Value = Zone> {
                         TriggerMode::Gate
                     },
                     reverse: false,
+                    ext: atomik_device_sdk::ZoneExt::NONE,
                 }
             },
         )

@@ -61,6 +61,7 @@ fn map_of(bufs: &[Arc<SampleBuffer>], gain_db: f32) -> SampleMapRef {
         crossfade: 200,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     };
     Arc::new(SampleMap::new(bufs.to_vec(), vec![zone(0), zone(1)]).unwrap())
 }

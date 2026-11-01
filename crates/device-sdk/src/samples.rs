@@ -65,6 +65,145 @@ pub const ZONE_TUNE_RANGE: (f32, f32) = (-100.0, 100.0);
 /// Lowest and highest zone gain, in dB.
 pub const ZONE_GAIN_RANGE: (f32, f32) = (-60.0, 12.0);
 
+/// Number of zone groups (group ids are `0..MAX_ZONE_GROUPS`; 0 is the default group).
+pub const MAX_ZONE_GROUPS: usize = 32;
+/// Longest round-robin cycle of a zone.
+pub const MAX_RR_LEN: u8 = 16;
+/// Longest velocity crossfade, in velocity steps.
+pub const MAX_VEL_XFADE: u8 = 126;
+/// Lowest and highest envelope time of a zone, in milliseconds.
+pub const ZONE_ENV_MS: (f32, f32) = (0.5, 10_000.0);
+/// Lowest and highest filter cutoff of a zone, in Hz.
+pub const ZONE_CUTOFF_RANGE: (f32, f32) = (20.0, 20_000.0);
+/// Number of filter modes of a zone filter (low-pass, band-pass, high-pass).
+pub const ZONE_FILTER_MODES: u8 = 3;
+
+/// An amplitude envelope that replaces the device's own for the voices of one zone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZoneEnv {
+    /// Attack in milliseconds, [`ZONE_ENV_MS`].
+    pub attack_ms: f32,
+    /// Decay in milliseconds, [`ZONE_ENV_MS`].
+    pub decay_ms: f32,
+    /// Sustain level, 0..=1.
+    pub sustain: f32,
+    /// Release in milliseconds, [`ZONE_ENV_MS`].
+    pub release_ms: f32,
+}
+
+impl ZoneEnv {
+    fn is_valid(&self) -> bool {
+        let ms = |v: f32| (ZONE_ENV_MS.0..=ZONE_ENV_MS.1).contains(&v);
+        ms(self.attack_ms)
+            && ms(self.decay_ms)
+            && ms(self.release_ms)
+            && (0.0..=1.0).contains(&self.sustain)
+    }
+}
+
+/// A filter that replaces the device's own for the voices of one zone (it runs even when the
+/// device filter is off). Its envelope is the device's filter envelope.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZoneFilter {
+    /// 0 low-pass, 1 band-pass, 2 high-pass (12 dB state-variable).
+    pub mode: u8,
+    /// Cutoff in Hz, [`ZONE_CUTOFF_RANGE`].
+    pub cutoff: f32,
+    /// Resonance, 0..=1.
+    pub resonance: f32,
+    /// Key tracking, 0..=1 (1: the cutoff follows the key one octave per octave).
+    pub key_track: f32,
+    /// Filter envelope amount, -1..=1 (6 octaves at 1).
+    pub env_amount: f32,
+}
+
+impl ZoneFilter {
+    fn is_valid(&self) -> bool {
+        self.mode < ZONE_FILTER_MODES
+            && (ZONE_CUTOFF_RANGE.0..=ZONE_CUTOFF_RANGE.1).contains(&self.cutoff)
+            && (0.0..=1.0).contains(&self.resonance)
+            && (0.0..=1.0).contains(&self.key_track)
+            && (-1.0..=1.0).contains(&self.env_amount)
+    }
+}
+
+/// The grouping, layering and per-zone synthesis of a [`Zone`]: everything beyond key and
+/// velocity range, tuning and playback that a sample map can say about a zone. The default
+/// ([`ZoneExt::NONE`]) is "no group, hard velocity edges, no round-robin, the device's own
+/// envelope and filter".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZoneExt {
+    /// The group the zone belongs to, `0..`[`MAX_ZONE_GROUPS`]. Round-robin cycles count per
+    /// group.
+    pub group: u8,
+    /// Velocity crossfade width, `0..=vel_hi - vel_lo` ([`MAX_VEL_XFADE`]). The zone fades in
+    /// over `vel_lo..=vel_lo + vel_xfade` (unless `vel_lo` is 1) and out over
+    /// `vel_hi - vel_xfade..=vel_hi` (unless `vel_hi` is 127), with an equal-power curve, so
+    /// two neighbours whose ranges overlap by the same width sum to constant power.
+    pub vel_xfade: u8,
+    /// Round-robin cycle length. 0 and 1 mean no round-robin; otherwise at most
+    /// [`MAX_RR_LEN`].
+    pub rr_len: u8,
+    /// This zone's slot in the cycle, `< rr_len` (0 without round-robin). The zone sounds when
+    /// the group's note counter modulo `rr_len` equals it.
+    pub rr_pos: u8,
+    /// Amplitude envelope of the zone, if it has its own.
+    pub env: Option<ZoneEnv>,
+    /// Filter of the zone, if it has its own.
+    pub filter: Option<ZoneFilter>,
+}
+
+impl ZoneExt {
+    /// No group, no crossfade, no round-robin, no own envelope or filter.
+    pub const NONE: ZoneExt = ZoneExt {
+        group: 0,
+        vel_xfade: 0,
+        rr_len: 0,
+        rr_pos: 0,
+        env: None,
+        filter: None,
+    };
+
+    /// Whether the zone takes part in a round-robin cycle.
+    pub fn round_robin(&self) -> bool {
+        self.rr_len > 1
+    }
+}
+
+impl Default for ZoneExt {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// Equal-power gain (0..=1) of a zone with `vel_lo..=vel_hi` and crossfade width `xfade` at
+/// 7-bit velocity `vel7`: 1 in the middle, a quarter sine rising over the first `xfade` steps
+/// above `vel_lo` and a quarter cosine falling over the last `xfade` below `vel_hi`.
+/// A `vel_lo` of 1 and a `vel_hi` of 127 are hard edges. Outside the range the gain is 0.
+pub fn velocity_fade(vel_lo: u8, vel_hi: u8, xfade: u8, vel7: u8) -> f32 {
+    if vel7 < vel_lo || vel7 > vel_hi {
+        return 0.0;
+    }
+    if xfade == 0 {
+        return 1.0;
+    }
+    let x = f32::from(xfade);
+    let mut g = 1.0f32;
+    if vel_lo > 1 {
+        let t = (f32::from(vel7) - f32::from(vel_lo)) / x;
+        if t < 1.0 {
+            g *= (t * std::f32::consts::FRAC_PI_2).sin();
+        }
+    }
+    if vel_hi < 127 {
+        let t = (f32::from(vel_hi) - f32::from(vel7)) / x;
+        if t < 1.0 {
+            g *= (t * std::f32::consts::FRAC_PI_2).sin();
+        }
+    }
+    g
+}
+
 /// One zone of a [`SampleMap`]. All fields are checked by [`SampleMap::new`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zone {
@@ -110,12 +249,27 @@ pub struct Zone {
     /// `crossfade` are ignored and are not validated. The loop rules of [`SampleMap::new`] apply
     /// only when `loop_mode != Off && !reverse`; `start`/`end` are always validated.
     pub reverse: bool,
+    /// Group, velocity crossfade, round-robin and per-zone envelope and filter.
+    pub ext: ZoneExt,
 }
 
 impl Zone {
     /// Whether the zone sounds for `key` at 7-bit velocity `vel7`.
     pub fn contains(&self, key: u8, vel7: u8) -> bool {
         (self.key_lo..=self.key_hi).contains(&key) && (self.vel_lo..=self.vel_hi).contains(&vel7)
+    }
+
+    /// The equal-power velocity crossfade gain at `vel7` ([`velocity_fade`]); 1 without a
+    /// crossfade.
+    pub fn velocity_gain(&self, vel7: u8) -> f32 {
+        velocity_fade(self.vel_lo, self.vel_hi, self.ext.vel_xfade, vel7)
+    }
+
+    /// Whether the zone's round-robin slot is the one `counter` selects (always true without
+    /// round-robin).
+    pub fn rr_turn(&self, counter: u32) -> bool {
+        !self.ext.round_robin()
+            || counter % u32::from(self.ext.rr_len) == u32::from(self.ext.rr_pos)
     }
 }
 
@@ -247,6 +401,16 @@ fn validate_zone(i: usize, z: &Zone, buffers: &[Arc<SampleBuffer>]) -> Result<()
         (ZONE_GAIN_RANGE.0..=ZONE_GAIN_RANGE.1).contains(&z.gain_db),
     )?;
     range("pan", (-1.0..=1.0).contains(&z.pan))?;
+    let e = &z.ext;
+    range("group", usize::from(e.group) < MAX_ZONE_GROUPS)?;
+    range(
+        "vel_xfade",
+        e.vel_xfade <= MAX_VEL_XFADE && e.vel_xfade <= z.vel_hi - z.vel_lo,
+    )?;
+    range("rr_len", e.rr_len <= MAX_RR_LEN)?;
+    range("rr_pos", e.rr_pos < e.rr_len.max(1))?;
+    range("env", e.env.is_none_or(|v| v.is_valid()))?;
+    range("filter", e.filter.is_none_or(|v| v.is_valid()))?;
     frames("end", z.start < z.end && z.end <= buf.frames)?;
     if z.loop_mode != LoopMode::Off && !z.reverse {
         frames(
@@ -290,6 +454,7 @@ mod tests {
             crossfade: 100,
             trigger: TriggerMode::Gate,
             reverse: false,
+            ext: ZoneExt::NONE,
         }
     }
 
@@ -410,5 +575,83 @@ mod tests {
         z.vel_lo = 64;
         assert!(z.contains(60, 64) && z.contains(64, 127));
         assert!(!z.contains(59, 100) && !z.contains(65, 100) && !z.contains(62, 63));
+    }
+
+    #[test]
+    fn neighbours_that_overlap_by_the_crossfade_sum_to_constant_power() {
+        // A covers 1..=70 and B 60..=127, each with a 10-step crossfade.
+        for v in 1..=127u8 {
+            let a = velocity_fade(1, 70, 10, v);
+            let b = velocity_fade(60, 127, 10, v);
+            if (60..=70).contains(&v) {
+                assert!((a * a + b * b - 1.0).abs() < 1e-5, "vel {v}: {a} {b}");
+            } else {
+                assert!(
+                    (a + b - 1.0).abs() < 1e-6 && a * b == 0.0,
+                    "vel {v}: {a} {b}"
+                );
+            }
+        }
+        // The ends of the keyboard are hard edges; outside the range nothing sounds.
+        assert_eq!(velocity_fade(1, 70, 10, 1), 1.0);
+        assert_eq!(velocity_fade(60, 127, 10, 127), 1.0);
+        assert_eq!(velocity_fade(60, 127, 10, 59), 0.0);
+        assert_eq!(velocity_fade(60, 127, 0, 60), 1.0);
+    }
+
+    #[test]
+    fn round_robin_turns_follow_the_counter() {
+        let mut z = zone();
+        assert!((0..8).all(|c| z.rr_turn(c)));
+        z.ext.rr_len = 3;
+        z.ext.rr_pos = 1;
+        let turns: Vec<u32> = (0..9).filter(|c| z.rr_turn(*c)).collect();
+        assert_eq!(turns, [1, 4, 7]);
+    }
+
+    #[test]
+    fn zone_ext_fields_are_validated() {
+        let cases: [(&str, fn(&mut Zone)); 8] = [
+            ("group", |z| z.ext.group = MAX_ZONE_GROUPS as u8),
+            ("vel_xfade", |z| z.ext.vel_xfade = 127),
+            ("rr_len", |z| z.ext.rr_len = MAX_RR_LEN + 1),
+            ("rr_pos", |z| z.ext.rr_pos = 1),
+            ("env", |z| {
+                z.ext.env = Some(ZoneEnv {
+                    attack_ms: 1.0,
+                    decay_ms: 1.0,
+                    sustain: 2.0,
+                    release_ms: 1.0,
+                });
+            }),
+            ("filter", |z| {
+                z.ext.filter = Some(ZoneFilter {
+                    mode: 0,
+                    cutoff: f32::NAN,
+                    resonance: 0.0,
+                    key_track: 0.0,
+                    env_amount: 0.0,
+                });
+            }),
+            ("vel_xfade", |z| {
+                z.vel_lo = 10;
+                z.vel_hi = 20;
+                z.ext.vel_xfade = 11;
+            }),
+            ("rr_pos", |z| {
+                z.ext.rr_len = 2;
+                z.ext.rr_pos = 2;
+            }),
+        ];
+        for (field, edit) in cases {
+            let mut z = zone();
+            edit(&mut z);
+            assert_eq!(err(z), SampleMapError::OutOfRange { zone: 0, field });
+        }
+        let mut ok = zone();
+        ok.ext.rr_len = 4;
+        ok.ext.rr_pos = 3;
+        ok.ext.vel_xfade = 126;
+        assert!(SampleMap::new(vec![buffer(1000)], vec![ok]).is_ok());
     }
 }

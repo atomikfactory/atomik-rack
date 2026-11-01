@@ -171,8 +171,8 @@ const DEVICE_FIELDS_V2: &[&str] = &["id", "type", "params", "name", "folded", "c
 pub(crate) struct DeviceFormat {
     /// The fields a device object may have.
     pub(crate) fields: &'static [&'static str],
-    /// Zones carry `reverse` (project format v6 and later).
-    pub(crate) zone_reverse: bool,
+    /// The project format version the zones are read at (1 for a patch).
+    pub(crate) zone_version: u64,
 }
 
 /// Loads a v1 or v2 patch (see the module docs).
@@ -214,7 +214,7 @@ pub(crate) fn load(json: &str, registry: &Registry) -> Result<RackDoc, ModelErro
     };
     let fmt = DeviceFormat {
         fields: device_fields,
-        zone_reverse: false,
+        zone_version: 1,
     };
     load_rack(obj, &root, fmt, registry)
 }
@@ -452,7 +452,7 @@ pub(crate) fn load_device(
         color,
         // Checked against the pool and the registry by the project loader.
         zones: match obj.get("zones") {
-            Some(v) => crate::project::load_zones(v, &path.field("zones"), fmt.zone_reverse)?,
+            Some(v) => crate::project::load_zones(v, &path.field("zones"), fmt.zone_version)?,
             None => Vec::new(),
         },
         steps: match obj.get("steps") {

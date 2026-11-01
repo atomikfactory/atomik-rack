@@ -78,7 +78,13 @@
 //! `{ "asset", "key_lo", "key_hi", "vel_lo", "vel_hi", "root_key", "transpose", "tune_cents",
 //! "gain_db", "pan", "start", "end", "loop_mode": "off"|"forward"|"ping_pong", "loop_start",
 //! "loop_end", "crossfade", "trigger": "gate"|"one_shot", "reverse": bool (v6) }`, every field
-//! required. Files before version 6 have no `"reverse"` (unknown field; the zone plays forward). Only a
+//! required. Files before version 6 have no `"reverse"` (unknown field; the zone plays forward).
+//! A zone of version 39 or later may add, each written only when it is not its default, `"group"`,
+//! `"vel_xfade"`, `"rr_len"`, `"rr_pos"` (integers, 0), the four `"env_attack"`, `"env_decay"`,
+//! `"env_sustain"`, `"env_release"` of an own amplitude envelope (all or none) and the five
+//! `"flt_mode"`, `"flt_cutoff"`, `"flt_resonance"`, `"flt_key_track"`, `"flt_env_amount"` of an
+//! own filter (`"flt_cutoff"` starts the set; `"flt_mode"` defaults to 0). An older file has none
+//! and reads exactly as before. Only a
 //! device whose type takes samples may have zones; each `"asset"` must be a key of `"assets"`
 //! (as for audio clips) and the zone must satisfy the SDK `Zone` rules against that asset's
 //! `frames`. A zone's asset *file* missing from the bundle is not a load error (the app plays
@@ -584,7 +590,7 @@ fn load_value(
     schema::object(value, &root, Obj::Root, version)?;
     let fmt = DeviceFormat {
         fields: schema::fields(Obj::Device, version),
-        zone_reverse: version >= 6,
+        zone_version: version,
     };
     // A plugin the registry does not know is built from its saved layout; the loader
     // reads with a copy of the registry that has these stand-in types.

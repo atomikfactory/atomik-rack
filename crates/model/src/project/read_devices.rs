@@ -7,10 +7,12 @@ use super::*;
 pub(crate) fn load_zones(
     v: &Value,
     path: &JsonPath,
-    with_reverse: bool,
+    file_version: u64,
 ) -> Result<Vec<ZoneDoc>, ModelError> {
-    // The zone fields differ only by `reverse`, which version 6 added.
-    let version = if with_reverse { 6 } else { 1 };
+    // Version 6 added `reverse`, version 39 the optional group, crossfade, round-robin and
+    // per-zone envelope and filter fields.
+    let version = file_version;
+    let with_reverse = version >= 6;
     let mut zones = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
@@ -63,9 +65,63 @@ pub(crate) fn load_zones(
             } else {
                 false
             },
+            ext: load_zone_ext(&z, &p)?,
         });
     }
     Ok(zones)
+}
+
+/// The optional zone fields of format 39: each is absent when it has its default, and the
+/// envelope and filter fields come as a set.
+fn load_zone_ext(
+    z: &serde_json::Map<String, Value>,
+    p: &JsonPath,
+) -> Result<atomik_device_sdk::ZoneExt, ModelError> {
+    use atomik_device_sdk::{ZoneEnv, ZoneExt, ZoneFilter};
+    let small = |name: &str| -> Result<u8, ModelError> {
+        z.get(name)
+            .map_or(Ok(0), |v| uint(v, &p.field(name), 255).map(|n| n as u8))
+    };
+    let num = |name: &str| -> Result<f32, ModelError> {
+        let v = z.get(name).ok_or_else(|| {
+            p.error(format!(
+                "`{name}` is missing (the group of fields needs it)"
+            ))
+        })?;
+        number(v, &p.field(name)).map(|x| x as f32)
+    };
+    let env = if z.contains_key("env_attack") {
+        Some(ZoneEnv {
+            attack_ms: num("env_attack")?,
+            decay_ms: num("env_decay")?,
+            sustain: num("env_sustain")?,
+            release_ms: num("env_release")?,
+        })
+    } else {
+        None
+    };
+    let filter = if z.contains_key("flt_cutoff") {
+        let mode = z.get("flt_mode").map_or(Ok(0), |v| {
+            uint(v, &p.field("flt_mode"), 255).map(|n| n as u8)
+        })?;
+        Some(ZoneFilter {
+            mode,
+            cutoff: num("flt_cutoff")?,
+            resonance: num("flt_resonance")?,
+            key_track: num("flt_key_track")?,
+            env_amount: num("flt_env_amount")?,
+        })
+    } else {
+        None
+    };
+    Ok(ZoneExt {
+        group: small("group")?,
+        vel_xfade: small("vel_xfade")?,
+        rr_len: small("rr_len")?,
+        rr_pos: small("rr_pos")?,
+        env,
+        filter,
+    })
 }
 
 /// An unsigned integer in `lo..=hi`.

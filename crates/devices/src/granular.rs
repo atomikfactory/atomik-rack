@@ -925,6 +925,7 @@ fn builtin_zone(frames: u64) -> Zone {
         crossfade: 0,
         trigger: TriggerMode::Gate,
         reverse: false,
+        ext: atomik_device_sdk::ZoneExt::NONE,
     }
 }
 

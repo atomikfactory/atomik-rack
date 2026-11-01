@@ -18,8 +18,10 @@ pub(crate) fn write_zones(w: &mut String, zones: &[ZoneDoc], p: &str) {
                 TriggerMode::Gate => "gate",
                 TriggerMode::OneShot => "one_shot",
             };
+            let mut ext = String::new();
+            zone_ext_text(&mut ext, &z.ext);
             format!(
-                "{{\"asset\": {}, \"key_lo\": {}, \"key_hi\": {}, \"vel_lo\": {}, \"vel_hi\": {}, \"root_key\": {}, \"transpose\": {}, \"tune_cents\": {}, \"gain_db\": {}, \"pan\": {}, \"start\": {}, \"end\": {}, \"loop_mode\": \"{loop_mode}\", \"loop_start\": {}, \"loop_end\": {}, \"crossfade\": {}, \"trigger\": \"{trigger}\", \"reverse\": {}}}",
+                "{{\"asset\": {}, \"key_lo\": {}, \"key_hi\": {}, \"vel_lo\": {}, \"vel_hi\": {}, \"root_key\": {}, \"transpose\": {}, \"tune_cents\": {}, \"gain_db\": {}, \"pan\": {}, \"start\": {}, \"end\": {}, \"loop_mode\": \"{loop_mode}\", \"loop_start\": {}, \"loop_end\": {}, \"crossfade\": {}, \"trigger\": \"{trigger}\", \"reverse\": {}{ext}}}",
                 json_str(&z.asset),
                 z.key_lo,
                 z.key_hi,
@@ -170,4 +172,39 @@ pub(crate) fn write_drums(w: &mut String, drums: &DrumDoc, ind: &str) {
         let _ = write!(w, "\n{b}}}");
     }
     let _ = write!(w, "\n{a}]\n{ind}}}");
+}
+
+/// The format 39 zone fields that differ from their defaults, each as `, "name": value`.
+fn zone_ext_text(w: &mut String, e: &atomik_device_sdk::ZoneExt) {
+    for (name, v) in [
+        ("group", e.group),
+        ("vel_xfade", e.vel_xfade),
+        ("rr_len", e.rr_len),
+        ("rr_pos", e.rr_pos),
+    ] {
+        if v != 0 {
+            let _ = write!(w, ", \"{name}\": {v}");
+        }
+    }
+    if let Some(v) = &e.env {
+        let _ = write!(
+            w,
+            ", \"env_attack\": {}, \"env_decay\": {}, \"env_sustain\": {}, \"env_release\": {}",
+            f32_text(v.attack_ms),
+            f32_text(v.decay_ms),
+            f32_text(v.sustain),
+            f32_text(v.release_ms)
+        );
+    }
+    if let Some(v) = &e.filter {
+        let _ = write!(
+            w,
+            ", \"flt_mode\": {}, \"flt_cutoff\": {}, \"flt_resonance\": {}, \"flt_key_track\": {}, \"flt_env_amount\": {}",
+            v.mode,
+            f32_text(v.cutoff),
+            f32_text(v.resonance),
+            f32_text(v.key_track),
+            f32_text(v.env_amount)
+        );
+    }
 }
