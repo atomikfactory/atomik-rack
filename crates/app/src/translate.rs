@@ -42,7 +42,9 @@ pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
         CursorHint::Move => CursorIcon::Move,
         CursorHint::Magnifier => CursorIcon::ZoomIn,
         CursorHint::Hand => CursorIcon::Grab,
-        CursorHint::Grabbing => CursorIcon::Grabbing,
+        CursorHint::Grabbing | CursorHint::Dragging => CursorIcon::Grabbing,
+        CursorHint::Copy => CursorIcon::Copy,
+        CursorHint::NotAllowed => CursorIcon::NotAllowed,
         CursorHint::Crosshair
         | CursorHint::Pen
         | CursorHint::Eraser
@@ -389,6 +391,10 @@ mod tests {
         );
         assert_eq!(cursor_icon(CursorHint::Move), CursorIcon::Move);
         assert_eq!(cursor_icon(CursorHint::Crosshair), CursorIcon::Crosshair);
+        assert_eq!(cursor_icon(CursorHint::Hand), CursorIcon::Grab);
+        assert_eq!(cursor_icon(CursorHint::Dragging), CursorIcon::Grabbing);
+        assert_eq!(cursor_icon(CursorHint::Copy), CursorIcon::Copy);
+        assert_eq!(cursor_icon(CursorHint::NotAllowed), CursorIcon::NotAllowed);
         assert_eq!(cursor_art(CursorHint::Default), None);
         assert_eq!(cursor_art(CursorHint::Pen), Some(CursorArt::Pen));
         assert_eq!(cursor_art(CursorHint::Eraser), Some(CursorArt::Eraser));

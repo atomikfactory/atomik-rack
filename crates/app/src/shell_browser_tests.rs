@@ -1048,3 +1048,82 @@ fn the_panels_path_bar_goes_back_and_forward_through_the_places_shown() {
     assert_eq!(view.forward_place(), Some(&Place::Tag("kick".into())));
     assert_eq!(view.back_place(), Some(&Place::Tag("808".into())));
 }
+
+// ------------------------------------------------------------------ cursors of a drag
+
+#[test]
+fn a_file_drag_shows_copy_over_what_takes_files_and_not_allowed_elsewhere() {
+    let mut s = drag_shell("cursor");
+    assert_eq!(s.cursor(), CursorHint::Default);
+    let lane = lane_point(&s);
+    start_drag(&mut s, vec![wav("c.wav", 100)]);
+    s.handle(&moved(lane));
+    assert_eq!(s.cursor(), CursorHint::Copy);
+    // The rack takes files; the panel itself, the transport bar and the status bar do not.
+    s.handle(&moved(s.layout().rack.center()));
+    assert_eq!(s.cursor(), CursorHint::Copy);
+    let fb = column(&s);
+    for nowhere in [
+        Point::new(fb.center().x, fb.center().y),
+        s.layout().transport.center(),
+        Point::new(5.0, 790.0),
+    ] {
+        s.handle(&moved(nowhere));
+        assert_eq!(s.cursor(), CursorHint::NotAllowed, "{nowhere:?}");
+    }
+    s.handle(&moved(lane));
+    s.handle(&up(lane));
+    s.core_mut().wait_background();
+    assert_eq!(s.cursor(), CursorHint::Default, "the drag is over");
+}
+
+#[test]
+fn a_library_item_drag_is_copy_over_the_rack_and_not_allowed_over_other_panes() {
+    let mut s = drag_shell("library-cursor");
+    start_drag(&mut s, vec![PathBuf::from("/lib/Patches/Lead.atomikpatch")]);
+    s.handle(&moved(s.layout().rack.center()));
+    assert_eq!(s.cursor(), CursorHint::Copy);
+    // An audio lane takes no patch; a note clip needs a note lane.
+    s.handle(&moved(lane_point(&s)));
+    assert_eq!(s.cursor(), CursorHint::NotAllowed);
+    s.handle(&UiEvent::Key {
+        key: Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert_eq!(s.cursor(), CursorHint::Default, "Escape cancels the drag");
+}
+
+/// The window point of the name plate of a delay added to the rack (a plain plate).
+fn rack_plate_point(s: &mut Shell<NullBackend>) -> Point {
+    let key = atomik_model::DeviceKey("synth".into());
+    s.core_mut()
+        .apply_command(atomik_model::Command::AddDevice {
+            index: 0,
+            type_id: "atomik.stereo-delay".into(),
+            key: Some(key.clone()),
+        })
+        .unwrap();
+    let p = s.core().view().plate_center(&key).expect("the plate");
+    let o = s.layout().rack.origin();
+    Point::new(p.x + o.x, p.y + o.y)
+}
+
+#[test]
+fn a_device_plate_shows_the_open_hand_and_a_device_dragged_out_of_the_rack_is_not_allowed() {
+    let mut s = shown();
+    let plate = rack_plate_point(&mut s);
+    s.handle(&moved(plate));
+    assert_eq!(s.cursor(), CursorHint::Hand);
+    s.handle(&down(plate));
+    s.handle(&moved(Point::new(plate.x + 30.0, plate.y + 60.0)));
+    assert_eq!(s.cursor(), CursorHint::Dragging, "over the rack");
+    // Over the sequencer the release drops nothing.
+    let song = s.layout().song.expect("the song area").center();
+    s.handle(&moved(song));
+    assert_eq!(s.cursor(), CursorHint::NotAllowed);
+    s.handle(&moved(Point::new(plate.x + 30.0, plate.y + 60.0)));
+    assert_eq!(s.cursor(), CursorHint::Dragging, "back over the rack");
+    s.handle(&up(song));
+    assert_ne!(s.cursor(), CursorHint::Dragging);
+}
