@@ -204,6 +204,7 @@ impl RackView {
             console: Console::default(),
             midi_maps: Vec::new(),
             macros: Default::default(),
+            info: Default::default(),
         })
     }
 

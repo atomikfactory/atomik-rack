@@ -58,6 +58,7 @@ fn the_panel_lists_every_missing_file_with_its_buttons() {
         "RELINK MISSING AUDIO",
         "2 audio files missing",
         "SEARCH FOLDER...",
+        "PROJECT FOLDER...",
         "CLOSE",
         "kick.wav",
         "snare.wav",
@@ -99,6 +100,15 @@ fn search_folder_and_close_emit_their_actions() {
         },
         [RelinkAction::SearchFolder]
     );
+    assert_eq!(
+        {
+            let at = v.project_rect().center();
+            click(&mut v, at)
+        },
+        [RelinkAction::ProjectFolder]
+    );
+    assert!(v.project_rect().x0 > v.search_rect().x1, "beside, not over");
+    assert!(v.panel().contains(v.project_rect().center()));
     assert_eq!(
         {
             let at = v.close_rect().center();

@@ -42,7 +42,7 @@ fn the_flag_is_refused_in_a_file_older_than_the_format_that_added_it() {
     let text = save_project(&new_project_doc());
     let old = text.replace(
         &format!("\"version\": {PROJECT_VERSION}"),
-        &format!("\"version\": {}", PROJECT_VERSION - 1),
+        &format!("\"version\": {}", 36),
     );
     let e = load_project(&old, &console_registry())
         .unwrap_err()

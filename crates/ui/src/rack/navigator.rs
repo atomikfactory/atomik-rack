@@ -362,6 +362,7 @@ mod tests {
             console: atomik_model::Console::default(),
             midi_maps: Vec::new(),
             macros: Default::default(),
+            info: Default::default(),
         };
         let mut v = RackView::new(Theme::dark());
         v.set_navigator_visible(true);

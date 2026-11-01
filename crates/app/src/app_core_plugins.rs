@@ -2116,7 +2116,8 @@ impl<S: EngineSink> AppCore<S> {
 
     /// The folder holding the session scratch bundles to scan for unfinished recordings.
     pub(super) fn scratch_scan_folder(&self) -> Option<PathBuf> {
-        self.plugins.paths.scratch.clone()
+        self.audio_scratch_base()
+            .or_else(|| self.plugins.paths.scratch.clone())
     }
 
     // ------------------------------------------------------------------ editor windows

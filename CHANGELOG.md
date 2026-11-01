@@ -9,6 +9,28 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Templates, song information, project archives and a scratch folder.** File > New from
+  Template lists the projects of the new Templates folder (next to the library folder, shown with
+  Show Template Folder; a project put there appears in the menu within a second). A template opens
+  as an untitled song, so Save asks for a name and the template is never written; its audio plays
+  at once and is copied into the project folder on the first save, and a plugin that is not
+  installed keeps its stand-in as in any project. Save as Template adds a copy of the song under
+  its title or file name (a free name, the song itself untouched), and Use Song as Default Song
+  saves one as the Default Song that File > New and a start with no project open instead of the
+  starter project (Reset Default Song goes back; Close still starts the starter project). File >
+  Song Information has the title, author, e-mail, web address and notes of the song (the notes up
+  to 10 000 characters): the title shows in the window title, it is one undo step, nothing is ever
+  filled in from the system, and the MCP `project_inspect` and `session_status` list what is set.
+  File > Export Project Archive writes the project and the audio it uses as one `.atomikz` file (a
+  stored ZIP, so any ZIP tool opens it) on a worker with a cancel; Import Project Archive unpacks one
+  into a new folder beside it and opens the project. Unpacking refuses an archive with a path that
+  leaves its folder, a duplicate, an unknown file, a compressed or encrypted entry or an entry over
+  the limits, before it writes anything, and a failure or cancel leaves no partial folder. The
+  relink panel has a PROJECT FOLDER button for a project moved without its folder: the files come
+  back by their content. Settings > Workflow has a Scratch folder for the audio of a song that has
+  no folder yet (the temporary folder of the system by default). The Workflow tab's rows are a
+  little closer together to make room. The project format is now 38: it adds the optional
+  `"info"` root field; older projects load and bounce as before.
 - **Note lane workflows.** Drag a note lane by its label to another place among a track's lanes or
   onto another track's lanes (a line shows where it will land; hold Ctrl, or Alt on macOS, to
   copy it instead). Merge Note Lanes (Ctrl+R, also in the Track menu and the track header menu)

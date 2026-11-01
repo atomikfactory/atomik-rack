@@ -245,6 +245,8 @@ pub enum DialogOutcome {
     ImportKeymap,
     /// The Workflow tab asks for a folder to be the library (the dialog stays open).
     PickLibraryFolder,
+    /// The Workflow tab asks for a folder for the session scratch bundle (the dialog stays open).
+    PickScratchFolder,
 }
 
 /// The settings modal.
@@ -370,6 +372,14 @@ impl SettingsDialog {
         }
     }
 
+    /// Replaces the scratch folder draft of the Workflow tab (a picked folder; `None`: the
+    /// temporary folder).
+    pub fn set_scratch_folder(&mut self, folder: Option<PathBuf>) {
+        if let Some(p) = &mut self.prefs {
+            p.workflow.set_scratch_folder(folder);
+        }
+    }
+
     /// Replaces the keymap draft (an imported file).
     pub fn replace_user(&mut self, user: UserKeymap) {
         if let Some(p) = &mut self.prefs {
@@ -396,7 +406,7 @@ impl SettingsDialog {
             }
             Tab::Workflow => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
-                let height = (TITLE + 13.0 * 50.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let height = (TITLE + 14.0 * 44.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
@@ -1149,6 +1159,7 @@ impl SettingsDialog {
             TabOutcome::Export => DialogOutcome::ExportKeymap,
             TabOutcome::Import => DialogOutcome::ImportKeymap,
             TabOutcome::PickLibraryFolder => DialogOutcome::PickLibraryFolder,
+            TabOutcome::PickScratchFolder => DialogOutcome::PickScratchFolder,
         }
     }
 

@@ -13,6 +13,7 @@ use crate::midi_map::MidiMapping;
 use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
+use crate::song_info::SongInfo;
 use crate::steps::StepSeqDoc;
 use crate::takes::TakeGroup;
 use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
@@ -398,6 +399,11 @@ pub(crate) enum Edit {
         old: Box<RelinkData>,
         new: Box<RelinkData>,
     },
+    /// The song information (title, author, notes, address, e-mail).
+    Info {
+        old: SongInfo,
+        new: SongInfo,
+    },
     /// Several edits performed in order as one undo step; the inverse undoes them in reverse.
     Compound(Vec<Edit>),
 }
@@ -585,6 +591,7 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::Info { old, new } => Edit::Info { old: new, new: old },
             Edit::Connect(c) => Edit::Disconnect(c),
             Edit::Disconnect(c) => Edit::Connect(c),
             Edit::Param {
@@ -936,6 +943,10 @@ impl Edit {
             }
             Edit::MidiOutPort { key, new, .. } => {
                 device_mut(doc, key)?.midi_out = new.as_deref().map(crate::MidiOutDoc::new);
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::Info { new, .. } => {
+                doc.info.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Connect(c) => {

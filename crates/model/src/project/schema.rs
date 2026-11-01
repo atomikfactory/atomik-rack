@@ -215,6 +215,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Root, "console", 2).req(),
     field(Root, "midi_maps", 28),
     field(Root, "macros", 29),
+    field(Root, "info", 38),
     field(Root, "assets", 3),
     field(Root, "song", 1).req(),
     // A device (the fields shared with the patch format come first).
@@ -698,6 +699,8 @@ mod tests {
         assert!(fields(Obj::Device, 36).contains(&"patch"));
         assert!(!fields(Obj::Device, 36).contains(&"midi_out"));
         assert!(fields(Obj::Device, 37).contains(&"midi_out"));
+        assert!(!fields(Obj::Root, 37).contains(&"info"));
+        assert!(fields(Obj::Root, 38).contains(&"info"));
         assert!(!fields(Obj::Root, 27).contains(&"midi_maps"));
         assert!(fields(Obj::Root, 28).contains(&"midi_maps"));
         assert!(!required(Obj::Root, 1).contains(&"console"));

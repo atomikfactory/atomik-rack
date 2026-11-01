@@ -361,6 +361,7 @@ impl RackDoc {
             console: self.console.clone(),
             midi_maps: Vec::new(),
             macros: self.macros.clone(),
+            info: self.info.clone(),
         })
     }
 

@@ -269,6 +269,8 @@
 //! - **Strip silence.** [`SilenceView`] is the modal panel of threshold, minimum silence, padding
 //!   and fade settings; it emits [`UiAction::StripSilence`] (`APPLY`, `CLOSE`) and the app feeds it
 //!   with [`SilenceView::set_target`].
+//! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
+//!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`).
 //! - **Audio to notes.** [`NotesView`] is the modal panel of mode (pitched voice or drums),
 //!   sensitivity, minimum note, range, pitch drift, open hats, Beats timing and target; it emits
 //!   [`UiAction::AudioToNotes`] (`EXTRACT`, `CLOSE`) and the app feeds it with
@@ -359,6 +361,7 @@ pub mod seq_panel;
 pub mod sidechain;
 pub mod silence_panel;
 pub mod slice_editor;
+pub mod song_info_panel;
 pub mod step_drag;
 pub mod step_editor;
 pub mod tempo_lane;
@@ -423,6 +426,7 @@ pub use seq_paint::SeqTheme;
 pub use seq_panel::SeqButton;
 pub use silence_panel::{SilenceAction, SilenceRow, SilenceValues, SilenceView};
 pub use slice_editor::SliceEditorView;
+pub use song_info_panel::{InfoField, SongInfoAction, SongInfoView};
 pub use step_editor::{StepEditorView, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use theme::{Theme, ThemeChoice};

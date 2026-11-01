@@ -97,6 +97,7 @@ pub fn reference_doc() -> RackDoc {
         console: atomik_model::Console::default(),
         midi_maps: Vec::new(),
         macros: Default::default(),
+        info: Default::default(),
     }
 }
 

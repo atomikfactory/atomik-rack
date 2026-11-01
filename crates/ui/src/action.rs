@@ -475,6 +475,9 @@ pub enum UiAction {
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),
+    /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
+    /// song information, or close.
+    SongInfo(crate::song_info_panel::SongInfoAction),
     /// The Audio to Notes panel ([`crate::NotesView`]) asks for something: extract the notes of
     /// the selected audio clip with its settings, or close.
     AudioToNotes(crate::notes_panel::NotesAction),

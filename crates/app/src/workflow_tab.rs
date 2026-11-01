@@ -8,8 +8,8 @@ use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
 use std::path::PathBuf;
 
-const ROW: f64 = 44.0;
-const GAP: f64 = 6.0;
+const ROW: f64 = 40.0;
+const GAP: f64 = 4.0;
 const BUTTON_W: f64 = 84.0;
 
 /// `text` with its head cut when longer than [`PATH_CHARS`] characters.
@@ -131,7 +131,9 @@ pub struct WorkflowLayout {
     pub toggles: Vec<Toggle>,
     /// The library folder row under them.
     pub library: LibraryRow,
-    /// The autosave row under the library row.
+    /// The scratch folder row under the library row.
+    pub scratch: LibraryRow,
+    /// The autosave row under the scratch row.
     pub autosave: AutosaveRow,
     /// The rows that step through a choice, under the autosave row.
     pub cycles: Vec<CycleRow>,
@@ -160,6 +162,11 @@ impl WorkflowTab {
     /// Sets the library folder draft (`None`: the default folder).
     pub(crate) fn set_library_folder(&mut self, folder: Option<PathBuf>) {
         self.prefs.library_folder = folder;
+    }
+
+    /// Sets the scratch folder draft (`None`: the temporary folder).
+    pub(crate) fn set_scratch_folder(&mut self, folder: Option<PathBuf>) {
+        self.prefs.scratch_folder = folder;
     }
 
     fn get(&self, pref: Pref) -> bool {
@@ -244,20 +251,30 @@ impl WorkflowTab {
             });
             y += ROW + GAP;
         }
-        let library = LibraryRow {
+        let folder_row = |y: f64, folder: &Option<PathBuf>, unset: &str| LibraryRow {
             rect: Rect::new(x0, y, x0 + inner, y + ROW),
-            path: self.prefs.library_folder.as_ref().map_or_else(
-                || "the default folder (Documents/Atomik Rack/Library)".to_string(),
-                |p| shorten(&p.to_string_lossy()),
-            ),
-            default: Rect::new(x0 + inner - BUTTON_W, y + 8.0, x0 + inner, y + 36.0),
+            path: folder
+                .as_ref()
+                .map_or_else(|| unset.to_string(), |p| shorten(&p.to_string_lossy())),
+            default: Rect::new(x0 + inner - BUTTON_W, y + 6.0, x0 + inner, y + 34.0),
             choose: Rect::new(
                 x0 + inner - 2.0 * BUTTON_W - GAP,
-                y + 8.0,
+                y + 6.0,
                 x0 + inner - BUTTON_W - GAP,
-                y + 36.0,
+                y + 34.0,
             ),
         };
+        let library = folder_row(
+            y,
+            &self.prefs.library_folder,
+            "the default folder (Documents/Atomik Rack/Library)",
+        );
+        y += ROW + GAP;
+        let scratch = folder_row(
+            y,
+            &self.prefs.scratch_folder,
+            "the temporary folder of the system",
+        );
         y += ROW + GAP;
         let autosave = AutosaveRow {
             rect: Rect::new(x0, y, x0 + inner, y + ROW),
@@ -308,6 +325,7 @@ impl WorkflowTab {
         WorkflowLayout {
             toggles,
             library,
+            scratch,
             autosave,
             cycles,
             note: (
@@ -340,6 +358,12 @@ impl WorkflowTab {
                 }
                 if layout.library.default.contains(*pos) {
                     self.prefs.library_folder = None;
+                }
+                if layout.scratch.choose.contains(*pos) {
+                    return TabOutcome::PickScratchFolder;
+                }
+                if layout.scratch.default.contains(*pos) {
+                    self.prefs.scratch_folder = None;
                 }
                 if layout.autosave.button.contains(*pos) {
                     self.prefs.autosave_minutes = next_autosave(self.prefs.autosave_minutes);
@@ -403,39 +427,43 @@ impl WorkflowTab {
                 theme.text_muted,
             ));
         }
-        let lib = &l.library;
-        canvas.text(&TextRun::new(
-            "Library folder",
-            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 18.0),
-            13.0,
-            theme.text,
-        ));
-        canvas.text(&TextRun::new(
-            lib.path.clone(),
-            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 36.0),
-            11.0,
-            theme.text_muted,
-        ));
-        for (r, label) in [(lib.choose, "Choose..."), (lib.default, "Default")] {
-            let shape = RoundedRect::from_rect(r, 6.0);
-            let lit = self.hover.is_some_and(|p| r.contains(p));
-            canvas.fill_with(
-                shape,
-                if lit {
-                    theme.selection
-                } else {
-                    theme.browser_row
-                },
-            );
-            canvas.text(
-                &TextRun::new(
-                    label,
-                    Point::new(r.center().x, r.y0 + 16.5),
-                    12.0,
-                    theme.text,
-                )
-                .align(Align::Center),
-            );
+        for (lib, title) in [
+            (&l.library, "Library folder"),
+            (&l.scratch, "Scratch folder"),
+        ] {
+            canvas.text(&TextRun::new(
+                title,
+                Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 18.0),
+                13.0,
+                theme.text,
+            ));
+            canvas.text(&TextRun::new(
+                lib.path.clone(),
+                Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 36.0),
+                11.0,
+                theme.text_muted,
+            ));
+            for (r, label) in [(lib.choose, "Choose..."), (lib.default, "Default")] {
+                let shape = RoundedRect::from_rect(r, 6.0);
+                let lit = self.hover.is_some_and(|p| r.contains(p));
+                canvas.fill_with(
+                    shape,
+                    if lit {
+                        theme.selection
+                    } else {
+                        theme.browser_row
+                    },
+                );
+                canvas.text(
+                    &TextRun::new(
+                        label,
+                        Point::new(r.center().x, r.y0 + 15.5),
+                        12.0,
+                        theme.text,
+                    )
+                    .align(Align::Center),
+                );
+            }
         }
         let auto = &l.autosave;
         canvas.text(&TextRun::new(

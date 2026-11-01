@@ -352,6 +352,10 @@ pub struct AppCore<S: EngineSink> {
     piano_keys: atomik_ui::PianoKeysView,
     keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
+    /// The templates folder as it was last listed ([`AppCore::templates`]).
+    templates: templates::TemplatesState,
+    /// The archive job that runs ([`AppCore::start_archive_export`]).
+    archive: archive::ArchiveState,
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
     plugins: plugins::PluginState,
@@ -498,6 +502,8 @@ impl<S: EngineSink> AppCore<S> {
             piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
             keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
+            templates: templates::TemplatesState::default(),
+            archive: archive::ArchiveState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
             patches: patches::PatchState::default(),
@@ -650,12 +656,21 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The window title: `Atomik Rack — <file name>` (`Untitled` without a file), with ` *`
-    /// when there are unsaved changes (rack or song).
+    /// when there are unsaved changes (rack or song). A song with a title in its information
+    /// shows it instead, with the file name after it in brackets.
     pub fn title(&self) -> String {
-        let name = self.file.as_ref().and_then(|p| p.file_name()).map_or_else(
-            || "Untitled".to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        );
+        let file = self
+            .file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        let song = self.doc().info.title.trim();
+        let name = match (song.is_empty(), file) {
+            (true, Some(file)) => file,
+            (true, None) => "Untitled".to_string(),
+            (false, Some(file)) => format!("{song} ({file})"),
+            (false, None) => song.to_string(),
+        };
         let dirty = if self.is_dirty() { " *" } else { "" };
         format!("Atomik Rack \u{2014} {name}{dirty}")
     }
@@ -2999,6 +3014,8 @@ fn write_file(path: &Path, text: &str) -> Result<(), AppError> {
 
 impl<S: EngineSink> Drop for AppCore<S> {
     fn drop(&mut self) {
+        // An archive job that runs removes its part file when it sees this.
+        self.archive.stop();
         self.audio.remove_scratch();
     }
 }
@@ -3124,6 +3141,15 @@ mod browser;
 #[path = "app_core_library.rs"]
 mod library;
 pub use library::LoadTarget;
+
+#[path = "app_core_templates.rs"]
+mod templates;
+pub use templates::{
+    DEFAULT_SONG_NAME, MAX_TEMPLATES, TEMPLATES_FOLDER, TemplateEntry, list_templates,
+};
+
+#[path = "app_core_archive.rs"]
+mod archive;
 
 #[path = "app_core_patches.rs"]
 mod patches;

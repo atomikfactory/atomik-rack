@@ -3,8 +3,8 @@
 //! ```text
 //! RELINK MISSING AUDIO                                                   [ CLOSE ]
 //! 2 audio files are missing; their clips play silence. Pick any file for each one,
-//! or search a folder: files are matched by name.
-//! [ SEARCH FOLDER... ]
+//! search a folder (files are matched by name), or choose the project's folder.
+//! [ SEARCH FOLDER... ] [ PROJECT FOLDER... ]
 //!   kick.wav                    3f2a9c01                              [ LOCATE... ]
 //!   snare.wav                   b71e0d44                              [ LOCATE... ]
 //! ```
@@ -17,6 +17,9 @@
 //!   a file and relinks the asset to it.
 //! * `SEARCH FOLDER...` emits [`RelinkAction::SearchFolder`]; the app asks for a folder and
 //!   matches the missing assets by file name.
+//! * `PROJECT FOLDER...` emits [`RelinkAction::ProjectFolder`]; the app asks for the folder of the
+//!   project (the one holding its `Audio` folder, as moved or unpacked) and takes the missing
+//!   files from it by content, without decoding anything.
 //! * `CLOSE` emits [`RelinkAction::Close`].
 //!
 //! The list scrolls with the wheel; only the rows in view are painted.
@@ -58,6 +61,9 @@ pub enum RelinkAction {
     },
     /// Pick a folder to search for the missing files.
     SearchFolder,
+    /// Pick the folder the project was moved from or to: its `Audio` folder gives back every file
+    /// the project lost, matched by content.
+    ProjectFolder,
     /// Close the panel.
     Close,
 }
@@ -180,6 +186,17 @@ impl RelinkView {
         Rect::new(p.x0 + PAD, y, p.x0 + PAD + 160.0, y + BTN_H)
     }
 
+    /// The PROJECT FOLDER button, beside SEARCH FOLDER.
+    pub fn project_rect(&self) -> Rect {
+        let search = self.search_rect();
+        Rect::new(
+            search.x1 + 8.0,
+            search.y0,
+            search.x1 + 8.0 + 170.0,
+            search.y1,
+        )
+    }
+
     /// The row of entry `i`, `None` when it is scrolled out of the list.
     pub fn row_rect(&self, i: usize) -> Option<Rect> {
         if i >= self.rows() {
@@ -246,6 +263,10 @@ impl RelinkView {
                 self.search_rect(),
                 "Search a folder for the missing files and relink what it finds",
             ),
+            RelinkAction::ProjectFolder => help(
+                self.project_rect(),
+                "Choose the project's folder (the one with its Audio folder) to get its files back",
+            ),
             RelinkAction::Locate { hash } => {
                 let i = self.entries.iter().position(|e| e.hash == hash)?;
                 help(
@@ -265,6 +286,9 @@ impl RelinkView {
         }
         if self.search_rect().contains(pos) {
             return Some(RelinkAction::SearchFolder);
+        }
+        if self.project_rect().contains(pos) {
+            return Some(RelinkAction::ProjectFolder);
         }
         (0..self.rows())
             .find(|i| self.locate_rect(*i).is_some_and(|r| r.contains(pos)))
@@ -321,7 +345,8 @@ impl RelinkView {
             format!(
                 "{count} audio file{plural} missing: their clips play silence. Pick any file for each one,"
             ),
-            "or search a folder: files are matched by their name.".to_owned(),
+            "search a folder (files are matched by name), or choose the project's folder."
+                .to_owned(),
         ];
         for (n, line) in hint.iter().enumerate() {
             sp::label(
@@ -336,6 +361,8 @@ impl RelinkView {
         }
         let search = self.search_rect();
         sp::button(c, st, search, "SEARCH FOLDER...", None, hovered(search));
+        let project = self.project_rect();
+        sp::button(c, st, project, "PROJECT FOLDER...", None, hovered(project));
         sp::line(
             c,
             p.x0,

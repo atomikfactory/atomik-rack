@@ -67,9 +67,9 @@ fn error(text: &str, r: &Registry) -> String {
 
 #[test]
 fn the_format_is_version_12() {
-    assert_eq!(PROJECT_VERSION, 37);
+    assert_eq!(PROJECT_VERSION, 38);
     let (d, _) = project();
-    assert!(save_project(d.doc()).contains("\"version\": 37,"));
+    assert!(save_project(d.doc()).contains("\"version\": 38,"));
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn buses_need_version_12() {
     let (d, r) = project();
     let text = save_project(d.doc());
     for v in 3..=11 {
-        let old = text.replace("\"version\": 37", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 38", &format!("\"version\": {v}"));
         let e = error(&old, &r);
         assert!(e.contains("console") && e.contains("buses"), "v{v}: {e}");
     }

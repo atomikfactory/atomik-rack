@@ -11,6 +11,7 @@ use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS,
+    TEMPLATE_ARGS,
 };
 use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
 use std::borrow::Cow;
@@ -35,6 +36,25 @@ pub enum AppCommand {
     OpenRecent(usize),
     /// File ▸ Open Recent ▸ Clear Menu: forget the recent songs.
     ClearRecent,
+    /// File ▸ New from Template ▸ a template: a new untitled song from the template at this
+    /// place of the templates folder's list (0 is the first; asks about unsaved changes).
+    NewFromTemplate(usize),
+    /// File ▸ New from Template ▸ Save as Template: a copy of the song in the templates folder.
+    SaveAsTemplate,
+    /// File ▸ New from Template ▸ Show Template Folder: opens the folder in the file manager.
+    ShowTemplateFolder,
+    /// File ▸ New from Template ▸ Use Song as Default Song: File ▸ New opens a copy of this song.
+    SetDefaultSong,
+    /// File ▸ New from Template ▸ Reset Default Song: File ▸ New opens the starter project again.
+    ResetDefaultSong,
+    /// File ▸ Song Information…: the title, author, notes, address and e-mail of the song.
+    SongInfo,
+    /// File ▸ Export Project Archive…: the project and its audio as one `.atomikz` file.
+    ExportArchive,
+    /// File ▸ Import Project Archive…: unpack an archive beside itself and open the project.
+    ImportArchive,
+    /// File ▸ Cancel Project Archive: stop the archive that is being written or unpacked.
+    CancelArchive,
     /// File ▸ Close: end the song and start a new empty one (asks about unsaved changes).
     Close,
     /// File ▸ Save.
@@ -510,6 +530,15 @@ impl AppCommand {
             AppCommand::Open => ("file.open", None),
             AppCommand::OpenRecent(i) => ("file.open_recent", Some(RECENT_ARGS.get(*i)?)),
             AppCommand::ClearRecent => ("file.clear_recent", None),
+            AppCommand::NewFromTemplate(i) => ("file.new_template", Some(TEMPLATE_ARGS.get(*i)?)),
+            AppCommand::SaveAsTemplate => ("file.save_template", None),
+            AppCommand::ShowTemplateFolder => ("file.show_templates", None),
+            AppCommand::SetDefaultSong => ("file.default_song_set", None),
+            AppCommand::ResetDefaultSong => ("file.default_song_reset", None),
+            AppCommand::SongInfo => ("file.song_info", None),
+            AppCommand::ExportArchive => ("file.export_archive", None),
+            AppCommand::ImportArchive => ("file.import_archive", None),
+            AppCommand::CancelArchive => ("file.cancel_archive", None),
             AppCommand::Close => ("file.close", None),
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
@@ -752,6 +781,17 @@ impl AppCommand {
                 AppCommand::OpenRecent(RECENT_ARGS.iter().position(|a| *a == n)?)
             }
             ("file.clear_recent", None) => AppCommand::ClearRecent,
+            ("file.new_template", Some(n)) => {
+                AppCommand::NewFromTemplate(TEMPLATE_ARGS.iter().position(|a| *a == n)?)
+            }
+            ("file.save_template", None) => AppCommand::SaveAsTemplate,
+            ("file.show_templates", None) => AppCommand::ShowTemplateFolder,
+            ("file.default_song_set", None) => AppCommand::SetDefaultSong,
+            ("file.default_song_reset", None) => AppCommand::ResetDefaultSong,
+            ("file.song_info", None) => AppCommand::SongInfo,
+            ("file.export_archive", None) => AppCommand::ExportArchive,
+            ("file.import_archive", None) => AppCommand::ImportArchive,
+            ("file.cancel_archive", None) => AppCommand::CancelArchive,
             ("file.close", None) => AppCommand::Close,
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
@@ -1303,6 +1343,11 @@ pub struct MenuState {
     pub editor: bool,
     /// Audio files of the project are missing (File > Relink Missing Audio is available).
     pub missing_audio: bool,
+    /// A project archive is being written or unpacked (File > Cancel Project Archive is
+    /// available).
+    pub archive_busy: bool,
+    /// A default song is chosen (File > New from Template > Reset Default Song is available).
+    pub default_song: bool,
     /// A note clip is selected or open (File > Export MIDI Clip is available).
     pub midi_clip: bool,
     /// A note track is selected (File > Export MIDI Track is available).
@@ -1547,6 +1592,17 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
 /// [`menus`], with the File ▸ Open Recent submenu listing `recent` (the label of each song,
 /// newest first; at most [`RECENT_ARGS`]'s length are shown).
 pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) -> Vec<Menu> {
+    menus_with_lists(state, keymap, recent, &[])
+}
+
+/// [`menus_with_recent`], with the File ▸ New from Template submenu listing `templates` (the name
+/// of each template of the templates folder; at most [`TEMPLATE_ARGS`]'s length are shown).
+pub fn menus_with_lists(
+    state: &MenuState,
+    keymap: &Keymap,
+    recent: &[String],
+    templates: &[String],
+) -> Vec<Menu> {
     let make = |label: &'static str, command: AppCommand, checked, enabled| {
         MenuEntry::Item(MenuItem {
             label: Cow::Borrowed(label),
@@ -1598,6 +1654,39 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
             ])
             .collect(),
     });
+    let new_template = MenuEntry::Submenu(Submenu {
+        label: "New from Template",
+        entries: templates
+            .iter()
+            .take(TEMPLATE_ARGS.len())
+            .enumerate()
+            .map(|(i, name)| {
+                MenuEntry::Item(MenuItem {
+                    label: Cow::Owned(name.clone()),
+                    command: AppCommand::NewFromTemplate(i),
+                    shortcut: None,
+                    checked: None,
+                    enabled: true,
+                })
+            })
+            .chain(if templates.is_empty() {
+                None
+            } else {
+                Some(MenuEntry::Separator)
+            })
+            .chain([
+                item("Save as Template", AppCommand::SaveAsTemplate),
+                item("Show Template Folder", AppCommand::ShowTemplateFolder),
+                MenuEntry::Separator,
+                item("Use Song as Default Song", AppCommand::SetDefaultSong),
+                enabled(
+                    "Reset Default Song",
+                    AppCommand::ResetDefaultSong,
+                    state.default_song,
+                ),
+            ])
+            .collect(),
+    });
     vec![
         Menu {
             title: "File",
@@ -1605,9 +1694,11 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("New", AppCommand::New),
                 item("Open\u{2026}", AppCommand::Open),
                 open_recent,
+                new_template,
                 item("Close", AppCommand::Close),
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
+                item("Song Information\u{2026}", AppCommand::SongInfo),
                 MenuEntry::Submenu(Submenu {
                     label: "New at Sample Rate",
                     entries: vec![
@@ -1643,6 +1734,13 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     "Relink Missing Audio\u{2026}",
                     AppCommand::RelinkAudio,
                     state.missing_audio,
+                ),
+                item("Export Project Archive\u{2026}", AppCommand::ExportArchive),
+                item("Import Project Archive\u{2026}", AppCommand::ImportArchive),
+                enabled(
+                    "Cancel Project Archive",
+                    AppCommand::CancelArchive,
+                    state.archive_busy,
                 ),
                 item("Export Patch\u{2026}", AppCommand::ExportPatch),
                 enabled(
@@ -2561,6 +2659,8 @@ mod tests {
             sequencer_only: false,
             editor: false,
             missing_audio: false,
+            archive_busy: false,
+            default_song: false,
             midi_clip: false,
             midi_track: false,
             midi_song: false,
@@ -2588,6 +2688,16 @@ mod tests {
             AppCommand::OpenRecent(0),
             AppCommand::OpenRecent(7),
             AppCommand::ClearRecent,
+            AppCommand::NewFromTemplate(0),
+            AppCommand::NewFromTemplate(15),
+            AppCommand::SaveAsTemplate,
+            AppCommand::ShowTemplateFolder,
+            AppCommand::SetDefaultSong,
+            AppCommand::ResetDefaultSong,
+            AppCommand::SongInfo,
+            AppCommand::ExportArchive,
+            AppCommand::ImportArchive,
+            AppCommand::CancelArchive,
             AppCommand::Close,
             AppCommand::Save,
             AppCommand::SaveAs,
@@ -2885,7 +2995,8 @@ mod tests {
     fn menu_commands_in_the_registry_all_have_a_menu_item() {
         let keymap = legacy(Os::Windows);
         let recent: Vec<String> = (0..8).map(|i| format!("song {i}")).collect();
-        let model = menus_with_recent(&state(), &keymap, &recent);
+        let templates: Vec<String> = (0..16).map(|i| format!("template {i}")).collect();
+        let model = menus_with_lists(&state(), &keymap, &recent, &templates);
         let in_menu: Vec<AppCommand> = model
             .iter()
             .flat_map(Menu::items)
@@ -3165,9 +3276,15 @@ mod tests {
                 "New",
                 "Open\u{2026}",
                 "Clear Menu",
+                // The New from Template submenu: no templates in the list.
+                "Save as Template",
+                "Show Template Folder",
+                "Use Song as Default Song",
+                "Reset Default Song",
                 "Close",
                 "Save",
                 "Save As\u{2026}",
+                "Song Information\u{2026}",
                 // New at Sample Rate, then Convert Sample Rate: three rates each.
                 "44.1 kHz",
                 "48 kHz",
@@ -3179,6 +3296,9 @@ mod tests {
                 "Import MIDI\u{2026}",
                 "Import MIDI as Song\u{2026}",
                 "Relink Missing Audio\u{2026}",
+                "Export Project Archive\u{2026}",
+                "Import Project Archive\u{2026}",
+                "Cancel Project Archive",
                 "Export Patch\u{2026}",
                 "Export MIDI Clip\u{2026}",
                 "Export MIDI Track\u{2026}",
@@ -3646,6 +3766,8 @@ mod tests {
                 sequencer_only: false,
                 editor: false,
                 missing_audio: true,
+                archive_busy: false,
+                default_song: false,
                 midi_clip: true,
                 midi_track: false,
                 midi_song: true,

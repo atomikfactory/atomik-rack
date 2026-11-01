@@ -129,7 +129,7 @@
 
 use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
-use crate::commands::{AppCommand, Menu, MenuState, menus_with_recent};
+use crate::commands::{AppCommand, Menu, MenuState, menus_with_lists};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -159,7 +159,7 @@ use atomik_ui::{
     NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
     Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
     QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
-    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
+    SongInfoAction, SongInfoView, TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -221,6 +221,24 @@ pub enum ShellRequest {
     /// Show a folder dialog (the relink panel's SEARCH FOLDER...), then call
     /// [`Shell::relink_search_folder`] with the picked folder.
     PickRelinkFolder,
+    /// Show a folder dialog (the relink panel's PROJECT FOLDER...), then call
+    /// [`Shell::relink_project_folder`] with the picked folder.
+    PickRelinkProjectFolder,
+    /// Show a save dialog for a project archive (File > Export Project Archive): an `.atomikz`
+    /// file named `name`, then call [`Shell::export_archive_to`] with the path.
+    PickExportArchive {
+        /// The suggested file name, with its extension.
+        name: String,
+    },
+    /// Show an open dialog for a project archive (File > Import Project Archive), then call
+    /// [`Shell::import_archive_from`] with the path.
+    PickImportArchive,
+    /// Show a folder dialog (the Workflow tab's Scratch folder Choose...), then call
+    /// [`Shell::set_scratch_folder`] with the picked folder.
+    PickScratchFolder,
+    /// Show a folder in the file manager (File > New from Template > Show Template Folder). The
+    /// folder is one the app made itself.
+    ShowFolder(PathBuf),
     /// Show a save dialog for a MIDI mapping preset (Mixer > Export MIDI Mapping Preset, the
     /// panel's EXPORT), starting in [`Shell::midi_preset_dir`], then call
     /// [`Shell::export_midi_preset_to`] with the path.
@@ -450,6 +468,8 @@ pub struct Shell<B: AudioBackend> {
     quantize_values: QuantizeValues,
     /// The strip silence panel (Edit > Strip Silence) while it is open.
     silence: Option<SilenceView>,
+    /// The song information panel (File > Song Information) while it is open.
+    song_info: Option<SongInfoView>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
     notes: Option<NotesView>,
     /// Its settings, kept between openings.
@@ -621,6 +641,7 @@ impl<B: AudioBackend> Shell<B> {
             quantize: None,
             quantize_values: QuantizeValues::default(),
             silence: None,
+            song_info: None,
             notes: None,
             notes_values: NotesValues::default(),
             warp: None,
@@ -830,6 +851,47 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Takes the missing audio files from the picked project folder (see
+    /// [`AppCore::relink_project_folder`]).
+    pub fn relink_project_folder(&mut self, folder: PathBuf) {
+        self.core.relink_project_folder(&folder);
+        self.repaint = true;
+    }
+
+    /// File > Export Project Archive: the dialog asks for the `.atomikz` file, unless an archive
+    /// job runs already.
+    fn export_archive_request(&mut self) -> Vec<ShellRequest> {
+        if self.core.archive_busy() {
+            self.notify("A project archive is already being made".to_owned());
+            return Vec::new();
+        }
+        let name = format!(
+            "{}.{}",
+            self.core.archive_name(),
+            atomik_audio_file::ARCHIVE_EXTENSION
+        );
+        vec![ShellRequest::PickExportArchive { name }]
+    }
+
+    /// Writes the project archive the dialog picked (see [`AppCore::start_archive_export`]); the
+    /// extension is added when the name has none.
+    pub fn export_archive_to(&mut self, path: &Path) {
+        let mut path = path.to_path_buf();
+        if path.extension().is_none() {
+            path.set_extension(atomik_audio_file::ARCHIVE_EXTENSION);
+        }
+        // The core says why in a toast when it refuses.
+        let _ = self.core.start_archive_export(path);
+        self.repaint = true;
+    }
+
+    /// Unpacks the project archive the dialog picked beside itself; the project opens when it is
+    /// done (see [`AppCore::start_archive_import`]).
+    pub fn import_archive_from(&mut self, path: &Path) {
+        let _ = self.core.start_archive_import(path.to_path_buf());
+        self.repaint = true;
+    }
+
     /// Opens the relink panel, or says there is nothing to relink.
     fn open_relink(&mut self) {
         if self.core.missing_assets().is_empty() {
@@ -914,6 +976,45 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.sync_silence();
+        self.repaint = true;
+    }
+
+    /// Whether the song information panel is open.
+    pub fn song_info_open(&self) -> bool {
+        self.song_info.is_some()
+    }
+
+    /// The song information panel, while it is open.
+    pub fn song_info_view(&self) -> Option<&SongInfoView> {
+        self.song_info.as_ref()
+    }
+
+    /// Opens the song information panel with the song's texts.
+    fn open_song_info(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = SongInfoView::new(theme, self.core.song_info().clone());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.song_info = Some(view);
+        self.repaint = true;
+    }
+
+    /// What the song information panel asked for: APPLY makes its texts the song information (one
+    /// undo step) and closes it.
+    fn song_info_action(&mut self, action: SongInfoAction) {
+        match action {
+            SongInfoAction::Close => {}
+            SongInfoAction::Apply => {
+                if let Some(view) = &self.song_info {
+                    let info = view.info().clone();
+                    // The core says why in a toast when a text is refused.
+                    if self.core.set_song_info(info).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+        self.song_info = None;
         self.repaint = true;
     }
 
@@ -1424,6 +1525,7 @@ impl<B: AudioBackend> Shell<B> {
                 vec![ShellRequest::PickRelinkFile]
             }
             RelinkAction::SearchFolder => vec![ShellRequest::PickRelinkFolder],
+            RelinkAction::ProjectFolder => vec![ShellRequest::PickRelinkProjectFolder],
             RelinkAction::Close => {
                 self.relink = None;
                 Vec::new()
@@ -1542,6 +1644,24 @@ impl<B: AudioBackend> Shell<B> {
     fn sync_library_root(&mut self) {
         let root = self.library_root();
         self.core.set_library_root(root);
+        // The templates folder sits next to the library folder.
+        if self.core.reload_templates() {
+            self.repaint = true;
+        }
+    }
+
+    /// The scratch folder picked in the folder dialog: into the open settings dialog's draft
+    /// (applied with its Apply), else applied and saved at once.
+    pub fn set_scratch_folder(&mut self, folder: PathBuf) {
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_scratch_folder(Some(folder));
+        } else {
+            self.workflow.scratch_folder = Some(folder);
+            self.save_workflow();
+            self.core
+                .set_scratch_folder(self.workflow.scratch_folder.clone());
+        }
+        self.repaint = true;
     }
 
     /// The library folder picked in the folder dialog: into the open settings dialog's draft
@@ -1618,6 +1738,8 @@ impl<B: AudioBackend> Shell<B> {
     fn apply_workflow_to_views(&mut self) {
         self.core
             .set_autosave_minutes(self.workflow.autosave_minutes);
+        self.core
+            .set_scratch_folder(self.workflow.scratch_folder.clone());
         self.core.set_record_mode(self.workflow.record_mode);
         self.core.set_keep_events(self.workflow.keep_events);
         self.core.set_warp_imports(self.workflow.warp_imports);
@@ -1719,6 +1841,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.silence {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.notes {
@@ -1847,7 +1972,18 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|p| crate::recent::menu_label(p))
             .collect();
-        menus_with_recent(&self.menu_state(), self.router.keymap(), &recent)
+        let templates: Vec<String> = self
+            .core
+            .templates()
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        menus_with_lists(
+            &self.menu_state(),
+            self.router.keymap(),
+            &recent,
+            &templates,
+        )
     }
 
     /// The modifiers last reported by the window.
@@ -1992,6 +2128,8 @@ impl<B: AudioBackend> Shell<B> {
             editor: !self.lower_is_console()
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
             missing_audio: !self.core.missing_assets().is_empty(),
+            archive_busy: self.core.archive_busy(),
+            default_song: self.workflow.default_song.is_some(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
@@ -2250,6 +2388,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.silence.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.silence {
+                v.set_bounds(rect);
+            }
+        }
+        if self.song_info.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.song_info {
                 v.set_bounds(rect);
             }
         }
@@ -3039,6 +3183,30 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_notes();
             return Vec::new();
         }
+        if self.song_info.is_some() {
+            // The song information panel takes every event (typed text included); Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.song_info = None;
+                return Vec::new();
+            }
+            let actions = self
+                .song_info
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::SongInfo(a) = action {
+                    self.song_info_action(a);
+                }
+            }
+            return Vec::new();
+        }
         if self.silence.is_some() {
             // The strip silence panel takes every event; Esc closes it.
             self.repaint = true;
@@ -3121,6 +3289,7 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::ExportKeymap => return vec![ShellRequest::PickExportKeymap],
                 DialogOutcome::ImportKeymap => return vec![ShellRequest::PickImportKeymap],
                 DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
+                DialogOutcome::PickScratchFolder => return vec![ShellRequest::PickScratchFolder],
             }
             return Vec::new();
         }
@@ -4551,6 +4720,7 @@ impl<B: AudioBackend> Shell<B> {
         let requests = match command {
             AppCommand::New
             | AppCommand::NewAtRate(_)
+            | AppCommand::NewFromTemplate(_)
             | AppCommand::Open
             | AppCommand::Close
             | AppCommand::Quit
@@ -4563,6 +4733,35 @@ impl<B: AudioBackend> Shell<B> {
                 } else {
                     self.confirmed(command)
                 }
+            }
+            AppCommand::SaveAsTemplate => {
+                self.save_as_template();
+                Vec::new()
+            }
+            AppCommand::ShowTemplateFolder => self
+                .core
+                .template_folder_for_show()
+                .map(|dir| vec![ShellRequest::ShowFolder(dir)])
+                .unwrap_or_default(),
+            AppCommand::SetDefaultSong => {
+                self.set_default_song();
+                Vec::new()
+            }
+            AppCommand::ResetDefaultSong => {
+                self.workflow.default_song = None;
+                self.save_workflow();
+                self.notify("File > New opens the starter project again".to_owned());
+                Vec::new()
+            }
+            AppCommand::SongInfo => {
+                self.open_song_info();
+                Vec::new()
+            }
+            AppCommand::ExportArchive => self.export_archive_request(),
+            AppCommand::ImportArchive => vec![ShellRequest::PickImportArchive],
+            AppCommand::CancelArchive => {
+                self.core.cancel_archive();
+                Vec::new()
             }
             AppCommand::ConvertRate(rate) => {
                 self.core.convert_sample_rate(rate);
@@ -5299,8 +5498,16 @@ impl<B: AudioBackend> Shell<B> {
     pub fn confirmed(&mut self, command: AppCommand) -> Vec<ShellRequest> {
         self.repaint = true;
         match command {
-            AppCommand::New | AppCommand::Close => {
+            AppCommand::New => {
+                self.new_song();
+                Vec::new()
+            }
+            AppCommand::Close => {
                 self.core.new_document();
+                Vec::new()
+            }
+            AppCommand::NewFromTemplate(i) => {
+                self.new_from_template(i);
                 Vec::new()
             }
             AppCommand::NewAtRate(rate) => {
@@ -5399,6 +5606,96 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.open_file(&path);
         true
+    }
+
+    /// File > New: the default song when one is chosen and still there, else the starter project.
+    fn new_song(&mut self) {
+        let mut why = None;
+        if let Some(path) = self.workflow.default_song.clone() {
+            if path.exists() {
+                match self.core.open_template(&path) {
+                    Ok(()) => return,
+                    Err(e) => why = Some(format!("The default song cannot be opened: {e}")),
+                }
+            } else {
+                why = Some(format!(
+                    "The default song {} is gone; the starter project is used",
+                    path.display()
+                ));
+            }
+        }
+        self.core.new_document();
+        // After the new song: a new song forgets the messages of the old one.
+        if let Some(why) = why {
+            self.notify(why);
+        }
+    }
+
+    /// Start-up with no project named: the default song, when one is chosen. Returns whether it
+    /// opened. A song that is gone or broken is said in a message and the starter project stays.
+    pub fn start_with_default_song(&mut self) -> bool {
+        let Some(path) = self.workflow.default_song.clone() else {
+            return false;
+        };
+        if !path.exists() {
+            self.notify(format!(
+                "The default song {} is gone; the starter project is used",
+                path.display()
+            ));
+            return false;
+        }
+        match self.core.open_template(&path) {
+            Ok(()) => true,
+            Err(e) => {
+                self.notify(format!("The default song cannot be opened: {e}"));
+                false
+            }
+        }
+    }
+
+    /// File > New from Template > a template: the template at this place of the list, as an
+    /// untitled song.
+    fn new_from_template(&mut self, index: usize) {
+        let Some(entry) = self.core.templates().get(index).cloned() else {
+            return;
+        };
+        if !entry.path.exists() {
+            self.core.reload_templates();
+            self.notify(format!("{} no longer exists", entry.path.display()));
+            return;
+        }
+        if let Err(e) = self.core.open_template(&entry.path) {
+            self.notify(e.to_string());
+        }
+    }
+
+    /// File > New from Template > Save as Template: a copy of the song in the templates folder.
+    fn save_as_template(&mut self) {
+        let name = self.core.template_name();
+        match self.core.save_as_template(&name) {
+            Ok(path) => {
+                let shown = path
+                    .file_stem()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                self.notify(format!("Saved the template {shown}"));
+            }
+            Err(e) => self.notify(format!("The template was not saved: {e}")),
+        }
+        self.repaint = true;
+    }
+
+    /// File > New from Template > Use Song as Default Song: a copy of the song becomes the
+    /// project File > New opens, and the choice is saved with the workflow preferences.
+    fn set_default_song(&mut self) {
+        match self.core.save_default_song() {
+            Ok(path) => {
+                self.workflow.default_song = Some(path);
+                self.save_workflow();
+                self.notify("File > New now opens a copy of this song".to_owned());
+            }
+            Err(e) => self.notify(format!("The default song was not saved: {e}")),
+        }
+        self.repaint = true;
     }
 
     /// Opens a project or patch file (errors are shown in the view).
@@ -5500,6 +5797,10 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.transport_frame(now_seconds);
+        // A template dropped into the folder shows in File > New from Template.
+        if self.core.refresh_templates(now_seconds) {
+            self.repaint = true;
+        }
         self.save_click_level();
         self.core.plugin_tick(now_seconds);
         self.core.piano_roll_tick(now_seconds);
@@ -5959,6 +6260,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.silence {
             view.paint(canvas);
         }
+        if let Some(view) = &self.song_info {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.notes {
             view.paint(canvas);
         }
@@ -6298,6 +6602,10 @@ mod export_tests;
 #[cfg(test)]
 #[path = "shell_save_tests.rs"]
 mod save_tests;
+
+#[cfg(test)]
+#[path = "shell_templates_tests.rs"]
+mod templates_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]
