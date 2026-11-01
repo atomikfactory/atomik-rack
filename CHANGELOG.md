@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Sampling into devices.** A SAMPLE button beside EDIT on the sampler, granular, drum machine and
+  loop slicer panels records from an audio input pair into a 30 s ring, cuts the silence before the
+  sound and lands the sample in the device as one undo step (a drum machine puts it on the selected
+  pad). A second press stops, Esc cancels, a right-click picks the next input pair or single
+  channel. Sampling and recording audio tracks exclude each other.
+- **Sample edits as render operations.** Crop, normalise, reverse and fade in or out render a new
+  sample on a worker and swap it into one zone, or every zone that plays the same sample, in one
+  undo step; the zone markers stay on the same audio. The pool can count what uses each sample.
 - **Drum generator: 32 patterns, flams, ratchets and a resolution and shuffle per pattern.** A step
   can carry a flam (a soft grace hit and the full hit up to half a step later) or a ratchet (two to
   eight even hits across the step). The panel shows 32 patterns as four banks of eight, has RES and

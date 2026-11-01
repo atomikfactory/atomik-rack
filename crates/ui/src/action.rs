@@ -157,6 +157,33 @@ pub enum UiAction {
         /// The sampler being edited.
         device: DeviceKey,
     },
+    /// The SAMPLE button of a sampler, drum machine, loop slicer or granular sampler (panel and
+    /// editors): the first press starts recording from the sampling input pair, the next stops
+    /// it and lands the sample in `device` as one undo step (a drum machine puts it on the pad of
+    /// `at_key`, else on the next empty pad). Recording stops by itself after 30 s.
+    SampleInto {
+        /// The device the sample lands in.
+        device: DeviceKey,
+        /// The key (a drum pad's key) the sample goes to, if the button named one.
+        at_key: Option<u8>,
+    },
+    /// A right-click on a SAMPLE button: the next sampling input (stereo pairs, then single
+    /// channels). View state of the app, not an undo step.
+    CycleSamplingInput,
+    /// Apply an offline edit to the sample of a zone (the sample editor's edit buttons): the app
+    /// makes a new asset on a worker and points the zone (or, with `all_uses`, every zone of
+    /// the project that plays the same asset) at it in one undo step. Ranges are frames of the
+    /// zone's asset.
+    EditSample {
+        /// The sampler holding the zone.
+        device: DeviceKey,
+        /// The zone's index.
+        zone: usize,
+        /// Every zone playing the same asset takes the edited copy, not only this one.
+        all_uses: bool,
+        /// The edit.
+        edit: SampleOp,
+    },
     /// Import sample files into a sampler: the user dropped `paths` on
     /// the sampler's rack panel (`at_key: None`) or on the sample editor (`at_key` is the key
     /// under the pointer when dropped on the key map, else `None`). The UI never reads the
@@ -779,4 +806,45 @@ pub enum BrowseAction {
     RequestInfo(Vec<PathBuf>),
     /// The panel width or tree/list split changed by a drag (persist them).
     LayoutChanged,
+}
+
+/// An offline edit of a sample (see [`UiAction::EditSample`]). Ranges are frames `[from, to)` of
+/// the asset the zone plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleOp {
+    /// Keep only the range.
+    Crop {
+        /// First frame kept.
+        from: u64,
+        /// End of the kept frames.
+        to: u64,
+    },
+    /// Scale the sample so the peak of the range is at 0 dBFS.
+    Normalise {
+        /// First frame of the range.
+        from: u64,
+        /// End of the range.
+        to: u64,
+    },
+    /// Play the range backwards (the whole sample when it is the whole asset).
+    Reverse {
+        /// First frame of the range.
+        from: u64,
+        /// End of the range.
+        to: u64,
+    },
+    /// Fade the range in from silence.
+    FadeIn {
+        /// First frame of the range.
+        from: u64,
+        /// End of the range.
+        to: u64,
+    },
+    /// Fade the range out to silence.
+    FadeOut {
+        /// First frame of the range.
+        from: u64,
+        /// End of the range.
+        to: u64,
+    },
 }

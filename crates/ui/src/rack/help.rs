@@ -88,6 +88,9 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::Fold(_) => s("Fold the device to a thin strip, or unfold it"),
         Hit::Edit(_) => s("Open the editor for this device's samples"),
         Hit::ToChannel(_) => s("Add a mixer channel for this device"),
+        Hit::Sample(_) => s(
+            "Record from the audio input into this device (click again to stop; right-click picks the input)",
+        ),
         Hit::SliceBtn(_) => s("Slice the loop at its transients (the knob sets how many)"),
         Hit::ToTrack(_) => s("Lay the slices out as notes on a new track"),
         Hit::ScButton(_) => s("Choose the sidechain source of this effect"),

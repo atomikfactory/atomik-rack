@@ -92,13 +92,13 @@ pub(super) struct ProjectBundle {
 
 /// What a sample import (a drop on a sampler, or its Load button) collects until the batch is
 /// done: the files that imported, mapped into one `SetZones` step.
-struct SampleImport {
-    device: DeviceKey,
-    at_key: Option<u8>,
+pub(super) struct SampleImport {
+    pub(super) device: DeviceKey,
+    pub(super) at_key: Option<u8>,
     /// Files a loop slicer left out (it takes one loop, the first).
-    ignored: Vec<String>,
+    pub(super) ignored: Vec<String>,
     /// `(asset id, original file name, frames)` in the order the files finished.
-    files: Vec<(String, String, u64)>,
+    pub(super) files: Vec<(String, String, u64)>,
 }
 
 /// One running import (a drop or a dialog).
@@ -478,6 +478,11 @@ impl<S: EngineSink> AppCore<S> {
                         }
                     }
                 }
+                Msg::Edited {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_edited(job, result),
                 Msg::Sliced {
                     generation,
                     job,
@@ -559,6 +564,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
                 | Msg::Scanned { .. }
+                | Msg::Edited { .. }
                 | Msg::Converted { .. } => {}
             }
         }
@@ -707,7 +713,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Adds the zones of a finished sample import in one undo step (a granular sampler's sample
     /// replaces the old one). Returns a note for the status message when files found no pad (a
     /// drum machine) or were left out (a granular sampler takes one).
-    fn finish_sample_import(&mut self, import: SampleImport) -> Option<String> {
+    pub(super) fn finish_sample_import(&mut self, import: SampleImport) -> Option<String> {
         if import.files.is_empty() {
             return None;
         }

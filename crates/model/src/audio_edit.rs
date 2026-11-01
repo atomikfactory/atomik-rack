@@ -170,3 +170,39 @@ pub fn strip_silence<C: AsRef<[f32]>>(
     }
     out
 }
+
+/// The first frame whose level reaches `threshold_db` on any channel: how much silence a
+/// recording starts with, found by the detector of [`strip_silence`]. `None` when the whole
+/// recording is quieter than that.
+pub fn leading_silence<C: AsRef<[f32]>>(channels: &[C], threshold_db: f32) -> Option<u64> {
+    let len = channels.iter().map(|c| c.as_ref().len()).max().unwrap_or(0) as u64;
+    let params = StripParams {
+        threshold_db,
+        min_silence: 1,
+        pad_before: 0,
+        pad_after: 0,
+    };
+    strip_silence(channels, 0, len, &params)
+        .first()
+        .map(|&(start, _)| start)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_silence_is_the_first_frame_at_the_threshold() {
+        let mut left = vec![0.0f32; 100];
+        left[40] = 0.5;
+        let mut right = vec![0.0f32; 100];
+        right[25] = -0.25;
+        assert_eq!(leading_silence(&[&left, &right], -40.0), Some(25));
+        assert_eq!(leading_silence(&[&left], -40.0), Some(40));
+        // Quieter than the threshold counts as silence.
+        let faint = vec![0.0001f32; 10];
+        assert_eq!(leading_silence(&[&faint], -40.0), None);
+        assert_eq!(leading_silence(&[&faint], -90.0), Some(0));
+        assert_eq!(leading_silence::<Vec<f32>>(&[], -40.0), None);
+    }
+}

@@ -188,6 +188,10 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts the audio part of a take for the armed audio `tracks` (module docs). False when
     /// nothing records (the reason is reported).
     pub(super) fn start_audio_recording(&mut self, tracks: &[DeviceKey]) -> bool {
+        if self.sampling_device().is_some() {
+            self.reject("Stop sampling before recording".to_owned());
+            return false;
+        }
         let mut planned = Vec::new();
         let mut names = Vec::new();
         let mut missing = Vec::new();

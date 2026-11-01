@@ -146,6 +146,8 @@ enum Hit {
     Socket(usize, usize),
     /// The Edit button of a sampler or drum panel.
     Edit(usize),
+    /// The SAMPLE button beside it.
+    Sample(usize),
     /// The "TO CH" button of a drum panel.
     ToChannel(usize),
     /// A pad of a drum panel (device index, pad 1..=16).
@@ -220,6 +222,7 @@ impl Hit {
             | Hit::Name(i)
             | Hit::Fold(i)
             | Hit::Edit(i)
+            | Hit::Sample(i)
             | Hit::ToChannel(i)
             | Hit::Pad(i, _)
             | Hit::PadGrid(i)
@@ -479,6 +482,8 @@ const SC_MAX_ROWS: usize = 14;
 #[derive(Debug)]
 pub struct RackView {
     theme: Theme,
+    /// The device a sampling runs into (its SAMPLE button reads STOP).
+    sampling: Option<DeviceKey>,
     layout_provider: Option<LayoutProvider>,
     devices: Vec<DeviceView>,
     specs: BTreeMap<String, Arc<PanelSpec>>,
@@ -686,6 +691,20 @@ impl RackView {
         }
     }
 
+    /// Tells the panels which device is being sampled into (`None`: none): its SAMPLE button
+    /// reads STOP. The app calls it when the state changes.
+    pub fn set_sampling(&mut self, device: Option<DeviceKey>) {
+        if self.sampling == device {
+            return;
+        }
+        for d in &mut self.devices {
+            if d.spec.samples.is_some() || d.spec.drum.is_some() || d.spec.slicer.is_some() {
+                d.lists = [None, None];
+            }
+        }
+        self.sampling = device;
+    }
+
     /// Gives the granular sampler panels the waveform peaks of pool asset `asset` (its content
     /// hash), replacing earlier ones; the panels that draw it are repainted. The app shares the
     /// pyramids it feeds the arrangement and the sample editor with.
@@ -763,6 +782,7 @@ impl RackView {
                 ..Browser::default()
             },
             toast: None,
+            sampling: None,
             midi: crate::MidiMarks::default(),
             clip_scale: None,
             repaint: true,
@@ -1608,8 +1628,14 @@ impl RackView {
                         if let Some(strip) = d.spec.samples {
                             tree.add(
                                 dn,
-                                paint::sample_edit_button(strip) + off,
+                                paint::button_halves(paint::sample_edit_button(strip)).0 + off,
                                 Hit::Edit(i),
+                                false,
+                            );
+                            tree.add(
+                                dn,
+                                paint::button_halves(paint::sample_edit_button(strip)).1 + off,
+                                Hit::Sample(i),
                                 false,
                             );
                         }
@@ -1619,7 +1645,18 @@ impl RackView {
                                 let r = autolayout::drum_pad_rect(dr.pads, pad);
                                 tree.add(dn, r + off, Hit::Pad(i, pad), false);
                             }
-                            tree.add(dn, dr.edit + off, Hit::Edit(i), false);
+                            tree.add(
+                                dn,
+                                paint::button_halves(dr.edit).0 + off,
+                                Hit::Edit(i),
+                                false,
+                            );
+                            tree.add(
+                                dn,
+                                paint::button_halves(dr.edit).1 + off,
+                                Hit::Sample(i),
+                                false,
+                            );
                             tree.add(dn, dr.to_channel + off, Hit::ToChannel(i), false);
                         }
                         if let Some(sl) = d.spec.slicer {
@@ -1627,7 +1664,18 @@ impl RackView {
                             tree.add(dn, sl.sens + off, Hit::Sens(i), false);
                             tree.add(dn, sl.slice + off, Hit::SliceBtn(i), false);
                             tree.add(dn, sl.to_track + off, Hit::ToTrack(i), false);
-                            tree.add(dn, sl.edit + off, Hit::Edit(i), false);
+                            tree.add(
+                                dn,
+                                paint::button_halves(sl.edit).0 + off,
+                                Hit::Edit(i),
+                                false,
+                            );
+                            tree.add(
+                                dn,
+                                paint::button_halves(sl.edit).1 + off,
+                                Hit::Sample(i),
+                                false,
+                            );
                         }
                         if let Some(cp) = d.spec.container {
                             for b in [
@@ -1942,9 +1990,11 @@ impl RackView {
             return None;
         }
         let b = match (d.spec.samples, d.spec.drum) {
-            _ if d.spec.slicer.is_some() => d.spec.slicer.map(|s| s.edit)?,
-            (Some(strip), _) => paint::sample_edit_button(strip),
-            (None, Some(drum)) => drum.edit,
+            _ if d.spec.slicer.is_some() => {
+                d.spec.slicer.map(|s| paint::button_halves(s.edit).0)?
+            }
+            (Some(strip), _) => paint::button_halves(paint::sample_edit_button(strip)).0,
+            (None, Some(drum)) => paint::button_halves(drum.edit).0,
             (None, None) => return None,
         };
         Some(self.rack_to_view(b.center() + d.offset()))
@@ -3204,6 +3254,16 @@ impl RackView {
                     UiAction::OpenSampleEditor(device)
                 });
             }
+            (Hit::Sample(i), PointerButton::Primary) => {
+                self.select(i, out);
+                let d = &self.devices[i];
+                let at_key = d.spec.drum.is_some().then(|| atomik_model::pad_key(d.pad));
+                out.push(UiAction::SampleInto {
+                    device: d.key.clone(),
+                    at_key,
+                });
+            }
+            (Hit::Sample(_), PointerButton::Secondary) => out.push(UiAction::CycleSamplingInput),
             (Hit::SliceBtn(i), PointerButton::Primary) => {
                 self.select(i, out);
                 let d = &self.devices[i];
@@ -4131,6 +4191,7 @@ impl RackView {
                     io: self.io.info(),
                     master: d.master.info(),
                     from_clip: self.clip_scale.is_some(),
+                    sampling: self.sampling.as_ref() == Some(&d.key),
                     grain: crate::granular_panel::GrainInfo {
                         meters: &d.meters,
                         sample: d.sample.as_ref(),

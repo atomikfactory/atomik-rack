@@ -319,3 +319,33 @@ fn panel_recordings_are_deterministic_and_the_hover_adds_the_highlight() {
         record(layered_zones(), false)
     );
 }
+
+#[test]
+fn the_sample_button_sits_beside_edit_starts_and_stops_a_sampling_and_right_click_picks_the_input()
+{
+    let (doc, mut v) = rack(layered_zones());
+    let reg = registry();
+    let edit = v.edit_button_center(&key("sampler")).unwrap();
+    // The SAMPLE half is the right half of the same button row, 2 px gap included.
+    let sample = Point::new(edit.x + 60.0, edit.y);
+    let a = v.handle(&down(sample), &doc, &reg);
+    assert!(
+        a.contains(&UiAction::SampleInto {
+            device: key("sampler"),
+            at_key: None
+        }),
+        "{a:?}"
+    );
+    assert!(!a.contains(&UiAction::OpenSampleEditor(key("sampler"))));
+    let _ = v.handle(&up(sample), &doc, &reg);
+    let a = v.handle(
+        &down_with(sample, atomik_ui::PointerButton::Secondary, 1),
+        &doc,
+        &reg,
+    );
+    assert!(a.contains(&UiAction::CycleSamplingInput), "{a:?}");
+    let _ = v.handle(&up(sample), &doc, &reg);
+    // The panel reads STOP while a sampling runs (its picture changes).
+    v.set_sampling(Some(key("sampler")));
+    v.set_sampling(None);
+}

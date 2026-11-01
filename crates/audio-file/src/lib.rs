@@ -8,6 +8,7 @@ mod archive;
 mod bundle;
 mod data;
 mod decode;
+mod edit;
 mod error;
 mod hash;
 mod meta;
@@ -26,6 +27,7 @@ pub use decode::{
     DEFAULT_MAX_SAMPLES, Decoded, decode_bytes, decode_bytes_with, decode_file, decode_file_with,
     decode_vec_with,
 };
+pub use edit::{FadeShape, crop, fade_in, fade_out, normalise, range_peak, reverse};
 pub use error::{AudioFileError, Result};
 pub use hash::content_hash;
 pub use meta::{FileMeta, parse_meta, read_file_meta};
