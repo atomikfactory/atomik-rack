@@ -799,6 +799,15 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Delete on a lane deletes the lane.** With an automation lane header picked, Edit > Delete (and the
+  Delete key) removes that lane alone, as one undo step; an extra note lane goes the same way, and
+  a track is only removed when its own header is picked.
+- **A click on an empty automation lane draws.** With the Select tool, a click without a drag on
+  empty lane area adds a clip over the bar clicked with a point at the pointer, as one undo step;
+  a click inside a clip still adds a point there.
+- **The followed automation lane can be folded.** The lane that follows the selected parameter is
+  kept open, but its fold chevron now folds it; it stays folded until another parameter is followed
+  or the lane is unfolded.
 - **Joining clips no longer makes muted notes audible.** The notes of a muted clip used to be
   folded into the audible clip a Join made. A join now leaves muted clips where they are (muted
   clips on their own still join into a muted clip), and a looped clip is unrolled instead of being
