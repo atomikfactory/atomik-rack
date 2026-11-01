@@ -19,8 +19,37 @@ fn paint(b: &Brush) -> vello_cpu::PaintType {
     match b {
         Brush::Solid(c) => vello_cpu::PaintType::Solid(*c),
         Brush::Gradient(g) => vello_cpu::PaintType::Gradient(g.clone()),
-        Brush::Image(_) => vello_cpu::PaintType::Solid(crate::peniko::Color::TRANSPARENT),
+        Brush::Image(brush) => image_paint(brush).unwrap_or(vello_cpu::PaintType::Solid(
+            crate::peniko::Color::TRANSPARENT,
+        )),
     }
+}
+
+/// An RGBA8 image brush as a `vello_cpu` paint; `None` for another pixel format or a side over
+/// 65535 pixels.
+fn image_paint(brush: &crate::peniko::ImageBrush) -> Option<vello_cpu::PaintType> {
+    use crate::peniko::{ImageAlphaType, ImageFormat};
+    use vello_cpu::{Image, ImageSource, PixelMetadata};
+    if brush.image.format != ImageFormat::Rgba8 {
+        return None;
+    }
+    let width = u16::try_from(brush.image.width).ok()?;
+    let height = u16::try_from(brush.image.height).ok()?;
+    let alpha_type: ImageAlphaType = brush.image.alpha_type;
+    let bytes = brush.image.data.as_ref();
+    if bytes.len() != usize::from(width) * usize::from(height) * 4 {
+        return None;
+    }
+    let pixmap = Pixmap::from_parts(
+        bytes.to_vec(),
+        width,
+        height,
+        PixelMetadata::new(alpha_type, true),
+    );
+    Some(vello_cpu::PaintType::Image(Image {
+        image: ImageSource::Pixmap(std::sync::Arc::new(pixmap)),
+        sampler: brush.sampler,
+    }))
 }
 
 impl<'a> CpuCanvas<'a> {
