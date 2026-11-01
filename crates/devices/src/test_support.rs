@@ -432,6 +432,7 @@ pub fn drum_player_data(variant: u8) -> atomik_device_sdk::PlayerDataRef {
     let hit = |velocity| DrumStep {
         velocity,
         prob: 100,
+        ..DrumStep::default()
     };
     for i in 0..16usize {
         if i % 4 == usize::from(variant) % 4 {

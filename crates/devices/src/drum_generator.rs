@@ -1,7 +1,7 @@
 //! `atomik.drum-generator`: a transport-synced drum pattern player that varies what is written.
 //!
 //! The device plays the [`atomik_device_sdk::DrumData`] installed with
-//! [`Device::swap_player_data`]: up to 8 patterns of 16 lanes (one key each, by default the
+//! [`Device::swap_player_data`]: up to 32 patterns of 16 lanes (one key each, by default the
 //! pads of the drum machine) and 1 to 64 steps. The clock is the step sequencer's: the step
 //! number comes from the transport tick every batch, so a locate lands on the right step and a
 //! loop repeats in phase; a pattern switch with `pattern.switch = at-end` waits for the end of
@@ -14,6 +14,11 @@
 //!   every n-th bar into a fill; `accent` boosts the strong positions of each role; `gate` is the
 //!   hit length in percent of a step; `random.seed` draws every chance; `mute` closes everything.
 //!   `style` is the starting rhythm the app's Generate button writes (the device ignores it).
+//! * **Flam and ratchet.** A step with a flam plays a soft grace hit when the step starts and the
+//!   full hit that many percent of the step later; a step with a ratchet of `n` plays the hit `n`
+//!   times, evenly across the step (a ratchet replaces a flam). The later hits wait in a small
+//!   fixed table (see `hits`) and each ends before the next of its lane starts; a jump, a mute,
+//!   an `AllOff` and a bypass drop them, so every On has its Off.
 //! * **Bars** are counted from tick 0 with the time signature in effect at the start of the
 //!   batch (a meter change mid-song shifts the bar count, documented).
 //! * **Note safety.** Notes are closed on stop, jump, `mute`, `AllOff` on `notes_in` and bypass,
@@ -28,6 +33,7 @@
 
 mod algo;
 mod generate;
+mod hits;
 
 pub use generate::{DrumStyle, generate_pattern};
 
@@ -35,8 +41,8 @@ use atomik_core::{
     BATCH, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit,
 };
 use atomik_device_sdk::{
-    DRUM_LANES, Device, DeviceDescriptor, DeviceFactory, DeviceKind, DrumPattern, PlayerDataRef,
-    PrepareInfo, ProcessContext,
+    DRUM_LANES, Device, DeviceDescriptor, DeviceFactory, DeviceKind, DrumPattern,
+    MAX_DRUM_PATTERNS, MAX_RATCHET, PlayerDataRef, PrepareInfo, ProcessContext,
 };
 
 use crate::bypass::bypass_param;
@@ -46,6 +52,7 @@ use crate::note_clock::{
 };
 use crate::note_fx::PlayerBypass;
 use algo::{Meter, Tuning, hit_velocity};
+use hits::{Hit, PendingHits, flam_tick, grace_velocity, ratchet_tick, span_end};
 
 const fn param(
     id: u32,
@@ -94,7 +101,7 @@ static PARAMS: [ParamDescriptor; 13] = [
         P_PATTERN,
         "pattern",
         "Pattern",
-        (1.0, 8.0, 1.0),
+        (1.0, 32.0, 1.0),
         Unit::None,
         true,
     ),
@@ -198,6 +205,7 @@ pub fn factory() -> DeviceFactory {
 pub struct DrumGenerator {
     data: Option<PlayerDataRef>,
     core: NoteCore,
+    ons: PendingHits,
     clock: JumpTracker,
     bypass: PlayerBypass,
     seed: u64,
@@ -228,6 +236,7 @@ impl DrumGenerator {
         Self {
             data: None,
             core: NoteCore::new(),
+            ons: PendingHits::new(),
             clock: JumpTracker::new(),
             bypass: PlayerBypass::new(),
             seed: 0,
@@ -287,7 +296,7 @@ impl DrumGenerator {
             }
             self.in_cursor += 1;
             if e.kind == NoteKind::AllOff {
-                self.core.close_all(ctx, at);
+                self.silence(ctx, at);
             }
         }
     }
@@ -304,9 +313,15 @@ impl DrumGenerator {
 
     /// A jump: close every note, adopt the queued pattern, recompute the next step.
     fn do_jump(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, tick: f64) {
-        self.core.close_all(ctx, frame);
+        self.silence(ctx, frame);
         self.cur = self.queued;
         self.refresh_grid(tick, true);
+    }
+
+    /// Closes every sounding note at `frame` and forgets the hits still to come.
+    fn silence(&mut self, ctx: &mut ProcessContext<'_>, frame: usize) {
+        self.ons.clear();
+        self.core.close_all(ctx, frame);
     }
 
     /// Plays every lane that hits at step `k`.
@@ -315,7 +330,8 @@ impl DrumGenerator {
             return;
         };
         let p = *p;
-        self.last_step_idx = (k as u64 % u64::from(p.length.clamp(1, 64))) as u32;
+        let len = u64::from(p.length.clamp(1, 64));
+        self.last_step_idx = (k as u64 % len) as u32;
         if self.mute {
             return;
         }
@@ -331,14 +347,100 @@ impl DrumGenerator {
             if v == 0 {
                 continue;
             }
-            self.core
-                .note_on(ctx, frame, l.key.min(127), f32::from(v) / 127.0, end);
+            let key = l.key.min(127);
+            let fx = p.steps[lane][self.last_step_idx as usize];
+            if fx.ratchet > 1 {
+                self.ratchet(
+                    ctx,
+                    key,
+                    v,
+                    fx.ratchet.min(MAX_RATCHET),
+                    (tick, next),
+                    frame,
+                );
+            } else if fx.flam > 0 {
+                // A soft grace hit now, the full hit a little later.
+                let main = flam_tick(tick, next, fx.flam);
+                let grace = grace_velocity(v);
+                self.core
+                    .note_on(ctx, frame, key, f32::from(grace) / 127.0, main);
+                self.ons.push(Hit {
+                    tick: main,
+                    end: self.grid.gate_end_to(main, next, self.gate * 100.0),
+                    key,
+                    velocity: v,
+                });
+            } else {
+                self.core
+                    .note_on(ctx, frame, key, f32::from(v) / 127.0, end);
+            }
             if loudest.is_none_or(|(_, lv)| v > lv) {
-                loudest = Some((l.key.min(127), v));
+                loudest = Some((key, v));
             }
         }
         if let Some((key, v)) = loudest {
             self.core.trigger(ctx, frame, key, f32::from(v) / 127.0);
+        }
+    }
+
+    /// Plays the first of `n` evenly spaced hits of a ratchet over the step `(tick, next)` now and
+    /// parks the others.
+    fn ratchet(
+        &mut self,
+        ctx: &mut ProcessContext<'_>,
+        key: u8,
+        v: u8,
+        n: u8,
+        (tick, next): (f64, f64),
+        frame: usize,
+    ) {
+        let len = next - tick;
+        for j in 0..n {
+            let at = ratchet_tick(tick, len, j, n);
+            let until = if j + 1 < n {
+                ratchet_tick(tick, len, j + 1, n)
+            } else {
+                next
+            };
+            let end = span_end(at, until, self.gate);
+            if j == 0 {
+                self.core
+                    .note_on(ctx, frame, key, f32::from(v) / 127.0, end);
+            } else {
+                self.ons.push(Hit {
+                    tick: at,
+                    end,
+                    key,
+                    velocity: v,
+                });
+            }
+        }
+    }
+
+    /// The earliest of the next note end and the next parked hit.
+    fn next_event(&self) -> Option<f64> {
+        let off = self.core.pending.earliest().map(|(_, t)| t);
+        let on = self.ons.earliest().map(|(_, t)| t);
+        match (off, on) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Runs the earliest event at `frame`: a note end, or at the same tick after it a parked hit.
+    fn run_event(&mut self, ctx: &mut ProcessContext<'_>, frame: usize) {
+        let off = self.core.pending.earliest().map(|(_, t)| t);
+        let on = self.ons.earliest();
+        match (off, on) {
+            (Some(a), Some((_, b))) if a <= b => self.core.pop_earliest(ctx, frame),
+            (_, Some((i, _))) => {
+                let h = self.ons.take(i);
+                let vel = f32::from(h.velocity) / 127.0;
+                self.core.note_on(ctx, frame, h.key, vel, h.end);
+                self.core.trigger(ctx, frame, h.key, vel);
+            }
+            (Some(_), None) => self.core.pop_earliest(ctx, frame),
+            (None, None) => {}
         }
     }
 }
@@ -369,11 +471,11 @@ impl StepHost for Run<'_, '_> {
     }
 
     fn earliest_off(&self) -> Option<f64> {
-        self.s.core.pending.earliest().map(|(_, t)| t)
+        self.s.next_event()
     }
 
     fn pop_off(&mut self, frame: usize) {
-        self.s.core.pop_earliest(self.ctx, frame);
+        self.s.run_event(self.ctx, frame);
     }
 
     fn on_step(&mut self, k: i64, tick: f64, frame: usize) {
@@ -407,6 +509,7 @@ impl Device for DrumGenerator {
     }
 
     fn reset(&mut self) {
+        self.ons.clear();
         self.core.reset();
         if self.bypass.reset() {
             self.core.flush_alloff = true;
@@ -420,7 +523,7 @@ impl Device for DrumGenerator {
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
         match id.0 {
-            P_PATTERN => self.queued = (plain.round() as usize).clamp(1, 8) - 1,
+            P_PATTERN => self.queued = (plain.round() as usize).clamp(1, MAX_DRUM_PATTERNS) - 1,
             P_SWITCH => self.switch_now = plain < 0.5,
             P_DENSITY => self.tuning.density = f64::from(plain.clamp(-1.0, 1.0)),
             P_VARIATION => self.tuning.variation = f64::from(plain.clamp(0.0, 1.0)),
@@ -452,7 +555,7 @@ impl Device for DrumGenerator {
         self.core.begin_batch(ctx);
         if self.bypass.begin_batch(ctx.notes_out(NOTES_OUT)) {
             // The switch closes what the generator sent and starts it from nothing.
-            self.core.close_all(ctx, 0);
+            self.silence(ctx, 0);
             self.clock.invalidate();
             self.running = false;
             self.close_pending = false;
@@ -475,7 +578,7 @@ impl Device for DrumGenerator {
         self.meter = Meter::new(time.time_signature.0, time.time_signature.1);
         let valid = time.playing && self.tpf > 0.0 && self.tpf.is_finite();
         if !valid {
-            self.core.close_all(ctx, 0);
+            self.silence(ctx, 0);
             self.clock.invalidate();
             self.running = false;
             self.close_pending = false;
@@ -488,7 +591,7 @@ impl Device for DrumGenerator {
         let jump = self.clock.observe(time.tick, self.tpf, 0);
         if self.close_pending {
             self.close_pending = false;
-            self.core.close_all(ctx, 0);
+            self.silence(ctx, 0);
         }
         if jump {
             self.do_jump(ctx, 0, time.tick);
