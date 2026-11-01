@@ -2358,6 +2358,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.toggle_song", "Arrangement", G::View, C::Global).menu(),
+    cmd("view.toggle_spectrum_eq", "Spectrum EQ", G::View, C::Global).menu(),
     cmd("view.toggle_step_editor", "Step Editor", G::View, C::Global).menu(),
     cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
     cmd("view.zoom_in", "Zoom In", G::View, C::Global)

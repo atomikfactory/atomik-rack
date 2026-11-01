@@ -89,6 +89,7 @@ fn reference_shadows_are_the_expected_notes() {
             "files Return files.open over transport.go_start",
             "files Space files.toggle_preview over transport.play_stop",
             "files Backspace files.parent over edit.delete",
+            "files F2 files.rename over view.toggle_spectrum_eq",
             "files Cmd+A files.select_all over edit.select_all",
             "files Cmd+F files.search over view.toggle_browser",
             "keys F keys.note over sequencer.follow",

@@ -372,9 +372,23 @@ impl SpectrumEqView {
 
     /// The strip shown and its values (`None`: no strip).
     pub fn set_state(&mut self, state: Option<StripEqState>) {
-        // A drag keeps the values it started from while it runs: the model answers each step.
-        self.state = state;
-        self.repaint = true;
+        let same = match (&self.state, &state) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                a.key == b.key
+                    && a.name == b.name
+                    && a.master == b.master
+                    && a.sample_rate.to_bits() == b.sample_rate.to_bits()
+                    && a.curve == b.curve
+                    && a.hpf_on == b.hpf_on
+                    && a.lpf_on == b.lpf_on
+            }
+            _ => false,
+        };
+        if !same {
+            self.state = state;
+            self.repaint = true;
+        }
     }
 
     /// The strip shown.
@@ -832,10 +846,11 @@ impl SpectrumEqView {
     // ------------------------------------------------------------------ paint
 
     /// Paints the window (physical pixels).
-    pub fn paint(&self, c: &mut dyn Canvas) {
+    pub fn paint(&mut self, c: &mut dyn Canvas) {
         c.push_transform(vello::kurbo::Affine::scale(self.scale));
         self.paint_logical(c);
         c.pop_transform();
+        self.repaint = false;
     }
 
     fn text(c: &mut dyn Canvas, theme: &Theme, s: &str, at: Point, align: Align) {

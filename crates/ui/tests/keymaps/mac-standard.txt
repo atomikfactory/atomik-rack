@@ -208,6 +208,7 @@ view.toggle_file_browser | global | F9, Cmd+Opt+Digit9
 view.toggle_flip | global | Tab
 view.toggle_piano_keys | global | F4, Cmd+Opt+Digit4
 view.toggle_rack | global | F6, Cmd+Opt+Digit6
+view.toggle_spectrum_eq | global | F2, Cmd+Opt+Digit2
 view.zoom_in | global | Cmd+=, Cmd++, Cmd+Shift+=, Cmd+Shift++, Cmd+Opt+=, Cmd+Opt++
 view.zoom_in | sequencer | H
 view.zoom_in | editor | H
