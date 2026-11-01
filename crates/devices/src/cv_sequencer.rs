@@ -39,8 +39,8 @@ use atomik_core::{
     BATCH, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit,
 };
 use atomik_device_sdk::{
-    CURVE_ROWS, CurveStep, Device, DeviceDescriptor, DeviceFactory, DeviceKind, PlayerDataRef,
-    PrepareInfo, ProcessContext, StepData,
+    CURVE_ROWS, CurveStep, Device, DeviceDescriptor, DeviceFactory, DeviceKind, MAX_CV_PATTERNS,
+    PlayerDataRef, PrepareInfo, ProcessContext, StepData,
 };
 
 use crate::bypass::bypass_param;
@@ -97,7 +97,7 @@ static PARAMS: [ParamDescriptor; 15] = [
         P_PATTERN,
         "pattern",
         "Pattern",
-        (1.0, 8.0, 1.0),
+        (1.0, 32.0, 1.0),
         Unit::None,
         true,
     ),
@@ -109,7 +109,14 @@ static PARAMS: [ParamDescriptor; 15] = [
         SWITCH,
         true,
     ),
-    param(P_CHAIN, "chain", "Chain", (1.0, 8.0, 1.0), Unit::None, true),
+    param(
+        P_CHAIN,
+        "chain",
+        "Chain",
+        (1.0, 32.0, 1.0),
+        Unit::None,
+        true,
+    ),
     param(
         P_TRANSPOSE,
         "transpose",
@@ -552,9 +559,9 @@ impl Device for CvSequencer {
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
         match id.0 {
-            P_PATTERN => self.queued = (plain.round() as usize).clamp(1, 8) - 1,
+            P_PATTERN => self.queued = (plain.round() as usize).clamp(1, MAX_CV_PATTERNS) - 1,
             P_SWITCH => self.switch_now = plain < 0.5,
-            P_CHAIN => self.queued_chain = (plain.round() as usize).clamp(1, 8),
+            P_CHAIN => self.queued_chain = (plain.round() as usize).clamp(1, MAX_CV_PATTERNS),
             P_TRANSPOSE => self.transpose = (plain.round() as i32).clamp(-24, 24),
             P_FOLLOW => self.follow = plain >= 0.5,
             P_PROB => self.prob_amount = f64::from(plain.clamp(0.0, 1.0)),
