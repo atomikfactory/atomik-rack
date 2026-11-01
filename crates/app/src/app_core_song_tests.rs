@@ -2279,3 +2279,77 @@ fn a_refused_insert_or_remove_at_the_locators_says_why() {
         assert!(message.contains("nothing"), "{id}: {message}");
     }
 }
+
+#[test]
+fn alt_dragging_the_end_edge_of_a_one_bar_note_clip_doubles_it_and_one_undo_undoes_it() {
+    use atomik_ui::kurbo::{Point, Rect};
+    use atomik_ui::{Modifiers, PointerButton, UiEvent};
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(BAR, &[(0, 60), (PPQ, 62)]),
+        }),
+    );
+    let doc = c.document().doc().clone();
+    c.arrangement_mut()
+        .set_bounds(Rect::new(0.0, 0.0, 1100.0, 600.0));
+    c.arrangement_mut()
+        .set_roles(atomik_ui::keymap::Roles::defaults(
+            atomik_ui::keymap::Os::Windows,
+        ));
+    c.arrangement_mut().set_snap(atomik_ui::timeline::Snap::Bar);
+    c.arrangement_mut().sync(&doc, &default_registry());
+    let id = only_clip(&c).id;
+    let r = c.arrangement().clip_rect(id).expect("the clip is drawn");
+    let bar_px = c.arrangement().tick_to_x(BAR) - c.arrangement().tick_to_x(0);
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    };
+    let edge = Point::new(r.x1 - 2.0, r.center().y + 6.0);
+    let send = |c: &mut AppCore<RecordingSink>, event: UiEvent| {
+        c.handle_pane_event(Pane::Arrangement, &event);
+    };
+    send(&mut c, UiEvent::ModifiersChanged { modifiers: alt });
+    send(
+        &mut c,
+        UiEvent::PointerDown {
+            pos: edge,
+            button: PointerButton::Primary,
+            modifiers: alt,
+            clicks: 1,
+        },
+    );
+    send(
+        &mut c,
+        UiEvent::PointerMove {
+            pos: Point::new(edge.x + bar_px, edge.y),
+            modifiers: alt,
+        },
+    );
+    // The preview is on screen and in the engine, but not in the history yet.
+    assert_eq!(only_clip(&c).length, 2 * BAR);
+    let undo_before = c.document().undo_depth();
+    send(
+        &mut c,
+        UiEvent::PointerUp {
+            pos: Point::new(edge.x + bar_px, edge.y),
+            button: PointerButton::Primary,
+            modifiers: alt,
+        },
+    );
+    let clip = only_clip(&c);
+    assert_eq!((clip.start, clip.length), (BAR, 2 * BAR));
+    let ClipContent::Notes(notes) = &clip.content else {
+        panic!("notes")
+    };
+    let got: Vec<(i64, i64)> = notes.iter().map(|n| (n.tick, n.length)).collect();
+    assert_eq!(got, [(0, PPQ), (2 * PPQ, PPQ)]);
+    assert_eq!(c.document().undo_depth(), undo_before + 1);
+    c.handle_action(UiAction::Undo);
+    let clip = only_clip(&c);
+    assert_eq!((clip.start, clip.length), (BAR, BAR));
+}
