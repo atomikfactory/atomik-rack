@@ -208,6 +208,7 @@ pub use song::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 pub use takes::{CompSegment, TakeGroup};
+pub use takes_cmd::MAX_TAKES;
 pub use validate::Violation;
 pub use warp::{
     AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpJob,

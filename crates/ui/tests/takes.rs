@@ -478,3 +478,209 @@ fn preview_png() {
     std::fs::write(&path, png).unwrap();
     println!("wrote {}", path.display());
 }
+
+// ------------------------------------------------------------------ comp strip and row menus
+
+fn mv(at: Point) -> UiEvent {
+    UiEvent::PointerMove {
+        pos: at,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+fn right_click(
+    d: &Document,
+    reg: &atomik_device_sdk::Registry,
+    v: &mut ArrangementView,
+    at: Point,
+) -> Vec<UiAction> {
+    run(
+        d,
+        reg,
+        v,
+        &[
+            UiEvent::PointerDown {
+                pos: at,
+                button: PointerButton::Secondary,
+                modifiers: Modifiers::NONE,
+                clicks: 1,
+            },
+            UiEvent::PointerUp {
+                pos: at,
+                button: PointerButton::Secondary,
+                modifiers: Modifiers::NONE,
+            },
+        ],
+    )
+}
+
+/// Clicks the row of the open menu labelled `label`.
+fn pick_row(
+    d: &Document,
+    reg: &atomik_device_sdk::Registry,
+    v: &mut ArrangementView,
+    label: &str,
+) -> Vec<UiAction> {
+    let i = v
+        .menu_labels()
+        .iter()
+        .position(|l| l == label)
+        .unwrap_or_else(|| panic!("no row {label}: {:?}", v.menu_labels()));
+    let at = v.param_menu_row_center(i).expect("a visible row");
+    click(d, reg, v, at)
+}
+
+#[test]
+fn dragging_across_the_strip_silences_the_range_in_one_step() {
+    let (mut d, reg, mut v) = setup();
+    let before = group(&d).comp;
+    let a = v.take_strip_point(1, 4 * BAR + PPQ / 4).unwrap();
+    let b = v.take_strip_point(1, 5 * BAR - PPQ / 4).unwrap();
+    let actions = run(&d, &reg, &mut v, &[down(a), mv(b), up(b)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetCompSilence {
+            group: 1,
+            start: 4 * BAR,
+            end: 5 * BAR
+        }]
+    );
+    apply(&mut d, &reg, &actions);
+    assert_eq!(group(&d).take_at(4 * BAR + 1), None);
+    d.undo(&reg).unwrap();
+    assert_eq!(group(&d).comp, before);
+    // A click on the strip, and a drag over a range that is already silent, send nothing.
+    assert!(song_commands(&click(&d, &reg, &mut v, a)).is_empty());
+}
+
+#[test]
+fn dragging_a_cut_moves_it_by_growing_one_neighbour_and_escape_cancels() {
+    let (mut d, reg, mut v) = setup();
+    v.set_snap(Snap::Beat);
+    // Layered takes: take 2 plays bar 4, take 1 plays bar 5, the cut is at `5 * BAR`.
+    assert_eq!(group(&d).take_at(4 * BAR + 1), Some(2));
+    assert_eq!(group(&d).take_at(5 * BAR + 1), Some(1));
+    let cut = v.take_strip_point(1, 5 * BAR).unwrap();
+    let later = v.take_strip_point(1, 5 * BAR + 2 * PPQ).unwrap();
+    let actions = run(&d, &reg, &mut v, &[down(cut), mv(later), up(later)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetCompSegment {
+            group: 1,
+            take: 2,
+            start: 5 * BAR,
+            end: 5 * BAR + 2 * PPQ
+        }],
+        "the take that grows takes the range the cut moved over"
+    );
+    apply(&mut d, &reg, &actions);
+    assert_eq!(group(&d).take_at(5 * BAR + PPQ), Some(2));
+    d.undo(&reg).unwrap();
+    assert_eq!(group(&d).take_at(5 * BAR + PPQ), Some(1));
+    // Dragging back into the earlier segment grows the later take instead.
+    let earlier = v.take_strip_point(1, 5 * BAR - 2 * PPQ).unwrap();
+    let actions = run(&d, &reg, &mut v, &[down(cut), mv(earlier), up(earlier)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetCompSegment {
+            group: 1,
+            take: 1,
+            start: 5 * BAR - 2 * PPQ,
+            end: 5 * BAR
+        }]
+    );
+    // Escape drops the drag.
+    let mut actions = run(&d, &reg, &mut v, &[down(cut), mv(later)]);
+    assert!(v.is_dragging());
+    actions.extend(run(
+        &d,
+        &reg,
+        &mut v,
+        &[
+            UiEvent::Key {
+                key: Key::Escape,
+                modifiers: Modifiers::NONE,
+                pressed: true,
+            },
+            up(later),
+        ],
+    ));
+    assert!(song_commands(&actions).is_empty(), "{actions:?}");
+}
+
+#[test]
+fn the_take_row_menu_duplicates_and_reorders_in_one_step_each() {
+    let (mut d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    let before = group(&d);
+    let at = v.take_point(1, 1, 4 * BAR + PPQ).unwrap();
+    right_click(&d, &reg, &mut v, at);
+    let labels = v.menu_labels();
+    assert_eq!(
+        labels,
+        [
+            "Duplicate Take",
+            "Move Take Up",
+            "Move Take Down",
+            "Delete Take",
+            "Delete Unused Takes"
+        ],
+        "a notes take has no level or offset rows; take 0 is not in the comp"
+    );
+    let actions = pick_row(&d, &reg, &mut v, "Duplicate Take");
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::DuplicateTake { group: 1, take: 1 }]
+    );
+    apply(&mut d, &reg, &actions);
+    assert_eq!(group(&d).takes.len(), 4);
+    d.undo(&reg).unwrap();
+    assert_eq!(group(&d), before);
+    right_click(&d, &reg, &mut v, at);
+    let actions = pick_row(&d, &reg, &mut v, "Move Take Down");
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::MoveTake {
+            group: 1,
+            take: 1,
+            to: 2
+        }]
+    );
+    apply(&mut d, &reg, &actions);
+    d.undo(&reg).unwrap();
+    // The first take cannot move up; the menu says so by not offering it.
+    let top = v.take_point(1, 0, 4 * BAR + PPQ).unwrap();
+    right_click(&d, &reg, &mut v, top);
+    assert!(!v.menu_labels().iter().any(|l| l == "Move Take Up"));
+    let actions = pick_row(&d, &reg, &mut v, "Delete Unused Takes");
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::DeleteUnusedTakes { group: 1 }]
+    );
+    apply(&mut d, &reg, &actions);
+    assert_eq!(group(&d).takes.len(), 2);
+}
+
+#[test]
+fn the_strip_menu_silences_a_segment_and_offers_no_crossfade_for_notes() {
+    let (mut d, reg, mut v) = setup();
+    let at = v.take_strip_point(1, 5 * BAR).unwrap();
+    right_click(&d, &reg, &mut v, at);
+    let labels = v.menu_labels();
+    assert!(labels.iter().any(|l| l == "Silence Segment"), "{labels:?}");
+    assert!(
+        !labels.iter().any(|l| l.contains("Crossfade")),
+        "{labels:?}"
+    );
+    let actions = pick_row(&d, &reg, &mut v, "Silence Segment");
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetCompSilence {
+            group: 1,
+            start: 5 * BAR,
+            end: 6 * BAR
+        }]
+    );
+    apply(&mut d, &reg, &actions);
+    assert_eq!(group(&d).take_at(5 * BAR + 1), None);
+}

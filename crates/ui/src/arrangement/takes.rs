@@ -11,6 +11,14 @@
 //! * **Comping** is a drag across a take row: the snapped range between the press and the
 //!   release becomes that take's part of the comp (`SetCompSegment`), one undo step; a click
 //!   without a drag in the row picks the whole take. Escape cancels a drag.
+//! * The **comp strip** is edited too. A drag across it silences the range (`SetCompSilence`); a
+//!   drag of a cut between two takes moves the cut (`SetCompSegment` for the take that grows);
+//!   when a cut has a crossfade its tail has a handle that sets the length (`SetCompXfade`). A
+//!   right-click on the strip offers the crossfade lengths of the nearest cut, silencing a
+//!   segment and deleting the unused takes; a right-click on a take row offers duplicate,
+//!   move up or down, delete, and for audio the level and offset (`SetTake`).
+//! * An audio take row draws the waveform of the part of its asset the take plays, so a take
+//!   moved by its offset or turned down shows it.
 //!
 //! Which groups are open is saved with the project (`SetTakesOpen`; the view shows a click at
 //! once). The rows are laid out below the row of the lane that holds the group, before the row
@@ -21,7 +29,9 @@ use crate::canvas::{Align, Canvas, CanvasExt, pt};
 use crate::event::Modifiers;
 use crate::seq_paint as sp;
 use crate::theme::mix;
-use crate::timeline::snap_round;
+use crate::timeline::{PPQ, snap_round};
+use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
+use atomik_model::takes::clear_segment;
 use atomik_model::{Clip, ClipContent, SongCommand, TakeGroup};
 use std::collections::BTreeSet;
 use vello::kurbo::{BezPath, Point, RoundedRect};
@@ -38,6 +48,39 @@ const TAKE_COLORS: [u32; 6] = [0x4c9aff, 0xffb454, 0x7bd88f, 0xe06c9f, 0xb48ef5,
 pub fn take_color(i: usize) -> Color {
     let c = TAKE_COLORS[i % TAKE_COLORS.len()];
     Color::from_rgb8((c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
+/// Pixels either side of a cut or crossfade tail that grab it in the comp strip.
+const HANDLE_PX: f64 = 4.0;
+/// Pixels either side of a cut within which a right-click on the strip offers its crossfades.
+const CUT_MENU_PX: f64 = 8.0;
+/// The crossfade lengths of the strip menu: a label and the note division (`None`: no crossfade).
+const XFADES: &[(&str, Option<i64>)] = &[
+    ("No Crossfade", None),
+    ("Crossfade 1/32", Some(32)),
+    ("Crossfade 1/16", Some(16)),
+    ("Crossfade 1/8", Some(8)),
+    ("Crossfade 1/4", Some(4)),
+];
+
+/// What a drag in a take row or the comp strip is doing (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompDrag {
+    /// A drag across a take row: the range plays from that take.
+    Swipe,
+    /// A drag across the strip: the range goes silent.
+    Silence,
+    /// A cut between takes `left` and `right` at tick `at`: the drag moves it, between the outer
+    /// ends `lo` and `hi` of the two segments.
+    Cut {
+        left: usize,
+        right: usize,
+        at: i64,
+        lo: i64,
+        hi: i64,
+    },
+    /// The crossfade tail of the cut at tick `at`: the drag sets its length.
+    Xfade { at: i64 },
 }
 
 /// What the view remembers about take groups.
@@ -195,6 +238,16 @@ impl ArrangementView {
         ))
     }
 
+    /// The point of the comp strip of `group` at song tick `tick` (for a pointer script).
+    pub fn take_strip_point(&self, group: u32, tick: i64) -> Option<Point> {
+        let ti = self.group_track(group)?;
+        let row = self.take_row(&RowKind::TakeGroup { track: ti, group })?;
+        Some(Point::new(
+            self.axis.tick_to_x(tick),
+            self.row_rect(row).center().y,
+        ))
+    }
+
     fn group_track(&self, group: u32) -> Option<usize> {
         let device = self
             .song
@@ -282,9 +335,25 @@ impl ArrangementView {
                     t0: t,
                     t1: t,
                     moved: false,
+                    mode: CompDrag::Swipe,
                 };
             }
-            Hit::TakeStrip(_) => {}
+            Hit::TakeStrip(group) => {
+                let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
+                let (mode, t0) = match self.strip_handle(*group, pos.x) {
+                    Some((mode, at)) => (mode, at),
+                    None => (CompDrag::Silence, t),
+                };
+                self.drag = Drag::Comp {
+                    start: pos,
+                    group: *group,
+                    take: 0,
+                    t0,
+                    t1: t0,
+                    moved: false,
+                    mode,
+                };
+            }
             _ => return false,
         }
         true
@@ -294,42 +363,317 @@ impl ArrangementView {
     pub(super) fn comp_move(&mut self, pos: Point, modifiers: Modifiers) {
         let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
         if let Drag::Comp {
-            start, t1, moved, ..
+            start,
+            t1,
+            moved,
+            mode,
+            ..
         } = &mut self.drag
         {
             *moved |= pos.distance(*start) > super::DRAG_THRESHOLD;
-            *t1 = t;
+            *t1 = match *mode {
+                // A cut stays inside the two segments it divides.
+                CompDrag::Cut { lo, hi, .. } => t.clamp(lo + 1, (hi - 1).max(lo + 1)),
+                CompDrag::Xfade { at, .. } => t.max(at),
+                CompDrag::Swipe | CompDrag::Silence => t,
+            };
             self.repaint = true;
         }
     }
 
     /// The end of a comp drag: the range is the take's part of the comp, or, with no drag, the
-    /// whole take is picked.
+    /// whole take is picked. Only commands the model accepts are sent.
     pub(super) fn comp_up(
         &mut self,
         group: u32,
         take: usize,
         (t0, t1): (i64, i64),
         moved: bool,
+        mode: CompDrag,
         out: &mut Vec<crate::action::UiAction>,
     ) {
         let Some(g) = self.group(group) else {
             return;
         };
-        if !moved {
-            out.push(song_cmd(SongCommand::PickTake { group, take }));
+        let (rs, re) = g.range();
+        match mode {
+            CompDrag::Swipe => {
+                if !moved {
+                    out.push(song_cmd(SongCommand::PickTake { group, take }));
+                    return;
+                }
+                let (start, end) = (t0.min(t1).max(rs), t0.max(t1).min(re));
+                if start < end {
+                    out.push(song_cmd(SongCommand::SetCompSegment {
+                        group,
+                        take,
+                        start,
+                        end,
+                    }));
+                }
+            }
+            CompDrag::Silence => {
+                let (start, end) = (t0.min(t1).max(rs), t0.max(t1).min(re));
+                if moved && start < end {
+                    let mut comp = g.comp.clone();
+                    clear_segment(&mut comp, start, end);
+                    if comp != g.comp {
+                        out.push(song_cmd(SongCommand::SetCompSilence { group, start, end }));
+                    }
+                }
+            }
+            CompDrag::Cut {
+                left, right, at, ..
+            } => {
+                if !moved || t1 == at {
+                    return;
+                }
+                // The take that grows takes the range the cut moved over.
+                let cmd = if t1 > at {
+                    SongCommand::SetCompSegment {
+                        group,
+                        take: left,
+                        start: at,
+                        end: t1,
+                    }
+                } else {
+                    SongCommand::SetCompSegment {
+                        group,
+                        take: right,
+                        start: t1,
+                        end: at,
+                    }
+                };
+                out.push(song_cmd(cmd));
+            }
+            CompDrag::Xfade { at } => {
+                let ticks = (t1 - at).max(0) as u64;
+                let current = g.comp.iter().find(|s| s.start == at).map(|s| s.xfade);
+                if moved && current.is_some_and(|c| c != ticks) {
+                    out.push(song_cmd(SongCommand::SetCompXfade {
+                        group,
+                        at,
+                        xfade: ticks,
+                    }));
+                }
+            }
+        }
+    }
+
+    /// The cuts of a group's comp: `(left take, right take, tick, lo, hi)` for each place where
+    /// a segment of one take ends exactly where a segment of another starts; `lo` and `hi` are
+    /// the outer ends of the two segments.
+    fn cuts(g: &TakeGroup) -> Vec<(usize, usize, i64, i64, i64)> {
+        g.comp
+            .windows(2)
+            .filter(|w| w[0].end == w[1].start && w[0].take != w[1].take)
+            .map(|w| (w[0].take, w[1].take, w[1].start, w[0].start, w[1].end))
+            .collect()
+    }
+
+    /// Whether every take of the group is audio (the crossfade and the offset need it).
+    fn audio_group(g: &TakeGroup) -> bool {
+        g.takes.iter().all(|t| t.content.is_audio())
+    }
+
+    /// The cut handle or crossfade-tail handle of group `group` at x `x`, with the cut tick.
+    fn strip_handle(&self, group: u32, x: f64) -> Option<(CompDrag, i64)> {
+        let g = self.group(group)?;
+        if Self::audio_group(g) {
+            for s in g.comp.iter().filter(|s| s.xfade > 0) {
+                let tail = self.axis.tick_to_x(s.start.saturating_add(s.xfade as i64));
+                if (x - tail).abs() <= HANDLE_PX && Self::cuts(g).iter().any(|c| c.2 == s.start) {
+                    return Some((CompDrag::Xfade { at: s.start }, s.start));
+                }
+            }
+        }
+        Self::cuts(g)
+            .into_iter()
+            .find(|c| (x - self.axis.tick_to_x(c.2)).abs() <= HANDLE_PX)
+            .map(|(left, right, at, lo, hi)| {
+                (
+                    CompDrag::Cut {
+                        left,
+                        right,
+                        at,
+                        lo,
+                        hi,
+                    },
+                    at,
+                )
+            })
+    }
+
+    /// Opens the right-click menu of a take row or of a group's comp strip.
+    pub(super) fn takes_menu(&mut self, hit: &Hit, pos: Point) {
+        let (group, take) = match hit {
+            Hit::TakePick(g, t) | Hit::TakeDelete(g, t) | Hit::TakeSpan(g, t) => (*g, Some(*t)),
+            Hit::TakeStrip(g) => (*g, None),
+            _ => return,
+        };
+        let Some(g) = self.group(group) else {
+            return;
+        };
+        let Some(device) = self
+            .song
+            .take_group(group)
+            .map(|(t, _, _)| t.device.clone())
+        else {
+            return;
+        };
+        let mut rows: Vec<(String, SongCommand)> = Vec::new();
+        let n = g.takes.len();
+        match take {
+            Some(t) => {
+                if n < atomik_model::MAX_TAKES {
+                    rows.push((
+                        "Duplicate Take".into(),
+                        SongCommand::DuplicateTake { group, take: t },
+                    ));
+                }
+                if t > 0 {
+                    rows.push((
+                        "Move Take Up".into(),
+                        SongCommand::MoveTake {
+                            group,
+                            take: t,
+                            to: t - 1,
+                        },
+                    ));
+                }
+                if t + 1 < n {
+                    rows.push((
+                        "Move Take Down".into(),
+                        SongCommand::MoveTake {
+                            group,
+                            take: t,
+                            to: t + 1,
+                        },
+                    ));
+                }
+                if let Some(Clip {
+                    content: ClipContent::Audio(a),
+                    ..
+                }) = g.takes.get(t)
+                {
+                    rows.extend(self.take_level_rows(group, t, a));
+                }
+                rows.push((
+                    "Delete Take".into(),
+                    SongCommand::DeleteTake { group, take: t },
+                ));
+            }
+            None => {
+                let x = pos.x;
+                if let Some((_, at, _, _)) = self.nearest_cut(g, x)
+                    && Self::audio_group(g)
+                {
+                    for (label, ticks) in XFADES {
+                        let xfade = ticks.map_or(0, |d| (PPQ * 4 / d) as u64);
+                        let current = g.comp.iter().find(|s| s.start == at).map_or(0, |s| s.xfade);
+                        if xfade != current {
+                            rows.push((
+                                (*label).into(),
+                                SongCommand::SetCompXfade { group, at, xfade },
+                            ));
+                        }
+                    }
+                }
+                let tick = self.axis.x_to_tick(x);
+                if let Some(s) = g.comp.iter().find(|s| s.start <= tick && tick < s.end) {
+                    rows.push((
+                        "Silence Segment".into(),
+                        SongCommand::SetCompSilence {
+                            group,
+                            start: s.start,
+                            end: s.end,
+                        },
+                    ));
+                }
+            }
+        }
+        let used = |t: usize| g.comp.iter().any(|s| s.take == t);
+        let unused = (0..n).filter(|t| !used(*t)).count();
+        if unused > 0 && unused < n {
+            rows.push((
+                "Delete Unused Takes".into(),
+                SongCommand::DeleteUnusedTakes { group },
+            ));
+        }
+        if rows.is_empty() {
             return;
         }
-        let (rs, re) = g.range();
-        let (start, end) = (t0.min(t1).max(rs), t0.max(t1).min(re));
-        if start < end {
-            out.push(song_cmd(SongCommand::SetCompSegment {
-                group,
-                take,
-                start,
-                end,
-            }));
+        let items = rows
+            .iter()
+            .enumerate()
+            .map(|(i, (label, _))| (i.to_string(), label.clone()))
+            .collect();
+        let commands = rows.into_iter().map(|(_, c)| c).collect();
+        let menu = super::Menu {
+            device,
+            kind: super::MenuKind::Takes(commands),
+            items,
+            origin: pos,
+            scroll: 0,
+            hover: None,
+            current: None,
+            checked: Vec::new(),
+        };
+        self.open_menu(menu);
+    }
+
+    /// The cut nearest to x `x` within a few pixels: `(index, tick, left take, right take)`.
+    fn nearest_cut(&self, g: &TakeGroup, x: f64) -> Option<(usize, i64, usize, usize)> {
+        Self::cuts(g)
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| (i, c, (x - self.axis.tick_to_x(c.2)).abs()))
+            .filter(|(_, _, d)| *d <= CUT_MENU_PX)
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(i, c, _)| (i, c.2, c.0, c.1))
+    }
+
+    /// The level and offset rows of an audio take's menu: the steps the asset allows.
+    fn take_level_rows(
+        &self,
+        group: u32,
+        take: usize,
+        a: &atomik_model::AudioClipContent,
+    ) -> Vec<(String, SongCommand)> {
+        let mut rows = Vec::new();
+        for (label, db) in [("Take Level -3 dB", -3.0f32), ("Take Level +3 dB", 3.0)] {
+            let gain_db = a.gain_db + db;
+            if (AUDIO_GAIN_DB_MIN..=AUDIO_GAIN_DB_MAX).contains(&gain_db) {
+                rows.push((
+                    label.into(),
+                    SongCommand::SetTake {
+                        group,
+                        take,
+                        gain_db,
+                        source_offset_delta: 0,
+                    },
+                ));
+            }
         }
+        if let Some(meta) = self.assets.get(&a.asset) {
+            let step = i64::from(meta.sample_rate / 100);
+            for (label, delta) in [("Take Earlier 10 ms", step), ("Take Later 10 ms", -step)] {
+                // The audio moves with the offset: more offset plays later audio sooner.
+                let offset = a.source_offset.checked_add_signed(delta);
+                if offset.is_some_and(|o| o <= meta.frames) {
+                    rows.push((
+                        label.into(),
+                        SongCommand::SetTake {
+                            group,
+                            take,
+                            gain_db: a.gain_db,
+                            source_offset_delta: delta,
+                        },
+                    ));
+                }
+            }
+        }
+        rows
     }
 
     // ------------------------------------------------------------------ painting
@@ -367,6 +711,7 @@ impl ArrangementView {
                     1.0,
                     st.base.text_muted.with_alpha(0.6),
                 );
+                self.paint_cuts(c, lr, g);
             }
             RowKind::Take { group, take, .. } => {
                 let Some(g) = self.group(*group) else { return };
@@ -377,19 +722,50 @@ impl ArrangementView {
                 let body = self.span_rect(lr, clip.start, clip.end());
                 c.fill_with(RoundedRect::from_rect(body, 2.0), col.with_alpha(0.16));
                 c.stroke_with(RoundedRect::from_rect(body, 2.0), 1.0, col.with_alpha(0.55));
+                let audio = match &clip.content {
+                    ClipContent::Audio(a) => Some(a),
+                    ClipContent::Notes(_) | ClipContent::Automation(_) => None,
+                };
+                // Under a waveform the played parts are a lighter wash so the wave stays readable.
+                let played = if audio.is_some() { 0.3 } else { 0.7 };
                 for s in g.comp.iter().filter(|s| s.take == *take) {
                     let r = self
                         .span_rect(lr, s.start.max(clip.start), s.end.min(clip.end()))
                         .intersect(body);
-                    c.fill_with(r, col.with_alpha(0.7));
+                    c.fill_with(r, col.with_alpha(played));
                 }
-                self.paint_take_notes(c, lr, clip, mix(col, st.base.text, 0.5));
+                if let Some(a) = audio {
+                    let tl = self.timeline_rect();
+                    let vis = Rect::new(
+                        body.x0.max(tl.x0 - 4.0),
+                        body.y0,
+                        body.x1.min(tl.x1 + 4.0),
+                        body.y1,
+                    );
+                    if vis.width() > 0.0 {
+                        let geo = self.audio_geo(body, clip, a, tl);
+                        self.paint_audio_wave(
+                            c,
+                            vis,
+                            body,
+                            clip,
+                            a,
+                            mix(col, st.base.text, 0.35),
+                            false,
+                            tl,
+                            &geo,
+                        );
+                    }
+                } else {
+                    self.paint_take_notes(c, lr, clip, mix(col, st.base.text, 0.5));
+                }
                 if let Drag::Comp {
                     group: dg,
                     take: dt,
                     t0,
                     t1,
                     moved: true,
+                    mode: CompDrag::Swipe,
                     ..
                 } = &self.drag
                     && dg == group
@@ -404,6 +780,53 @@ impl ArrangementView {
             | RowKind::Folder { .. }
             | RowKind::AddTrack(_)
             | RowKind::AddAudio => {}
+        }
+    }
+
+    /// The cut handles and crossfade tails of a group's comp strip, and the preview of the
+    /// drag in progress (a silent range, a moving cut, a crossfade being set).
+    fn paint_cuts(&self, c: &mut dyn Canvas, lr: Rect, g: &TakeGroup) {
+        let st = &self.st;
+        let (y0, y1) = (lr.y0 + 3.0, lr.y1 - 3.0);
+        let audio = Self::audio_group(g);
+        let drag = match &self.drag {
+            Drag::Comp {
+                group,
+                t0,
+                t1,
+                moved: true,
+                mode,
+                ..
+            } if *group == g.id => Some((*mode, *t0, *t1)),
+            _ => None,
+        };
+        for (_, _, at, _, hi) in Self::cuts(g) {
+            let Some(seg) = g.comp.iter().find(|s| s.start == at) else {
+                continue;
+            };
+            let mut at_x = self.axis.tick_to_x(at);
+            let mut xfade = seg.xfade;
+            match drag {
+                Some((CompDrag::Cut { at: a, .. }, _, t1)) if a == at => {
+                    at_x = self.axis.tick_to_x(t1)
+                }
+                Some((CompDrag::Xfade { at: a }, _, t1)) if a == at => {
+                    xfade = (t1 - at).max(0) as u64;
+                }
+                _ => {}
+            }
+            if audio && xfade > 0 {
+                let end = at.saturating_add(xfade as i64).min(hi);
+                let tail = Rect::new(at_x, y0, self.axis.tick_to_x(end).max(at_x), y1);
+                c.fill_with(tail, st.base.plate.with_alpha(0.55));
+                sp::line(c, tail.x1, y0, tail.x1, y1, st.base.text.with_alpha(0.9));
+            }
+            sp::line(c, at_x, y0, at_x, y1, st.base.text.with_alpha(0.9));
+        }
+        if let Some((CompDrag::Silence, t0, t1)) = drag {
+            let r = self.span_rect(lr, t0.min(t1), t0.max(t1));
+            c.fill_with(r, st.base.plate.with_alpha(0.6));
+            c.stroke_with(r, 1.0, st.selection);
         }
     }
 

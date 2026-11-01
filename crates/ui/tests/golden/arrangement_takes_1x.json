@@ -349,6 +349,7 @@
 {"fill":{"rect":[688.00,275.00,784.00,289.00]},"brush":"#ffb454d9"},
 {"text":"2","at":[692.00,285.50],"size":9.00,"weight":400,"align":"start","color":"#17191cff"},
 {"stroke":{"rect":[592.00,275.00,784.00,289.00]},"width":1.00,"cap":"round","join":"round","brush":"#8f96a099"},
+{"stroke":{"line":[688.00,275.00,688.00,289.00]},"width":1.00,"cap":"round","join":"round","brush":"#ece8e1e6"},
 {"stroke":{"line":[208.50,272.00,208.50,292.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff2e"},
 {"stroke":{"line":[220.50,272.00,220.50,292.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff09"},
 {"stroke":{"line":[232.50,272.00,232.50,292.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff14"},
