@@ -294,7 +294,7 @@ pub(crate) fn source_outputs(
 }
 
 /// Wires a channel's outputs and sends into the master's buses (rule 5).
-fn wire_channel_to_master(
+pub(crate) fn wire_channel_to_master(
     p: &mut Planner<'_>,
     channel: &DeviceKey,
     master: &DeviceKey,
@@ -551,8 +551,15 @@ fn add_channel_for(
 }
 
 /// Removes console channel `index` and its device.
-fn remove_channel_at(p: &mut Planner<'_>, index: usize) -> Result<(), ModelError> {
+pub(crate) fn remove_channel_at(p: &mut Planner<'_>, index: usize) -> Result<(), ModelError> {
     let ch = p.doc().console.channels[index].clone();
+    // Its parallel channels go first (and it leaves the list of its own parent).
+    crate::console_mix::detach(p, &ch.channel, remove_channel_at)?;
+    let index = p
+        .doc()
+        .console
+        .channel_index(&ch.channel)
+        .ok_or_else(|| bad(format!("{} is not a console channel", ch.channel)))?;
     p.push(Edit::ConsoleChannel {
         index,
         old: Some(ch.clone()),
@@ -574,6 +581,9 @@ pub(crate) fn remove_device(p: &mut Planner<'_>, key: &DeviceKey) -> Result<(), 
     // Deleting a bus device is `DeleteBus`: its feeders move to its own destination.
     if p.doc().console.bus_index(key).is_some() {
         return crate::console_bus::delete_bus(p, key);
+    }
+    if p.doc().console.channel_index(key).is_some() {
+        crate::console_mix::detach(p, key, remove_channel_at)?;
     }
     if let Some(index) = p.doc().console.channel_index(key) {
         p.push(Edit::ConsoleChannel {
@@ -653,6 +663,13 @@ pub(crate) fn plan(
             out_r,
             name,
         } => add_channel_for(&mut p, &source, &out_l, &out_r, name)?,
+        ConsoleCommand::AddMixChannel { name } => {
+            crate::console_mix::add_mix_channel(&mut p, &name)?;
+        }
+        ConsoleCommand::CreateParallel { strip } => {
+            crate::console_mix::create_parallel(&mut p, &strip)?;
+        }
+        ConsoleCommand::SetSendFollow(on) => crate::console_mix::set_send_follow(&mut p, on)?,
         ConsoleCommand::RemoveChannel { channel } => {
             rules::check_deletable(doc, &channel)?;
             let index = console

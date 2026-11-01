@@ -2835,6 +2835,8 @@ impl ConsoleView {
             ("Paste settings", "mixer.paste_settings"),
             ("Reset channel", "mixer.reset_strip"),
             ("Clear inserts", "mixer.clear_inserts"),
+            ("Create parallel channel", "mixer.create_parallel"),
+            ("Delete channel", "mixer.remove_channel"),
         ] {
             items.push((label.to_string(), MenuItem::Run(id)));
         }
@@ -3624,24 +3626,16 @@ impl ConsoleView {
     /// Delete: the selected channels and buses are removed from the console, each its own undo
     /// step (a channel goes with its device and cables, a bus hands its feeders on).
     fn delete_selected(&mut self) -> CommandOutcome {
-        let commands: Vec<UiAction> = self
-            .selected_strips()
-            .into_iter()
-            .filter_map(|key| {
-                let i = self.strips.iter().position(|s| s.key == key)?;
-                Some(UiAction::Command(Command::Console(
-                    if i < self.n_channels {
-                        ConsoleCommand::RemoveChannel { channel: key }
-                    } else {
-                        ConsoleCommand::DeleteBus { bus: key }
-                    },
-                )))
-            })
-            .collect();
-        if commands.is_empty() {
+        // The app's Delete Channel deletes the selection: an instrument's strip takes the
+        // instrument and its track with it (asking first when the track holds clips), a bus
+        // is deleted as `DeleteBus` does.
+        if self.selected_strips().is_empty() {
             return CommandOutcome::Declined;
         }
-        CommandOutcome::Handled(commands)
+        CommandOutcome::Handled(vec![UiAction::RunCommand {
+            id: "mixer.remove_channel".to_owned(),
+            arg: None,
+        }])
     }
 
     fn scrolled(&mut self, x: f64) -> CommandOutcome {

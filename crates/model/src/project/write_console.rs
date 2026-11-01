@@ -78,11 +78,29 @@ pub(super) fn write_console(w: &mut String, console: &Console) {
         .map(|r| key_or_null(r.as_ref()))
         .collect();
     let _ = writeln!(w, "    \"returns\": [{}],", returns.join(", "));
+    let mut tail: Vec<String> = Vec::new();
     if console.align_returns {
-        let _ = writeln!(w, "    \"compensation\": {},", console.compensation);
-        let _ = writeln!(w, "    \"align_returns\": true");
-    } else {
+        tail.push("\"align_returns\": true".to_owned());
+    }
+    if console.send_follow {
+        tail.push("\"send_follow\": true".to_owned());
+    }
+    if !console.parallels.is_empty() {
+        let pairs: Vec<String> = console
+            .parallels
+            .iter()
+            .map(|(p, c)| format!("[{}, {}]", json_str(&p.0), json_str(&c.0)))
+            .collect();
+        tail.push(format!("\"parallels\": [{}]", pairs.join(", ")));
+    }
+    if tail.is_empty() {
         let _ = writeln!(w, "    \"compensation\": {}", console.compensation);
+    } else {
+        let _ = writeln!(w, "    \"compensation\": {},", console.compensation);
+        for (i, field) in tail.iter().enumerate() {
+            let comma = if i + 1 < tail.len() { "," } else { "" };
+            let _ = writeln!(w, "    {field}{comma}");
+        }
     }
     let _ = writeln!(w, "  }},");
 }

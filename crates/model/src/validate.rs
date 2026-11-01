@@ -136,9 +136,21 @@ impl RackDoc {
         for (i, b) in c.buses.iter().enumerate() {
             known(format!("console.buses[{i}]"), &b.bus);
         }
+        for (i, (parent, child)) in c.parallels.iter().enumerate() {
+            known(format!("console.parallels[{i}][0]"), parent);
+            known(format!("console.parallels[{i}][1]"), child);
+        }
         for (i, r) in c.returns.iter().enumerate() {
             if let Some(device) = r {
                 known(format!("console.returns[{i}]"), device);
+            }
+        }
+        for (i, (_, child)) in c.parallels.iter().enumerate() {
+            if c.channel_index(child).is_none() {
+                found.add(
+                    format!("console.parallels[{i}][1]"),
+                    format!("{child} is not a console channel"),
+                );
             }
         }
     }

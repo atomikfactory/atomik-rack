@@ -351,5 +351,39 @@ pub(super) fn load_console(
     if let Some(v) = obj.get("align_returns") {
         console.align_returns = boolean(v, &path.field("align_returns"))?;
     }
+    if let Some(v) = obj.get("send_follow") {
+        console.send_follow = boolean(v, &path.field("send_follow"))?;
+    }
+    if let Some(v) = obj.get("parallels") {
+        let pairs_path = path.field("parallels");
+        for (i, item) in array(v, &pairs_path)?.iter().enumerate() {
+            let p = pairs_path.index(i);
+            let pair = array(item, &p)?;
+            if pair.len() != 2 {
+                return Err(p.error("expected [parent, child]"));
+            }
+            let parent_path = p.index(0);
+            let child_path = p.index(1);
+            let parent = device_ref(&pair[0], &parent_path)?
+                .ok_or_else(|| parent_path.error("expected a device id, found null"))?;
+            let child = device_ref(&pair[1], &child_path)?
+                .ok_or_else(|| child_path.error("expected a device id, found null"))?;
+            if console.channel_index(&child).is_none() {
+                return Err(child_path.error(format!("{:?} is not a console channel", child.0)));
+            }
+            if console.channel_index(&parent).is_none() && console.bus_index(&parent).is_none() {
+                return Err(
+                    parent_path.error(format!("{:?} is not a console channel or bus", parent.0))
+                );
+            }
+            if parent == child || console.parallel_parent(&child).is_some() {
+                return Err(child_path.error(format!(
+                    "{:?} cannot be a parallel channel of {:?}",
+                    child.0, parent.0
+                )));
+            }
+            console.parallels.push((parent, child));
+        }
+    }
     Ok(console)
 }

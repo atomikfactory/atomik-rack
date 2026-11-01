@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v38), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v39), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -222,7 +222,11 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 38 (older versions still load; version 38
+- **Project files** are `.atomik` JSON, format version 39 (older versions still load; version 39
+  adds the console's `"send_follow": true` (the sends of a strip that plays into a bus follow the
+  bus fader and mute; written only when on, a file without it loads with it off) and
+  `"parallels": [[parent, child], ...]` (the parallel channels, written only when there are some;
+  both refused in a version 38 file; see 5, "Mix channels and parallel channels"); version 38
   adds the root's `"info"` after `"macros"`, the song information `{"title"?, "author"?, "email"?,
   "url"?, "notes"?}` (`song_info.rs`), written only when something is set and kept as typed, and
   refused in a version 37 file; see 6, "The app: workers and rules"; version 37
@@ -2263,6 +2267,38 @@ a channel wherever console devices are skipped (sidechain sources, clipboard).
   transitively; the siblings feeding a bus that is only on a soloed channel's path stay silenced.
   The app pushes `internal.solo_silence` to each strip by its own device type.
 
+### Mix channels and parallel channels
+
+[crates/model/src/console_mix.rs](../crates/model/src/console_mix.rs). Every command is one undo step,
+planned on a scratch copy.
+
+- **Mix channel.** `AddMixChannel { name }` makes an `atomik.channel` with no `source` (the
+  loader always allowed that), wired to the master and its sends like any channel, after the last
+  channel in the rack and folded; an empty name gets the default. Its `in_l/in_r` are the Direct In:
+  cable anything there. `RemoveChannel` removes it with its cables; the app's Delete Channel (key
+  and strip menu) is `WorkflowCommand::RemoveDevices` on the device behind each strip, so an
+  instrument's strip goes with the instrument and its track, which asks first when the track holds
+  clips.
+- **Parallel channel.** Every channel and bus has `parallel_out_l/r`, the signal after the width,
+  before the fader and the pan, with the mute. `CreateParallel { strip }` makes a source-less channel
+  named `P<n>: <strip name>` fed from those sockets and routed where the strip is routed (the master,
+  or the bus the strip plays into). `Console::parallels` holds `(parent, child)` pairs in creation
+  order (format 39, written only when there are some). A rename of the strip renames the copies whose
+  name still has that form; removing the strip (as a channel, a bus, or through its instrument)
+  removes its copies, theirs too; a soloed strip leaves its copies audible (`solo_silence` treats the
+  path of a copy like the path of a bus). A copy can have copies of its own. Latency is aligned
+  by the engine at the master's summing input like any two paths.
+- **Send follow.** The console flag `send_follow` (format 39, written only when on; on in a new
+  project, off for a file saved before it) keeps a hidden console link `LinkKind::FollowLink`,
+  `bus:follow_out -> strip:follow_in`, for every strip that plays into a bus; `SetOutput`,
+  `CreateBus`, `RouteToNewBus` and `DeleteBus` keep the links and `SetSendFollow` makes or removes
+  them all in one step. The link is a control cable (no delay compensation, no early-cable
+  warning). The bus writes its gain, fader times mute times the gain of the bus above, in a stage of
+  its own ahead of its audio stages, so the link closes no loop; the strip multiplies the post-fader
+  part of its sends by it, sample by sample. Pre-fader sends and the main output are untouched, and a
+  strip without the link is bit for bit the old strip, so the flag off reproduces the old bounce.
+  See the bus section of the device reference for the timing.
+
 ### Output buses (console, rack and app)
 
 - **Model helper.** `console::output_options(doc, strip)` lists the destinations a strip's selector
@@ -3573,7 +3609,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (396) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (399) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

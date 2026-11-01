@@ -1,6 +1,6 @@
 {
   "format": "atomik-project",
-  "version": 38,
+  "version": 39,
   "sample_rate": 48000,
   "tempo_bpm": 120,
   "seed": 0,
@@ -120,7 +120,8 @@
     "master": "master",
     "returns": ["hall", null, null, null, null, null, null, null],
     "compensation": true,
-    "align_returns": true
+    "align_returns": true,
+    "send_follow": true
   },
   "assets": {},
   "song": {

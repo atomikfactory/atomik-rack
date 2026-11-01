@@ -103,6 +103,9 @@ fn song_label(c: &SongCommand) -> &'static str {
 fn console_label(c: &ConsoleCommand) -> &'static str {
     match c {
         ConsoleCommand::AddChannel { .. } | ConsoleCommand::AddChannelFor { .. } => "Add Channel",
+        ConsoleCommand::AddMixChannel { .. } => "Add Mix Channel",
+        ConsoleCommand::CreateParallel { .. } => "Create Parallel Channel",
+        ConsoleCommand::SetSendFollow(_) => "Send Follow",
         ConsoleCommand::RemoveChannel { .. } => "Delete Channel",
         ConsoleCommand::MoveChannel { .. } => "Move Channel",
         ConsoleCommand::SetReturn { .. } => "Set Send Effect",

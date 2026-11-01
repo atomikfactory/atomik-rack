@@ -856,7 +856,7 @@ fn create_keys_show_a_hidden_rack_and_focus_the_filter() {
 }
 
 #[test]
-fn ctrl_t_adds_an_audio_track_and_ctrl_shift_m_opens_the_channel_picker() {
+fn ctrl_t_adds_an_audio_track_and_ctrl_shift_m_creates_a_mixer_channel() {
     let mut s = shell();
     let tracks = s.core().doc().song.tracks.len();
     keys(&mut s).tap("Cmd+T");
@@ -864,12 +864,15 @@ fn ctrl_t_adds_an_audio_track_and_ctrl_shift_m_opens_the_channel_picker() {
     assert!(s.core().doc().song.tracks.last().unwrap().is_audio());
     keys(&mut s).tap("Cmd+Z");
     assert_eq!(s.core().doc().song.tracks.len(), tracks, "one undo step");
-    assert!(!s.menu_state().console);
+    let channels = s.core().doc().console.channels.len();
     keys(&mut s).tap("Cmd+Shift+M");
-    assert!(
-        s.menu_state().console,
-        "the console shows with its add-channel picker"
+    let console = &s.core().doc().console;
+    assert_eq!(
+        console.channels.len(),
+        channels + 1,
+        "a mixer channel without a source"
     );
+    assert_eq!(console.channels.last().unwrap().source, None);
 }
 
 // ---------------------------------------------------------------- remaps really apply

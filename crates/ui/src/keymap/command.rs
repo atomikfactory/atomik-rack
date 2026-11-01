@@ -966,6 +966,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     ),
     cmd(
+        "mixer.create_parallel",
+        "Create Parallel Channel",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.create_vca",
         "Create VCA from Selection",
         G::Mixer,
@@ -1017,6 +1024,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.recall_snapshot",
         "Recall Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.remove_channel",
+        "Delete Channel",
         G::Mixer,
         C::Global,
     )
@@ -1100,6 +1114,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.toggle_return_alignment",
         "Align Returns",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.toggle_send_follow",
+        "Sends Follow Bus",
         G::Mixer,
         C::Global,
     )

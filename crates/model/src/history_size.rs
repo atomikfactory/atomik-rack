@@ -60,6 +60,7 @@ impl Edit {
                 }
                 Edit::MidiMaps { old, new } => (old.len() + new.len()) * ENTRY_BYTES,
                 Edit::ConsoleVcas { old, new } => (old.len() + new.len()) * ENTRY_BYTES,
+                Edit::ConsoleParallels { old, new } => (old.len() + new.len()) * ENTRY_BYTES,
                 Edit::ConsoleSnapshots { old, new } => (old.len() + new.len()) * PATTERN_BYTES,
                 Edit::Zones { old, new, .. } => {
                     (old.len() + new.len()) * size_of::<crate::zones::ZoneDoc>()

@@ -198,6 +198,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Maximise Console", Some("Shift+F5")),
             ("Add Channel\u{2026}", None),
             ("Route to New Output Bus", Some("Ctrl+G")),
+            ("Create Parallel Channel", None),
+            ("Delete Channel", None),
             ("Create VCA from Selection", None),
             ("Add to VCA", None),
             ("Remove from VCA", None),
@@ -218,6 +220,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Delete Snapshot", None),
             ("Delay Compensation", None),
             ("Align Returns", None),
+            ("Sends Follow Bus", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Export MIDI Mapping Preset\u{2026}", None),
@@ -1306,4 +1309,120 @@ fn the_view_menu_shows_and_hides_the_big_meter() {
     assert!(s.menu_state().big_meter && s.core().view().big_meter_visible());
     s.execute(AppCommand::ToggleBigMeter);
     assert!(!s.menu_state().big_meter);
+}
+
+#[test]
+fn create_mixer_channel_makes_a_source_less_channel_and_selects_it() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    let before = s.core().doc().console.channels.len();
+    s.execute(AppCommand::CreateMixerChannel);
+    let console = &s.core().doc().console;
+    assert_eq!(console.channels.len(), before + 1);
+    let made = console.channels.last().unwrap();
+    assert_eq!(made.source, None);
+    assert_eq!(
+        s.core().console().selected_strips(),
+        std::slice::from_ref(&made.channel)
+    );
+    s.execute(AppCommand::Undo);
+    assert_eq!(s.core().doc().console.channels.len(), before);
+}
+
+#[test]
+fn delete_channel_removes_a_mix_channel_and_its_parallel_channels() {
+    let mut s = shell();
+    s.execute(AppCommand::ToggleConsole);
+    s.set_focus(Pane::Console);
+    s.execute(AppCommand::CreateMixerChannel);
+    let strip = s.core().doc().console.channels[0].channel.clone();
+    s.core_mut()
+        .console_mut()
+        .set_selected_strips(std::slice::from_ref(&strip));
+    s.execute(AppCommand::CreateParallel);
+    assert_eq!(s.core().doc().console.parallels.len(), 1);
+    assert_eq!(s.core().doc().console.channels.len(), 2);
+    s.core_mut()
+        .console_mut()
+        .set_selected_strips(std::slice::from_ref(&strip));
+    s.execute(AppCommand::RemoveChannel);
+    assert!(s.core().doc().console.channels.is_empty());
+    assert!(s.core().doc().console.parallels.is_empty());
+    s.execute(AppCommand::Undo);
+    assert_eq!(s.core().doc().console.channels.len(), 2);
+}
+
+#[test]
+fn delete_channel_takes_the_instrument_and_asks_first_when_its_track_has_clips() {
+    let mut s = shell();
+    s.execute(AppCommand::ToggleConsole);
+    s.set_focus(Pane::Console);
+    add_synth(&mut s, "a");
+    let strip = s.core().doc().console.channels[0].channel.clone();
+    // No clips: the instrument and its track go at once.
+    s.core_mut()
+        .console_mut()
+        .set_selected_strips(std::slice::from_ref(&strip));
+    s.execute(AppCommand::RemoveChannel);
+    assert!(s.core().doc().device(&DeviceKey("a".into())).is_none());
+    s.execute(AppCommand::Undo);
+    assert!(s.core().doc().device(&DeviceKey("a".into())).is_some());
+    // With a clip the first call only says so.
+    let clip = atomik_model::Clip {
+        id: atomik_model::ClipId(0),
+        start: 0,
+        length: 960,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        scale: None,
+        controllers: Vec::new(),
+        name: None,
+        color: None,
+        grid: None,
+        content: atomik_model::ClipContent::Notes(
+            vec![atomik_model::Note::new(0, 480, 60, 0.8)].into(),
+        ),
+    };
+    s.core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+            device: DeviceKey("a".into()),
+        }))
+        .unwrap();
+    s.core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::AddClip {
+            device: DeviceKey("a".into()),
+            lane: 0,
+            clip,
+        }))
+        .unwrap();
+    s.core_mut()
+        .console_mut()
+        .set_selected_strips(std::slice::from_ref(&strip));
+    s.execute(AppCommand::RemoveChannel);
+    assert!(
+        s.core().doc().device(&DeviceKey("a".into())).is_some(),
+        "asked first"
+    );
+    s.core_mut()
+        .console_mut()
+        .set_selected_strips(std::slice::from_ref(&strip));
+    s.execute(AppCommand::RemoveChannel);
+    assert!(
+        s.core().doc().device(&DeviceKey("a".into())).is_none(),
+        "confirmed"
+    );
+}
+
+#[test]
+fn sends_follow_bus_is_a_mixer_menu_check_and_one_undo_step() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    // The test shell starts from a plain document: off.
+    assert!(!s.menu_state().send_follow);
+    s.execute(AppCommand::ToggleSendFollow);
+    assert!(s.core().doc().console.send_follow);
+    assert!(s.menu_state().send_follow);
+    s.execute(AppCommand::Undo);
+    assert!(!s.core().doc().console.send_follow);
 }

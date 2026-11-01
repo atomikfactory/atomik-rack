@@ -3439,6 +3439,17 @@ both device types run). The console creates buses; you do not add one from the b
   as latency exactly as on a channel, so delay compensation treats buses like channels.
   The range is up to 480,000 samples (10 s at 48 kHz) either way; a strip holds 4,800 samples of
   history and a larger positive value puts a reserve to use, starting from silence.
+- **Follow gain.** `follow_out` (a control output, stage 0) is the gain the bus applies to its
+  signal: the fader with the VCA offset times the mute and the solo silence, sample by sample,
+  times the gain of the bus above when `follow_in` is cabled. The strips that play into the bus
+  take it on their `follow_in` and scale the post-fader part of their sends by it, so a send
+  moves with the bus fader and mute (see the Mixer menu's Sends Follow Bus). The gain is
+  computed ahead of the audio stages from copies of the bus's smoothers, in a stage of its own
+  that reads no audio, so cabling it back to the feeders is not a loop; the send and the main
+  signal stay sample-aligned, and a fader CV (applied in the audio stage) reaches the follow
+  gain one batch late. Nothing is computed while `follow_out` is not cabled. With the stage the
+  bus has three stages: the follow gain (`follow_in`, `follow_out`), then the channel's two.
+- **Parallel output.** `parallel_out_l/r`, as on a channel.
 - **Browser.** Not listed in the device browser.
 
 ## Audio I/O: the `interface` pseudo-device

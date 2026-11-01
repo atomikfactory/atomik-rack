@@ -209,6 +209,14 @@ pub enum AppCommand {
     ToggleConsole,
     /// Mixer ▸ Maximise Console (Shift+F5): the console over the rack, or back.
     MaximiseConsole,
+    /// Mixer > Delete Channel (Delete in the console): removes the selected strips; a strip an
+    /// instrument feeds goes with the instrument and its track.
+    RemoveChannel,
+    /// Mixer > Create Parallel Channel: a channel fed from the selected strip's parallel output.
+    CreateParallel,
+    /// Mixer > Sends Follow Bus (on/off, undoable): post-fader sends scale with the bus fader and
+    /// mute.
+    ToggleSendFollow,
     /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
@@ -653,6 +661,9 @@ impl AppCommand {
             AppCommand::MaximiseConsole => ("view.maximise_console", None),
             AppCommand::AddChannel => ("mixer.add_channel", None),
             AppCommand::RouteToNewBus => ("mixer.route_to_new_bus", None),
+            AppCommand::RemoveChannel => ("mixer.remove_channel", None),
+            AppCommand::CreateParallel => ("mixer.create_parallel", None),
+            AppCommand::ToggleSendFollow => ("mixer.toggle_send_follow", None),
             AppCommand::CreateVca => ("mixer.create_vca", None),
             AppCommand::AddToVca(None) => ("mixer.add_to_vca", None),
             AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
@@ -903,6 +914,9 @@ impl AppCommand {
             ("view.maximise_console", None) => AppCommand::MaximiseConsole,
             ("mixer.add_channel", None) => AppCommand::AddChannel,
             ("mixer.route_to_new_bus", None) => AppCommand::RouteToNewBus,
+            ("mixer.remove_channel", None) => AppCommand::RemoveChannel,
+            ("mixer.create_parallel", None) => AppCommand::CreateParallel,
+            ("mixer.toggle_send_follow", None) => AppCommand::ToggleSendFollow,
             ("mixer.create_vca", None) => AppCommand::CreateVca,
             ("mixer.add_to_vca", None) => AppCommand::AddToVca(None),
             ("mixer.add_to_vca", Some(id)) => {
@@ -1337,6 +1351,8 @@ pub struct MenuState {
     pub compensation: bool,
     /// Return alignment is on (document switch).
     pub align_returns: bool,
+    /// Send follow is on (document switch).
+    pub send_follow: bool,
     /// Console devices are shown in the rack.
     pub console_devices: bool,
     /// The console links are drawn as cables.
@@ -2065,6 +2081,8 @@ pub fn menus_with_lists(
                 MenuEntry::Separator,
                 item("Add Channel\u{2026}", AppCommand::AddChannel),
                 item("Route to New Output Bus", AppCommand::RouteToNewBus),
+                item("Create Parallel Channel", AppCommand::CreateParallel),
+                item("Delete Channel", AppCommand::RemoveChannel),
                 MenuEntry::Separator,
                 enabled(
                     "Create VCA from Selection",
@@ -2165,6 +2183,11 @@ pub fn menus_with_lists(
                     "Align Returns",
                     AppCommand::ToggleReturnAlignment,
                     state.align_returns,
+                ),
+                check(
+                    "Sends Follow Bus",
+                    AppCommand::ToggleSendFollow,
+                    state.send_follow,
                 ),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
@@ -2685,6 +2708,7 @@ mod tests {
             console_maximised: false,
             compensation: true,
             align_returns: true,
+            send_follow: true,
             console_devices: false,
             console_links: false,
             cpu_meters: false,
@@ -2803,6 +2827,8 @@ mod tests {
             AppCommand::MaximiseConsole,
             AppCommand::AddChannel,
             AppCommand::RouteToNewBus,
+            AppCommand::RemoveChannel,
+            AppCommand::CreateParallel,
             AppCommand::CreateVca,
             AppCommand::AddToVca(None),
             AppCommand::RemoveFromVca,
@@ -2827,6 +2853,7 @@ mod tests {
             AppCommand::DeleteSnapshot(None),
             AppCommand::ToggleCompensation,
             AppCommand::ToggleReturnAlignment,
+            AppCommand::ToggleSendFollow,
             AppCommand::MidiLearn,
             AppCommand::MidiMappings,
             AppCommand::ExportMidiPreset,
@@ -3451,6 +3478,8 @@ mod tests {
                 "Maximise Console",
                 "Add Channel\u{2026}",
                 "Route to New Output Bus",
+                "Create Parallel Channel",
+                "Delete Channel",
                 "Create VCA from Selection",
                 "Add to VCA",
                 "Remove from VCA",
@@ -3471,6 +3500,7 @@ mod tests {
                 "Delete Snapshot",
                 "Delay Compensation",
                 "Align Returns",
+                "Sends Follow Bus",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Export MIDI Mapping Preset\u{2026}",
@@ -3803,6 +3833,7 @@ mod tests {
                 console_maximised: false,
                 compensation: false,
                 align_returns: false,
+                send_follow: false,
                 console_devices: true,
                 console_links: false,
                 cpu_meters: false,

@@ -182,6 +182,9 @@ pub struct AppCore<S: EngineSink> {
     clipboard: Clipboard,
     /// The channel settings the last Copy Channel Settings took.
     settings_clip: Option<atomik_model::ChannelSettingsClip>,
+    /// The strips a Delete Channel asked to confirm (their tracks hold clips): the same call
+    /// again on the same strips deletes them.
+    strip_delete_ask: Option<Vec<DeviceKey>>,
     /// Tracks the creation chain armed: the next auto-route disarms them
     /// (and only them). Session state, forgotten when a document is replaced.
     auto_armed: Vec<DeviceKey>,
@@ -433,6 +436,7 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             settings_clip: None,
+            strip_delete_ask: None,
             auto_armed: Vec::new(),
             manual_rec: false,
             mki: None,
@@ -3082,6 +3086,9 @@ mod setups;
 
 #[path = "app_core_dub.rs"]
 mod dub_ops;
+
+#[path = "app_core_mix.rs"]
+mod mix_ops;
 
 #[path = "app_core_settings.rs"]
 mod settings_ops;

@@ -14,6 +14,9 @@ pub enum ConsoleOp {
     SetReturn(usize, Option<usize>),
     Compensation(bool),
     AlignReturns(bool),
+    SendFollow(bool),
+    AddMixChannel,
+    CreateParallel(usize),
     ClearSolos,
     ClearMutes,
     /// `solo` (true) or `mute` (false) on a channel.
@@ -34,6 +37,9 @@ pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
         2 => (0usize..FX_SLOTS + 1, proptest::option::of(i())).prop_map(|(s, e)| ConsoleOp::SetReturn(s, e)),
         1 => any::<bool>().prop_map(ConsoleOp::Compensation),
         1 => any::<bool>().prop_map(ConsoleOp::AlignReturns),
+        1 => any::<bool>().prop_map(ConsoleOp::SendFollow),
+        1 => Just(ConsoleOp::AddMixChannel),
+        1 => i().prop_map(ConsoleOp::CreateParallel),
         1 => Just(ConsoleOp::ClearSolos),
         1 => Just(ConsoleOp::ClearMutes),
         3 => (i(), any::<bool>(), any::<bool>()).prop_map(|(c, s, on)| ConsoleOp::Flag(c, s, on)),
@@ -68,6 +74,11 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
         }),
         ConsoleOp::Compensation(on) => c(ConsoleCommand::SetCompensation(*on)),
         ConsoleOp::AlignReturns(on) => c(ConsoleCommand::SetAlignReturns(*on)),
+        ConsoleOp::SendFollow(on) => c(ConsoleCommand::SetSendFollow(*on)),
+        ConsoleOp::AddMixChannel => c(ConsoleCommand::AddMixChannel {
+            name: String::new(),
+        }),
+        ConsoleOp::CreateParallel(ch) => c(ConsoleCommand::CreateParallel { strip: chan(*ch)? }),
         ConsoleOp::ClearSolos => c(ConsoleCommand::ClearSolos),
         ConsoleOp::ClearMutes => c(ConsoleCommand::ClearMutes),
         ConsoleOp::ResetStrip(ch, keep_routing) => c(ConsoleCommand::ResetStrip {
@@ -159,6 +170,22 @@ pub fn assert_console_invariants(doc: &RackDoc) {
             assert!(!grouped.contains(m), "{m} is in two VCA groups");
             grouped.push(m.clone());
         }
+    }
+    let mut children = Vec::new();
+    for (parent, child) in &console.parallels {
+        assert!(
+            console.channel_index(parent).is_some() || console.bus_index(parent).is_some(),
+            "parallel parent {parent} is not a strip"
+        );
+        assert!(
+            console.channel_index(child).is_some(),
+            "parallel child {child} is not a channel"
+        );
+        assert!(
+            parent != child && !children.contains(child),
+            "parallel child {child}"
+        );
+        children.push(child.clone());
     }
     if let Some(m) = &console.master {
         assert_eq!(type_of(m), MASTER);

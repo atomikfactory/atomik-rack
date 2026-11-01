@@ -65,6 +65,13 @@
 //!   fader, bit for bit) through the same 5 ms smoother; the VCA's mute and solo count as the
 //!   strip's own, so solo still beats mute. With the three at their defaults the strip is
 //!   bit-identical to one outside any VCA.
+//! * **Parallel output** (`parallel_out_l/r`, stage 1): the widened signal before the fader and the
+//!   pan, with the mute (and the solo silence) applied, for a parallel channel of the console to
+//!   process on its own and play next to the strip. Nothing is written while it is not cabled.
+//! * **Follow input** (`follow_in`, a control input): the gain of the bus the strip plays into (see
+//!   [`atomik.bus`](crate::bus)). When cabled, the post-fader part of every send is multiplied by
+//!   it, sample by sample; the pre-fader part and the main output are untouched. Not cabled, the
+//!   strip is bit-identical to one without the input.
 //! * **Parallel compressor** (`pcomp.*`, stage 1, after the inserts, the dynamics and the EQ, before
 //!   the width, the fader, the pan and the sends): a second [`atomik_dsp::Compressor`] (the one of
 //!   the dynamics section, with its own threshold, ratio, attack and release, an RMS detector and
@@ -94,6 +101,7 @@
 //! * **`gr_cv_out`:** `1 − g`, where `g` is the combined linear gain of gate × compressor
 //!   (0 = no reduction, 0.5 ≈ 6 dB, → 1 when fully closed).
 
+use crate::bus::S_FOLLOW_OUT;
 use crate::cv_in::batch_mean;
 use atomik_core::{
     BATCH, ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB, db_to_gain,
@@ -583,7 +591,14 @@ const S_FADER_CV: u16 = S_GR + 1;
 const S_PAN_CV: u16 = S_GR + 2;
 /// First send-level CV input (`send1_level_cv_in`); one per send.
 const S_SEND_CV_FIRST: u16 = S_GR + 3;
-pub(crate) const SOCKET_COUNT: usize = S_SEND_CV_FIRST as usize + SENDS;
+/// `parallel_out_l/r`: the signal after the width, before the fader and the pan (and after the
+/// mute), for the parallel channels of the console.
+const S_PARALLEL_L: u16 = S_SEND_CV_FIRST + SENDS as u16;
+const S_PARALLEL_R: u16 = S_PARALLEL_L + 1;
+/// `follow_in` (a control input): the gain of the bus this strip plays into, which scales the
+/// post-fader sends (see the module docs). On the bus it is also the gain of the bus above.
+pub(crate) const S_FOLLOW_IN: u16 = S_PARALLEL_R + 1;
+pub(crate) const SOCKET_COUNT: usize = S_FOLLOW_IN as usize + 1;
 
 const fn cv_in(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
     socket(id, key, name, SocketKind::Cv, Direction::Input)
@@ -648,6 +663,9 @@ pub(crate) static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
     }
     out[S_FADER_CV as usize] = cv_in(S_FADER_CV, "fader_cv_in", "Fader CV");
     out[S_PAN_CV as usize] = cv_in(S_PAN_CV, "pan_cv_in", "Pan CV");
+    out[S_PARALLEL_L as usize] = audio_out(S_PARALLEL_L, "parallel_out_l", "Parallel out L");
+    out[S_PARALLEL_R as usize] = audio_out(S_PARALLEL_R, "parallel_out_r", "Parallel out R");
+    out[S_FOLLOW_IN as usize] = cv_in(S_FOLLOW_IN, "follow_in", "Follow in");
     let mut k = 0;
     while k < SENDS {
         out[S_SEND_CV_FIRST as usize + k] = cv[k];
@@ -796,6 +814,8 @@ pub struct Channel {
     /// The descriptor this strip reports: the channel's, or the output bus's (same DSP and
     /// params, a summing stereo input in place of `in_l`/`in_r`).
     descriptor: &'static DeviceDescriptor,
+    /// Stages ahead of the channel's two: 0 for a channel, 1 for the bus (its follow gain).
+    lead: u8,
     values: [f32; PARAM_COUNT],
     sample_rate: f32,
     /// Real delay from a positive `latency.adjust` (not reported).
@@ -873,6 +893,7 @@ impl Channel {
         let band = |shape| SmoothedBiquad::new(shape, 1_000.0, 1.0, 0.0, sr);
         let mut c = Self {
             descriptor,
+            lead: descriptor.stage_count().saturating_sub(2),
             values,
             sample_rate: sr,
             latency: 0,
@@ -1287,6 +1308,29 @@ impl Channel {
         self.mid = (l, r);
     }
 
+    /// The bus's stage 0: the gain it will apply to its signal in this batch (fader × mute, then
+    /// the gain of the bus above), written to `follow_out` for the strips that play into it.
+    /// The smoothers run ahead on copies, so the audio stages see the same values.
+    fn follow_stage(&mut self, ctx: &mut ProcessContext<'_>) {
+        if !ctx.is_connected(SocketId(S_FOLLOW_OUT)) {
+            return;
+        }
+        if self.fresh {
+            // The first audio stage snaps again (`fresh` stays set); the gain starts settled.
+            self.snap_all();
+        }
+        let (mut fader, mut audible) = (self.fader, self.audible);
+        let above = ctx
+            .is_connected(SocketId(S_FOLLOW_IN))
+            .then(|| *ctx.input(SocketId(S_FOLLOW_IN)));
+        let mut gain = [0.0f32; BATCH];
+        for (n, g) in gain.iter_mut().enumerate() {
+            let own = fader.next_value() * audible.next_value();
+            *g = above.as_ref().map_or(own, |a| own * a[n]);
+        }
+        *ctx.output(SocketId(S_FOLLOW_OUT)) = gain;
+    }
+
     /// Stage 1: insert return → latency adjust (→ dynamics/EQ with `route.insert_pre`) →
     /// width → fader → pan → `out_*`, sends and `gr_cv_out`.
     fn stage1(&mut self, ctx: &mut ProcessContext<'_>) {
@@ -1325,8 +1369,21 @@ impl Channel {
             out_l[n] = a * fa[n] * self.pan_l.next_value();
             out_r[n] = b * fa[n] * self.pan_r.next_value();
         }
+        if ctx.is_connected(SocketId(S_PARALLEL_L)) || ctx.is_connected(SocketId(S_PARALLEL_R)) {
+            // The parallel copy: the widened signal before the fader and the pan, with the mute.
+            let (mut pl, mut pr) = (l, r);
+            for n in 0..BATCH {
+                pl[n] *= au[n];
+                pr[n] *= au[n];
+            }
+            *ctx.output(SocketId(S_PARALLEL_L)) = pl;
+            *ctx.output(SocketId(S_PARALLEL_R)) = pr;
+        }
         *ctx.output(SocketId(S_OUT_L)) = out_l;
         *ctx.output(SocketId(S_OUT_R)) = out_r;
+        let follow = ctx
+            .is_connected(SocketId(S_FOLLOW_IN))
+            .then(|| *ctx.input(SocketId(S_FOLLOW_IN)));
         for k in 0..SENDS {
             let (pre, post) = (&mut self.send_pre[k], &mut self.send_post[k]);
             if is_silent(pre) && is_silent(post) {
@@ -1335,7 +1392,11 @@ impl Channel {
             let mut sl = [0.0f32; BATCH];
             let mut sr = [0.0f32; BATCH];
             for n in 0..BATCH {
-                let g = pre.next_value() * au[n] + post.next_value() * fa[n];
+                let (pre_g, post_g) = (pre.next_value(), post.next_value());
+                let post_g = post_g * fa[n];
+                // The bus above scales the post-fader part (see the bus docs).
+                let post_g = follow.as_ref().map_or(post_g, |f| post_g * f[n]);
+                let g = pre_g * au[n] + post_g;
                 sl[n] = l[n] * g;
                 sr[n] = r[n] * g;
             }
@@ -1429,12 +1490,18 @@ impl Device for Channel {
 
     /// Runs both stages (for hosts that do not split stages, e.g. the test harness).
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
+        if self.lead > 0 {
+            self.follow_stage(ctx);
+        }
         self.stage0(ctx);
         self.stage1(ctx);
     }
 
     fn process_stage(&mut self, stage: u8, ctx: &mut ProcessContext<'_>) {
-        match stage {
+        if self.lead > 0 && stage == 0 {
+            return self.follow_stage(ctx);
+        }
+        match stage - self.lead {
             0 => self.stage0(ctx),
             1 => self.stage1(ctx),
             _ => {}

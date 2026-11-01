@@ -1154,7 +1154,7 @@ fn select_all_selects_every_strip() {
 }
 
 #[test]
-fn delete_removes_the_selected_channels() {
+fn delete_asks_the_app_to_delete_the_selected_strips() {
     let (doc, reg, mut v) = setup();
     assert!(matches!(
         v.command("edit.delete", None, &doc, &reg),
@@ -1162,17 +1162,12 @@ fn delete_removes_the_selected_channels() {
     ));
     v.set_selected_strips(&[key("ch-bass"), key("ch-keys")]);
     let a = run(&mut v, &doc, &reg, "edit.delete");
-    assert_eq!(
-        console_cmds(&a),
-        [
-            ConsoleCommand::RemoveChannel {
-                channel: key("ch-bass")
-            },
-            ConsoleCommand::RemoveChannel {
-                channel: key("ch-keys")
-            }
-        ]
-    );
+    // One command for the whole selection: the app decides what goes with each strip.
+    assert!(console_cmds(&a).is_empty());
+    assert!(matches!(
+        a.as_slice(),
+        [UiAction::RunCommand { id, arg: None }] if id == "mixer.remove_channel"
+    ));
 }
 
 #[test]
@@ -1289,6 +1284,8 @@ fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
         "Paste settings",
         "Reset channel",
         "Clear inserts",
+        "Create parallel channel",
+        "Delete channel",
     ] {
         assert!(items.iter().any(|i| i == label), "{items:?}");
     }
