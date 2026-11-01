@@ -2072,7 +2072,7 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Keys])
             }
             Pane::PianoKeys => ContextStack::global(),
-            Pane::Transport | Pane::PluginParams => ContextStack::global(),
+            Pane::Transport | Pane::PluginParams | Pane::SpectrumEq => ContextStack::global(),
         }
     }
 
@@ -2130,6 +2130,7 @@ impl<B: AudioBackend> Shell<B> {
             rack: self.workflow.rack_visible,
             rack_detached: self.rack_detached(),
             console_detached: self.console_detached(),
+            spectrum_eq: self.detached(WindowKind::SpectrumEq),
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
@@ -2336,6 +2337,9 @@ impl<B: AudioBackend> Shell<B> {
             if !self.console_detached() {
                 self.core.console_mut().set_bounds(song);
             }
+        }
+        if let Some((_, rect)) = self.pane_rect(Pane::SpectrumEq) {
+            self.core.spectrum_eq_mut().set_bounds(rect);
         }
         if let Some((_, rect)) = self.pane_rect(Pane::Console)
             && self.console_detached()
@@ -2549,6 +2553,7 @@ impl<B: AudioBackend> Shell<B> {
         if window != WindowKind::Main {
             let pane = match window {
                 WindowKind::Console => Pane::Console,
+                WindowKind::SpectrumEq => Pane::SpectrumEq,
                 _ => Pane::Rack,
             };
             let (_, rect) = self.pane_rect(pane)?;
@@ -5093,6 +5098,13 @@ impl<B: AudioBackend> Shell<B> {
                 self.set_detached(WindowKind::Rack, !self.rack_detached());
                 Vec::new()
             }
+            AppCommand::ToggleSpectrumEq => {
+                self.set_detached(
+                    WindowKind::SpectrumEq,
+                    !self.detached(WindowKind::SpectrumEq),
+                );
+                Vec::new()
+            }
             AppCommand::DetachConsole => {
                 self.set_detached(WindowKind::Console, !self.console_detached());
                 Vec::new()
@@ -6230,6 +6242,9 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Console => {
                 return self.repaint || win.dirty || self.core.console().needs_repaint();
             }
+            WindowKind::SpectrumEq => {
+                return self.repaint || win.dirty || self.core.spectrum_eq().needs_repaint();
+            }
             WindowKind::Main => {}
         }
         self.repaint
@@ -6266,7 +6281,9 @@ impl<B: AudioBackend> Shell<B> {
         }
         match window {
             WindowKind::Main => self.paint_main(canvas),
-            WindowKind::Rack | WindowKind::Console => self.paint_detached(window, canvas),
+            WindowKind::Rack | WindowKind::Console | WindowKind::SpectrumEq => {
+                self.paint_detached(window, canvas);
+            }
         }
         self.mark_painted(window);
     }

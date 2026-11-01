@@ -34,6 +34,8 @@ pub enum WindowKind {
     Rack,
     /// The console (mixer), while detached.
     Console,
+    /// The Spectrum EQ window: a floating window of its own while open.
+    SpectrumEq,
 }
 
 impl WindowKind {
@@ -45,6 +47,7 @@ impl WindowKind {
             Self::Main => main.clone(),
             Self::Rack => format!("Rack \u{2014} {project}"),
             Self::Console => format!("Mixer \u{2014} {project}"),
+            Self::SpectrumEq => format!("Spectrum EQ \u{2014} {project}"),
         }
     }
 }
@@ -110,6 +113,8 @@ pub struct WindowsState {
     pub rack: DetachState,
     /// The console window.
     pub console: DetachState,
+    /// The Spectrum EQ window (`detached` means open).
+    pub spectrum_eq: DetachState,
 }
 
 impl WindowsState {
@@ -119,6 +124,7 @@ impl WindowsState {
             WindowKind::Main => false,
             WindowKind::Rack => self.rack.detached,
             WindowKind::Console => self.console.detached,
+            WindowKind::SpectrumEq => self.spectrum_eq.detached,
         }
     }
 
@@ -128,6 +134,7 @@ impl WindowsState {
             WindowKind::Main => {}
             WindowKind::Rack => self.rack.detached = detached,
             WindowKind::Console => self.console.detached = detached,
+            WindowKind::SpectrumEq => self.spectrum_eq.detached = detached,
         }
     }
 
@@ -137,6 +144,7 @@ impl WindowsState {
             WindowKind::Main => self.main.as_ref(),
             WindowKind::Rack => self.rack.geom.as_ref(),
             WindowKind::Console => self.console.geom.as_ref(),
+            WindowKind::SpectrumEq => self.spectrum_eq.geom.as_ref(),
         }
     }
 
@@ -146,15 +154,21 @@ impl WindowsState {
             WindowKind::Main => self.main = Some(geom),
             WindowKind::Rack => self.rack.geom = Some(geom),
             WindowKind::Console => self.console.geom = Some(geom),
+            WindowKind::SpectrumEq => self.spectrum_eq.geom = Some(geom),
         }
     }
 
     /// The windows that should exist: the main window and every detached pane, in order.
     pub fn wanted(&self) -> Vec<WindowKind> {
-        [WindowKind::Main, WindowKind::Rack, WindowKind::Console]
-            .into_iter()
-            .filter(|&k| k == WindowKind::Main || self.detached(k))
-            .collect()
+        [
+            WindowKind::Main,
+            WindowKind::Rack,
+            WindowKind::Console,
+            WindowKind::SpectrumEq,
+        ]
+        .into_iter()
+        .filter(|&k| k == WindowKind::Main || self.detached(k))
+        .collect()
     }
 
     /// The same state without geometry that cannot be used (a file edited by hand or written
@@ -164,6 +178,7 @@ impl WindowsState {
         self.main = keep(self.main);
         self.rack.geom = keep(self.rack.geom);
         self.console.geom = keep(self.console.geom);
+        self.spectrum_eq.geom = keep(self.spectrum_eq.geom);
         self
     }
 }

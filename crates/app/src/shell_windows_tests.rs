@@ -1038,3 +1038,29 @@ fn a_single_click_on_the_divider_leaves_the_split_alone() {
     click_divider(&mut s, at, 1);
     assert_eq!(s.layout(), before);
 }
+
+#[test]
+fn the_spectrum_eq_window_opens_and_closes_without_touching_the_layout() {
+    let mut s = shell();
+    s.execute(AppCommand::ToggleConsole);
+    let lower = s.lower_pane();
+    assert!(!s.menu_state().spectrum_eq);
+    s.execute(AppCommand::ToggleSpectrumEq);
+    assert!(s.windows_wanted().contains(&WindowKind::SpectrumEq));
+    assert!(s.menu_state().spectrum_eq && s.core().spectrum_eq_shown());
+    assert_eq!(s.lower_pane(), lower, "the main layout is unchanged");
+    let size = s.window_size(WindowKind::SpectrumEq).unwrap();
+    assert_eq!(
+        s.core().spectrum_eq().bounds(),
+        Rect::new(0.0, 0.0, size.width, size.height)
+    );
+    assert!(s.windows_to_paint().contains(&WindowKind::SpectrumEq));
+    // The OS closing the window closes it for good: no pane goes back to the main window.
+    s.window_closed(WindowKind::SpectrumEq);
+    assert!(!s.windows_wanted().contains(&WindowKind::SpectrumEq));
+    assert!(!s.core().spectrum_eq_shown());
+    assert_eq!(s.lower_pane(), lower);
+    s.execute(AppCommand::ToggleSpectrumEq);
+    s.execute(AppCommand::ToggleSpectrumEq);
+    assert!(!s.menu_state().spectrum_eq);
+}

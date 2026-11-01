@@ -313,6 +313,9 @@ pub enum AppCommand {
     /// View ▸ Detach Mixer (Cmd+Shift+F5): the console in a window of its own, or back in the
     /// lower pane.
     DetachConsole,
+    /// View ▸ Spectrum EQ (F2): the floating analyser of the selected strip with its EQ points,
+    /// in a window of its own; again closes it.
+    ToggleSpectrumEq,
     /// View ▸ Sequencer Only (F7): hide the rack and the console; again restores the layout.
     SequencerOnly,
     /// View ▸ Clip Editor (F8): open the editor of the selected clip, or close the open one.
@@ -522,6 +525,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::Main => "main",
         WindowKind::Rack => "rack",
         WindowKind::Console => "mixer",
+        WindowKind::SpectrumEq => "spectrum-eq",
     }
 }
 
@@ -717,6 +721,7 @@ impl AppCommand {
             AppCommand::SequencerOnly => ("view.sequencer_only", None),
             AppCommand::DetachRack => ("view.detach_rack", None),
             AppCommand::DetachConsole => ("view.detach_console", None),
+            AppCommand::ToggleSpectrumEq => ("view.toggle_spectrum_eq", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
             AppCommand::GroupTracks => ("sequencer.group_tracks", None),
             AppCommand::UngroupTracks => ("sequencer.ungroup_tracks", None),
@@ -1001,6 +1006,7 @@ impl AppCommand {
             ("view.sequencer_only", None) => AppCommand::SequencerOnly,
             ("view.detach_rack", None) => AppCommand::DetachRack,
             ("view.detach_console", None) => AppCommand::DetachConsole,
+            ("view.toggle_spectrum_eq", None) => AppCommand::ToggleSpectrumEq,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
             ("sequencer.group_tracks", None) => AppCommand::GroupTracks,
             ("sequencer.ungroup_tracks", None) => AppCommand::UngroupTracks,
@@ -1393,6 +1399,8 @@ pub struct MenuState {
     pub rack_detached: bool,
     /// The console is in a window of its own.
     pub console_detached: bool,
+    /// The Spectrum EQ window is open.
+    pub spectrum_eq: bool,
     /// The sequencer-only layout (F7) is active.
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
@@ -1983,6 +1991,11 @@ pub fn menus_with_lists(
                     "Detach Mixer",
                     AppCommand::DetachConsole,
                     state.console_detached,
+                ),
+                check(
+                    "Spectrum EQ",
+                    AppCommand::ToggleSpectrumEq,
+                    state.spectrum_eq,
                 ),
                 check(
                     "Rack Navigator",
@@ -2766,6 +2779,7 @@ mod tests {
             rack: true,
             rack_detached: false,
             console_detached: false,
+            spectrum_eq: false,
             sequencer_only: false,
             editor: false,
             missing_audio: false,
@@ -2916,6 +2930,7 @@ mod tests {
             AppCommand::SequencerOnly,
             AppCommand::DetachRack,
             AppCommand::DetachConsole,
+            AppCommand::ToggleSpectrumEq,
             AppCommand::ToggleEditor,
             AppCommand::GroupTracks,
             AppCommand::UngroupTracks,
@@ -3499,6 +3514,7 @@ mod tests {
                 "Rack",
                 "Detach Rack",
                 "Detach Mixer",
+                "Spectrum EQ",
                 "Rack Navigator",
                 "Sequencer Only",
                 "Clip Editor",
@@ -3899,6 +3915,7 @@ mod tests {
                 rack: true,
                 rack_detached: false,
                 console_detached: false,
+                spectrum_eq: false,
                 sequencer_only: false,
                 editor: false,
                 missing_audio: true,

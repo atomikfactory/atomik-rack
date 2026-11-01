@@ -212,7 +212,10 @@ fn parse_detach(name: &str) -> Result<WindowKind, String> {
     match name.to_ascii_lowercase().as_str() {
         "rack" => Ok(WindowKind::Rack),
         "console" | "mixer" => Ok(WindowKind::Console),
-        _ => Err(format!("unknown pane {name:?} (expected rack, console)")),
+        "spectrum-eq" | "spectrum" => Ok(WindowKind::SpectrumEq),
+        _ => Err(format!(
+            "unknown pane {name:?} (expected rack, console, spectrum-eq)"
+        )),
     }
 }
 
