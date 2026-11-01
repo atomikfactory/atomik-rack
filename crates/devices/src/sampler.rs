@@ -35,8 +35,8 @@
 //!   crossfade it fades in over the first `vel_xfade` velocities above `vel_lo` and out over the
 //!   last below `vel_hi` on an equal-power curve (neighbours that overlap by the same width sum
 //!   to constant power; a zone at a silent edge starts no voice). A round-robin zone (`rr_len`
-//!   above one) sounds when its group note counter modulo `rr_len` is its `rr_pos`; the counter counts
-//!   one per note-on that reaches a round-robin zone of the group and is cleared by `reset`, so
+//!   above one) sounds when its group-and-key note counter modulo `rr_len` is its `rr_pos`; the counter counts
+//!   one per note-on of the key that reaches a round-robin zone of the group and is cleared by `reset`, so
 //!   the cycle is the same on every bounce and after every locate.
 //! * **Own envelope and filter.** A zone's `env` replaces the amp envelope for its voices, its
 //!   `filter` (mode, cutoff, resonance, key tracking, envelope amount; the device filter
@@ -1059,8 +1059,8 @@ pub struct Sampler {
     voices: Vec<Voice>,
     voice_limit: usize,
     next_order: u64,
-    /// Notes counted per zone group for round-robin (see `note_on`); cleared by `reset`.
-    round_robin: [u32; MAX_ZONE_GROUPS],
+    /// Notes counted per zone group and key for round-robin (see `note_on`); cleared by `reset`.
+    round_robin: Vec<u32>,
     lfo: Lfo,
     master: Smoother,
     /// Sustain, volume, expression, pressure and the bend range.
@@ -1118,7 +1118,7 @@ impl Sampler {
             voices: vec![Voice::new(); MAX_VOICES],
             voice_limit: 32,
             next_order: 0,
-            round_robin: [0; MAX_ZONE_GROUPS],
+            round_robin: vec![0; MAX_ZONE_GROUPS * 128],
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             ctl: ControllerState::new(),
@@ -1243,7 +1243,7 @@ impl Sampler {
             if zone.ext.round_robin() {
                 let g = usize::from(zone.ext.group).min(MAX_ZONE_GROUPS - 1);
                 counted |= 1 << g;
-                if !zone.rr_turn(self.round_robin[g]) {
+                if !zone.rr_turn(self.round_robin[g * 128 + usize::from(key & 127)]) {
                     continue;
                 }
             }
@@ -1266,8 +1266,9 @@ impl Sampler {
                 });
             }
         }
-        for (g, n) in self.round_robin.iter_mut().enumerate() {
+        for g in 0..MAX_ZONE_GROUPS {
             if counted >> g & 1 == 1 {
+                let n = &mut self.round_robin[g * 128 + usize::from(key & 127)];
                 *n = n.wrapping_add(1);
             }
         }
@@ -1373,7 +1374,7 @@ impl Device for Sampler {
             v.filter_ready = false;
         }
         self.next_order = 0;
-        self.round_robin = [0; MAX_ZONE_GROUPS];
+        self.round_robin.fill(0);
         self.ctl.reset();
         self.shared.bend = 0.0;
         self.lfo.reset();

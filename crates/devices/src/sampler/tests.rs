@@ -1705,3 +1705,14 @@ fn sixty_four_voices_of_grouped_filtered_zones_never_allocate() {
         assert!(l.iter().chain(&r).all(|v| v.is_finite()), "round {round}");
     }
 }
+
+#[test]
+fn round_robin_cycles_each_key_on_its_own() {
+    let (mut h, _) = with_map(&rr_map(1));
+    let a0 = note_level(&mut h, 60, 1.0);
+    let b0 = note_level(&mut h, 62, 1.0);
+    let a1 = note_level(&mut h, 60, 1.0);
+    // Key 62 starts its own cycle at slot 0, whatever key 60 has played.
+    assert_eq!(a0.to_bits(), b0.to_bits());
+    assert!(a1 > a0);
+}
