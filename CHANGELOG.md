@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Effects: more distortion, an echo, a soft clip, split-band width and a choice of look-ahead.**
+  The distortion gains five curves (`tape`, `fuzz`, `modulate`, `warp`, `scream`, each with
+  first-order anti-aliasing), a `cut.low` and `cut.high` pair and a `body` bank (resonant or
+  cabinet-like, with `body.amount` and `body.size`); its panel is three rack units tall now. The
+  new Echo (`atomik.echo`) is a stereo delay whose repeats take a saturator, a low and high cut, a
+  bit crusher, diffusion and wobble in the feedback loop, with ducking by the input level, ping-pong
+  and three modes: normal, triggered (the repeats are heard while a trigger cable is high) and roll
+  (the input is cut and the loop holds). Mastering gains a `softclip` before the limiter, a
+  `lookahead` of 0.5, 1.5 or 4 ms (it changes the reported latency, and the ceiling holds at every
+  one), and a split-band width: `width.split` with `width.freq`, `width.lo`, `width.hi` and a
+  `width.solo` to hear one band; its panel is five rack units tall. Every new param defaults to the
+  old sound bit for bit, so existing projects render as before. Not in this version: the
+  Pulveriser, the echo loop breakout jacks, the extra reverb algorithms with gate and EQ,
+  convolution with impulse responses, the vocoder, the gated filter, the bass amp voicing and the
+  modulation and ensemble additions. The project format is unchanged.
 - **Synth expansion: wave tables, oscillator modes, a second filter, a mono bass and a dual
   layer.** The poly synth gains params, all defaulting to the old sound bit for bit (existing
   patches and projects render as before): `osc1.table` and `osc2.table` pick one of 32 additive

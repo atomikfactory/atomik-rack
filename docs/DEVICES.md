@@ -810,7 +810,7 @@ the delay line in [crates/dsp/src/echo.rs](../crates/dsp/src/echo.rs).
   (with colour, crush or diffusion on it evolves).
 - **Mix.** Output = dry × (1 − mix) + wet × duck × gate × mix; `mix` 0 is the dry input bit for bit.
   Feedback and mix are smoothed over 5 ms.
-- **Not built.** The `loop_send` / `loop_return` breakout jacks (they need a staged device, which
+- **Not built.** The loop send and return breakout jacks (they need a staged device, which
   the bypass wrapper does not support).
 
 ---
@@ -1526,6 +1526,12 @@ limiter gain times the smallest band compression gain).
 | `release` | 10 to 2000 (limiter) | 150 | ms | Exp | no |
 | `output` | −24 to 12 (after the limiter) | 0 | dB | Linear | no |
 | `meter.reset` | momentary toggle: a rising edge clears the loudness and true-peak meters | 0 | toggle | Linear | yes |
+| `softclip` | 0 (off) to 1: soft clip before the limiter, ceiling `2^(1 - 2 amount)` (1 to 0.5) | 0 | percent | Linear | no |
+| `lookahead` | 0–2: 0.5 ms, 1.5 ms, 4 ms | 1 (1.5 ms) | choice | Linear | yes |
+| `width.split` | 0 or 1: split-band width (replaces `width`) | 0 | toggle | Linear | yes |
+| `width.freq` | 40 to 2000 (split frequency, LR4) | 250 | Hz | Exp | no |
+| `width.lo`, `width.hi` | 0 to 2 (width of the side below and above the split) | 1 | percent | Linear | no |
+| `width.solo` | 0–2: off, low, high (hear one band while the split is on) | 0 | choice | Linear | yes |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 The param ids run in this order (`input` 0 … `meter.reset` 27); the band params are grouped per band
@@ -1534,8 +1540,21 @@ The param ids run in this order (`input` 0 … `meter.reset` 27); the band param
 ### Behaviour (as built)
 
 - **Chain.** input gain → multiband → width → limiter → output gain; the loudness and true-peak
-  meter read the output. The limiter lookahead is a fixed 1.5 ms (no parameter; the latency is
-  therefore constant).
+  meter read the output; the optional soft clip sits between the width and the limiter.
+- **Soft clip.** `softclip` above 0 runs `x / √(1 + (x/c)²)` on each channel before the limiter,
+  `c = 2^(1 − 2 amount)` (the knee ceiling, 1 down to 0.5): unity gain for small signals, peaks
+  rounded towards `c`. It uses first-order antiderivative anti-aliasing (half a sample of delay,
+  not reported); at 0 the stage is skipped and the output is unchanged bit for bit.
+- **Look-ahead.** `lookahead` picks one of three limiters built in `prepare` (0.5, 1.5 or 4 ms),
+  so the latency is `17 + round(look-ahead × sample rate)` samples (41, 89 or 209 at 48 kHz) and
+  changing the choice moves the reported latency (and the delay-compensation epoch). The ceiling
+  guarantee holds at every look-ahead; a switch starts the new limiter from rest (a short
+  transient). A longer look-ahead gives a gentler gain ramp.
+- **Split-band width.** With `width.split` on, the mid and the side are each split at `width.freq`
+  by a Linkwitz-Riley 4th-order pair; the side's low and high bands are scaled by `width.lo` and
+  `width.hi` (the plain `width` is not used) and `mono_below` still applies to the side first.
+  With both widths at 100 % the bands recombine to a flat magnitude. `width.solo` keeps only the
+  low or the high band of mid and side, to hear what each does.
 - **Crossovers.** Two Linkwitz-Riley 4th-order crossovers (two cascaded Butterworth 2nd-order
   sections per branch). The low crossover splits the input into `L1`/`H1`, the high crossover splits
   `H1` into mid and high, and `L1` is passed through the high crossover's own low-pass plus
@@ -1578,8 +1597,9 @@ The param ids run in this order (`input` 0 … `meter.reset` 27); the band param
   until reset. **`meter.reset`** (a rising edge from 0 to 1) clears the integrated loudness, both
   windows and the true-peak maximum, and `reset()` does too; the transport does not. Note that the
   output still carries the last `latency` samples of the audio from before the reset.
-- **Latency** (constant per sample rate, set in `prepare`): `17 + round(1.5 ms × sr)` samples = **89
-  at 48 kHz, 83 at 44.1 kHz, 161 at 96 kHz**: 17 is the group delay of the oversampler's up path (a
+- **Latency** (set in `prepare`, moved by `lookahead`; shown for the default 1.5 ms):
+  `17 + round(1.5 ms × sr)` samples = **89 at 48 kHz, 83 at 44.1 kHz, 161 at 96 kHz**: 17 is the
+  group delay of the oversampler's up path (a
   sample `n` lands in detector group `n + 17`), the rest is the lookahead; the audio never passes
   through the oversampler. The tests measure the impulse delay (multiband off).
 - **Meter values** (8):
