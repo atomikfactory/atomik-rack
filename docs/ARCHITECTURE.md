@@ -2816,8 +2816,9 @@ as before (`crates/render/tests/macros.rs`).
   something is written**; never while an automation take records), opens the folders that hide the
   track (`SetGroupCollapsed`, they are the project's) and tells the arrangement to `reveal_lane`.
   The arrangement outlines the followed lane, shows its track's lanes (a collapse is view state) and
-  **shows a folded lane open without changing the project's fold**, scrolls it to a third of the way
-  down when it is out of sight, and follows the lane that appears later. Selecting a device in the
+  **shows a folded lane open without changing the project's fold** (its own chevron still folds it,
+  until another parameter is followed), scrolls it to a third of the way down when it is out of
+  sight, and follows the lane that appears later. Selecting a device in the
   rack or a track in the arrangement shows the lane of the last param touched on it **when that lane
   exists** (a selection never adds a lane). View > Show Automation Lane does the same for the
   selected device on demand and explains why it cannot for an effect. The **Edit Automation** item
