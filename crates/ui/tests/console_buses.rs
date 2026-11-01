@@ -755,7 +755,7 @@ fn console_with_buses_matches_golden() {
 }
 
 /// What every strip menu ends with: the channel settings commands.
-const SETTINGS_ITEMS: [&str; 7] = [
+const SETTINGS_ITEMS: [&str; 9] = [
     "Copy settings",
     "Copy levels",
     "Copy sends",
@@ -763,6 +763,8 @@ const SETTINGS_ITEMS: [&str; 7] = [
     "Paste settings",
     "Reset channel",
     "Clear inserts",
+    "Create parallel channel",
+    "Delete channel",
 ];
 
 /// The menu entries before the channel settings ones.
