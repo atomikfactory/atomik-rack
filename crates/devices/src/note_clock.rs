@@ -548,6 +548,15 @@ impl NoteCore {
         }
     }
 
+    /// Closes `key` at `frame` if a note of it still sounds, so a note of the same key from
+    /// another path can start without a second On.
+    pub fn close_key(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, key: u8) {
+        if let Some(i) = self.pending.find_key(key) {
+            self.pending.take(i);
+            self.note_off(ctx, frame, key);
+        }
+    }
+
     /// Closes the held `key` at `frame`, if it is still held.
     pub fn release_hold(&mut self, ctx: &mut ProcessContext<'_>, frame: usize, key: u8) {
         if let Some(i) = self.pending.find_hold(key) {

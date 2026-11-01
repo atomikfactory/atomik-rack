@@ -1021,6 +1021,73 @@ fn a_held_outside_key_is_closed_by_all_off_and_by_reset() {
     assert!(evs.iter().any(|e| e.k == K::AllOff));
 }
 
+/// Balance of On/Off per key over `evs`; panics when a key is sounded twice.
+fn tally(count: &mut [i32; 128], evs: &[Ev]) {
+    for e in evs {
+        match e.k {
+            K::On(k, _) => {
+                count[usize::from(k)] += 1;
+                assert!(count[usize::from(k)] <= 1, "double on {k}");
+            }
+            K::Off(k) => {
+                count[usize::from(k)] -= 1;
+                assert!(count[usize::from(k)] >= 0, "off without on {k}");
+            }
+            K::AllOff => *count = [0; 128],
+        }
+    }
+}
+
+#[test]
+fn a_key_pressed_again_outside_a_moved_input_range_is_never_sounded_twice() {
+    // The arpeggio sounds 39, the range then moves below it and 39 is pressed again: the key
+    // plays itself, and the arpeggio note of the same key is closed first.
+    let mut h = rig();
+    let mut count = [0i32; 128];
+    set(&mut h, "gate", 100.0);
+    press(&mut h, &[39]);
+    tally(&mut count, &collect(&mut h, batches_for(1, 240)));
+    assert_eq!(count[39], 1, "the arpeggio sounds the key");
+    set(&mut h, "input.high", 0.0);
+    press(&mut h, &[39]);
+    tally(&mut count, &collect(&mut h, 2));
+    assert_eq!(count[39], 1, "one sounding note of the key");
+    h.push_note("notes_in", off(0, 39));
+    tally(&mut count, &collect(&mut h, 2));
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::AllOff,
+        },
+    );
+    tally(&mut count, &collect(&mut h, 1));
+    assert!(count.iter().all(|c| *c == 0), "a note hangs");
+}
+
+#[test]
+fn a_key_that_went_through_is_closed_when_the_range_widens_and_the_arpeggio_takes_it() {
+    let mut h = rig();
+    let mut count = [0i32; 128];
+    set(&mut h, "input.high", 0.0);
+    press(&mut h, &[39]);
+    tally(&mut count, &collect(&mut h, 1));
+    assert_eq!(count[39], 1, "the key went through");
+    set(&mut h, "input.high", 127.0);
+    press(&mut h, &[39, 41]);
+    tally(&mut count, &collect(&mut h, batches_for(4, 240)));
+    assert!(count[39] <= 1);
+    h.push_note(
+        "notes_in",
+        NoteEvent {
+            offset: 0,
+            kind: NoteKind::AllOff,
+        },
+    );
+    tally(&mut count, &collect(&mut h, 1));
+    assert!(count.iter().all(|c| *c == 0), "a note hangs");
+}
+
 #[derive(Debug, Clone)]
 enum PAct {
     Run,
