@@ -1681,3 +1681,72 @@ fn the_tap_carries_the_signal_after_the_eq_and_before_the_fader() {
 fn a_strip_that_was_never_prepared_has_no_tap() {
     assert!(Channel::new().scope_tap().is_none());
 }
+
+#[test]
+fn the_drawn_strip_curve_matches_a_measured_sweep_within_a_tenth_of_a_db() {
+    use atomik_dsp::strip_eq::{StripBand, StripCurve};
+    let mut h = channel();
+    let settings: [(&str, f32); 14] = [
+        ("hpf.on", 1.0),
+        ("hpf.freq", 120.0),
+        ("lpf.on", 1.0),
+        ("lpf.freq", 9_000.0),
+        ("eq.on", 1.0),
+        ("eq.hf.gain", 5.0),
+        ("eq.hf.freq", 6_000.0),
+        ("eq.hmf.gain", -7.0),
+        ("eq.hmf.freq", 2_000.0),
+        ("eq.hmf.q", 2.0),
+        ("eq.lmf.gain", 6.0),
+        ("eq.lmf.freq", 400.0),
+        ("eq.lf.gain", 4.0),
+        ("eq.lf.bell", 1.0),
+    ];
+    for (k, v) in settings {
+        h.set_param(k, v);
+    }
+    h.set_param("eq.lf.freq", 90.0);
+    let curve = StripCurve {
+        sample_rate: SR,
+        eq_on: true,
+        hpf: Some(120.0),
+        lpf: Some(9_000.0),
+        hf: StripBand {
+            gain_db: 5.0,
+            freq: 6_000.0,
+            q: 0.0,
+            bell: false,
+        },
+        hmf: StripBand {
+            gain_db: -7.0,
+            freq: 2_000.0,
+            q: 2.0,
+            bell: false,
+        },
+        lmf: StripBand {
+            gain_db: 6.0,
+            freq: 400.0,
+            q: 1.0,
+            bell: false,
+        },
+        lf: StripBand {
+            gain_db: 4.0,
+            freq: 90.0,
+            q: 0.0,
+            bell: true,
+        },
+    };
+    // The reference: the same strip with the filters and the EQ off, for the fixed pan law.
+    let mut flat = channel();
+    let mut worst = 0.0f64;
+    for hz in [
+        60.0, 100.0, 150.0, 250.0, 400.0, 800.0, 1_500.0, 2_000.0, 3_000.0, 6_000.0, 8_000.0,
+        12_000.0,
+    ] {
+        let got = sine_gain_db(&mut h, &["in_l", "in_r"], "out_l", hz, 0.1, 0.3);
+        let base = sine_gain_db(&mut flat, &["in_l", "in_r"], "out_l", hz, 0.1, 0.3);
+        let err = (got - base - curve.response_db(hz)).abs();
+        worst = worst.max(err);
+    }
+    assert!(worst < 0.1, "worst error {worst} dB");
+}
