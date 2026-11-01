@@ -23,6 +23,7 @@
 //!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"? }…], "names"?: [{ "bank", "macro", "name" }…] }
 //!                                                               (v29; written only when non-empty),
 //!   "info"?: { "title"?, "author"?, "email"?, "url"?, "notes"? }  (v38; written only when set),
+//!   "tune_cents"?: number                  (v39, -100..=100 around A = 440 Hz; written only when not 0),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
@@ -357,7 +358,11 @@
 //! 254, 500 and 10 000 characters) without control characters (the notes may have new lines and
 //! tabs), stored as typed and written only when not empty, the whole object only when something is
 //! set. A project without information differs from its version 37 file in the version line
-//! alone, and plays and bounces bit for bit as it did. Saving always writes version 38.
+//! alone, and plays and bounces bit for bit as it did.
+//! Version 39 adds the root `"tune_cents"` after `"info"` (see [`crate::master_tune`]): the master
+//! tune, a number of cents within -100..=100 (a value outside is refused), written only when it is
+//! not 0, so a project at 0 differs from the same file without the field in nothing, and plays and
+//! bounces bit for bit as it did. Saving always writes version 39.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -638,6 +643,9 @@ fn load_value(
     }
     if let Some(info) = obj.get("info") {
         doc.info = crate::song_info::load_info(info, &root.field("info"))?;
+    }
+    if let Some(tune) = obj.get("tune_cents") {
+        doc.tune_cents = crate::master_tune::load_tune(tune, &root.field("tune_cents"))?;
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)

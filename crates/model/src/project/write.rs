@@ -38,6 +38,7 @@ pub(crate) fn save(doc: &RackDoc) -> String {
     crate::midi_map_io::write_midi_maps(w, &doc.midi_maps);
     crate::macros_io::write_macros(w, &doc.macros);
     crate::song_info::write_info(w, &doc.info);
+    crate::master_tune::write_tune(w, doc.tune_cents);
     write_assets(w, &doc.assets);
     write_song(w, &doc.song);
     let _ = writeln!(w, "}}");

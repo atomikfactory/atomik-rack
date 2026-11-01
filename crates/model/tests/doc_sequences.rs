@@ -80,6 +80,7 @@ enum WfOp {
     MidiPort(usize, u8),
     /// The song information: which of its texts changes and to which of three values.
     SongInfo(u8, u8),
+    Tune(u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -254,6 +255,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..5).prop_map(WfOp::AddDevice),
         (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
         (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
+        (0u8..5).prop_map(WfOp::Tune),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
@@ -587,6 +589,9 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 text.replace(['\n', '\t'], " ")
             };
             Command::SetSongInfo(info)
+        }
+        WfOp::Tune(step) => {
+            Command::SetMasterTune([0.0, -50.0, 12.5, 100.0, -100.0][usize::from(*step)])
         }
         WfOp::Connect(a, b) => {
             let (from, to) = (pick(&top, *a)?, pick(&top, *b)?);
