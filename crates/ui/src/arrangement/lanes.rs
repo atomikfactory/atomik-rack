@@ -185,6 +185,8 @@ impl ArrangementView {
         let device = self.song.tracks[track].device.clone();
         self.set_selected_track(Some(device.clone()));
         self.set_selected_lane(&device, lane);
+        // Delete acts on an extra lane alone; lane 0 is the track's own row.
+        self.picked_note_lane = (lane > 0).then(|| (device.clone(), lane));
         if secondary {
             out.push(UiAction::ContextMenu {
                 target: crate::action::ContextTarget::TrackHeader,

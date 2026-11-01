@@ -407,8 +407,9 @@ impl ArrangementView {
         if lane == 0 && self.is_automation_track(track) {
             return false;
         }
-        // The lane that follows the selected parameter stays open, whatever the project says.
-        !self.is_followed(track, lane)
+        // The lane that follows the selected parameter stays open, whatever the project says,
+        // unless it was folded by hand since.
+        (self.follow_folded || !self.is_followed(track, lane))
             && self
                 .lane_id(track, lane)
                 .is_some_and(|(d, p)| self.song.lane_folded(&d, &p))
