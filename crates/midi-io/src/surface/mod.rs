@@ -12,8 +12,10 @@
 //! track folders of the arrangement do not reorder the console), the same list the console
 //! view draws. The driver owns the bank (which eight strips the surface shows).
 
+pub mod generic;
 pub mod mcu;
 
+pub use generic::Generic;
 pub use mcu::Mcu;
 
 /// What kind of console strip a surface strip stands for.
@@ -163,6 +165,12 @@ pub trait SurfaceDriver: Send {
     /// A short name for the settings and messages.
     fn name(&self) -> &'static str;
 
+    /// True for a driver whose messages are not read here but handed to the MIDI mappings (a
+    /// generic controller): the host parses them and tags them with the surface.
+    fn feeds_mappings(&self) -> bool {
+        false
+    }
+
     /// The surface was just connected: appends what to send to bring it online and, since
     /// nothing is known about what it shows, everything it should show for `state`.
     fn connect(&mut self, state: &SurfaceState, out: &mut Vec<Vec<u8>>);
@@ -189,9 +197,13 @@ pub trait SurfaceDriver: Send {
 pub fn driver_by_id(id: &str) -> Option<Box<dyn SurfaceDriver>> {
     match id {
         "mcu" => Some(Box::new(Mcu::new())),
+        "generic" => Some(Box::new(Generic::new())),
         _ => None,
     }
 }
 
 /// The ids and labels of the drivers, in the order the settings list them.
-pub const DRIVERS: &[(&str, &str)] = &[("mcu", "Control surface (MCU-compatible)")];
+pub const DRIVERS: &[(&str, &str)] = &[
+    ("mcu", "Control surface (MCU-compatible)"),
+    ("generic", "Generic controller (mapped)"),
+];
