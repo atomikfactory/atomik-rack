@@ -7,7 +7,7 @@ use crate::paint::fit_label;
 use crate::seq_paint as sp;
 use crate::theme::mix;
 use crate::wave_paint::{MAX_COLUMNS, WaveChannel, WaveDetail, paint_channel};
-use crate::zone_edit::{self, Field, Marker};
+use crate::zone_edit::{self, Marker};
 use atomik_device_sdk::{LoopMode, TriggerMode};
 use atomik_model::ZoneDoc;
 use vello::kurbo::{Affine, BezPath, Rect};
@@ -374,6 +374,14 @@ fn head(v: &SampleEditorView, c: &mut dyn Canvas) {
             v.hover == Hit::Trigger(mode),
         );
     }
+    sp::button(
+        c,
+        st,
+        v.page_rect(),
+        "SYNTH",
+        v.synth_page.then_some(v.accent),
+        v.hover == Hit::Page,
+    );
     if let Some((_, z, m)) = v.selected_with_meta() {
         let secs = (z.end - z.start) as f64 / f64::from(m.sample_rate.max(1));
         let info = format!(
@@ -382,7 +390,7 @@ fn head(v: &SampleEditorView, c: &mut dyn Canvas) {
             m.channels,
             f64::from(m.sample_rate) / 1000.0
         );
-        let room = (l.x1 - (v.trigger_rect(TriggerMode::OneShot).x1 + 16.0)).max(20.0);
+        let room = (l.x1 - (v.page_rect().x1 + 16.0)).max(20.0);
         sp::label(
             c,
             &fit_label(&info, room, 9.0),
@@ -546,7 +554,7 @@ fn fields(v: &SampleEditorView, c: &mut dyn Canvas) {
         },
         _ => None,
     };
-    for f in Field::ALL {
+    for &f in v.page_fields() {
         let r = v.field_rect(f);
         c.text(
             &TextRun::new(f.label(), pt(r.x0 + 2.0, r.y0 + 8.0), 7.0, t.text_muted)

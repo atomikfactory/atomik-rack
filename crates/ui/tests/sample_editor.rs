@@ -973,3 +973,123 @@ proptest! {
         prop_assert!(fresh.apply(cmd, &reg).is_ok());
     }
 }
+
+// ---- the synth page: group, crossfade, round-robin, own envelope and filter -----------------------
+
+/// Zones 0 and 1 of the layered set share group 3.
+fn grouped_zones() -> Vec<ZoneDoc> {
+    let mut zones = layered_zones();
+    zones[0].ext.group = 3;
+    zones[1].ext.group = 3;
+    zones
+}
+
+#[test]
+fn the_synth_button_switches_the_field_panel_and_back() {
+    let (d, reg, mut v) = setup(grouped_zones());
+    assert!(!v.synth_page());
+    let t = texts(&mut v, &d, &reg);
+    assert!(t.iter().any(|x| x == "XFADE") && !t.iter().any(|x| x == "ROUND-ROBIN"));
+    v.set_synth_page(true);
+    let t = texts(&mut v, &d, &reg);
+    for s in [
+        "GROUP",
+        "VEL XFADE",
+        "ROUND-ROBIN",
+        "RR SLOT",
+        "ATTACK",
+        "CUTOFF",
+        "ENV AMOUNT",
+    ] {
+        assert!(t.iter().any(|x| x == s), "missing {s:?}: {t:?}");
+    }
+    assert!(!t.iter().any(|x| x == "XFADE"));
+    // A zone with no envelope or filter of its own shows the device ones.
+    assert!(t.iter().any(|x| x == "device"), "{t:?}");
+    v.set_synth_page(false);
+    let t = texts(&mut v, &d, &reg);
+    assert!(t.iter().any(|x| x == "XFADE"));
+}
+
+#[test]
+fn dragging_a_synth_field_emits_a_valid_list_and_an_envelope_edit_reaches_the_group() {
+    let (d, reg, mut v) = setup(grouped_zones());
+    v.set_synth_page(true);
+    let p = v.field_center(Field::EnvA);
+    let a = gesture(&mut v, &d, &reg, &drag_by(p, Vec2::new(0.0, -40.0)));
+    let list = last_list(&a);
+    assert_eq!(list.len(), 4);
+    let e0 = list[0]
+        .ext
+        .env
+        .expect("the edited zone has its own envelope");
+    assert!(e0.attack_ms > 1.0, "dragging up lengthens the attack");
+    // Zone 1 is in the same group: it follows. The zones outside the group do not.
+    assert_eq!(list[1].ext.env, Some(e0));
+    assert_eq!(list[2].ext.env, None);
+    assert_eq!(list[3].ext.env, None);
+    // The model accepts the list.
+    let mut doc = d;
+    doc.apply(
+        Command::SetZones {
+            device: key("sampler"),
+            zones: list,
+            merge: None,
+        },
+        &reg,
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_zone_outside_any_group_edits_only_itself_and_a_double_click_gives_the_filter_back() {
+    let mut zones = layered_zones();
+    zones[1].ext.filter = Some(atomik_device_sdk::ZoneFilter {
+        mode: 1,
+        cutoff: 2_000.0,
+        resonance: 0.5,
+        key_track: 0.0,
+        env_amount: 0.0,
+    });
+    let (mut d, reg, mut v) = setup(zones);
+    v.set_synth_page(true);
+    select(&mut v, &d, &reg, 1);
+    let p = v.field_center(Field::FltCutoff);
+    let a = v.handle(&down_with(p, PointerButton::Primary, 2), d.doc(), &reg);
+    let list = last_list(&a);
+    assert_eq!(list[1].ext.filter, None);
+    d.apply(
+        Command::SetZones {
+            device: key("sampler"),
+            zones: list,
+            merge: None,
+        },
+        &reg,
+    )
+    .unwrap();
+    resync(&mut v, &d, &reg);
+    // Editing the cutoff of a zone without a filter starts from the default filter.
+    let fc = v.field_center(Field::FltCutoff);
+    let a = gesture(&mut v, &d, &reg, &drag_by(fc, Vec2::new(0.0, -20.0)));
+    let f = last_list(&a)[1].ext.filter.expect("a filter of its own");
+    assert!(f.cutoff > 8_000.0 && f.mode == 0);
+}
+
+#[test]
+fn the_crossfade_and_round_robin_fields_stay_inside_the_zone_rules() {
+    let mut z = layered_zones();
+    z[0].vel_lo = 10;
+    z[0].vel_hi = 20;
+    let (d, reg, mut v) = setup(z);
+    v.set_synth_page(true);
+    let fc = v.field_center(Field::VelXfade);
+    let a = gesture(&mut v, &d, &reg, &drag_by(fc, Vec2::new(0.0, -400.0)));
+    assert_eq!(
+        last_list(&a)[0].ext.vel_xfade,
+        10,
+        "at most the width of the velocity range"
+    );
+    let fc = v.field_center(Field::RrLen);
+    let a = gesture(&mut v, &d, &reg, &drag_by(fc, Vec2::new(0.0, -400.0)));
+    assert_eq!(last_list(&a)[0].ext.rr_len, 16);
+}
