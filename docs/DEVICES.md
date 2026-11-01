@@ -1,7 +1,8 @@
 # Device reference
 
-Atomik Rack ships forty-two original devices: the poly synth, the wavetable synth, the FM synth,
-the grain sampler, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
+Atomik Rack ships forty-six original devices: the poly synth (with its mono bass and dual layer
+variants), the wavetable synth, the FM synth, the grain sampler, line mixer and stereo delay, the Mod
+Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, compressor, EQ,
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
@@ -30,9 +31,11 @@ Conventions used throughout:
 
 ## Poly Synth: `atomik.poly-synth` (Instrument)
 
-A subtractive synthesizer with up to 16 voices. Each voice has two band-limited oscillators plus
-noise, a 12 dB/oct state-variable filter, an amp envelope and a filter envelope. One global LFO
-modulates pitch and cutoff. Source:
+A subtractive synthesizer with up to 16 voices. Each voice has two band-limited oscillators (or
+additive wave tables, with ring, FM and sync) plus noise, a 12 dB/oct state-variable filter or a 24 dB
+ladder, a second filter, an amp, a filter and a mod envelope. Two global LFOs modulate pitch, cutoff and
+level; there is glide, legato, a stereo spread, drift and an in-device chorus and echo (see
+"Expansion"). Source:
 [crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs).
 
 ### Sockets
@@ -89,6 +92,38 @@ modulates pitch and cutoff. Source:
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
+| `osc1.table` | 0–32: `wave`, then the 32 additive waves (see "Wave bank") | 0 (`wave`) | choice | Linear | yes |
+| `osc2.table` | as `osc1.table` | 0 (`wave`) | choice | Linear | yes |
+| `osc2.mode` | 0–3: normal, ring, fm, sync | 0 (normal) | choice | Linear | yes |
+| `osc2.amount` | 0 to 1 | 0 | percent | Linear | no |
+| `filter.type` | 0–1: svf (12 dB), ladder (24 dB) | 0 (svf) | choice | Linear | yes |
+| `filter.drive` | 0 to 1 | 0 | percent | Linear | no |
+| `filter2.mode` | 0–3: off, LP12, BP12, HP12 | 0 (off) | choice | Linear | yes |
+| `filter2.cutoff` | 20 to 20 000 | 4000 | Hz | Exp | no |
+| `filter2.resonance` | 0 to 1 | 0.2 | percent | Linear | no |
+| `filter.link` | 0 to 1 | 1 | percent | Linear | no |
+| `filter2.routing` | 0–1: series, parallel | 0 (series) | choice | Linear | yes |
+| `lfo2.wave` | 0–4: sine, triangle, saw, square, sample&hold | 0 (sine) | choice | Linear | yes |
+| `lfo2.rate` | 0.05 to 30 | 0.5 | Hz | Exp | no |
+| `lfo2.to_pitch` | 0 to 12 | 0 | semitones | Linear | no |
+| `lfo2.to_cutoff` | 0 to 4 | 0 | octaves | Linear | no |
+| `lfo2.to_level` | 0 to 1 | 0 | percent | Linear | no |
+| `env.mod.attack` | 0.5 to 10 000 | 2 | ms | Exp | no |
+| `env.mod.decay` | 0.5 to 10 000 | 400 | ms | Exp | no |
+| `env.mod.sustain` | 0 to 1 | 0 | percent | Linear | no |
+| `env.mod.release` | 0.5 to 10 000 | 300 | ms | Exp | no |
+| `env.mod.amount` | −1 to 1 | 0 | none | Linear | no |
+| `env.mod.dest` | 0–4: pitch, osc 2 pitch, osc mix, osc 2 amount, filter 2 cutoff | 0 (pitch) | choice | Linear | yes |
+| `glide` | 0 to 2000 (0 = off) | 0 | ms | Linear | no |
+| `legato` | 0–1: off, on | 0 (off) | choice | Linear | yes |
+| `spread` | 0 to 1 | 0 | percent | Linear | no |
+| `drift` | 0 to 1 | 0 | percent | Linear | no |
+| `chorus.mix` | 0 to 1 | 0 | percent | Linear | no |
+| `chorus.rate` | 0.05 to 5 | 0.6 | Hz | Exp | no |
+| `chorus.depth` | 0 to 1 | 0.4 | percent | Linear | no |
+| `delay.mix` | 0 to 1 | 0 | percent | Linear | no |
+| `delay.time` | 10 to 1000 | 300 | ms | Exp | no |
+| `delay.feedback` | 0 to 0.95 | 0.35 | percent | Linear | no |
 
 ### Behaviour (as built)
 
@@ -107,8 +142,7 @@ modulates pitch and cutoff. Source:
   - The output is the sum of voices × 0.5 × the master gain (smoothed over 5 ms).
   - **Soft limiter:** the signal then passes through a limiter that is linear up to ±2 and saturates
     smoothly towards ±4. Output is always finite and |x| < 4, whatever the params.
-- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled. There is no stereo
-  spread in this version.
+- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled and `spread` is 0.
 - **CV inputs (pitch, resonance, level, pan).** Each is applied only while its socket is cabled;
   with all of them open the output is bit for bit what it was before they existed. Every CV sample
   is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its
@@ -123,6 +157,119 @@ modulates pitch and cutoff. Source:
     sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device
   instance, so renders are reproducible.
+
+### Expansion (appended params)
+
+Every param after `bend.range` was appended, and each default leaves the sound above bit for bit as it
+was (a test pins a render of a busy patch). They add the following; the same voice runs the
+[Mono Bass](#mono-bass-atomikmono-bass-instrument) and the [Dual Layer](#dual-layer-atomikdual-layer-instrument).
+
+- **Wave bank.** `osc1.table` and `osc2.table` pick one of 32 additive waves instead of the PolyBLEP
+  `wave` (0 keeps `wave`). The waves are written down as harmonics in
+  [crates/dsp/src/wavetable.rs](../crates/dsp/src/wavetable.rs) and built by inverse FFT on first use,
+  so they are the same bits on every platform. Each wave is stored once per octave of bandwidth and
+  read at the richest level whose top harmonic stays under Nyquist, so a table never aliases. Names, in
+  order: sine, saw, square, triangle, pulse 25, pulse 10, octave saw, soft saw, soft square, bright saw,
+  hollow, organ 1, organ 2, organ 3, sine 2nd, sine 3rd, vowels a e i o u, peak 4, peak 8, peak 16,
+  triple, pairs, bell, random a to d (seeded spectra), buzz.
+- **Oscillator 2 mode.** `normal`: as before. `ring`: oscillator 2's output is the product of the two
+  oscillators. `fm`: oscillator 1 modulates the frequency of oscillator 2, which deviates by up to
+  `osc2.amount` × 2 times its own frequency each way. `sync`: oscillator 2 restarts at every cycle of
+  oscillator 1, and `osc2.amount` raises its pitch by up to 24 semitones; the reset step is softened with
+  a one-sided BLEP. `osc.mix` still crossfades the two outputs.
+- **Filters.** `filter.type` `ladder` replaces the state-variable filter with a 24 dB/oct ladder lowpass
+  (`filter.mode` is ignored): four TPT stages with the feedback solved without a delay, `f64` state, a
+  loop gain of 3.9 at full resonance (strong ringing, never self-oscillation). `filter.drive` clips in
+  front of it with an anti-aliased cubic clipper (0 is exact bypass). `filter2.mode` adds a second 12 dB
+  filter, in `series` after the first or in `parallel` (the two outputs averaged). Its cutoff is
+  `filter2.cutoff` × 2^(`filter.link` × the first filter's modulation in octaves: envelope, key
+  tracking, both LFOs and the CV, plus the mod envelope when it targets filter 2).
+- **LFO 2.** A second global LFO (not written to a socket) to pitch (`lfo2.to_pitch`), the cutoff of the
+  first filter and filter 2 (through the link), and the level (`lfo2.to_level`: a tremolo that is unity at
+  the LFO's top and `1 - to_level` at its bottom). It runs only while it has a destination (its phase
+  waits otherwise).
+- **Mod envelope.** A third ADSR per voice. `env.mod.amount` (bipolar) scales it onto `env.mod.dest`:
+  pitch or osc 2 pitch by up to 24 semitones, osc mix by up to half the range, osc 2 amount by up to 1, or
+  filter 2's cutoff by up to 4 octaves. The envelope advances only while the amount is not 0, so a
+  mod envelope enabled in a held note starts its attack then.
+- **Glide and legato.** `glide` is the time constant in ms of an exponential slide to a new key, from
+  the last key played; a stolen voice slides from where it was. `legato` on makes the synth monophonic
+  (it releases the other voices): a key played while another is held changes the pitch only, the
+  envelopes run on, and releasing the top key returns to the key still held.
+- **Stereo spread.** `spread` pans each voice by its key (middle C centred, 36 semitones away at the
+  edge, low left and high right) and the outputs become a true pair. At 0 `out_l` equals `out_r`.
+- **Drift.** `drift` detunes every voice by up to 20 cents. A note draws its detune from a seeded random
+  stream, and a new random target is drawn every 0.6 s that the detune moves to over about 0.4 s.
+- **Effects.** After the pan and the limiter, `chorus.*` (a stereo chorus with the right side's sweep
+  inverted: `rate`, `depth`) and `delay.*` (a ping-pong echo: the two sides summed to mono enter the left
+  line, every echo feeds the other side; `time`, `feedback`) run on the output, then the limiter bounds the
+  sum again. A mix of 0 skips the effect and clears its memory.
+
+---
+
+## Mono Bass: `atomik.mono-bass` (Instrument)
+
+A monophonic bass synthesizer on the [Poly Synth](#poly-synth-atomikpoly-synth-instrument)'s voice: the
+same params, sockets and sound engine under other defaults, so a patch of one carries over to the other
+by key. Source: [crates/devices/src/mono_bass.rs](../crates/devices/src/mono_bass.rs).
+
+What differs, all of it defaults (the ranges and tapers are the poly synth's):
+
+| Key | Default here | Poly synth |
+|---|---|---|
+| `voices` | 1 | 16 |
+| `legato` | 1 (on) | 0 |
+| `glide` | 60 ms | 0 |
+| `filter.type` | 1 (ladder, 24 dB) | 0 |
+| `filter.drive` | 0.25 | 0 |
+| `filter.cutoff`, `filter.resonance` | 450 Hz, 0.35 | 4000 Hz, 0.2 |
+| `filter.env_amount`, `filter.key_track` | 0.6, 0.35 | 0.3, 0.5 |
+| `env.filter.decay`, `env.filter.sustain` | 220 ms, 0.1 | 400 ms, 0 |
+| `env.amp.attack/decay/sustain/release` | 1 ms, 250 ms, 0.8, 90 ms | 2 ms, 200 ms, 0.7, 300 ms |
+| `osc2.octave`, `osc2.fine`, `osc.mix` | −1, 0, 0.4 | 0, 7, 0.5 |
+| `chorus.mix` | 0.15 | 0 |
+
+The sockets are the poly synth's. A key played while another is held changes the pitch only and
+`glide` slides it; the first key after silence glides from the last one played. The in-device `chorus.*`
+and `delay.*` (see the poly synth's "Expansion") are the bass's effects.
+
+---
+
+## Dual Layer: `atomik.dual-layer` (Instrument)
+
+Two poly synth layers played together. Each layer is a whole [Poly Synth](#poly-synth-atomikpoly-synth-instrument)
+voice engine with its own oscillators, filters, envelopes and LFOs; both hear the same notes, bend, wheel
+and pedal. Source: [crates/devices/src/dual_layer.rs](../crates/devices/src/dual_layer.rs).
+
+### Sockets
+
+`notes_in`, `cutoff_cv_in`, `pitch_cv_in`, `resonance_cv_in`, `level_cv_in` and `pan_cv_in` (each reaches
+both layers, with the poly synth's meaning), and `out_l`, `out_r`. There is no `lfo_cv_out`.
+
+### Params
+
+| Key | Range | Default | Notes |
+|---|---|---|---|
+| `layer.mode` | 0–1: stack, morph | 1 (morph) | How `layer.morph` weighs the layers |
+| `layer.morph` | 0 to 1 | 0.5 | 0 is layer A alone, 1 is layer B alone |
+| `layer.age` | 0 to 1 | 0 | The `drift` of both layers (a seeded slow random detune, up to 20 cents) |
+| `voices`, `master.level`, `bend.range`, `glide`, `legato`, `spread` | as the poly synth | as the poly synth | Shared by both layers (`voices` counts per layer) |
+| `a.*`, `b.*` | as the poly synth | as the poly synth, except layer B starts as a triangle against a sine | Every other poly synth param under the prefix of its layer (`a.osc1.wave`, `b.filter2.mode`, ...) |
+
+Not exposed: the CV trims keep their defaults, `drift` is `layer.age`, and the chorus and delay stay
+with the poly synth and mono bass.
+
+### Behaviour (as built)
+
+- **Morph.** In `morph` mode the layer gains are `1 − m` and `m`. In `stack` mode both play at full level
+  from the middle: `min(1, 2(1 − m))` and `min(1, 2m)`. At both ends the output is exactly one layer,
+  bit for bit as that layer sounds alone as a poly synth (a test compares the bits for each end and mode).
+- **Limiting.** The layers are not limited by themselves: the sum is passed once through the poly
+  synth's soft limiter, so every output is bounded by 4.
+- **Seeds.** Layer A uses the device seed and layer B a stream derived from it, so their noise, sample &
+  hold LFOs and drift differ and are reproducible.
+- **Cost.** Both layers always run (a gain of 0 does not stop one hearing the notes), so the device costs
+  about two poly synths.
 
 ---
 
@@ -3028,6 +3175,8 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | Device | Pitch bend | Bend range (RPN 0) | Mod wheel (CC 1) | Sustain (CC 64) | Volume (CC 7) | Expression (CC 11) | Pressure source |
 |---|---|---|---|---|---|---|---|
 | `atomik.poly-synth` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.mono-bass` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.dual-layer` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
@@ -3036,8 +3185,8 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.drum-machine` | no | no | no | no | no | no | no |
 | `atomik.loop-slicer` | no | no | no | no | no | no | no |
 
-The five melodic instruments (poly synth, wavetable synth, FM synth, grain sampler and sampler)
-share one helper, `ControllerState`
+The seven melodic instruments (poly synth, mono bass, dual layer, wavetable synth, FM synth, grain
+sampler and sampler) share one helper, `ControllerState`
 ([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)). What it does,
 identically in each:
 
