@@ -327,6 +327,150 @@ impl Shaper {
     }
 }
 
+// ------------------------------------------------------------------ character curves
+
+/// Slope parameter of [`CharacterKind::Modulate`]: the curve peaks at 1 (at `u = 1/(a sqrt 2)`).
+const MODULATE_A: f64 = 0.384_9;
+/// Pre-gain of [`CharacterKind::Fuzz`] and its negative ceiling.
+const FUZZ_GAIN: f64 = 4.0;
+const FUZZ_NEG: f64 = 0.6;
+/// Slope and the lower ceiling of [`CharacterKind::Scream`].
+const SCREAM_GAIN: f64 = 3.0;
+const SCREAM_LOW: f64 = -0.5;
+
+/// The additional distortion curves. Each is a memoryless curve with a unit output ceiling and a
+/// closed-form antiderivative ([`character_integral`]), so [`character_adaa`] removes much of its
+/// aliasing. They evaluate in `f64` with only `+ - * /` and `sqrt` (deterministic).
+///
+/// * [`CharacterKind::Tape`]: the cubic soft knee `1.5 u - 0.5 u^3` up to `|u| = 1`, flat beyond:
+///   a rounded, odd saturation.
+/// * [`CharacterKind::Fuzz`]: an asymmetric algebraic clip with a pre-gain of 4; the positive
+///   side saturates at `+1`, the negative side at `-0.6`: dense even and odd harmonics.
+/// * [`CharacterKind::Modulate`]: `u / (1 + a^2 u^2)^(3/2)`: the gain collapses as the level
+///   rises, so a loud signal folds back towards zero after its peak at 1 (self-modulation).
+/// * [`CharacterKind::Warp`]: the smooth plateau `c (15 - 10 c^2 + 3 c^4) / 8` on
+///   `c = clamp(u, -1, 1)`: a flat-topped, nearly square limit with strong odd harmonics.
+/// * [`CharacterKind::Scream`]: `clamp(3 u, -0.5, 1)`, an asymmetric hard clip with gain, the
+///   harshest of the set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharacterKind {
+    /// Cubic soft knee.
+    Tape,
+    /// Asymmetric high-gain clip.
+    Fuzz,
+    /// Self-modulating gain collapse.
+    Modulate,
+    /// Smooth plateau limit.
+    Warp,
+    /// Asymmetric hard clip with gain.
+    Scream,
+}
+
+impl CharacterKind {
+    /// All five kinds, in a stable order.
+    pub const ALL: [Self; 5] = [
+        Self::Tape,
+        Self::Fuzz,
+        Self::Modulate,
+        Self::Warp,
+        Self::Scream,
+    ];
+}
+
+/// The value of the character curve `kind` at `u` (non-finite `u` gives 0).
+pub fn character_curve(kind: CharacterKind, u: f64) -> f64 {
+    if !u.is_finite() {
+        return 0.0;
+    }
+    match kind {
+        CharacterKind::Tape => {
+            let c = u.clamp(-1.0, 1.0);
+            c * (1.5 - 0.5 * c * c)
+        }
+        CharacterKind::Fuzz => {
+            if u >= 0.0 {
+                let x = FUZZ_GAIN * u;
+                x / (1.0 + x * x).sqrt()
+            } else {
+                let x = FUZZ_GAIN / FUZZ_NEG * u;
+                FUZZ_NEG * x / (1.0 + x * x).sqrt()
+            }
+        }
+        CharacterKind::Modulate => {
+            let s = 1.0 + MODULATE_A * MODULATE_A * u * u;
+            u / (s * s.sqrt())
+        }
+        CharacterKind::Warp => {
+            let c = u.clamp(-1.0, 1.0);
+            let c2 = c * c;
+            c * (15.0 - 10.0 * c2 + 3.0 * c2 * c2) * 0.125
+        }
+        CharacterKind::Scream => (SCREAM_GAIN * u).clamp(SCREAM_LOW, 1.0),
+    }
+}
+
+/// The antiderivative of [`character_curve`] with `F(0) = 0`.
+pub fn character_integral(kind: CharacterKind, u: f64) -> f64 {
+    if !u.is_finite() {
+        return 0.0;
+    }
+    match kind {
+        CharacterKind::Tape => {
+            let a = u.abs();
+            if a <= 1.0 {
+                let a2 = a * a;
+                0.75 * a2 - 0.125 * a2 * a2
+            } else {
+                0.625 + (a - 1.0)
+            }
+        }
+        CharacterKind::Fuzz => {
+            if u >= 0.0 {
+                ((1.0 + FUZZ_GAIN * FUZZ_GAIN * u * u).sqrt() - 1.0) / FUZZ_GAIN
+            } else {
+                let c = FUZZ_GAIN / FUZZ_NEG;
+                FUZZ_NEG * ((1.0 + c * c * u * u).sqrt() - 1.0) / c
+            }
+        }
+        CharacterKind::Modulate => {
+            let a2 = MODULATE_A * MODULATE_A;
+            (1.0 - 1.0 / (1.0 + a2 * u * u).sqrt()) / a2
+        }
+        CharacterKind::Warp => {
+            let a = u.abs();
+            if a <= 1.0 {
+                let a2 = a * a;
+                (7.5 * a2 - 2.5 * a2 * a2 + 0.5 * a2 * a2 * a2) * 0.125
+            } else {
+                0.687_5 + (a - 1.0)
+            }
+        }
+        CharacterKind::Scream => {
+            let hi = 1.0 / SCREAM_GAIN;
+            let lo = SCREAM_LOW / SCREAM_GAIN;
+            if u > hi {
+                0.5 * SCREAM_GAIN * hi * hi + (u - hi)
+            } else if u < lo {
+                0.5 * SCREAM_GAIN * lo * lo + SCREAM_LOW * (u - lo)
+            } else {
+                0.5 * SCREAM_GAIN * u * u
+            }
+        }
+    }
+}
+
+/// First-order antiderivative anti-aliased output of the character curve for the step
+/// `u1 -> u` (the mean of the curve over the step, as for [`Shaper::set_adaa`]); under
+/// [`ADAA_EPS`] it falls back to the curve at the midpoint.
+#[inline]
+pub fn character_adaa(kind: CharacterKind, u: f64, u1: f64) -> f64 {
+    let d = u - u1;
+    if d.abs() < ADAA_EPS || !d.is_finite() {
+        return character_curve(kind, 0.5 * (u + u1));
+    }
+    (character_integral(kind, u) - character_integral(kind, u1)) / d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,6 +858,103 @@ mod tests {
             s.process_block(&mut x);
             proptest::prop_assert!(x.iter().all(|v| v.is_finite()));
             proptest::prop_assert!(x.iter().all(|v| v.abs() <= 16.0));
+        }
+    }
+
+    #[test]
+    fn character_integrals_differentiate_to_their_curves() {
+        let h = 1e-6f64;
+        for kind in CharacterKind::ALL {
+            assert_eq!(character_integral(kind, 0.0), 0.0, "{kind:?}");
+            let mut u = -6.0f64;
+            while u < 6.0 {
+                let d =
+                    (character_integral(kind, u + h) - character_integral(kind, u - h)) / (2.0 * h);
+                let want = character_curve(kind, u);
+                assert!((d - want).abs() < 1e-4, "{kind:?} u={u}: {d} vs {want}");
+                u += 0.0371;
+            }
+        }
+    }
+
+    #[test]
+    fn character_curves_are_bounded_by_one_and_hold_their_shapes() {
+        for kind in CharacterKind::ALL {
+            let mut u = -50.0f64;
+            while u < 50.0 {
+                assert!(character_curve(kind, u).abs() <= 1.0 + 1e-9, "{kind:?} {u}");
+                u += 0.013;
+            }
+            assert_eq!(character_curve(kind, f64::NAN), 0.0);
+        }
+        // Odd curves are odd; fuzz and scream are not.
+        for kind in [
+            CharacterKind::Tape,
+            CharacterKind::Modulate,
+            CharacterKind::Warp,
+        ] {
+            assert_eq!(character_curve(kind, 0.37), -character_curve(kind, -0.37));
+        }
+        assert!(character_curve(CharacterKind::Fuzz, -9.0) > -0.61);
+        assert!(character_curve(CharacterKind::Fuzz, 9.0) > 0.99);
+        assert_eq!(character_curve(CharacterKind::Scream, -9.0), -0.5);
+        assert_eq!(character_curve(CharacterKind::Scream, 9.0), 1.0);
+        // Modulate peaks near 1 and falls back after its peak.
+        let peak = character_curve(CharacterKind::Modulate, 1.0 / (MODULATE_A * 2f64.sqrt()));
+        assert!((peak - 1.0).abs() < 1e-3);
+        assert!(character_curve(CharacterKind::Modulate, 30.0) < 0.1);
+    }
+
+    #[test]
+    fn adaa_lowers_the_aliasing_of_every_character_curve() {
+        let n = 8192usize;
+        let bin = 853usize;
+        let f0 = bin as f64 * f64::from(SR) / n as f64;
+        let x = sine(f0, f64::from(SR), n + 2048, 0.7);
+        for (kind, drive) in [
+            (CharacterKind::Tape, 12.0f64),
+            (CharacterKind::Fuzz, 12.0),
+            (CharacterKind::Modulate, 6.0),
+            (CharacterKind::Warp, 12.0),
+            (CharacterKind::Scream, 12.0),
+        ] {
+            let g = 10f64.powf(drive / 20.0);
+            let run = |adaa: bool| {
+                let mut u1 = 0.0f64;
+                let y: Vec<f32> = x
+                    .iter()
+                    .map(|v| {
+                        let u = f64::from(*v) * g;
+                        let o = if adaa {
+                            character_adaa(kind, u, u1)
+                        } else {
+                            character_curve(kind, u)
+                        };
+                        u1 = u;
+                        o as f32
+                    })
+                    .collect();
+                alias_energy(&y[1024..], bin, n)
+            };
+            let (plain, adaa) = (run(false), run(true));
+            assert!(
+                adaa < plain * 0.5,
+                "{kind:?}: aliases {plain} plain vs {adaa} with ADAA"
+            );
+        }
+    }
+
+    #[test]
+    fn character_adaa_is_finite_for_hostile_steps() {
+        for kind in CharacterKind::ALL {
+            for (u, u1) in [
+                (1e30, -1e30),
+                (f64::NAN, 0.0),
+                (0.0, f64::INFINITY),
+                (0.5, 0.5),
+            ] {
+                assert!(character_adaa(kind, u, u1).is_finite(), "{kind:?} {u} {u1}");
+            }
         }
     }
 }
