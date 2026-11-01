@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Utility devices.** The palette gains eight small devices. Gain Tool (gain, balance, width and
+  mute, with an aux input to add or cross-fade in and CV on gain and balance), Stereo Tool
+  (polarity, width with a bass bypass, balance, mono and mid/side encode and decode), Gate (a
+  gate or 2:1 expander with hold, sidechain key filters and a gain-reduction CV out), Gate +
+  Compressor (a gate then a compressor with input gain, makeup and mix), Sidechain Tool (pump
+  from the song position, trigger from the hits of a key, or classic ducking from its level, with
+  depth, attack, recovery time and curve, and a CV out for ducking other devices), Envelope Filter
+  (a state-variable filter swept by an ADSR started by a gate CV, notes or the input level, with
+  an envelope CV out), Spider Audio (four summing stereo merge inputs and a four-way split) and
+  Spider CV (four trimmed summing CV inputs and two split-and-invert inputs). The six effects have
+  the BYPASS switch. Their level, gain and time maths is platform-independent, so a bounce is
+  bit-identical everywhere, and a pumping Sidechain Tool gives the same gain after a locate as
+  playing through. The Sidechain Tool's curve is set by attack, time and curve knobs; there is no
+  hand-drawn curve editor yet.
 - **CPU meters, an automatic worker count, a free buffer size and a Big Meter.** View > CPU
   Meters shows on every device's name plate the share of the audio time that device takes (a
   container shows the sum of what is inside it), so the heavy device is easy to find; the engine

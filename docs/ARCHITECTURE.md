@@ -3094,6 +3094,16 @@ parameter tables are in [DEVICES.md](DEVICES.md).
   leave the param out of the body. The console's bypass buttons set this param on the effects of a chain (Channel strip
   upgrades, section 5); the strip's own `insert.bypass` is a separate switch that is not delay
   compensated. See [DEVICES.md](DEVICES.md#effect-bypass).
+- **Utility devices.** Gain Tool, Stereo Tool, Gate, Gate + Compressor, Sidechain Tool and Envelope
+  Filter are `Bypassable` effects; Spider Audio and Spider CV are plain utilities whose merge inputs
+  are `Direction::SummingInput` (the model's cable rules and the engine's summing and delay
+  compensation treat them like a console bus input, in source order). They share the descriptor
+  builders of `devices/src/tool_support.rs`, use the deterministic `log2_det`/`exp2_det`, and the
+  gate is `atomik_dsp::Gate` in its deterministic mode (the channel strip's gate keeps its own maths
+  and goldens). The Sidechain Tool's pump mode is a pure function of the transport position of the
+  batch, so it needs no history and a locate gives the same gain. They have the automatic panel
+  layout. The render test `utility_devices.rs` bounces each effect and checks the merge alignment.
+  See [DEVICES.md](DEVICES.md#utility-devices).
 - **Meters.** Reduction, levels, loudness and EQ band energies reach the UI through the device meter
   values of section 5; `RackView::set_device_meter_values` feeds the panels once per frame.
 - **Sidechain helper.** The UI emits one `Command::Batch` (disconnect the old source, connect the
