@@ -860,6 +860,11 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
+  is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
+  their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
+  seconds after the bypass is fully engaged (see Effect bypass in DEVICES). The two-second rule can
+  change the tail heard when an effect is switched back on.
 - **Importing audio holds about one copy of it, and big projects open about four times faster.** An
   import used to copy the audio five times (every check copied the buffer, and a file already at
   the project rate was cloned by the resampler); it now peaks at about 1.03 times the decoded size

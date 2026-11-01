@@ -1027,7 +1027,9 @@ order 1 to 6; the param ids are in that order too (`band1.on` is 0, `output` is 
   0 after about 100 ms). A band that is off, and a shelf or peak with exactly 0 dB gain, is skipped,
   so with every band off and `output` 0 dB the output equals the input bit for bit (also the default
   state).
-- **Analyser.** The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak
+- **Analyser.** It runs only while the app sets `internal.analyser_live` (never stored; the rack view
+  sets it for the EQ panels on screen), the audio output is the same either way, and the band
+  energies read 0 while it is off. The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak
   gain, Q 2.485) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915), designed in `prepare`.
   It runs at the full sample rate on the audio thread (16 `f64` biquads per sample; no FFT, no
   decimation) and the mean square of every band is taken per batch and smoothed with a 50 ms
@@ -3659,9 +3661,11 @@ modules know nothing about it.
   Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in
   `prepare`; a latency that changes at run time (Character across its two latency classes) moves the
   dry tap at the next batch boundary.
-- **The effect keeps running.** Its state and tail continue and every other output (the compressor's
-  `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged;
-  un-bypassing is seamless, and the CPU cost does not drop.
+- **The effect runs, then stops.** While the bypass fades in and for two seconds after it is fully
+  engaged the effect runs and its CV outs and meters keep coming from it. Then it is reset once and
+  skipped: its CV outs read 0, its meters the reset state, only the delayed dry signal is written, and
+  it costs almost nothing. Un-bypassing runs it again from the reset state, so a tail that was still
+  ringing after the two seconds is gone. The rule counts batches, so live and offline stop together.
 - **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample,
   `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's
   own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed
