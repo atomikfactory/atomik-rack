@@ -585,9 +585,9 @@ pub fn analyser_centre(k: usize) -> f64 {
 // ------------------------------------------------------------------ distortion
 
 /// Transfer function of the distortion panel's curve `curve` (0 soft, 1 hard, 2 tube, 3
-/// foldback, 4 bitcrush) for an input `x` in -1..=1: drive (dB), then bias, then the curve with
-/// its value at the bias subtracted, as `atomik.distortion` does (the crush curve quantises the
-/// clamped driven sample to `bits` bits).
+/// foldback, 4 bitcrush, 5 tape, 6 fuzz, 7 modulate, 8 warp, 9 scream) for an input `x` in
+/// -1..=1: drive (dB), then bias, then the curve with its value at the bias subtracted, as
+/// `atomik.distortion` does (the crush curve quantises the clamped driven sample to `bits` bits).
 pub fn distortion_transfer(curve: usize, drive_db: f32, bias: f32, bits: f32, x: f32) -> f32 {
     let u = x * 10f32.powf(drive_db / 20.0) + bias;
     match curve {
@@ -600,7 +600,14 @@ pub fn distortion_transfer(curve: usize, drive_db: f32, bias: f32, bits: f32, x:
 }
 
 fn shape(curve: usize, u: f32) -> f32 {
+    use atomik_dsp::shaper::{CharacterKind, character_curve};
+    let character = |kind| character_curve(kind, f64::from(u)) as f32;
     match curve {
+        5 => character(CharacterKind::Tape),
+        6 => character(CharacterKind::Fuzz),
+        7 => character(CharacterKind::Modulate),
+        8 => character(CharacterKind::Warp),
+        9 => character(CharacterKind::Scream),
         0 => u / (1.0 + u * u).sqrt(),
         1 => u.clamp(-1.0, 1.0),
         2 => {

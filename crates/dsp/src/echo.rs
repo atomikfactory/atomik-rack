@@ -118,19 +118,34 @@ impl Echo {
         self.current = self.target;
     }
 
-    /// Processes one stereo sample.
+    /// Advances the glide and the modulation by one sample and reads both lines at the sounding
+    /// time: the repeats of this sample. Every call must be followed by [`Echo::write_pair`]
+    /// (that is what [`Echo::process`] does); a device that shapes its own feedback path uses the
+    /// two directly.
     #[inline]
-    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+    pub fn read_pair(&mut self) -> (f32, f32) {
         let diff = self.target - self.current;
         self.current += diff.clamp(-self.glide, self.glide);
         let s = self.lfo.next_sample() * self.mod_depth;
         let dl = (self.current + s).clamp(1.0, self.max_samples);
         let dr =
             (self.current + if self.invert_right { -s } else { s }).clamp(1.0, self.max_samples);
-        let wl = self.lines[0].read(dl);
-        let wr = self.lines[1].read(dr);
-        self.lines[0].write(flush_denormal(l + self.feedback * wl));
-        self.lines[1].write(flush_denormal(r + self.feedback * wr));
+        (self.lines[0].read(dl), self.lines[1].read(dr))
+    }
+
+    /// Writes one stereo sample into the lines (denormals flushed); the counterpart of
+    /// [`Echo::read_pair`].
+    #[inline]
+    pub fn write_pair(&mut self, l: f32, r: f32) {
+        self.lines[0].write(flush_denormal(l));
+        self.lines[1].write(flush_denormal(r));
+    }
+
+    /// Processes one stereo sample.
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let (wl, wr) = self.read_pair();
+        self.write_pair(l + self.feedback * wl, r + self.feedback * wr);
         (l + self.mix * (wl - l), r + self.mix * (wr - r))
     }
 

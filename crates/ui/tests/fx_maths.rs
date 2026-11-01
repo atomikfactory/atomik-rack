@@ -138,8 +138,23 @@ fn eq_total_response_sums_the_active_bands() {
 #[test]
 fn distortion_curves_follow_the_device() {
     use atomik_devices::distortion::{Curve, shape};
-    let curves = [Curve::Soft, Curve::Hard, Curve::Tube, Curve::Fold];
+    use atomik_dsp::shaper::CharacterKind;
+    let curves = [
+        Curve::Soft,
+        Curve::Hard,
+        Curve::Tube,
+        Curve::Fold,
+        Curve::Crush,
+        Curve::Character(CharacterKind::Tape),
+        Curve::Character(CharacterKind::Fuzz),
+        Curve::Character(CharacterKind::Modulate),
+        Curve::Character(CharacterKind::Warp),
+        Curve::Character(CharacterKind::Scream),
+    ];
     for (i, c) in curves.iter().enumerate() {
+        if i == 4 {
+            continue; // the crush curve is checked below
+        }
         for &(drive, bias) in &[(0.0f32, 0.0f32), (12.0, 0.0), (24.0, 0.3), (6.0, -0.5)] {
             let g = 10f32.powf(drive / 20.0);
             for k in -10..=10 {

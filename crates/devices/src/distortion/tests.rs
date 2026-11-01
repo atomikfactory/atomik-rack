@@ -42,6 +42,11 @@ fn descriptor_validates() {
             "oversample",
             "drive_cv_trim",
             "mix_cv_trim",
+            "cut.low",
+            "cut.high",
+            "body.mode",
+            "body.amount",
+            "body.size",
             "bypass",
         ],
         &["in_l", "in_r", "out_l", "out_r", "drive_cv_in", "mix_cv_in"],
@@ -276,7 +281,7 @@ fn tone_tilts_the_spectrum() {
 fn latency_equals_the_impulse_delay_for_every_setting_and_rate() {
     for sr in [44_100.0f64, 48_000.0, 96_000.0] {
         for (os, want) in [(0.0f32, 0usize), (1.0, 29), (2.0, 35)] {
-            for curve in [0.0f32, 1.0, 3.0, 4.0] {
+            for curve in [0.0f32, 1.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0] {
                 let mut h = dist_at(sr);
                 set(
                     &mut h,
@@ -499,7 +504,7 @@ fn process_is_allocation_free_at_all_rates_with_automation() {
             }
             *h.input_mut("in_l") = x;
             *h.input_mut("in_r") = x;
-            h.set_param("curve", (i / 20 % 5) as f32);
+            h.set_param("curve", (i / 20 % 10) as f32);
             h.set_param("drive", (i % 49) as f32);
             h.set_param("bias", ((i % 21) as f32 - 10.0) / 10.0);
             h.set_param("tone", ((i % 11) as f32 - 5.0) / 5.0);
@@ -507,6 +512,10 @@ fn process_is_allocation_free_at_all_rates_with_automation() {
             h.set_param("crush.bits", 1.0 + (i % 16) as f32);
             h.set_param("crush.rate", 500.0 + (i % 40) as f32 * 2_000.0);
             h.set_param("mix", (i % 5) as f32 / 4.0);
+            h.set_param("cut.low", 20.0 + (i % 30) as f32 * 60.0);
+            h.set_param("cut.high", 1_000.0 + (i % 20) as f32 * 950.0);
+            h.set_param("body.mode", (i / 11 % 3) as f32);
+            h.set_param("body.size", (i % 10) as f32 / 9.0);
             h.process(); // guarded by the harness
         }
         h.device_mut().reset();
@@ -519,7 +528,7 @@ proptest! {
 
     #[test]
     fn output_is_finite_and_bounded_for_any_params(
-        curve in 0u8..5,
+        curve in 0u8..10,
         drive in 0.0f32..48.0,
         bias in -1.0f32..1.0,
         tone in -1.0f32..1.0,
@@ -655,4 +664,152 @@ fn cv_inputs_are_allocation_free_and_finite() {
         h.process();
         assert!(h.output("out_l").iter().all(|v| v.is_finite()));
     }
+}
+
+/// The `u` a first sample after rest sees, as the character curves' ADAA turns it into output.
+fn character_first(kind: CharacterKind, drive_db: f32, x: f32) -> f32 {
+    let u = f64::from(x) * f64::from(10f32.powf(drive_db / 20.0));
+    character_adaa(kind, u, 0.0) as f32
+}
+
+#[test]
+fn the_new_curves_follow_their_formulas_and_are_off_the_old_indices() {
+    assert_eq!(Curve::from_index(4), Curve::Crush);
+    for (i, kind) in CharacterKind::ALL.into_iter().enumerate() {
+        assert_eq!(Curve::from_index(5 + i), Curve::Character(kind));
+    }
+    for (i, kind) in CharacterKind::ALL.into_iter().enumerate() {
+        for x in [-1.3f32, -0.4, 0.05, 0.3, 0.8, 1.6] {
+            // The device's drive is smoothed; at the first sample it is immediate.
+            let got = first_sample(&[("curve", 5.0 + i as f32), ("drive", 6.0206)], x);
+            let want = character_first(kind, 6.0206, x);
+            assert!((got - want).abs() < 3e-4, "{kind:?} x {x}: {got} vs {want}");
+        }
+    }
+}
+
+#[test]
+fn the_new_curves_stay_within_their_ceiling_at_full_drive() {
+    for c in 5..10 {
+        let mut h = dist();
+        set(
+            &mut h,
+            &[("curve", c as f32), ("drive", 48.0), ("tone", 0.0)],
+        );
+        let y = run_signal(&mut h, &IN, sine(300.0, 0.9), 400, &["out_l"]);
+        let peak = y[0].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak.is_finite() && peak < 2.5, "curve {c}: peak {peak}");
+        assert!(peak > 0.05, "curve {c} makes sound: {peak}");
+    }
+}
+
+#[test]
+fn the_new_curves_alias_less_with_oversampling() {
+    for (c, drive) in [
+        (5.0f32, 18.0f32),
+        (6.0, 12.0),
+        (7.0, 6.0),
+        (8.0, 18.0),
+        (9.0, 12.0),
+    ] {
+        let off = alias_dbc(0.0, c, drive);
+        let x4 = alias_dbc(2.0, c, drive);
+        println!("curve {c} at +{drive} dB: {off:.1} dBc off, {x4:.1} dBc 4x");
+        assert!(x4 < off - 6.0, "curve {c}: {off} vs {x4}");
+        assert!(x4 < -30.0, "curve {c}: 4x alias level {x4} dBc");
+    }
+}
+
+/// Gain of the wet path at `hz` with `params` (a sine's steady-state amplitude over its input).
+fn gain_at(params: &[(&str, f32)], hz: f64) -> f64 {
+    let mut h = dist();
+    // Soft clip at unity drive is close to linear for a quiet sine.
+    set(
+        &mut h,
+        &[
+            ("curve", 0.0),
+            ("drive", 0.0),
+            ("oversample", 0.0),
+            ("mix", 1.0),
+        ],
+    );
+    set(&mut h, params);
+    let y = run_signal(&mut h, &IN, sine(hz, 0.01), 400, &["out_l"]);
+    let tail = &y[0][y[0].len() / 2..];
+    let peak = tail.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    f64::from(peak) / 0.01
+}
+
+#[test]
+fn the_cuts_remove_the_bands_beyond_their_corners() {
+    let flat_lo = gain_at(&[], 60.0);
+    let flat_hi = gain_at(&[], 12_000.0);
+    assert!((flat_lo - 1.0).abs() < 0.1 && (flat_hi - 1.0).abs() < 0.1);
+    let cut_lo = gain_at(&[("cut.low", 400.0)], 60.0);
+    assert!(cut_lo < 0.08, "60 Hz under a 400 Hz low cut: {cut_lo}");
+    let pass_lo = gain_at(&[("cut.low", 400.0)], 4_000.0);
+    assert!((pass_lo - 1.0).abs() < 0.1, "4 kHz is passed: {pass_lo}");
+    let cut_hi = gain_at(&[("cut.high", 2_000.0)], 12_000.0);
+    assert!(cut_hi < 0.08, "12 kHz under a 2 kHz high cut: {cut_hi}");
+    let pass_hi = gain_at(&[("cut.high", 2_000.0)], 200.0);
+    assert!((pass_hi - 1.0).abs() < 0.1, "200 Hz is passed: {pass_hi}");
+}
+
+#[test]
+fn the_body_banks_shape_the_spectrum_and_size_moves_them() {
+    // Resonant: a boost at 110 Hz for size 0.5 (factor 1), at 55 Hz for size 1 (factor 0.5).
+    let off = gain_at(&[], 110.0);
+    let res = gain_at(&[("body.mode", 1.0), ("body.amount", 1.0)], 110.0);
+    assert!(res > off * 2.0, "resonant boost at 110 Hz: {res} vs {off}");
+    let big_at_110 = gain_at(
+        &[("body.mode", 1.0), ("body.amount", 1.0), ("body.size", 1.0)],
+        110.0,
+    );
+    let big_at_55 = gain_at(
+        &[("body.mode", 1.0), ("body.amount", 1.0), ("body.size", 1.0)],
+        55.0,
+    );
+    assert!(big_at_55 > big_at_110, "the big body resonates lower");
+    // Cabinet: rolls the top off and removes the bottom.
+    let cab_hi = gain_at(&[("body.mode", 2.0), ("body.amount", 1.0)], 12_000.0);
+    let cab_lo = gain_at(&[("body.mode", 2.0), ("body.amount", 1.0)], 30.0);
+    assert!(cab_hi < 0.15 && cab_lo < 0.2, "cabinet {cab_hi} {cab_lo}");
+    // The amount blends from the dry wet path to the bank.
+    let half = gain_at(&[("body.mode", 2.0), ("body.amount", 0.5)], 12_000.0);
+    assert!(half > cab_hi && half < 1.0, "half {half}");
+    let none = gain_at(&[("body.mode", 2.0), ("body.amount", 0.0)], 12_000.0);
+    assert!((none - off.max(gain_at(&[], 12_000.0))).abs() < 0.2);
+}
+
+#[test]
+fn the_new_sections_at_their_defaults_change_no_bit() {
+    let run = |extra: &[(&str, f32)]| {
+        let mut h = dist();
+        set(&mut h, &[("curve", 2.0), ("drive", 20.0), ("tone", 0.3)]);
+        set(&mut h, extra);
+        let mut rng = Rng::new(5);
+        let mut all = Vec::new();
+        for _ in 0..60 {
+            let mut x = [0.0f32; BATCH];
+            for v in &mut x {
+                *v = rng.next_bipolar() * 0.7;
+            }
+            *h.input_mut("in_l") = x;
+            *h.input_mut("in_r") = x;
+            h.process();
+            all.extend_from_slice(h.output("out_l"));
+        }
+        all.into_iter().map(f32::to_bits).collect::<Vec<_>>()
+    };
+    let plain = run(&[]);
+    // Explicitly the defaults, and the amount and size with the body off.
+    let defaults = run(&[
+        ("cut.low", 20.0),
+        ("cut.high", 20_000.0),
+        ("body.mode", 0.0),
+        ("body.amount", 1.0),
+        ("body.size", 0.1),
+    ]);
+    assert_eq!(plain, defaults);
+    assert_ne!(plain, run(&[("cut.low", 300.0)]));
 }
