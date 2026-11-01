@@ -20,6 +20,7 @@ mod record;
 mod seq;
 mod stream;
 mod sync;
+pub mod timing;
 mod workers;
 
 pub use arena::{RoutingPlan, Topology};

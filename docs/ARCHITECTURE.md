@@ -1986,7 +1986,32 @@ thread moves `Box<Node>`s into per-worker `rtrb` job queues and gets them back t
 in plan order, so the output is bit-identical for any worker count. The audio thread waits at a
 barrier (a bounded spin, then yielding its core; counted as telemetry); idle workers spin, then
 park. The app and `atomik-play` start at most `cores - 1` workers. A level with a single device is
-never dispatched.
+never dispatched. The app's default is an automatic count (`auto_workers` in
+[audio-io](../crates/audio-io/src/lib.rs)): one worker per physical core but the audio thread's own,
+at most 8. Simultaneous multithreading is read from the kernel on Linux and guessed elsewhere
+(`workers_auto` in `settings.json`; a file that sets `workers` and not `workers_auto` keeps its
+number, the Audio settings tab has an Auto chip).
+
+### Per-device processing time
+
+[timing.rs](../crates/engine/src/timing.rs) feeds the CPU readout (View > CPU Meters). The engine
+never reads a clock itself: the host installs a monotonic nanosecond counter once (`install_clock`;
+the app passes `monotonic_ns` of audio-io) and switches the measurement on with `set_enabled`.
+While it is on, `Node::run` reads the counter before and after each device call and adds the
+difference to the node's own `busy_ns`, on whichever thread runs the node. After each batch the
+audio thread publishes every device's total next to the audio time rendered so far into
+[`Meters`](../crates/engine/src/console.rs) (`device_cpu`, a few atomics per device; the slots are
+cleared with the device-value slots when a device leaves or the arena is swapped). A reader keeps
+two samples and turns them into a load with `load_percent`: the share of one callback's budget the
+device used. The numbers are never read back into the signal, nothing allocates and nothing locks
+(the clock slot is a `OnceLock`, read as an atomic load), so a bounce is bit-identical with the
+measurement on or off (`cpu_timing.rs` in [engine/tests](../crates/engine/tests)). With it off a
+node pays two relaxed loads per call; on, about 70 ns per device per batch (100 devices cost about
+0.5 % of a 64-frame callback at 48 kHz; [perf/BASELINE.md](../perf/BASELINE.md)).
+The app side is [app_core_cpu.rs](../crates/app/src/app_core_cpu.rs): once per frame it reads the
+samples, forms a load once 200 ms of audio have passed, smooths it, and hands the loads to the rack
+view, which draws them on the name plates over the cached panels; a container shows the sum of the
+devices inside it. The switch is not saved.
 
 ## 4. Threading model
 
@@ -3538,7 +3563,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (394) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (396) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4012,6 +4037,16 @@ change (version 9), no change to the routing plan, summing order, PDC or stages.
   running every block). A meter read resets its peak, so an endpoint the console strips also meter
   (the master's `main`) is read once per frame and the reading is shared with
   `update_console_meters` of the same frame.
+- **Big Meter.** View > Big Meter floats a larger meter over the top right of the rack
+  ([big_meter.rs](../crates/ui/src/big_meter.rs), glue in
+  [big_meter_view.rs](../crates/ui/src/rack/big_meter_view.rs)). It shows one pair of sockets
+  (inputs two by two, then outputs; the arrows pick the pair) from the same per-socket peaks as the
+  small meters (`set_io_peaks`), with the ballistics on the UI thread, fed the frame clock that
+  `RackView::tick` already gets: VU (a 300 ms rise to 99 % of a steady tone, 0 VU at a reference
+  level of -18 dBFS that the buttons move between -24 and -9), PPM (rises at once, falls 24 dB in
+  2.8 s) and PEAK (falls 20 dB per second), a hold marker that lasts 5 s or until reset (a click on
+  a bar) and a clip lamp per channel that latches above full scale until it is clicked. It never
+  touches the engine. Not saved: it starts hidden.
 - **First start.** `ui-state.json` gains `console_notice_seen`; the first start with a state file
   says once that console devices are shown now and where the toggle is (not for a user who switched
   them off).
@@ -4584,7 +4619,7 @@ Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation
 
 | Mechanism | Where |
 |---|---|
-| `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by clippy; the exceptions are the CLI `--stats` timer and the audio-io telemetry, which never influence audio | [clippy.toml](../clippy.toml); local `#[allow]`s |
+| `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by clippy; the exceptions are the CLI `--stats` timer, the audio-io telemetry and the clock of the CPU readout, which never influence audio | [clippy.toml](../clippy.toml); local `#[allow]`s |
 | Graph, topology and compile state use `BTreeMap`/`BTreeSet`; ready sets are ordered by id; summing is a fixed-order fold | [graph.rs](../crates/engine/src/graph.rs), [plan.rs](../crates/engine/src/plan.rs), [console.rs](../crates/engine/src/console.rs) |
 | Each device's seed is `mix_seed(patch seed, device id)` | `mix_seed` in [plan.rs](../crates/engine/src/plan.rs) |
 | Fixed 64-frame batches behind a FIFO make the host block size irrelevant; workers only compute, the audio thread gathers and scatters | [engine.rs](../crates/engine/src/engine.rs), [workers.rs](../crates/engine/src/workers.rs) |

@@ -324,3 +324,133 @@ pub enum IoError {
 
 #[cfg(test)]
 atomik_testkit::install_alloc_guard!();
+
+/// The most workers [`auto_workers`] starts.
+pub const AUTO_WORKERS_MAX: u16 = 8;
+
+/// The worker count the app picks on its own, for a machine with `logical` hardware threads of
+/// which `smt` run on each core (1 without simultaneous multithreading): one worker per
+/// physical core but the audio thread's own, never more than [`AUTO_WORKERS_MAX`]. A sibling
+/// thread shares its core's execution units, so counting it would only make the render workers
+/// compete with the audio callback. One core (or an unknown count) means no workers.
+pub fn auto_workers(logical: usize, smt: usize) -> u16 {
+    let cores = logical / smt.max(1);
+    cores.saturating_sub(1).min(usize::from(AUTO_WORKERS_MAX)) as u16
+}
+
+/// Hardware threads per core on this machine: read from the kernel on Linux; elsewhere a
+/// guess (Apple silicon has none, other machines with eight or more threads nearly always run
+/// two per core).
+pub fn smt_ways_here() -> usize {
+    let logical = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    #[cfg(target_os = "linux")]
+    if let Some(ways) = linux_smt_ways() {
+        return ways;
+    }
+    guess_smt_ways(
+        logical,
+        cfg!(all(target_os = "macos", target_arch = "aarch64")),
+    )
+}
+
+/// The SMT guess for a machine with `logical` threads (`no_smt` for platforms that never have it).
+pub fn guess_smt_ways(logical: usize, no_smt: bool) -> usize {
+    if no_smt || logical < 8 || logical % 2 == 1 {
+        1
+    } else {
+        2
+    }
+}
+
+/// `/sys/devices/system/cpu/cpu0/topology/thread_siblings_list`: how many threads share cpu0's
+/// core (`0,8` or `0-1` list them).
+#[cfg(target_os = "linux")]
+fn linux_smt_ways() -> Option<usize> {
+    let text =
+        std::fs::read_to_string("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list")
+            .ok()?;
+    count_cpu_list(text.trim())
+}
+
+/// The number of cpus in a kernel cpu list such as `0,8` or `0-3,8`.
+pub fn count_cpu_list(list: &str) -> Option<usize> {
+    let mut count = 0usize;
+    for part in list.split(',') {
+        let part = part.trim();
+        match part.split_once('-') {
+            Some((a, b)) => {
+                let (a, b) = (a.parse::<usize>().ok()?, b.parse::<usize>().ok()?);
+                count += b.checked_sub(a)? + 1;
+            }
+            None => {
+                part.parse::<usize>().ok()?;
+                count += 1;
+            }
+        }
+    }
+    (count > 0).then_some(count)
+}
+
+/// The worker count of [`auto_workers`] for this machine.
+pub fn auto_workers_here() -> u16 {
+    let logical = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    auto_workers(logical, smt_ways_here())
+}
+
+/// Nanoseconds on a monotonic clock, counted from the first call. The clock the app hands the
+/// engine for the per-device CPU readout (`atomik_engine::timing::install_clock`): it reads the
+/// OS counter, allocates nothing and takes no lock, and it only feeds the readout, never the
+/// signal.
+#[allow(clippy::disallowed_methods)] // Justification: the readout's clock; see the doc above.
+pub fn monotonic_ns() -> u64 {
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    ORIGIN
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::*;
+
+    #[test]
+    fn auto_workers_leave_the_audio_thread_a_physical_core() {
+        assert_eq!(auto_workers(0, 1), 0);
+        assert_eq!(auto_workers(1, 1), 0);
+        assert_eq!(auto_workers(2, 1), 1);
+        assert_eq!(auto_workers(4, 1), 3);
+        assert_eq!(auto_workers(4, 2), 1); // 2 cores, 4 threads
+        assert_eq!(auto_workers(8, 2), 3); // 4 cores
+        assert_eq!(auto_workers(16, 2), 7); // 8 cores
+        assert_eq!(auto_workers(32, 2), 8); // capped
+        assert_eq!(auto_workers(12, 1), 8); // 12 real cores, capped
+        assert_eq!(auto_workers(8, 0), 7, "a zero count reads as one way");
+    }
+
+    #[test]
+    fn a_core_list_counts_its_cpus() {
+        assert_eq!(count_cpu_list("0"), Some(1));
+        assert_eq!(count_cpu_list("0,8"), Some(2));
+        assert_eq!(count_cpu_list("0-1"), Some(2));
+        assert_eq!(count_cpu_list("0-3,8"), Some(5));
+        assert_eq!(count_cpu_list(""), None);
+        assert_eq!(count_cpu_list("a"), None);
+        assert_eq!(count_cpu_list("3-1"), None);
+    }
+
+    #[test]
+    fn the_guess_assumes_smt_only_on_large_even_machines() {
+        assert_eq!(guess_smt_ways(4, false), 1);
+        assert_eq!(guess_smt_ways(8, false), 2);
+        assert_eq!(guess_smt_ways(12, false), 2);
+        assert_eq!(guess_smt_ways(9, false), 1);
+        assert_eq!(guess_smt_ways(16, true), 1);
+    }
+
+    #[test]
+    fn the_clock_does_not_go_back() {
+        let a = monotonic_ns();
+        assert!(monotonic_ns() >= a);
+    }
+}

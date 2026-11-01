@@ -695,6 +695,40 @@ pub fn lock_icon<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, center: Point) {
     c.fill_with(Circle::new(pt(center.x, center.y + 2.0), 0.9), theme.plate);
 }
 
+/// The CPU load of a device on its name plate, in whole percent of the audio time: muted while
+/// it is small, the normal text colour from 30 %, the warning colour from 70 %. Unfolded it sits
+/// at the bottom right of the plate, beside the fold button; a folded strip shows it past the
+/// plate, after the room the output display of a channel takes.
+pub fn cpu_readout<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    plate: Rect,
+    folded: bool,
+    percent: f32,
+) {
+    let color = if percent >= 70.0 {
+        theme.warning
+    } else if percent >= 30.0 {
+        theme.text
+    } else {
+        theme.text_muted
+    };
+    let text = format!("{}%", percent.round().max(0.0) as i64);
+    if folded {
+        c.text(&TextRun::new(
+            text,
+            pt(plate.x1 + 320.0, plate.center().y + 3.0),
+            8.0,
+            color,
+        ));
+    } else {
+        c.text(
+            &TextRun::new(text, pt(plate.x1 - 6.0, plate.y1 - 7.0), 8.0, color)
+                .align(crate::Align::End),
+        );
+    }
+}
+
 /// The output display of a channel or the master on its name plate: the
 /// label in the normal text colour, the warning colour when the output was cabled by hand somewhere odd and
 /// the muted colour for "Output: none". A folded strip shows it to the right of its plate.

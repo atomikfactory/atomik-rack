@@ -71,7 +71,23 @@ fn bounce(doc: &RackDoc, workers: u16, block: usize) -> usize {
     rendered.channels.first().map_or(0, Vec::len)
 }
 
+/// Nanoseconds since the first call: the clock the app installs for the per-device CPU readout.
+fn bench_clock() -> u64 {
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    ORIGIN
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
+}
+
 fn main() {
+    // `ATOMIK_BENCH_TIMING=1` renders with the per-device timing on, to price its overhead
+    // against a run without it.
+    if std::env::var_os("ATOMIK_BENCH_TIMING").is_some() {
+        atomik_engine::timing::install_clock(bench_clock);
+        atomik_engine::timing::set_enabled(true);
+        println!("per-device timing on");
+    }
     let all = scenarios();
     if once_mode() {
         for (name, doc) in &all {

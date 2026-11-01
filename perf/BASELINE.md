@@ -146,3 +146,20 @@ render/lanes-2000/workers0/block256    1.895 s       1.720 s
 
 The render workers are capped at cores - 1 and the level barrier yields its core after 2,000 empty
 spins; both only matter on a live stream (see `atomik-play --stats` for the callback percentiles).
+
+## CPU readout
+
+Same machine, bench profile, medians of 21 runs (`cargo bench -p atomik-render --bench render_batch
+-- "rack/workers0|console-64/workers0"`, with `ATOMIK_BENCH_TIMING=1` for the second column). The
+per-device timing reads the clock twice around each device call; it is on only while View > CPU
+Meters is. A bounce renders the same samples either way.
+
+```text
+case                                   off           timing on
+render/rack/workers0/block256          754.2 ms      777.0 ms
+render/console-64/workers0/block256    1.486 s       1.565 s
+```
+
+The rack case is 100 cheap devices, so it is the worst case for the overhead: about 70 ns per
+device per 64-frame batch, which is 0.5 % of the 1.33 ms callback at 48 kHz for 100 devices. With
+the readout off a device call pays two relaxed atomic loads.

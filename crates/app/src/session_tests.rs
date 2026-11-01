@@ -260,6 +260,7 @@ fn settings() -> AudioSettings {
         buffer_frames: 256,
         midi_inputs: Vec::new(),
         workers: 0,
+        workers_auto: false,
         worker_linger_spins: 0,
         metronome_gain: 0.5,
         input_device: None,

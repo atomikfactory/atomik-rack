@@ -37,10 +37,12 @@ use std::sync::Arc;
 use vello::kurbo::{Affine, Circle, ParamCurve, Point, Rect, Size, Vec2};
 use vello::peniko::Color;
 
+mod big_meter_view;
 mod columns;
 mod console_links;
 mod container_input;
 mod container_move;
+mod cpu_readout;
 mod device_drag;
 mod drum_input;
 mod fx_input;
@@ -59,6 +61,7 @@ mod selection;
 pub use crate::paint::Side as Flip;
 pub use columns::COLUMN_GAP;
 pub use console_links::OutputDisplay;
+pub use cpu_readout::load_under;
 
 /// Time constant of the fall of a CV activity indicator, seconds.
 pub const CV_DECAY_SECONDS: f32 = 0.18;
@@ -539,6 +542,8 @@ pub struct RackView {
     links: BTreeSet<Cable>,
     /// The output display of each channel and of the master.
     outputs: BTreeMap<DeviceKey, OutputDisplay>,
+    /// The CPU load shown on each plate (percent; see `set_cpu_loads`); empty = readout off.
+    cpu: BTreeMap<DeviceKey, f32>,
     /// The Master Section while it is the first device: it cannot be moved or deleted.
     locked: Option<DeviceKey>,
     /// What the output displays were last computed from (the console and the device names).
@@ -563,6 +568,8 @@ pub struct RackView {
     choice_menu: Option<master_input::ChoiceMenu>,
     /// The Audio I/O panel's state: host channels, lamps, levels, clip flags.
     io: crate::io_panel::IoView,
+    /// The Big Meter overlay (View > Big Meter).
+    big: crate::big_meter::BigMeter,
     /// Edited pattern of each step sequencer (view state, not in the document).
     edits: BTreeMap<DeviceKey, usize>,
     /// The pattern clipboard of the sequencer panels (COPY, PASTE).
@@ -769,6 +776,7 @@ impl RackView {
             show_links: false,
             links: BTreeSet::new(),
             outputs: BTreeMap::new(),
+            cpu: BTreeMap::new(),
             locked: None,
             console_seen: None,
             drop_hover: None,
@@ -779,6 +787,7 @@ impl RackView {
             sc_menu: None,
             choice_menu: None,
             io: crate::io_panel::IoView::default(),
+            big: crate::big_meter::BigMeter::default(),
             edits: BTreeMap::new(),
             pattern_clip: None,
             drum_clip: None,
@@ -3072,6 +3081,9 @@ impl RackView {
         self.context_slot = None;
         self.pointer = pos;
         self.repaint = true;
+        if self.big_meter_press(pos, button) {
+            return;
+        }
         if self.macro_press(pos, out) || self.plugin_menu_press(pos) {
             return;
         }
@@ -4136,6 +4148,7 @@ impl RackView {
         canvas.pop_transform();
         canvas.pop_clip();
         self.paint_navigator(canvas);
+        self.paint_big_meter(canvas);
         if let Some(t) = self.tooltip() {
             paint::tooltip(canvas, &self.theme, self.pointer, &t);
         }
@@ -4195,6 +4208,9 @@ impl RackView {
             let plate = paint::plate_rect(d.height, d.folded) + d.offset();
             if let Some(o) = self.outputs.get(&d.key) {
                 paint::output_display(c, theme, plate, d.folded, &o.text, o.warn);
+            }
+            if let Some(pct) = self.cpu.get(&d.key) {
+                paint::cpu_readout(c, theme, plate, d.folded, *pct);
             }
             if self.locked.as_ref() == Some(&d.key) {
                 let at = if d.folded {

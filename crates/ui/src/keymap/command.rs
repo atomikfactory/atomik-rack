@@ -2230,6 +2230,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.theme", "Theme", G::View, C::Global)
         .arg(THEME_ARGS)
         .menu(),
+    cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
@@ -2246,6 +2247,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("view.toggle_cpu_meters", "CPU Meters", G::View, C::Global).menu(),
     cmd("view.toggle_editor", "Clip Editor", G::View, C::Global).menu(),
     cmd(
         "view.toggle_file_browser",

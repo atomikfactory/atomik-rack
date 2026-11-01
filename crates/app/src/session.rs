@@ -554,8 +554,15 @@ impl<B: AudioBackend> LiveSession<B> {
         config: &EngineConfig,
     ) -> Result<(Opened<B>, Option<String>), IoError> {
         // Never more workers than cores - 1: the audio thread keeps a core of its own.
-        let threads = atomik_audio_io::cap_workers_here(settings.workers);
-        if threads != settings.workers {
+        let requested = if settings.workers_auto {
+            atomik_audio_io::auto_workers_here()
+        } else {
+            settings.workers
+        };
+        let threads = atomik_audio_io::cap_workers_here(requested);
+        if settings.workers_auto {
+            log::info!("render workers: {threads} (automatic)");
+        } else if threads != settings.workers {
             log::info!(
                 "render workers: {} requested, {threads} started (one core stays free)",
                 settings.workers
@@ -1121,6 +1128,17 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         out: &mut [f32],
     ) -> Option<(usize, u64)> {
         self.running.as_ref()?.meters.device_values(id, out)
+    }
+
+    fn set_cpu_timing(&mut self, on: bool) {
+        if on {
+            atomik_engine::timing::install_clock(atomik_audio_io::monotonic_ns);
+        }
+        atomik_engine::timing::set_enabled(on);
+    }
+
+    fn read_device_cpu(&self, id: DeviceInstanceId) -> Option<atomik_engine::timing::CpuSample> {
+        self.running.as_ref()?.meters.device_cpu(id)
     }
 
     fn read_device_scope(

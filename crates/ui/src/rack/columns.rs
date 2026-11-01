@@ -128,19 +128,21 @@ impl RackView {
     /// Advances the auto-scroll of a drag to `now_seconds` (any monotonic clock): the rack
     /// scrolls by the edge speed times the time since the last tick (at most 50 ms), so a
     /// device can be dragged to a column or a place that is off screen. The first tick of a
-    /// drag only starts the clock. Returns whether the view scrolled.
+    /// drag only starts the clock. The tick also moves the Big Meter's ballistics. Returns
+    /// whether the view scrolled or the meter changed.
     pub fn tick(&mut self, now_seconds: f64) -> bool {
+        let meter = self.big_meter_tick(now_seconds);
         let v = self.autoscroll_velocity();
         if v == Vec2::ZERO {
             self.tick_clock = None;
-            return false;
+            return meter;
         }
         let Some(last) = self.tick_clock.replace(now_seconds) else {
-            return false;
+            return meter;
         };
         let before = self.scroll;
         self.scroll_by(v * (now_seconds - last).clamp(0.0, MAX_STEP));
-        self.scroll != before
+        self.scroll != before || meter
     }
 
     // ------------------------------------------------------------------ commands

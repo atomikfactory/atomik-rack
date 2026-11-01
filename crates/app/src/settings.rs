@@ -21,6 +21,7 @@
 //!     { "name": "Example Pads", "enabled": true, "role": "mapping" }
 //!   ],
 //!   "workers": 2,
+//!   "workers_auto": true,
 //!   "worker_linger_spins": 500000,
 //!   "metronome_gain": 0.5,
 //!   "input_device": null,
@@ -46,6 +47,8 @@
 //! `output_device: null` is the host's default output, `midi_inputs: []` is no MIDI input (every
 //! enabled port is open at once; an older file with one `midi_input` name loads as that input,
 //! enabled, and is saved in the new form),
+//! `workers_auto: true` starts one worker per physical core but the audio thread's own (at most 8)
+//! and ignores `workers`; a file with `workers` and no `workers_auto` keeps its count,
 //! `worker_linger_spins: 0` is the engine default. `input_device: null` is the device named like
 //! the output when the host lists it as an input, else no input (pick one). A positive
 //! `record_offset_frames` places recordings earlier (see [`crate::audio_record`]).
@@ -437,8 +440,11 @@ pub struct AudioSettings {
     pub buffer_frames: u32,
     /// The MIDI input ports: every enabled one is open at once; empty = no MIDI input.
     pub midi_inputs: Vec<MidiInputSetting>,
-    /// Extra engine worker threads (0 = single-threaded).
+    /// Extra engine worker threads (0 = single-threaded). Used while `workers_auto` is off.
     pub workers: u16,
+    /// Pick the worker count from the machine ([`atomik_audio_io::auto_workers`]) instead of
+    /// `workers`. On for new files; a file that sets `workers` and not this keeps its count.
+    pub workers_auto: bool,
     /// Worker linger in spins (0 = engine default).
     pub worker_linger_spins: u64,
     /// Metronome level, linear gain 0..=1 (default 0.5).
@@ -476,6 +482,7 @@ impl Default for AudioSettings {
             buffer_frames: 256,
             midi_inputs: Vec::new(),
             workers: 2,
+            workers_auto: true,
             worker_linger_spins: DEFAULT_LINGER_SPINS,
             metronome_gain: DEFAULT_METRONOME_GAIN,
             input_device: None,
@@ -601,7 +608,14 @@ impl AudioSettings {
                 .map(str::to_owned),
             _ => None,
         };
+        // A file from before the automatic count that chose a number keeps it.
+        let keeps_count = value
+            .as_object()
+            .is_some_and(|o| o.contains_key("workers") && !o.contains_key("workers_auto"));
         let mut settings = serde_json::from_value::<Self>(value).map_err(|e| e.to_string())?;
+        if keeps_count {
+            settings.workers_auto = false;
+        }
         if let Some(name) = legacy {
             settings.midi_inputs = vec![MidiInputSetting::enabled(name)];
         }
@@ -926,6 +940,18 @@ mod tests {
     }
 
     #[test]
+    fn the_worker_count_is_automatic_unless_an_old_file_chose_one() {
+        assert!(AudioSettings::default().workers_auto);
+        assert!(AudioSettings::from_json("{}").unwrap().workers_auto);
+        let old = AudioSettings::from_json(r#"{ "workers": 3 }"#).unwrap();
+        assert_eq!((old.workers, old.workers_auto), (3, false));
+        let new = AudioSettings::from_json(r#"{ "workers": 3, "workers_auto": true }"#).unwrap();
+        assert!(new.workers_auto);
+        let json = AudioSettings::default().to_json();
+        assert!(AudioSettings::from_json(&json).unwrap().workers_auto);
+    }
+
+    #[test]
     fn json_round_trips() {
         let s = AudioSettings {
             host: HostChoice::Asio,
@@ -933,6 +959,7 @@ mod tests {
             buffer_frames: 128,
             midi_inputs: vec![MidiInputSetting::enabled("Example Keyboard")],
             workers: 4,
+            workers_auto: false,
             worker_linger_spins: 100_000,
             metronome_gain: 0.25,
             input_device: Some("Example USB ASIO".into()),

@@ -73,6 +73,9 @@ pub(crate) struct Node {
     pub(crate) variable_latency: bool,
     /// Set when the device panicked in `process`: the node is silent and skipped from then on.
     pub(crate) faulted: bool,
+    /// Nanoseconds spent in `process` while the timing was on (see [`crate::timing`]). Written
+    /// only by the thread that runs the node, read by the audio thread between batches.
+    pub(crate) busy_ns: u64,
 }
 
 /// The cable routes of one stage of one device in one routing (a single-stage
@@ -198,6 +201,7 @@ impl Node {
             playback: [[0.0; BATCH]; 2],
             playback_on: false,
             faulted: false,
+            busy_ns: 0,
         }
     }
 }
@@ -294,7 +298,11 @@ impl Node {
             self.silence();
             return false;
         }
+        let started = crate::timing::start();
         let outcome = catch_unwind(AssertUnwindSafe(|| self.run_device(time, stage, last)));
+        if let Some(started) = started {
+            self.busy_ns = self.busy_ns.wrapping_add(crate::timing::elapsed(started));
+        }
         if outcome.is_err() {
             self.faulted = true;
             self.silence();

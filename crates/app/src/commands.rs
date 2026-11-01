@@ -172,6 +172,13 @@ pub enum AppCommand {
     /// View > Show Console Links: draw the channel to master cables on the back of
     /// the rack (a channel otherwise shows "Output: Master").
     ToggleConsoleLinks,
+    /// View > CPU Meters: the share of the audio time each device takes, on its name plate (a
+    /// container shows the sum of what is inside). The engine times its devices only while this
+    /// is on. Not saved: it starts off.
+    ToggleCpuMeters,
+    /// View > Big Meter: a large VU, PPM or peak meter with a hold marker and clip lamps for one
+    /// pair of the Audio I/O sockets, floating over the rack. Not saved: it starts hidden.
+    ToggleBigMeter,
     /// View > Tempo Lane: the tempo curve lane between the ruler and the track lanes in the
     /// arrangement (saved with the view state).
     ToggleTempoLane,
@@ -629,6 +636,8 @@ impl AppCommand {
             AppCommand::Quantize(_) => ("transport.input_quantize", None),
             AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
+            AppCommand::ToggleCpuMeters => ("view.toggle_cpu_meters", None),
+            AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
             AppCommand::ToggleInspector => ("view.toggle_inspector", None),
@@ -877,6 +886,8 @@ impl AppCommand {
             }
             ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
+            ("view.toggle_cpu_meters", None) => AppCommand::ToggleCpuMeters,
+            ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
             ("view.toggle_inspector", None) => AppCommand::ToggleInspector,
@@ -1330,6 +1341,10 @@ pub struct MenuState {
     pub console_devices: bool,
     /// The console links are drawn as cables.
     pub console_links: bool,
+    /// The devices' name plates show their CPU load.
+    pub cpu_meters: bool,
+    /// The Big Meter shows over the rack.
+    pub big_meter: bool,
     /// The arrangement shows the tempo lane.
     pub tempo_lane: bool,
     /// The arrangement shows the marker strip.
@@ -1969,6 +1984,8 @@ pub fn menus_with_lists(
                     AppCommand::ToggleConsoleLinks,
                     state.console_links,
                 ),
+                check("CPU Meters", AppCommand::ToggleCpuMeters, state.cpu_meters),
+                check("Big Meter", AppCommand::ToggleBigMeter, state.big_meter),
                 MenuEntry::Separator,
                 check("Tempo Lane", AppCommand::ToggleTempoLane, state.tempo_lane),
                 check(
@@ -2670,6 +2687,8 @@ mod tests {
             align_returns: true,
             console_devices: false,
             console_links: false,
+            cpu_meters: false,
+            big_meter: false,
             tempo_lane: false,
             marker_strip: false,
             inspector: false,
@@ -2764,6 +2783,8 @@ mod tests {
             AppCommand::ToggleSliceEditor,
             AppCommand::ToggleConsoleDevices,
             AppCommand::ToggleConsoleLinks,
+            AppCommand::ToggleCpuMeters,
+            AppCommand::ToggleBigMeter,
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
@@ -3412,6 +3433,8 @@ mod tests {
                 "Slice Editor",
                 "Show Console Devices in Rack",
                 "Show Console Links",
+                "CPU Meters",
+                "Big Meter",
                 "Tempo Lane",
                 "Marker Strip",
                 "Marker List",
@@ -3782,6 +3805,8 @@ mod tests {
                 align_returns: false,
                 console_devices: true,
                 console_links: false,
+                cpu_meters: false,
+                big_meter: false,
                 tempo_lane: false,
                 marker_strip: false,
                 inspector: false,

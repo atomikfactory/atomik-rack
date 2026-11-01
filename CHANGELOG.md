@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **CPU meters, an automatic worker count, a free buffer size and a Big Meter.** View > CPU
+  Meters shows on every device's name plate the share of the audio time that device takes (a
+  container shows the sum of what is inside it), so the heavy device is easy to find; the engine
+  times its devices only while the switch is on, costs about 70 ns per device per 64-frame batch
+  (half a percent of a callback for a hundred devices), and a bounce is bit-identical either way.
+  Audio settings now start the number of render workers from the machine (one per physical core
+  but the audio thread's own, at most 8; the Auto chip, the default for new settings, a file that
+  chose a number keeps it), the Buffer size section has a Type a size field for any value from 16
+  to 8192 frames, and its note keeps showing the buffer and the input and output latency of the
+  running stream. View > Big Meter floats a larger meter for one pair of the Audio I/O sockets
+  over the rack: VU (reaches 99 % of a steady tone in 300 ms, 0 VU at a reference level you can
+  move), PPM (falls 24 dB in 2.8 s) or PEAK, a hold marker that stays 5 s or until you click the
+  bar, and a clip lamp per channel that stays lit until you click it. Neither switch is saved.
 - **Stems, AIFF export and a dry clip bounce.** File > Export Stems as Audio Files writes one
   file per mixer strip (every channel, bus, FX return and the master) into a `Bounced <song>`
   folder, numbered in mixer order, with the same range and tail as Export Song, the same depth,

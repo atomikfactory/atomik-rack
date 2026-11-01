@@ -99,6 +99,10 @@ struct MeterSlot {
 pub struct Meters {
     slots: Box<[MeterSlot]>,
     devices: Box<[DeviceValueSlot]>,
+    /// Processing time per arena slot, see [`crate::timing`].
+    cpu: Box<[CpuSlot]>,
+    /// Audio time rendered while the timing was on, in nanoseconds.
+    cpu_budget_ns: AtomicU64,
     /// The scope taps of the arena devices that have one (`Device::scope_tap`). Only the control
     /// side (insert, remove, plan submit) and readers lock it; the audio thread never does.
     scopes: std::sync::Mutex<Vec<(crate::DeviceInstanceId, Arc<ScopeTap>)>>,
@@ -115,6 +119,13 @@ struct DeviceValueSlot {
     seq: AtomicU64,
     count: AtomicU32,
     values: [AtomicU32; MAX_METER_VALUES],
+}
+
+/// Published processing time of the device in one arena slot (`owner` = id + 1, 0 = empty).
+#[derive(Default)]
+struct CpuSlot {
+    owner: AtomicU64,
+    busy_ns: AtomicU64,
 }
 
 impl DeviceValueSlot {
@@ -160,6 +171,8 @@ impl Meters {
         Self {
             slots: (0..METER_CAPACITY).map(|_| MeterSlot::default()).collect(),
             devices: (0..arena_slots).map(|_| DeviceValueSlot::new()).collect(),
+            cpu: (0..arena_slots).map(|_| CpuSlot::default()).collect(),
+            cpu_budget_ns: AtomicU64::new(0),
             scopes: std::sync::Mutex::new(Vec::new()),
             midis: std::sync::Mutex::new(Vec::new()),
         }
@@ -274,6 +287,49 @@ impl Meters {
         }
         s.count.store(n as u32, Ordering::Release);
         s.seq.fetch_add(1, Ordering::Release);
+    }
+
+    /// The processing time of device `id` and the audio time rendered, as one sample for
+    /// [`crate::timing::load_percent`]. `None` for a device that has not published (the timing
+    /// is off, or the device is not in the arena). Lock-free.
+    pub fn device_cpu(&self, id: crate::DeviceInstanceId) -> Option<crate::timing::CpuSample> {
+        let owner = u64::from(id.0) + 1;
+        let slot = self
+            .cpu
+            .iter()
+            .find(|s| s.owner.load(Ordering::Acquire) == owner)?;
+        let budget_ns = self.cpu_budget_ns.load(Ordering::Acquire);
+        let busy_ns = slot.busy_ns.load(Ordering::Acquire);
+        (slot.owner.load(Ordering::Acquire) == owner)
+            .then_some(crate::timing::CpuSample { busy_ns, budget_ns })
+    }
+
+    /// RT: publishes the busy time of the device `id` in arena slot `slot`.
+    pub(crate) fn publish_cpu(&self, slot: usize, id: crate::DeviceInstanceId, busy_ns: u64) {
+        if let Some(s) = self.cpu.get(slot) {
+            s.owner.store(u64::from(id.0) + 1, Ordering::Release);
+            s.busy_ns.store(busy_ns, Ordering::Release);
+        }
+    }
+
+    /// RT: counts `ns` more audio time (after the slots of the batch were published).
+    pub(crate) fn add_cpu_budget(&self, ns: u64) {
+        self.cpu_budget_ns.fetch_add(ns, Ordering::Release);
+    }
+
+    /// RT: empties the processing-time slot `slot` (its device was removed).
+    pub(crate) fn clear_cpu(&self, slot: usize) {
+        if let Some(s) = self.cpu.get(slot) {
+            s.owner.store(0, Ordering::Release);
+            s.busy_ns.store(0, Ordering::Release);
+        }
+    }
+
+    /// RT: empties every processing-time slot (the arena was swapped).
+    pub(crate) fn clear_all_cpu(&self) {
+        for i in 0..self.cpu.len() {
+            self.clear_cpu(i);
+        }
     }
 
     /// RT: empties the device-value slot `slot` (its device was removed).

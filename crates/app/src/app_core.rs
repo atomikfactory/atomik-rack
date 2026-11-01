@@ -326,6 +326,8 @@ pub struct AppCore<S: EngineSink> {
     pdc_misaligned: (usize, u32),
     /// The Audio I/O panel's metered endpoints.
     io_meters: io_ops::IoMeters,
+    /// The per-device CPU readout (View > CPU Meters).
+    cpu: cpu_ops::CpuMeters,
     /// The CV cables shown with an activity indicator on the back.
     cv_taps: io_ops::CvTaps,
     /// How many meters the CV indicators may fill the bank up to (the engine's
@@ -489,6 +491,7 @@ impl<S: EngineSink> AppCore<S> {
             pdc_limit: false,
             pdc_misaligned: (0, 0),
             io_meters: io_ops::IoMeters::default(),
+            cpu: cpu_ops::CpuMeters::default(),
             cv_taps: io_ops::CvTaps::default(),
             meter_capacity: atomik_engine::METER_CAPACITY,
             audio: AudioState::new(),
@@ -1399,6 +1402,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_tuners();
         self.sync_io_host();
         self.feed_io_meters();
+        self.feed_cpu_loads();
         self.browser_frame();
     }
 
@@ -3134,6 +3138,9 @@ mod create_ops;
 
 #[path = "app_core_io.rs"]
 mod io_ops;
+
+#[path = "app_core_cpu.rs"]
+mod cpu_ops;
 
 #[path = "app_core_browser.rs"]
 mod browser;
