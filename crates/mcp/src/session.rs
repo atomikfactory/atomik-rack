@@ -1274,7 +1274,7 @@ fn window_def() -> Value {
             (
                 "window",
                 "string",
-                "main, rack or console: the window to act on.",
+                "main, rack, console or spectrum-eq: the window to act on.",
             ),
             ("width", "number", "resize: the logical width (200..8192)."),
             (
