@@ -1,8 +1,12 @@
 //! Derives the application icon files from the master logo.
 //!
 //! ```sh
-//! cargo run --release -p atomik-app --example make_icons -- assets/icon/atomik-rack.png assets/icon
+//! cargo run --release -p atomik-app --example make_icons -- assets/icon/atomik-rack.png assets/icon assets/logo
 //! ```
+//!
+//! The icons are composited on an opaque black background, so they read on any taskbar or dock.
+//! The optional third argument is a folder that gets `monogram.png` (transparent) and
+//! `monogram-black.png`, both 512 pixels.
 //!
 //! Reads the master PNG (8-bit RGBA), crops it to the square around the artwork (the pixels
 //! that are not transparent, plus a small margin, so the logo fills the icon) and writes, into
@@ -20,6 +24,8 @@ use std::path::{Path, PathBuf};
 const MARGIN: f64 = 0.04;
 /// Sizes of the `.ico` frames.
 const ICO_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
+/// Size of the logo files `monogram.png` and `monogram-black.png`.
+const LOGO_SIZE: u32 = 512;
 /// PNG files that are kept next to the `.ico` and `.icns`.
 const PNG_SIZES: [u32; 3] = [128, 256, 512];
 /// `.icns` entries that hold a PNG: type code and pixel size.
@@ -50,6 +56,7 @@ fn main() -> Result<(), String> {
         args.next()
             .ok_or("usage: make_icons <master.png> <out-dir>")?,
     );
+    let logo_dir = args.next().map(PathBuf::from);
     let (width, height, pixels) = read_png(&input)?;
     let square = crop_to_artwork(width, height, &pixels)?;
     println!(
@@ -57,6 +64,18 @@ fn main() -> Result<(), String> {
         square.size
     );
 
+    // The logo files: the artwork on transparent and on an opaque black background.
+    if let Some(dir) = logo_dir {
+        let logo = scale(&square, LOGO_SIZE);
+        write(&dir.join("monogram.png"), &encode_png(&logo, LOGO_SIZE)?)?;
+        let black = on_black(&logo);
+        write(
+            &dir.join("monogram-black.png"),
+            &encode_png(&black, LOGO_SIZE)?,
+        )?;
+    }
+
+    // The icons sit on black so they read on any taskbar or dock.
     let mut frames: std::collections::BTreeMap<u32, Vec<u8>> = std::collections::BTreeMap::new();
     let mut images: std::collections::BTreeMap<u32, Image> = std::collections::BTreeMap::new();
     for size in ICO_SIZES
@@ -66,7 +85,7 @@ fn main() -> Result<(), String> {
         .chain(PNG_SIZES)
     {
         if let std::collections::btree_map::Entry::Vacant(slot) = frames.entry(size) {
-            let image = scale(&square, size);
+            let image = on_black(&scale(&square, size));
             slot.insert(encode_png(&image, size)?);
             images.insert(size, image);
         }
@@ -199,6 +218,22 @@ fn scale(src: &Image, size: u32) -> Image {
         }
     }
     Image { size, rgba: out }
+}
+
+/// The picture composited over opaque black (straight-alpha output, alpha 255 everywhere).
+fn on_black(src: &Image) -> Image {
+    let mut rgba = src.rgba.clone();
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[3]);
+        for c in &mut px[..3] {
+            *c = ((u32::from(*c) * a + 127) / 255) as u8;
+        }
+        px[3] = 255;
+    }
+    Image {
+        size: src.size,
+        rgba,
+    }
 }
 
 fn encode_png(image: &Image, size: u32) -> Result<Vec<u8>, String> {

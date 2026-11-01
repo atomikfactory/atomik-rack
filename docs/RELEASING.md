@@ -67,10 +67,10 @@ The `.deb` puts the real files in `/opt/atomik-rack` and symlinks `/usr/bin/atom
 The logo is the owner's own artwork, kept unchanged as `assets/icon/atomik-rack.png` (the master, 1254 x 1254 RGBA). Everything else in `assets/icon/` is derived from it by the `make_icons` example, which crops the master to the square around the artwork (4 % margin) and scales it with area averaging on premultiplied colour (the artwork is never redrawn or recoloured):
 
 ```sh
-cargo run --release -p atomik-app --example make_icons -- assets/icon/atomik-rack.png assets/icon
+cargo run --release -p atomik-app --example make_icons -- assets/icon/atomik-rack.png assets/icon assets/logo
 ```
 
-It writes `atomik-rack-128.png`, `-256.png` and `-512.png`, `atomik-rack.ico` (16, 24, 32, 48, 64 and 128 pixel bitmap frames and a 256 pixel PNG frame) and `atomik-rack.icns` (PNG entries from 16 to 512 pixels, the 2x sizes included). Run it and commit the result when the master changes. Where each platform gets its icon:
+The icons are composited on an opaque black background, so they read on any taskbar or dock. The optional third argument writes `assets/logo/monogram.png` (transparent, the About box draws it) and `assets/logo/monogram-black.png`, both 512 pixels. It writes `atomik-rack-128.png`, `-256.png` and `-512.png`, `atomik-rack.ico` (16, 24, 32, 48, 64 and 128 pixel bitmap frames and a 256 pixel PNG frame) and `atomik-rack.icns` (PNG entries from 16 to 512 pixels, the 2x sizes included). Run it and commit the result when the master changes. Where each platform gets its icon:
 
 | Where | How |
 | --- | --- |
