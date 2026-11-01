@@ -13,6 +13,9 @@ use vello::kurbo::{Point, Rect};
 /// Pointer travel (logical pixels) after which a press on a file starts a file drag.
 const DRAG_THRESHOLD: f64 = 6.0;
 
+/// The most folders the path pop-up lists.
+const MAX_POPUP_FOLDERS: usize = 24;
+
 fn emit(out: &mut Vec<UiAction>, action: BrowseAction) {
     out.push(UiAction::Browse(action));
 }
@@ -294,11 +297,54 @@ impl FileBrowserView {
         if self.entry.is_some() {
             return;
         }
-        if let Some(Place::Folder(path)) = &self.location {
-            let bar = lay::path_segments(path, lay.path);
+        if lay.back_btn.contains(pos) {
+            self.step_history(true, out);
+        } else if lay.fwd_btn.contains(pos) {
+            self.step_history(false, out);
+        } else if let Some(Place::Folder(path)) = &self.location {
+            let bar = lay::path_segments(path, lay.path_text);
             if let Some(seg) = bar.segments.iter().find(|s| s.rect.contains(pos)) {
                 emit(out, BrowseAction::Show(Place::Folder(seg.path.clone())));
+            } else if bar.ellipsis && bar.segments.first().is_some_and(|s| pos.x < s.rect.x0) {
+                // The shortened start of the path: offer every folder above.
+                self.open_path_menu(pos);
             }
+        }
+    }
+
+    /// Goes one place back or forward in the history (the answer to the `Show` this emits
+    /// is not a new branch).
+    fn step_history(&mut self, back: bool, out: &mut Vec<UiAction>) {
+        let target = if back {
+            self.history_at.checked_sub(1)
+        } else {
+            (self.history_at + 1 < self.history.len()).then_some(self.history_at + 1)
+        };
+        if let Some(at) = target {
+            self.history_jump = Some(at);
+            emit(out, BrowseAction::Show(self.history[at].clone()));
+        }
+    }
+
+    /// The path pop-up: the folder shown and every folder above it, nearest first.
+    fn open_path_menu(&mut self, at: Point) {
+        let Some(Place::Folder(path)) = &self.location else {
+            return;
+        };
+        let items: Vec<MenuItem> = path
+            .ancestors()
+            .take(MAX_POPUP_FOLDERS)
+            .filter(|a| !a.as_os_str().is_empty())
+            .map(|a| {
+                let label = a.file_name().map_or_else(
+                    || a.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                MenuItem::new(&label, Act::Go(a.to_path_buf()))
+            })
+            .collect();
+        if !items.is_empty() {
+            self.menu = Some(Menu::new(items, Vec::new(), at, self.bounds));
         }
     }
 
@@ -490,6 +536,9 @@ impl FileBrowserView {
         } else if let Some(vp) = self.list_pos_at(pos, &lay) {
             self.pane = Pane::List;
             self.open_list_menu(vp, pos);
+        } else if lay.path.contains(pos) {
+            self.pane = Pane::List;
+            self.open_path_menu(pos);
         }
     }
 
@@ -500,6 +549,11 @@ impl FileBrowserView {
                 MenuItem::new("Rename...", Act::RenameTag(name.clone())),
                 MenuItem::new("Delete", Act::DeleteTag(name.clone())),
             ],
+            tree::Key::List(name) => vec![
+                MenuItem::new("Rename...", Act::RenameList(name.clone())),
+                MenuItem::new("Delete", Act::DeleteList(name.clone())),
+            ],
+            tree::Key::Favorites => vec![MenuItem::new("New list...", Act::NewList)],
             tree::Key::Folder { path, .. } => {
                 if self.places.bookmarks.contains(path) {
                     vec![MenuItem::new(
@@ -583,6 +637,39 @@ impl FileBrowserView {
             enabled: have,
             ..MenuItem::new("Toggle favourite", Act::ToggleFavorite)
         });
+        items.push(MenuItem::separator());
+        items.push(MenuItem {
+            enabled: have,
+            ..MenuItem::new("Edit Author...", Act::EditAuthor)
+        });
+        items.push(MenuItem {
+            enabled: have,
+            ..MenuItem::new("Edit Categories...", Act::EditCategories)
+        });
+        items.push(MenuItem::separator());
+        for (name, _) in &self.places.lists {
+            items.push(MenuItem {
+                enabled: have,
+                ..MenuItem::new(&format!("Add to {name}"), Act::AddToList(name.clone()))
+            });
+        }
+        items.push(MenuItem {
+            enabled: have,
+            ..MenuItem::new("New list...", Act::NewList)
+        });
+        if let Some(Place::List(name)) = &self.location {
+            items.push(MenuItem {
+                enabled: have,
+                ..MenuItem::new(
+                    &format!("Remove from {name}"),
+                    Act::RemoveFromList(name.clone()),
+                )
+            });
+        }
+        if kind != FileKind::Device {
+            items.push(MenuItem::separator());
+            items.push(MenuItem::new("Show in Folder", Act::Reveal(path.clone())));
+        }
         if let Some(folder) = folder {
             items.push(MenuItem::separator());
             if self.places.bookmarks.contains(&folder) {
@@ -672,7 +759,45 @@ impl FileBrowserView {
             Some(Act::Load(p)) => emit(out, BrowseAction::Load(p)),
             Some(Act::OpenProject(p)) => emit(out, BrowseAction::OpenProject(p)),
             Some(Act::RenameItem(p)) => self.begin_rename_item(p),
+            Some(Act::Go(p)) => emit(out, BrowseAction::Show(Place::Folder(p))),
+            Some(Act::Reveal(p)) => emit(out, BrowseAction::Reveal(p)),
+            Some(Act::EditAuthor) => {
+                let initial = self.first_target_row(&targets).map(|r| r.author.clone());
+                self.begin_entry(EntryKind::Author, &initial.unwrap_or_default(), targets);
+            }
+            Some(Act::EditCategories) => {
+                let initial = self
+                    .first_target_row(&targets)
+                    .map(|r| r.categories.join(", "));
+                self.begin_entry(EntryKind::Categories, &initial.unwrap_or_default(), targets);
+            }
+            Some(Act::AddToList(list)) => emit(
+                out,
+                BrowseAction::AddToList {
+                    paths: targets,
+                    list,
+                },
+            ),
+            Some(Act::RemoveFromList(list)) => emit(
+                out,
+                BrowseAction::RemoveFromList {
+                    paths: targets,
+                    list,
+                },
+            ),
+            Some(Act::NewList) => self.begin_entry(EntryKind::NewList, "", targets),
+            Some(Act::RenameList(l)) => {
+                let initial = l.clone();
+                self.begin_entry(EntryKind::RenameList(l), &initial, Vec::new());
+            }
+            Some(Act::DeleteList(l)) => emit(out, BrowseAction::DeleteList(l)),
         }
+    }
+
+    /// The row of the first of `targets` (the one an entry is prefilled from).
+    fn first_target_row(&self, targets: &[PathBuf]) -> Option<&FileRow> {
+        let first = targets.first()?;
+        self.rows.iter().find(|r| &r.path == first)
     }
 
     /// Starts the rename entry of a library item with its file stem selected.
@@ -726,10 +851,47 @@ impl FileBrowserView {
                     return;
                 };
                 let text = entry.field.text().trim().to_string();
+                // An empty author or category list clears it; every other entry needs a name.
+                match entry.kind {
+                    EntryKind::Author if !entry.targets.is_empty() => {
+                        emit(
+                            out,
+                            BrowseAction::SetAuthor {
+                                paths: entry.targets,
+                                author: text,
+                            },
+                        );
+                        return;
+                    }
+                    EntryKind::Categories if !entry.targets.is_empty() => {
+                        emit(
+                            out,
+                            BrowseAction::SetCategories {
+                                paths: entry.targets,
+                                categories: text,
+                            },
+                        );
+                        return;
+                    }
+                    _ => {}
+                }
                 if text.is_empty() {
                     return;
                 }
                 match entry.kind {
+                    EntryKind::NewList if entry.targets.is_empty() => {
+                        emit(out, BrowseAction::NewList(text));
+                    }
+                    EntryKind::NewList => emit(
+                        out,
+                        BrowseAction::AddToList {
+                            paths: entry.targets,
+                            list: text,
+                        },
+                    ),
+                    EntryKind::RenameList(from) if from != text => {
+                        emit(out, BrowseAction::RenameList { from, to: text });
+                    }
                     EntryKind::NewTag if !entry.targets.is_empty() => emit(
                         out,
                         BrowseAction::AddTag {

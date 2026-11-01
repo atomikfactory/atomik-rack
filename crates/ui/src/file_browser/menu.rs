@@ -41,6 +41,24 @@ pub(super) enum Act {
     OpenProject(PathBuf),
     /// Start the rename entry of a library item.
     RenameItem(PathBuf),
+    /// Show a folder (a choice of the path pop-up).
+    Go(PathBuf),
+    /// Show a file or folder in the system file manager.
+    Reveal(PathBuf),
+    /// Start the author entry for the targets.
+    EditAuthor,
+    /// Start the categories entry for the targets.
+    EditCategories,
+    /// Put the targets into the favourite list of this name.
+    AddToList(String),
+    /// Take the targets out of the favourite list of this name.
+    RemoveFromList(String),
+    /// Start the entry that makes a favourite list (with the targets in it).
+    NewList,
+    /// Start the rename entry of a favourite list.
+    RenameList(String),
+    /// Delete a favourite list.
+    DeleteList(String),
 }
 
 /// One row of a menu.

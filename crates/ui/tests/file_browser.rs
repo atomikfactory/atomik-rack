@@ -52,6 +52,8 @@ fn audio(name: &str) -> FileRow {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -65,6 +67,8 @@ fn folder(name: &str) -> FileRow {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -98,6 +102,7 @@ fn places() -> PlacesData {
     PlacesData {
         favorites: 3,
         tags: vec![("808".into(), 4), ("snare".into(), 2)],
+        lists: Vec::new(),
         bookmarks: vec![PathBuf::from("/music/drums")],
         roots: vec![PathBuf::from("/"), PathBuf::from("/home/me")],
     }
@@ -475,12 +480,13 @@ fn path_bar_segments_navigate() {
     v.set_location(Place::Folder(PathBuf::from("/music/drums/kicks")));
     let mut dl = paint(&mut v);
     assert!(dl.texts().contains(&"kicks"));
-    // Segments: "/", "music", "drums", "kicks"; "music" starts after "/" (8+14 wide) + sep.
+    // Segments: "/", "music", "drums", "kicks"; "music" starts after the two buttons (40), the
+    // padding (8), "/" (14 wide) and a separator.
     let y = 277.0;
     let acts = run(
         &mut v,
         &[
-            down(Point::new(8.0 + 12.0 + 12.0 + 6.0, y)),
+            down(Point::new(40.0 + 8.0 + 12.0 + 12.0 + 6.0, y)),
             up(Point::new(50.0, y)),
         ],
     );
@@ -1090,8 +1096,12 @@ fn folder_rows_offer_bookmarking() {
     let mut v = menu_view();
     let at = row_pt(0);
     run(&mut v, &[right(at)]);
-    // Tags are disabled for folders; items: 808, snare, sep, New tag, Toggle, sep, Bookmark.
-    let bm = Point::new(at.x + 20.0, at.y + 4.0 + 44.0 + 8.0 + 44.0 + 8.0 + 11.0);
+    // Tags are disabled for folders; items: 808, snare, sep, New tag, Toggle, sep, Author,
+    // Categories, sep, New list, sep, Show in Folder, sep, Bookmark.
+    let bm = Point::new(
+        at.x + 20.0,
+        at.y + 4.0 + 44.0 + 8.0 + 44.0 + 8.0 + 44.0 + 8.0 + 22.0 + 8.0 + 22.0 + 8.0 + 11.0,
+    );
     assert_eq!(
         run(&mut v, &[down(bm)]),
         vec![BrowseAction::AddPlace(p("drums"))]
@@ -1376,6 +1386,8 @@ fn device_row(type_id: &str, name: &str, category: &str) -> FileRow {
         }),
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -1915,6 +1927,8 @@ fn take_info_requests_polls_visible_rows_without_an_event() {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     };
     v.set_rows(vec![row]);
     assert_eq!(
@@ -1940,4 +1954,362 @@ fn ctrl_a_in_the_list_selects_every_file() {
         [BrowseAction::ToggleFavorite(paths)] => assert_eq!(paths.len(), files),
         other => panic!("expected one ToggleFavorite, got {other:?}"),
     }
+}
+
+// ----- history, path pop-up, Show in Folder, info and favourite lists -----------------------------
+
+fn at_place(v: &mut FileBrowserView, name: &str) {
+    v.set_location(Place::Folder(PathBuf::from(format!("/music/{name}"))));
+}
+
+fn folder_place(name: &str) -> Place {
+    Place::Folder(PathBuf::from(format!("/music/{name}")))
+}
+
+const BACK: Point = Point::new(12.0, 277.0);
+const FORWARD: Point = Point::new(31.0, 277.0);
+
+#[test]
+fn back_and_forward_walk_the_places_that_were_shown() {
+    let mut v = settled(view());
+    for name in ["a", "b", "c"] {
+        at_place(&mut v, name);
+    }
+    assert_eq!(v.back_place(), Some(&folder_place("b")));
+    assert_eq!(v.forward_place(), None);
+    assert!(run(&mut v, &[down(FORWARD), up(FORWARD)]).is_empty());
+    // Back asks for the place before; the answer is not a new branch.
+    assert_eq!(
+        run(&mut v, &[down(BACK), up(BACK)]),
+        vec![BrowseAction::Show(folder_place("b"))]
+    );
+    at_place(&mut v, "b");
+    assert_eq!(v.back_place(), Some(&folder_place("a")));
+    assert_eq!(v.forward_place(), Some(&folder_place("c")));
+    assert_eq!(
+        run(&mut v, &[down(FORWARD), up(FORWARD)]),
+        vec![BrowseAction::Show(folder_place("c"))]
+    );
+    at_place(&mut v, "c");
+    assert_eq!(v.forward_place(), None);
+    assert_eq!(v.back_place(), Some(&folder_place("b")));
+}
+
+#[test]
+fn going_somewhere_new_after_stepping_back_drops_the_places_ahead() {
+    let mut v = settled(view());
+    for name in ["a", "b", "c"] {
+        at_place(&mut v, name);
+    }
+    run(&mut v, &[down(BACK)]);
+    at_place(&mut v, "b");
+    at_place(&mut v, "z");
+    assert_eq!(v.forward_place(), None, "c is gone");
+    assert_eq!(v.back_place(), Some(&folder_place("b")));
+    // Showing the same place again (a refresh) adds nothing.
+    at_place(&mut v, "z");
+    assert_eq!(v.back_place(), Some(&folder_place("b")));
+}
+
+#[test]
+fn history_covers_every_kind_of_place_and_is_bounded() {
+    let mut v = settled(view());
+    v.set_location(Place::Favorites);
+    v.set_location(Place::Tag("808".into()));
+    v.set_location(Place::List("Drums".into()));
+    v.set_location(Place::Library(LibrarySection::Clips));
+    assert_eq!(v.back_place(), Some(&Place::List("Drums".into())));
+    for i in 0..200 {
+        at_place(&mut v, &format!("n{i}"));
+    }
+    let mut steps = 0;
+    while let Some(place) = v.back_place().cloned() {
+        let acts = run(&mut v, &[down(BACK), up(BACK)]);
+        assert_eq!(acts, vec![BrowseAction::Show(place.clone())]);
+        v.set_location(place);
+        steps += 1;
+        assert!(steps < 100, "the history must be bounded");
+    }
+    assert_eq!(steps, 63, "64 places are remembered");
+}
+
+#[test]
+fn the_buttons_have_tooltips_and_paint_dim_without_somewhere_to_go() {
+    let mut v = settled(view());
+    assert!(paint(&mut v).texts().contains(&"<"));
+    assert!(v.help_at(BACK).is_some());
+    assert!(v.help_at(FORWARD).is_some());
+    at_place(&mut v, "a");
+    at_place(&mut v, "b");
+    let back = v.help_at(BACK).unwrap();
+    assert!(back.text.contains("previous"), "{}", back.text);
+}
+
+#[test]
+fn right_click_on_the_path_bar_offers_every_folder_above() {
+    let mut v = settled(view());
+    at_place(&mut v, "drums/kicks");
+    let at = Point::new(120.0, 277.0);
+    assert!(run(&mut v, &[right(at)]).is_empty());
+    let texts = paint(&mut v);
+    for label in ["kicks", "drums", "music"] {
+        assert!(texts.texts().contains(&label), "{label}");
+    }
+    // Nearest first: kicks, drums, music, root. Choosing "drums" shows that folder.
+    assert_eq!(
+        run(&mut v, &[down(menu_item(at, 1))]),
+        vec![BrowseAction::Show(folder_place("drums"))]
+    );
+    // Escape closes it without a request.
+    run(&mut v, &[right(at)]);
+    assert!(run(&mut v, &[key(Key::Escape)]).is_empty());
+    // Away from a folder there is nothing to offer.
+    v.set_location(Place::Favorites);
+    assert!(run(&mut v, &[right(at)]).is_empty());
+    assert!(!paint(&mut v).texts().contains(&"music"));
+}
+
+/// The centre of the item that follows `before` pixels of earlier items and separators.
+fn menu_after(at: Point, before: f64) -> Point {
+    Point::new(at.x + 20.0, at.y + 4.0 + before + 11.0)
+}
+
+/// Height of the row menu of `menu_view` (two tags) down to "Edit Author...".
+const TO_AUTHOR: f64 = 44.0 + 8.0 + 44.0 + 8.0;
+
+#[test]
+fn show_in_folder_names_the_row_that_was_clicked() {
+    let mut v = menu_view();
+    let at = row_pt(1);
+    run(&mut v, &[right(at)]);
+    // 808, snare, sep, New tag, Toggle, sep, Author, Categories, sep, New list, sep, Show.
+    let show = menu_after(at, TO_AUTHOR + 44.0 + 8.0 + 22.0 + 8.0);
+    assert_eq!(
+        run(&mut v, &[down(show)]),
+        vec![BrowseAction::Reveal(p("hat.wav"))]
+    );
+    // A folder row can be shown too; a device row cannot.
+    run(&mut v, &[right(row_pt(0))]);
+    assert!(paint(&mut v).texts().contains(&"Show in Folder"));
+    v.set_rows(vec![FileRow {
+        kind: FileKind::Device,
+        path: device_uri("atomik.delay"),
+        ..audio("Delay")
+    }]);
+    run(&mut v, &[key(Key::Escape), right(row_pt(0))]);
+    assert!(!paint(&mut v).texts().contains(&"Show in Folder"));
+}
+
+fn hat_meta(v: &mut FileBrowserView) {
+    v.patch_meta(&[(
+        p("hat.wav"),
+        "Old Name".to_string(),
+        vec!["Drums".to_string(), "Kits".to_string()],
+    )]);
+}
+
+#[test]
+fn edit_author_prefills_replaces_and_clears() {
+    let mut v = menu_view();
+    hat_meta(&mut v);
+    let at = row_pt(1);
+    run(&mut v, &[right(at), down(menu_after(at, TO_AUTHOR))]);
+    assert!(v.is_text_owner());
+    assert!(paint(&mut v).texts().contains(&"Author"));
+    assert!(paint(&mut v).texts().contains(&"Old Name"), "prefilled");
+    typed(&mut v, "Ada");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::SetAuthor {
+            paths: vec![p("hat.wav")],
+            author: "Ada".into()
+        }]
+    );
+    // Emptying the field and confirming clears the author.
+    run(&mut v, &[right(at), down(menu_after(at, TO_AUTHOR))]);
+    run(&mut v, &[key(Key::Backspace)]);
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::SetAuthor {
+            paths: vec![p("hat.wav")],
+            author: String::new()
+        }]
+    );
+    // Escape changes nothing.
+    run(&mut v, &[right(at), down(menu_after(at, TO_AUTHOR))]);
+    assert!(run(&mut v, &[key(Key::Escape)]).is_empty());
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn edit_categories_prefills_the_list_and_sends_the_text() {
+    let mut v = menu_view();
+    hat_meta(&mut v);
+    let at = row_pt(1);
+    let item = menu_after(at, TO_AUTHOR + 22.0);
+    run(&mut v, &[right(at), down(item)]);
+    assert!(paint(&mut v).texts().contains(&"Drums, Kits"));
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::SetCategories {
+            paths: vec![p("hat.wav")],
+            categories: "Drums, Kits".into()
+        }]
+    );
+    run(&mut v, &[right(at), down(item)]);
+    typed(&mut v, "Percussion");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::SetCategories {
+            paths: vec![p("hat.wav")],
+            categories: "Percussion".into()
+        }]
+    );
+}
+
+#[test]
+fn a_folder_row_has_no_info_to_edit() {
+    let mut v = menu_view();
+    let at = row_pt(0);
+    run(&mut v, &[right(at), down(menu_after(at, TO_AUTHOR))]);
+    // The item is disabled for folders: choosing it opens no entry.
+    assert!(!v.is_text_owner());
+}
+
+fn list_view() -> FileBrowserView {
+    let mut v = menu_view();
+    v.set_places(PlacesData {
+        lists: vec![("Drums".into(), 2), ("Pads".into(), 0)],
+        ..places()
+    });
+    v
+}
+
+#[test]
+fn favourite_lists_are_tree_places_below_favourites() {
+    let mut v = list_view();
+    // 0 Favourites, 1 Drums, 2 Pads, 3 Tags, ...
+    assert_eq!(
+        run(&mut v, &[down(tree_pt(1, 60.0)), up(tree_pt(1, 60.0))]),
+        vec![BrowseAction::Show(Place::List("Drums".into()))]
+    );
+    v.set_location(Place::List("Drums".into()));
+    assert!(paint(&mut v).texts().contains(&"Drums"));
+    let texts = paint(&mut v);
+    assert!(texts.texts().contains(&"Pads") && texts.texts().contains(&"Tags"));
+}
+
+#[test]
+fn a_list_menu_renames_and_deletes() {
+    let mut v = list_view();
+    let at = tree_pt(1, 60.0);
+    run(&mut v, &[right(at)]);
+    assert_eq!(
+        run(&mut v, &[down(menu_item(at, 1))]),
+        vec![BrowseAction::DeleteList("Drums".into())]
+    );
+    run(&mut v, &[right(at), down(menu_item(at, 0))]);
+    assert!(v.is_text_owner());
+    assert!(paint(&mut v).texts().contains(&"Rename"));
+    typed(&mut v, "Kits");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::RenameList {
+            from: "Drums".into(),
+            to: "Kits".into()
+        }]
+    );
+    // The same name changes nothing.
+    run(&mut v, &[right(at), down(menu_item(at, 0))]);
+    assert!(run(&mut v, &[key(Key::Enter)]).is_empty());
+}
+
+#[test]
+fn the_favourites_entry_makes_a_new_list() {
+    let mut v = list_view();
+    let at = tree_pt(0, 60.0);
+    run(&mut v, &[right(at), down(menu_item(at, 0))]);
+    assert!(v.is_text_owner());
+    assert!(paint(&mut v).texts().contains(&"New list"));
+    typed(&mut v, "Pads2");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::NewList("Pads2".into())]
+    );
+    // An empty name makes nothing.
+    run(&mut v, &[right(at), down(menu_item(at, 0))]);
+    assert!(run(&mut v, &[key(Key::Enter)]).is_empty());
+}
+
+#[test]
+fn row_menu_puts_files_in_lists_and_takes_them_out() {
+    let mut v = list_view();
+    let at = row_pt(1);
+    // After Categories: sep, then "Add to Drums", "Add to Pads", "New list...".
+    let add = TO_AUTHOR + 44.0 + 8.0;
+    assert_eq!(
+        run(&mut v, &[right(at), down(menu_after(at, add))]),
+        vec![BrowseAction::AddToList {
+            paths: vec![p("hat.wav")],
+            list: "Drums".into()
+        }]
+    );
+    run(&mut v, &[right(at), down(menu_after(at, add + 44.0))]);
+    assert!(v.is_text_owner());
+    typed(&mut v, "Fresh");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::AddToList {
+            paths: vec![p("hat.wav")],
+            list: "Fresh".into()
+        }]
+    );
+    // Inside a list the menu can take the file out of it.
+    v.set_location(Place::List("Drums".into()));
+    run(&mut v, &[right(at)]);
+    assert!(paint(&mut v).texts().contains(&"Remove from Drums"));
+    // The longer menu no longer fits below the row: it is moved up to end at the panel bottom.
+    let height = 274.0 + 8.0;
+    let top = at.y.min(600.0 - height);
+    let remove = Point::new(at.x + 20.0, top + 4.0 + add + 66.0 + 11.0);
+    assert_eq!(
+        run(&mut v, &[down(remove)]),
+        vec![BrowseAction::RemoveFromList {
+            paths: vec![p("hat.wav")],
+            list: "Drums".into()
+        }]
+    );
+}
+
+#[test]
+fn the_search_field_filters_with_kind_in_author_and_cat() {
+    let mut v = settled(view());
+    hat_meta(&mut v);
+    v.focus_search();
+    let shown = |v: &mut FileBrowserView| -> Vec<String> {
+        let texts = paint(v);
+        ["drums", "hat.wav", "kick 1.wav", "snare.wav"]
+            .iter()
+            .filter(|n| texts.texts().contains(n))
+            .map(|n| (*n).to_string())
+            .collect()
+    };
+    typed(&mut v, "kind:folder");
+    assert_eq!(shown(&mut v), ["drums"]);
+    run(&mut v, &[key(Key::Escape)]);
+    v.focus_search();
+    typed(&mut v, "author:old");
+    assert_eq!(shown(&mut v), ["hat.wav"]);
+    run(&mut v, &[key(Key::Escape)]);
+    v.focus_search();
+    typed(&mut v, "cat:kits kind:audio");
+    assert_eq!(shown(&mut v), ["hat.wav"]);
+    run(&mut v, &[key(Key::Escape)]);
+    v.focus_search();
+    typed(&mut v, "in:lib kind:audio hat");
+    assert_eq!(shown(&mut v), ["hat.wav"]);
+    run(&mut v, &[key(Key::Escape)]);
+    v.focus_search();
+    typed(&mut v, "in:nowhere");
+    assert!(shown(&mut v).is_empty());
 }

@@ -35,6 +35,8 @@ fn rows() -> Vec<FileRow> {
                 } else {
                     Vec::new()
                 },
+                author: String::new(),
+                categories: Vec::new(),
             }
         })
         .collect()
@@ -49,6 +51,8 @@ fn matching_50k_rows_with_a_two_word_query_fits_the_budget() {
         Query::parse("kick snare"),
         Query::parse("sample_4 #808"),
         Query::parse("café fav"),
+        Query::parse("kind:wav in:samples sample_4"),
+        Query::parse("author:nobody"),
     ];
     for query in &queries {
         // Warm up, then take the best of several runs to ignore scheduler noise.
@@ -60,7 +64,10 @@ fn matching_50k_rows_with_a_two_word_query_fits_the_budget() {
             best = best.min(start.elapsed().as_secs_f64() * 1000.0);
         }
         println!("{query:?}: {hits} hits, best {best:.3} ms");
-        assert!(hits > 0);
+        assert!(
+            hits > 0 || *query == queries[4],
+            "only the miss query may find nothing"
+        );
         assert!(best <= BUDGET_MS, "{best:.3} ms > {BUDGET_MS} ms");
     }
 }

@@ -1000,3 +1000,50 @@ fn the_platform_tick_keeps_running_while_the_core_is_busy() {
     let s = shell();
     assert_eq!(s.is_busy(), s.core().is_busy());
 }
+
+// ------------------------------------------------------------------ show in folder
+
+#[test]
+fn show_in_folder_becomes_a_request_for_the_platform() {
+    let mut s = shown();
+    s.take_requests();
+    let file = PathBuf::from("/music/kick.wav");
+    s.pane_actions(&[UiAction::Browse(atomik_ui::BrowseAction::Reveal(
+        file.clone(),
+    ))]);
+    assert_eq!(s.take_requests(), vec![ShellRequest::Reveal(file)]);
+}
+
+#[test]
+fn the_panels_path_bar_goes_back_and_forward_through_the_places_shown() {
+    let mut s = shown();
+    let fb = column(&s);
+    // Three places, shown by the core as the panel asks for them.
+    for place in [Place::Favorites, Place::Tag("808".into()), Place::Favorites] {
+        s.core_mut().file_browser_mut().set_location(place);
+    }
+    s.core_mut()
+        .file_browser_mut()
+        .set_location(Place::Tag("kick".into()));
+    // The back button is at the left of the path bar, below the tree: find it by its tooltip.
+    let view = s.core().file_browser();
+    assert_eq!(view.back_place(), Some(&Place::Favorites));
+    assert_eq!(view.forward_place(), None);
+    let probe = (0..fb.height() as usize)
+        .map(|dy| Point::new(fb.x0 + 12.0, fb.y0 + dy as f64))
+        .find(|p| {
+            s.core()
+                .file_browser()
+                .help_at(*p)
+                .is_some_and(|h| h.text.contains("previous"))
+        })
+        .expect("the back button");
+    s.take_requests();
+    s.handle(&down(probe));
+    s.handle(&up(probe));
+    // The core showed the place the button asked for, and the history kept the rest.
+    let view = s.core().file_browser();
+    assert_eq!(view.location(), Some(&Place::Favorites));
+    assert_eq!(view.forward_place(), Some(&Place::Tag("kick".into())));
+    assert_eq!(view.back_place(), Some(&Place::Tag("808".into())));
+}

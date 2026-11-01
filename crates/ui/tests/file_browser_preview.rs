@@ -27,6 +27,8 @@ fn row(name: &str, kind: FileKind, tags: &[&str], favorite: bool, info: bool) ->
         item: None,
         favorite,
         tags: tags.iter().map(|t| (*t).to_string()).collect(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -39,6 +41,7 @@ fn view(width: f64) -> FileBrowserView {
     v.set_places(PlacesData {
         favorites: 3,
         tags: vec![("808".into(), 4), ("snare".into(), 2), ("loop".into(), 9)],
+        lists: Vec::new(),
         bookmarks: vec![PathBuf::from("/music/drums")],
         roots: vec![PathBuf::from("C:\\"), PathBuf::from("/home/me")],
     });

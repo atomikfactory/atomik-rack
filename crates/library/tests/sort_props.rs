@@ -33,6 +33,8 @@ fn row_strategy() -> impl Strategy<Value = FileRow> {
                 item: None,
                 favorite: false,
                 tags: Vec::new(),
+                author: String::new(),
+                categories: Vec::new(),
             }
         },
     )

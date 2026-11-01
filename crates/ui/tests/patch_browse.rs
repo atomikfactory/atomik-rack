@@ -39,6 +39,8 @@ fn row(name: &str, kind: FileKind, device_type: Option<&str>) -> FileRow {
         }),
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 

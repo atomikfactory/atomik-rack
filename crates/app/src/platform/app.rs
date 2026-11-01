@@ -391,6 +391,33 @@ fn open_url(url: &str) {
     }
 }
 
+/// Shows `path` in the file manager, selecting the file where the system can (Windows and
+/// macOS; elsewhere the folder that holds it opens). Only an existing path is passed on.
+fn reveal(path: &std::path::Path) {
+    if !path.exists() {
+        log::warn!("cannot show {} in its folder: it is gone", path.display());
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    let result = {
+        let mut arg = std::ffi::OsString::from("/select,");
+        arg.push(path);
+        std::process::Command::new("explorer.exe").arg(arg).spawn()
+    };
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open")
+        .arg(path.parent().unwrap_or(path))
+        .spawn();
+    if let Err(e) = result {
+        log::warn!("could not show {} in its folder: {e}", path.display());
+    }
+}
+
 fn monitors(event_loop: &ActiveEventLoop) -> (Vec<MonitorInfo>, usize) {
     let handles: Vec<_> = event_loop.available_monitors().collect();
     let infos = handles
@@ -1131,6 +1158,7 @@ impl App {
                     }
                 }
                 ShellRequest::ShowFolder(folder) => open_url(&folder.to_string_lossy()),
+                ShellRequest::Reveal(path) => reveal(&path),
                 ShellRequest::PickPluginFolder => {
                     let mut dialog = rfd::FileDialog::new().set_title("Add a plugin folder");
                     if let Some(w) = self.parent_window() {

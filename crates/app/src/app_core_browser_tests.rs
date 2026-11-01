@@ -10,7 +10,8 @@ use crate::sink::{RecordingSink, SinkCall};
 use atomik_audio_file::{AudioData, write_wav_f32};
 use atomik_engine::preview_channel;
 use atomik_library::{
-    AudioFormat, FileKind, FileRow, ItemInfo, LibrarySection, PathKey, device_type_of, device_uri,
+    AudioFormat, FileKind, FileRow, ItemInfo, LibraryDb, LibrarySection, PathKey, Tag,
+    device_type_of, device_uri,
 };
 use atomik_model::empty_doc;
 use atomik_ui::kurbo::{Point, Rect};
@@ -773,6 +774,213 @@ fn a_newer_library_is_never_overwritten() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
     assert!(!cfg.path("config/library.json.bad").exists());
     assert!(!cfg.path("config/library.json.tmp").exists());
+    assert_eq!(c.library_writes(), 0);
+}
+
+// -------------------------------------------------------------- authors, categories and lists
+
+fn meta_calls(c: &AppCore<impl EngineSink>) -> Vec<Vec<(PathBuf, String, Vec<String>)>> {
+    trace(c)
+        .iter()
+        .filter_map(|t| match t {
+            ViewCall::PatchMeta(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn author_and_categories_patch_rows_and_save() {
+    let lib = library("meta");
+    let mut c = core();
+    show(&mut c, &lib.0);
+    let kick = lib.path("kick 2.wav");
+    c.browse(BrowseAction::SetAuthor {
+        paths: vec![kick.clone()],
+        author: "  Ada   Quinn ".into(),
+    });
+    assert_eq!(
+        meta_calls(&c).last().unwrap(),
+        &[(kick.clone(), "Ada Quinn".to_string(), vec![])]
+    );
+    c.browse(BrowseAction::SetCategories {
+        paths: vec![kick.clone()],
+        categories: "Percussion, One shots,, ".into(),
+    });
+    assert_eq!(
+        meta_calls(&c).last().unwrap(),
+        &[(
+            kick.clone(),
+            "Ada Quinn".to_string(),
+            vec!["One shots".to_string(), "Percussion".to_string()]
+        )]
+    );
+    // Nothing changed: nothing is pushed.
+    let calls = meta_calls(&c).len();
+    c.browse(BrowseAction::SetAuthor {
+        paths: vec![kick.clone()],
+        author: "Ada Quinn".into(),
+    });
+    assert_eq!(meta_calls(&c).len(), calls);
+    // A bad category refuses the whole edit and says so.
+    c.browse(BrowseAction::SetCategories {
+        paths: vec![kick.clone()],
+        categories: "fine, bad#one".into(),
+    });
+    assert!(c.last_rejection().unwrap().contains("category"));
+    assert_eq!(c.library_db().mark(&kick).categories.len(), 2);
+    // Both survive a listing: the rows are decorated from the database.
+    show(&mut c, &lib.0);
+    let row = rows(&c).into_iter().find(|r| r.path == kick).unwrap();
+    assert_eq!(row.author, "Ada Quinn");
+    assert_eq!(row.categories, ["One shots", "Percussion"]);
+    // Clearing both removes the mark.
+    c.browse(BrowseAction::SetAuthor {
+        paths: vec![kick.clone()],
+        author: String::new(),
+    });
+    c.browse(BrowseAction::SetCategories {
+        paths: vec![kick.clone()],
+        categories: String::new(),
+    });
+    assert_eq!(c.library_db(), &LibraryDb::new());
+}
+
+#[test]
+fn favourite_lists_show_their_files_and_follow_edits() {
+    let lib = library("lists");
+    let mut c = core();
+    let a = lib.path("kick 2.wav");
+    let b = lib.path("kick 10.wav");
+    c.browse(BrowseAction::AddToList {
+        paths: vec![a.clone(), b.clone()],
+        list: " Drums ".into(),
+    });
+    assert_eq!(last_places(&c).lists, [("Drums".to_string(), 2)]);
+    c.browse(BrowseAction::NewList("Pads".into()));
+    assert_eq!(
+        last_places(&c).lists,
+        [("Drums".to_string(), 2), ("Pads".to_string(), 0)]
+    );
+    c.browse(BrowseAction::NewList("pads".into()));
+    assert!(c.last_rejection().unwrap().contains("already"));
+
+    c.browse(BrowseAction::Show(Place::List("drums".into())));
+    wait_browser(&mut c);
+    assert_eq!(names(&rows(&c)), ["kick 10.wav", "kick 2.wav"]);
+    // Taking a file out lists the place again.
+    c.browse(BrowseAction::RemoveFromList {
+        paths: vec![a.clone()],
+        list: "Drums".into(),
+    });
+    wait_browser(&mut c);
+    assert_eq!(names(&rows(&c)), ["kick 10.wav"]);
+    // Renaming the shown list follows it.
+    c.browse(BrowseAction::RenameList {
+        from: "Drums".into(),
+        to: "Kits".into(),
+    });
+    wait_browser(&mut c);
+    assert_eq!(
+        c.file_browser().location(),
+        Some(&Place::List("Kits".into()))
+    );
+    assert_eq!(names(&rows(&c)), ["kick 10.wav"]);
+    c.browse(BrowseAction::RenameList {
+        from: "Kits".into(),
+        to: "Pads".into(),
+    });
+    assert!(c.last_rejection().unwrap().contains("already"));
+    assert_eq!(c.library_db().lists().len(), 2);
+    // Deleting it empties the place and drops it from the tree; the files stay.
+    c.browse(BrowseAction::DeleteList("Kits".into()));
+    wait_browser(&mut c);
+    assert!(rows(&c).is_empty());
+    assert_eq!(last_places(&c).lists, [("Pads".to_string(), 0)]);
+    assert!(b.exists());
+}
+
+#[test]
+fn an_invalid_list_name_is_reported_and_makes_nothing() {
+    let mut c = core();
+    for bad in ["", "a,b", "#x", &"x".repeat(40)] {
+        c.browse(BrowseAction::NewList(bad.to_string()));
+        assert!(c.last_rejection().is_some(), "{bad:?}");
+        c.browse(BrowseAction::AddToList {
+            paths: vec![PathBuf::from("/a.wav")],
+            list: bad.to_string(),
+        });
+    }
+    assert!(c.library_db().lists().is_empty());
+}
+
+#[test]
+fn a_renamed_library_item_stays_in_its_lists() {
+    let mut c = core();
+    let (from, to) = (
+        PathBuf::from("/lib/Lead.atomikpatch"),
+        PathBuf::from("/lib/Pad.atomikpatch"),
+    );
+    c.browse(BrowseAction::AddToList {
+        paths: vec![from.clone()],
+        list: "Leads".into(),
+    });
+    c.library_moved(&from, &to);
+    let list = c.library_db().list(&Tag::new("Leads").unwrap()).unwrap();
+    assert_eq!(list.paths(), [PathKey::new(&to)]);
+}
+
+const V1_LIBRARY: &str =
+    r#"{"version":1,"places":["/music"],"entries":{"/a.wav":{"favorite":true,"tags":["808"]}}}"#;
+
+#[test]
+fn a_version_1_library_loads_and_is_saved_as_version_2_without_loss() {
+    let cfg = Tmp::new("v1-cfg");
+    let file = library_file(&cfg);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, V1_LIBRARY).unwrap();
+    let mut c = core();
+    c.set_library_path(Some(file.clone()));
+    assert!(
+        c.last_rejection().is_none(),
+        "a version 1 file is not an error"
+    );
+    assert!(c.library_db().is_favorite(Path::new("/a.wav")));
+    c.browse(BrowseAction::SetAuthor {
+        paths: vec![PathBuf::from("/a.wav")],
+        author: "Ada".into(),
+    });
+    wait_browser(&mut c);
+    c.flush_library();
+    let saved = LibraryDb::from_json(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(saved.is_favorite(Path::new("/a.wav")));
+    assert_eq!(saved.author(Path::new("/a.wav")), "Ada");
+    assert_eq!(saved.places(), [PathBuf::from("/music")]);
+    assert_eq!(saved.all_tags().len(), 1);
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("\"version\": 2")
+    );
+    assert!(!cfg.path("config/library.json.bad").exists());
+}
+
+#[test]
+fn an_unreadable_library_is_never_overwritten() {
+    // A directory where the file should be: reading fails with an error that is not "missing".
+    let cfg = Tmp::new("unreadable-cfg");
+    let file = library_file(&cfg);
+    std::fs::create_dir_all(&file).unwrap();
+    let mut c = core();
+    c.set_library_path(Some(file.clone()));
+    assert!(c.last_rejection().unwrap().contains("cannot be read"));
+    c.browse(BrowseAction::AddToList {
+        paths: vec![PathBuf::from("/a.wav")],
+        list: "Mine".into(),
+    });
+    wait_browser(&mut c);
+    c.flush_library();
+    assert!(file.is_dir(), "left as it was");
     assert_eq!(c.library_writes(), 0);
 }
 

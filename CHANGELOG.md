@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Browser organisation: filters, history, info and favourite lists.** The search field takes
+  `kind:` (`audio`, `wav`, `flac`, `folder`, `patch`, `clip`, `item`, ...), `cat:`, `author:`,
+  `in:` (a folder the file lies in) and `tag:` next to words, `#tag` and `fav`; all tokens must
+  match. The path bar of the file browser has back and forward buttons over the last 64 places
+  shown, and a right-click on it lists every folder above the one shown. The right-click menu of
+  a row adds Show in Folder (the file selected in the system file manager), Edit Author, Edit
+  Categories, and favourite lists: Add to a list, New list and, inside a list, Remove from it.
+  The tree lists the named lists under Favourites and has Rename and Delete for each. Authors,
+  categories and lists are saved in `library.json`, now version 2; a version 1 file opens as it
+  was and is written as version 2 by the next save, and a file that cannot be encoded is reported
+  instead of replacing the library with an empty one. A rename of a library item keeps its place
+  in its lists. Not in this version: the persistent index and All Locations place, the preview
+  level and waveform, `.mid` rows, device palettes with categories and tags, and import-time
+  warp and placement preferences.
 - **Comp rows: crossfades, silence, take level and offset, and a take menu.** A cut between two
   audio takes in a comp can have a crossfade: the take before the cut runs on past it and the
   take after it fades in over it (equal power, two overlapping regions in the engine, no dip), up

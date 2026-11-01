@@ -268,6 +268,8 @@ pub fn device_rows(registry: &Registry) -> Vec<FileRow> {
             }),
             favorite: false,
             tags: Vec::new(),
+            author: String::new(),
+            categories: Vec::new(),
         })
         .collect()
 }

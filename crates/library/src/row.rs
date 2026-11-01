@@ -123,6 +123,10 @@ pub struct FileRow {
     pub favorite: bool,
     /// Tags from the library database, in display order.
     pub tags: Vec<String>,
+    /// Author from the library database (empty when none was given).
+    pub author: String,
+    /// Categories the user gave the file, from the library database, in display order.
+    pub categories: Vec<String>,
 }
 
 #[cfg(test)]

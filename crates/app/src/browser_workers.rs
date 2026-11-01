@@ -345,6 +345,8 @@ fn row_of(entry: &std::fs::DirEntry, follow: bool) -> Option<FileRow> {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     })
 }
 
@@ -457,6 +459,8 @@ pub(crate) fn stat_files(paths: &[PathBuf]) -> Vec<FileRow> {
                 item: None,
                 favorite: false,
                 tags: Vec::new(),
+                author: String::new(),
+                categories: Vec::new(),
             })
         })
         .collect()
