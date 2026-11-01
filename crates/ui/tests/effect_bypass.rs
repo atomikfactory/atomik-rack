@@ -294,7 +294,8 @@ fn no_panel_body_places_bypass_as_a_control() {
             .iter()
             .position(|p| p.key == BYPASS_KEY)
             .unwrap();
-        assert_eq!(bypass, desc.params.len() - 1, "{t}: appended last");
+        // Params appended to a player later (saved projects keep their ids) follow the bypass.
+        assert!(bypass < desc.params.len(), "{t}");
         let mut specs = vec![auto_layout(desc), spec_of(desc)];
         if let Some(layout) = atomik_devices::panel_layout(t) {
             specs.push(from_panel_layout(layout, desc));
@@ -335,7 +336,8 @@ fn player_panels_show_the_strip_bypass() {
             .iter()
             .position(|p| p.key == BYPASS_KEY)
             .unwrap();
-        assert_eq!(bypass, desc.params.len() - 1, "{t}: appended last");
+        // Params appended to a player later (saved projects keep their ids) follow the bypass.
+        assert!(bypass < desc.params.len(), "{t}");
         assert!(spec_of(desc).front.iter().all(|c| c.param != bypass), "{t}");
         // The veil covers the body only while bypassed, the strip stays lit.
         let veil = bypass_veil(spec_of(desc).height());

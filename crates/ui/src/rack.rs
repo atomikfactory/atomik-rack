@@ -205,6 +205,8 @@ enum PlayerBtn {
     Rate(u8),
     /// The octave stepper's minus button.
     OctaveDec,
+    /// A step cell of the arpeggiator pattern (0-based step).
+    Step(u8),
     /// The octave stepper's plus button.
     OctaveInc,
     /// The FROM CLIP button of a Key & Chord panel.
@@ -1723,6 +1725,10 @@ impl RackView {
                             tree.add(dn, ap.octave_dec + off, dec, false);
                             let inc = Hit::Player(i, PlayerBtn::OctaveInc);
                             tree.add(dn, ap.octave_inc + off, inc, false);
+                            for (n, r) in ap.steps.iter().enumerate() {
+                                let hit = Hit::Player(i, PlayerBtn::Step(n as u8));
+                                tree.add(dn, *r + off, hit, false);
+                            }
                         }
                         if let Some(kc) = d.spec.key_chord {
                             let hit = Hit::Player(i, PlayerBtn::FromClip);

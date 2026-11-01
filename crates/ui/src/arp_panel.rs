@@ -32,7 +32,7 @@ use vello::peniko::Color;
 /// Type id of the arpeggiator (it has its own panel, [`arp_layout`]).
 pub const ARP_TYPE: &str = "atomik.arpeggiator";
 /// Height of the arpeggiator panel in rack units.
-pub const ARP_UNITS: u8 = 2;
+pub const ARP_UNITS: u8 = 4;
 /// The mode buttons' labels, in `mode` param order.
 pub const ARP_MODES: [&str; 6] = ["UP", "DOWN", "UP-DN", "RANDOM", "AS PLAYED", "CHORD"];
 /// The rate buttons' labels, in `rate` param order.
@@ -45,7 +45,7 @@ const LEFT_W: f64 = 302.0;
 const KNOBS_X: f64 = CONTENT_X.0 + LEFT_W + 8.0;
 const COL_W: f64 = 63.0;
 /// The controls, in cell order (five per row): the empty key is the octave stepper's cell.
-const ARP_CONTROLS: [&str; 8] = [
+const ARP_CONTROLS: [&str; 16] = [
     "gate",
     "swing",
     "velocity.fixed",
@@ -54,7 +54,21 @@ const ARP_CONTROLS: [&str; 8] = [
     "hold",
     "run",
     "velocity.mode",
+    "pattern.on",
+    "insert",
+    "rate.mode",
+    "rate.hz",
+    "shift",
+    "input.low",
+    "input.high",
+    "repeat",
 ];
+/// Steps of the rhythm pattern.
+pub const ARP_STEPS: usize = 16;
+/// The labels of a step's four values, in `step.N` param order.
+pub const STEP_VALUES: [&str; 4] = ["rest", "on", "tie", "accent"];
+const STEP_W: f64 = 17.0;
+const STEP_GAP: f64 = 2.0;
 
 /// Geometry of the arpeggiator panel's extras (front, panel coordinates).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,9 +91,13 @@ pub struct ArpPanel {
     pub octave_label: Rect,
     /// The live display of the held keys and the next notes.
     pub display: Rect,
+    /// Title strip of the step pattern.
+    pub steps_title: Rect,
+    /// The sixteen step cells of the rhythm pattern (a click cycles rest, on, tie, accent).
+    pub steps: [Rect; ARP_STEPS],
 }
 
-/// The panel of `atomik.arpeggiator` (two rack units, see the module documentation); the back is
+/// The panel of `atomik.arpeggiator` (four rack units, see the module documentation); the back is
 /// the generic socket layout.
 pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
     let top = MARGIN_TOP + TITLE_H;
@@ -107,6 +125,12 @@ pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
         octave_inc: Rect::new(cx + 11.0, stepper_y, cx + 28.0, stepper_y + 22.0),
         octave_label: Rect::new(cx - 30.0, top + 44.0, cx + 30.0, top + 58.0),
         display: Rect::new(x0, rate_y + 24.0, x0 + LEFT_W, rate_y + 24.0 + 56.0),
+        steps_title: Rect::new(x0, rate_y + 86.0, x0 + LEFT_W, rate_y + 86.0 + TITLE_H),
+        steps: std::array::from_fn(|i| {
+            let x = x0 + i as f64 * (STEP_W + STEP_GAP);
+            let y = rate_y + 86.0 + TITLE_H + 2.0;
+            Rect::new(x, y, x + STEP_W, y + 26.0)
+        }),
     };
     let front = place_controls(desc, &ARP_CONTROLS, KNOBS_X, COL_W, 5, top);
     let front_sections = vec![
@@ -117,6 +141,10 @@ pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
         Section {
             label: "RATE".to_string(),
             rect: panel.rate_title,
+        },
+        Section {
+            label: "PATTERN".to_string(),
+            rect: panel.steps_title,
         },
         Section {
             label: "SETTINGS".to_string(),
@@ -311,6 +339,52 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         .align(Align::Center),
     );
     paint_display(c, theme, panel.display, info.meters, accent);
+    // The step pattern: dim while `pattern.on` is off.
+    let active = param(device, desc, "pattern.on") >= 0.5;
+    for (i, r) in panel.steps.iter().enumerate() {
+        let value = param(device, desc, &format!("step.{}", i + 1))
+            .round()
+            .clamp(0.0, 3.0) as usize;
+        let alpha = if active { 1.0 } else { 0.45 };
+        let face = match value {
+            0 => theme.button,
+            1 => mix(theme.button, accent, 0.4),
+            2 => mix(theme.button, accent, 0.2),
+            _ => mix(theme.button, accent, 0.8),
+        };
+        c.fill_with(RoundedRect::from_rect(*r, 3.0), face.with_alpha(alpha));
+        c.stroke_with(
+            RoundedRect::from_rect(r.inset(-0.5), 3.5),
+            if value == 0 { 1.0 } else { 1.5 },
+            if value == 0 {
+                theme.bevel_dark
+            } else {
+                accent.with_alpha(alpha)
+            },
+        );
+        let mark = ["", "", "-", "!"][value];
+        if !mark.is_empty() {
+            c.text(
+                &TextRun::new(
+                    mark,
+                    pt(r.center().x, r.center().y + 4.0),
+                    11.0,
+                    theme.text.with_alpha(alpha),
+                )
+                .align(Align::Center)
+                .weight(700),
+            );
+        }
+        c.text(
+            &TextRun::new(
+                (i + 1).to_string(),
+                pt(r.center().x, r.y1 - 2.5),
+                6.5,
+                theme.text_muted.with_alpha(alpha),
+            )
+            .align(Align::Center),
+        );
+    }
 }
 
 fn paint_display<C: Canvas + ?Sized>(
