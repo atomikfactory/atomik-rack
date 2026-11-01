@@ -263,7 +263,7 @@ fn other_devices_have_no_slicer_extras() {
         d
     };
     let mut v = RackView::new(Theme::dark());
-    let _ = v.handle(&UiEvent::Resize(Size::new(820.0, 1200.0)), &doc, &reg);
+    let _ = v.handle(&UiEvent::Resize(Size::new(820.0, 2000.0)), &doc, &reg);
     v.sync(&doc, &reg);
     let edit = v.edit_button_center(&key("sampler")).unwrap();
     let a = without_select(click(&mut v, &doc, edit, 1));

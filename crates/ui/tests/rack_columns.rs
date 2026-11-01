@@ -13,7 +13,7 @@ use atomik_ui::{
 };
 use support::*;
 
-const WIDE: Size = Size::new(3200.0, 1200.0);
+const WIDE: Size = Size::new(3200.0, 2400.0);
 
 /// Synth and delay in column 0, the mixer alone in column 1.
 fn two_columns() -> (RackDoc, Registry, RackView) {

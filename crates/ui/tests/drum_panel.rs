@@ -443,6 +443,12 @@ fn all_69_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
 fn a_pad_output_can_be_cabled_to_a_mixer_input() {
     let (doc, mut v) = rack();
     let reg = registry();
+    // The poly synth above the mixer is seven rack units: room for the mixer on the back.
+    let _ = v.handle(
+        &UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 1800.0)),
+        &doc,
+        &reg,
+    );
     v.set_flip(Flip::Back);
     let from = v.socket_center(&sref("drums", "pad16_out_r")).unwrap();
     let to = v.socket_center(&sref("mixer", "ch2_in_l")).unwrap();
