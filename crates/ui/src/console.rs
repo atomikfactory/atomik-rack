@@ -1040,6 +1040,27 @@ impl ConsoleView {
         self.repaint = true;
     }
 
+    /// The strips with the names their plates show, for the Spectrum EQ window: the channels,
+    /// the buses, then the master (`true`).
+    pub fn strip_names(&self) -> Vec<(DeviceKey, String, bool)> {
+        let name = |s: &StripView| {
+            if s.name.is_empty() {
+                s.caption.clone()
+            } else {
+                s.name.clone()
+            }
+        };
+        let mut out: Vec<(DeviceKey, String, bool)> = self
+            .strips
+            .iter()
+            .map(|s| (s.key.clone(), name(s), false))
+            .collect();
+        if let Some(m) = &self.master {
+            out.push((m.key.clone(), "MASTER".to_string(), true));
+        }
+        out
+    }
+
     /// Strip device keys: the channels in console order, then the buses in bus order.
     pub fn strip_keys(&self) -> Vec<DeviceKey> {
         self.strips.iter().map(|s| s.key.clone()).collect()

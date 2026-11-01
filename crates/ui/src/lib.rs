@@ -363,6 +363,7 @@ pub mod sidechain;
 pub mod silence_panel;
 pub mod slice_editor;
 pub mod song_info_panel;
+pub mod spectrum_eq;
 pub mod step_drag;
 pub mod step_editor;
 pub mod tempo_lane;

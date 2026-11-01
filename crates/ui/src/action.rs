@@ -75,6 +75,12 @@ pub enum UiAction {
     /// The arm button of the tempo lane was clicked: the next take records tempo changes (or no
     /// longer does). Session state of the app, not an undo step.
     ToggleTempoArm,
+    /// An arrow of the Spectrum EQ window: show the strip `delta` places along (wrapping). View
+    /// state, not an undo step.
+    SpectrumEqStep(i8),
+    /// The Follow Selection box of the Spectrum EQ window was clicked: `true` follows the
+    /// selected strip. View state, not an undo step.
+    SpectrumEqFollow(bool),
     /// The arrow of a track header (Separated master keyboard mode) or the command: the track
     /// `Some(device)` now receives the master keyboard whatever is selected, `None` hands it
     /// back to the selection. View state, not an undo step.
