@@ -76,6 +76,9 @@ pub(crate) struct Node {
     /// Nanoseconds spent in `process` while the timing was on (see [`crate::timing`]). Written
     /// only by the thread that runs the node, read by the audio thread between batches.
     pub(crate) busy_ns: u64,
+    /// A tap on the notes the device receives (Direct Record, Send to Track): every note on or
+    /// off of its notes input is copied into the queue before the device runs.
+    pub(crate) note_tap: Option<std::sync::Arc<atomik_device_sdk::MidiTap>>,
 }
 
 /// The cable routes of one stage of one device in one routing (a single-stage
@@ -202,6 +205,7 @@ impl Node {
             playback_on: false,
             faulted: false,
             busy_ns: 0,
+            note_tap: None,
         }
     }
 }
@@ -317,6 +321,31 @@ impl Node {
         } else {
             &[]
         };
+        if let Some(tap) = &self.note_tap
+            && stage == 0
+        {
+            for (i, s) in self.sockets.iter().enumerate() {
+                if s.direction.is_input() && is_notes(s.kind) {
+                    for e in self.notes[i].as_slice() {
+                        let frame = time.frame + u64::from(e.offset);
+                        let msg = match e.kind {
+                            NoteKind::On { key, velocity } => {
+                                let v = (velocity * 127.0).round().clamp(1.0, 127.0) as u8;
+                                Some([0x90, key & 0x7F, v])
+                            }
+                            NoteKind::Off { key } => Some([0x80, key & 0x7F, 0]),
+                            _ => None,
+                        };
+                        if let Some(event) =
+                            msg.and_then(|m| atomik_device_sdk::MidiEvent::new(frame, &m))
+                        {
+                            tap.push(event);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
         let mut ctx =
             ProcessContext::new(time, &mut self.signals, &mut self.notes, &self.connected)
                 .with_playback(playback);

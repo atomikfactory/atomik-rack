@@ -35,6 +35,7 @@ pub mod export;
 pub mod flat;
 pub mod freeze;
 pub mod patch;
+pub mod players;
 pub mod plugin_pass;
 pub mod plugins;
 pub mod project;

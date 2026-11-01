@@ -333,3 +333,34 @@ fn two_tracks_that_enter_at_one_player_share_its_engine_track() {
     assert_eq!(on_filter[0].notes.len(), NOTES.len() + 1);
     assert!(atomik_engine::compile_song(&input).is_ok());
 }
+
+// ------------------------------------------------------------------ Send to Track
+
+#[test]
+fn the_notes_of_a_stack_are_rendered_at_the_tick_they_play_for_any_block_and_workers() {
+    use atomik_render::players::render_player_notes;
+    let doc = project(&NOTES, Some(7.0));
+    let reg = default_registry();
+    let want: Vec<(i64, i64, u8)> = NOTES.iter().map(|&(t, l, k, _)| (t, l, k + 7)).collect();
+    for (block, workers) in [(512, 0), (64, 0), (333, 2)] {
+        let got =
+            render_player_notes(&doc, &reg, &options(block, workers), None, &key("synth")).unwrap();
+        let got: Vec<(i64, i64, u8)> = got.iter().map(|n| (n.tick, n.length, n.key)).collect();
+        assert_eq!(got, want, "{block}/{workers}");
+    }
+}
+
+#[test]
+fn a_track_without_a_stack_has_nothing_to_send() {
+    use atomik_render::players::render_player_notes;
+    let doc = project(&NOTES, None);
+    let e = render_player_notes(
+        &doc,
+        &default_registry(),
+        &options(64, 0),
+        None,
+        &key("synth"),
+    )
+    .expect_err("no stack");
+    assert!(e.to_string().contains("no player stack"), "{e}");
+}
