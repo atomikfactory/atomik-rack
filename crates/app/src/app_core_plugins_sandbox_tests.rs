@@ -416,6 +416,55 @@ fn a_loaded_preset_is_one_undo_step_that_reaches_the_live_plugin() {
     assert_eq!(live(&mut core, &dev), b"preset:warm");
 }
 
+fn knob(core: &AppCore<OfflineSink>, device: &DeviceKey, param: &str) -> f32 {
+    core.doc()
+        .param_value(device, param, core.registry())
+        .expect("a plugin param")
+}
+
+#[test]
+fn a_loaded_preset_moves_the_knobs_in_the_same_undo_step() {
+    let (mut core, _stats, dev) = preset_core();
+    let before = knob(&core, &dev, "p1");
+    assert!(core.load_plugin_preset(&dev, "warm"));
+    // The second preset puts every param at 20 % of its range (the gain spans -60 to 12 dB).
+    assert!((knob(&core, &dev, "p1") - (-45.6)).abs() < 1e-3);
+    assert_ne!(knob(&core, &dev, "p1"), before);
+    assert_eq!(
+        core.document().undo_label(),
+        Some("Change Plugin Patch"),
+        "the knob changes are part of the patch step"
+    );
+    assert!(core.undo());
+    assert_eq!(
+        knob(&core, &dev, "p1"),
+        before,
+        "one undo puts the knobs back"
+    );
+    assert_eq!(stored(&core, &dev).as_deref(), Some(&b""[..]));
+    assert!(core.redo());
+    assert!((knob(&core, &dev, "p1") - (-45.6)).abs() < 1e-3);
+    assert_eq!(live(&mut core, &dev), b"preset:warm");
+}
+
+#[test]
+fn a_patch_changed_in_the_plugin_window_moves_the_knobs_too() {
+    let (mut core, _stats, dev) = preset_core();
+    let before = knob(&core, &dev, "p1");
+    let id = core.plugin_instance(&dev).unwrap();
+    core.plugin_host()
+        .manager()
+        .load_preset(id, "bright")
+        .unwrap();
+    post(&mut core, &dev, PluginMessage::StateDirty);
+    core.frame();
+    core.plugin_tick(10.0);
+    core.plugin_tick(12.0);
+    assert!((knob(&core, &dev, "p1") - (-60.0 + 72.0 * 0.3)).abs() < 1e-3);
+    assert!(core.undo());
+    assert_eq!(knob(&core, &dev, "p1"), before);
+}
+
 #[test]
 fn stepping_goes_round_the_list_and_a_refused_preset_changes_nothing() {
     let (mut core, stats, dev) = preset_core();
