@@ -338,6 +338,8 @@ The restructuring commands are Edit menu items, so `session_commands` lists them
 
 5. Cleanup Automation is an Edit menu submenu (`sequencer.cleanup_automation` with `normal`, `heavy` or `maximum`). `session_pointer` `click` an automation clip, then run it: `project_inspect` shows fewer points in the clip, a ramp drawn point by point is its two ends, and `edit.undo` brings all of them back in one step. Pick the pencil (`session_key` with the tool key, or the corner button) and `session_pointer` `drag` across an automation clip to draw: `project_inspect` shows about one point per snap step before thinning and fewer after, and the whole stroke is one undo step.
 
+6. Stretching by an edge: `session_pointer` `drag` from just inside the right edge of a selected note clip, with `alt` set, one bar to the right (Select tool, snap on a bar). The clip's `length` in `project_inspect` grows by that bar, its notes' `tick` and `length` scale by the same ratio, and `edit.undo` gives the clip back in one step. On an audio clip the same drag turns warping on (`warp` in `project_inspect`) and `session_bounce` keeps the pitch. A drag from the left edge keeps the end of the clip where it is. A drag with `alt` from the body of a clip does not stretch.
+
 The model rules are checked in `crates/model/tests/time_edit.rs` and `crates/model/tests/clip_transform.rs`; the playback checks above are hand checks.
 
 ### Recipe: loops, clip names and colours

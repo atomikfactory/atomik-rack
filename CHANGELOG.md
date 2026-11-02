@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Alt+drag a clip edge to stretch it.** With the Select tool, hold Alt (the alternate-tool role)
+  over the start or end edge of a clip and drag: the clip gets longer or shorter by a ratio, the
+  opposite edge stays where it is, and everything in the clip follows. Note starts and lengths
+  and automation points scale proportionally, and an audio clip is warped to the new length with
+  its pitch kept (it keeps its warp mode, Repitch included; a clip that is not warped yet turns
+  warping on with the default engine, and one that plays backwards is refused). Every selected
+  clip stretches by the same ratio about its own fixed edge, so each keeps its own start (or end).
+  The edge snaps to the grid like a resize does (the disable-snap role works), the clips change
+  live while you drag, the release is one undo step and Esc puts everything back; over an edge
+  with Alt held the pointer is a split-bar cursor. Alt on the body of a clip keeps the alternate
+  tool. The same ratio code as Scale Tempo does the work (the model command is `StretchClips`;
+  the project format is unchanged).
+- **Insert and Remove Bars at Locators in the ruler menu.** Right-click the ruler: the two
+  commands sit under the locator items, next to the Edit menu entries that already did the same.
 - **The logo in the About box and in `assets/logo/`.** Help > About now draws the AR monogram at
   the top. `assets/logo/monogram.png` (transparent) and `assets/logo/monogram-black.png` (the same
   on opaque black), both 512 pixels, are derived from the master by the `make_icons` example. The
@@ -810,6 +824,15 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Insert and Remove Bars at Locators moved some things wrongly.** A tempo or meter change that
+  starts exactly on the left locator stayed behind while the music after it moved, so the opened
+  bars took the new tempo or the new bar length and the following bars no longer sat on bar
+  lines; now it moves with the music (the song's first tempo and meter stay). A loop that starts
+  on the locator but is not the locator range moves too. Remove Bars shortens a note that would
+  ring on into the removed bars (with note tails on) so it ends where the cut starts. An
+  automation curve stays continuous across an insert and joins with the value from the end of the
+  range on a remove, and automation-only tracks and device lanes move like the rest (tests now
+  cover all of it).
 - **The Stereo Tool's MONO switch is the last stage.** It used to come before the Mid/side mode,
   so with Mid/side set to encode the output was the mid on the left and silence on the right.
   Now the two outputs are the same `(L + R) / 2` of whatever the mode produced, in every mode
