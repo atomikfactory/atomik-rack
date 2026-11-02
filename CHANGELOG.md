@@ -930,6 +930,11 @@ may break APIs and the patch and project formats.
 - **The application icon sits on a black background.** The window, taskbar, Explorer, installer,
   Dock and Linux icons are regenerated from the logo on opaque black so they read on any
   taskbar.
+- **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
+  is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
+  their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
+  seconds after the bypass is fully engaged (see Effect bypass in DEVICES). The two-second rule can
+  change the tail heard when an effect is switched back on.
 - **A bigger drum machine panel that shows what is loaded.** The pad grid now takes the width and
   height of the panel instead of a small corner of it, with the 14 pad knobs and the master level
   in two columns at the right and the readout and the EDIT, SAMPLE and TO CH buttons under the
