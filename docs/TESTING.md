@@ -586,7 +586,8 @@ alone). `crates/app/src/app_core_midi_tests.rs` and `shell_midi_tests.rs` run th
 headless core and `Shell`: what an export picks, a song written to a file and imported into a new
 project, one clip on a selected track, new tracks at the playhead, bad, truncated and corrupted
 files (the document stays valid), the menu entries and their enabled flags, the dialog requests and
-a file dropped on the window. The QA server's `session_midi` has a test in
+a file dropped on the window, on a note lane and below the tracks, and a MIDI file loaded from the
+browser. The QA server's `session_midi` has a test in
 `crates/mcp/tests/session.rs`.
 
 Hand checks, not automated (they need another program or a real window):
