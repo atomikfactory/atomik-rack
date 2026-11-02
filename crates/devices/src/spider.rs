@@ -1,11 +1,11 @@
 //! `atomik.spider-audio` and `atomik.spider-cv`: cable mergers and splitters.
 //!
-//! * **Spider Audio** has four stereo merge inputs `m1_l/r` .. `m4_l/r`, each a summing input (any
+//! * **Audio Split/Merge** has four stereo merge inputs `m1_l/r` .. `m4_l/r`, each a summing input (any
 //!   number of cables, summed in source order like a console bus), and one stereo merge output
 //!   `merge_out_l/r` carrying the sum of the four pairs added in the order 1, 2, 3, 4. Beside it
 //!   a stereo split input `split_in_l/r` is copied to four stereo outputs `split1_out_l/r` ..
 //!   `split4_out_l/r`.
-//! * **Spider CV** has four CV merge inputs `in1` .. `in4` (summing inputs), each with a
+//! * **CV Split/Merge** has four CV merge inputs `in1` .. `in4` (summing inputs), each with a
 //!   `trim1` .. `trim4` amount (-1..+1, default +1, so a negative trim inverts and a small one
 //!   attenuates), added in that order to `sum_out`; and two split inputs `split1_in`, `split2_in`
 //!   with a `split1_level`, `split2_level` amount (-1..+1, default +1), each giving a normal
@@ -64,11 +64,11 @@ static AUDIO_SOCKETS: [SocketDescriptor; 20] = [
     audio_o(19, "split4_out_r", "Split 4 R"),
 ];
 
-/// Static description of Spider Audio.
+/// Static description of Audio Split/Merge (the id keeps its old spelling so saved projects load).
 pub static AUDIO_DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
     stages: &[],
     type_id: "atomik.spider-audio",
-    name: "Spider Audio",
+    name: "Audio Split/Merge",
     kind: DeviceKind::Utility,
     version: 1,
     params: &[],
@@ -147,11 +147,11 @@ static CV_SOCKETS: [SocketDescriptor; 11] = [
     cv_out(10, "split2_inv_out", "Split 2 inverted"),
 ];
 
-/// Static description of Spider CV.
+/// Static description of CV Split/Merge (the id keeps its old spelling so saved projects load).
 pub static CV_DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
     stages: &[],
     type_id: "atomik.spider-cv",
-    name: "Spider CV",
+    name: "CV Split/Merge",
     kind: DeviceKind::Utility,
     version: 1,
     params: &CV_PARAMS,

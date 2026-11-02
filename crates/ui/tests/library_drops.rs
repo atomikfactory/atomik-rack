@@ -552,3 +552,87 @@ fn audio_drops_still_import() {
         "{a:?}"
     );
 }
+
+// ------------------------------------------------------------------------------- MIDI files
+
+fn midi_file() -> Vec<PathBuf> {
+    vec![p("Loops/riff.mid")]
+}
+
+#[test]
+fn a_midi_file_dropped_on_a_note_lane_emits_import_midi_with_the_lane_and_snapped_tick() {
+    let (doc, reg, mut v) = setup();
+    let at = on_lane(&v, "keys", 1, 420.0);
+    let tick = snap_round(v.x_to_tick(420.0), Some(BAR));
+    assert!(tick > 0 && tick % BAR == 0);
+    assert!(v.handle(&hover(at, &midi_file()), &doc, &reg).is_empty());
+    assert_eq!(
+        v.clip_drop_hover(),
+        Some((key("keys"), 1, tick)),
+        "the lane marker shows"
+    );
+    assert_eq!(v.drop_hover(), None);
+    assert_eq!(
+        v.handle(&drop_on(at, &midi_file()), &doc, &reg),
+        vec![UiAction::ImportMidi {
+            paths: midi_file(),
+            lane: Some((key("keys"), 1)),
+            tick,
+        }]
+    );
+    assert_eq!(v.clip_drop_hover(), None, "the drop clears the marker");
+}
+
+#[test]
+fn a_midi_file_dropped_below_the_tracks_or_on_a_lane_that_is_not_notes_makes_new_tracks() {
+    let (doc, reg, mut v) = setup();
+    for at in [Point::new(420.0, 790.0), on_lane(&v, "bass", 1, 420.0)] {
+        let tick = snap_round(v.x_to_tick(420.0), Some(BAR));
+        let _ = v.handle(&hover(at, &midi_file()), &doc, &reg);
+        assert_eq!(v.clip_drop_hover(), None, "{at:?}");
+        assert_eq!(
+            v.drop_hover(),
+            Some((atomik_ui::ImportTarget::NewTracks, tick)),
+            "{at:?}"
+        );
+        assert_eq!(
+            v.handle(&drop_on(at, &midi_file()), &doc, &reg),
+            vec![UiAction::ImportMidi {
+                paths: midi_file(),
+                lane: None,
+                tick,
+            }],
+            "{at:?}"
+        );
+        assert_eq!(v.drop_hover(), None);
+    }
+}
+
+#[test]
+fn a_midi_file_dropped_on_the_ruler_emits_nothing_and_a_cancel_clears_the_hover() {
+    let (doc, reg, mut v) = setup();
+    let ruler = Point::new(420.0, 5.0);
+    assert!(v.handle(&hover(ruler, &midi_file()), &doc, &reg).is_empty());
+    assert_eq!(v.drop_hover(), None);
+    assert!(
+        v.handle(&drop_on(ruler, &midi_file()), &doc, &reg)
+            .is_empty()
+    );
+    let at = on_lane(&v, "keys", 0, 420.0);
+    let _ = v.handle(&hover(at, &midi_file()), &doc, &reg);
+    assert!(v.clip_drop_hover().is_some());
+    let _ = v.handle(&UiEvent::FileHoverCancel, &doc, &reg);
+    assert_eq!(v.clip_drop_hover(), None);
+}
+
+#[test]
+fn a_mixed_drop_is_not_a_midi_import() {
+    let (doc, reg, mut v) = setup();
+    let at = on_lane(&v, "keys", 1, 420.0);
+    let mixed = vec![p("Loops/riff.mid"), p("kick.wav")];
+    let a = v.handle(&drop_on(at, &mixed), &doc, &reg);
+    assert!(
+        matches!(a.as_slice(), [UiAction::ImportAudio { .. }]),
+        "{a:?}"
+    );
+}
