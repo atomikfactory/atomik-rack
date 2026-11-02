@@ -191,6 +191,11 @@ pub(crate) fn check_lanes(lanes: &[ControllerLane], max_tick: i64) -> Result<(),
                     p.value
                 ));
             }
+            if matches!(p.curve, Curve::Bend(_)) {
+                return Err(format!(
+                    "controller lane {i} point {j}: a bend is for parameter lanes"
+                ));
+            }
             if j > 0 && lane.points[j - 1].tick >= p.tick {
                 return Err(format!(
                     "controller lane {i}: points must be sorted by tick without duplicates (point {j})"

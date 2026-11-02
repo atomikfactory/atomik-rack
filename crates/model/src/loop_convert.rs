@@ -19,6 +19,7 @@
 
 use crate::controller::{ControllerLane, canonical};
 use crate::history::Edit;
+use crate::param_lane::ParamLane;
 use crate::song::{
     AutomationPoint, Clip, ClipContent, ClipId, Curve, Note, automation_piece, controller_piece,
 };
@@ -263,6 +264,21 @@ fn unrolled(
             .map(|(kind, points)| ControllerLane::new(kind, points))
             .collect(),
     );
+    let param_lanes = c
+        .param_lanes
+        .iter()
+        .filter(|l| !l.points.is_empty())
+        .map(|lane| {
+            let points = pieces
+                .iter()
+                .flat_map(|&(from, to, cs)| {
+                    automation_piece(&lane.points, (from - c.start, to - c.start), cs)
+                })
+                .map(|(tick, value, curve)| AutomationPoint { tick, value, curve })
+                .collect();
+            ParamLane::new(lane.device.clone(), lane.param.clone(), points)
+        })
+        .collect::<Vec<_>>();
     let desc = rules::descriptor(registry, &rules::device(doc, device)?.type_id)?;
     let content = check_content(doc, content, lane_kind, desc)?;
     let clip = Clip {
@@ -270,6 +286,7 @@ fn unrolled(
         loop_length: None,
         content,
         controllers,
+        param_lanes,
         ..(*c).clone()
     };
     check_geometry(clip.start, clip.length, 0, None).map_err(range)?;

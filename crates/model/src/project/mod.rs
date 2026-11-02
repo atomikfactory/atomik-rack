@@ -388,6 +388,7 @@ use crate::organise::{
     MAX_GROUP_DEPTH, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, TrackGroup, comment_ok,
     group_name_ok,
 };
+use crate::param_lane::{ParamLane, check_param_shape};
 use crate::patch::{
     DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str, load_rack, number,
     parse_color, string, uint, write_devices_and_cables,

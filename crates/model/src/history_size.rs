@@ -114,6 +114,10 @@ fn device_bytes(d: &RackDevice) -> usize {
 fn clip_bytes(clip: Option<&Clip>) -> usize {
     let Some(c) = clip else { return 0 };
     size_of::<Clip>()
+        + c.param_lanes
+            .iter()
+            .map(|l| l.points.len() * size_of::<crate::AutomationPoint>())
+            .sum::<usize>()
         + c.controllers
             .iter()
             .map(|l| l.points.len() * size_of::<crate::AutomationPoint>())

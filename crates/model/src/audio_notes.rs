@@ -107,6 +107,7 @@ pub fn notes_clip(
         muted: false,
         grid: None,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

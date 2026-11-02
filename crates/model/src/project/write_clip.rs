@@ -119,6 +119,36 @@ pub(crate) fn write_note_clip_tail(w: &mut String, c: &Clip, notes: &[Note], ind
     }
 }
 
+/// Writes a note clip's `"param_lanes"` after its notes tail (nothing without lanes). The clip
+/// file of the library leaves them out: a lane names devices of one project.
+fn write_param_lanes(w: &mut String, c: &Clip, indent: &str) {
+    if c.param_lanes.is_empty() {
+        return;
+    }
+    let _ = write!(
+        w,
+        ",
+{indent}\"param_lanes\": ["
+    );
+    for (n, lane) in c.param_lanes.iter().enumerate() {
+        let sep = if n == 0 { "" } else { "," };
+        let _ = write!(
+            w,
+            "{sep}
+{indent}  {{\"device\": {}, \"param\": {}, \"points\": ",
+            json_str(&lane.device.0),
+            json_str(&lane.param)
+        );
+        list_each(w, &format!("{indent}  "), &lane.points, write_point);
+        let _ = write!(w, "}}");
+    }
+    let _ = write!(
+        w,
+        "
+{indent}]"
+    );
+}
+
 /// Writes one clip object of a lane's `"clips"` (or of a take group's `"takes"`), after the
 /// separator `sep` of its list.
 pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
@@ -139,7 +169,10 @@ pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
         ClipContent::Audio(a) => {
             let _ = write!(w, "{indent}\"audio\": {}", audio_json(a));
         }
-        ClipContent::Notes(notes) => write_note_clip_tail(w, c, notes, indent),
+        ClipContent::Notes(notes) => {
+            write_note_clip_tail(w, c, notes, indent);
+            write_param_lanes(w, c, indent);
+        }
         ClipContent::Automation(points) => {
             let _ = write!(w, "{indent}\"points\": ");
             list_each(w, indent, points, write_point);
@@ -240,12 +273,15 @@ pub(crate) fn clip_meta_text(c: &Clip) -> String {
     out
 }
 
-/// One automation point: `[tick, value, "curve"]`.
+/// One automation point: `[tick, value, "curve"]`, `[tick, value, "bend", amount]` for a bent one.
 fn write_point(w: &mut String, p: &AutomationPoint) {
     let _ = write!(w, "[{}, ", p.tick);
     write_f32(w, p.value);
-    w.push_str(match p.curve {
-        Curve::Linear => ", \"linear\"]",
-        Curve::Step => ", \"step\"]",
-    });
+    match p.curve {
+        Curve::Linear => w.push_str(", \"linear\"]"),
+        Curve::Step => w.push_str(", \"step\"]"),
+        Curve::Bend(n) => {
+            let _ = write!(w, ", \"bend\", {n}]");
+        }
+    }
 }

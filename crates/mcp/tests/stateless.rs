@@ -132,6 +132,7 @@ fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
         muted: false,
         grid: None,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

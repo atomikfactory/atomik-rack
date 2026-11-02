@@ -862,6 +862,7 @@ fn automation_clip(start: i64, length: i64, points: Vec<AutomationPoint>) -> Cli
         muted: false,
         grid: None,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

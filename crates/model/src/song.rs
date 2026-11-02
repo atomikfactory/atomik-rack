@@ -13,6 +13,7 @@ use crate::controller::ControllerLane;
 use crate::freeze::Frozen;
 use crate::groove::{Groove, QuantizeParams, builtin_groove};
 use crate::organise::Organisation;
+use crate::param_lane::ParamLane;
 use crate::takes::TakeGroup;
 use crate::theory::Scale;
 use crate::warp::WarpSettings;
@@ -60,6 +61,27 @@ pub enum Curve {
     Linear,
     /// Hold this value until the next point.
     Step,
+    /// A power-curve ramp to the next point: `bend` in `-64..=64` (see
+    /// [`atomik_core::bend`]); positive eases in, negative eases out, 0 is a straight line.
+    Bend(i8),
+}
+
+impl Curve {
+    /// True when the segment ramps towards the next point (`Linear` or `Bend`).
+    pub fn ramps(self) -> bool {
+        !matches!(self, Curve::Step)
+    }
+
+    /// The value `x` of the way (`0..=1`) from `v0` to `v1` along a segment of this shape; a
+    /// `Step` stays at `v0`. The one place the shapes are evaluated: the player, the display
+    /// overlay and the flattening all call it, so they cannot disagree.
+    pub fn blend(self, v0: f64, v1: f64, x: f64) -> f64 {
+        match self {
+            Curve::Linear => v0 + (v1 - v0) * x,
+            Curve::Bend(n) => v0 + (v1 - v0) * atomik_core::bend::bend_shape(x, n),
+            Curve::Step => v0,
+        }
+    }
 }
 
 /// One automation point, relative to the clip content start.
@@ -386,6 +408,10 @@ pub struct Clip {
     /// clip (see [`crate::controller`]). Sorted by kind, one lane per kind. They follow the
     /// clip's offset, loop and audible span like its notes do.
     pub controllers: Vec<ControllerLane>,
+    /// Device-parameter lanes, in content ticks: non-empty only on a note clip (see
+    /// [`crate::param_lane`]). Sorted by `(device, param)`, one lane per param. They follow the
+    /// clip like its notes and controller lanes; a track lane of the same param overrides them.
+    pub param_lanes: Vec<ParamLane>,
     /// Content.
     pub content: ClipContent,
 }
@@ -1121,6 +1147,20 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Replace a note clip's device-parameter lanes (see [`crate::param_lane`]). The clip must be
+    /// a note clip (an empty list is allowed on any clip and a no-op there); every lane must name
+    /// a device in the rack and one of its params, points are sorted by tick in `0..=MAX_TICK`
+    /// with values clamped into the param's range, and lanes without points are dropped. `merge`
+    /// groups drags into one undo step, in the same group as the other clip edits. Reports
+    /// [`crate::SyncOp::SongChanged`].
+    SetClipParamLanes {
+        /// Clip id.
+        clip: ClipId,
+        /// The clip's whole parameter-lane data after the edit.
+        lanes: Vec<ParamLane>,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Set or clear a note clip's scale (what the piano roll highlights and snaps to). The clip
     /// must be a note clip. `None` and a chromatic scale both clear it (a chromatic scale is
     /// stored as no scale). The notes and the engine's view of the clip do not change. One undo
@@ -1490,8 +1530,9 @@ mod flatten;
 
 pub use crate::automation_view::automation_value_at;
 pub use flatten::{
-    AudioRegion, Crossfade, audible_spans, crossfades, effective_tracks, flatten_audio,
+    AudioRegion, Crossfade, FlatParam, audible_spans, crossfades, effective_tracks, flatten_audio,
     flatten_automation, flatten_controllers, flatten_notes, flatten_notes_with,
+    flatten_param_lanes,
 };
 pub(crate) use flatten::{automation_piece, controller_piece};
 

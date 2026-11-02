@@ -596,6 +596,7 @@ impl Take {
                     color: None,
                     scale: None,
                     controllers,
+                    param_lanes: Vec::new(),
                     grid: None,
                     content: ClipContent::Notes(content),
                 },

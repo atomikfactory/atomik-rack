@@ -55,6 +55,7 @@ use super::{
     AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind,
     Song, Track,
 };
+use crate::DeviceKey;
 use crate::controller::{ControllerKind, value_at as lane_value_at};
 use crate::warp::{WarpJob, warp_job};
 use std::collections::BTreeMap;
@@ -167,17 +168,19 @@ fn value_at(points: &[AutomationPoint], c: i64) -> (f32, Curve) {
     }
     let p = points[i - 1];
     match points.get(i) {
-        Some(n) if p.curve == Curve::Linear => {
-            let v0 = f64::from(p.value);
+        Some(n) if p.curve.ramps() => {
             let frac = (c - p.tick) as f64 / (n.tick - p.tick) as f64;
             (
-                (v0 + (f64::from(n.value) - v0) * frac) as f32,
-                Curve::Linear,
+                p.curve.blend(f64::from(p.value), f64::from(n.value), frac) as f32,
+                p.curve,
             )
         }
         _ => (p.value, Curve::Step),
     }
 }
+
+/// The most straight ramps a cut bent segment is replayed as.
+const BEND_CHAIN: i64 = 128;
 
 /// The points one piece of an automation clip emits: the piece spans the song ticks `[s, e)` and
 /// shows the content from `cs` (rules in the module docs). Never empty for non-empty `points`.
@@ -194,14 +197,55 @@ pub(crate) fn automation_piece(
         out.push((s + (p.tick - cs), p.value, value_at(points, p.tick).1));
     }
     let last = out.len() - 1;
-    if out[last].2 == Curve::Linear {
+    if out[last].2.ramps() {
         if out[last].0 < e - 1 {
             out.push((e - 1, value_at(points, ce - 1).0, Curve::Step));
         } else {
             out[last].2 = Curve::Step;
         }
     }
+    if out.iter().any(|p| matches!(p.2, Curve::Bend(_))) {
+        out = chain_cut_bends(points, out, s, cs);
+    }
     out
+}
+
+/// A bent segment survives flattening only when the piece holds all of it, from its own point to
+/// the next one. A segment the piece starts inside or ends inside (a cut clip, a loop end) is
+/// replayed as a chain of at most [`BEND_CHAIN`] straight ramps that follow the curve, since a
+/// part of a power curve is not a power curve.
+fn chain_cut_bends(
+    points: &[AutomationPoint],
+    out: Vec<(i64, f32, Curve)>,
+    s: i64,
+    cs: i64,
+) -> Vec<(i64, f32, Curve)> {
+    let mut fixed = Vec::with_capacity(out.len());
+    for (i, &(t, v, curve)) in out.iter().enumerate() {
+        let Curve::Bend(_) = curve else {
+            fixed.push((t, v, curve));
+            continue;
+        };
+        let c = cs + (t - s);
+        let k = points.partition_point(|p| p.tick <= c);
+        let whole = points[k - 1].tick == c
+            && match (points.get(k), out.get(i + 1)) {
+                (Some(n), Some(&(t2, ..))) => cs + (t2 - s) == n.tick,
+                _ => false,
+            };
+        if whole {
+            fixed.push((t, v, curve));
+            continue;
+        }
+        let end = out.get(i + 1).map_or(t + 1, |p| p.0);
+        let step = ((end - t) + BEND_CHAIN - 1) / BEND_CHAIN;
+        let mut at = t;
+        while at < end {
+            fixed.push((at, value_at(points, cs + (at - s)).0, Curve::Linear));
+            at += step.max(1);
+        }
+    }
+    fixed
 }
 
 /// The points one piece of a controller lane emits (see [`automation_piece`] for the arguments;
@@ -329,6 +373,52 @@ fn lane_controllers(lane: &Lane) -> BTreeMap<ControllerKind, Vec<(i64, f32, Curv
         }
     }
     by_kind
+}
+
+/// One parameter's flattened clip-lane points: `(device, param, [(song tick, value, curve)])`.
+pub type FlatParam = (DeviceKey, String, Vec<FlatPoint>);
+
+/// One flattened point: `(song tick, value, curve)`.
+pub type FlatPoint = (i64, f32, Curve);
+
+/// The device-parameter lanes a track's unmuted note lanes play: for each `(device, param)` in
+/// use (sorted) the points `(song tick, value, curve)` with strictly increasing ticks (rules in
+/// the module docs). Each lane flattens like an automation lane ([`flatten_automation`]: a piece
+/// starts with the value it has there, a ramp cut by the piece end is closed, the last point of a
+/// piece holds), so the value holds between clips. The points of several note lanes merge by
+/// tick, the later lane winning at an equal tick. Empty without parameter lanes. Track mute and
+/// solo are not applied here, and neither is the override by a track's own automation lane of the
+/// same param (the render does that).
+pub fn flatten_param_lanes(track: &Track) -> Vec<FlatParam> {
+    let mut by_param: BTreeMap<(DeviceKey, String), Vec<FlatPoint>> = BTreeMap::new();
+    for lane in track.note_lanes().filter(|l| !l.muted) {
+        for (clip, s, e, cs) in audible_pieces(lane) {
+            for p in &clip.param_lanes {
+                if p.points.is_empty() {
+                    continue;
+                }
+                by_param
+                    .entry((p.device.clone(), p.param.clone()))
+                    .or_default()
+                    .extend(automation_piece(&p.points, (s, e), cs));
+            }
+        }
+    }
+    by_param
+        .into_iter()
+        .map(|((device, param), mut points)| {
+            // Stable by tick, so of two points at one tick the later one comes last: keep it.
+            points.sort_by_key(|p| p.0);
+            let mut merged: Vec<(i64, f32, Curve)> = Vec::with_capacity(points.len());
+            for p in points {
+                match merged.last_mut() {
+                    Some(last) if last.0 == p.0 => *last = p,
+                    _ => merged.push(p),
+                }
+            }
+            (device, param, merged)
+        })
+        .collect()
 }
 
 /// The tracks that play: unmuted tracks, and if any track is soloed, only the soloed ones

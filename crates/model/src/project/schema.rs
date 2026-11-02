@@ -78,6 +78,7 @@ pub(crate) enum Obj {
     Grid,
     Scale,
     ControllerLane,
+    ParamLane,
 }
 
 impl Obj {
@@ -128,6 +129,10 @@ impl Obj {
             Obj::ControllerLane => &[
                 "song.tracks[].lanes[].clips[].controllers[]",
                 "song.tracks[].lanes[].take_groups[].takes[].controllers[]",
+            ],
+            Obj::ParamLane => &[
+                "song.tracks[].lanes[].clips[].param_lanes[]",
+                "song.tracks[].lanes[].take_groups[].takes[].param_lanes[]",
             ],
             Obj::Asset
             | Obj::Device
@@ -420,6 +425,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(NoteClip, "grid", 5),
     field(NoteClip, "scale", 16),
     field(NoteClip, "controllers", 19),
+    field(NoteClip, "param_lanes", 41),
     field(NoteClip, "notes", 1).req(),
     field(AudioClip, "id", 1).req(),
     field(AudioClip, "start", 1).req(),
@@ -442,6 +448,9 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(ControllerLane, "kind", 1).req(),
     field(ControllerLane, "number", 1),
     field(ControllerLane, "points", 1).req(),
+    field(ParamLane, "device", 41).req(),
+    field(ParamLane, "param", 41).req(),
+    field(ParamLane, "points", 41).req(),
     field(Grid, "resolution", 1).req(),
     field(Grid, "steps", 1).req(),
     field(Grid, "swing", 1).req(),

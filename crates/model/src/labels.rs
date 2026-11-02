@@ -82,6 +82,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::RemoveClip { .. } => "Delete Clip",
         SongCommand::SetClipGeometry { .. } => "Move Clip",
         SongCommand::SetClipContent { .. } => "Edit Clip",
+        SongCommand::SetClipParamLanes { .. } => "Edit Parameter Lane",
         SongCommand::SplitClip { .. } => "Split Clip",
         SongCommand::DuplicateClip { .. } => "Duplicate Clip",
         SongCommand::SetClipMeta {

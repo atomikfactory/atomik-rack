@@ -119,7 +119,7 @@ impl LaneEditor {
             }
             Chip::Curve => {
                 self.curve = match self.curve {
-                    Curve::Linear => Curve::Step,
+                    Curve::Linear | Curve::Bend(_) => Curve::Step,
                     Curve::Step => Curve::Linear,
                 };
             }
@@ -173,7 +173,7 @@ pub fn chip_label(chip: Chip, ed: &LaneEditor) -> String {
         Chip::Cc => format!("< CC {} >", ed.cc),
         Chip::Poly => format!("< POLY {} >", ed.poly),
         Chip::Curve => match ed.curve {
-            Curve::Linear => "RAMP".to_owned(),
+            Curve::Linear | Curve::Bend(_) => "RAMP".to_owned(),
             Curve::Step => "STEP".to_owned(),
         },
     }
@@ -385,7 +385,7 @@ pub fn toggle_curve(
         .and_then(|l| l.points.get_mut(index))
     {
         p.curve = match p.curve {
-            Curve::Linear => Curve::Step,
+            Curve::Linear | Curve::Bend(_) => Curve::Step,
             Curve::Step => Curve::Linear,
         };
     }

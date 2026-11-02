@@ -99,6 +99,7 @@ fn clip(bars: i64, notes: i64) -> String {
         muted: false,
         grid: None,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

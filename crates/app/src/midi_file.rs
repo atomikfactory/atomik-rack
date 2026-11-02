@@ -712,6 +712,7 @@ impl MidiTrack {
             color: None,
             grid: None,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: self.controllers,
             content: ClipContent::Notes(self.notes.into()),
         }

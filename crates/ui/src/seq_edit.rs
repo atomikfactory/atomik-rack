@@ -557,9 +557,9 @@ pub fn automation_value_at(points: &[AutomationPoint], tick: i64) -> Option<f32>
         if tick < b.tick {
             return Some(match a.curve {
                 Curve::Step => a.value,
-                Curve::Linear => {
+                Curve::Linear | Curve::Bend(_) => {
                     let t = (tick - a.tick) as f64 / (b.tick - a.tick).max(1) as f64;
-                    (f64::from(a.value) + (f64::from(b.value) - f64::from(a.value)) * t) as f32
+                    a.curve.blend(f64::from(a.value), f64::from(b.value), t) as f32
                 }
             });
         }
@@ -620,6 +620,7 @@ pub fn toggle_curve(points: &[AutomationPoint], index: usize) -> Vec<AutomationP
     if let Some(p) = v.get_mut(index) {
         p.curve = match p.curve {
             Curve::Linear => Curve::Step,
+            Curve::Bend(_) => Curve::Linear,
             Curve::Step => Curve::Linear,
         };
     }
@@ -669,6 +670,7 @@ mod tests {
             loop_length: looped,
             muted: false,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: Vec::new(),
             name: None,
             color: None,

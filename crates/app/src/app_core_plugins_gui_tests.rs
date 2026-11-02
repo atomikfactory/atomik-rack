@@ -853,6 +853,7 @@ fn automate_adds_a_lane_for_the_param_on_the_track_of_the_selected_clip() {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

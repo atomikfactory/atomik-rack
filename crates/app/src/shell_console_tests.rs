@@ -1388,6 +1388,7 @@ fn delete_channel_takes_the_instrument_and_asks_first_when_its_track_has_clips()
         loop_length: None,
         muted: false,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

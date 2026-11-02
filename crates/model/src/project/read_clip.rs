@@ -138,6 +138,7 @@ pub(super) fn load_clip(
             muted,
             grid: None,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: Vec::new(),
             name,
             color,
@@ -187,6 +188,10 @@ pub(super) fn load_clip(
             Some(s) => Some(load_scale(s, &path.field("scale"))?),
             None => None,
         },
+        param_lanes: match obj.get("param_lanes") {
+            Some(l) => load_param_lanes(l, &path.field("param_lanes"))?,
+            None => Vec::new(),
+        },
         controllers: match obj.get("controllers") {
             Some(c) => load_controllers(c, &path.field("controllers"))?,
             None => Vec::new(),
@@ -202,7 +207,10 @@ fn read_point(
     p: &JsonPath,
     pd: Option<&atomik_core::ParamDescriptor>,
 ) -> Result<AutomationPoint, ModelError> {
-    let a = tuple(item, p, 3, "a point [tick, value, curve]")?;
+    let a = match item.as_array() {
+        Some(a) if a.len() == 4 => a.as_slice(),
+        _ => tuple(item, p, 3, "a point [tick, value, curve]")?,
+    };
     let tick = tick(&a[0], &p.index(0))?;
     let value = number(&a[1], &p.index(1))? as f32;
     let value = match pd {
@@ -210,13 +218,28 @@ fn read_point(
         None if value.is_finite() => value,
         None => return Err(p.index(1).error(format!("{value} is out of range"))),
     };
-    let curve = match string(&a[2], &p.index(2))? {
-        "linear" => Curve::Linear,
-        "step" => Curve::Step,
-        other => {
+    let curve = match (string(&a[2], &p.index(2))?, a.get(3)) {
+        ("linear", None) => Curve::Linear,
+        ("step", None) => Curve::Step,
+        ("bend", Some(n)) => {
+            let amount = number(n, &p.index(3))?;
+            let max = f64::from(atomik_core::bend::BEND_MAX);
+            if amount.fract() != 0.0 || !(-max..=max).contains(&amount) {
+                return Err(p.index(3).error(format!(
+                    "a bend is a whole number from -{max} to {max}, found {amount}"
+                )));
+            }
+            Curve::Bend(amount as i8)
+        }
+        ("bend", None) => {
             return Err(p
                 .index(2)
-                .error(format!("expected \"linear\" or \"step\", found {other:?}")));
+                .error("a \"bend\" point is [tick, value, \"bend\", amount]".to_string()));
+        }
+        (other, _) => {
+            return Err(p.index(2).error(format!(
+                "expected \"linear\", \"step\" or \"bend\", found {other:?}"
+            )));
         }
     };
     Ok(AutomationPoint { tick, value, curve })
@@ -375,6 +398,26 @@ pub(crate) fn load_controllers(
         lanes.push(ControllerLane::new(kind, points));
     }
     check_lanes(&lanes, crate::song::MAX_TICK).map_err(|m| path.error(m))?;
+    Ok(lanes)
+}
+
+/// Reads a note clip's `"param_lanes"` list (see [`crate::param_lane`]). The target is kept as
+/// written: a device or param that is not in the rack plays nothing.
+pub(crate) fn load_param_lanes(v: &Value, path: &JsonPath) -> Result<Vec<ParamLane>, ModelError> {
+    let mut lanes: Vec<ParamLane> = Vec::new();
+    for (i, item) in array(v, path)?.iter().enumerate() {
+        let p = path.index(i);
+        let obj = schema::current(item, &p, Obj::ParamLane)?;
+        let device = DeviceKey(string(&obj["device"], &p.field("device"))?.to_owned());
+        let param = string(&obj["param"], &p.field("param"))?.to_owned();
+        let points_path = p.field("points");
+        let mut points = Vec::new();
+        for (j, point) in array(&obj["points"], &points_path)?.iter().enumerate() {
+            points.push(read_point(point, &points_path.index(j), None)?);
+        }
+        lanes.push(ParamLane::new(device, param, points));
+    }
+    check_param_shape(&lanes, crate::song::MAX_TICK).map_err(|m| path.error(m))?;
     Ok(lanes)
 }
 
