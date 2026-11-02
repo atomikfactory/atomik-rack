@@ -337,16 +337,29 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// What the Edit menu offers on the rack's selection: whether Combine and Uncombine can be
-    /// tried. A cheap check of the selection's shape (the model's refusal, with the offending
-    /// cables, comes when the command runs; the context menu asks the model beforehand).
+    /// tried. Combine is on when the model would take the selection (it plans the command on a
+    /// copy of the document, once per document revision and selection, like the context menu); a
+    /// refused Combine from a shortcut says why in the status line. Uncombine is a check of the
+    /// selection's shape (the model's refusal comes when the command runs).
     pub fn combine_menu(&self) -> (bool, bool) {
         if self.view.scope_depth() != 0 {
             return (false, false);
         }
         let doc = self.doc();
         let selection = self.view.selection();
-        let combine = !selection.is_empty();
         let uncombine = selection.iter().any(|k| is_container(doc, k));
+        if selection.is_empty() {
+            return (false, uncombine);
+        }
+        let revision = self.document.revision();
+        if let Some((rev, keys, answer)) = self.combine_memo.borrow().as_ref()
+            && *rev == revision
+            && *keys == selection
+        {
+            return (*answer, uncombine);
+        }
+        let combine = self.view.combine_reason(doc, &self.registry).is_none();
+        *self.combine_memo.borrow_mut() = Some((revision, selection, combine));
         (combine, uncombine)
     }
 

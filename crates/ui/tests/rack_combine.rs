@@ -82,6 +82,38 @@ fn the_combine_reason_is_the_models_or_none() {
 }
 
 #[test]
+fn two_instruments_with_their_own_channels_name_both_in_the_reason() {
+    let mut d = layered();
+    apply(
+        &mut d,
+        Command::AddDevice {
+            index: 1,
+            type_id: SYNTH.into(),
+            key: Some(key("lead2")),
+        },
+    );
+    let reg = registry();
+    let mut v = view(d.doc(), &reg);
+    select(&mut v, &["lead", "lead2"]);
+    let reason = v.combine_reason(d.doc(), &reg).expect("refused");
+    assert!(reason.contains("Combine keeps one track"), "{reason}");
+    assert!(
+        reason.contains("\"Poly Synth\" and \"Poly Synth 2\""),
+        "{reason}"
+    );
+    // The master stays in the rack and the instrument combines.
+    let master = d.doc().console.master.clone().expect("a master").0;
+    select(&mut v, &["lead", master.as_str()]);
+    assert_eq!(v.combine_reason(d.doc(), &reg), None);
+    // Only the master: nothing a container can hold.
+    select(&mut v, &[master.as_str()]);
+    assert!(
+        v.combine_reason(d.doc(), &reg)
+            .is_some_and(|r| r.contains("cannot be placed"))
+    );
+}
+
+#[test]
 fn the_combine_reason_names_what_the_model_refuses() {
     // The master section is not a device a container can take.
     let d = layered();

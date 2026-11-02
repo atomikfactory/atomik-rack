@@ -589,7 +589,12 @@ fn two_devices_that_each_have_a_track_or_channel_cannot_share_a_container() {
     );
     let e = refused(&mut d, &r, combine(&["one", "two"]));
     assert!(matches!(e, ModelError::BadScope(_)), "{e:?}");
-    assert!(e.to_string().contains("a container keeps only one"), "{e}");
+    assert!(e.to_string().contains("Combine keeps one track"), "{e}");
+    assert!(
+        e.to_string()
+            .contains("\"Poly Synth\" and \"Poly Synth 2\""),
+        "{e}"
+    );
 }
 
 #[test]
