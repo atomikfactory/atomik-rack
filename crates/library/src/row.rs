@@ -19,13 +19,20 @@ pub enum AudioFormat {
     Ogg,
 }
 
-/// What a browser row is. Files that are neither folders, audio nor library items are not rows.
+/// File extensions of a standard MIDI file (any case): the one list the browser's listing and
+/// the app's MIDI import share.
+pub const MIDI_EXTENSIONS: [&str; 2] = ["mid", "midi"];
+
+/// What a browser row is. Files that are neither folders, audio, MIDI nor library items are
+/// not rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum FileKind {
     /// A directory.
     Folder,
     /// An audio file of the given format.
     Audio(AudioFormat),
+    /// A standard MIDI file (`.mid`, `.midi`): imported, not a library item.
+    Midi,
     /// A patch item (`.atomikpatch`).
     Patch,
     /// A container item (`.atomikcontainer`).
@@ -39,15 +46,15 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    /// Whether the row is a library item (anything but a folder or an audio file).
+    /// Whether the row is a library item (anything but a folder, an audio file or a MIDI file).
     pub fn is_item(self) -> bool {
-        !matches!(self, Self::Folder | Self::Audio(_))
+        !matches!(self, Self::Folder | Self::Audio(_) | Self::Midi)
     }
 }
 
 /// Classifies a directory entry: folders are always rows, files only when their extension
-/// (case-insensitive) is a supported audio format or a library item. Returns `None` for
-/// everything else. Never returns [`FileKind::Device`].
+/// (case-insensitive) is a supported audio format, a MIDI file or a library item. Returns
+/// `None` for everything else. Never returns [`FileKind::Device`].
 pub fn classify(path: &Path, is_dir: bool) -> Option<FileKind> {
     if is_dir {
         return Some(FileKind::Folder);
@@ -63,6 +70,9 @@ pub fn classify(path: &Path, is_dir: bool) -> Option<FileKind> {
         if is(&[candidate]) {
             return Some(kind);
         }
+    }
+    if is(&MIDI_EXTENSIONS) {
+        return Some(FileKind::Midi);
     }
     let format = if is(&["wav", "wave"]) {
         AudioFormat::Wav
@@ -160,6 +170,22 @@ mod tests {
         for (name, fmt) in cases {
             assert_eq!(audio(name), Some(FileKind::Audio(fmt)), "{name}");
         }
+    }
+
+    #[test]
+    fn midi_files_are_rows_of_their_own_kind_and_not_items() {
+        for name in ["a.mid", "a.midi", "SONG.MID", "x.MiDi", ".hidden.mid"] {
+            assert_eq!(audio(name), Some(FileKind::Midi), "{name}");
+        }
+        for ext in MIDI_EXTENSIONS {
+            assert_eq!(
+                classify(Path::new(&format!("f.{ext}")), false),
+                Some(FileKind::Midi)
+            );
+        }
+        assert!(!FileKind::Midi.is_item());
+        assert_eq!(audio("a.mid.bak"), None);
+        assert_eq!(audio("mid"), None);
     }
 
     #[test]

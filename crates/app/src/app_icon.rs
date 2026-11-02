@@ -55,9 +55,11 @@ mod tests {
         let icon = app_icon().expect("the embedded icon decodes");
         assert_eq!(icon.size, 128);
         assert_eq!(icon.rgba.len(), 128 * 128 * 4);
-        // The artwork is there (nearly opaque pixels) and the corners are transparent.
-        assert!(icon.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 200));
-        assert_eq!(icon.rgba[3], 0);
+        // The icon sits on an opaque black background (it reads on any taskbar): every pixel is
+        // opaque, the corners are black and the artwork's green is there.
+        assert!(icon.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+        assert_eq!(&icon.rgba[..4], &[0, 0, 0, 255]);
+        assert!(icon.rgba.as_chunks::<4>().0.iter().any(|p| p[1] > 150));
     }
 
     #[test]
