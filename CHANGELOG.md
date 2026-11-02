@@ -9,7 +9,6 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
-<<<<<<< HEAD
 - **Release and dependency hygiene.** A freeze or an unfreeze that finishes while the transport runs no longer
   rebuilds the engine under it: the sound goes on, the message says the freeze plays when playback stops, and the
   engine is rebuilt at the stop. Where plugins run is shown, not assumed: Settings > Plugins says "Running now:
@@ -25,7 +24,6 @@ may break APIs and the patch and project formats.
   no plugins contract. `SECURITY.md` says how far the plugin cache is trusted and why the macOS app has the
   library-validation entitlement. The sandbox child is an accessory process on macOS (no Dock icon) and a utility
   window on X11; the sandbox end-to-end tests have a CI job on Linux and macOS.
-=======
 - **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
   slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
   control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
@@ -50,7 +48,6 @@ may break APIs and the patch and project formats.
   past another, an undo, or a note added before the selection used to leave the selection on whatever sat at the
   old positions; it now follows the notes (by key and order within the key, else by start and key) and goes back
   to the original notes when an edit it could not follow, such as a transpose, is undone.
->>>>>>> feat/ui-widgets
 - **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
   every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
   canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
