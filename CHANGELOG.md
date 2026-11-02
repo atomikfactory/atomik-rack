@@ -42,14 +42,13 @@ may break APIs and the patch and project formats.
   channel vocoder with a carrier input (an internal noise carrier when none is cabled) and a hiss path for
   consonants. A gated three-band filter, a bass amp voicing, echo loop jacks and a spectral vocoder mode are not
   built yet. No project format change.
-- **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
-  slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
-  control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
-  worker count. The document stores the slots per device with one undoable command, the amount of a slot is an
-  ordinary automatable param, and a project without slots saves, loads and bounces as before (project format
-  41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
-  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. There
-  is no panel for it yet: the slots are set through the command and the project file.
+- **Pattern lanes.** The `pattern` lane of a step sequencer, CV sequencer or drum generator is now a pattern
+  lane: it reads "Pattern", draws its held numbers as labelled blocks, and a right click on a clip lists the
+  device's patterns to pick from (a clip drawn on it starts with one stepped point). A take now catches pattern
+  changes without AUTO LANES: the first one adds the lane and each change is written on the next downbeat as a
+  held number, so the clip switches on a bar line. Track > Add Pattern Lane adds the lane, and Track > Pattern
+  Lane to Notes renders what the patterns play, in the order the lane chose them, into a clip on a new note
+  lane. No project format change: a pattern clip is an ordinary automation clip. A pattern offset is not built.
 - **Bent automation segments.** Shift-drag on an automation segment bends it so the curve passes through the
   pointer at the middle of the segment (one undo step); a click without a drag, or a Shift-click on a point,
   straightens it again. The bend is a power curve evaluated with plain arithmetic only, so a bounce is
@@ -62,13 +61,31 @@ may break APIs and the patch and project formats.
   lane of the selected note clip, and Edit > Clear Clip Parameter Lanes removes them. Recording into a note
   clip and drawing a lane inside the piano roll are not there yet. Both additions are written to the project
   only when used (format 41), and the MCP `project_inspect` lists the lanes.
-- **Pattern lanes.** The `pattern` lane of a step sequencer, CV sequencer or drum generator is now a pattern
-  lane: it reads "Pattern", draws its held numbers as labelled blocks, and a right click on a clip lists the
-  device's patterns to pick from (a clip drawn on it starts with one stepped point). A take now catches pattern
-  changes without AUTO LANES: the first one adds the lane and each change is written on the next downbeat as a
-  held number, so the clip switches on a bar line. Track > Add Pattern Lane adds the lane, and Track > Pattern
-  Lane to Notes renders what the patterns play, in the order the lane chose them, into a clip on a new note
-  lane. No project format change: a pattern clip is an ordinary automation clip. A pattern offset is not built.
+- **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
+  slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
+  control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
+  worker count. The document stores the slots per device with one undoable command, the amount of a slot is an
+  ordinary automatable param, and a project without slots saves, loads and bounces as before (project format
+  41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
+  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. There
+  is no panel for it yet: the slots are set through the command and the project file.
+- **Containers fold and unfold in the rack.** A container no longer has to be opened in a view of
+  its own to be worked on: the arrow on the title strip of its panel, or a double-click on the
+  panel, draws its devices straight under it in the same column, framed in the container's colour
+  between a thin INPUT strip and a thin OUTPUT strip that closes the frame. A container nested in
+  an unfolded one unfolds the same way, one frame inside the other. The devices are the ones of
+  the rack for every gesture: knobs and buttons, patch strips, selection (it stays inside one
+  container), delete, duplicate, rename, the macro menu of a control (it maps to the container
+  the device is drawn in), the add key after the selected device, and a drag inside the frame
+  reorders. Drag a device of the rack into a frame and it moves inside; drag an inner device out
+  of its frame and it moves back to the rack, in the column of its container (the model says why
+  when it refuses); drop a browser row or a library item in a frame and it is added inside. On
+  the back (Tab) the INPUT and OUTPUT strips show the container's own jacks, so cables between
+  the container's sockets and its inner devices are patched as in the container's own view, and
+  a cable never joins two levels. A Combine leaves the new container unfolded, so what you
+  combined stays in view. Whether a container is unfolded is saved with the project (an optional
+  `"open": true` in the container, written only when it is set; the project format is unchanged)
+  and is one undo step. The OPEN button still shows the inside in a view of its own.
 - **Master tune.** Audio > Settings has a Master tune of -100 to +100 cents around A = 440 Hz. It
   shifts every pitched device (the synths, the sampler, the drum machine, the loop slicer and the grain
   sampler; a fixed-frequency FM operator keeps its Hz) and the reference of the audio track tuner, is
@@ -917,6 +934,16 @@ may break APIs and the patch and project formats.
   audio clip, or stripping silence, refuses a fade or an envelope point longer than the clip. A
   project saved by an earlier version that has one loads with it clamped to the clip and a warning
   naming the clip; the sound is the same, since the player already clamped it.
+- **Combine says what it cannot do, and no longer stops at a mixer strip.** Choosing Combine on a
+  selection that includes a mixer strip (a channel, a bus or the master) or an audio track used to
+  be refused as a whole. Those devices can never go inside a container, so they now stay in the
+  rack with a note and the rest of the selection is combined; a selection made only of such
+  devices is still refused, naming the first. A container has one song track, one mixer channel
+  and one FX return, so two or more selected devices that each have one are refused with a
+  message naming them ("Combine keeps one track and one mixer channel: ... each have ...;
+  combine them separately"). The Edit menu now enables Combine only when the model would take the
+  selection, as the context menu does, so a refused multi-selection is dimmed and a shortcut
+  shows the reason in the status line. The project format is unchanged.
 - **Insert and Remove Bars at Locators moved some things wrongly.** A tempo or meter change that
   starts exactly on the left locator stayed behind while the music after it moved, so the opened
   bars took the new tempo or the new bar length and the following bars no longer sat on bar
@@ -1064,20 +1091,6 @@ may break APIs and the patch and project formats.
   a placeholder constructor, and a tempo or meter map is always built non-empty. `Document::undo`
   and `redo` no longer take a registry, and `Document::begin_gesture` ends a drag's merge group by
   itself when it goes out of scope.
-- **Saving no longer freezes the window.** File > Save and the file picked for Save As write the
-  project beside the window: the plugins' states are collected first (all at once, so a project with
-  many plugins waits for the slowest one), then the project text is built, the audio is copied and
-  the file is written on a worker while "Saving..." shows in the status line. You can keep editing;
-  a change made meanwhile stays unsaved afterwards, and undoing back to the saved state is clean. A
-  save that fails is reported and leaves the earlier file untouched. The saved file is
-  byte for byte what it was.
-- **Plugins load together and an idle project stays quiet.** Opening a project starts the processes
-  of up to eight sandboxed plugins at the same time instead of one after the other (they still
-  attach in document order). With a plugin loaded and nothing playing, the app looks at its
-  plugins ten times a second instead of sixty and sleeps in between. `ui-state.json` is written
-  atomically and at most every two seconds instead of at every click, `keymap.json` is checked when a
-  window gets the focus or a menu opens instead of four times a second, and the plugin scan uses as
-  many scanner processes as half the cores (two to eight).
 - **The rack navigator is a miniature of the real rack.** The strip at the right edge of the rack
   no longer shows colour blocks: every device is drawn as a scaled-down picture of its own panel
   (plate, name, knobs, faders and displays as they stand, a folded panel folded), so you can tell
@@ -1093,6 +1106,20 @@ may break APIs and the patch and project formats.
 - **The application icon sits on a black background.** The window, taskbar, Explorer, installer,
   Dock and Linux icons are regenerated from the logo on opaque black so they read on any
   taskbar.
+- **Saving no longer freezes the window.** File > Save and the file picked for Save As write the
+  project beside the window: the plugins' states are collected first (all at once, so a project with
+  many plugins waits for the slowest one), then the project text is built, the audio is copied and
+  the file is written on a worker while "Saving..." shows in the status line. You can keep editing;
+  a change made meanwhile stays unsaved afterwards, and undoing back to the saved state is clean. A
+  save that fails is reported and leaves the earlier file untouched. The saved file is
+  byte for byte what it was.
+- **Plugins load together and an idle project stays quiet.** Opening a project starts the processes
+  of up to eight sandboxed plugins at the same time instead of one after the other (they still
+  attach in document order). With a plugin loaded and nothing playing, the app looks at its
+  plugins ten times a second instead of sixty and sleeps in between. `ui-state.json` is written
+  atomically and at most every two seconds instead of at every click, `keymap.json` is checked when a
+  window gets the focus or a menu opens instead of four times a second, and the plugin scan uses as
+  many scanner processes as half the cores (two to eight).
 - **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
   is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
   their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
