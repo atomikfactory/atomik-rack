@@ -296,6 +296,15 @@
     "tempo_bpm": 120,
     "tracks": 2.0
   },
+  "v42": {
+    "clips": 3.0,
+    "lanes": 3.0,
+    "note_sum": 3764750.0,
+    "notes": 29.0,
+    "sample_rate": 48000,
+    "tempo_bpm": 120,
+    "tracks": 2.0
+  },
   "v6": {
     "clips": 3.0,
     "lanes": 3.0,

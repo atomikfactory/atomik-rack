@@ -376,7 +376,13 @@
 //! [`crate::param_lane`]), a list of `{ "device", "param", "points" }` written after the clip's notes
 //! only when the clip has lanes, and the bent automation point `[tick, value, "bend", amount]` with
 //! a whole `amount` in `-64..=64` (refused in a controller lane). A file with neither differs from its
-//! version 40 file in the version line alone. Saving always writes version 41.
+//! version 40 file in the version line alone.
+//! Version 42 adds, to a container's `"inner"` object, a macro's `"kind": "switch"`, the last eight of
+//! sixteen `"macros"` (the list has 8 entries unless one of them is used) and a split's
+//! `"pass_bend"`, `"pass_cc"` and `"pass_pressure"` set to `false`; each is written only when set (see
+//! [`crate::container_io`]), so a project that uses none of them differs from its version 41 file in
+//! the version line alone. A reader of 41 cannot skip them (`BREAKING_VERSIONS`). Saving always writes
+//! version 42.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -472,8 +478,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
 /// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
 /// information) and 39 (no send follow, no parallel channels) and 40 (no master tune) and 41 (no
-/// modulation slots).
-pub const PROJECT_VERSION: u32 = 41;
+/// modulation slots) and 42 (no CV inputs, macro kinds or split pass flags on containers).
+pub const PROJECT_VERSION: u32 = 42;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

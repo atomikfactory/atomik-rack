@@ -197,8 +197,9 @@ impl FieldSpec {
 
 /// Format versions whose change an older reader cannot skip although no field row shows it (a
 /// field that changed meaning, a rule that tightened). [`compat_version`] is at least the newest
-/// of them. Empty: every change so far added or removed fields.
-pub(crate) const BREAKING_VERSIONS: &[u32] = &[];
+/// of them. Version 42 added fields to a container's `inner` object, which has no row here (and a
+/// device, so no ignorable path), so a reader of 41 must refuse a file that uses them.
+pub(crate) const BREAKING_VERSIONS: &[u32] = &[42];
 
 use Obj::*;
 
