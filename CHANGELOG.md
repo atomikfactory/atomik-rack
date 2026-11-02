@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Space reverb, convolution reverb and vocoder.** Three new effects. The Space Reverb adds arena, cathedral,
+  spring and echoverb algorithms to the reverb engine, with a wet high cut and a gated tail (hold time and level).
+  The Convolution Reverb plays an impulse response from an audio file of the project (drop a `.wav` on the device;
+  no impulse files ship): a mono or stereo response of up to 5 seconds, level-normalised, with pre-delay, low and
+  high cut, width and mix. It adds no latency, equals direct convolution to float rounding, allocates only when
+  the device is prepared, and swapping the response crossfades instead of clicking. The Vocoder is a 4 to 32 band
+  channel vocoder with a carrier input (an internal noise carrier when none is cabled) and a hiss path for
+  consonants. A gated three-band filter, a bass amp voicing, echo loop jacks and a spectral vocoder mode are not
+  built yet. No project format change.
 - **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
   slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
   control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
