@@ -41,12 +41,20 @@ use std::sync::Arc;
 
 /// The granular sampler's device type: it plays one sample, so a drop replaces its zone.
 pub(super) const GRANULAR: &str = "atomik.granular";
+/// The convolution reverb's device type: its impulse response is one sample, like the granular
+/// sampler's.
+pub(super) const CONVOLVER: &str = "atomik.convolver";
+
+/// Whether the device type plays exactly one sample (a drop replaces it).
+pub(super) fn takes_one_sample(type_id: &str) -> bool {
+    type_id == GRANULAR || type_id == CONVOLVER
+}
 
 impl<S: EngineSink> AppCore<S> {
-    pub(super) fn is_granular(&self, device: &DeviceKey) -> bool {
+    pub(super) fn is_one_sample(&self, device: &DeviceKey) -> bool {
         self.doc()
             .resolve(device)
-            .is_some_and(|d| d.type_id == GRANULAR)
+            .is_some_and(|d| takes_one_sample(&d.type_id))
     }
 
     // ------------------------------------------------------------------ sample editor pane

@@ -68,7 +68,7 @@ pub(super) fn zones_after_import(
             }
         };
     }
-    if device.type_id == super::samples::GRANULAR {
+    if super::samples::takes_one_sample(&device.type_id) {
         // One sample: the first file replaces the old one.
         return (auto_map(&files[..files.len().min(1)], at_key), Vec::new());
     }
