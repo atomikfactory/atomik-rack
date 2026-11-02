@@ -149,17 +149,17 @@ proptest! {
         master_kept(&d);
         for o in &ops {
             match o {
-                Op::Undo => { d.undo(&r); }
-                Op::Redo => { d.redo(&r); }
+                Op::Undo => { d.undo(); }
+                Op::Redo => { d.redo(); }
                 _ => {
                     let Some(cmd) = resolve(o, &d) else { continue };
                     let before = text(&d);
                     match d.apply(cmd, &r) {
                         Ok(_) => {
                             let after = text(&d);
-                            d.undo(&r).expect("a step to undo");
+                            d.undo().expect("a step to undo");
                             prop_assert_eq!(text(&d), before);
-                            d.redo(&r).expect("a step to redo");
+                            d.redo().expect("a step to redo");
                             prop_assert_eq!(text(&d), after.clone());
                             let loaded = load_project(&after, &r).expect("a saved state loads");
                             prop_assert_eq!(save_project(&loaded), after);
@@ -170,7 +170,7 @@ proptest! {
             }
             master_kept(&d);
         }
-        while d.undo(&r).is_some() {}
+        while d.undo().is_some() {}
         prop_assert_eq!(text(&d), start);
         master_kept(&d);
     }

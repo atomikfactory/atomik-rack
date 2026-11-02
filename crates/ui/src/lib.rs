@@ -22,8 +22,8 @@
 //!             Err(e) => view.notify_rejected(e.to_string()),
 //!         },
 //!         UiAction::EndMerge => document.end_merge(),
-//!         UiAction::Undo => { document.undo(&registry); }
-//!         UiAction::Redo => { document.redo(&registry); }
+//!         UiAction::Undo => { document.undo(); }
+//!         UiAction::Redo => { document.redo(); }
 //!         UiAction::Select(_) | UiAction::OpenBrowser => {}  // menus, status bar…
 //!         _ => {}  // `UiAction` is non-exhaustive; see the sequencer views below
 //!     }

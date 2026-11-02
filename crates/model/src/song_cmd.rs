@@ -4,7 +4,7 @@ use crate::WriteMode;
 use crate::audio_edit::{slice_envelope, split_envelope};
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::controller::{canonical, check_lanes};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR,
@@ -994,22 +994,22 @@ pub(crate) fn plan(
         }
         SongCommand::SetTrackChase { device, chase } => {
             let t = &song.tracks[track_index(doc, &device)?];
-            Edit::TrackChase {
+            Edit::Swap(Swap::TrackChase {
                 device,
                 old: t.chase,
                 new: chase,
-            }
+            })
         }
         SongCommand::SetDirectRecord { device, on } => {
             let t = &song.tracks[track_index(doc, &device)?];
             if t.is_audio() || t.is_automation_only() {
                 return Err(bad(format!("{device} has no note lane to record into")));
             }
-            Edit::TrackDirectRecord {
+            Edit::Swap(Swap::TrackDirectRecord {
                 device,
                 old: t.direct_record,
                 new: on,
-            }
+            })
         }
         SongCommand::AddNoteLane { device, name } => {
             let t = &song.tracks[track_index(doc, &device)?];

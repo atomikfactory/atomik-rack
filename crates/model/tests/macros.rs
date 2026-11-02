@@ -204,9 +204,9 @@ fn assigning_to_a_new_bank_is_one_undo_step() {
     assert_eq!((assigns[0].id, assigns[0].index), (1, 2));
     let p = desc(&r, SYNTH, CUTOFF);
     assert_eq!((assigns[0].min, assigns[0].max), (p.min, p.max));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().macros.assigns.len(), 1);
     assert_eq!(d.doc().banks().count(), 1);
 }
@@ -225,7 +225,7 @@ fn the_first_assignment_keeps_the_value_of_its_target() {
     assert_eq!(assign_value(&a, m, &p), 1000.0);
     assert_eq!(d.doc().driven_value(&r, &key("a"), CUTOFF), Some(1000.0));
     // One undo step took both.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().macros.assigns.is_empty());
     assert_eq!(d.doc().banks().count(), 0);
 }
@@ -241,7 +241,7 @@ fn a_macro_drives_several_params_and_a_param_follows_one_macro() {
     assert_eq!(d.doc().macros.of_macro(&bank, 0).count(), 0);
     assert_eq!(d.doc().macros.of_macro(&bank, 1).count(), 3);
     assert_eq!(d.doc().macros.assigns.len(), 3);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().macros.of_macro(&bank, 0).count(), 1);
 }
 
@@ -341,7 +341,7 @@ fn set_range_edits_the_range_and_refuses_a_value_outside_the_param() {
         )
         .is_err()
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     let a = d.doc().macros.assigns.iter().find(|a| a.id == id).unwrap();
     assert_eq!((a.min, a.max, a.invert), (200.0, 2000.0, true));
 }
@@ -364,8 +364,8 @@ fn removing_an_assignment_leaves_the_param_where_the_macro_put_it() {
     assert_eq!(param_of(&d, "a", WAVE), Some(3.0));
     assert_eq!(d.doc().bank_driver(&key("a"), WAVE), None);
     set(&mut d, &r, "a", WAVE, 1.0);
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().driven_value(&r, &key("a"), WAVE), Some(3.0));
     assert_eq!(param_of(&d, "a", WAVE), None);
     assert!(run_macro(&mut d, &r, MacroCommand::Remove { id: 99 }).is_err());
@@ -398,7 +398,7 @@ fn clearing_a_macro_frees_all_its_targets_in_one_step() {
         )
         .is_err()
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().macros.assigns.len(), 3);
     assert_eq!(param_of(&d, "b", CUTOFF), None);
 }
@@ -418,7 +418,7 @@ fn names_are_trimmed_limited_and_can_be_cleared() {
     assert!(run_macro(&mut d, &r, name("Brightness")).is_err());
     run_macro(&mut d, &r, name("")).unwrap();
     assert_eq!(d.doc().macro_name(&bank, 0), "Macro 1");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().macro_name(&bank, 0), "Brightness");
 }
 
@@ -552,7 +552,7 @@ fn an_assignment_outlives_its_devices_and_undo_brings_it_back() {
         .unwrap();
     assert_eq!(d.doc().macros, all);
     assert_eq!(d.doc().bank_updates(&r, &bank).len(), 2);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().bank_updates(&r, &bank).len(), 3);
     // The bank goes: nothing is driven.
     d.apply(Command::RemoveDevice { key: bank.clone() }, &r)
@@ -562,8 +562,8 @@ fn an_assignment_outlives_its_devices_and_undo_brings_it_back() {
     let expanded = d.doc().expand(&r);
     assert!(expanded.macro_targets.is_empty());
     set(&mut d, &r, "a", CUTOFF, 1234.0);
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert!(d.doc().bank_driver(&key("a"), CUTOFF).is_some());
 }
 
@@ -787,7 +787,7 @@ fn undo_after_a_load_is_exact() {
     let mut loaded = Document::new(load_project(&text, &r).unwrap());
     let id = loaded.doc().macros.assigns[0].id;
     run_macro(&mut loaded, &r, MacroCommand::Remove { id }).unwrap();
-    loaded.undo(&r).unwrap();
+    loaded.undo().unwrap();
     assert_eq!(loaded.doc().macros, d.doc().macros);
     assert_eq!(loaded.doc(), d.doc());
 }

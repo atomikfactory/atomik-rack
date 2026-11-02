@@ -780,7 +780,7 @@ fn the_view_follows_the_document_and_goes_away_with_the_device() {
     let p = v.marker_point(1).unwrap();
     let a = gesture(&mut v, &d, &reg, &drag_by(p, Vec2::new(30.0, 0.0)));
     apply_all(&mut d, &reg, &a);
-    d.undo(&reg);
+    d.undo();
     v.sync(d.doc(), &reg);
     assert_eq!(v.markers(), MARKERS.to_vec());
     d.apply(Command::RemoveDevice { key: key("slicer") }, &reg)

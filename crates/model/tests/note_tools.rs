@@ -63,9 +63,9 @@ fn a_tool_edits_many_clips_in_one_undo_step() {
     assert_eq!(ops, [SyncOp::SongChanged]);
     assert!(notes_of(&d, 1).iter().all(|n| n.velocity == 0.9));
     assert!(notes_of(&d, 2).iter().all(|n| n.velocity == 0.9));
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(save_project(d.doc()), before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(notes_of(&d, 2)[0].velocity, 0.9);
 }
 
@@ -145,7 +145,7 @@ fn audio_clips_are_skipped_and_alone_are_an_error() {
     d.apply(tool(&[1, audio], None, NoteTool::SetVelocity(0.9)), &reg)
         .unwrap();
     assert!(notes_of(&d, 1).iter().all(|n| n.velocity == 0.9));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before_audio);
     // Audio alone changes nothing, so the command is refused.
     assert!(

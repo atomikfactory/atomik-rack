@@ -2,7 +2,7 @@
 //! the engine's graph rules), key and name generation.
 
 use crate::container::{BOUNDARY_KEY, notes_input, scope_socket, split_path};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::song::MAX_AUDIO_FRAMES;
 use crate::{
     AssetMeta, Cable, DeviceKey, INTERFACE_KEY, MAX_INPUT_CHANNELS, ModelError, RackDevice,
@@ -718,11 +718,11 @@ pub(crate) fn plan_rename_asset(
             "the asset already has that name".into(),
         ));
     }
-    Ok(Edit::AssetName {
+    Ok(Edit::Swap(Swap::AssetName {
         asset: asset.to_owned(),
         old: meta.original_name.clone(),
         new: name.to_owned(),
-    })
+    }))
 }
 
 /// `Command::RegisterAsset`: adds the asset, or checks it against the one already there.

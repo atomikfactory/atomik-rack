@@ -310,7 +310,7 @@ fn assigning_and_removing_leaves_the_render_as_it_was() {
     let mut n = song();
     let original = n.doc().clone();
     assign(&mut n, None, None, false);
-    n.undo(&default_registry()).unwrap();
+    n.undo().unwrap();
     assert_eq!(n.doc(), &original);
     same(&bounce(n.doc()), &before, "assigned and undone");
 }

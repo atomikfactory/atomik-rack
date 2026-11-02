@@ -123,7 +123,7 @@ fn entering_slice_mode_switches_warp_on_in_one_undo_step() {
     slice_mode(&mut v, &mut d, &reg);
     assert_eq!(v.mode(), AudioMode::Slice);
     assert!(warp_on(&d));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(!warp_on(&d));
 }
 
@@ -190,7 +190,7 @@ fn dragging_a_marker_stretches_in_one_merge_group_and_one_undo_step() {
         "a stretch keeps the frame"
     );
     assert_eq!(d.undo_depth(), depth + 1);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(markers_of(&d), before);
 }
 
@@ -282,7 +282,7 @@ fn split_cuts_at_every_marker_in_one_undo_step() {
     );
     assert_eq!(clips(&d), n + 1);
     assert_eq!(d.undo_depth(), depth + 1);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(clips(&d), n);
 }
 
@@ -468,7 +468,7 @@ fn add_all_puts_a_marker_on_every_transient_in_one_undo_step() {
         "{out:?}"
     );
     assert!(v.status().contains("already"), "{}", v.status());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(
         markers_of(&d)
             .iter()

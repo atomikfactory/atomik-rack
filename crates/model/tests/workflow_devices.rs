@@ -1047,7 +1047,7 @@ fn a_rejected_workflow_command_leaves_history_and_redo_alone() {
     let r = registry();
     let mut d = chain(&r);
     d.apply(duplicate(&["delay"]), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(d.can_redo());
     let e = rejected(
         &mut d,

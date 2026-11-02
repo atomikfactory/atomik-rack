@@ -24,7 +24,7 @@
 use crate::console::{
     CHANNEL_TYPE, ConsoleChannel, ConsoleCommand, FX_SLOTS, MASTER_TYPE, is_console_type, sockets,
 };
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::{Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, rules};
 use atomik_device_sdk::{DeviceKind, Direction, Registry, SocketKind};
 use std::collections::BTreeMap;
@@ -181,11 +181,11 @@ impl<'r> Planner<'r> {
             .collect();
         for device in entering {
             let new = next.clone().filter(|n| *n != device);
-            self.push(Edit::TrackEntry {
+            self.push(Edit::Swap(Swap::TrackEntry {
                 device,
                 old: Some(key.clone()),
                 new,
-            });
+            }));
         }
         if let Some(t) = self
             .scratch
@@ -529,11 +529,11 @@ fn add_channel_for(
     let channel = p.insert_device(index, CHANNEL_TYPE)?;
     let new = name.unwrap_or_else(|| default_channel_name(&source_name, out_l));
     let old = rules::device(p.doc(), &channel)?.name.clone();
-    p.push(Edit::Name {
+    p.push(Edit::Swap(Swap::Name {
         key: channel.clone(),
         old,
         new,
-    });
+    }));
     p.connect(wire(at(source, out_l), at(&channel, "in_l")))?;
     p.connect(wire(at(source, out_r), at(&channel, "in_r")))?;
     wire_channel_to_master(p, &channel, &master)?;

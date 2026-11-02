@@ -261,10 +261,10 @@ fn patches_carry_no_buses() {
 
 #[test]
 fn undo_and_redo_keep_the_saved_bytes_in_step() {
-    let (mut d, r) = project();
+    let (mut d, _) = project();
     let with = save_project(d.doc());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_ne!(save_project(d.doc()), with);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(save_project(d.doc()), with);
 }

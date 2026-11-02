@@ -54,10 +54,10 @@ fn setting_and_clearing_the_port_are_undo_steps_that_report_a_view_change() {
     one_step(&mut d, &r, set("out", Some("Example Synth 2")));
     one_step(&mut d, &r, set("out", None));
     assert_eq!(port(&d, "out"), None);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(port(&d, "out").as_deref(), Some("Example Synth 2"));
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(port(&d, "out"), None);
 }
 
@@ -107,7 +107,7 @@ fn the_port_is_saved_only_when_set_and_round_trips() {
     );
     assert_eq!(save_project(&back), saved, "the save is canonical");
     // Undoing the port gives the text without it back, byte for byte.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), none);
 }
 

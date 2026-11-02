@@ -164,7 +164,7 @@ fn dragging_the_hmf_point_is_one_undo_step_and_both_params_move() {
     assert!(hmf(document.doc(), "eq.hmf.freq") > 2_500.0);
     assert!(hmf(document.doc(), "eq.hmf.gain") > 6.0);
     assert_eq!(document.undo_depth(), 1, "one undo step");
-    document.undo(&reg);
+    document.undo();
     assert_eq!(hmf(document.doc(), "eq.hmf.freq"), 2_500.0);
     assert_eq!(hmf(document.doc(), "eq.hmf.gain"), 6.0);
 }

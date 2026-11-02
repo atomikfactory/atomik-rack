@@ -48,13 +48,13 @@ fn the_fold_is_part_of_the_creation_step() {
     let start = save_project(d.doc());
     run(&mut d, &r, [create_synth("synth")]);
     let after = save_project(d.doc());
-    assert!(d.undo(&r).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(
         save_project(d.doc()),
         start,
         "one undo removes the instrument, its channel and the fold"
     );
-    assert!(d.redo(&r).is_some());
+    assert!(d.redo().is_some());
     assert_eq!(save_project(d.doc()), after);
 }
 

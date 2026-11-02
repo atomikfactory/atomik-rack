@@ -865,10 +865,10 @@ fn run_gestures(steps: &[Gesture], doc: Document, scope: &[&str]) {
                 }
                 UiAction::EndMerge => d.end_merge(),
                 UiAction::Undo => {
-                    let _ = d.undo(&reg);
+                    let _ = d.undo();
                 }
                 UiAction::Redo => {
-                    let _ = d.redo(&reg);
+                    let _ = d.redo();
                 }
                 _ => {}
             }

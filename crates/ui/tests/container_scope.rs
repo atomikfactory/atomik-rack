@@ -183,7 +183,7 @@ fn the_view_pops_to_the_nearest_scope_that_still_exists() {
     assert!(v.scope().is_empty());
     assert_eq!(keys_in_view(&v), ["interface", "lead"]);
     // Undo brings the container back; the view stays where it is.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(v.scope().is_empty());
 }
@@ -931,8 +931,8 @@ mod property {
                             );
                         }
                         UiAction::EndMerge => d.end_merge(),
-                        UiAction::Undo => { d.undo(&reg); }
-                        UiAction::Redo => { d.redo(&reg); }
+                        UiAction::Undo => { d.undo(); }
+                        UiAction::Redo => { d.redo(); }
                         _ => {}
                     }
                 }

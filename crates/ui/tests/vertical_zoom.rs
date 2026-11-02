@@ -251,7 +251,7 @@ fn dragging_the_header_edge_resizes_the_track_in_one_undo_step() {
     assert_eq!(merges.len(), 2);
     assert_eq!(merges[0], merges[1], "one merge group");
     assert!(actions.contains(&UiAction::EndMerge));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert_eq!(h(&v, "lead", 0), 60.0, "a single undo step");
 }

@@ -126,14 +126,14 @@ fn undo_and_redo_name_the_step_they_would_run() {
         ],
     );
     assert_eq!(d.undo_label(), Some("Move Device"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.undo_label(), Some("Add Device"));
     assert_eq!(d.redo_label(), Some("Move Device"));
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.undo_label(), Some("Move Device"));
     assert_eq!(d.redo_label(), None);
     // A new command drops the redo names with the redo steps.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     run(&mut d, &r, [set_param("a", "osc1.wave", 1.0)]);
     assert_eq!(d.redo_label(), None);
     assert_eq!(d.undo_label(), Some("Change Parameter"));
@@ -160,7 +160,7 @@ fn merged_drags_and_joined_steps_keep_the_first_name() {
         Some("Change Parameter"),
         "the first name stays"
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.undo_label(), Some("Add Device"));
     assert_eq!(d.redo_label(), Some("Change Parameter"));
 }
@@ -174,7 +174,7 @@ fn a_trial_is_named_after_its_first_step_and_a_cancel_keeps_the_redo_names() {
         &r,
         [add(0, SYNTH, Some("a")), add(1, DELAY, Some("b"))],
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     d.apply_trial(Command::SetTempo(100.0), &r).unwrap();
     d.apply_trial(add(1, DELAY, Some("c")), &r).unwrap();
     d.cancel_trial().unwrap();

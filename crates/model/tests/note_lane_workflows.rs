@@ -68,9 +68,9 @@ fn step(d: &mut Document, r: &atomik_device_sdk::Registry, c: Command) {
     let text = save_project(&after);
     let loaded = load_project(&text, r).unwrap();
     assert_eq!(loaded.song, after.song, "the song survives a round trip");
-    d.undo(r).expect("one step to undo");
+    d.undo().expect("one step to undo");
     assert_eq!(d.doc(), &before);
-    d.redo(r).expect("one step to redo");
+    d.redo().expect("one step to redo");
     assert_eq!(d.doc(), &after);
 }
 
@@ -348,7 +348,7 @@ proptest! {
         d.doc().validate().unwrap();
         prop_assert_eq!(track(&d, "a").note_lane_count(), 1);
         prop_assert_eq!(played(track(&d, "a"), tails), before.clone());
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         prop_assert_eq!(played(track(&d, "a"), tails), before);
     }
 }
@@ -595,13 +595,13 @@ fn extracting_moves_the_selected_notes_to_a_new_lane() {
     assert_eq!(t.lanes[1].name.as_deref(), Some("C3"));
     assert_eq!(played(t, false), before, "a move keeps the sound");
     // A copy leaves the notes where they are.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     d.apply(extract(vec![1], ExtractMode::Copy, None), &r)
         .unwrap();
     let t = track(&d, "a");
     assert_eq!(pitches(&t.lanes[0]), vec![60, 60, 62, 64, 67, 71]);
     assert_eq!(pitches(&t.lanes[1]), vec![64]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     refused(&mut d, &r, extract(vec![], ExtractMode::Move, None));
     refused(&mut d, &r, extract(vec![9], ExtractMode::Move, None));
     refused(&mut d, &r, extract(vec![0], ExtractMode::Move, Some(0)));
@@ -660,7 +660,7 @@ proptest! {
         if d.apply(extract, &r).is_ok() {
             d.doc().validate().unwrap();
             prop_assert_eq!(played(track(&d, "a"), tails), before.clone());
-            d.undo(&r).unwrap();
+            d.undo().unwrap();
         }
         if d.apply(sc_workflow(WorkflowCommand::ExplodeNotes { clip: id }), &r).is_ok() {
             d.doc().validate().unwrap();

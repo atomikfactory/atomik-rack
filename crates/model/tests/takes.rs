@@ -120,10 +120,10 @@ fn a_new_group_is_one_undo_step_and_redo_restores_it_exactly() {
     new_group(&mut d, &reg, vec![take(0, BAR, 60), take(0, BAR, 61)]);
     let after = save_project(d.doc());
     assert_ne!(before, after);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
     assert_eq!(d.doc().song.take_groups().count(), 0);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(save_project(d.doc()), after);
 }
 
@@ -239,9 +239,9 @@ fn a_pick_is_one_undo_step_and_undo_brings_the_old_comp_back() {
     d.apply(sc(SongCommand::PickTake { group: 1, take: 2 }), &reg)
         .unwrap();
     assert_eq!(played(&d), [(0, 62)]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(played(&d), [(0, 60)]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
     assert_eq!(played(&d), [(0, 63)]);
 }
@@ -327,12 +327,12 @@ fn a_comp_edit_is_one_undo_step() {
     comp(&mut d, &reg, 1, 0, BAR);
     comp(&mut d, &reg, 2, BAR, 2 * BAR);
     assert_eq!(group(&d).comp, [seg(1, 0, BAR), seg(2, BAR, 2 * BAR)]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d).comp, [seg(1, 0, BAR), seg(3, BAR, 2 * BAR)]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
-    d.redo(&reg).unwrap();
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
     assert_eq!(group(&d).comp, [seg(1, 0, BAR), seg(2, BAR, 2 * BAR)]);
 }
 
@@ -417,7 +417,7 @@ fn deleting_the_last_take_removes_the_group_and_its_clips_and_undo_brings_both_b
         .unwrap();
     assert_eq!(d.doc().song.take_groups().count(), 0);
     assert_eq!(lane_clip_count(&d), 0);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
 }
 
@@ -451,9 +451,9 @@ fn flattening_keeps_the_comp_clips_and_drops_the_takes() {
     assert_eq!(d.doc().song.take_groups().count(), 0);
     assert_eq!(d.doc().song.tracks[0].lanes[0].clips, clips_before);
     assert_eq!(played(&d), played_before);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d).takes.len(), 4);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.take_groups().count(), 0);
 }
 
@@ -475,7 +475,7 @@ fn group_ids_grow_and_a_removed_track_takes_its_groups_along() {
     )
     .unwrap();
     assert_eq!(d.doc().song.take_groups().count(), 0);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), with);
 }
 
@@ -609,7 +609,7 @@ fn audio_takes_count_as_referenced_assets_and_relink_swaps_them_in_one_step() {
     .unwrap();
     let g = group(&d);
     assert!(matches!(&g.takes[0].content, ClipContent::Audio(a) if a.asset == hash(4)));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
 }
 
@@ -840,12 +840,12 @@ proptest! {
             }
         }
         for want in states.iter().rev().skip(1) {
-            d.undo(&reg).unwrap();
+            d.undo().unwrap();
             prop_assert_eq!(&save_project(d.doc()), want);
         }
         prop_assert_eq!(applied + 1, states.len());
         for want in states.iter().skip(1) {
-            d.redo(&reg).unwrap();
+            d.redo().unwrap();
             prop_assert_eq!(&save_project(d.doc()), want);
         }
     }

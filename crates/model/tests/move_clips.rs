@@ -176,7 +176,7 @@ fn a_cross_lane_drop_joins_the_geometry_drags_of_its_gesture() {
     );
     assert_eq!(starts(&d, "b").len(), 2);
     d.end_merge();
-    d.undo(&r).expect("one step");
+    d.undo().expect("one step");
     assert_eq!(text(&d), before, "the whole gesture is one undo step");
 }
 
@@ -204,8 +204,8 @@ fn a_group_drag_without_a_lane_change_is_one_undo_step_too() {
         }
     }
     d.end_merge();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(starts(&d, "a"), [(all[0].0, 3 * BAR), (all[1].0, 5 * BAR)]);
 }

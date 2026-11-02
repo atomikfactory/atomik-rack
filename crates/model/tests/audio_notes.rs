@@ -314,9 +314,9 @@ fn a_new_track_with_the_notes_is_one_undo_step() {
     let c = &track.lanes[0].clips[0];
     assert_eq!((c.start, c.length), (BAR, 2 * BAR));
     assert_eq!(notes_of(c), vec![(0, PPQ, 60), (PPQ, PPQ, 64)]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo removes the track and the clip");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.tracks.len(), before.song.tracks.len() + 1);
 }
 
@@ -345,6 +345,6 @@ fn the_clip_goes_onto_a_note_track_in_one_step_and_the_format_is_unchanged() {
     let loaded = load_project(&text, &reg).unwrap();
     assert_eq!(&loaded, d.doc());
     assert_eq!(save_project(&loaded), text, "canonical");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }

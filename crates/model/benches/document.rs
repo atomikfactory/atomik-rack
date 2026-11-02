@@ -91,7 +91,7 @@ fn cases_of(name: &str, doc: RackDoc, reg: &Rc<Registry>) -> Vec<Case> {
                     merge: None,
                 };
                 let ops = d.apply(cmd, &reg).expect("a valid edit");
-                let undone = d.undo(&reg).map_or(0, |u| u.len());
+                let undone = d.undo().map_or(0, |u| u.len());
                 ops.len() + undone
             }),
         ));

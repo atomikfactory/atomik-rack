@@ -452,7 +452,7 @@ fn copy_paste_and_clear_edit_the_selected_pattern_in_one_command_each() {
     assert_eq!(sets[0].1, cleared);
     let _ = apply_all(&mut document, &reg, &a);
     // Undo restores the pasted pattern in one step.
-    document.undo(&reg);
+    document.undo();
     assert_eq!(pattern_of(document.doc(), 2), expect);
     let _ = d;
 }

@@ -154,10 +154,10 @@ fn choosing_a_channel_emits_one_batch_that_the_model_accepts_and_undoes_in_one_s
     );
     assert_eq!(sc_enable(&document), 1.0);
     // One undo step restores the cables and the switch.
-    document.undo(&registry());
+    document.undo();
     assert_eq!(document.doc().cables, before.cables);
     assert_eq!(sc_enable(&document), 0.0);
-    document.redo(&registry());
+    document.redo();
     assert_eq!(sc_cables(document.doc()).len(), 2);
 }
 
@@ -200,7 +200,7 @@ fn replacing_the_source_disconnects_then_connects_in_one_batch() {
         .unwrap();
     v.sync(document.doc(), &registry());
     assert!(sc_cables(document.doc()).iter().all(|c| c.0 == ch2.0));
-    document.undo(&registry());
+    document.undo();
     let back = sc_cables(document.doc());
     assert_eq!(back.len(), 2, "the first source is back");
     assert!(back.iter().all(|c| c.0 == ch1.0));
@@ -257,7 +257,7 @@ fn off_removes_the_cables_and_the_switch_in_one_step() {
         .unwrap();
     assert!(sc_cables(document.doc()).is_empty());
     assert_eq!(sc_enable(&document), 0.0);
-    document.undo(&registry());
+    document.undo();
     assert_eq!(sc_cables(document.doc()).len(), 2);
     assert_eq!(sc_enable(&document), 1.0);
     // Off when nothing is cabled and the switch is off: nothing to do.

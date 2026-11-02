@@ -74,14 +74,14 @@ fn set_zones_replaces_the_list_in_one_undoable_step() {
     let b = vec![looped()];
     d.apply(set(b.clone(), None), &r).unwrap();
     assert_eq!(zones_of(&d), b);
-    assert_eq!(d.undo(&r).unwrap(), [SyncOp::ZonesChanged(key("s"))]);
+    assert_eq!(d.undo().unwrap(), [SyncOp::ZonesChanged(key("s"))]);
     assert_eq!(zones_of(&d), a);
-    assert_eq!(d.undo(&r).unwrap(), [SyncOp::ZonesChanged(key("s"))]);
+    assert_eq!(d.undo().unwrap(), [SyncOp::ZonesChanged(key("s"))]);
     assert!(zones_of(&d).is_empty());
-    assert_eq!(d.redo(&r).unwrap(), [SyncOp::ZonesChanged(key("s"))]);
-    assert_eq!(d.redo(&r).unwrap(), [SyncOp::ZonesChanged(key("s"))]);
+    assert_eq!(d.redo().unwrap(), [SyncOp::ZonesChanged(key("s"))]);
+    assert_eq!(d.redo().unwrap(), [SyncOp::ZonesChanged(key("s"))]);
     assert_eq!(zones_of(&d), b);
-    assert!(d.redo(&r).is_none());
+    assert!(d.redo().is_none());
 }
 
 #[test]
@@ -95,9 +95,9 @@ fn consecutive_drags_with_the_same_merge_id_are_one_step() {
         d.apply(set(vec![z], Some(7)), &r).unwrap();
     }
     assert_eq!(zones_of(&d)[0].key_hi, 80);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(zones_of(&d)[0].key_hi, 127, "one step for the whole drag");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(zones_of(&d).is_empty());
 }
 
@@ -119,7 +119,7 @@ fn a_new_merge_id_a_gap_or_end_merge_starts_a_new_step() {
     d.apply(set(with_hi(60), Some(2)), &r).unwrap();
     let mut his = Vec::new();
     for _ in 0..5 {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         his.push(zones_of(&d).first().map(|z| z.key_hi));
     }
     assert_eq!(
@@ -144,7 +144,7 @@ fn merging_does_not_cross_devices() {
         &r,
     )
     .unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(zones_of(&d).len(), 1, "device s keeps its zones");
 }
 
@@ -224,7 +224,7 @@ fn rejected_lists_change_nothing() {
     let e = synth.apply(synth_cmd, &r).unwrap_err();
     assert!(matches!(e, ModelError::BadZones(m) if m.contains("does not take samples")));
     // After all those rejections the history still has exactly the earlier steps.
-    assert!(d.undo(&r).is_some());
+    assert!(d.undo().is_some());
     assert!(zones_of(&d).is_empty());
 }
 
@@ -265,10 +265,10 @@ fn removing_a_sampler_and_undoing_restores_its_zones_exactly() {
     d.apply(Command::RemoveDevice { key: key("s") }, &r)
         .unwrap();
     assert!(d.doc().device(&key("s")).is_none());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.redo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -303,11 +303,11 @@ fn an_asset_only_the_undo_history_holds_survives_until_the_history_is_gone() {
     assert!(d.referenced_assets().contains(&hash(1)));
     d.prune_unreferenced_assets();
     assert!(d.doc().assets.contains_key(&hash(1)));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(zones_of(&d)[0].asset, hash(1));
     // Redo history counts too.
-    d.redo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.redo().unwrap();
+    d.undo().unwrap();
     d.prune_unreferenced_assets();
     assert!(d.doc().assets.contains_key(&hash(2)));
     // A fresh document over the same content has no history: the old asset is pruned.
@@ -623,9 +623,9 @@ proptest! {
         let back = load_project(&text, &r).unwrap();
         prop_assert_eq!(&back, d.doc());
         prop_assert_eq!(save_project(&back), text);
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         prop_assert_eq!(d.doc(), &before);
-        d.redo(&r).unwrap();
+        d.redo().unwrap();
         prop_assert_eq!(&zones_of(&d), &valid);
     }
 }
@@ -782,9 +782,9 @@ fn a_batch_of_set_param_and_set_zones_is_one_step_reporting_each_kind() {
     );
     assert_eq!(tune(&d), Some(5.0));
     assert_eq!(zones_of(&d), vec![zone(2, 500)]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(*d.doc(), before, "one undo restores everything");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(tune(&d), Some(5.0));
     assert_eq!(zones_of(&d), vec![zone(2, 500)]);
 }
@@ -800,13 +800,13 @@ fn a_batch_ignores_merge_ids_and_never_joins_a_drag_group() {
     )
     .unwrap();
     d.apply(set(vec![zone(3, 80)], Some(3)), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         zones_of(&d),
         vec![zone(2, 500)],
         "the later drag is its own step"
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(zones_of(&d), vec![zone(1, 1000)]);
     assert_eq!(tune(&d), None);
 }
@@ -851,7 +851,7 @@ fn a_batch_validates_set_zones_against_the_evolving_document() {
     d.apply(Command::Batch(vec![set_param(1.0), set_param(2.0)]), &r)
         .unwrap();
     assert_eq!(tune(&d), Some(2.0));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(tune(&d), None);
 }
 

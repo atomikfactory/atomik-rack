@@ -52,13 +52,13 @@ fn a_clip_past_the_end_moves_it_to_the_next_bar_line_and_undo_restores_both() {
         "bar line at or after the clip's end"
     );
     assert_eq!(clip_ids(d.doc()).len(), 1);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc(),
         &before,
         "one undo step takes the clip and the End back"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.end_tick(), 6 * BAR);
 }
 
@@ -99,7 +99,7 @@ fn a_drag_past_the_end_is_one_undo_step_and_the_end_never_moves_back() {
         8 * BAR,
         "the farthest the drag reached"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -150,7 +150,7 @@ fn duplicating_a_track_whose_clips_pass_the_end_moves_the_end_out() {
         3 * BAR,
         "the copy's clip ends at bar 4"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step takes the End back too");
 }
 
@@ -172,7 +172,7 @@ fn pasting_devices_with_their_tracks_past_the_end_moves_the_end_out() {
     .unwrap();
     assert_eq!(d.doc().song.tracks.len(), 2);
     assert_eq!(d.doc().song.end_tick(), 3 * BAR);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

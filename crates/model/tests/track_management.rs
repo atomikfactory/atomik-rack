@@ -75,7 +75,7 @@ fn several_tracks_move_side_by_side_in_one_undo_step() {
     one_step(&mut d, &reg, move_cmd(&["c", "a"], 0, None));
     // They keep their own order (a before c), whatever order the command lists them in.
     assert_eq!(order(&d), ["a", "c", "synth", "lead", "b", "d"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d), ["synth", "lead", "a", "b", "c", "d"]);
     d.apply(move_cmd(&["synth", "lead"], 4, None), &reg)
         .unwrap();
@@ -304,9 +304,9 @@ fn duplicating_three_tracks_is_one_undo_step_and_the_copies_are_not_armed() {
     let o = order(&d);
     assert_eq!(&o[..3], ["t0", "t1", "t2"]);
     assert_eq!(o[6], "t3");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.tracks.len(), before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.tracks.len(), before + 3);
 }
 
@@ -373,7 +373,7 @@ fn deleting_a_track_with_its_device_takes_the_channel_and_undo_restores_everythi
         "no channel plays a deleted track"
     );
     assert!(doc.device(&key("t1")).is_none() && doc.device(&key("t2")).is_none());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), before, "clips, channels and cables are back");
 }
 
@@ -395,10 +395,10 @@ fn a_track_colour_and_its_device_colour_change_in_one_undo_step() {
     d.apply(batch, &reg).unwrap();
     assert_eq!(d.doc().song.track_color(&key("a")), Some(colour));
     assert_eq!(d.doc().device(&key("a")).unwrap().color, Some(colour));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.track_color(&key("a")), None);
     assert_eq!(d.doc().device(&key("a")).unwrap().color, None);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().device(&key("a")).unwrap().color, Some(colour));
 }
 

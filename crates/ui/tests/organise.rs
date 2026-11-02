@@ -187,7 +187,7 @@ fn shift_clicking_headers_selects_several_tracks_and_group_tracks_makes_a_folder
         "the folder row is there"
     );
     // One undo step.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(v.folder_header_center(1).is_none());
     assert_eq!(order(&d), ["bass", "lead", "keys", "pad"]);
@@ -268,7 +268,7 @@ fn the_chevron_collapses_and_expands_and_the_tracks_leave_the_layout() {
     assert_eq!(v.lane_rect(&key("keys"), 0).unwrap(), keys_before);
     assert!(v.lane_rect(&key("bass"), 0).is_some());
     // Undo and redo follow the document.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(v.lane_rect(&key("bass"), 0).is_none());
 }
@@ -336,7 +336,7 @@ fn folder_buttons_set_the_flag_on_every_track_in_one_batch() {
     assert!(!d.doc().song.track(&key("bass")).unwrap().muted);
     assert!(!d.doc().song.track(&key("lead")).unwrap().muted);
     // One undo step each.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.track(&key("bass")).unwrap().muted);
     // Solo and arm keep the other flags of each track.
     let s = v.folder_button_center(1, FolderButton::Solo).unwrap();
@@ -439,7 +439,7 @@ fn double_clicking_a_track_name_renames_it_and_enter_commits() {
     apply(&mut d, &reg, &mut v, &actions);
     assert_eq!(d.doc().device(&key("pad")).unwrap().name, "Pad Wash");
     // One undo step puts the name back.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().device(&key("pad")).unwrap().name, "Pad");
 }
 
@@ -733,7 +733,7 @@ fn track_colour_applies_to_the_selected_tracks_in_one_step_and_to_a_folder() {
     assert_eq!(song.track_color(&key("bass")), Some([0x3f, 0x8f, 0xd2]));
     assert_eq!(song.track_color(&key("keys")), Some([0x3f, 0x8f, 0xd2]));
     assert_eq!(song.track_color(&key("lead")), None);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.org.colors.is_empty(), "one undo step");
     // None clears it again.
     do_command(&mut d, &reg, &mut v, "sequencer.track_color", Some("green"));
@@ -848,10 +848,10 @@ fn opened_take_rows_are_kept_in_the_song_and_follow_undo() {
     apply(&mut d, &reg, &mut v, &actions);
     assert!(d.doc().song.org.open_takes.contains(&1));
     // Undo closes them, redo opens them: the view follows the document.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(!v.takes_open(1));
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(v.takes_open(1));
 }
@@ -921,7 +921,7 @@ fn delete_on_a_selected_folder_ungroups_it_and_keeps_the_tracks() {
     assert_eq!(song_cmds(&actions), [SongCommand::Ungroup { group: 1 }]);
     assert_eq!(order(&d).len(), 4);
     assert!(v.selected_group().is_none());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.org.groups.len(), 1);
 }
 
@@ -983,7 +983,7 @@ fn height_presets_set_the_selected_tracks_or_all_of_them() {
     }
     assert_eq!(v.track_height(&key("bass")), Some(f64::from(HEIGHT_LARGE)));
     // One undo step for all of them.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.track_heights.is_empty());
     // Selected tracks only.
     v.set_selected_track(Some(key("lead")));

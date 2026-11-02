@@ -42,10 +42,10 @@ fn setting_the_information_is_one_undo_step_that_reports_a_view_change() {
     assert_eq!(ops, vec![SyncOp::ViewChanged]);
     assert_eq!(d.doc().info, info());
     assert_eq!(d.undo_label(), Some("Edit Song Information"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), none);
     assert!(d.doc().info.is_empty());
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().info, info());
 }
 

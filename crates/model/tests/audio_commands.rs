@@ -116,11 +116,11 @@ fn register_asset_keeps_redo() {
     let mut d = with_audio_track(&reg);
     d.apply(add_audio_clip("audio-track", 0, BAR, 1), &reg)
         .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.can_redo());
     d.apply(register(3, 10), &reg).unwrap();
     assert!(d.can_redo(), "registering does not clear redo");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
 }
 
 // ---- audio tracks ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ fn add_audio_track_is_one_step_with_device_channel_track_and_cables() {
     assert!(ops.contains(&SyncOp::ConsoleChanged));
     assert!(matches!(ops[0], SyncOp::DeviceAdded(_)));
     // One undo step.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -172,9 +172,9 @@ fn add_audio_track_undo_redo_roundtrip() {
     let before = d.doc().clone();
     d.apply(add_audio_track(), &reg).unwrap();
     let after = d.doc().clone();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc(), &after);
 }
 
@@ -323,7 +323,7 @@ fn removing_an_audio_track_device_keeps_the_pool_and_undo_restores_everything() 
         "pool is kept for undo"
     );
     assert!(d.doc().referenced_assets().is_empty());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -358,7 +358,7 @@ fn add_audio_clip_creates_a_clip_and_reports_its_id() {
     assert_eq!(c.content, ClipContent::Audio(a));
     assert!(c.content.is_audio() && !c.content.is_notes());
     assert_eq!(d.doc().song.next_clip_id, id.0 + 1);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -589,7 +589,7 @@ fn set_clip_content_replaces_audio_content_and_validates() {
         ..audio(2)
     };
     d.apply(set(ClipContent::Audio(b)), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(doc_clip(d.doc(), id).content, ClipContent::Audio(audio(1)));
     assert!(matches!(
         rejects(&mut d, set(ClipContent::Audio(audio(9))), &reg),
@@ -634,7 +634,7 @@ fn set_audio_clip_changes_everything_in_one_step_and_merges_drags() {
             ..audio(1)
         })
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "a drag is one undo step");
     assert!(matches!(
         rejects(&mut d, cmd(0, 0, 0, None), &reg),
@@ -705,7 +705,7 @@ fn split_audio_clip_advances_the_source_offset_by_the_frames_to_the_split() {
     assert_eq!(ra.fade_curve, FadeCurve::EqualPower);
     assert_eq!(ra.asset, hash(1));
     // Undo restores the original clip.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(doc_clip(d.doc(), id).content, ClipContent::Audio(a));
 }
 
@@ -790,7 +790,7 @@ fn duplicate_and_remove_audio_clips() {
         d.doc().assets.contains_key(&hash(1)),
         "pool is kept for undo"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.clip(id).is_some());
 }
 
@@ -821,7 +821,7 @@ fn set_input_channels_validates_and_undoes() {
     let ops = d.apply(Command::SetInputChannels(4), &reg).unwrap();
     assert!(ops.contains(&SyncOp::RoutingChanged));
     assert_eq!(d.doc().input_channels, 4);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().input_channels, 2);
     assert!(matches!(
         rejects(&mut d, Command::SetInputChannels(33), &reg),
@@ -867,7 +867,7 @@ fn shrinking_inputs_removes_the_cables_from_the_removed_inputs_in_the_same_step(
             .cables
             .contains(&cable("interface:in_2", "audio-track:in_r"))
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // Setting the same value is a valid step that changes nothing.
     d.apply(Command::SetInputChannels(2), &reg).unwrap();
@@ -912,15 +912,15 @@ fn document_pruning_keeps_what_undo_and_redo_still_need() {
         d.doc().assets.keys().cloned().collect::<Vec<_>>(),
         [hash(1)]
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.clip(id).is_some());
     // Undone steps (the redo history) keep their assets as well.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.clip(id).is_none());
     d.prune_unreferenced_assets();
     assert!(d.doc().assets.contains_key(&hash(1)));
-    d.redo(&reg).unwrap();
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
     assert!(d.doc().song.clip(id).is_none());
 }
 
@@ -963,9 +963,9 @@ fn a_cable_batch_is_one_undo_step_and_reports_routing_once() {
         .unwrap();
     assert_eq!(ops, [routing()]);
     assert_eq!(input_cables(&d), ["in_3>in_l", "in_4>in_r"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(input_cables(&d), before, "one undo restores the old inputs");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(input_cables(&d), ["in_3>in_l", "in_4>in_r"]);
 }
 
@@ -1045,7 +1045,7 @@ fn a_fade_drag_over_two_clips_is_one_merge_group_and_one_undo_step() {
         };
         assert_eq!(c.fade_in, 300);
     }
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc(),
         &before,
@@ -1062,7 +1062,7 @@ fn a_transpose_batch_over_two_clips_is_one_undo_step() {
         .map(|id| set_audio(&d, id, |c| c.warp.transpose_cents = 700, None))
         .to_vec();
     d.apply(Command::Batch(cmds), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -1107,9 +1107,9 @@ fn set_warp_markers_is_one_undo_step_and_keeps_the_rest_of_the_content() {
         .unwrap();
     assert!(ops.contains(&SyncOp::SongChanged));
     assert_eq!(markers(&d, a), list);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(markers(&d, a), list);
 }
 
@@ -1130,7 +1130,7 @@ fn a_marker_drag_is_one_merge_group() {
         .unwrap();
     }
     assert_eq!(markers(&d, a)[1].tick, 4200);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -1198,7 +1198,7 @@ fn split_at_every_marker_is_one_batch_and_one_undo_step() {
     .map(|id| doc_clip(d.doc(), *id).length)
     .collect();
     assert_eq!(lens, vec![3000, 6000, 6360]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -1217,9 +1217,9 @@ fn rename_asset_is_an_undoable_edit() {
     )
     .unwrap();
     assert_eq!(d.doc().assets[&id].original_name, "Take 4");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().assets[&id].original_name, old);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().assets[&id].original_name, "Take 4");
     for bad in ["", "   ", "tab\there", &"x".repeat(201)] {
         rejects(

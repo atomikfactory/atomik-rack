@@ -223,6 +223,6 @@ fn enter_in_the_effect_browser_with_the_master_selected_reaches_the_send_rule() 
     let mut d = d;
     d.apply(cmds[0].clone(), &reg).unwrap();
     assert!(d.doc().console.returns[0].is_some());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &doc);
 }

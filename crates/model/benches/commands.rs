@@ -31,7 +31,7 @@ fn registry() -> Registry {
 /// Applies `cmd`, undoes it and returns the number of ops reported.
 fn round_trip(d: &mut Document, reg: &Registry, cmd: Command) -> usize {
     let ops = d.apply(cmd, reg).expect("a valid command");
-    ops.len() + d.undo(reg).map_or(0, |u| u.len())
+    ops.len() + d.undo().map_or(0, |u| u.len())
 }
 
 fn cases_of(notes: usize, reg: &Rc<Registry>, out: &mut Vec<Case>) {
@@ -78,7 +78,7 @@ fn cases_of(notes: usize, reg: &Rc<Registry>, out: &mut Vec<Case>) {
             // The source already has its channel: the command may be refused; it is the
             // planning that is measured.
             let ops = d.apply(cmd, &r).map_or(0, |o| o.len());
-            ops + d.undo(&r).map_or(0, |u| u.len())
+            ops + d.undo().map_or(0, |u| u.len())
         }),
     );
     let r = Rc::clone(reg);
@@ -99,7 +99,7 @@ fn cases_of(notes: usize, reg: &Rc<Registry>, out: &mut Vec<Case>) {
                 .apply(Command::Connect(cable.clone()), &r)
                 .expect("the cable fits again")
                 .len();
-            a + b + d.undo(&r).map_or(0, |u| u.len()) + d.undo(&r).map_or(0, |u| u.len())
+            a + b + d.undo().map_or(0, |u| u.len()) + d.undo().map_or(0, |u| u.len())
         }),
     );
     let r = Rc::clone(reg);

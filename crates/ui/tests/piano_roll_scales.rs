@@ -172,7 +172,7 @@ fn a_root_chosen_without_a_scale_is_kept_for_the_next_scale() {
 fn a_scale_change_is_one_undo_step_and_unknown_arguments_are_declined() {
     let (mut v, mut d, reg) = setup(vec![n(0, PPQ, 60)], None);
     run_cmd(&mut v, &mut d, &reg, "editor.set_scale", Some("blues"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(scale_of(&d), None);
     for (id, arg) in [
         ("editor.set_scale", Some("lydian_b7")),
@@ -675,7 +675,7 @@ fn a_snapped_drag_is_one_merge_group_and_one_undo_step() {
         "{merges:?}"
     );
     assert_ne!(keys(&notes_of(&d)), [60]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(keys(&notes_of(&d)), [60], "one undo step");
 }
 
@@ -702,7 +702,7 @@ fn transpose_moves_by_scale_degree_with_snap_to_scale_and_octaves_stay_octaves()
     run_cmd(&mut v, &mut d, &reg, "editor.octave_up", None);
     assert_eq!(keys(&notes_of(&d)), [72, 76, 62]);
     // One undo step per command.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(keys(&notes_of(&d)), [60, 64, 62]);
 }
 
@@ -744,7 +744,7 @@ fn conform_moves_the_selection_to_the_scale_in_one_undo_step() {
         [60, 62, 65, 60, 70],
         "the unselected A# stays"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(keys(&notes_of(&d)), [61, 63, 66, 60, 70]);
     // Notes already in the scale: nothing is sent.
     v.set_selected_notes(&[3]);
@@ -835,7 +835,7 @@ fn dragging_while_stamping_sets_the_length_of_every_note_in_one_undo_step() {
     );
     let merges: Vec<_> = emitted(&all).into_iter().map(|(_, m)| m).collect();
     assert!(merges.windows(2).all(|w| w[0] == w[1]));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(notes_of(&d).is_empty(), "the chord was one undo step");
 }
 
@@ -955,7 +955,7 @@ fn chordify_replaces_each_selected_note_by_the_stamp_chord_in_one_undo_step() {
         vec![0, 1, 2, 3, 4, 5],
         "the chords are selected"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(notes_of(&d).len(), 3);
 }
 
@@ -1020,7 +1020,7 @@ fn arpeggiate_up_with_a_sixteenth_snap_has_exact_ticks_and_is_one_undo_step() {
         ]
     );
     assert_eq!(v.selected_notes(), vec![0, 1, 2, 3]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(notes_of(&d).len(), 4);
 }
 
@@ -1103,7 +1103,7 @@ fn strum_delays_the_notes_and_keeps_their_ends_in_one_undo_step() {
             (4 * PPQ, PPQ, 50)
         ]
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(notes_of(&d).iter().all(|n| n.length == PPQ));
 }
 

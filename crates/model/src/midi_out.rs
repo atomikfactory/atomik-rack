@@ -9,7 +9,7 @@
 //!
 //! The field is stored only when set (project format 37) and only on this device type.
 
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::{DeviceKey, ModelError, RackDevice, RackDoc, rules};
 
 /// The type id of the MIDI Out device.
@@ -70,11 +70,11 @@ pub(crate) fn plan_set_port(
             "{key} already has that MIDI port"
         )));
     }
-    Ok(Edit::MidiOutPort {
+    Ok(Edit::Swap(Swap::MidiOutPort {
         key: key.clone(),
         old,
         new: port.map(str::to_owned),
-    })
+    }))
 }
 
 impl RackDevice {

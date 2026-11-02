@@ -238,7 +238,7 @@ fn a_vanished_device_makes_the_pane_not_present() {
     apply(&mut d, Command::RemoveDevice { key: key("synth") });
     v.sync(d.doc(), &reg);
     assert!(!v.is_present());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(v.is_present());
 }
@@ -342,7 +342,7 @@ fn a_slider_drag_is_one_merged_gesture_of_set_params_on_the_plugins_own_key() {
     apply_all(&mut d, &acts);
     assert!(value_of(&d, "synth", "p10").is_some());
     // One undo step undoes the whole drag.
-    d.undo(&registry()).unwrap();
+    d.undo().unwrap();
     assert_eq!(value_of(&d, "synth", "p10"), None);
     // A second drag gets a new merge id.
     let acts2 = slider_drag(&mut v, &d, 10, w / 4.0);
@@ -770,7 +770,7 @@ fn a_gui_gesture_is_one_merged_undo_step_flagged_by_its_ids() {
     assert!(acts.contains(&UiAction::EndMerge));
     apply_all(&mut d, &acts);
     assert_eq!(value_of(&d, "synth", "p10"), Some(0.4));
-    d.undo(&registry()).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         value_of(&d, "synth", "p10"),
         None,
@@ -958,10 +958,10 @@ fn run(steps: &[Step], doc: Document, device: &str) {
                 }
                 UiAction::EndMerge => d.end_merge(),
                 UiAction::Undo => {
-                    let _ = d.undo(&reg);
+                    let _ = d.undo();
                 }
                 UiAction::Redo => {
-                    let _ = d.redo(&reg);
+                    let _ = d.redo();
                 }
                 _ => {}
             }

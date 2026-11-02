@@ -200,7 +200,7 @@ fn clicking_a_take_name_picks_the_take_as_one_undo_step() {
     let before = group(&d).comp;
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).picked(), Some(1));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d).comp, before);
 }
 
@@ -256,7 +256,7 @@ fn dragging_across_a_take_row_comps_the_snapped_range_in_one_step() {
     );
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).take_at(4 * BAR + 1), Some(1));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d).comp, before);
 }
 
@@ -351,7 +351,7 @@ fn flatten_keeps_the_clips_the_comp_made() {
     apply(&mut d, &reg, &actions);
     assert_eq!(d.doc().song.take_groups().count(), 0);
     assert_eq!(d.doc().song.tracks[2].lanes[0].clips, clips);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.take_groups().count(), 1);
 }
 
@@ -547,7 +547,7 @@ fn dragging_across_the_strip_silences_the_range_in_one_step() {
     );
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).take_at(4 * BAR + 1), None);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d).comp, before);
     // A click on the strip, and a drag over a range that is already silent, send nothing.
     assert!(song_commands(&click(&d, &reg, &mut v, a)).is_empty());
@@ -575,7 +575,7 @@ fn dragging_a_cut_moves_it_by_growing_one_neighbour_and_escape_cancels() {
     );
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).take_at(5 * BAR + PPQ), Some(2));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d).take_at(5 * BAR + PPQ), Some(1));
     // Dragging back into the earlier segment grows the later take instead.
     let earlier = v.take_strip_point(1, 5 * BAR - 2 * PPQ).unwrap();
@@ -634,7 +634,7 @@ fn the_take_row_menu_duplicates_and_reorders_in_one_step_each() {
     );
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).takes.len(), 4);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(group(&d), before);
     right_click(&d, &reg, &mut v, at);
     let actions = pick_row(&d, &reg, &mut v, "Move Take Down");
@@ -647,7 +647,7 @@ fn the_take_row_menu_duplicates_and_reorders_in_one_step_each() {
         }]
     );
     apply(&mut d, &reg, &actions);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     // The first take cannot move up; the menu says so by not offering it.
     let top = v.take_point(1, 0, 4 * BAR + PPQ).unwrap();
     right_click(&d, &reg, &mut v, top);

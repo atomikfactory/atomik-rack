@@ -63,9 +63,9 @@ fn add_channel_for_cables_names_and_is_one_undo_step() {
     )));
     // One undo step, exact; redo restores the same document.
     let after = doc.clone();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc(), &after);
 }
 
@@ -165,7 +165,7 @@ fn removing_the_source_removes_every_channel_and_undo_restores_them() {
         .unwrap();
     assert!(d.doc().console.channels.is_empty());
     assert_eq!(keys(&d), ["master"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -204,7 +204,7 @@ fn batch_accepts_add_track_and_add_clip_as_one_step() {
         d.doc().song.tracks[0].lanes[0].clips[0].content,
         ClipContent::Notes(_)
     ));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

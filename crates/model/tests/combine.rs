@@ -87,9 +87,9 @@ fn check_undo_redo(d: &mut Document, r: &Registry, before: &RackDoc) {
     let after = d.doc().clone();
     d.doc().validate().expect("the combined document is valid");
     assert_invariants(d.doc(), r);
-    d.undo(r).expect("one undo step");
+    d.undo().expect("one undo step");
     assert_eq!(d.doc(), before, "undo restores the document exactly");
-    d.redo(r).expect("redo");
+    d.redo().expect("redo");
     assert_eq!(d.doc(), &after, "redo restores the combined document");
 }
 
@@ -491,9 +491,9 @@ fn combine_then_uncombine_gives_the_rack_back() {
     assert_eq!(d.doc(), &before);
     assert!(d.doc().validate().is_ok());
     // Both steps undo one by one.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().has_containers());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -529,7 +529,7 @@ fn the_automation_lanes_of_the_combined_instrument_are_dropped_with_a_note() {
     d.apply(command, &r).unwrap();
     assert_eq!(d.doc().song.tracks[0].lanes.len(), 1);
     // The lane is back with the undo.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -632,7 +632,7 @@ fn uncombine_joins_the_container_cables_to_the_devices_and_refuses_a_narrow_spli
     .unwrap();
     let e = refused(&mut d, &r, uncombine(CONTAINER_KEY));
     assert!(e.to_string().contains("narrows or transposes"), "{e}");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     d.apply(uncombine(CONTAINER_KEY), &r).unwrap();
     assert_eq!(d.doc(), &before);
 }
@@ -746,8 +746,8 @@ fn a_device_moves_into_an_existing_container_and_out_again() {
     );
     d.doc().validate().unwrap();
     assert_invariants(d.doc(), &r);
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -1039,7 +1039,7 @@ proptest! {
                     }
                 }
                 // Undo of everything is the original, exactly.
-                while d.undo(&r).is_some() {}
+                while d.undo().is_some() {}
                 prop_assert_eq!(d.doc(), &original);
             }
         }

@@ -239,9 +239,9 @@ proptest! {
                 Ok(_) => {
                     invariants(&d, &r);
                     let after = text(&d);
-                    d.undo(&r).expect("a step to undo");
+                    d.undo().expect("a step to undo");
                     prop_assert_eq!(text(&d), before.clone());
-                    d.redo(&r).expect("a step to redo");
+                    d.redo().expect("a step to redo");
                     prop_assert_eq!(text(&d), after.clone());
                     let loaded = load_project(&after, &r).expect("a saved state loads");
                     prop_assert_eq!(save_project(&loaded), after.clone());
@@ -252,13 +252,13 @@ proptest! {
             }
         }
         for k in (0..accepted.len()).rev() {
-            d.undo(&r).expect("undo");
+            d.undo().expect("undo");
             prop_assert_eq!(text(&d), states[k].clone(), "undo to state {}", k);
         }
         prop_assert_eq!(text(&d), text(&start));
         prop_assert!(!d.can_undo());
         for (k, s) in states.iter().enumerate().skip(1) {
-            d.redo(&r).expect("redo");
+            d.redo().expect("redo");
             prop_assert_eq!(text(&d), s.clone(), "redo to state {}", k);
         }
         let mut fresh = Document::new(start.doc().clone());

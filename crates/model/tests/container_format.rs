@@ -785,8 +785,8 @@ proptest! {
         let mut d = Document::new(empty_doc());
         for o in &ops {
             match o {
-                Op::Undo => { let _ = d.undo(&r); }
-                Op::Redo => { let _ = d.redo(&r); }
+                Op::Undo => { let _ = d.undo(); }
+                Op::Redo => { let _ = d.redo(); }
                 _ => {
                     if let Some(c) = resolve_op(o, d.doc(), &r) {
                         let _ = d.apply(c, &r);

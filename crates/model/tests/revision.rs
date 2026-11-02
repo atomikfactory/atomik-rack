@@ -17,10 +17,10 @@ fn every_change_takes_a_new_revision() {
         .unwrap();
     let r2 = d.revision();
     assert_ne!(r2, r1, "apply of a second command");
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     let r3 = d.revision();
     assert_ne!(r3, r2, "undo");
-    assert!(d.redo(&reg).is_some());
+    assert!(d.redo().is_some());
     assert_ne!(d.revision(), r3, "redo");
 }
 
@@ -29,8 +29,8 @@ fn nothing_to_undo_or_redo_and_a_rejected_command_keep_the_revision() {
     let reg = registry();
     let mut d = Document::new(empty_doc());
     let r = d.revision();
-    assert!(d.undo(&reg).is_none());
-    assert!(d.redo(&reg).is_none());
+    assert!(d.undo().is_none());
+    assert!(d.redo().is_none());
     assert!(d.apply(set_param("nobody", "gain", 0.5), &reg).is_err());
     d.end_merge();
     assert_eq!(d.revision(), r);

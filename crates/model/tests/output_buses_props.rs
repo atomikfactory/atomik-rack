@@ -139,11 +139,11 @@ proptest! {
         let end = d.doc().clone();
         // The three setup steps stay; undo only the accepted ones.
         for _ in 0..accepted {
-            prop_assert!(d.undo(&r).is_some());
+            prop_assert!(d.undo().is_some());
         }
         prop_assert_eq!(d.doc(), &base);
         for _ in 0..accepted {
-            prop_assert!(d.redo(&r).is_some());
+            prop_assert!(d.redo().is_some());
         }
         prop_assert_eq!(d.doc(), &end);
     }

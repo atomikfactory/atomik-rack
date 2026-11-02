@@ -98,9 +98,9 @@ fn set_markers_is_one_undo_step_and_redoes() {
     let before = d.doc().clone();
     set_markers(&mut d, &reg, vec![marker(1, 0, "Start")]);
     let after = d.doc().clone();
-    assert_eq!(d.undo(&reg), Some(vec![SyncOp::ViewChanged]));
+    assert_eq!(d.undo(), Some(vec![SyncOp::ViewChanged]));
     assert_eq!(d.doc(), &before);
-    assert_eq!(d.redo(&reg), Some(vec![SyncOp::ViewChanged]));
+    assert_eq!(d.redo(), Some(vec![SyncOp::ViewChanged]));
     assert_eq!(d.doc(), &after);
     assert!(!d.can_redo());
 }
@@ -127,7 +127,7 @@ fn set_ranges_sorts_by_start_and_undoes() {
         .map(|r| r.name.as_str())
         .collect();
     assert_eq!(names, ["Intro", "Verse"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -157,11 +157,11 @@ fn drags_merge_into_one_step_per_group_and_markers_and_ranges_do_not_mix() {
         &reg,
     )
     .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.ranges.is_empty());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &base, "five marker drags were one undo step");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.markers.is_empty());
     assert!(!d.can_undo());
 }
@@ -181,7 +181,7 @@ fn a_range_drag_merges_across_its_moves() {
         )
         .unwrap();
     }
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.ranges[0].start, 0);
 }
 

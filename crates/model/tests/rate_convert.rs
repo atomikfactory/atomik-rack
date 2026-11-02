@@ -115,9 +115,9 @@ fn conversion_keeps_ticks_and_scales_frames_in_one_step() {
     );
     assert!(!doc.referenced_assets().contains(&hash(1)));
     // One undo step restores the rate, the assets and every position.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().sample_rate, 44_100);
 }
 
@@ -186,7 +186,7 @@ fn output_channels_change_in_one_step_and_drop_the_cables_above() {
             .iter()
             .all(|c| c.to.socket != "out_2" && c.to.socket != "out_3")
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().output_channels, 8);
     assert!(matches!(
         d.apply(Command::SetOutputChannels(0), &reg),

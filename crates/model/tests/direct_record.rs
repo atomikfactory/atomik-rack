@@ -38,9 +38,9 @@ fn the_command_changes_one_track_in_one_undo_step() {
     let ops = d.apply(set("synth", true), &reg).unwrap();
     assert_eq!(ops, vec![SyncOp::SongChanged]);
     assert!(flag(&d, "synth") && !flag(&d, "lead"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(!flag(&d, "synth"));
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(flag(&d, "synth"));
 }
 

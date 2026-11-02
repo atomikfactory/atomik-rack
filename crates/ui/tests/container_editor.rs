@@ -191,7 +191,7 @@ fn a_container_that_vanishes_makes_the_editor_not_present() {
     v.sync(d.doc(), &reg);
     assert!(!v.is_present());
     // Undo brings it back.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &reg);
     assert!(v.is_present());
 }
@@ -343,7 +343,7 @@ fn dragging_the_right_edge_changes_key_hi_in_one_merged_step() {
     let before = splits_of(d.doc());
     apply_all(&mut d, &a);
     assert_eq!(splits_of(d.doc())[0].key_hi, 49);
-    d.undo(&registry()).unwrap();
+    d.undo().unwrap();
     assert_eq!(splits_of(d.doc()), before);
 }
 
@@ -977,8 +977,8 @@ proptest! {
                         prop_assert!(r.is_ok(), "{c:?} refused: {r:?}");
                     }
                     UiAction::EndMerge => d.end_merge(),
-                    UiAction::Undo => { d.undo(&reg); }
-                    UiAction::Redo => { d.redo(&reg); }
+                    UiAction::Undo => { d.undo(); }
+                    UiAction::Redo => { d.redo(); }
                     _ => {}
                 }
             }

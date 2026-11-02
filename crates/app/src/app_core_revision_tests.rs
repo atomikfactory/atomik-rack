@@ -123,14 +123,14 @@ fn step(c: &mut AppCore<RecordingSink>, rng: &mut Rng, steps: u32) {
             if rng.next(2) == 0 {
                 c.undo();
             } else {
-                let _ = c.document.undo(&c.registry);
+                let _ = c.document.undo();
             }
         }
         9 => {
             if rng.next(2) == 0 {
                 c.redo();
             } else {
-                let _ = c.document.redo(&c.registry);
+                let _ = c.document.redo();
             }
         }
         10 => c.set_saved(c.doc().clone()),

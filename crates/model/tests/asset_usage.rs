@@ -69,9 +69,9 @@ fn assigned_follows_undo_and_redo() {
     let mut d = with_sampler(&reg);
     zones_on(&mut d, &reg, &[1]);
     assert!(d.doc().asset_usage()[&hash(1)].assigned());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(!d.doc().asset_usage()[&hash(1)].assigned());
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(d.doc().asset_usage()[&hash(1)].assigned());
 }
 
@@ -83,7 +83,7 @@ fn an_unused_sample_leaves_the_pool_unless_undo_needs_it() {
     assert_eq!(d.remove_asset(&hash(1)), Err(AssetRemoval::InUse));
     assert_eq!(d.remove_asset(&hash(9)), Err(AssetRemoval::Unknown));
     // Undone: nothing uses it, but redo would.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.remove_asset(&hash(1)), Err(AssetRemoval::History));
     // Never used: gone at once.
     assert!(d.doc().assets.contains_key(&hash(2)));

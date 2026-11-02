@@ -176,9 +176,9 @@ fn set_audio_clip_takes_warp_and_undo_restores_it() {
     })
     .unwrap();
     assert_eq!(audio_of(&d, id).warp.mode, WarpMode::Tonal);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(audio_of(&d, id).warp, WarpSettings::default());
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(audio_of(&d, id).warp.transpose_cents, -250);
     // A bad value is refused and changes nothing.
     let before = d.doc().clone();

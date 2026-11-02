@@ -243,7 +243,7 @@ fn a_press_in_a_curve_lane_sets_the_value_and_a_drag_paints_columns() {
     assert_eq!(rows[1][2].value, 100);
     assert_eq!((rows[1][3].value, rows[1][4].value), (0, 0));
     assert_eq!(rows[0][2].value, 2 * 6 - 45, "row A is untouched");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc().device(&key("seq")).unwrap().curves,
         doc.device(&key("seq")).unwrap().curves,

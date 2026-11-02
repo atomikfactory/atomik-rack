@@ -89,9 +89,9 @@ fn step(d: &mut Document, cmd: SongCommand, reg: &Registry) {
     d.apply(song_cmd(cmd), reg).unwrap();
     assert_eq!(d.undo_depth(), depth + 1);
     let after = save_project(d.doc());
-    d.undo(reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
-    d.redo(reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(save_project(d.doc()), after);
 }
 

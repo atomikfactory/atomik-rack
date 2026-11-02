@@ -15,7 +15,7 @@
 
 use crate::DeviceKey;
 use crate::console_cmd::Planner;
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::song::{Clip, Marker, MeterEvent, SongCommand, TempoEvent};
 use crate::song_cmd::{check_markers, check_meter_map, check_tempo_map, new_track};
 use crate::workflow_create::{CreateOptions, CreateSource, create_instrument};
@@ -83,11 +83,11 @@ pub(crate) fn plan(
         let name = t.name.trim();
         if !name.is_empty() {
             let old = rules::resolve(p.doc(), &key)?.name.clone();
-            p.push(Edit::Name {
+            p.push(Edit::Swap(Swap::Name {
                 key: key.clone(),
                 old,
                 new: name.to_owned(),
-            });
+            }));
         }
         let index = p.doc().song.tracks.len();
         p.push(Edit::Track {

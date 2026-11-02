@@ -289,12 +289,12 @@ fn a_plugin_takes_its_state_and_it_comes_back_on_undo() {
         Some(&PluginStateBlob(vec![1, 2, 3, 4]))
     );
     // Undo puts the old blob back, redo the patch's.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         plugin_of(d.doc(), "dst").state.as_deref(),
         Some(&PluginStateBlob(vec![9, 9]))
     );
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_same_sound(device(&d, "dst"), device(&d, "src"));
     // A reset leaves the plugin without state, as a new one.
     one_step(&mut d, &r, reset("dst"));
@@ -546,8 +546,8 @@ fn the_patch_name_round_trips_and_is_left_out_when_empty() {
     assert_eq!(&back, d.doc());
     assert_eq!(save_project(&back), named);
     // Without the names the text is what it was.
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), plain);
     let v: Value = serde_json::from_str(&plain).unwrap();
     assert_eq!(v["version"], PROJECT_VERSION);
@@ -660,7 +660,7 @@ fn a_trial_is_one_undo_step_when_committed_and_nothing_when_cancelled() {
     assert!(!committed.in_trial());
     assert_eq!(committed.undo_depth(), depth + 1);
     assert_same_sound(device(&committed, "dst"), device(&committed, "src"));
-    committed.undo(&r).unwrap();
+    committed.undo().unwrap();
     assert_eq!(device(&committed, "dst"), &original);
     assert_eq!(committed.undo_depth(), depth);
 }
@@ -672,10 +672,10 @@ fn undo_waits_for_the_trial_and_the_redo_history_survives_a_cancel() {
     let mut d = doc_with(&r, &[(type_id, "src"), (type_id, "dst")], vec![]);
     run(&mut d, &r, tweak(&r, type_id, "src"));
     let snapshot = patch_of(&d, "src");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(d.can_redo());
     d.apply_trial(apply("dst", &snapshot), &r).unwrap();
-    assert!(d.undo(&r).is_none(), "undo is refused during a trial");
+    assert!(d.undo().is_none(), "undo is refused during a trial");
     d.cancel_trial().unwrap();
     assert!(d.can_redo(), "the redo history comes back");
     // A trial that changes nothing the history records leaves everything alone.

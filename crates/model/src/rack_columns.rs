@@ -7,10 +7,10 @@
 //! insertion index. Container insides are always a single column (column 0).
 //!
 //! Everything that changes a column is an [`Edit::Layout`] (the whole `(key, column)` order,
-//! used by moves and column removal) or an [`Edit::Columns`] (the column count); both report
+//! used by moves and column removal) or an [`Swap::Columns`] (the column count); both report
 //! [`crate::SyncOp::ViewChanged`] only, so a column edit never rebuilds the audio graph.
 
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::{DeviceKey, ModelError, RackDevice, RackDoc, rules};
 use std::ops::Range;
 
@@ -201,10 +201,10 @@ fn layout_of(doc: &RackDoc) -> Vec<(DeviceKey, u16)> {
 /// `AddRackColumn`.
 pub(crate) fn plan_add_column(doc: &RackDoc) -> Result<Edit, ModelError> {
     check_room(doc)?;
-    Ok(Edit::Columns {
+    Ok(Edit::Swap(Swap::Columns {
         old: doc.columns,
         new: doc.columns + 1,
-    })
+    }))
 }
 
 /// `RemoveRackColumn`: the flat order stays, so the devices of the removed column land at the
@@ -234,15 +234,15 @@ pub(crate) fn plan_remove_column(doc: &RackDoc, column: u16) -> Result<Edit, Mod
         .collect();
     Ok(Edit::Compound(vec![
         Edit::Layout { old, new },
-        Edit::Columns {
+        Edit::Swap(Swap::Columns {
             old: doc.columns,
             new: doc.columns - 1,
-        },
+        }),
     ]))
 }
 
 /// Moves the top-level `group` (any order) together to `place`, keeping their relative rack
-/// order. Plans a [`Edit::Layout`] (preceded by [`Edit::Columns`] when the slot asks for a new
+/// order. Plans a [`Edit::Layout`] (preceded by [`Swap::Columns`] when the slot asks for a new
 /// column). The result may change nothing; callers that reject a no-op compare the layouts
 /// with [`is_noop`].
 pub(crate) fn plan_move(
@@ -289,10 +289,10 @@ pub(crate) fn plan_move(
     let layout = Edit::Layout { old, new };
     Ok(if adds {
         Edit::Compound(vec![
-            Edit::Columns {
+            Edit::Swap(Swap::Columns {
                 old: doc.columns,
                 new: doc.columns + 1,
-            },
+            }),
             layout,
         ])
     } else {
@@ -328,10 +328,10 @@ pub(crate) fn place_new_device(doc: &RackDoc, slot: ResolvedSlot, edit: Edit) ->
     if slot.adds_column {
         edits.insert(
             0,
-            Edit::Columns {
+            Edit::Swap(Swap::Columns {
                 old: doc.columns,
                 new: doc.columns + 1,
-            },
+            }),
         );
     }
     match <[Edit; 1]>::try_from(edits) {

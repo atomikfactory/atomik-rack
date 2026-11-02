@@ -40,7 +40,7 @@ fn the_history_keeps_the_latest_steps_and_forgets_the_oldest() {
     }
     assert_eq!(d.undo_depth(), MAX_UNDO_STEPS);
     let mut undone = 0;
-    while d.undo(&reg).is_some() {
+    while d.undo().is_some() {
         undone += 1;
     }
     assert_eq!(undone, MAX_UNDO_STEPS);
@@ -50,7 +50,7 @@ fn the_history_keeps_the_latest_steps_and_forgets_the_oldest() {
     assert!((level(&d, "lead") - (-40.0 + ((200 - 1) % 30) as f32)).abs() < 1e-6);
     // Redo walks the whole way forward again.
     let mut redone = 0;
-    while d.redo(&reg).is_some() {
+    while d.redo().is_some() {
         redone += 1;
     }
     assert_eq!(redone, MAX_UNDO_STEPS);
@@ -82,7 +82,7 @@ fn a_memory_limit_forgets_old_steps_but_always_keeps_the_latest() {
     let kept = d.undo_depth();
     assert!((2..15).contains(&kept), "kept {kept} of 32 steps");
     let mut undone = 0;
-    while d.undo(&reg).is_some() {
+    while d.undo().is_some() {
         undone += 1;
     }
     assert_eq!(undone, kept);
@@ -93,7 +93,7 @@ fn a_memory_limit_forgets_old_steps_but_always_keeps_the_latest() {
     d.apply(add_clip("lead", 0, notes_clip(40 * BAR, BAR, notes)), &reg)
         .unwrap();
     assert_eq!(d.undo_depth(), 1);
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn a_cancelled_trial_does_not_push_the_oldest_step_out_of_a_full_history() {
     d.cancel_trial().unwrap();
     assert_eq!(d.undo_depth(), 5);
     let mut undone = 0;
-    while d.undo(&reg).is_some() {
+    while d.undo().is_some() {
         undone += 1;
     }
     assert_eq!(undone, 5);

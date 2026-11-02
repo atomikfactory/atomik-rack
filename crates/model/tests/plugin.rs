@@ -31,9 +31,9 @@ fn bad_plugin(e: &ModelError) -> &str {
     }
 }
 
-fn undo_all(d: &mut Document, reg: &atomik_device_sdk::Registry) -> usize {
+fn undo_all(d: &mut Document) -> usize {
     let mut n = 0;
-    while d.undo(reg).is_some() {
+    while d.undo().is_some() {
         n += 1;
     }
     n
@@ -79,9 +79,9 @@ fn add_builds_the_plugin_doc_and_one_undo_step() {
     assert!(p.powered);
     assert_eq!(p.type_id(), CLAP_SYNTH);
 
-    assert_eq!(undo_all(&mut d, &r), 1, "one undo step");
+    assert_eq!(undo_all(&mut d), 1, "one undo step");
     assert!(d.doc().devices.is_empty());
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().devices[0].type_id, CLAP_SYNTH);
 }
 
@@ -177,7 +177,7 @@ fn an_instrument_plugin_gets_a_console_channel_in_the_same_step() {
     assert_eq!(c.channels.len(), 1);
     assert_eq!(c.channels[0].source, Some(key("s")));
     assert!(c.master.is_some());
-    assert_eq!(undo_all(&mut d, &r), 1, "channel and device are one step");
+    assert_eq!(undo_all(&mut d), 1, "channel and device are one step");
     assert!(d.doc().devices.is_empty());
     assert!(d.doc().console.channels.is_empty());
 }
@@ -216,7 +216,7 @@ fn removing_a_plugin_instrument_removes_its_channel_and_undo_brings_state_back()
         .unwrap();
     assert!(d.doc().devices.is_empty() || d.doc().device(&key("s")).is_none());
     assert!(d.doc().console.channels.is_empty());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         plugin_of(d.doc(), "s").state.as_deref(),
         Some(&PluginStateBlob(b"patch one".to_vec()))
@@ -372,14 +372,14 @@ fn a_gesture_is_one_undo_step() {
         .unwrap();
     }
     assert_eq!(d.doc().device(&key("synth")).unwrap().params["p10"], 0.5);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(
         d.doc().device(&key("synth")).unwrap().params.is_empty(),
         "the whole gesture is undone at once"
     );
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().device(&key("synth")).unwrap().params["p10"], 0.5);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -403,9 +403,9 @@ fn gestures_on_different_params_or_ids_are_separate_steps() {
             gesture("p11", 0.4, 2),
         ],
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().device(&key("synth")).unwrap().params["p11"], 0.3);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(
         !d.doc()
             .device(&key("synth"))
@@ -414,7 +414,7 @@ fn gestures_on_different_params_or_ids_are_separate_steps() {
             .contains_key("p11")
     );
     assert_eq!(d.doc().device(&key("synth")).unwrap().params["p10"], 0.2);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().device(&key("synth")).unwrap().params.is_empty());
 }
 
@@ -457,7 +457,7 @@ fn sync_state_stores_the_blob_and_is_not_an_undo_step() {
     let mut d = plugin_chain(&r);
     let steps = {
         let mut probe = d.clone();
-        undo_all(&mut probe, &r)
+        undo_all(&mut probe)
     };
     let ops = d.apply(sync_state("synth", b"patch"), &r).unwrap();
     assert!(
@@ -468,7 +468,7 @@ fn sync_state_stores_the_blob_and_is_not_an_undo_step() {
         plugin_of(d.doc(), "synth").state.as_deref(),
         Some(&PluginStateBlob(b"patch".to_vec()))
     );
-    assert_eq!(undo_all(&mut d, &r), steps, "the same undo depth as before");
+    assert_eq!(undo_all(&mut d), steps, "the same undo depth as before");
     // An empty blob is a state too.
     let mut d = plugin_chain(&r);
     d.apply(sync_state("fx", b""), &r).unwrap();
@@ -491,7 +491,7 @@ fn sync_state_leaves_redo_and_the_drag_group_alone() {
     run(&mut d, &r, [set_param("synth", "p11", 0.9), gesture(0.1)]);
     d.apply(sync_state("synth", b"x"), &r).unwrap();
     d.apply(gesture(0.2), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(
         !d.doc()
             .device(&key("synth"))
@@ -503,7 +503,7 @@ fn sync_state_leaves_redo_and_the_drag_group_alone() {
     assert!(d.can_redo());
     d.apply(sync_state("synth", b"y"), &r).unwrap();
     assert!(d.can_redo(), "a state sync does not clear redo");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().device(&key("synth")).unwrap().params["p10"], 0.2);
 }
 
@@ -664,14 +664,14 @@ fn pins_run_mode_and_power_are_one_undo_step_each_with_a_sync_op() {
     assert_eq!(ops.as_slice(), std::slice::from_ref(&changed));
     assert!(!plugin_of(d.doc(), "synth").powered);
 
-    let ops = d.undo(&r).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(ops.as_slice(), std::slice::from_ref(&changed));
     assert!(plugin_of(d.doc(), "synth").powered);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(!plugin_of(d.doc(), "synth").run_on_audio_thread);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(plugin_of(d.doc(), "synth").pinned.is_empty());
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(plugin_of(d.doc(), "synth").pinned, [11, 10]);
 }
 
@@ -801,9 +801,9 @@ fn relink_points_a_stand_in_at_an_installed_plugin_keeping_everything() {
     assert_eq!(d.doc().cables, before.cables, "cables kept");
     assert_eq!(d.doc().song, before.song, "automation kept");
 
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step restores type and layout");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().device(&key("fx")).unwrap().type_id, CLAP_FX);
 }
 
@@ -951,7 +951,7 @@ fn relink_drops_pins_the_new_layout_lacks_and_undo_brings_them_back() {
     )
     .unwrap();
     assert_eq!(plugin_of(d.doc(), "fx").pinned, [1]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(plugin_of(d.doc(), "fx").pinned, [3, 1]);
 }
 
@@ -999,7 +999,7 @@ fn a_batch_accepts_pins_power_and_relink_as_one_step() {
         d.doc().device(&key("fx")).unwrap().type_id,
         "clap.test.fxold"
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -1077,7 +1077,7 @@ fn plugins_work_inside_containers_with_path_keys_macros_and_auto_split() {
             .targets
             .is_empty()
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc().inner(&key("layer")).unwrap().macros[0]
             .targets
@@ -1277,12 +1277,12 @@ fn set_state_is_one_undoable_step_that_reports_the_state() {
             .any(|o| matches!(o, SyncOp::PluginStateChanged { .. }))
     );
     assert_eq!(d.undo_label(), Some("Change Plugin Patch"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         plugin_of(d.doc(), "synth").state.as_deref(),
         Some(&PluginStateBlob(b"one".to_vec()))
     );
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(
         plugin_of(d.doc(), "synth").state.as_deref(),
         Some(&PluginStateBlob(b"two".to_vec()))
@@ -1297,7 +1297,7 @@ fn set_state_with_one_merge_id_folds_and_obeys_the_caps() {
     for s in [&b"a"[..], b"b", b"c"] {
         d.apply(set_state("synth", s, Some(7)), &r).unwrap();
     }
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         plugin_of(d.doc(), "synth").state.as_deref(),
         Some(&PluginStateBlob(b"one".to_vec())),

@@ -156,7 +156,7 @@ fn organising_the_tracks_does_not_change_the_bounce() {
     // Taking everything apart again is the plain song too.
     // Two groups and seven more commands.
     for _ in 0..9 {
-        d.undo(&default_registry()).unwrap();
+        d.undo().unwrap();
     }
     assert_eq!(bounce(d.doc(), 512, 0), plain);
 }
@@ -193,7 +193,7 @@ fn muting_every_track_of_a_folder_is_muting_each_track() {
     assert_eq!(a, b);
     assert!(a.iter().any(|s| s.abs() > 0.01), "the bass still plays");
     // One undo step brings the folder's tracks back.
-    folder.undo(&default_registry()).unwrap();
+    folder.undo().unwrap();
     assert!(
         folder.doc().song.tracks.iter().all(|t| !t.muted),
         "one batch is one undo step"

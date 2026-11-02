@@ -269,7 +269,7 @@ fn removing_a_column_moves_its_devices_to_the_end_of_the_left_neighbour() {
         "d shifts down; the order never changes"
     );
     valid(&d);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(layout(&d), "a0 b1 c1 d2");
     assert_eq!(d.doc().columns, 3);
 }
@@ -341,7 +341,7 @@ fn a_group_keeps_its_relative_order_and_moves_in_one_step() {
     assert_eq!(layout(&d), "b0 x1 a1 c1 y1");
     valid(&d);
     // one_step proved that a single undo restores the rack.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(layout(&d), "a0 b0 c0 x1 y1");
 }
 
@@ -361,7 +361,7 @@ fn a_move_to_a_new_column_slot_creates_the_column_in_the_same_step() {
     view_only(&ops);
     assert_eq!(layout(&d), "b0 a1");
     assert_eq!(d.doc().columns, 2);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!((layout(&d), d.doc().columns), ("a0 b0".to_owned(), 1));
 }
 
@@ -454,7 +454,7 @@ fn a_plain_add_joins_the_column_of_the_device_before_it() {
         "a0 b0 c1 m1 d1",
         "a0 b0 c1 d1",
     ] {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         assert_eq!(layout(&d), expect);
     }
 }
@@ -501,7 +501,7 @@ fn add_device_at_the_new_column_slot_creates_the_column_in_the_same_step() {
         },
     );
     assert_eq!((layout(&d), d.doc().columns), ("a0 n1".to_owned(), 2));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!((layout(&d), d.doc().columns), ("a0".to_owned(), 1));
 }
 
@@ -939,12 +939,12 @@ fn undoing_everything_restores_the_columns_and_redo_replays_them() {
         states.push(text(&d));
     }
     for want in states.iter().rev().skip(1) {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         valid(&d);
         assert_eq!(&text(&d), want);
     }
     for want in states.iter().skip(1) {
-        d.redo(&r).unwrap();
+        d.redo().unwrap();
         valid(&d);
         assert_eq!(&text(&d), want);
     }
@@ -983,7 +983,7 @@ fn a_plugin_added_at_a_slot_lands_in_its_column() {
     assert_eq!(layout(&d), "a0 m0 b0 n1 c1 d1 o1");
     valid(&d);
     for _ in 0..3 {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
     }
     assert_eq!(layout(&d), "a0 b0 c1 d1");
 }
@@ -999,10 +999,10 @@ fn a_plugin_added_past_the_last_column_creates_it_in_one_undo_step() {
     assert_eq!(d.doc().columns, 3);
     assert_eq!(layout(&d), "a0 c1 n2");
     valid(&d);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().columns, 2);
     assert_eq!(atomik_model::save_project(d.doc()), before, "one undo step");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(layout(&d), "a0 c1 n2");
 }
 

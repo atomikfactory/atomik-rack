@@ -170,9 +170,9 @@ fn a_click_toggles_the_param_with_one_command_and_one_undo_step() {
         }
         assert_eq!(bypass_value(&d), 0.0, "{t}");
         // Two edits, two undo steps.
-        d.undo(&registry()).expect("undo");
+        d.undo().expect("undo");
         assert_eq!(bypass_value(&d), 1.0, "{t}");
-        d.undo(&registry()).expect("undo");
+        d.undo().expect("undo");
         assert_eq!(bypass_value(&d), 0.0, "{t}");
     }
 }

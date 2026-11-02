@@ -80,16 +80,16 @@ fn set_clip_scale_stores_it_reports_the_song_and_undoes_as_one_step() {
     let d2 = Scale::new(2, ScaleKind::Dorian);
     set(&mut d, 1, Some(d2), &reg);
     assert_eq!(clip(&d, 1).scale, Some(d2));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(clip(&d, 1).scale, Some(a_minor()));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc(),
         &before,
         "two commands, two steps, back to the start"
     );
-    d.redo(&reg).unwrap();
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
     assert_eq!(clip(&d, 1).scale, Some(d2));
 }
 

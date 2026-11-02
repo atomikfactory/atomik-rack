@@ -209,9 +209,9 @@ fn rename_trims_the_name_and_undoes_in_one_step() {
     )
     .unwrap();
     assert_eq!(d.doc().devices[1].name, "Echo");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().devices[1].name, "Stereo Delay");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().devices[1].name, "Echo");
 }
 
@@ -232,8 +232,8 @@ fn rename_to_a_blank_name_restores_the_default_name() {
     assert_eq!(d.doc().devices[1].name, "Poly Synth 2");
     d.apply(rename("poly-synth", ""), &reg).unwrap();
     assert_eq!(d.doc().devices[0].name, "Poly Synth");
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().devices[1].name, "Lead");
 }
 

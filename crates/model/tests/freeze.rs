@@ -158,13 +158,13 @@ fn freeze_and_unfreeze_are_one_undo_step_each_and_restore_the_document() {
     assert!(frozen_of(&d).is_none());
     assert_eq!(d.doc().song, before.song, "the original state, exactly");
 
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(frozen_of(&d).is_some(), "undo of the unfreeze refreezes");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song, before.song, "undo of the freeze");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(frozen_of(&d).is_some());
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(frozen_of(&d).is_none());
 }
 
@@ -370,7 +370,7 @@ fn removing_the_frozen_instrument_removes_its_track_and_undo_brings_the_freeze_b
     d.apply(Command::RemoveDevice { key: key("synth") }, &reg)
         .unwrap();
     assert!(d.doc().song.track(&key("synth")).is_none());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(frozen_of(&d).is_some());
 }
 
@@ -526,7 +526,7 @@ fn unfreeze_and_keep_the_audio_adds_a_track_with_the_render_in_one_step() {
     assert!(matches!(&clip.content, atomik_model::ClipContent::Audio(a) if a.asset == hash(1)));
     assert!(doc.device(&kept.device).unwrap().name.contains("(frozen)"));
     // One step undoes both.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &frozen_doc);
 }
 
@@ -555,7 +555,7 @@ fn a_rendered_track_adds_one_clip_and_mutes_the_originals_in_one_step() {
     assert_eq!(track.lanes[0].clips[0].start, BAR);
     assert!(doc.song.clip(original).unwrap().2.muted);
     assert!(d.last_clip_id().is_some());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step");
     // Bad content changes nothing.
     let e = d
@@ -716,13 +716,13 @@ fn a_rendered_track_sits_after_its_source_in_its_folder_and_colour() {
     assert!(org.members.contains_key(&new));
     assert_eq!(org.colors.get(&new), Some(&[10, 20, 30]));
     assert!(doc.console.channel_of(&new).is_some());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc(),
         &before,
         "one undo step removes the track, its channel and its folder entry"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.tracks.len(), before.song.tracks.len() + 1);
 }
 
@@ -777,7 +777,7 @@ fn a_relink_swaps_the_asset_of_a_render() {
     )
     .unwrap();
     assert_eq!(frozen_of(&d).unwrap().audio.asset, hash(3));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(frozen_of(&d).unwrap().audio.asset, hash(1));
 }
 

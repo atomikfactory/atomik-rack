@@ -87,9 +87,9 @@ fn the_tracks_come_with_instruments_unarmed_and_named_in_one_undo_step() {
     ids.dedup();
     assert_eq!(ids.len(), 3);
 
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo removes everything");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.tracks.len(), before.song.tracks.len() + 3);
 }
 
@@ -134,7 +134,7 @@ fn tempo_meter_and_markers_are_part_of_the_same_step() {
     assert_eq!(markers, [(0, "Intro"), (5, "Old"), (BAR, "Chorus")]);
     let ids: std::collections::BTreeSet<_> = song.markers.iter().map(|m| m.id).collect();
     assert_eq!(ids.len(), 3, "the new markers get fresh ids");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

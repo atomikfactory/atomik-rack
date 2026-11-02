@@ -18,7 +18,7 @@
 use crate::console::is_console_type;
 use crate::console_cmd::Planner;
 use crate::container::{SPLIT_TYPE, new_device, split_path};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::plugin::{MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES};
 use crate::{DeviceKey, DeviceSnapshot, ModelError, RackDevice, RackDoc, rules, zones};
 use atomik_device_sdk::Registry;
@@ -120,11 +120,11 @@ pub(crate) fn plan_set_name(
             "{key} already has that patch name"
         )));
     }
-    Ok(Edit::PatchName {
+    Ok(Edit::Swap(Swap::PatchName {
         key: key.clone(),
         old: device.patch_name.clone(),
         new: name.to_owned(),
-    })
+    }))
 }
 
 fn bits(v: Option<f32>) -> Option<u32> {
@@ -244,11 +244,11 @@ fn plan_into(
 
     // The name.
     if target.patch_name != patch.patch_name {
-        p.push(Edit::PatchName {
+        p.push(Edit::Swap(Swap::PatchName {
             key: key.clone(),
             old: target.patch_name.clone(),
             new: patch.patch_name.clone(),
-        });
+        }));
     }
 
     // A container's inside is replaced by taking the device out and putting the new one back

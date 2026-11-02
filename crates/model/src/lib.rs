@@ -194,7 +194,7 @@ pub use console_snapshot::{
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 pub use history::InvariantError;
-use history::{Edit, song_end_growth};
+use history::{Edit, Swap, song_end_growth};
 pub use labels::DEFAULT_LABEL;
 use labels::Labels;
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
@@ -1047,6 +1047,31 @@ pub struct Document {
     labels: Labels,
 }
 
+/// A drag-merge group that ends with the guard (see [`Document::begin_gesture`]). It reads and
+/// writes the document through `Deref`.
+pub struct Gesture<'a> {
+    document: &'a mut Document,
+}
+
+impl std::ops::Deref for Gesture<'_> {
+    type Target = Document;
+    fn deref(&self) -> &Document {
+        self.document
+    }
+}
+
+impl std::ops::DerefMut for Gesture<'_> {
+    fn deref_mut(&mut self) -> &mut Document {
+        self.document
+    }
+}
+
+impl Drop for Gesture<'_> {
+    fn drop(&mut self) {
+        self.document.merge = None;
+    }
+}
+
 /// The most undo steps a [`Document`] keeps: with more, the oldest are forgotten.
 pub const MAX_UNDO_STEPS: usize = 1000;
 
@@ -1608,14 +1633,14 @@ impl Document {
     /// Undoes the last step; `None` when there is nothing to undo (or when the step cannot be
     /// undone: it stays where it is and the document is unchanged; [`Document::try_undo`] says
     /// why).
-    pub fn undo(&mut self, registry: &Registry) -> Option<Vec<SyncOp>> {
-        self.try_undo(registry).unwrap_or(None)
+    pub fn undo(&mut self) -> Option<Vec<SyncOp>> {
+        self.try_undo().unwrap_or(None)
     }
 
     /// Redoes the last undone step; `None` when there is nothing to redo (or when the step cannot
     /// be redone; see [`Document::undo`]).
-    pub fn redo(&mut self, registry: &Registry) -> Option<Vec<SyncOp>> {
-        self.try_redo(registry).unwrap_or(None)
+    pub fn redo(&mut self) -> Option<Vec<SyncOp>> {
+        self.try_redo().unwrap_or(None)
     }
 
     /// Undoes the last step: `Ok(None)` when there is nothing to undo.
@@ -1623,7 +1648,7 @@ impl Document {
     /// # Errors
     /// [`ModelError::Invariant`] when the step does not fit the document. Nothing changes: the
     /// document is as it was and the step stays on the undo stack.
-    pub fn try_undo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
+    pub fn try_undo(&mut self) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
         if self.in_trial() {
             return Ok(None);
@@ -1652,7 +1677,7 @@ impl Document {
     ///
     /// # Errors
     /// As [`Document::try_undo`]; the step stays on the redo stack.
-    pub fn try_redo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
+    pub fn try_redo(&mut self) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
         if self.in_trial() {
             return Ok(None);
@@ -1722,9 +1747,28 @@ impl Document {
         !self.redo.is_empty()
     }
 
-    /// Ends any open drag-merge group (call on pointer release).
+    /// Ends any open drag-merge group (call on pointer release). Code that holds the document
+    /// for the whole gesture uses [`Document::begin_gesture`] instead, which cannot forget it.
     pub fn end_merge(&mut self) {
         self.merge = None;
+    }
+
+    /// Starts a gesture: commands applied through the returned guard that carry the same merge
+    /// id fold into one undo step, and the group ends when the guard is dropped, whatever the
+    /// path out of the scope (an early return or `?` included). Commands before the gesture
+    /// never merge into it.
+    ///
+    /// ```ignore
+    /// let mut drag = document.begin_gesture();
+    /// for value in values {
+    ///     drag.apply(set_param(value, Some(1)), registry)?;
+    /// }
+    /// // dropped here: the next command starts a new step
+    /// ```
+    #[must_use = "the gesture ends when the guard is dropped"]
+    pub fn begin_gesture(&mut self) -> Gesture<'_> {
+        self.merge = None;
+        Gesture { document: self }
     }
 
     /// Validates `command` against the current document and turns it into a reversible edit.
@@ -1904,11 +1948,11 @@ impl Document {
             }
             Command::AddRackColumn => rack_columns::plan_add_column(doc)?,
             Command::RemoveRackColumn { column } => rack_columns::plan_remove_column(doc, column)?,
-            Command::SetFolded { key, folded } => Edit::Folded {
+            Command::SetFolded { key, folded } => Edit::Swap(Swap::Folded {
                 old: rules::resolve(doc, &key)?.folded,
                 new: folded,
                 key,
-            },
+            }),
             Command::Rename { key, name } if doc.console.bus_index(&key).is_some() => {
                 // A bus carries its name in the console too.
                 let mut p = console_cmd::Planner::new(doc, registry);
@@ -1927,26 +1971,26 @@ impl Document {
                     // The parallel channels of a strip carry its name: they follow.
                     let old = device.name.clone();
                     let mut p = console_cmd::Planner::new(doc, registry);
-                    p.push(Edit::Name {
+                    p.push(Edit::Swap(Swap::Name {
                         old: old.clone(),
                         new: new.clone(),
                         key: key.clone(),
-                    });
+                    }));
                     console_mix::follow_names(&mut p, &key, &old, &new)?;
                     p.finish()
                 } else {
-                    Edit::Name {
+                    Edit::Swap(Swap::Name {
                         old: device.name.clone(),
                         new,
                         key,
-                    }
+                    })
                 }
             }
-            Command::SetColor { key, color } => Edit::Color {
+            Command::SetColor { key, color } => Edit::Swap(Swap::Color {
                 old: rules::resolve(doc, &key)?.color,
                 new: color,
                 key,
-            },
+            }),
             Command::Connect(cable) => workflow_create::with_entries(
                 doc,
                 registry,

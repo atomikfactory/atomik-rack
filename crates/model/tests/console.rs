@@ -53,8 +53,8 @@ fn rejects(d: &mut Document, cmd: Command, reg: &Registry) -> ModelError {
 }
 
 /// Undoes everything and checks the document is back to `before`.
-fn undo_all_restores(d: &mut Document, before: &RackDoc, reg: &Registry) {
-    while d.undo(reg).is_some() {}
+fn undo_all_restores(d: &mut Document, before: &RackDoc) {
+    while d.undo().is_some() {}
     assert_eq!(d.doc(), before);
 }
 
@@ -194,7 +194,7 @@ fn disconnect_of_a_summing_input_removes_every_cable_into_it_in_one_step() {
         .unwrap();
     assert_eq!(ops, [routing()]);
     assert!(d.doc().cables.iter().all(|c| c.to != sock("master:bus_l")));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -242,7 +242,7 @@ fn add_channel_creates_channel_and_master_and_auto_wires() {
     want.extend(bus_cables("channel", "master"));
     assert_eq!(doc.cables, sorted(want));
     // One undo step restores everything (the mixer's interface cables too).
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(
         ops,
         [
@@ -253,7 +253,7 @@ fn add_channel_creates_channel_and_master_and_auto_wires() {
         ]
     );
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().console.channels.len(), 1);
 }
 
@@ -470,7 +470,7 @@ fn renaming_a_channel_source_is_one_undo_step() {
     )
     .unwrap();
     assert_eq!(d.doc().device(&key("synth")).unwrap().name, "Lead");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -505,7 +505,7 @@ fn remove_channel_removes_device_and_cables_and_keeps_the_master() {
             .iter()
             .all(|c| c.from.device.0 != "channel" && c.to.device.0 != "channel")
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     for bad in ["synth", "nope"] {
         let e = rejects(
@@ -562,7 +562,7 @@ fn move_channel_reorders_the_console_only() {
     assert_eq!(order(&d), ["channel-3", "channel", "channel-2"]);
     let e = rejects(&mut d, mv("synth", 0), &reg);
     assert!(matches!(e, ModelError::BadConsole(_)));
-    undo_all_restores(&mut d, &before, &reg);
+    undo_all_restores(&mut d, &before);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -620,10 +620,10 @@ fn set_return_wires_the_effect_between_fx_send_and_return() {
             .cables
             .contains(&cable("delay:out_l", "master:return8_l"))
     );
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -668,7 +668,7 @@ fn set_compensation_toggles_in_one_undo_step() {
         .unwrap();
     assert_eq!(ops, [console_op()]);
     assert!(!d.doc().console.compensation);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().console.compensation);
 }
 
@@ -753,7 +753,7 @@ fn ac_x2_solo_matrix() {
         d.doc().param_value(&key("channel"), "solo", &reg),
         Some(0.0)
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         silence(&d, &reg),
         s(&[
@@ -762,7 +762,7 @@ fn ac_x2_solo_matrix() {
             ("channel-3", true)
         ])
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     // Clear all mutes.
     d.apply(param("channel-3", "mute", 1.0), &reg).unwrap();
     let before = d.doc().clone();
@@ -771,7 +771,7 @@ fn ac_x2_solo_matrix() {
     for ch in ["channel", "channel-2", "channel-3"] {
         assert_eq!(d.doc().param_value(&key(ch), "mute", &reg), Some(0.0));
     }
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // Nothing to clear is still accepted.
     d.apply(cc(ConsoleCommand::ClearSolos), &reg).unwrap();
@@ -850,10 +850,10 @@ fn ac_x6_adding_an_instrument_adds_its_channel_in_the_same_step() {
     d.apply(add(9, "test.silent-synth", None), &reg).unwrap();
     assert_eq!(d.doc().console.channels.len(), 2);
     // Undo removes the instrument and its channel (and the master it created) together.
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
-    let ops = d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(
         ops,
         [
@@ -863,7 +863,7 @@ fn ac_x6_adding_an_instrument_adds_its_channel_in_the_same_step() {
             SyncOp::DeviceRemoved(key("poly-synth")),
         ]
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &empty_doc());
 }
 
@@ -903,7 +903,7 @@ fn ac_x6_removing_an_instrument_removes_its_channel_and_undo_restores_both() {
         d.doc().console.channels,
         [channel("channel-2", Some("lead"))]
     );
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(
         ops,
         [
@@ -973,7 +973,7 @@ fn removing_console_devices_and_returns_keeps_the_console_valid() {
         "{e:?}"
     );
     assert_eq!(d.doc().console.returns[1], Some(key("echo")));
-    undo_all_restores(&mut d, &before, &reg);
+    undo_all_restores(&mut d, &before);
 }
 
 // ---------------------------------------------------------------------------------------

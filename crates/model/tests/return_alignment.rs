@@ -61,8 +61,8 @@ fn switching_the_flag_is_one_undo_step() {
     .unwrap();
     assert!(d.doc().console.align_returns);
     assert!(save_project(d.doc()).contains(FIELD));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(!d.doc().console.align_returns);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(d.doc().console.align_returns);
 }
