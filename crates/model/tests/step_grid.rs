@@ -662,7 +662,7 @@ fn v5_writes_grid_only_when_present() {
     let d = doc_with_grids(&reg);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 39);
+    assert_eq!(v["version"], 40);
     let clips = &v["song"]["tracks"][0]["lanes"][0]["clips"];
     assert_eq!(
         clips[0]["grid"],
@@ -703,7 +703,7 @@ fn older_versions_load_without_grids_and_reject_the_field() {
     let text = save_project(d.doc());
     assert!(!text.contains("grid"));
     for version in 3..=4 {
-        let old = text.replace("\"version\": 39", &format!("\"version\": {version}"));
+        let old = text.replace("\"version\": 40", &format!("\"version\": {version}"));
         let back = load_project(&old, &reg).unwrap();
         assert!(
             back.song
@@ -718,7 +718,7 @@ fn older_versions_load_without_grids_and_reject_the_field() {
     // A grid in an older file is an unknown field.
     let with = save_project(doc_with_grids(&reg).doc());
     for version in 3..=4 {
-        let old = with.replace("\"version\": 39", &format!("\"version\": {version}"));
+        let old = with.replace("\"version\": 40", &format!("\"version\": {version}"));
         let e = load_project(&old, &reg).unwrap_err().to_string();
         assert!(e.contains("grid"), "v{version}: {e}");
     }

@@ -22,9 +22,9 @@ use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
-    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES, MAX_BUFFER,
-    MAX_SURFACES, MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES, RECORD_OFFSET_CHOICES,
-    SurfaceSettings, WORKER_CHOICES,
+    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES,
+    MASTER_TUNE_CHOICES, MAX_BUFFER, MAX_SURFACES, MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES,
+    RECORD_OFFSET_CHOICES, SurfaceSettings, WORKER_CHOICES,
 };
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
@@ -93,6 +93,8 @@ pub enum Choice {
     RecordOffset(i32),
     /// Bars of pre-count before a recording (0 = off).
     PreCount(u8),
+    /// The master tune of the project, in cents around A = 440 Hz.
+    Tune(f32),
     /// Buffer size.
     Buffer(u32),
     /// The field beside the buffer chips: a click starts typing a size (digits, Enter keeps it,
@@ -144,6 +146,15 @@ pub enum Choice {
     ClockInPort(Option<String>),
     /// Whether the transport follows the clock in.
     ClockFollow(bool),
+}
+
+/// The text of a master tune chip: `0`, `+5`, `-12.5`.
+fn tune_label(cents: f32) -> String {
+    if cents.abs() < 1e-4 {
+        "0".to_string()
+    } else {
+        format!("{cents:+}")
+    }
 }
 
 /// A titled group of options.
@@ -623,6 +634,13 @@ impl SettingsDialog {
             offsets.push(d.record_offset_frames);
             offsets.sort_unstable();
         }
+        // The project's own tune is offered too when it is none of the steps (a typed value in
+        // a file, or one a mapping set).
+        let mut tunes: Vec<f32> = MASTER_TUNE_CHOICES.to_vec();
+        if !tunes.iter().any(|c| (c - d.master_tune_cents).abs() < 1e-4) {
+            tunes.push(d.master_tune_cents);
+            tunes.sort_by(f32::total_cmp);
+        }
         let mut sections = vec![
             Section {
                 title: "Audio host",
@@ -705,6 +723,14 @@ impl SettingsDialog {
                         };
                         (label, Choice::PreCount(*b))
                     })
+                    .collect(),
+                chips: true,
+            },
+            Section {
+                title: "Master tune (cents, A = 440 Hz; this project)",
+                options: tunes
+                    .iter()
+                    .map(|c| (tune_label(*c), Choice::Tune(*c)))
                     .collect(),
                 chips: true,
             },
@@ -993,6 +1019,7 @@ impl SettingsDialog {
             Choice::Input(n) => d.input_device == *n,
             Choice::RecordOffset(o) => d.record_offset_frames == *o,
             Choice::PreCount(b) => d.pre_count_bars == *b,
+            Choice::Tune(c) => (d.master_tune_cents - *c).abs() < 1e-4,
             Choice::Buffer(b) => d.buffer_frames == *b && self.buffer_edit.is_none(),
             Choice::BufferField => self.buffer_edit.is_some(),
             Choice::WorkersAuto => d.workers_auto,
@@ -1041,6 +1068,7 @@ impl SettingsDialog {
             Choice::Input(n) => self.draft.input_device = n,
             Choice::RecordOffset(o) => self.draft.record_offset_frames = o,
             Choice::PreCount(b) => self.draft.pre_count_bars = b,
+            Choice::Tune(c) => self.draft.master_tune_cents = c,
             Choice::Buffer(b) => {
                 self.buffer_edit = None;
                 self.draft.buffer_frames = b;
@@ -1432,6 +1460,7 @@ impl SettingsDialog {
                     | Choice::Linger(_)
                     | Choice::RecordOffset(_)
                     | Choice::PreCount(_)
+                    | Choice::Tune(_)
             );
             let shape = RoundedRect::from_rect(*r, 5.0);
             if selected {

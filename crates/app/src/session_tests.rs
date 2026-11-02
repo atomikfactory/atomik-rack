@@ -272,6 +272,7 @@ fn settings() -> AudioSettings {
         midi_out_port: None,
         sync: crate::settings::SyncSettings::default(),
         device_loss: crate::settings::DeviceLossSettings::default(),
+        master_tune_cents: 0.0,
     }
 }
 

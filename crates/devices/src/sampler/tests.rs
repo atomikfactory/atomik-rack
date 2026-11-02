@@ -1716,3 +1716,47 @@ fn round_robin_cycles_each_key_on_its_own() {
     assert_eq!(a0.to_bits(), b0.to_bits());
     assert!(a1 > a0);
 }
+
+#[test]
+fn master_tune_is_a_playback_ratio_like_the_tune_params() {
+    let want = ramp(4000);
+    // An octave of master tune plays exactly like an octave of tune.semi.
+    let m = ramp_map(4000, |_| {});
+    let (mut h, _) = with_map(&m);
+    h.time_mut().tune_cents = 1200.0;
+    h.push_note("notes_in", on(0, 60, 1.0));
+    let (ol, _) = render(&mut h, 3);
+    for n in SETTLED..150 {
+        let w = want[2 * n] * FRAC_1_SQRT_2;
+        assert_eq!(ol[n].to_bits(), w.to_bits(), "@{n}");
+    }
+    // 50 cents: the ramp advances by 2^(50/1200) a sample.
+    let (mut h, _) = with_map(&m);
+    h.time_mut().tune_cents = 50.0;
+    h.push_note("notes_in", on(0, 60, 1.0));
+    let (ol, _) = render(&mut h, 3);
+    let ratio = 2f64.powf(50.0 / 1200.0);
+    for (n, v) in ol.iter().enumerate().take(150).skip(SETTLED) {
+        let w = f64::from(FRAC_1_SQRT_2) * ratio * n as f64 / 4096.0;
+        assert!((f64::from(*v) - w).abs() < 1e-5, "@{n}: {v} vs {w}");
+    }
+}
+
+#[test]
+fn a_tune_of_zero_plays_the_same_bits_as_no_tune() {
+    let m = ramp_map(4000, |z| z.tune_cents = 13.0);
+    let run = |set: bool| {
+        let (mut h, _) = with_map(&m);
+        if set {
+            h.time_mut().tune_cents = 0.0;
+        }
+        h.push_note("notes_in", on(0, 63, 1.0));
+        render(&mut h, 4)
+    };
+    let (a, b) = (run(false), run(true));
+    assert!(
+        a.0.iter()
+            .zip(&b.0)
+            .all(|(x, y)| x.to_bits() == y.to_bits())
+    );
+}

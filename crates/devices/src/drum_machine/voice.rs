@@ -233,12 +233,12 @@ impl Voice {
         self.fade_left > 0
     }
 
-    fn segment(&self, pads: &[Pad; PAD_COUNT]) -> Segment {
+    fn segment(&self, pads: &[Pad; PAD_COUNT], sh: &Shared) -> Segment {
         let p = &pads[usize::from(self.pad)];
         let z = &self.zone;
         let key = i32::from(super::pad_key(self.pad));
         let offset = (key - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
-        let exponent = (offset + p.tune + (p.fine + z.tune_cents) / 100.0) / 12.0;
+        let exponent = (offset + p.tune + (p.fine + z.tune_cents + sh.master_cents) / 100.0) / 12.0;
         let pan = p.pan + z.pan;
         let (pan_l, pan_r) = if self.stereo {
             balance_gains(pan)
@@ -266,7 +266,7 @@ impl Voice {
     ) {
         let [out_l, out_r] = out;
         let mut map = own;
-        let mut seg = self.segment(pads);
+        let mut seg = self.segment(pads, sh);
         for n in 0..out_l.len() {
             let data = &map.buffer_of(&self.zone).data;
             let xl = self.head.read(&data[0]);
@@ -323,7 +323,7 @@ impl Voice {
                     Some((m, pe)) => {
                         self.start(m, pe.zone as usize, pe.pad, pe.velocity, pads);
                         map = m;
-                        seg = self.segment(pads);
+                        seg = self.segment(pads, sh);
                     }
                     None => return,
                 }

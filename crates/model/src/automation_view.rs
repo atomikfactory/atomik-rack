@@ -142,6 +142,7 @@ impl RackDoc {
             midi_maps: Vec::new(),
             macros: self.macros.clone(),
             info: self.info.clone(),
+            tune_cents: self.tune_cents,
         })
     }
 }

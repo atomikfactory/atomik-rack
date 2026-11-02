@@ -27,6 +27,28 @@ Conventions used throughout:
   *Exp* is exponential, and *dB* is linear in decibels with the minimum meaning silence.
 - **Audio** is nominally ±1.0. **CV** is nominally −1..+1. Stereo is a pair of mono sockets `*_l` and `*_r`.
 
+## Master tune
+
+The project has one reference pitch, a shift of -100 to +100 cents around A = 440 Hz (Audio > Settings,
+the Master tune chips; saved with the song as the root field `tune_cents`, written only when it is not
+0). It reaches every device the same way: the engine puts the value of the batch in `TimeInfo::tune_cents`
+(a change glides over about 20 ms, so held notes do not step), so a bounce of the song is what was heard
+and is the same for every block size. A project at 0 bounces bit for bit as it did before the setting
+existed. Where each pitched path stands:
+
+| Path | Master tune |
+|---|---|
+| Poly synth, Mono Bass, Dual Layer (both layers) | Shifts both oscillators (note, bend, LFO and CV all add to it) |
+| Wavetable synth | Shifts both oscillators and the sub oscillator |
+| FM synth | Shifts the key frequency every ratio operator follows; a fixed-frequency operator keeps its own Hz |
+| Sampler | Adds to the playback ratio with the zone and global tune |
+| Drum machine | Adds to every pad's playback ratio with the pad's tune, fine tune and the zone's cents |
+| Loop slicer | Adds to every slice's playback ratio, with the slice's own tune and the global tune |
+| Grain Sampler | Adds to every grain's ratio |
+| Audio track tuner | Its A4 is the track's `tuner_ref` shifted by the master tune; the readout shows that A4 |
+| Audio tracks (clips, recording), plugins, effects, the note players | Not affected |
+| Audio-to-notes conversion | Not affected: it reads the pitch of a recording against A = 440 Hz |
+
 ---
 
 ## Poly Synth: `atomik.poly-synth` (Instrument)

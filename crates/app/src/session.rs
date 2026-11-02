@@ -1047,6 +1047,16 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         }
     }
 
+    fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError> {
+        match &mut self.running {
+            Some(r) => counted(
+                &mut self.control_stalled,
+                r.handle.set_master_tune(cents, glide),
+            ),
+            None => Ok(()),
+        }
+    }
+
     fn collect_garbage(&mut self) -> usize {
         self.running
             .as_mut()

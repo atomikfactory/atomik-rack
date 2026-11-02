@@ -127,6 +127,7 @@ fn the_sections_cover_every_setting() {
             "Worker linger (spins)",
             "Record offset (frames)",
             "Pre-count (bars)",
+            "Master tune (cents, A = 440 Hz; this project)",
             "If the audio device is lost",
         ]
     );
@@ -591,4 +592,29 @@ fn auto_and_a_fixed_count_exclude_each_other() {
             .iter()
             .any(|(_, n)| n.starts_with("Auto starts "))
     );
+}
+
+#[test]
+fn the_master_tune_chips_set_the_draft_and_offer_a_value_that_is_none_of_the_steps() {
+    let mut d = SettingsDialog::new(current(), lists());
+    let chips = labels(&d, "Master tune (cents, A = 440 Hz; this project)");
+    assert_eq!(chips.len(), 15);
+    assert!(chips.contains(&"0".to_string()) && chips.contains(&"+5".to_string()));
+    assert!(chips.contains(&"-100".to_string()));
+    assert!(d.is_selected(&Choice::Tune(0.0)));
+    d.choose(Choice::Tune(-20.0));
+    assert!(d.is_selected(&Choice::Tune(-20.0)) && !d.is_selected(&Choice::Tune(0.0)));
+    assert!((d.draft.master_tune_cents + 20.0).abs() < 1e-6);
+    // A project tuned by hand to 7.5 cents shows that value as its own chip.
+    let d = SettingsDialog::new(
+        AudioSettings {
+            master_tune_cents: 7.5,
+            ..current()
+        },
+        lists(),
+    );
+    let chips = labels(&d, "Master tune (cents, A = 440 Hz; this project)");
+    assert_eq!(chips.len(), 16);
+    assert!(chips.contains(&"+7.5".to_string()), "{chips:?}");
+    assert!(d.is_selected(&Choice::Tune(7.5)));
 }

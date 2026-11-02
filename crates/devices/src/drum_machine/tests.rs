@@ -1596,3 +1596,31 @@ fn a_reversed_pad_zone_ends_with_a_fade_at_its_start() {
 
 #[path = "fx_tests.rs"]
 mod fx_tests;
+
+#[test]
+fn master_tune_shifts_every_pad_like_the_tune_params() {
+    let m = map(vec![buffer(vec![ramp(4000)])], vec![zone(0, 4000, 36)]);
+    let want = ramp(4000);
+    // An octave of master tune reads every second frame, exactly like `pad1.tune` 12.
+    let (mut h, _) = with_map(&m);
+    h.time_mut().tune_cents = 1200.0;
+    hit(&mut h, 0, 1, 1.0);
+    let (ol, _) = render(&mut h, 4);
+    for n in SETTLED..200 {
+        assert_eq!(
+            ol[n].to_bits(),
+            (want[2 * n] * FRAC_1_SQRT_2).to_bits(),
+            "{n}"
+        );
+    }
+    // 50 cents: the ramp advances by 2^(50/1200) a sample.
+    let (mut h, _) = with_map(&m);
+    h.time_mut().tune_cents = 50.0;
+    hit(&mut h, 0, 1, 1.0);
+    let (ol, _) = render(&mut h, 4);
+    let ratio = 2f64.powf(50.0 / 1200.0);
+    for (n, v) in ol.iter().enumerate().take(200).skip(SETTLED) {
+        let w = f64::from(FRAC_1_SQRT_2) * ratio * n as f64 / 4096.0;
+        assert!((f64::from(*v) - w).abs() < 1e-5, "{n}: {v} vs {w}");
+    }
+}

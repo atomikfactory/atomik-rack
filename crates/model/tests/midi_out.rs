@@ -115,7 +115,7 @@ fn the_port_is_saved_only_when_set_and_round_trips() {
 fn a_project_without_a_port_differs_from_its_version_36_file_in_the_version_line_alone() {
     let (d, r) = with_device();
     let current = text(&d);
-    let old = current.replacen("\"version\": 39", "\"version\": 36", 1);
+    let old = current.replacen("\"version\": 40", "\"version\": 36", 1);
     let loaded = load_project(&old, &r).expect("a version 36 file loads");
     assert_eq!(save_project(&loaded), current);
 }
@@ -125,7 +125,7 @@ fn the_field_is_refused_in_a_version_36_file_and_on_other_devices_and_when_malfo
     let (mut d, r) = with_device();
     run(&mut d, &r, [set("out", Some("Port"))]);
     let saved = text(&d);
-    let old = saved.replacen("\"version\": 39", "\"version\": 36", 1);
+    let old = saved.replacen("\"version\": 40", "\"version\": 36", 1);
     let e = load_project(&old, &r).unwrap_err().to_string();
     assert!(e.contains("midi_out") && e.contains("unknown field"), "{e}");
     // On a device that is not a MIDI Out device.

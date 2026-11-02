@@ -420,6 +420,11 @@ pub(crate) enum Edit {
         old: SongInfo,
         new: SongInfo,
     },
+    /// The master tune in cents.
+    Tune {
+        old: f32,
+        new: f32,
+    },
     /// Several edits performed in order as one undo step; the inverse undoes them in reverse.
     Compound(Vec<Edit>),
 }
@@ -608,6 +613,7 @@ impl Edit {
                 new: old,
             },
             Edit::Info { old, new } => Edit::Info { old: new, new: old },
+            Edit::Tune { old, new } => Edit::Tune { old: new, new: old },
             Edit::Connect(c) => Edit::Disconnect(c),
             Edit::Disconnect(c) => Edit::Connect(c),
             Edit::Param {
@@ -971,6 +977,10 @@ impl Edit {
             Edit::Info { new, .. } => {
                 doc.info.clone_from(new);
                 vec![SyncOp::ViewChanged]
+            }
+            Edit::Tune { new, .. } => {
+                doc.tune_cents = *new;
+                vec![SyncOp::TuneChanged(*new)]
             }
             Edit::Connect(c) => {
                 let Err(at) = doc.cables.binary_search(c) else {

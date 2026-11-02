@@ -398,3 +398,32 @@ fn a_click_on_the_tuner_button_shows_the_tuner_and_mutes_the_track() {
     core.paint(&mut dl);
     assert!(dl.texts().contains(&"PLAY A NOTE"), "{:?}", dl.texts());
 }
+
+#[test]
+fn the_master_tune_shifts_the_reference_the_tuner_reads_against() {
+    let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    let key = add_audio_track(&mut core);
+    show(&mut core, &key, true);
+    assert_eq!(
+        data(&core, &key).tuner_ref_hz,
+        0.0,
+        "in tune: the panel shows its own A4"
+    );
+    core.apply_command(Command::SetMasterTune(100.0)).unwrap();
+    core.apply_command(Command::SetParam {
+        key: key.clone(),
+        param: "tuner_ref".into(),
+        value: 432.0,
+        merge: None,
+    })
+    .unwrap();
+    show(&mut core, &key, false);
+    show(&mut core, &key, true);
+    let want = 432.0 * 2f32.powf(100.0 / 1200.0);
+    let shown = data(&core, &key).tuner_ref_hz;
+    assert!((shown - want).abs() < 0.01, "{shown} vs {want}");
+    // The reading itself is made against the shifted A4.
+    let (reference, shown_ref) = core.tuner_reference(&key);
+    assert_eq!(reference, shown_ref);
+    assert!((reference - want).abs() < 0.01);
+}

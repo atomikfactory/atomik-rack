@@ -276,7 +276,7 @@ impl Voice {
         let z = &self.zone;
         let semis = (i32::from(self.key) - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
         let exponent = (semis + sh.tune_semi) / 12.0
-            + z.tune_cents / 1200.0
+            + (z.tune_cents + sh.master_cents) / 1200.0
             + if cv.is_finite() {
                 cv.clamp(-1.0, 1.0)
             } else {

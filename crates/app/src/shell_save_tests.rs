@@ -464,3 +464,31 @@ fn start_up_skips_a_last_song_that_is_gone_and_says_so() {
     let message = s.core().last_rejection().unwrap_or_default();
     assert!(message.contains("no longer exists"), "{message}");
 }
+
+#[test]
+fn the_window_saves_on_a_worker_and_says_so_in_the_status_line() {
+    let d = dir("background");
+    let mut s = shell();
+    s.core_mut().set_background_save(true);
+    add(&mut s, "lead");
+    let file = d.join("song.atomik");
+    s.save_to(&file);
+    assert!(s.core().saving());
+    s.poll_status();
+    assert!(s.status_text().contains("Saving..."), "{}", s.status_text());
+    // Opening another song asks the question only once the save has settled.
+    s.core_mut().settle_save();
+    s.poll_status();
+    assert!(!s.status_text().contains("Saving..."));
+    assert!(!s.core().is_dirty());
+    assert!(file.exists());
+    // A change after the save is unsaved again.
+    add(&mut s, "pad");
+    assert!(s.core().is_dirty());
+    // File > Save writes in the background too, and quitting waits for it.
+    assert!(s.execute(AppCommand::Save).is_empty());
+    assert!(s.core().saving());
+    assert_eq!(s.execute(AppCommand::Quit), vec![ShellRequest::Quit]);
+    assert!(!s.core().saving());
+    assert!(!s.core().is_dirty());
+}

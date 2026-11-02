@@ -796,6 +796,8 @@ struct Shared {
     transpose: f32,
     fine: f32,
     random_cents: f32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`).
+    master_cents: f32,
     key_track: f32,
     velocity_amount: f32,
     filter_on: bool,
@@ -843,6 +845,7 @@ impl Shared {
             transpose: 0.0,
             fine: 0.0,
             random_cents: 0.0,
+            master_cents: 0.0,
             key_track: 1.0,
             velocity_amount: 0.5,
             filter_on: false,
@@ -1328,7 +1331,10 @@ impl Voice {
         let reverse = self.rng.next_f32() < p.reverse;
         let pan = (self.sel.zone.pan + p.spread * self.rng.next_bipolar()).clamp(-1.0, 1.0);
         let fraction = fold01(self.centre() + spray);
-        let ratio = f64::from(exp2_det((c.semis + random * 0.01) / 12.0)).clamp(MIN_STEP, MAX_STEP);
+        let ratio = f64::from(exp2_det(
+            (c.semis + random * 0.01 + p.master_cents * 0.01) / 12.0,
+        ))
+        .clamp(MIN_STEP, MAX_STEP);
         let start = fit_start(fraction * window, f64::from(c.len) * ratio, window, reverse);
         let step = if reverse { -ratio } else { ratio };
         let (gl, gr) = if self.stereo {
@@ -1816,6 +1822,7 @@ impl Device for Granular {
             self.fresh = false;
         }
         self.display.valid = false;
+        self.shared.master_cents = ctx.time.tune_cents;
         let mut lfo = [0.0f32; BATCH];
         for s in &mut lfo {
             *s = self.lfo.next_sample();
