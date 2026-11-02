@@ -113,6 +113,8 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
+*Note, 2026-11-01.* Built on the working default, so it stands or changes with the review: device-level slots (eight per device), the operators `+ - * /` only, no engine change. The shape of the framework (slot count, source and target tables by id, `via` as a 0..1 scale on the amount) is in [EXTENDING.md](EXTENDING.md#modulation-matrix); the poly synth and the mono bass are the first devices to use it, and project format 41 stores the slot structure. The generic matrix panel is not built yet.
+
 ## F. Block-based arrangement
 
 **Question.** Should the arrangement support blocks, reusable sections that own a set of clips per lane?

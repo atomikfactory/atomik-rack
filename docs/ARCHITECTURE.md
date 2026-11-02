@@ -2130,6 +2130,23 @@ and plugins are not touched. The per-device audit is in [DEVICES.md](DEVICES.md#
 tab of Settings edits the open project's tune and, once changed there, keeps the value as the tune new
 projects start with (`master_tune_cents` in the settings file).
 
+### Modulation matrix
+
+A device whose type declares modulation tables (`ModTables`, registered with `Registry::register_with_mods`) has
+eight slots; a slot routes one of the device's own sources to one of its own targets with an amount and an optional
+`via` source that scales it. It is the working default of decision E in
+[DECISIONS.md](DECISIONS.md#e-modulation-framework) (device-level slots, no engine change), and the engine never
+sees a slot. The document keeps the structure per device
+(`RackDevice::mods`: source, target and `via` as ids into the device's tables, edited by
+`WorkflowCommand::SetModSlot`, one undo step, saved from format 41 only when a slot is in use) and the amount of
+slot 1 as the ordinary param `mod1_amount` (and so on), so it is automatable. `RackDoc::expand` turns the structure into the
+device's `internal.mod1_source`, `_target` and `_via` params (id + 1, 0 for none; `SyncOp::ModSlotsChanged` makes the
+app re-send them after an edit), and the device sums its slots with a `ModBus` at its control rate: `amount * source
+* via` in slot order with `+ - * /` only, added to the target in the device's own unit. A device with no slot in use
+runs none of that code, so a project without slots bounces bit for bit as before. The poly synth and the mono bass
+are the first users (nine sources, three targets); the framework is written down for device authors in
+[EXTENDING.md](EXTENDING.md#modulation-matrix) and the sources and targets in [DEVICES.md](DEVICES.md).
+
 ## 4. Threading model
 
 | Thread | Runs | May allocate or block? |

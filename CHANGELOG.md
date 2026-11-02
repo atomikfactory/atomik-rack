@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
+  slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
+  control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
+  worker count. The document stores the slots per device with one undoable command, the amount of a slot is an
+  ordinary automatable param, and a project without slots saves, loads and bounces as before (project format
+  41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
+  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. There
+  is no panel for it yet: the slots are set through the command and the project file.
 - **Master tune.** Audio > Settings has a Master tune of -100 to +100 cents around A = 440 Hz. It
   shifts every pitched device (the synths, the sampler, the drum machine, the loop slicer and the grain
   sampler; a fixed-frequency FM operator keeps its Hz) and the reference of the audio track tuner, is

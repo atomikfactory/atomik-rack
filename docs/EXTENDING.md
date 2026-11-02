@@ -159,6 +159,51 @@ One convention for every dedicated CV input, with the shared helpers in [crates/
 - Per-sample targets (level, pan) read the CV sample by sample with no extra smoothing, so a stepped CV gives a stepped gain; pitch, resonance and cutoff are read at the 16-sample control rate with the filter coefficient ramped in between. A device that smooths per batch uses the batch mean of the CV.
 - Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level; drum machine level and pitch) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan).
 
+### Modulation matrix
+
+A device can let the user route its own sources to its own targets without a cable. The framework is
+device-level: the engine has no concept of it, the sums are computed inside the device, and the operators are
+`+`, `-`, `*` and `/` only, so the result is bit-identical on every platform. It is the working default of
+[decision E](DECISIONS.md#e-modulation-framework) (device-level slots; not yet reviewed by the maintainer).
+
+- **Tables.** The device declares a `ModTables`: its **sources** (`ModSource`: an id, a key, a name and whether it
+  is bipolar) and its **targets** (`ModTarget`: an id, a key, a name and the param it belongs to), and registers
+  with `Registry::register_with_mods` (which validates them against the descriptor: ids equal indices, keys are
+  unique, every target is a real param, at most 16 of each). Source and target **ids are stored in projects**, so
+  a released table only grows: append, never reorder or reuse. A target is a *place* the sum goes, not a stored
+  value: the device adds the sum to the target's own value while it renders and never writes it back.
+- **Slots.** Every device with tables has `MOD_SLOTS` (8) slots. A slot is `source -> target` with an `amount`
+  (-1 to 1) and optionally a `via` source that scales the amount: the contribution is
+  `amount * source * via`, where `via` is read clamped to 0..1 (a mod wheel that fades an LFO in) and a slot
+  without one is not scaled. Sources are sanitised (non-finite is 0) and clamped to -1..1 by the bus. A
+  negative amount inverts; there is no other operator.
+- **Params.** The slots reach the device as 32 params at the end of its table, made by `mod_slot_params` and
+  joined to the device's own with `join_params`; `ModTables::first_param` says where the block starts. Slots are
+  numbered 1 to 8 and each has four params, shown here for slot 1: `internal.mod1_source`, `internal.mod1_target`
+  and `internal.mod1_via` (0 is none, `k` is id `k - 1`; set from the slot list, never stored as params) and
+  the plain, automatable `mod1_amount`. The slot structure lives in the document (`RackDevice::mods`, edited by
+  `SetModSlot`, one undo step, saved from project format 41), and the expansion turns it into the internal
+  params. The amount is an ordinary param, so it is saved, undone, automated, mapped and in a patch like any
+  other.
+- **The bus.** The device keeps a `ModBus` (a small `Copy` value) next to its other shared state, hands it
+  every param of the slot block from `set_param` (`ModBus::set_param` returns true for them), and at its control
+  rate asks `ModBus::offset(target, &sources)` for the sum of every slot that reaches a target. `sources` holds
+  the current value of each source by id. `ModBus::add_norm` is the `cv_in::add_norm` convention (base plus
+  offset, clamped to 0..1) for a target in normalised space; a device that works in octaves or semitones scales
+  the offset itself (the poly synth: 6 octaves of cutoff and 24 semitones of pitch at amount 1). Slots are
+  summed in slot order, so the order is part of the contract. Guard everything with `ModBus::is_active`: a
+  device with no slot in use runs none of the new code and must render exactly as before.
+- **Rules.** No allocation and no lock on the audio thread (the bus is fixed-size); per-voice sources are
+  computed by the device per voice; a dual or layered device that wraps another keeps the wrapped device's slot
+  params out of its own table (the dual layer lists them as hidden). A registry that is built by copying
+  another one must carry the tables over (`Registry::attach_mods`).
+- **Tests.** Check the tables with `ModTables::validate` (the registry does it), that idle slots and a cleared
+  slot render the same bits as no slots, that the output is the same bit for bit however the render is cut
+  into calls and for every block size and worker count, and the allocation guard (the harness has it).
+  The poly synth's tests are the model; its render test is in `crates/render/tests/mod_matrix.rs`.
+- **Panel.** The generated front panel skips the slot params (`is_mod_slot_key`); a generic matrix panel built
+  from the tables is not part of this change.
+
 ## 4. Registering the device
 
 Add one line to `register_all` in [crates/devices/src/lib.rs](../crates/devices/src/lib.rs), which registers each module's `factory()`. Registration validates the descriptor and rejects a duplicate `type_id`. The renderer's `default_registry()` ([crates/render/src/lib.rs](../crates/render/src/lib.rs)) calls `register_all`, so the new `type_id` becomes usable in patch files at once. `Registry::get` answers with the descriptor of any registered type (a plugin type too) and `Registry::create` builds an instance; only a built-in type has a constructor to hand out (`Registry::factory`).
@@ -215,4 +260,5 @@ cargo test -p atomik-devices
 - [ ] Audible param changes are smoothed, because the engine applies params only at 64-frame boundaries.
 - [ ] Tests use `DeviceHarness`, with `set_param`/`reset` wrapped in `assert_no_alloc`.
 - [ ] The device is registered in `register_all` and listed in `TYPE_IDS`, [DEVICES.md](DEVICES.md) and `examples/patches/README.md`.
+- [ ] A device with a modulation matrix registers with `Registry::register_with_mods` and follows the rules of "Modulation matrix" above.
 - [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
