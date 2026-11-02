@@ -553,7 +553,7 @@ fn stretching_the_end_scales_the_notes_and_keeps_the_start_and_undo_gives_it_bac
     let c = the_clip(&d, 0);
     assert_eq!((c.start, c.length), (BAR, 2 * BAR));
     assert_eq!(notes_of(&c), [(0, 2 * PPQ, 60), (4 * PPQ, 2 * PPQ, 64)]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), was);
 }
 
@@ -632,7 +632,7 @@ fn stretching_audio_warps_it_and_keeps_its_engine() {
         a.warp.source_bpm
     );
     assert_eq!(a.warp.mode, atomik_model::WarpMode::Beats);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     // A clip already in Repitch mode stays there.
     let before = doc_clip(d.doc(), id).clone();
     let ClipContent::Audio(mut content) = before.content.clone() else {
