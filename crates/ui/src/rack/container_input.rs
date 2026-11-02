@@ -146,10 +146,24 @@ impl RackView {
             // The panels show the value an automation lane gives a param while the song plays
             // or is positioned (`shown`), and the value a macro gives it, not the stored one.
             let base = doc.view_with_shown(&self.shown);
-            return match base.view_with_driven_values(registry) {
+            let base = match base.view_with_driven_values(registry) {
                 Some(view) => Cow::Owned(view),
                 None => base,
             };
+            // Unfolded containers: the devices of their inside join the rack's own (see
+            // [`super::inline`]).
+            let inline = base.devices.iter().any(super::inline::is_open);
+            if inline != self.inline {
+                self.inline = inline;
+                self.synced = false;
+            }
+            if inline {
+                self.compute_inline_driven(&base);
+                let mut flat = base.into_owned();
+                super::inline::flatten(&mut flat);
+                return Cow::Owned(flat);
+            }
+            return base;
         }
         let mut keep = 0;
         let mut path: Option<DeviceKey> = None;
@@ -671,7 +685,8 @@ impl RackView {
     fn enter(&mut self, i: usize) {
         let key = self.devices[i].key.clone();
         let mut scope = self.scope.clone();
-        scope.push(key.clone());
+        // An inner container of an unfolded one has a path key: one scope level per segment.
+        scope.extend(key.0.split('/').map(|s| DeviceKey(s.to_string())));
         let device = self.abs_key(&key);
         self.pending_scope = Some(scope);
         self.direct.push(UiAction::EnterContainer { device });
@@ -807,6 +822,19 @@ impl RackView {
         self.select(i, out);
         let key = self.devices[i].key.clone();
         match b {
+            ContainerButton::Fold => {
+                let open = self.devices[i]
+                    .device
+                    .as_ref()
+                    .and_then(|d| d.inner.as_ref())
+                    .is_some_and(|inner| inner.open);
+                self.direct.push(UiAction::Command(Command::Container(
+                    ContainerCommand::SetOpen {
+                        container: self.abs_key(&key),
+                        open: !open,
+                    },
+                )));
+            }
             ContainerButton::Open => self.enter(i),
             ContainerButton::Edit => {
                 let device = self.abs_key(&key);
@@ -816,7 +844,7 @@ impl RackView {
                 });
             }
             ContainerButton::ToChannel => {
-                if !self.scope.is_empty() {
+                if !self.scope.is_empty() || super::inline::is_inner(&key) {
                     self.toast = Some(
                         "Only a container in the rack itself can feed a console channel".into(),
                     );

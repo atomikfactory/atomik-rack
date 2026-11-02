@@ -97,7 +97,12 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::ToTrack(_) => s("Lay the slices out as notes on a new track"),
         Hit::ScButton(_) => s("Choose the sidechain source of this effect"),
         Hit::TunerButton(_) => s("Show or hide the tuner: it reads this track's input"),
-        Hit::Container(_, ContainerButton::Open) => s("Enter the container to see its devices"),
+        Hit::Container(_, ContainerButton::Fold) => {
+            s("Unfold the container's devices under its panel, or fold them away")
+        }
+        Hit::Container(_, ContainerButton::Open) => {
+            s("Show the container's devices in a view of their own")
+        }
         Hit::Container(_, ContainerButton::Edit) => s("Open the container editor"),
         Hit::Container(_, ContainerButton::ToChannel) => {
             s("Add a mixer channel for this container")
