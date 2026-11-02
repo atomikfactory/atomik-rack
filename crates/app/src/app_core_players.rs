@@ -168,11 +168,14 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ drum generator
 
     /// GENERATE or RANDOMISE on a drum generator panel: writes the steps of pattern `index` from
-    /// the device's `style`, `density` and `random.seed` params ([`generate_pattern`], a pure
-    /// function of them, so the same seed writes the same pattern) as one undo step. RANDOMISE
-    /// first moves `random.seed` up by one (999 wraps to 0) in the same step. The lanes, the
-    /// length, the grid and the name of the pattern stay.
+    /// the device's `style` and `density` params and a seed ([`generate_pattern`], a pure function
+    /// of them, so the same seed writes the same pattern) as one undo step. Every press picks a
+    /// NEW seed (never the one the device holds) and writes it to `random.seed` in the same step,
+    /// so GENERATE gives another rhythm each time. RANDOMISE also draws the character: `style`,
+    /// `density`, `variation`, `accent` and the pattern's swing. The lanes, the length, the grid
+    /// and the name of the pattern stay.
     pub fn generate_drums(&mut self, device: DeviceKey, index: u8, randomise: bool) {
+        let mut draw = self.next_drum_draw();
         let Some(dev) = self
             .doc()
             .resolve(&device)
@@ -188,25 +191,52 @@ impl<S: EngineSink> AppCore<S> {
                 p.clamp(dev.params.get(key).copied().unwrap_or(p.default))
             })
         };
-        let seed = value("random.seed").round() as u16;
-        let seed = if randomise { (seed + 1) % 1000 } else { seed };
-        let density = (f64::from(value("density")) * 100.0).round() / 100.0;
-        let style = DrumStyle::from_index(value("style").round() as usize);
+        let held = value("random.seed").round() as u16;
         let drums = dev.drums.clone().unwrap_or_default();
         let Some(current) = drums.patterns.get(usize::from(index)) else {
             return self.reject(format!("{device} has no pattern {}", index + 1));
         };
-        let written = generate_pattern(&current.to_data(), style, density, u64::from(seed));
-        let pattern = DrumPatternDoc::from_data(&written, current.name.clone());
-        let mut batch = Vec::with_capacity(2);
+        // A seed that is not the held one, whatever the draw.
+        let seed = {
+            let s = ((draw >> 33) % 999) as u16;
+            if s >= held { s + 1 } else { s }
+        };
+        let mut params = vec![("random.seed", f32::from(seed))];
+        let mut data = current.to_data();
+        let (mut style, mut density) = (value("style").round() as usize, value("density"));
         if randomise {
-            batch.push(Command::SetParam {
-                key: device.clone(),
-                param: "random.seed".into(),
-                value: f32::from(seed),
-                merge: None,
-            });
+            let mut pick = |n: u64| {
+                draw = draw
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (draw >> 33) % n
+            };
+            style = pick(DrumStyle::ALL.len() as u64) as usize;
+            density = (pick(81) as f32 - 30.0) / 100.0;
+            const SWINGS: [u8; 7] = [0, 0, 8, 12, 16, 22, 28];
+            data.swing = SWINGS[pick(SWINGS.len() as u64) as usize];
+            params.push(("style", style as f32));
+            params.push(("density", density));
+            params.push(("variation", pick(61) as f32 / 100.0));
+            params.push(("accent", pick(51) as f32 / 100.0));
         }
+        let density = (f64::from(density) * 100.0).round() / 100.0;
+        let written = generate_pattern(
+            &data,
+            DrumStyle::from_index(style),
+            density,
+            u64::from(seed),
+        );
+        let pattern = DrumPatternDoc::from_data(&written, current.name.clone());
+        let mut batch: Vec<Command> = params
+            .into_iter()
+            .map(|(param, value)| Command::SetParam {
+                key: device.clone(),
+                param: param.into(),
+                value,
+                merge: None,
+            })
+            .collect();
         batch.push(Command::SetDrumPattern {
             device,
             index,
@@ -215,6 +245,16 @@ impl<S: EngineSink> AppCore<S> {
         });
         self.document.end_merge();
         let _ = self.apply_command(Command::Batch(batch));
+    }
+
+    /// The next draw of the drum generator's seed and character (a linear congruential step of
+    /// a counter that starts from the clock when the app starts, so every launch differs).
+    fn next_drum_draw(&mut self) -> u64 {
+        self.drum_draws = self
+            .drum_draws
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.drum_draws
     }
 
     // ------------------------------------------------------------------ audition
