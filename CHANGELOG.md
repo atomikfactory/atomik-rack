@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Containers fold and unfold in the rack.** A container no longer has to be opened in a view of
+  its own to be worked on: the arrow on the title strip of its panel, or a double-click on the
+  panel, draws its devices straight under it in the same column, framed in the container's colour
+  between a thin INPUT strip and a thin OUTPUT strip that closes the frame. A container nested in
+  an unfolded one unfolds the same way, one frame inside the other. The devices are the ones of
+  the rack for every gesture: knobs and buttons, patch strips, selection (it stays inside one
+  container), delete, duplicate, rename, the macro menu of a control (it maps to the container
+  the device is drawn in), the add key after the selected device, and a drag inside the frame
+  reorders. Drag a device of the rack into a frame and it moves inside; drag an inner device out
+  of its frame and it moves back to the rack, in the column of its container (the model says why
+  when it refuses); drop a browser row or a library item in a frame and it is added inside. On
+  the back (Tab) the INPUT and OUTPUT strips show the container's own jacks, so cables between
+  the container's sockets and its inner devices are patched as in the container's own view, and
+  a cable never joins two levels. A Combine leaves the new container unfolded, so what you
+  combined stays in view. Whether a container is unfolded is saved with the project (an optional
+  `"open": true` in the container, written only when it is set; the project format is unchanged)
+  and is one undo step. The OPEN button still shows the inside in a view of its own.
 - **Alt+drag a clip edge to stretch it.** With the Select tool, hold Alt (the alternate-tool role)
   over the start or end edge of a clip and drag: the clip gets longer or shorter by a ratio, the
   opposite edge stays where it is, and everything in the clip follows. Note starts and lengths

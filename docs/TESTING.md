@@ -1689,6 +1689,11 @@ have a track and a channel are refused naming both, each instrument combines wit
 a selection with mixer strips or an audio track leaves them in the rack, and a drum machine with its
 generator combines and uncombines to the exact document.
 
+The unfolded container is `crates/ui/tests/container_inline.rs` (the flat view, its layout and frames,
+the fold gestures, selection, delete, reorder and the moves in and out of a frame, browser and
+library drops in a frame, the macro menu, the back panel and its cables, goldens
+`container_inline_*`); the model side of the flag is `crates/model/tests/container_open.rs`.
+
 The rack's side is `crates/ui/tests/rack_combine.rs` (the reasons the menus show, a drop on a
 container's panel and on the breadcrumb, the BYPASS switch of the panel, goldens
 `container_bypassed_front_1x.json` and `container_drop_target_1x.json`), the menu tests in
@@ -1712,7 +1717,13 @@ Hand checks, not automated (they need a real window, your mouse and your ears):
   container" and the effect goes inside on release (the container's summary counts it). Drag it
   to the top edge of the panel instead: it is placed above the container. Drag a group of devices
   over a container: they are placed, not moved inside.
-- Open a container (double-click) and drag one inner device onto **Project** in the breadcrumb (the
+- Click the arrow on a container's panel (or double-click the panel): its devices are drawn under
+  it in a frame, between a thin INPUT strip and a thin OUTPUT strip. Turn a knob of an inner
+  device, drag it up and down inside the frame, drag one out of the frame to the rack and back
+  in, and press Tab: the strips show the container's jacks and a cable from the INPUT strip to an
+  inner device holds. Combine two devices: the new container is unfolded. Undo folds and
+  unfolds as one step each; save, reopen and the container is as you left it.
+- Open a container (the OPEN button) and drag one inner device onto **Project** in the breadcrumb (the
   segment lights up): it lands in the rack right after the container. Select one inner device and
   choose Move Out of Container from its context menu: the same. Both are one undo step.
 - Click BYPASS in a container's name strip while a note plays through it: the inside drops out at

@@ -3154,12 +3154,27 @@ of the flat graph (no inner device, cable or macro) and `in_l`, `in_r` go straig
   track or mixer channel are refused), Uncombine the selected container. An item the model would refuse
   is dimmed in both menus; running one anyway (key) shows the refusal in the status toast, with
   the cables that have no socket on the container.
-- **Move Out of Container** is in the context menu while a container is open: the selected
-  device goes back to the rack right after the container.
-- **Drag in and out.** Drop one device on the body of a container's panel to move it inside (the
-  panel is outlined while you hold it there; the top and bottom edge of the panel still place a
-  device above or below it). While a container is open, drop a device on **Project** or Back in the
-  breadcrumb to move it out. A group of devices is placed like any other move, not moved inside.
+- **Fold and unfold.** The arrow on the title strip of a container's panel, or a double-click on
+  the panel outside its controls, unfolds the inside in place: the container's devices are drawn
+  under its panel in the same column, in a frame in the container's colour, between a thin INPUT
+  strip and a thin OUTPUT strip. A container nested in it unfolds the same way inside its own
+  frame. Everything works on those devices as on the ones of the rack (knobs, patch strips,
+  selection, delete, duplicate, rename, mapping a control to a macro, Tab for the back panel and
+  its cables, the container's own jacks being on the two strips); the selection stays inside one
+  container, and a cable joins two jacks of the same container only. Whether it is unfolded is
+  saved with the project and is an undo step. A Combine leaves the new container unfolded. OPEN
+  (the button next to EDIT) still shows the inside in a view of its own.
+- **Move Out of Container** is in the context menu while a container is open or unfolded: the
+  selected device goes back to the rack right after the container.
+- **Drag in and out.** Drag a device of the rack into the frame of an unfolded container, or drop
+  it on the body of a container's panel, to move it inside (the panel or the frame is outlined
+  while you hold it there; the top and bottom edge of the panel still place a device above or
+  below it). Drag an inner device out of its frame to move it back to the rack, in the column of
+  its container; inside the frame it reorders (a group moves together). While a container is open
+  in a view of its own, drop a device on **Project** or Back in the breadcrumb to move it out. A
+  group of devices is placed like any other move, not moved in or out. A device of a nested
+  container stays in it: only the containers of the rack take devices from the rack and give them
+  back. When the model refuses a move the toast says why.
 
 ## Note split: `atomik.note-split` (Utility, internal)
 
