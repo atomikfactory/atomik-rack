@@ -13,7 +13,7 @@ use atomik_core::BATCH;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, EditorKind, HostMessenger, LogLevel, NativeParent,
-    PluginInstance, PluginMessage, PluginProcessor, PresetInfo, warmed,
+    PendingInstance, PluginInstance, PluginMessage, PluginProcessor, PresetInfo, warmed,
 };
 use atomik_plugin_ipc::{FromChild, ParentPort, ToChild, WireParent};
 use std::collections::BTreeMap;
@@ -42,6 +42,58 @@ pub(crate) struct RemoteInstance {
     texts: BTreeMap<u32, String>,
 }
 
+enum Stage {
+    /// The Hello is out.
+    Greeting,
+    /// The `Instantiate` is out.
+    Creating,
+}
+
+/// A remote instance that is starting: see [`RemoteInstance::begin`].
+pub(crate) struct PendingRemote {
+    link: Option<Link>,
+    port: Option<ParentPort>,
+    warn: HostMessenger,
+    stage: Stage,
+    /// When the request of this stage went out.
+    since: std::time::Instant,
+}
+
+impl PendingInstance for PendingRemote {
+    fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>> {
+        let create = self.link.as_ref()?.timeouts().create;
+        let link = self.link.as_mut()?;
+        match self.stage {
+            Stage::Greeting => {
+                let reply = match link.poll_reply("Hello", self.since, create)? {
+                    Ok(reply) => reply,
+                    Err(e) => return Some(Err(link.explain(e))),
+                };
+                if let Err(e) = link.check_hello(reply) {
+                    return Some(Err(e));
+                }
+                if let Some(port) = &self.port {
+                    RemoteInstance::unlink_block(port, &self.warn);
+                }
+                if let Err(e) = link.begin_call(|id| ToChild::Instantiate { id }) {
+                    return Some(Err(link.explain(e)));
+                }
+                self.stage = Stage::Creating;
+                self.since = crate::clock::now();
+                None
+            }
+            Stage::Creating => {
+                let reply = match link.poll_reply("Instantiate", self.since, create)? {
+                    Ok(reply) => reply,
+                    Err(e) => return Some(Err(link.explain(e))),
+                };
+                let (link, port) = (self.link.take()?, self.port.take()?);
+                Some(RemoteInstance::instantiated(link, port, reply).map(|i| Box::new(i) as _))
+            }
+        }
+    }
+}
+
 fn unexpected_none(what: &str) -> BackendError {
     BackendError::Failed(format!(
         "the plugin process answered {what} without its data"
@@ -64,16 +116,7 @@ impl RemoteInstance {
         let death = port.death_handle();
         let warn = messenger.clone();
         let mut link = Link::start(transport, death, timeouts, messenger, live)?;
-        // The child has greeted, so it has mapped the block: the file is no longer needed and
-        // must not outlive a crash of the app.
-        #[cfg(test)]
-        UNLINKS.with(|n| n.set(n.get() + 1));
-        if let Err(e) = port.unlink_block() {
-            warn.post(PluginMessage::Log {
-                level: LogLevel::Warning,
-                text: format!("cannot remove the plugin's block file: {e}"),
-            });
-        }
+        Self::unlink_block(&port, &warn);
         let reply = link
             .call(
                 "Instantiate",
@@ -82,6 +125,35 @@ impl RemoteInstance {
                 None,
             )
             .map_err(|e| link.explain(e))?;
+        Self::instantiated(link, port, reply)
+    }
+
+    /// The first half of [`RemoteInstance::start`] without the waiting: spawns the link and
+    /// sends the greeting; [`PendingRemote::poll`] carries on as the child answers.
+    ///
+    /// # Errors
+    /// The helper threads could not start.
+    pub fn begin(
+        transport: Transport,
+        port: ParentPort,
+        timeouts: Timeouts,
+        messenger: HostMessenger,
+        live: LiveGuard,
+    ) -> Result<PendingRemote, BackendError> {
+        let death = port.death_handle();
+        let warn = messenger.clone();
+        let link = Link::launch(transport, death, timeouts, messenger, live)?;
+        Ok(PendingRemote {
+            link: Some(link),
+            port: Some(port),
+            warn,
+            stage: Stage::Greeting,
+            since: crate::clock::now(),
+        })
+    }
+
+    /// The instance from the answer to `Instantiate`.
+    fn instantiated(link: Link, port: ParentPort, reply: Reply) -> Result<Self, BackendError> {
         let FromChild::Instantiated {
             layout,
             has_gui,
@@ -100,6 +172,19 @@ impl RemoteInstance {
             offline_active: false,
             texts: BTreeMap::new(),
         })
+    }
+
+    /// The block file is no longer needed once the child has greeted (it has mapped the block)
+    /// and must not outlive a crash of the app.
+    fn unlink_block(port: &ParentPort, warn: &HostMessenger) {
+        #[cfg(test)]
+        UNLINKS.with(|n| n.set(n.get() + 1));
+        if let Err(e) = port.unlink_block() {
+            warn.post(PluginMessage::Log {
+                level: LogLevel::Warning,
+                text: format!("cannot remove the plugin's block file: {e}"),
+            });
+        }
     }
 
     fn timeouts(&self) -> Timeouts {
@@ -210,13 +295,22 @@ impl PluginInstance for RemoteInstance {
         self.latency
     }
 
+    fn begin_capture_state(&mut self) {
+        // A failure shows again when the state is collected.
+        let _ = self.link.begin_call(|id| ToChild::CaptureState { id });
+    }
+
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
-        let reply = self.link.call(
-            "CaptureState",
-            self.timeouts().create,
-            |id| ToChild::CaptureState { id },
-            None,
-        )?;
+        let timeout = self.timeouts().create;
+        let reply = match self.link.finish_call("CaptureState", timeout) {
+            Some(reply) => reply?,
+            None => self.link.call(
+                "CaptureState",
+                timeout,
+                |id| ToChild::CaptureState { id },
+                None,
+            )?,
+        };
         match (&reply.msg, reply.blob) {
             (FromChild::State { .. }, Some(blob)) => Ok(PluginStateBlob(blob)),
             (FromChild::State { .. }, None) => Err(unexpected_none("CaptureState")),

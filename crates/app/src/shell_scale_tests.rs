@@ -333,6 +333,7 @@ fn the_keys_toggle_snap_to_scale_and_fold_and_the_window_state_is_saved() {
     tap(&mut s, "Shift+F");
     assert_eq!(s.core().piano_roll().fold(), Fold::Scale);
     assert_eq!(s.ui_state().piano_roll_fold, Fold::Scale);
+    s.flush_ui_state();
     let saved = crate::ui_state::UiState::load(&path);
     assert!(saved.piano_roll_snap_scale && saved.piano_roll_fold == Fold::Scale);
     // A new shell reads them back.

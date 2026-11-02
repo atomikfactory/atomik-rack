@@ -288,3 +288,14 @@ fn symlink_loops_terminate() {
     assert!(Path::new(&found[0]).exists());
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn the_scanner_count_follows_the_cores_between_two_and_eight() {
+    use atomik_plugin_host::{MAX_PARALLEL_SCANS, parallel_scans};
+    assert_eq!(parallel_scans(1), 2);
+    assert_eq!(parallel_scans(4), 2);
+    assert_eq!(parallel_scans(8), 4);
+    assert_eq!(parallel_scans(12), 6);
+    assert_eq!(parallel_scans(64), MAX_PARALLEL_SCANS);
+    assert_eq!(MAX_PARALLEL_SCANS, 8);
+}

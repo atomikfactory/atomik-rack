@@ -94,8 +94,8 @@ use atomik_model::{
 };
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
-    CrashJournal, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest, LOST,
-    ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle,
+    CrashJournal, CreateTicket, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest,
+    LOST, ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle,
     PluginSettings, PluginStatus, PresetInfo, RecoveryDir, RescanMode, ScanJob, ScanRunner,
     blacklist_in_use,
 };
@@ -259,6 +259,16 @@ struct Recovery {
     marker: Option<SessionMarker>,
 }
 
+/// How many plugin processes load at the same time when a project opens.
+const MAX_STARTING: usize = 8;
+
+/// A pending device whose plugin is loading.
+struct Starting {
+    ticket: CreateTicket,
+    plugin: PluginRef,
+    began: std::time::Instant,
+}
+
 /// Plugin state of the app core.
 pub(super) struct PluginState {
     pub(super) host: PluginHost,
@@ -279,6 +289,9 @@ pub(super) struct PluginState {
     loaded: BTreeMap<InstanceId, InUsePlugin>,
     /// Devices whose instance is waiting to be created, in order.
     pub(super) pending: VecDeque<DeviceKey>,
+    /// The pending devices whose plugin process has been started, loading while the ones before
+    /// them attach (see [`AppCore::instantiate_one`]).
+    starting: BTreeMap<DeviceKey, Starting>,
     /// How many instances the current batch of creations started with (for "3/8").
     batch_total: usize,
     /// Seconds between autosave snapshots of a changed project (0: off).
@@ -356,6 +369,7 @@ impl PluginState {
             keys: BTreeMap::new(),
             loaded: BTreeMap::new(),
             pending: VecDeque::new(),
+            starting: BTreeMap::new(),
             batch_total: 0,
             autosave_secs: DEFAULT_AUTOSAVE_MINUTES * 60.0,
             batch_done: 0,
@@ -783,6 +797,7 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.host.manager().retain(id, keep);
         }
         self.plugins.pending.clear();
+        self.cancel_starting(None);
         self.plugins.batch_total = 0;
         self.plugins.batch_done = 0;
         self.plugins.shown.clear();
@@ -855,6 +870,7 @@ impl<S: EngineSink> AppCore<S> {
             self.release_instance_maps(flat);
         }
         self.plugins.pending.retain(|k| k != flat);
+        self.cancel_starting(Some(flat));
         if let Some(id) = parked {
             // A parked instance has no engine device to leave with: destroy it.
             self.plugins_poll_events();
@@ -1111,7 +1127,9 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ creating instances
 
-    /// Creates one pending instance and swaps its device in (one per frame).
+    /// Moves the pending creations on: starts the plugin process of every pending device (up to
+    /// [`MAX_STARTING`] at a time, so they all load at the same time), then attaches the one at
+    /// the front of the queue once it is ready (one per frame, always in queue order).
     fn instantiate_one(&mut self) {
         if self.plugins.paint_first
             && let Some(front) = self.plugins.pending.front()
@@ -1120,35 +1138,102 @@ impl<S: EngineSink> AppCore<S> {
             // LOADING is fed (and painted) before the creation blocks the thread.
             return;
         }
-        while let Some(key) = self.plugins.pending.pop_front() {
-            let Some((plugin, request)) = self.instantiate_request(&key) else {
+        self.start_pending();
+        let Some(key) = self.plugins.pending.front().cloned() else {
+            return;
+        };
+        let Some(ticket) = self.plugins.starting.get(&key).map(|s| s.ticket) else {
+            return;
+        };
+        let Some(answer) = self.plugins.host.manager().poll_create(ticket) else {
+            return;
+        };
+        let Some(Starting { plugin, began, .. }) = self.plugins.starting.remove(&key) else {
+            return;
+        };
+        self.plugins.pending.pop_front();
+        self.finish_batch_step();
+        match answer {
+            Ok(handle) => {
+                let took = began.elapsed();
+                self.attach_instance(&key, &plugin, handle);
+                self.plugins
+                    .log(format!("[{key}] created in {:.1} s", took.as_secs_f64()));
+            }
+            Err(e) => {
+                let message = e.to_string();
+                self.plugins.log(format!("[{key}] cannot load: {message}"));
+                self.plugins.failed.insert(key, message);
+            }
+        }
+    }
+
+    /// One creation of the batch is over.
+    fn finish_batch_step(&mut self) {
+        self.plugins.batch_done += 1;
+        if self.plugins.pending.is_empty() {
+            self.plugins.batch_total = 0;
+            self.plugins.batch_done = 0;
+        }
+    }
+
+    /// Starts the creation of the pending devices that have not started yet, in queue order
+    /// (see [`MAX_STARTING`]). A device that no longer needs an instance leaves the queue.
+    fn start_pending(&mut self) {
+        let keys: Vec<DeviceKey> = self.plugins.pending.iter().cloned().collect();
+        for key in keys {
+            if self.plugins.starting.contains_key(&key) {
+                continue;
+            }
+            if self.plugins.starting.len() >= MAX_STARTING {
+                break;
+            }
+            let usable = self
+                .instantiate_request(&key)
+                .filter(|(plugin, _)| self.plugin_usable(plugin));
+            let Some((plugin, request)) = usable else {
+                self.plugins.pending.retain(|k| k != &key);
                 continue;
             };
-            if !self.plugin_usable(&plugin) {
-                continue;
-            }
-            self.plugins.batch_done += 1;
-            if self.plugins.pending.is_empty() {
-                self.plugins.batch_total = 0;
-                self.plugins.batch_done = 0;
-            }
             #[allow(clippy::disallowed_methods)]
             // Justification: UI-thread load time for the log, not engine behaviour.
             let began = std::time::Instant::now();
-            match self.plugins.host.manager().instantiate(&request) {
-                Ok(handle) => {
-                    let took = began.elapsed();
-                    self.attach_instance(&key, &plugin, handle);
-                    self.plugins
-                        .log(format!("[{key}] created in {:.1} s", took.as_secs_f64()));
+            match self.plugins.host.manager().begin_create(&request) {
+                Ok(ticket) => {
+                    self.plugins.starting.insert(
+                        key,
+                        Starting {
+                            ticket,
+                            plugin,
+                            began,
+                        },
+                    );
                 }
                 Err(e) => {
                     let message = e.to_string();
                     self.plugins.log(format!("[{key}] cannot load: {message}"));
-                    self.plugins.failed.insert(key, message);
+                    self.plugins.failed.insert(key.clone(), message);
+                    self.plugins.pending.retain(|k| k != &key);
+                    self.finish_batch_step();
                 }
             }
-            return;
+        }
+    }
+
+    /// Abandons the creations that were started for `key` (all of them with `None`): the plugin
+    /// processes that were loading end.
+    fn cancel_starting(&mut self, key: Option<&DeviceKey>) {
+        let gone: Vec<DeviceKey> = self
+            .plugins
+            .starting
+            .keys()
+            .filter(|k| key.is_none_or(|only| only == *k))
+            .cloned()
+            .collect();
+        for k in gone {
+            if let Some(s) = self.plugins.starting.remove(&k) {
+                self.plugins.host.manager().cancel_create(s.ticket);
+            }
         }
     }
 
@@ -1475,8 +1560,16 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Captures every live instance (before a save, a recovery snapshot, an engine restart).
+    /// The requests go to every sandboxed plugin first and the answers are collected after, so
+    /// the wait is the slowest plugin's, not the sum.
     pub fn plugins_capture_all(&mut self) {
         let keys: Vec<DeviceKey> = self.plugins.instances.keys().cloned().collect();
+        let ids: Vec<InstanceId> = keys
+            .iter()
+            .filter(|key| !self.plugins.no_capture.contains(*key))
+            .filter_map(|key| self.plugins.instances.get(key).copied())
+            .collect();
+        self.plugins.host.manager().begin_capture(&ids);
         for key in keys {
             self.capture_instance(&key);
         }
