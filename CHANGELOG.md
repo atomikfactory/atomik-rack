@@ -29,6 +29,13 @@ may break APIs and the patch and project formats.
   lane of the selected note clip, and Edit > Clear Clip Parameter Lanes removes them. Recording into a note
   clip and drawing a lane inside the piano roll are not there yet. Both additions are written to the project
   only when used (format 41), and the MCP `project_inspect` lists the lanes.
+- **Pattern lanes.** The `pattern` lane of a step sequencer, CV sequencer or drum generator is now a pattern
+  lane: it reads "Pattern", draws its held numbers as labelled blocks, and a right click on a clip lists the
+  device's patterns to pick from (a clip drawn on it starts with one stepped point). A take now catches pattern
+  changes without AUTO LANES: the first one adds the lane and each change is written on the next downbeat as a
+  held number, so the clip switches on a bar line. Track > Add Pattern Lane adds the lane, and Track > Pattern
+  Lane to Notes renders what the patterns play, in the order the lane chose them, into a clip on a new note
+  lane. No project format change: a pattern clip is an ordinary automation clip. A pattern offset is not built.
 - **Master tune.** Audio > Settings has a Master tune of -100 to +100 cents around A = 440 Hz. It
   shifts every pitched device (the synths, the sampler, the drum machine, the loop slicer and the grain
   sampler; a fixed-frequency FM operator keeps its Hz) and the reference of the audio track tuner, is
