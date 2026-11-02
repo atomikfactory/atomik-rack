@@ -502,6 +502,12 @@ pub(crate) fn load_device(
         }
         None => None,
     };
+    let mods = match obj.get("mods") {
+        Some(v) => {
+            crate::mod_matrix::load_slots(v, &path.field("mods"), registry.mod_tables(type_id))?
+        }
+        None => Vec::new(),
+    };
     let column = match obj.get("column") {
         Some(v) => {
             let column_path = path.field("column");
@@ -590,6 +596,7 @@ pub(crate) fn load_device(
         column,
         patch_name,
         midi_out,
+        mods,
     })
 }
 
@@ -807,6 +814,10 @@ pub(crate) fn write_device(
             ",\n{p}\"midi_out\": {{ \"port\": {} }}",
             json_str(&out.port)
         );
+    }
+    if project && !d.mods.is_empty() {
+        let _ = write!(w, ",\n{p}\"mods\": ");
+        crate::mod_matrix::write_slots(w, &d.mods, &p);
     }
     let _ = write!(w, "\n{ind}}}");
 }

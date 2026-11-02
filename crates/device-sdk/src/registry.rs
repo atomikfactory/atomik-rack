@@ -1,7 +1,7 @@
 //! Registry of device factories keyed by type id.
 
 use crate::plugin::{PluginStandIn, is_plugin_type_id};
-use crate::{DescriptorError, Device, DeviceDescriptor};
+use crate::{DescriptorError, Device, DeviceDescriptor, ModTables};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Creates instances of one device type.
@@ -76,6 +76,8 @@ pub struct Registry {
     curved: BTreeSet<&'static str>,
     /// Types that take drum pattern data.
     drummed: BTreeSet<&'static str>,
+    /// Types with a modulation matrix, and their tables.
+    modulated: BTreeMap<&'static str, &'static ModTables>,
     /// Dynamically registered plugin types. Kept apart from `factories`, so the
     /// sorted static list and its counts do not change.
     plugins: BTreeMap<String, &'static DeviceDescriptor>,
@@ -157,6 +159,46 @@ impl Registry {
     /// Whether `type_id` was registered with [`Registry::register_with_drums`].
     pub fn takes_drums(&self, type_id: &str) -> bool {
         self.drummed.contains(type_id)
+    }
+
+    /// Registers a factory whose devices have a modulation matrix: the tables are checked
+    /// against the descriptor ([`ModTables::validate`]) before anything is registered.
+    pub fn register_with_mods(
+        &mut self,
+        factory: DeviceFactory,
+        tables: &'static ModTables,
+    ) -> Result<(), RegistryError> {
+        let type_id = factory.descriptor.type_id;
+        tables
+            .validate(factory.descriptor)
+            .map_err(|source| RegistryError::InvalidDescriptor { type_id, source })?;
+        self.register(factory)?;
+        self.modulated.insert(type_id, tables);
+        Ok(())
+    }
+
+    /// Gives the already registered built-in type `type_id` a modulation matrix, for a registry
+    /// that is built by copying another one ([`Registry::register_with_mods`] does both steps).
+    /// The tables are checked like there; an unknown type is refused.
+    pub fn attach_mods(
+        &mut self,
+        type_id: &'static str,
+        tables: &'static ModTables,
+    ) -> Result<(), RegistryError> {
+        let Some(factory) = self.factories.get(type_id) else {
+            return Err(RegistryError::UnknownPlugin(type_id.to_owned()));
+        };
+        tables
+            .validate(factory.descriptor)
+            .map_err(|source| RegistryError::InvalidDescriptor { type_id, source })?;
+        self.modulated.insert(type_id, tables);
+        Ok(())
+    }
+
+    /// The modulation tables of `type_id`, if it was registered with
+    /// [`Registry::register_with_mods`].
+    pub fn mod_tables(&self, type_id: &str) -> Option<&'static ModTables> {
+        self.modulated.get(type_id).copied()
     }
 
     /// Registers a plugin device type. Non-RT; `&mut self` on the thread that

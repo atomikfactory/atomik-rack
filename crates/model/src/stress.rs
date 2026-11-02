@@ -433,7 +433,14 @@ pub fn lanes_song_doc(registry: &Registry, lanes: usize) -> RackDoc {
     const SYNTH: &str = "atomik.poly-synth";
     let keys: Vec<&'static str> = registry
         .get(SYNTH)
-        .map(|f| f.descriptor.params.iter().map(|p| p.key).collect())
+        .map(|f| {
+            f.descriptor
+                .params
+                .iter()
+                .map(|p| p.key)
+                .filter(|k| !k.starts_with("internal."))
+                .collect()
+        })
         .unwrap_or_default();
     let per_track = keys.len().max(1);
     let tracks = lanes.div_ceil(per_track);

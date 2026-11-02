@@ -932,6 +932,7 @@ pub(crate) fn new_device(
         column: 0,
         patch_name: String::new(),
         midi_out: None,
+        mods: Vec::new(),
     }
 }
 

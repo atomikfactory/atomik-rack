@@ -81,6 +81,8 @@ mod bounded_tests;
 #[cfg(test)]
 mod midi_chart;
 #[cfg(test)]
+mod mod_matrix_tests;
+#[cfg(test)]
 mod test_support;
 /// Hand-made panel layout for a built-in device type, or `None` to use the
 /// layout generated from the descriptor. Layouts are added as the UI matures.
@@ -129,8 +131,8 @@ pub fn is_internal(type_id: &str) -> bool {
 pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(arpeggiator::factory())?;
     registry.register(audio_track::factory())?;
-    registry.register(poly_synth::factory())?;
-    registry.register(mono_bass::factory())?;
+    registry.register_with_mods(poly_synth::factory(), &poly_synth::MOD_TABLES)?;
+    registry.register_with_mods(mono_bass::factory(), &poly_synth::MOD_TABLES)?;
     registry.register(dual_layer::factory())?;
     registry.register(wavetable_synth::factory())?;
     registry.register(fm_synth::factory())?;

@@ -626,6 +626,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ResetDevice { .. }
             | WorkflowCommand::SetPatchName { .. }
             | WorkflowCommand::SetMidiOutPort { .. }
+            | WorkflowCommand::SetModSlot { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::ReplaceDevice { .. }
             | WorkflowCommand::SetFoldedMany { .. }

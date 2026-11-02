@@ -226,6 +226,17 @@ was (a test pins a render of a busy patch). They add the following; the same voi
   inverted: `rate`, `depth`) and `delay.*` (a ping-pong echo: the two sides summed to mono enter the left
   line, every echo feeds the other side; `time`, `feedback`) run on the output, then the limiter bounds the
   sum again. A mix of 0 skips the effect and clears its memory.
+- **Modulation matrix.** Eight slots (`mod1_amount` to `mod8_amount` and the internal source, target and via
+  params of each) route a source to a target, summed per voice at the control rate (see
+  [EXTENDING.md](EXTENDING.md#modulation-matrix) for the framework and
+  [ARCHITECTURE.md](ARCHITECTURE.md#modulation-matrix) for how it is saved). Sources, by id: `amp_env`, `filter_env`
+  and `mod_env` (the envelope levels, 0 to 1), `lfo1` and `lfo2` (-1 to 1; LFO 2 runs while a slot is in use),
+  `velocity` (0 to 1), `key` (-1 to 1: C4 is 0, five octaves each way), `mod_wheel` and `pressure` (0 to 1, the
+  pressure on the voice's key, the larger of channel and poly pressure). Targets: `cutoff` (the sum times 6 octaves,
+  also moving filter 2 through its link), `pitch` (times 24 semitones, both oscillators) and `level` (the voice gain
+  times 1 plus the sum, between 0 and 2). The mod envelope advances while a slot is in use. A synth with no slot in
+  use takes none of these paths and renders bit for bit as before (a test compares). The slot params are the last
+  32 of the table (68 to 99); the dual layer does not expose them and the generated panel does not show them.
 
 ---
 
@@ -254,6 +265,7 @@ What differs, all of it defaults (the ranges and tapers are the poly synth's):
 The sockets are the poly synth's. A key played while another is held changes the pitch only and
 `glide` slides it; the first key after silence glides from the last one played. The in-device `chorus.*`
 and `delay.*` (see the poly synth's "Expansion") are the bass's effects.
+The modulation matrix is the poly synth's too (the same sources and targets).
 
 ---
 

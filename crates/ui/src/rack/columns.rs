@@ -280,6 +280,7 @@ mod tests {
             column,
             patch_name: String::new(),
             midi_out: None,
+            mods: Vec::new(),
         }
     }
 

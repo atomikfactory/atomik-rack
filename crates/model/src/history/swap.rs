@@ -87,6 +87,11 @@ swaps! {
         device_mut(doc, key)?.midi_out = new.as_deref().map(crate::MidiOutDoc::new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// A device's modulation slots (see [`crate::ModSlot`]).
+    ModSlots { key: DeviceKey }: Vec<Option<crate::ModSlot>> => |doc, new| {
+        device_mut(doc, key)?.mods.clone_from(new);
+        Ok(vec![SyncOp::ModSlotsChanged { device: key.clone() }])
+    };
     /// The song information (title, author, notes, address, e-mail).
     Info {}: SongInfo => |doc, new| {
         doc.info.clone_from(new);

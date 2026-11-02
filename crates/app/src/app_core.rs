@@ -1656,6 +1656,12 @@ impl<S: EngineSink> AppCore<S> {
                         self.send_samples(key);
                     }
                 }
+                // A device inserted by this edit already got its slots with its params.
+                SyncOp::ModSlotsChanged { device } => {
+                    if !inserted.contains(device) {
+                        self.send_mod_slots(device);
+                    }
+                }
                 // A sequencer inserted by this edit already got its data after the insert.
                 SyncOp::PatternsChanged { device } => {
                     if !inserted.contains(device) {
@@ -1819,6 +1825,18 @@ impl<S: EngineSink> AppCore<S> {
         };
         let result = self.sink.set_param(id, pid, value);
         self.engine_result(result);
+    }
+
+    /// Sends a device the structure of its modulation slots (`SyncOp::ModSlotsChanged`): the
+    /// source, target and via params of every slot, so a slot that was removed goes quiet. The
+    /// amounts travel as ordinary params.
+    fn send_mod_slots(&mut self, key: &DeviceKey) {
+        let Some(mods) = self.doc().resolve(key).map(|d| d.mods.clone()) else {
+            return;
+        };
+        for (param, value) in atomik_model::engine_params(&mods, true) {
+            self.send_param(key, &param, value);
+        }
     }
 
     /// Pushes [`RackDoc::solo_silence`] into every console strip's (channel's or bus's)

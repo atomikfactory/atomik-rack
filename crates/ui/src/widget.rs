@@ -326,6 +326,7 @@ mod tests {
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            mods: Vec::new(),
         };
         assert!(close(current_value(&dev, &LIN), 0.25));
         dev.params.insert("a.lin".into(), 7.0);

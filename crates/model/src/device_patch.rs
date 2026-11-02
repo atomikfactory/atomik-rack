@@ -251,6 +251,20 @@ fn plan_into(
         }));
     }
 
+    // The modulation slots (their amounts are params, handled above). A patch from a file has
+    // none and puts the device's slots back to empty.
+    if target.mods != patch.mods {
+        if !patch.mods.is_empty() {
+            crate::mod_matrix::check_slots(&patch.mods, registry.mod_tables(&target.type_id))
+                .map_err(ModelError::BadScope)?;
+        }
+        p.push(Edit::Swap(Swap::ModSlots {
+            key: key.clone(),
+            old: target.mods.clone(),
+            new: patch.mods.clone(),
+        }));
+    }
+
     // A container's inside is replaced by taking the device out and putting the new one back
     // in its place: the engine rebuilds the whole inside either way.
     if target.inner != patch.inner {

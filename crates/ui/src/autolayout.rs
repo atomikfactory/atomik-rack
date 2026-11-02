@@ -434,6 +434,10 @@ fn front_groups(
         if atomik_model::console::is_internal_param(p.key) {
             continue;
         }
+        // The modulation slots are one matrix, not eight rows of loose knobs.
+        if atomik_device_sdk::is_mod_slot_key(p.key) {
+            continue;
+        }
         let prefix = prefix_of(p.key);
         let (w, h) = cell_size(choose_widget(p));
         let item = (i, w, h);
@@ -1184,7 +1188,9 @@ mod tests {
             params.sort_unstable();
             assert_eq!(
                 params,
-                (0..d.params.len()).collect::<Vec<_>>(),
+                (0..d.params.len())
+                    .filter(|i| !atomik_device_sdk::is_mod_slot_key(d.params[*i].key))
+                    .collect::<Vec<_>>(),
                 "{}",
                 d.type_id
             );

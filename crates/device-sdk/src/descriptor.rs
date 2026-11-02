@@ -160,6 +160,40 @@ pub enum DescriptorError {
         /// The cap.
         max: usize,
     },
+    /// A modulation source or target id differs from its index.
+    #[error("modulation entry `{key}` has id {id} but index {index}")]
+    ModIdMismatch {
+        /// Entry key.
+        key: &'static str,
+        /// Declared id.
+        id: u16,
+        /// Actual index.
+        index: usize,
+    },
+    /// A modulation target names a param the device does not have (or one of the slot params).
+    #[error("modulation target `{key}` names param {param}, which is not a modulatable param")]
+    ModUnknownParam {
+        /// Target key.
+        key: &'static str,
+        /// The param id it names.
+        param: u32,
+    },
+    /// The device declares more modulation sources or targets than the cap.
+    #[error("{count} modulation {what} declared, the limit is {max}")]
+    TooManyModEntries {
+        /// `"sources"` or `"targets"`.
+        what: &'static str,
+        /// Declared count.
+        count: usize,
+        /// The cap.
+        max: usize,
+    },
+    /// The slot params are not in the descriptor where the tables say they start.
+    #[error("the modulation slot params are missing or wrong at param {first}")]
+    ModSlotBlock {
+        /// Declared first param of the block.
+        first: u32,
+    },
 }
 
 impl DeviceDescriptor {
