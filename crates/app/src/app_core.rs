@@ -1301,6 +1301,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn replace(&mut self, doc: RackDoc, file: Option<PathBuf>) {
+        // A save that is still writing finishes first: it works on the old project.
+        self.settle_save();
         // A new document does not keep the old one's plugin instances.
         self.plugins_discard_on_next_reset();
         self.plugin_params_open = false;

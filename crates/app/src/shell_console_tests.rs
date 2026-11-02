@@ -261,6 +261,7 @@ fn the_console_display_choices_persist_in_ui_state_and_an_absent_key_means_shown
     assert!(s.core().view().show_console_links());
     assert!(s.menu_state().console_links);
     s.execute(AppCommand::ToggleConsoleDevices);
+    s.flush_ui_state();
     let saved = UiState::load(&path);
     assert!(saved.show_console_links && !saved.show_console_devices);
 
@@ -319,6 +320,7 @@ fn the_rack_navigator_toggles_from_the_view_menu_and_persists_in_ui_state() {
     s.execute(AppCommand::ToggleRackNavigator);
     assert!(!s.core().view().navigator_visible());
     assert!(!s.menu_state().rack_navigator);
+    s.flush_ui_state();
     assert!(!UiState::load(&path).show_rack_navigator);
     // A new start reads it back; a file from before the update shows the strip.
     assert!(
@@ -445,6 +447,7 @@ fn the_console_state_is_saved_in_the_ui_state() {
     let _ = std::fs::remove_file(&path);
     let mut s = shell_at(Some(path.clone()));
     s.execute(AppCommand::MaximiseConsole);
+    s.flush_ui_state();
     let t = shell_at(Some(path.clone()));
     assert_eq!(t.lower_pane(), Pane::Console);
     assert!(t.menu_state().console_maximised);
@@ -478,6 +481,7 @@ fn the_console_view_knows_when_it_is_maximised() {
     s.execute(AppCommand::ToggleConsole);
     assert!(!s.core().console().maximised(), "hiding un-maximises");
     s.execute(AppCommand::MaximiseConsole);
+    s.flush_ui_state();
     // Restored from ui-state.json at start.
     let t = shell_at(Some(path.clone()));
     assert!(t.core().console().maximised());
@@ -496,7 +500,7 @@ fn the_first_start_after_4m_says_console_devices_are_shown_and_only_once() {
     let _ = std::fs::remove_file(&path);
     // An older ui-state.json: no notice flag in it.
     std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
-    let s = shell_at(Some(path.clone()));
+    let mut s = shell_at(Some(path.clone()));
     let text = s.core().last_rejection().expect("the notice").to_string();
     assert!(
         text.contains("Console devices are now shown in the rack")
@@ -505,6 +509,7 @@ fn the_first_start_after_4m_says_console_devices_are_shown_and_only_once() {
     );
     assert!(s.ui_state().console_notice_seen);
     // The flag is saved, with the user's other values kept.
+    s.flush_ui_state();
     let saved = UiState::load(&path);
     assert!(saved.console_notice_seen && (saved.rack_split - 0.4).abs() < 1e-9);
     // The next start is quiet.
