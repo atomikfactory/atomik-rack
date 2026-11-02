@@ -361,6 +361,20 @@ impl FileDrag {
     }
 }
 
+/// An input-method event of the window system as the UI's.
+pub fn ime(event: &winit::event::Ime) -> UiEvent {
+    use winit::event::Ime;
+    match event {
+        Ime::Enabled => UiEvent::Ime(atomik_ui::ImeEvent::Enabled),
+        Ime::Preedit(text, cursor) => UiEvent::Ime(atomik_ui::ImeEvent::Preedit {
+            text: text.clone(),
+            cursor: *cursor,
+        }),
+        Ime::Commit(text) => UiEvent::Ime(atomik_ui::ImeEvent::Commit(text.clone())),
+        Ime::Disabled => UiEvent::Ime(atomik_ui::ImeEvent::Disabled),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -51,6 +51,8 @@ midir.workspace = true
 vello.workspace = true
 winit.workspace = true
 rfd.workspace = true
+# The OS clipboard for text fields (text only: no image support).
+arboard.workspace = true
 pollster.workspace = true
 png.workspace = true
 serde.workspace = true

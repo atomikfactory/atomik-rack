@@ -52,6 +52,8 @@ pub struct MenuEnable {
     pub assign_send: bool,
     /// Rack: the primary device is a MIDI Out device (Choose MIDI Out Port works).
     pub midi_out: bool,
+    /// Rack: the primary device has a modulation matrix (Modulation Matrix opens it).
+    pub mod_matrix: bool,
     /// Rack: Combine can work on the selection (the model would accept it).
     pub combine: bool,
     /// Rack: Uncombine can work on the selection (the model would accept it).
@@ -518,6 +520,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.patch_next", e.selection && !e.master_only),
                 Spec::Separator,
                 item("rack.midi_out_port", e.midi_out),
+                item("rack.mod_matrix", e.mod_matrix),
             ]);
             v
         }
@@ -1202,6 +1205,7 @@ mod tests {
                 "rack.patch_prev",
                 "rack.patch_next",
                 "rack.midi_out_port",
+                "rack.mod_matrix",
             ]
         );
     }

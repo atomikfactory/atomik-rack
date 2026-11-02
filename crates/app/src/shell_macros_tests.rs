@@ -751,3 +751,81 @@ fn selecting_an_automation_track_arms_nothing_and_reports_nothing() {
     );
     assert!(!s.core().freeze_menu().can_freeze);
 }
+
+// ---- the Modulation Matrix panel ----------------------------------------------------------------
+
+fn choose(s: &mut Shell<NullBackend>, picker: Point, label: &str) {
+    mouse(s, picker, PointerButton::Primary);
+    let at = s
+        .mod_matrix_view()
+        .and_then(|v| v.picker_center(label))
+        .unwrap_or_else(|| panic!("{label} in the picker"));
+    mouse(s, at, PointerButton::Primary);
+}
+
+#[test]
+fn the_matrix_panel_edits_a_slot_and_its_amount_as_undoable_commands() {
+    let mut s = shell();
+    add_synth(&mut s, "a", "Lead");
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[key("a")], Some(&key("a")));
+    s.run_command("rack.mod_matrix", None);
+    assert!(s.mod_matrix_view().is_some(), "the command opens the panel");
+    assert!(s.modal_open(), "and it takes the window");
+    let info = s.core().mod_matrix_info(&key("a")).unwrap();
+    let (source, target) = (info.sources[0].clone(), info.targets[0].clone());
+    let v = s.mod_matrix_view().unwrap();
+    let (src, tgt) = (
+        v.picker_rect(0, 's').center(),
+        v.picker_rect(0, 't').center(),
+    );
+    choose(&mut s, src, &source);
+    assert_eq!(s.core().doc().resolve(&key("a")).unwrap().mod_slot(0), None);
+    choose(&mut s, tgt, &target);
+    let slot = s.core().doc().resolve(&key("a")).unwrap().mod_slot(0);
+    assert_eq!(slot, Some(atomik_model::ModSlot::new(0, 0)));
+    // The amount bar sets mod1_amount in one undo step, and typing nothing starts the transport.
+    let bar = s.mod_matrix_view().unwrap().bar_rect(0);
+    mouse(
+        &mut s,
+        Point::new(bar.x0 + bar.width() * 0.9, bar.center().y),
+        PointerButton::Primary,
+    );
+    let amount = s.core().doc().resolve(&key("a")).unwrap().mod_amount(0);
+    assert!(amount > 0.7, "{amount}");
+    press(&mut s, Key::Space, Modifiers::NONE);
+    assert!(!s.core().is_playing(), "the keys are the panel's");
+    assert!(s.core_mut().undo());
+    assert_eq!(
+        s.core().doc().resolve(&key("a")).unwrap().mod_amount(0),
+        0.0
+    );
+    assert!(s.core_mut().undo());
+    assert_eq!(s.core().doc().resolve(&key("a")).unwrap().mod_slot(0), None);
+    // The panel followed the undo and Esc closes it.
+    s.frame();
+    assert_eq!(
+        s.mod_matrix_view().unwrap().row(0),
+        Some((None, None, None))
+    );
+    press(&mut s, Key::Escape, Modifiers::NONE);
+    assert!(s.mod_matrix_view().is_none());
+}
+
+#[test]
+fn a_device_without_a_matrix_does_not_open_the_panel() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.echo".into(),
+            key: Some(key("fx")),
+        })
+        .unwrap();
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[key("fx")], Some(&key("fx")));
+    s.run_command("rack.mod_matrix", None);
+    assert!(s.mod_matrix_view().is_none());
+}

@@ -285,6 +285,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.macros_panel {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.mod_matrix {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.param_search {
                     v.set_scale(scale);
                 }
@@ -434,6 +437,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.export.is_some()
             || self.midi_maps.is_some()
             || self.macros_panel.is_some()
+            || self.mod_matrix.is_some()
             || self.param_search.is_some()
             || self.quantize.is_some()
             || self.silence.is_some()

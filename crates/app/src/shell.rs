@@ -155,11 +155,12 @@ use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip,
-    Key, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
-    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
-    SongInfoAction, SongInfoView, TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
+    Key, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT,
+    ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView, PointerButton,
+    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
+    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TextRun, UiAction,
+    UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -464,6 +465,7 @@ pub struct Shell<B: AudioBackend> {
     midi_maps: Option<MidiMapsView>,
     /// The Macros panel (Mixer > Macros) while it is open.
     macros_panel: Option<MacrosView>,
+    mod_matrix: Option<ModMatrixView>,
     /// The parameter search (View > Find Parameter) while it is open.
     param_search: Option<ParamSearchView>,
     /// The control a right click opened the MIDI menu for (what Learn MIDI and Forget MIDI act on).
@@ -657,6 +659,7 @@ impl<B: AudioBackend> Shell<B> {
             relink_target: None,
             midi_maps: None,
             macros_panel: None,
+            mod_matrix: None,
             param_search: None,
             control_target: None,
             router: Router::new(built.keymap),
@@ -990,6 +993,12 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Whether the song information panel is open.
     pub fn song_info_open(&self) -> bool {
+        self.song_info.is_some()
+    }
+
+    /// Whether a text field has the keys, so the window system should offer its input method
+    /// (composition windows, dead keys) to the window.
+    pub fn wants_text_input(&self) -> bool {
         self.song_info.is_some()
     }
 
@@ -1369,6 +1378,58 @@ impl<B: AudioBackend> Shell<B> {
             self.macros_panel = None;
         }
         self.sync_macros();
+        self.repaint = true;
+    }
+
+    /// The modulation matrix panel, while it is open.
+    pub fn mod_matrix_view(&self) -> Option<&ModMatrixView> {
+        self.mod_matrix.as_ref()
+    }
+
+    /// Opens the modulation matrix of `device`; says why when the device has none.
+    fn open_mod_matrix(&mut self, device: &DeviceKey) {
+        let Some(info) = self.core.mod_matrix_info(device) else {
+            self.core
+                .report("Select a device with a modulation matrix first");
+            return;
+        };
+        let theme = self.core.view().theme().clone();
+        let mut view = ModMatrixView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_info(info);
+        self.mod_matrix = Some(view);
+        self.repaint = true;
+    }
+
+    /// Feeds the matrix panel the device's slots; the panel closes when the device is gone.
+    fn sync_mod_matrix(&mut self) {
+        let Some(device) = self.mod_matrix.as_ref().and_then(|v| v.device().cloned()) else {
+            return;
+        };
+        match self.core.mod_matrix_info(&device) {
+            Some(info) => {
+                if let Some(view) = &mut self.mod_matrix {
+                    view.set_info(info);
+                    if view.needs_repaint() {
+                        self.repaint = true;
+                    }
+                }
+            }
+            None => {
+                self.mod_matrix = None;
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the matrix panel asked for: its edits are ordinary commands.
+    fn mod_matrix_action(&mut self, action: UiAction) {
+        match action {
+            UiAction::ModMatrix(ModMatrixAction::Close) => self.mod_matrix = None,
+            other => self.core.handle_action(other),
+        }
+        self.sync_mod_matrix();
         self.repaint = true;
     }
 
@@ -1844,6 +1905,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.macros_panel {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.mod_matrix {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.param_search {
@@ -2385,6 +2449,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.midi_maps.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.midi_maps {
+                v.set_bounds(rect);
+            }
+        }
+        if self.mod_matrix.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.mod_matrix {
                 v.set_bounds(rect);
             }
         }
@@ -3060,6 +3130,19 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_plugin_ui();
             return Vec::new();
         }
+        if self.mod_matrix.is_some() {
+            // The matrix panel takes every event; Esc closes its menu, then the panel.
+            self.repaint = true;
+            let actions = self
+                .mod_matrix
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                self.mod_matrix_action(action);
+            }
+            return Vec::new();
+        }
         if self.macros_panel.is_some() {
             // The Macros panel takes every event; Esc closes it (or drops a name being edited).
             self.repaint = true;
@@ -3684,6 +3767,12 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("rack.mod_matrix", None) => match self.core.view().primary() {
+                Some(device) => self.open_mod_matrix(&device),
+                None => self
+                    .core
+                    .report("Select a device with a modulation matrix first"),
+            },
             ("edit.copy_settings", None) => self.core.copy_settings(),
             ("edit.paste_settings", None) => self.core.paste_settings(),
             ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
@@ -4215,6 +4304,11 @@ impl<B: AudioBackend> Shell<B> {
                 && core.view().selection_len() == 1
                 && doc.console.master.is_some()
                 && core.view().primary() == doc.console.master,
+            mod_matrix: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.has_mod_matrix(&d)),
             midi_out: pane == Pane::Rack
                 && core
                     .view()
@@ -5901,6 +5995,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_export();
         self.sync_midi_maps();
         self.sync_macros();
+        self.sync_mod_matrix();
         self.sync_param_search();
         self.sync_quantize();
         // Imports and loads finish between frames: keep painting until the last one landed.
@@ -6476,6 +6571,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.macros_panel {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.mod_matrix {
             view.paint(canvas);
         }
         if let Some(view) = &self.param_search {

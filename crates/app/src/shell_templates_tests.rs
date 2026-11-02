@@ -649,3 +649,58 @@ fn the_workflow_tab_chooses_and_resets_the_scratch_folder() {
     click(&mut s, apply);
     assert_eq!(s.core().scratch_folder(), None);
 }
+
+#[test]
+fn the_panel_takes_composed_text_the_clipboard_and_a_selection_through_the_shell() {
+    let t = Tmp::new("info-ime");
+    let mut s = shell(&t);
+    s.execute(AppCommand::SongInfo);
+    assert!(s.wants_text_input(), "the window offers its input method");
+    // A composition and its commit arrive as input-method events.
+    s.handle(&UiEvent::Ime(atomik_ui::ImeEvent::Preedit {
+        text: "\u{3053}\u{3093}".into(),
+        cursor: None,
+    }));
+    assert_eq!(s.song_info_view().unwrap().info().title, "");
+    s.handle(&UiEvent::Ime(atomik_ui::ImeEvent::Commit(
+        "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}".into(),
+    )));
+    assert_eq!(
+        s.song_info_view().unwrap().info().title,
+        "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}"
+    );
+    // Select all, copy, move to the author and paste: the shortcuts are the field's, not the
+    // shell's.
+    let ctrl = Modifiers::CTRL;
+    for k in ['a', 'c'] {
+        s.handle(&UiEvent::Key {
+            key: Key::Char(k),
+            modifiers: ctrl,
+            pressed: true,
+        });
+    }
+    press(&mut s, Key::Tab);
+    s.handle(&UiEvent::Key {
+        key: Key::Char('v'),
+        modifiers: ctrl,
+        pressed: true,
+    });
+    assert_eq!(
+        s.song_info_view().unwrap().info().author,
+        "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}"
+    );
+    // An AltGr character is text even where Ctrl+Alt+key would be a shortcut.
+    let altgr = Modifiers {
+        ctrl: true,
+        alt: true,
+        ..Modifiers::NONE
+    };
+    s.handle(&UiEvent::Key {
+        key: Key::Char('@'),
+        modifiers: altgr,
+        pressed: true,
+    });
+    assert!(s.song_info_view().unwrap().info().author.ends_with('@'));
+    press(&mut s, Key::Escape);
+    assert!(!s.wants_text_input());
+}

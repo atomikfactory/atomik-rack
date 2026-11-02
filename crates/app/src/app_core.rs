@@ -3315,6 +3315,9 @@ mod patches;
 #[path = "app_core_midi_out.rs"]
 mod midi_out;
 
+#[path = "app_core_mod_matrix.rs"]
+mod mod_matrix;
+
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
     RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
