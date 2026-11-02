@@ -7,8 +7,9 @@
 //!
 //! The working directory is always an allowed folder; each `--root` adds one.
 
+use atomik_mcp::rpc::{Line, MAX_LINE_BYTES, read_line_limited, too_long_reply};
 use atomik_mcp::{Paths, Server};
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::PathBuf;
 
 fn main() -> std::process::ExitCode {
@@ -39,13 +40,16 @@ fn main() -> std::process::ExitCode {
     };
     let mut server = Server::new(Paths::new(cwd, &roots));
     let stdin = std::io::stdin();
+    let mut input = stdin.lock();
     let mut stdout = std::io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Some(reply) = server.handle_line(&line)
+    loop {
+        let reply = match read_line_limited(&mut input, MAX_LINE_BYTES) {
+            Ok(Some(Line::Text(line))) if line.trim().is_empty() => continue,
+            Ok(Some(Line::Text(line))) => server.handle_line(&line),
+            Ok(Some(Line::TooLong(length))) => Some(too_long_reply(length, MAX_LINE_BYTES)),
+            Ok(None) | Err(_) => break,
+        };
+        if let Some(reply) = reply
             && (writeln!(stdout, "{reply}").is_err() || stdout.flush().is_err())
         {
             break;

@@ -367,6 +367,8 @@ The rules are checked in `crates/model/tests/loop_clips.rs`, `crates/model/tests
 
 - **No live audio.** The session opens no stream, so Play moves nothing audible and the engine telemetry of a live run (xruns, meters under load) is not available. The bounce is the sound check; the live twins are covered by the `app_core_*_tests`.
 - **No plugins in a bounce.** `bounce` and `session_bounce` refuse a project that uses a third-party plugin. Use `atomik-render --allow-plugins` (sandbox and plugin cache apply), then `analyze_audio` and `compare_audio` on the WAV.
+- **Headless, no audio, no plugins: the contract.** The server and its session never open an audio or MIDI device, never show a window, never scan or load a third-party plugin and never start the plugin sandbox. Anything that needs one of them is refused with a message that says so, or answered from the model alone; it is a hand check or a test in the repository.
+- **A line is at most 16 MiB.** Each message is one line of input. A longer line is read through to its end without being kept, answered with a protocol error (code -32600, no id, "over the limit") and skipped; the server goes on with the next line.
 - **A screenshot is a CPU render.** The GPU path (`vello`) draws the same display lists, but anti-aliasing and text rasterisation differ slightly. Do not diff screenshots pixel by pixel across machines; the display-list goldens are the stable check.
 - **One session.** `session_open` replaces the previous one.
 - **Determinism.** Bounces are deterministic and so is the shell's painting; use that: an unexpected difference between two runs is itself a finding.

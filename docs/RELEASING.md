@@ -196,9 +196,20 @@ The build writes a detached, armoured signature `SHA256SUMS.asc` next to `SHA256
 
 A build is signed only where the secrets exist, and the release notes (and the nightly notes) say which platforms are signed. Until the secrets are added the binaries are not code-signed or notarised: the macOS app has only the ad-hoc signature described above, and macOS Gatekeeper and Windows SmartScreen warn on first launch; the README's Install section explains the first-run steps. There are no signing secrets in the repository, and no certificate exists yet.
 
+What is signed or attested without any secret: every build writes a Sigstore build provenance attestation for the files in `SHA256SUMS` (the `checksums` job of `build.yml`; it needs no key, only the repository's OIDC token), which proves which workflow run built them. The order in which the owner can add the rest, each step independent and each skipped cleanly until its secrets exist:
+
+1. the GPG key: create it as described above, add `GPG_PRIVATE_KEY_BASE64` and `GPG_PASSPHRASE`, and publish the public key (attach `atomik-rack-release.asc` to a release and print its fingerprint in the README), after which `SHA256SUMS.asc` is published with every build;
+2. Windows: Azure Trusted Signing (or a certificate file);
+3. macOS: the Developer ID certificate and the notary key.
+
+Nothing in the workflows needs to change for any of these steps.
+
 ### Verifying a download
 
 ```sh
+# The provenance attestation (the GitHub CLI): which workflow run built the file
+gh attestation verify atomik-rack-<version>-linux-x86_64.tar.gz --repo atomikfactory/atomik-rack
+
 # Checksums (every platform's files are in SHA256SUMS)
 sha256sum -c SHA256SUMS --ignore-missing           # Linux; macOS: shasum -a 256 -c
 
@@ -224,11 +235,11 @@ xcrun stapler validate atomik-rack-<version>-macos-universal.dmg
 
 ## Nightly builds
 
-The `Nightly` workflow (`.github/workflows/nightly.yml`) runs every day at 03:00 UTC and can be started by hand (`gh workflow run nightly.yml`, with `-f force=true` to build when nothing changed). It never runs in forks.
+The `Nightly` workflow (`.github/workflows/nightly.yml`) runs every day at 03:00 UTC and can be started by hand (`gh workflow run nightly.yml`, with `-f force=true` to build when nothing changed, and `-f dry_run=true` on `main` to run the whole publish step without changing the release: it lists what it would upload and delete and leaves the tag and the notes alone). It never runs in forks.
 
 1. `changes` compares the head of `main` with the commit the `nightly` tag points to. With no new commit the run stops there (a notice says so), so a quiet repository costs almost nothing. A manual run with `force` builds anyway; a manual run from another branch builds and smoke-tests but does not publish.
 2. `build` is the same `build.yml` as a release, with the label `nightly-<YYYYMMDD>-<shortsha>`, so the files are named `atomik-rack-nightly-<YYYYMMDD>-<shortsha>-<platform>.<ext>` (the `.deb` is `atomik-rack_nightly-<YYYYMMDD>-<shortsha>_amd64.deb`) and the installers show `0.1.0-nightly.<YYYYMMDD>+<shortsha>`. It signs exactly where the `release-signing` secrets exist. Its workflow artifacts are kept for three days.
-3. `publish` (the only job with `contents: write`) updates **one rolling pre-release** tagged `nightly`: it deletes the old assets, uploads the new ones, moves the tag to the new commit and rewrites the notes (the commit range since the previous nightly, which platforms are signed and a warning when they are not). It is never the "latest" release. A newer run cancels one that is still going; the tag moves last, so an interrupted publish is simply redone by the next run.
+3. `publish` (the only job with `contents: write`) updates **one rolling pre-release** tagged `nightly`: it uploads the new assets, then deletes the old ones that the new set does not replace (`scripts/release/swap-release-assets.sh`, so the release never has an empty window: only `SHA256SUMS`, which keeps its name, is replaced in place), moves the tag to the new commit and rewrites the notes (the commit range since the previous nightly, which platforms are signed and a warning when they are not). It is never the "latest" release. A newer run cancels one that is still going; the tag moves last, so an interrupted publish is simply redone by the next run.
 
 Nightlies have no stable tag of their own: link to `https://github.com/atomikfactory/atomik-rack/releases/tag/nightly`. GitHub stops scheduled workflows in a repository that has had no activity for 60 days; re-enable the workflow in the Actions tab if that happens.
 

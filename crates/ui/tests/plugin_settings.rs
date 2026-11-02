@@ -72,6 +72,7 @@ fn on_data() -> PluginSettingsData {
         last_scan: None,
         log: vec!["[Test Synth] loaded".into(), "[Test Fx] latency 128".into()],
         sandbox: true,
+        running_sandboxed: true,
     }
 }
 
@@ -737,4 +738,15 @@ fn the_status_column_says_enabled_disabled_could_not_load_or_crashed() {
         settings(&acts),
         [PluginSettingsAction::RetryPlugin("clap.org.test.fx".into())]
     );
+}
+
+#[test]
+fn the_sandbox_row_shows_where_plugins_really_run() {
+    let t = texts_of(&view(on_data()));
+    assert!(has(&t, "Running now: separate process"), "{t:?}");
+    // The switch is on but the sandbox could not start: the row says what is true.
+    let mut data = on_data();
+    data.running_sandboxed = false;
+    let t = texts_of(&view(data));
+    assert!(has(&t, "Running now: in-process"), "{t:?}");
 }

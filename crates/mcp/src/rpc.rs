@@ -175,3 +175,76 @@ pub fn output_json(output: &ToolOutput) -> Value {
         .collect();
     json!({"content": content, "isError": output.is_error})
 }
+
+/// The longest message, in bytes, the server reads: one line of input. A longer one is skipped and
+/// answered with a protocol error, and the server goes on with the next line.
+pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+/// One line read from the input.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Line {
+    /// The line without its line end (a byte that is not UTF-8 is replaced).
+    Text(String),
+    /// A line over the limit: its length in bytes. The rest of it has been read and dropped.
+    TooLong(usize),
+}
+
+/// Reads the next line, keeping at most `limit` bytes of it in memory: a longer line is read
+/// through to its end without being stored, so a client cannot make the server allocate what it
+/// sends. `None` at the end of the input.
+///
+/// # Errors
+/// When the input fails.
+pub fn read_line_limited<R: std::io::BufRead>(
+    input: &mut R,
+    limit: usize,
+) -> std::io::Result<Option<Line>> {
+    let mut text: Vec<u8> = Vec::new();
+    let mut total = 0usize;
+    let mut too_long = false;
+    let mut any = false;
+    loop {
+        let chunk = input.fill_buf()?;
+        if chunk.is_empty() {
+            break;
+        }
+        any = true;
+        let newline = chunk.iter().position(|b| *b == b'\n');
+        let content = newline.unwrap_or(chunk.len());
+        total = total.saturating_add(content);
+        if !too_long && total <= limit {
+            text.extend_from_slice(&chunk[..content]);
+        } else if !too_long {
+            too_long = true;
+            text = Vec::new();
+        }
+        let used = newline.map_or(content, |i| i + 1);
+        input.consume(used);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if !any {
+        return Ok(None);
+    }
+    if too_long {
+        return Ok(Some(Line::TooLong(total)));
+    }
+    if text.last() == Some(&b'\r') {
+        text.pop();
+    }
+    Ok(Some(Line::Text(
+        String::from_utf8_lossy(&text).into_owned(),
+    )))
+}
+
+/// The reply to a line over [`MAX_LINE_BYTES`]: a protocol error with no id (the message was not
+/// read, so its id is unknown).
+pub fn too_long_reply(length: usize, limit: usize) -> String {
+    error_reply(
+        Value::Null,
+        INVALID_REQUEST,
+        &format!("message of {length} bytes is over the limit of {limit} bytes and was skipped"),
+    )
+    .to_string()
+}

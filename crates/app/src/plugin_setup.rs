@@ -68,15 +68,29 @@ pub fn plugin_host_command(exe: &Path) -> HostCommand {
 
 /// Where plugins run for this start: in child processes when the setting is on and the app's
 /// executable `exe` is known (the child is found from it), else in this process. Read once at
-/// start: a change in Settings applies at the next start.
-pub fn plugin_isolation(sandbox: bool, exe: Option<&Path>) -> PluginIsolation {
+/// start: a change in Settings applies at the next start. The warning is for the one case that
+/// changes the mode behind the user's back: the sandbox is on but cannot be started (no
+/// executable path to find the child from), so plugins would run inside the app without the
+/// isolation they asked for.
+pub fn plugin_isolation(sandbox: bool, exe: Option<&Path>) -> (PluginIsolation, Option<String>) {
     match exe {
-        Some(exe) if sandbox => PluginIsolation::Sandbox {
-            command: plugin_host_command(exe),
-            // The live app: a late result is dry or silence for that batch.
-            bounce: false,
-        },
-        _ => PluginIsolation::InProcess,
+        Some(exe) if sandbox => (
+            PluginIsolation::Sandbox {
+                command: plugin_host_command(exe),
+                // The live app: a late result is dry or silence for that batch.
+                bounce: false,
+            },
+            None,
+        ),
+        None if sandbox => (
+            PluginIsolation::InProcess,
+            Some(
+                "The plugin sandbox is on but cannot start (the app's own path is unknown): \
+                 plugins run inside the app without isolation"
+                    .to_string(),
+            ),
+        ),
+        _ => (PluginIsolation::InProcess, None),
     }
 }
 
@@ -319,7 +333,7 @@ mod tests {
     #[test]
     fn the_sandbox_setting_picks_where_plugins_run_at_start() {
         let exe = Path::new("D:/apps/atomik.exe");
-        let sandboxed = plugin_isolation(true, Some(exe));
+        let (sandboxed, warning) = plugin_isolation(true, Some(exe));
         assert_eq!(
             sandboxed,
             PluginIsolation::Sandbox {
@@ -328,12 +342,20 @@ mod tests {
             },
             "on: the same command as the child program lookup"
         );
+        assert_eq!(warning, None);
         assert_eq!(
             plugin_isolation(false, Some(exe)),
-            PluginIsolation::InProcess
+            (PluginIsolation::InProcess, None),
+            "off is a choice, not a surprise"
         );
-        // Without an executable path there is no way to start a child.
-        assert_eq!(plugin_isolation(true, None), PluginIsolation::InProcess);
+        // Without an executable path there is no way to start a child: in-process, and said.
+        let (isolation, warning) = plugin_isolation(true, None);
+        assert_eq!(isolation, PluginIsolation::InProcess);
+        assert!(
+            warning.is_some_and(|w| w.contains("without isolation")),
+            "the fallback is never silent"
+        );
+        assert_eq!(plugin_isolation(false, None).1, None);
     }
 
     #[test]

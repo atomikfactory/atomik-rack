@@ -78,16 +78,16 @@ pub fn run(cli: Cli) -> Result<(), String> {
         plugin_settings.enabled = true;
     }
     let plugin_settings_sandbox = plugin_settings.sandbox;
+    let plugins_on = plugin_settings.enabled;
     let mut plugin_config = plugin_setup::plugin_config(
         plugin_settings,
         Some(config.dir.as_path()),
         exe.as_deref().map(plugin_setup::scanner_command),
     );
     // Where plugins run is read once, here: the Settings switch applies at the next start.
-    plugin_config.isolation = Some(plugin_setup::plugin_isolation(
-        plugin_settings_sandbox,
-        exe.as_deref(),
-    ));
+    let (isolation, isolation_warning) =
+        plugin_setup::plugin_isolation(plugin_settings_sandbox, exe.as_deref());
+    plugin_config.isolation = Some(isolation);
     if cli.stress_plugins
         && let Some(exe) = exe.as_deref()
     {
@@ -110,6 +110,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         core.set_recent_path(path);
     }
     core.configure_plugins(plugin_config);
+    if let Some(warning) = isolation_warning.filter(|_| plugins_on) {
+        core.warn_plugin_isolation(&warning);
+    }
     if cli.stress_audio {
         // 16 generated audio tracks next to the 8 instrument tracks (files are reused
         // between runs); wait for the import so playback starts with everything loaded.

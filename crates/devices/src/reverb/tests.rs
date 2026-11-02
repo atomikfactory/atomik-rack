@@ -603,9 +603,11 @@ proptest! {
 /// Rough CPU cost: seconds of processing per second of audio, release builds only
 /// (`cargo test -p atomik-devices --release -- --ignored reverb_cpu --nocapture`).
 #[test]
-#[ignore]
-// Wall-clock timing is the point of this ignored, manual benchmark; it never runs in CI.
-#[allow(clippy::disallowed_methods)]
+#[ignore = "a manual CPU benchmark: wall-clock timing, release builds only"]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "wall-clock timing is the point of this ignored, manual benchmark; it never runs in CI"
+)]
 fn reverb_cpu_bench() {
     for sr in [44_100.0, 48_000.0, 96_000.0] {
         let mut h = reverb_at(sr);

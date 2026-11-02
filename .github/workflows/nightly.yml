@@ -18,6 +18,10 @@ on:
         description: "Build and publish even when main has no new commits since the last nightly"
         type: boolean
         default: false
+      dry_run:
+        description: "On main: build and run the publish step without changing the release (it lists what it would upload and delete)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,6 +49,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check the asset swap keeps the release non-empty
+        run: sh scripts/release/swap-release-assets-test.sh
       - name: Decide whether to build
         id: plan
         env:
@@ -87,6 +93,11 @@ jobs:
     name: build
     needs: changes
     if: needs.changes.outputs.build == 'true'
+    # The checksums job of build.yml attests the provenance of the files (Sigstore).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/build.yml
     with:
       version: ${{ needs.changes.outputs.label }}
@@ -105,12 +116,16 @@ jobs:
       group: nightly-publish
       cancel-in-progress: false
     steps:
+      # The swap script lives in the repository; the token is not kept in the checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: atomik-rack-*
           path: dist
           merge-multiple: true
-      - name: Replace the assets of the nightly pre-release and move its tag
+      - name: Swap the assets of the nightly pre-release and move its tag
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -122,6 +137,7 @@ jobs:
           MACOS_SIGNED: ${{ needs.build.outputs.macos-signed }}
           MACOS_NOTARIZED: ${{ needs.build.outputs.macos-notarized }}
           CHECKSUMS_SIGNED: ${{ needs.build.outputs.checksums-signed }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -eu
           (cd dist && sha256sum -c SHA256SUMS)
@@ -169,15 +185,19 @@ jobs:
           if [ -f dist/SHA256SUMS.asc ]; then set -- "$@" dist/SHA256SUMS.asc; fi
 
           if gh release view nightly --repo "$REPO" > /dev/null 2>&1; then
-            # Drop the old assets, then upload the new ones.
-            gh release view nightly --repo "$REPO" --json assets --jq '.assets[].name' |
-              while IFS= read -r asset; do
-                gh release delete-asset nightly "$asset" --repo "$REPO" --yes
-              done
-            gh release upload nightly "$@" --repo "$REPO" --clobber
+            # Upload the new assets first and delete the old ones that are not replaced after
+            # that, so the release is never empty (see scripts/release/swap-release-assets.sh).
+            sh scripts/release/swap-release-assets.sh nightly "$REPO" "$@"
+          elif [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "dry run: the nightly release does not exist yet; a real run would create it with $# asset(s)"
           else
             gh release create nightly "$@" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
               --title "$title" --notes-file "$notes"
+          fi
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "dry run: the tag and the notes are left as they are"
+            exit 0
           fi
 
           # Move the tag to the built commit last, once the assets are all there.

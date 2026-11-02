@@ -3910,7 +3910,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   editor window positions are not remembered across sessions; no Wayland embedding for in-process
   editors or without `DISPLAY` (sandboxed editors use XWayland); macOS and Linux paths are
   compile-checked (type-checked and linted) but have not been run against real plugins; the
-  sandbox's Linux and macOS wake-up and stdout redirection are compile-checked only; one process per
+  sandbox's Linux and macOS wake-up and stdout redirection run against the real child in the CI
+  job "sandbox end to end" and in the test matrix, and have not been checked by hand with a
+  window; the editor window of the child is a utility window on X11 (a hint) and its macOS process
+  is an accessory (no Dock icon), neither checked by hand; one process per
   instance costs memory with many instances; a sandboxed editor is a separate window, not embedded.
 
 ## 6g. Input, commands and the keymap

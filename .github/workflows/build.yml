@@ -367,6 +367,12 @@ jobs:
     timeout-minutes: 10
     # Holds the GPG key (see docs/RELEASING.md); without it SHA256SUMS is published unsigned.
     environment: release-signing
+    # The provenance attestation (Sigstore, keyless) needs the job's OIDC token and the right to
+    # store the attestation; the caller must grant both (release.yml and nightly.yml do).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     outputs:
       signed: ${{ steps.sign.outputs.signed }}
     steps:
@@ -396,6 +402,15 @@ jobs:
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
+      # A Sigstore build provenance attestation for every file in SHA256SUMS: needs no secret, and
+      # says which workflow run built them (`gh attestation verify <file> --repo <owner>/<repo>`).
+      # It never fails a build: where attestations are unavailable (a fork, a private repository
+      # without the feature) the step is reported and skipped.
+      - name: Attest the build provenance
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atomik-rack-checksums

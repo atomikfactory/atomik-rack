@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Release and dependency hygiene.** A freeze or an unfreeze that finishes while the transport runs no longer
+  rebuilds the engine under it: the sound goes on, the message says the freeze plays when playback stops, and the
+  engine is rebuilt at the stop. Where plugins run is shown, not assumed: Settings > Plugins says "Running now:
+  separate process" or "in-process", the status line shows `plugins: sandbox` or `plugins: in-process` while plugins
+  are on, and a sandbox that is switched on but cannot start says so once instead of falling back silently. Waiting
+  for plugins to load is bounded by time. `docs/DEPENDENCIES.md` lists the deliberate pins and why, the duplicate
+  versions that `deny.toml` skips by root cause (so only a new duplicate warns), and the quarterly bump of the
+  0.x GUI stack, which a scheduled workflow opens as an issue; the same workflow prints `cargo update --dry-run` every
+  Monday. Every advisory ignore has a review date and the Security workflow fails once it has passed. The nightly
+  release uploads its new files before it deletes the old ones, so it is never empty, and a manual run can be a dry
+  run (`dry_run`); every build writes a Sigstore provenance attestation for the files in `SHA256SUMS`. The MCP server
+  skips a message over 16 MiB with a protocol error and stays usable, and `docs/MCP.md` states the headless, no audio,
+  no plugins contract. `SECURITY.md` says how far the plugin cache is trusted and why the macOS app has the
+  library-validation entitlement. The sandbox child is an accessory process on macOS (no Dock icon) and a utility
+  window on X11; the sandbox end-to-end tests have a CI job on Linux and macOS.
 - **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
   slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
   control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and

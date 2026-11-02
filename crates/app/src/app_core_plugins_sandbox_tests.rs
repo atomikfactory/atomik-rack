@@ -659,3 +659,32 @@ fn the_parameter_pane_lists_the_presets_and_its_actions_load_them() {
         "after an undo the state is not known to be a preset"
     );
 }
+
+#[test]
+fn the_mode_plugins_really_run_in_is_shown_and_a_missing_sandbox_is_said_once() {
+    let (mut core, _) = null_core(sandbox(), PluginPaths::default());
+    assert_eq!(core.plugin_mode(), Some("sandbox"));
+    assert!(core.plugin_settings_data().running_sandboxed);
+    let (mut bare, _) = null_core(PluginIsolation::InProcess, PluginPaths::default());
+    assert_eq!(bare.plugin_mode(), Some("in-process"));
+    // The switch still says on: the settings tell what runs, not what was asked for.
+    assert!(bare.plugin_settings_data().sandbox);
+    assert!(!bare.plugin_settings_data().running_sandboxed);
+    bare.warn_plugin_isolation("The plugin sandbox is on but cannot start");
+    assert!(
+        bare.last_rejection()
+            .is_some_and(|m| m.contains("cannot start"))
+    );
+    assert!(
+        bare.plugin_settings_data()
+            .log
+            .iter()
+            .any(|l| l.contains("cannot start")),
+        "also in the plugin log"
+    );
+    // Plugins off: nothing to say about where they run.
+    core.handle_action(UiAction::PluginSettings(PluginSettingsAction::SetEnabled {
+        enabled: false,
+    }));
+    assert_eq!(core.plugin_mode(), None);
+}

@@ -311,3 +311,47 @@ pub fn definition(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(value: Value) -> Args {
+        Args::new(Some(&value))
+    }
+
+    #[test]
+    fn anything_but_an_object_is_no_arguments() {
+        assert!(Args::new(None).0.is_empty());
+        assert!(Args::new(Some(&json!([1, 2]))).0.is_empty());
+        assert!(Args::new(Some(&json!("x"))).0.is_empty());
+    }
+
+    #[test]
+    fn a_required_argument_names_what_is_missing_or_wrong() {
+        let a = args(json!({"path": "a.atomik", "n": 3, "bad": 1}));
+        assert_eq!(a.str("path").unwrap(), "a.atomik");
+        assert_eq!(a.str("other").unwrap_err(), "missing argument `other`");
+        assert_eq!(a.str("bad").unwrap_err(), "argument `bad` must be a string");
+        assert_eq!(a.f64("n").unwrap(), 3.0);
+        assert_eq!(
+            a.f64("path").unwrap_err(),
+            "argument `path` must be a number"
+        );
+    }
+
+    #[test]
+    fn null_and_absent_are_the_same_and_types_are_checked() {
+        let a = args(json!({"s": null, "u": -1, "b": "yes", "l": ["a", 2]}));
+        assert_eq!(a.opt_str("s").unwrap(), None);
+        assert_eq!(a.opt_f64("missing").unwrap(), None);
+        assert!(a.opt_u64("u").is_err(), "a negative number is not a count");
+        assert!(a.opt_bool("b").is_err());
+        assert!(a.opt_strings("l").is_err(), "every item must be a string");
+        assert_eq!(a.opt_strings("none").unwrap(), Vec::<String>::new());
+        let ok = args(json!({"u": 7, "b": false, "l": ["x", "y"]}));
+        assert_eq!(ok.opt_u64("u").unwrap(), Some(7));
+        assert_eq!(ok.opt_bool("b").unwrap(), Some(false));
+        assert_eq!(ok.opt_strings("l").unwrap(), ["x", "y"]);
+    }
+}

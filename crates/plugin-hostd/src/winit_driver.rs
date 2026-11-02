@@ -74,10 +74,19 @@ struct Windows<'a> {
 
 impl Windows<'_> {
     fn attributes(title: &str, size: (u32, u32)) -> WindowAttributes {
-        Window::default_attributes()
+        let attributes = Window::default_attributes()
             .with_title(title)
             .with_inner_size(plugin_size(size.0, size.1))
-            .with_visible(false)
+            .with_visible(false);
+        // No owner window exists on X11, so the editor says what it is: a utility window, which
+        // window managers keep with and above the windows of the application (a hint, which a
+        // manager may ignore; Wayland has none).
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let attributes = {
+            use winit::platform::x11::{WindowAttributesExtX11, WindowType};
+            attributes.with_x11_window_type(vec![WindowType::Utility])
+        };
+        attributes
     }
 }
 
@@ -211,6 +220,13 @@ impl ApplicationHandler<Event> for App {
 /// The control itself, untouched, when no event loop could be made.
 pub fn run(control: Control) -> Result<u8, Box<Control>> {
     let mut builder = EventLoop::<Event>::with_user_event();
+    // The child is a helper of the application: no Dock icon or menu bar of its own while an
+    // editor is open (its windows still show and take the keyboard).
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        builder.with_activation_policy(ActivationPolicy::Accessory);
+    }
     if prefers_x11(std::env::var_os("DISPLAY").as_deref()) {
         // Editors are X11 windows the plugin embeds into; on a Wayland session that is XWayland.
         #[cfg(all(unix, not(target_os = "macos")))]

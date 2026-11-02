@@ -65,6 +65,8 @@ pub struct AudioStatus {
     pub stream_silent_ms: u64,
     /// MIDI clock in and out.
     pub sync: SyncStatus,
+    /// Where plugins run (`sandbox` or `in-process`); set while plugins are on.
+    pub plugin_mode: Option<&'static str>,
 }
 
 /// What MIDI clock is doing (see [`crate::settings::SyncSettings`]).
@@ -214,6 +216,9 @@ pub fn status_text(s: &AudioStatus) -> String {
         (None, None) => "MIDI off".to_string(),
     });
     parts.extend(s.sync.parts());
+    if let Some(mode) = s.plugin_mode {
+        parts.push(format!("plugins: {mode}"));
+    }
     parts.join(" \u{b7} ")
 }
 
@@ -587,5 +592,19 @@ mod tests {
             ..AudioStatus::default()
         };
         assert_eq!(status_text(&s), "WASAPI \u{b7} audio off \u{b7} MIDI off");
+    }
+
+    #[test]
+    fn the_plugin_mode_is_shown_only_while_plugins_are_on() {
+        let mut s = running();
+        assert!(!status_text(&s).contains("plugins:"));
+        s.plugin_mode = Some("sandbox");
+        assert!(
+            status_text(&s).ends_with("plugins: sandbox"),
+            "{}",
+            status_text(&s)
+        );
+        s.plugin_mode = Some("in-process");
+        assert!(status_text(&s).ends_with("plugins: in-process"));
     }
 }

@@ -665,9 +665,18 @@ impl PluginSettingsView {
                     t.text,
                     Align::Start,
                 );
+                let now = if d.running_sandboxed {
+                    "Running now: separate process"
+                } else {
+                    "Running now: in-process, no isolation"
+                };
                 label(
                     c,
-                    "Applies after restarting Atomik",
+                    &fit_label(
+                        &format!("{now}. Applies after restarting Atomik"),
+                        r.width() - 26.0,
+                        9.0,
+                    ),
                     r.x0 + 26.0,
                     r.y0 + 30.0,
                     9.0,
