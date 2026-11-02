@@ -560,6 +560,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 if doc.container_bypassed(&d.key) {
                     v["bypassed"] = json!(true);
                 }
+                // Drawn open in the rack, under its panel (a Combine leaves it so).
+                if inside.open {
+                    v["unfolded"] = json!(true);
+                }
             }
             if include_params {
                 let params: serde_json::Map<String, Value> = d
