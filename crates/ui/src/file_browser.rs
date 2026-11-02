@@ -78,6 +78,15 @@ pub struct PlacesData {
     pub roots: Vec<PathBuf>,
 }
 
+/// What the info pane shows of an audio file beyond its row: read by the app on a worker.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DetailData {
+    /// The tempo the file states (a loop), in BPM.
+    pub tempo: Option<f64>,
+    /// The loudness picture: one level from 0 to 1 per equal part of the file, in time order.
+    pub levels: Vec<f32>,
+}
+
 /// A sub-folder in the tree (see [`FileBrowserView::set_children`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeChild {
@@ -200,6 +209,10 @@ pub struct FileBrowserView {
     list_scroll: f64,
     preview: Option<(PathBuf, f32)>,
     requested_info: BTreeSet<PathBuf>,
+    /// What the app told about the audio file of the info pane (see [`FileBrowserView::set_detail`]).
+    detail: Option<(PathBuf, DetailData)>,
+    /// The file whose detail was asked for last.
+    requested_detail: Option<PathBuf>,
     info_dirty: bool,
     library_folder: Option<PathBuf>,
     /// The device the panel applies patches to (see [`FileBrowserView::set_patch_target`]).
@@ -262,6 +275,8 @@ impl FileBrowserView {
             list_scroll: 0.0,
             preview: None,
             requested_info: BTreeSet::new(),
+            detail: None,
+            requested_detail: None,
             info_dirty: false,
             library_folder: None,
             target: None,
@@ -413,7 +428,28 @@ impl FileBrowserView {
         self.anchor = None;
         self.list_scroll = 0.0;
         self.requested_info.clear();
+        self.requested_detail = None;
         self.resort();
+    }
+
+    /// The row the info pane describes: the one selected file or library item (not a folder,
+    /// a device or a preset, which have nothing to show beyond their row).
+    fn pane_row(&self) -> Option<&FileRow> {
+        let row = self.rows.get(self.cursor? as usize)?;
+        (self.selection.len() == 1
+            && self.selection.contains(&row.path)
+            && !matches!(
+                row.kind,
+                FileKind::Folder | FileKind::Device | FileKind::Preset
+            ))
+        .then_some(row)
+    }
+
+    /// Answers [`BrowseAction::RequestDetail`]: the tempo and the loudness picture of `path`,
+    /// shown in the info pane while that file stays selected.
+    pub fn set_detail(&mut self, path: PathBuf, detail: DetailData) {
+        self.detail = Some((path, detail));
+        self.dirty = true;
     }
 
     /// Adds rows (recursive search results streaming in), keeping scroll and selection.
@@ -625,6 +661,23 @@ impl FileBrowserView {
             .collect()
     }
 
+    /// The audio file the info pane shows when its detail was not asked for yet (once per
+    /// file). The app polls this every frame next to [`Self::take_info_requests`]; it is a poll and
+    /// not an action of `handle`, so selecting rows adds nothing to what an event returns. Answer
+    /// it with [`Self::set_detail`].
+    pub fn take_detail_request(&mut self) -> Option<PathBuf> {
+        let row = self
+            .pane_row()
+            .filter(|r| matches!(r.kind, FileKind::Audio(_)))?;
+        let path = row.path.clone();
+        let known = self.detail.as_ref().is_some_and(|(p, _)| *p == path);
+        if known || self.requested_detail.as_ref() == Some(&path) {
+            return None;
+        }
+        self.requested_detail = Some(path.clone());
+        Some(path)
+    }
+
     /// Handles one event (window-logical coordinates). See the module docs for routing and
     /// for when [`crate::action::BrowseAction::RequestInfo`] is emitted.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {
@@ -643,7 +696,12 @@ impl FileBrowserView {
     // ----- shared helpers ------------------------------------------------------------------
 
     fn lay(&self) -> layout::Layout {
-        layout::layout(self.bounds, self.tree_fraction, self.target.is_some())
+        layout::layout(
+            self.bounds,
+            self.tree_fraction,
+            self.target.is_some(),
+            self.pane_row().is_some(),
+        )
     }
 
     fn rebuild_tree(&mut self) {
@@ -714,7 +772,7 @@ impl FileBrowserView {
             return true;
         };
         match row.kind {
-            FileKind::Folder => true,
+            FileKind::Folder | FileKind::Preset => true,
             FileKind::Patch => row
                 .item
                 .as_ref()

@@ -25,8 +25,9 @@ fn is_audio(row: &FileRow) -> bool {
 }
 
 /// Whether the row is a file (audio or library item): what a star, a tag and a drag apply to.
+/// A plugin preset is a virtual row: it is loaded, never marked or dragged.
 fn is_file(row: &FileRow) -> bool {
-    row.kind != FileKind::Folder
+    !matches!(row.kind, FileKind::Folder | FileKind::Preset)
 }
 
 /// Whether the info probe reads the row: audio headers and the item files (a device row
@@ -37,7 +38,7 @@ fn wants_info(row: &FileRow) -> bool {
         FileKind::Patch | FileKind::Container | FileKind::Clip | FileKind::Project => {
             row.item.is_none()
         }
-        FileKind::Folder | FileKind::Device => false,
+        FileKind::Folder | FileKind::Device | FileKind::Preset => false,
     }
 }
 
@@ -417,7 +418,15 @@ impl FileBrowserView {
             return;
         }
         if !file && clicks >= 2 {
-            emit(out, BrowseAction::Show(Place::Folder(path)));
+            let preset = self.rows[row_idx as usize].kind == FileKind::Preset;
+            emit(
+                out,
+                if preset {
+                    BrowseAction::Load(path)
+                } else {
+                    BrowseAction::Show(Place::Folder(path))
+                },
+            );
             return;
         }
         if item && clicks >= 2 {
@@ -598,6 +607,11 @@ impl FileBrowserView {
         let have = !targets.is_empty();
         let mut items: Vec<MenuItem> = Vec::new();
         let kind = self.rows[row_idx as usize].kind;
+        if kind == FileKind::Preset {
+            let load = MenuItem::new("Load", Act::Load(path));
+            self.menu = Some(Menu::new(vec![load], Vec::new(), at, self.bounds));
+            return;
+        }
         if kind.is_item() {
             items.push(MenuItem::new("Load", Act::Load(path.clone())));
             if matches!(
@@ -974,7 +988,8 @@ impl FileBrowserView {
                         | FileKind::Container
                         | FileKind::Clip
                         | FileKind::Project
-                        | FileKind::Device => BrowseAction::Load(r.path.clone()),
+                        | FileKind::Device
+                        | FileKind::Preset => BrowseAction::Load(r.path.clone()),
                     };
                     emit(out, action);
                 }

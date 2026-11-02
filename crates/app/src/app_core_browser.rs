@@ -29,11 +29,14 @@ use crate::library_store::{LibrarySaver, Loaded, load};
 use crate::sink::EngineSink;
 use atomik_engine::{PreviewMonitor, preview_channel};
 #[cfg(test)]
-use atomik_library::{AudioInfo, ItemInfo};
-use atomik_library::{FileRow, LibraryDb, LibrarySection, PathKey, Tag, classify, device_type_of};
+use atomik_library::AudioInfo;
+use atomik_library::{
+    FileKind, FileRow, ItemInfo, LibraryDb, LibrarySection, PathKey, Tag, classify, device_type_of,
+    preset_of, preset_uri,
+};
 #[cfg(test)]
 use atomik_ui::TreeChild;
-use atomik_ui::{BrowseAction, FileBrowserView, Place, PlacesData, device_rows};
+use atomik_ui::{BrowseAction, DetailData, FileBrowserView, Place, PlacesData, device_rows};
 use std::path::PathBuf;
 
 /// The preview that is playing (or about to).
@@ -58,6 +61,7 @@ pub(crate) enum ViewCall {
     PatchItemInfo(Vec<(PathBuf, ItemInfo)>),
     SetPlaces(PlacesData),
     SetChildren(PathBuf, Vec<TreeChild>),
+    Detail(PathBuf, Option<f64>, Vec<f32>),
     Select(PathBuf),
 }
 
@@ -518,6 +522,7 @@ impl<S: EngineSink> AppCore<S> {
             {
                 self.accept_patch(&path);
             }
+            BrowseAction::Load(path) if preset_of(&path).is_some() => self.load_preset_row(&path),
             BrowseAction::Load(path) => self.load_library_item(&path, LoadTarget::Default),
             BrowseAction::Audition(path) => self.audition_patch(&path),
             BrowseAction::Cancel => self.cancel_patch_browse(),
@@ -553,6 +558,11 @@ impl<S: EngineSink> AppCore<S> {
         }
         let wanted = self.file_browser.take_info_requests();
         self.queue_probe(wanted);
+        if let Some(path) = self.file_browser.take_detail_request()
+            && self.browser.workers().detail(path)
+        {
+            self.browser.jobs += 1;
+        }
         self.preview_progress();
         if let Some(error) = self
             .browser
@@ -759,6 +769,18 @@ impl<S: EngineSink> AppCore<S> {
                 self.browser.trace.push(ViewCall::PatchInfo(info.clone()));
                 self.file_browser.patch_info(&info);
             }
+            BrowseMsg::Detail {
+                path,
+                tempo,
+                levels,
+            } => {
+                #[cfg(test)]
+                self.browser
+                    .trace
+                    .push(ViewCall::Detail(path.clone(), tempo, levels.clone()));
+                self.file_browser
+                    .set_detail(path, DetailData { tempo, levels });
+            }
             BrowseMsg::ItemInfo(info) => {
                 #[cfg(test)]
                 self.browser
@@ -813,9 +835,76 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn set_rows(&mut self, rows: Vec<FileRow>) {
-        let rows = self.decorated(rows);
+        let mut rows = self.decorated(rows);
+        // A patch browser aimed at a plugin lists the plugin's own presets first.
+        let presets = self.plugin_preset_rows();
+        rows.splice(0..0, presets);
         self.browser.shown_paths = rows.iter().map(|r| r.path.clone()).collect();
         self.view_rows(rows, false);
+    }
+
+    // ------------------------------------------------------------------ plugin presets
+
+    /// The rows of the presets of the plugin the patch browser is aimed at (none for any other
+    /// device or without a live plugin): virtual rows that [`BrowseAction::Load`] loads into
+    /// the plugin as one undo step.
+    fn plugin_preset_rows(&mut self) -> Vec<FileRow> {
+        let Some(device) = self.patch_browse_device().cloned() else {
+            return Vec::new();
+        };
+        self.plugin_presets(&device)
+            .into_iter()
+            .map(|p| FileRow {
+                path: preset_uri(device.as_str(), &p.id),
+                name: p.name,
+                kind: FileKind::Preset,
+                size: 0,
+                info: None,
+                item: Some(ItemInfo {
+                    detail: p.group,
+                    category: "PRESET".to_string(),
+                    device_type: String::new(),
+                }),
+                favorite: false,
+                tags: Vec::new(),
+                author: String::new(),
+                categories: Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Lists only the presets of the plugin the patch browser is aimed at (it has no patch folder
+    /// to show); false when there are none.
+    pub(super) fn show_presets_only(&mut self) -> bool {
+        if self.plugin_preset_rows().is_empty() {
+            return false;
+        }
+        self.set_rows(Vec::new());
+        true
+    }
+
+    /// Loads the preset a browser row stands for into its plugin. The patch browse that was
+    /// aimed at the plugin is accepted first (a load is an undo step of its own) and aimed again
+    /// afterwards, so the next preset can be picked.
+    fn load_preset_row(&mut self, path: &std::path::Path) {
+        let Some((device, preset)) = preset_of(path) else {
+            return;
+        };
+        let (device, preset) = (
+            atomik_model::DeviceKey(device.to_string()),
+            preset.to_string(),
+        );
+        let browsing = self.browsing(&device);
+        if browsing {
+            self.commit_patch_browse();
+        }
+        let loaded = self.load_plugin_preset(&device, &preset);
+        if browsing && loaded {
+            self.begin_patch_browse(&device);
+            // The list is rebuilt: the row that was loaded is selected again once it is there.
+            self.browser.select_after = Some(path.to_path_buf());
+            self.browser.offer_name = false;
+        }
     }
 
     // ------------------------------------------------------------------ library

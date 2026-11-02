@@ -497,6 +497,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn browse_patches(&mut self, device: &DeviceKey) {
         match self.patch_folder(device) {
             Some(folder) if folder.is_dir() => self.show_folder(folder),
+            _ if self.show_presets_only() => {}
             Some(folder) => self.report(format!(
                 "The patch folder '{}' does not exist yet: save a patch first",
                 folder.display()

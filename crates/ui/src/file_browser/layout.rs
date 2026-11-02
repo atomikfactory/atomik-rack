@@ -1,5 +1,6 @@
 //! Pure geometry and text formatting of the file browser panel (logical pixels).
 
+use atomik_library::{AudioFormat, FileKind, FileRow};
 use std::path::{Path, PathBuf};
 use vello::kurbo::Rect;
 
@@ -19,6 +20,8 @@ pub(super) const SPLIT_H: f64 = 6.0;
 pub(super) const PATH_H: f64 = 22.0;
 /// Height of the column header.
 pub(super) const COLHDR_H: f64 = 20.0;
+/// Height of the info pane under the list (the selected file's facts and picture).
+pub(super) const PANE_H: f64 = 74.0;
 /// Height of a list row.
 pub(super) const ROW_H: f64 = 22.0;
 /// Height of a tree row.
@@ -73,13 +76,15 @@ pub(super) struct Layout {
     pub colhdr: Rect,
     /// Row area of the list.
     pub list: Rect,
+    /// The info pane under the list (empty when it is not shown).
+    pub info: Rect,
     /// Resize handle on the right edge.
     pub handle: Rect,
 }
 
 /// Splits `bounds` into the regions of the panel.
 /// `banner` adds the band that names the device the panel applies patches to, above the header.
-pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool) -> Layout {
+pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool, info: bool) -> Layout {
     let band = if banner { BANNER_H } else { 0.0 };
     let banner_rect = Rect::new(
         bounds.x0,
@@ -134,7 +139,16 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool) -> Layout {
     );
     let path_text = Rect::new(fwd_btn.x1, path.y0, path.x1.max(fwd_btn.x1), path.y1);
     let colhdr = Rect::new(bounds.x0, path.y1, right, bottom(path.y1 + COLHDR_H));
-    let list = Rect::new(bounds.x0, colhdr.y1, right, bounds.y1.max(colhdr.y1));
+    // The info pane takes the foot of the list when there is room for it and a few rows.
+    let room = bounds.y1 - colhdr.y1;
+    let pane = if info && room >= PANE_H + 3.0 * ROW_H {
+        PANE_H
+    } else {
+        0.0
+    };
+    let list_end = (bounds.y1 - pane).max(colhdr.y1);
+    let list = Rect::new(bounds.x0, colhdr.y1, right, list_end);
+    let info = Rect::new(bounds.x0, list_end, right, bounds.y1.max(list_end));
     let handle = Rect::new(bounds.x1 - HANDLE_W, bounds.y0, bounds.x1, bounds.y1);
     Layout {
         banner: banner_rect,
@@ -150,6 +164,7 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool) -> Layout {
         path_text,
         colhdr,
         list,
+        info,
         handle,
     }
 }
@@ -355,6 +370,98 @@ pub(super) fn format_rate(rate: u32) -> String {
     }
 }
 
+/// A tempo as `120 BPM` or `93.5 BPM`.
+pub(super) fn format_tempo(bpm: f64) -> String {
+    if (bpm - bpm.round()).abs() < 0.05 {
+        format!("{:.0} BPM", bpm)
+    } else {
+        format!("{bpm:.1} BPM")
+    }
+}
+
+/// The facts line of the info pane: format, channels, rate, length, size and tempo for an audio
+/// file (what is not known is left out), the kind and detail for a library item.
+pub(super) fn pane_facts(row: &FileRow, tempo: Option<f64>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match row.kind {
+        FileKind::Audio(format) => {
+            parts.push(
+                match format {
+                    AudioFormat::Wav => "WAV",
+                    AudioFormat::Aiff => "AIFF",
+                    AudioFormat::Flac => "FLAC",
+                    AudioFormat::Mp3 => "MP3",
+                    AudioFormat::Ogg => "OGG",
+                }
+                .to_string(),
+            );
+            if let Some(info) = row.info {
+                parts.push(match info.channels {
+                    1 => "mono".to_string(),
+                    2 => "stereo".to_string(),
+                    n => format!("{n} ch"),
+                });
+                parts.push(format_rate(info.sample_rate));
+                if info.duration_secs().is_some() {
+                    parts.push(format_duration(info.duration_secs()));
+                }
+            }
+            if row.size > 0 {
+                parts.push(format_size(row.size));
+            }
+            if let Some(bpm) = tempo {
+                parts.push(format_tempo(bpm));
+            }
+        }
+        FileKind::Patch => parts.push("PATCH".to_string()),
+        FileKind::Container => parts.push("CONTAINER".to_string()),
+        FileKind::Clip => parts.push("CLIP".to_string()),
+        FileKind::Project => parts.push("PROJECT".to_string()),
+        FileKind::Folder | FileKind::Device | FileKind::Preset => {}
+    }
+    if let Some(item) = &row.item
+        && !item.detail.is_empty()
+    {
+        parts.push(item.detail.clone());
+    }
+    parts.join(" \u{b7} ")
+}
+
+/// The line of tags, author and categories under the facts (empty when the row has none).
+pub(super) fn pane_marks(row: &FileRow) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !row.tags.is_empty() {
+        parts.push(
+            row.tags
+                .iter()
+                .map(|t| format!("#{t}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    if !row.author.is_empty() {
+        parts.push(format!("by {}", row.author));
+    }
+    if !row.categories.is_empty() {
+        parts.push(row.categories.join(", "));
+    }
+    parts.join(" \u{b7} ")
+}
+
+/// The level of picture column `x` of `columns` in `levels` (the loudest level the column
+/// covers; 0 for an empty picture).
+pub(super) fn level_at(levels: &[f32], x: usize, columns: usize) -> f32 {
+    if levels.is_empty() || columns == 0 {
+        return 0.0;
+    }
+    let from = x * levels.len() / columns;
+    let to = ((x + 1) * levels.len() / columns).clamp(from + 1, levels.len());
+    levels[from.min(levels.len() - 1)..to]
+        .iter()
+        .copied()
+        .fold(0.0, f32::max)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,7 +473,7 @@ mod tests {
     #[test]
     fn regions_stack_without_gaps_or_overlap() {
         let b = bounds(300.0, 600.0);
-        let l = layout(b, 0.4, false);
+        let l = layout(b, 0.4, false, false);
         assert_eq!(l.header.y0, b.y0);
         assert_eq!(l.tree.y0, l.header.y1);
         assert_eq!(l.splitter.y0, l.tree.y1);
@@ -381,20 +488,115 @@ mod tests {
     }
 
     #[test]
+    fn the_info_pane_takes_the_foot_of_the_list_only_when_there_is_room() {
+        let b = bounds(300.0, 600.0);
+        let with = layout(b, 0.4, false, true);
+        assert_eq!(with.info.height(), PANE_H);
+        assert_eq!(with.info.y1, b.y1);
+        assert_eq!(with.list.y1, with.info.y0);
+        assert!(layout(b, 0.4, false, false).info.height() == 0.0);
+        let tiny = layout(bounds(300.0, 240.0), 0.4, false, true);
+        assert!(tiny.info.height() == 0.0, "no room: no pane");
+        assert!(tiny.list.height() >= ROW_H - 1e-9);
+    }
+
+    fn audio_row(format: AudioFormat, channels: u16, secs: u64, size: u64) -> FileRow {
+        FileRow {
+            path: PathBuf::from("/lib/x"),
+            name: "x".to_string(),
+            kind: FileKind::Audio(format),
+            size,
+            info: Some(atomik_library::AudioInfo {
+                sample_rate: 44_100,
+                channels,
+                frames: Some(44_100 * secs),
+            }),
+            item: None,
+            favorite: false,
+            tags: Vec::new(),
+            author: String::new(),
+            categories: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_facts_line_names_what_is_known_and_leaves_out_what_is_not() {
+        let r = audio_row(AudioFormat::Flac, 2, 75, 3 * 1024 * 1024);
+        assert_eq!(
+            pane_facts(&r, Some(120.0)),
+            "FLAC \u{b7} stereo \u{b7} 44.1k \u{b7} 1:15 \u{b7} 3.0 MB \u{b7} 120 BPM"
+        );
+        let mut bare = audio_row(AudioFormat::Wav, 1, 0, 0);
+        bare.info = None;
+        assert_eq!(pane_facts(&bare, None), "WAV");
+        let mut six = audio_row(AudioFormat::Ogg, 6, 3, 100);
+        six.info = six
+            .info
+            .map(|i| atomik_library::AudioInfo { frames: None, ..i });
+        assert_eq!(
+            pane_facts(&six, Some(93.5)),
+            "OGG \u{b7} 6 ch \u{b7} 44.1k \u{b7} 100 B \u{b7} 93.5 BPM"
+        );
+        let mut item = audio_row(AudioFormat::Wav, 1, 1, 1);
+        item.kind = FileKind::Patch;
+        item.info = None;
+        item.size = 0;
+        item.item = Some(atomik_library::ItemInfo {
+            detail: "Poly Synth".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(pane_facts(&item, None), "PATCH \u{b7} Poly Synth");
+    }
+
+    #[test]
+    fn the_marks_line_joins_tags_author_and_categories() {
+        let mut r = audio_row(AudioFormat::Wav, 1, 1, 1);
+        assert_eq!(pane_marks(&r), "");
+        r.tags = vec!["808".into(), "punchy".into()];
+        r.author = "Ada".into();
+        r.categories = vec!["Drums".into(), "Kicks".into()];
+        assert_eq!(
+            pane_marks(&r),
+            "#808 #punchy \u{b7} by Ada \u{b7} Drums, Kicks"
+        );
+    }
+
+    #[test]
+    fn a_picture_column_shows_the_loudest_level_it_covers() {
+        let levels = [0.1, 0.9, 0.2, 0.3];
+        assert_eq!(level_at(&levels, 0, 2), 0.9);
+        assert_eq!(level_at(&levels, 1, 2), 0.3);
+        // More columns than levels: each level spreads over several columns, none is empty.
+        assert_eq!(
+            (0..8).map(|x| level_at(&levels, x, 8)).collect::<Vec<_>>(),
+            vec![0.1, 0.1, 0.9, 0.9, 0.2, 0.2, 0.3, 0.3]
+        );
+        assert_eq!(level_at(&[], 0, 4), 0.0);
+        assert_eq!(level_at(&levels, 0, 0), 0.0);
+    }
+
+    #[test]
+    fn a_tempo_shows_a_decimal_only_when_it_has_one() {
+        assert_eq!(format_tempo(120.0), "120 BPM");
+        assert_eq!(format_tempo(119.97), "120 BPM");
+        assert_eq!(format_tempo(93.5), "93.5 BPM");
+    }
+
+    #[test]
     fn tree_fraction_is_clamped_and_leaves_room_for_the_list() {
         let b = bounds(300.0, 600.0);
-        let lo = layout(b, 0.0, false);
+        let lo = layout(b, 0.0, false, false);
         assert!((lo.tree.height() - (600.0 - HEADER_H) * 0.1).abs() < 1e-9);
-        let hi = layout(bounds(300.0, 1000.0), 5.0, false);
+        let hi = layout(bounds(300.0, 1000.0), 5.0, false, false);
         assert!((hi.tree.height() - (1000.0 - HEADER_H) * 0.9).abs() < 1e-9);
-        let tiny = layout(bounds(300.0, 120.0), 0.9, false);
+        let tiny = layout(bounds(300.0, 120.0), 0.9, false, false);
         assert!(tiny.list.height() >= ROW_H - 1e-9);
         assert!(tiny.list.y1 <= 140.0 + 1e-9);
     }
 
     #[test]
     fn header_controls_fit_at_min_width() {
-        let l = layout(bounds(200.0, 400.0), 0.4, false);
+        let l = layout(bounds(200.0, 400.0), 0.4, false, false);
         assert!(l.search.width() > 80.0);
         assert!(l.search.x1 <= l.recursive_btn.x0);
         assert!(l.recursive_btn.x1 <= l.preview_btn.x0);
