@@ -135,7 +135,7 @@ fn provider<'a>(p: *const clap_preset_discovery_provider) -> &'a ProviderObj {
     unsafe { &*(*p).provider_data.cast::<ProviderObj>() }
 }
 
-unsafe extern "C" fn provider_init(p: *const clap_preset_discovery_provider) -> bool {
+extern "C" fn provider_init(p: *const clap_preset_discovery_provider) -> bool {
     let obj = provider(p);
     let indexer = obj.indexer;
     // SAFETY: the indexer of the host is valid for the life of the provider (CLAP contract).
@@ -175,13 +175,13 @@ unsafe extern "C" fn provider_init(p: *const clap_preset_discovery_provider) -> 
     true
 }
 
-unsafe extern "C" fn provider_destroy(p: *const clap_preset_discovery_provider) {
+extern "C" fn provider_destroy(p: *const clap_preset_discovery_provider) {
     // SAFETY: `destroy` is the last call on the provider; the pointer came from `Box::into_raw`
     // in `create` and is not used again.
     drop(unsafe { Box::from_raw((*p).provider_data.cast::<ProviderObj>()) });
 }
 
-unsafe extern "C" fn provider_get_extension(
+extern "C" fn provider_get_extension(
     _p: *const clap_preset_discovery_provider,
     _id: *const c_char,
 ) -> *const c_void {
@@ -216,7 +216,7 @@ fn announce(
     }
 }
 
-unsafe extern "C" fn provider_get_metadata(
+extern "C" fn provider_get_metadata(
     p: *const clap_preset_discovery_provider,
     kind: u32,
     location: *const c_char,
@@ -254,7 +254,7 @@ unsafe extern "C" fn provider_get_metadata(
     true
 }
 
-unsafe extern "C" fn from_location(
+extern "C" fn from_location(
     plugin: *const clap_plugin,
     kind: u32,
     location: *const c_char,
