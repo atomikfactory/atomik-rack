@@ -202,6 +202,9 @@ pub struct PluginSettingsData {
     pub log: Vec<String>,
     /// Plugins run in a separate process (a change applies after a restart of the app).
     pub sandbox: bool,
+    /// Plugins run in a separate process right now (false: inside the app, whatever the switch
+    /// says: the sandbox could not start).
+    pub running_sandboxed: bool,
 }
 
 impl Default for PluginSettingsData {
@@ -217,6 +220,7 @@ impl Default for PluginSettingsData {
             last_scan: None,
             log: Vec::new(),
             sandbox: true,
+            running_sandboxed: true,
         }
     }
 }

@@ -10,7 +10,7 @@
 {"stroke":{"rrect":[16.00,45.00,30.00,59.00,2.00]},"width":1.00,"cap":"round","join":"round","brush":"#8f96a0ff"},
 {"fill":{"rrect":[19.00,48.00,27.00,56.00,1.00]},"brush":"#ffe08aff"},
 {"text":"Run plugins in a separate process (recommended)","at":[40.00,56.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Applies after restarting Atomik","at":[40.00,71.00],"size":9.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Running now: separate process. Applies after restarting Atomik","at":[40.00,71.00],"size":9.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"SEARCH FOLDERS","at":[14.00,99.00],"size":8.50,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"stroke":{"line":[14.00,106.50,746.00,106.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"text":"D:/Plugins/CLAP","at":[22.00,123.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
