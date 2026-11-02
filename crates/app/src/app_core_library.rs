@@ -34,6 +34,8 @@
 //!   playhead, or the lane of a track target.
 //! * A **project** is not loaded here: the shell asks about unsaved changes and opens it
 //!   ([`AppCore::take_open_request`]).
+//! * A **MIDI file** (not an item; listed beside the audio) is imported as File > Import MIDI
+//!   does ([`AppCore::import_midi`]).
 //!
 //! # Rename
 //!
@@ -175,6 +177,12 @@ impl<S: EngineSink> AppCore<S> {
             Some(FileKind::Clip) => self.load_clip(path, target),
             Some(FileKind::Project) => {
                 self.request_open(path.to_path_buf());
+                Ok(())
+            }
+            // A MIDI file imports as File > Import MIDI does (errors reach the status line
+            // there).
+            Some(FileKind::Midi) => {
+                self.import_midi(path, false);
                 Ok(())
             }
             _ => Err(format!("'{}' is not a library item", file_name(path))),

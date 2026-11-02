@@ -122,7 +122,7 @@ impl RackView {
         }
         self.devices[i].meters.clear();
         self.devices[i].meters.extend_from_slice(&new);
-        self.devices[i].revision += 1;
+        self.devices[i].bump_live();
         self.repaint = true;
     }
 
