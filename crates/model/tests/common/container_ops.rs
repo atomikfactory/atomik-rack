@@ -125,6 +125,7 @@ pub enum Op {
     Remove(u8),
     Move(u8, u8),
     Duplicate(u8),
+    Open(u8, bool),
     Param(u8, u8, u8),
     Undo,
     Redo,
@@ -148,7 +149,8 @@ pub fn op() -> impl Strategy<Value = Op> {
         2 => (any::<u8>(), 0u8..8, any::<u8>()).prop_map(|(a, b, c)| Op::Unmap(a, b, c)),
         1 => any::<u8>().prop_map(Op::Remove),
         2 => (any::<u8>(), any::<u8>()).prop_map(|(a, b)| Op::Move(a, b)),
-        1 => any::<u8>().prop_map(Op::Duplicate),
+        2 => any::<u8>().prop_map(Op::Duplicate),
+        1 => (any::<u8>(), any::<bool>()).prop_map(|(a, b)| Op::Open(a, b)),
         3 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(a, b, c)| Op::Param(a, b, c)),
         2 => Just(Op::Undo),
         1 => Just(Op::Redo),
@@ -355,6 +357,14 @@ pub fn resolve_op(op: &Op, doc: &RackDoc, r: &Registry) -> Option<Command> {
             let (p, _) = pick(*i, &paths)?;
             Some(Command::Container(ContainerCommand::DuplicateContainer {
                 container: key(&p),
+            }))
+        }
+        Op::Open(i, open) => {
+            let owned: Vec<(String, bool)> = containers.iter().map(|x| (*x).clone()).collect();
+            let (p, _) = pick(*i, &owned)?;
+            Some(Command::Container(ContainerCommand::SetOpen {
+                container: key(&p),
+                open: *open,
             }))
         }
         Op::Param(i, p, v) => {

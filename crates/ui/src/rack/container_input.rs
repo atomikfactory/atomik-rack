@@ -146,10 +146,29 @@ impl RackView {
             // The panels show the value an automation lane gives a param while the song plays
             // or is positioned (`shown`), and the value a macro gives it, not the stored one.
             let base = doc.view_with_shown(&self.shown);
-            return match base.view_with_driven_values(registry) {
+            let base = match base.view_with_driven_values(registry) {
                 Some(view) => Cow::Owned(view),
                 None => base,
             };
+            // Unfolded containers: the devices of their inside join the rack's own (see
+            // [`super::inline`]).
+            let inline = base.devices.iter().any(super::inline::is_open);
+            if inline != self.inline {
+                self.inline = inline;
+                self.synced = false;
+            }
+            if inline {
+                self.compute_inline_driven(&base);
+                if let Some(flat) = super::inline::flatten(&base) {
+                    return Cow::Owned(flat);
+                }
+            }
+            return base;
+        }
+        // A scope shows one container's inside on its own: nothing is unfolded in it.
+        if self.inline {
+            self.inline = false;
+            self.synced = false;
         }
         let mut keep = 0;
         let mut path: Option<DeviceKey> = None;
@@ -295,7 +314,9 @@ impl RackView {
 
     pub(super) fn notify_driven(&mut self, i: usize, param: &str) {
         if let Some(m) = self.driven_by(i, param) {
-            self.toast = Some(if self.scope.is_empty() {
+            let in_container =
+                !self.scope.is_empty() || super::inline::is_inner(&self.devices[i].key);
+            self.toast = Some(if !in_container {
                 format!(
                     "Driven by macro {}: right-click to remove it from the macro first",
                     u16::from(m) + 1
@@ -671,7 +692,8 @@ impl RackView {
     fn enter(&mut self, i: usize) {
         let key = self.devices[i].key.clone();
         let mut scope = self.scope.clone();
-        scope.push(key.clone());
+        // An inner container of an unfolded one has a path key: one scope level per segment.
+        scope.extend(key.0.split('/').map(|s| DeviceKey(s.to_string())));
         let device = self.abs_key(&key);
         self.pending_scope = Some(scope);
         self.direct.push(UiAction::EnterContainer { device });
@@ -807,6 +829,19 @@ impl RackView {
         self.select(i, out);
         let key = self.devices[i].key.clone();
         match b {
+            ContainerButton::Fold => {
+                let open = self.devices[i]
+                    .device
+                    .as_ref()
+                    .and_then(|d| d.inner.as_ref())
+                    .is_some_and(|inner| inner.open);
+                self.direct.push(UiAction::Command(Command::Container(
+                    ContainerCommand::SetOpen {
+                        container: self.abs_key(&key),
+                        open: !open,
+                    },
+                )));
+            }
             ContainerButton::Open => self.enter(i),
             ContainerButton::Edit => {
                 let device = self.abs_key(&key);
@@ -816,7 +851,7 @@ impl RackView {
                 });
             }
             ContainerButton::ToChannel => {
-                if !self.scope.is_empty() {
+                if !self.scope.is_empty() || super::inline::is_inner(&key) {
                     self.toast = Some(
                         "Only a container in the rack itself can feed a console channel".into(),
                     );
@@ -893,7 +928,7 @@ impl RackView {
         button: PointerButton,
         modifiers: Modifiers,
     ) -> bool {
-        if self.scope.is_empty() || button != PointerButton::Secondary {
+        if self.macro_container(i).is_none() || button != PointerButton::Secondary {
             return false;
         }
         let Some((_, kind, _)) = self.param_of(i, slot) else {
@@ -919,7 +954,7 @@ impl RackView {
         } else {
             (0..MACRO_COUNT as u8)
                 .map(|m| {
-                    let name = &self.scope_macros[usize::from(m)];
+                    let name = &self.macro_names(i)[usize::from(m)];
                     let label = if name.is_empty() {
                         format!("Map to macro {}", m + 1)
                     } else {
@@ -966,12 +1001,44 @@ impl RackView {
         true
     }
 
+    /// The container whose macros the controls of device view `i` map to: the open container
+    /// in a scope, else the unfolded container the device is drawn in (`None` for a device of
+    /// the rack itself).
+    pub(super) fn macro_container(&self, i: usize) -> Option<DeviceKey> {
+        if !self.scope.is_empty() {
+            return self.scope_path();
+        }
+        let key = &self.devices.get(i)?.key;
+        super::inline::parent_of(key)
+    }
+
+    /// The names of the macros of the container device view `i` maps to (empty: unnamed).
+    fn macro_names(&self, i: usize) -> [String; 8] {
+        if !self.scope.is_empty() {
+            return self.scope_macros.clone();
+        }
+        let container = self.macro_container(i);
+        self.devices
+            .iter()
+            .find(|d| Some(&d.key) == container.as_ref())
+            .and_then(|d| d.device.as_ref())
+            .and_then(|d| d.inner.as_ref())
+            .map(|inner| std::array::from_fn(|n| inner.macros[n].name.clone()))
+            .unwrap_or_default()
+    }
+
     fn apply_entry(&mut self, menu: &MacroMenu, entry: MenuEntry) {
-        let Some(container) = self.scope_path() else {
+        let Some(container) = self.macro_container(menu.dev) else {
             return;
         };
         let d = &self.devices[menu.dev];
-        let device = d.key.clone();
+        // A macro names its target relative to the container: the view key in a scope, the last
+        // segment of the path key of an unfolded device.
+        let device = if self.scope.is_empty() {
+            atomik_model::split_path(&d.key).1
+        } else {
+            d.key.clone()
+        };
         let param = menu.param.clone();
         let action = match entry {
             MenuEntry::Map(index) => {

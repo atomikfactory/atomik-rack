@@ -4,6 +4,7 @@
 //! disconnect). The selection is view state: it is never in the document and never an undo
 //! step. Keys in the set are the view's local keys; the public accessors give path keys.
 
+use super::inline::{is_inner, parent_of};
 use super::*;
 use crate::keymap::{GestureClass, Role, Roles};
 use atomik_model::{CreateOptions, WorkflowCommand};
@@ -168,6 +169,10 @@ impl RackView {
         let range = self
             .roles
             .is_active(Role::RangeSelect, modifiers, GestureClass::ClickItem);
+        // The selection stays inside one container (the rack's own devices count as one): the
+        // commands on it work on a single scope.
+        let toggle = toggle && self.shares_scope(&key);
+        let range = range && self.shares_scope(&key);
         if toggle {
             if self.selection.remove(&key) {
                 if self.selected.as_ref() == Some(&key) {
@@ -191,7 +196,12 @@ impl RackView {
             let a = shown.iter().position(|k| *k == anchor).unwrap_or(0);
             let b = shown.iter().position(|k| *k == key).unwrap_or(a);
             let (lo, hi) = (a.min(b), a.max(b));
-            self.selection = shown[lo..=hi].iter().cloned().collect();
+            let scope = parent_of(&key);
+            self.selection = shown[lo..=hi]
+                .iter()
+                .filter(|k| parent_of(k) == scope)
+                .cloned()
+                .collect();
             self.selected = Some(key);
             self.anchor = Some(anchor);
             self.report_selection(out);
@@ -251,7 +261,12 @@ impl RackView {
         let mut out: Vec<UiAction> = Vec::new();
         match id {
             "edit.select_all" => {
-                let shown = self.shown_keys();
+                let scope = self.selected.as_ref().and_then(parent_of);
+                let shown: Vec<DeviceKey> = self
+                    .shown_keys()
+                    .into_iter()
+                    .filter(|k| parent_of(k) == scope)
+                    .collect();
                 let (Some(first), Some(last)) = (shown.first().cloned(), shown.last().cloned())
                 else {
                     return Some(CommandOutcome::Declined);
@@ -290,7 +305,12 @@ impl RackView {
                     .unwrap_or_else(|| target.clone());
                 let a = shown.iter().position(|k| *k == anchor).unwrap_or(0);
                 let b = shown.iter().position(|k| *k == target).unwrap_or(a);
-                self.selection = shown[a.min(b)..=a.max(b)].iter().cloned().collect();
+                let scope = parent_of(&target);
+                self.selection = shown[a.min(b)..=a.max(b)]
+                    .iter()
+                    .filter(|k| parent_of(k) == scope)
+                    .cloned()
+                    .collect();
                 self.selected = Some(target);
                 self.anchor = Some(anchor);
                 self.report_selection(&mut out);
@@ -299,7 +319,7 @@ impl RackView {
                 let keys = self.local_selection();
                 // With auto-routing the removal keeps the audio path of an effect that was
                 // cabled between two devices, at the top level.
-                let bridge = self.auto_route && self.scope.is_empty();
+                let bridge = self.auto_route && self.scope.is_empty() && !keys.iter().any(is_inner);
                 let action = match keys.as_slice() {
                     [] => return Some(CommandOutcome::Declined),
                     _ if bridge => Command::Workflow(WorkflowCommand::DeleteDevices { keys }),
@@ -370,7 +390,7 @@ impl RackView {
                 if keys.is_empty() {
                     return Some(CommandOutcome::Declined);
                 }
-                if !self.scope.is_empty() {
+                if !self.scope.is_empty() || keys.iter().any(is_inner) {
                     return Some(CommandOutcome::NotApplicable(
                         "Auto-route works on the top level of the rack".into(),
                     ));
@@ -391,6 +411,14 @@ impl RackView {
         }
         self.repaint = true;
         Some(CommandOutcome::Handled(self.finish(out, registry)))
+    }
+
+    /// Whether `key` is in the container the selection is in (or the selection is empty): the
+    /// rack's own devices share the top-level scope.
+    fn shares_scope(&self, key: &DeviceKey) -> bool {
+        self.selected
+            .as_ref()
+            .is_none_or(|primary| parent_of(primary) == parent_of(key))
     }
 
     fn control_has_focus(&self) -> bool {
@@ -439,7 +467,7 @@ impl RackView {
             [_] => {}
             _ => return Some("Use as Send Effect works on one effect at a time".to_string()),
         }
-        if !self.scope.is_empty() {
+        if !self.scope.is_empty() || keys.iter().any(is_inner) {
             return Some("Use as Send Effect works on the top level of the rack".to_string());
         }
         let command = Command::Workflow(WorkflowCommand::AssignSend {

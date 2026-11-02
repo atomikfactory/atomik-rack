@@ -791,6 +791,7 @@ pub enum Command {
 /// | inner device added (`AddInner`) | `DeviceAdded(path)`, `RoutingChanged` (`AddInner` with `auto_split` also `SplitsChanged`) |
 /// | container removed, added back (undo), duplicated, or added with `AddDevice` | `DeviceRemoved(container)` or `DeviceAdded(container)` for the **whole inside** (the app expands it; no per-inner ops) |
 /// | `SetSplits` | `SplitsChanged`, plus `RoutingChanged` only when the list of targets changed |
+/// | `SetOpen` (also undo/redo) | `ViewChanged` |
 /// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
 /// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |

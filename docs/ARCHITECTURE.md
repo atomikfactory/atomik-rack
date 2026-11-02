@@ -3335,7 +3335,8 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
 
 - **Document** ([model/src/container.rs](../crates/model/src/container.rs)).
   `RackDevice::inner: Option<Box<ContainerDoc>>`, only on devices of `DeviceKind::Container`.
-  `ContainerDoc { devices, cables, macros: [MacroDoc; 8], splits: Vec<NoteSplit> }`; inner cables
+  `ContainerDoc { devices, cables, macros: [MacroDoc; 8], splits: Vec<NoteSplit>, open: bool }`
+  (`open`: unfolded in the rack, view state only, stored as an optional `"open": true`); inner cables
   and splits use local keys, and the reserved key `boundary` names the inside edge (outputs `in_l`,
   `in_r`; inputs `out_l`, `out_r`). Limits: nesting depth 3, 32 devices per container, 256 inner
   devices per project, 8 splits, 32 targets per macro and 128 per container; no console devices,
@@ -3423,17 +3424,28 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
 - **UI** ([ui/src/container_panel.rs](../crates/ui/src/container_panel.rs),
   [breadcrumb.rs](../crates/ui/src/breadcrumb.rs),
   [container_editor.rs](../crates/ui/src/container_editor.rs),
-  [rack/container_input.rs](../crates/ui/src/rack/container_input.rs)). A double-click or OPEN
-  enters a container: the rack view works on a scope document (the container's devices and cables
-  with local keys, boundary drawn as two pseudo-panels) and lifts what it emits to path keys and
-  `ContainerCommand`s; a breadcrumb bar, Back, Esc and Backspace go up. The 2 U panel has OPEN,
-  EDIT, TO CH and eight named macro knobs; a right-click on an inner control maps it to a macro, a
+  [rack/container_input.rs](../crates/ui/src/rack/container_input.rs)). OPEN enters a container:
+  the rack view works on a scope document (the container's devices and cables with local keys,
+  boundary drawn as two pseudo-panels) and lifts what it emits to path keys and
+  `ContainerCommand`s; a breadcrumb bar, Back, Esc and Backspace go up. A double-click on the
+  panel or its fold arrow instead unfolds the container in place
+  ([rack/inline.rs](../crates/ui/src/rack/inline.rs)): `ContainerDoc::open` (saved as an optional
+  `"open"` flag, undoable with `ContainerCommand::SetOpen`, never seen by `expand`) makes the
+  view work on a flat document, `flatten`, that holds each unfolded container's devices (path
+  keys), its two strips (pseudo-devices `<path>/boundary` and `<path>/boundary~out`, half a unit
+  tall on the front and whole on the back) and its inner cables with path keys, so a gesture
+  emits path keys with nothing to lift. A `Frame` per unfolded container is drawn in the margin
+  beside the column and is a drop target; `inline_drop` turns a drop into a reorder
+  (`MoveDevice`), `MoveIntoContainer` or `MoveOutOfContainer` (planned on the project, kept
+  in `host_doc` while an unfolded rack handles an event, so a refusal reads as the model's own
+  message), and `can_cable` keeps a cable inside one container. The 2 U panel has the fold
+  arrow, OPEN, EDIT, TO CH and eight named macro knobs; a right-click on an inner control maps it to a macro, a
   mapped control is locked, and Ctrl/Cmd+D duplicates the selected container. The container's name
   strip has the BYPASS switch of the built-in effects (one `SetParam` of `bypass`, the body veiled
   while it is on, locked while a macro drives it).
   [rack/container_move.rs](../crates/ui/src/rack/container_move.rs) holds the rack's side of
   Combine, Uncombine and the moves: the device menu and the Edit menu list Combine and Uncombine
-  (Ctrl/Cmd+Shift+G and U), and Move Out of Container while a container is open; the device menu
+  (Ctrl/Cmd+Shift+G and U), and Move Out of Container for a device of an open or unfolded container; the device menu
   enables each by planning the command on a scratch copy of the document
   (`combine_reason`, `uncombine_reason`, `move_out_reason`), so a refusal is the model's own message
   and the key or the Edit menu shows it as a toast. Dropping one device on the body of a

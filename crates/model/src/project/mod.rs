@@ -119,6 +119,8 @@
 //! inside edge is the reserved key `boundary`), exactly 8 macros `{"name" (at most 24
 //! characters), "targets": [{"device" (a path relative to the container), "param", "min", "max"}]}`
 //! and up to 8 note splits `{"target", "key_lo", "key_hi", "vel_lo", "vel_hi", "transpose"}`.
+//! An optional `"open": true` (written last, only when set) marks a container unfolded in the
+//! rack view.
 //! See [`crate::container_io`] and [`crate::RackDoc::check_containers`] for the rules (depth 3, 32
 //! devices per container, 256 inner devices per project, no console devices, audio tracks or
 //! interface inside, no loop in the expanded graph). A project file before version 8 has no
