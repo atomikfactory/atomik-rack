@@ -60,6 +60,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "instrument_read"
+path = "fuzz_targets/instrument_read.rs"
+test = false
+doc = false
+bench = false
+
 # Overflow checks stay on in the optimised build: they are what finds the arithmetic panics.
 [profile.release]
 debug = 1

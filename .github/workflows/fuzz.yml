@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [load_project, load_patch, smf_read, audio_decode, ipc_frame]
+        target: [load_project, load_patch, smf_read, audio_decode, ipc_frame, instrument_read]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -23,7 +23,7 @@ prefixed() {
 }
 
 mkdir -p "$corpus/load_project" "$corpus/load_patch" "$corpus/smf_read" \
-  "$corpus/audio_decode" "$corpus/ipc_frame"
+  "$corpus/audio_decode" "$corpus/ipc_frame" "$corpus/instrument_read"
 
 # Projects.
 for f in crates/model/tests/fixtures/*.atomik examples/projects/*.atomik; do
@@ -62,6 +62,11 @@ for f in crates/audio-file/tests/fixtures/*; do
   { byte $((hint * 16 + 8)); cat "$f"; } > "$corpus/audio_decode/wav-$base"
   { byte $((hint * 16 + 11)); cat "$f"; } > "$corpus/audio_decode/preview-$base"
 done
+
+# Instruments: the small SoundFont (odd selector) and an SFZ text (even).
+prefixed 1 crates/audio-file/tests/fixtures/small.sf2 "$corpus/instrument_read"
+{ byte 0; printf "%s
+" "<group> lovel=1 hivel=63" "<region> sample=a.wav key=c4 loop_mode=loop_continuous"; } > "$corpus/instrument_read/small.sfz"
 
 # The sandbox wire: a few frames (a 4-byte little-endian length, then the JSON).
 frame() {
