@@ -798,6 +798,32 @@ track, goes with the device when the device is removed (`Planner`), and is copie
   like any lane (the armed set is by device and param) and `project_inspect` marks the track
   `automation_only`.
 
+### 2.6c Pattern lanes
+
+A **pattern lane** is the automation lane of the `pattern` param (`PATTERN_PARAM`) of a step sequencer, a
+CV sequencer or a drum generator, found with `Track::pattern_lane` and labelled "Pattern". It needs no
+format of its own: its clips are automation clips of stepped points (a pattern number held until the next
+point), flattened like any lane, so the first point switches the device's pattern at the clip start and
+the lane's static value takes over at the clip end. Playback, bounce and old projects are unchanged.
+
+- **View.** `ArrangementView` draws the held numbers as labelled blocks (`pattern_lane.rs`) instead of a
+  curve. A right click on a clip opens the pattern list (its rows are `SetClipContent` commands that set
+  the number of the block under the pointer; the last row deletes the clip). A clip drawn on the lane
+  starts with one `Step` point, the number under the pointer. Draw, move, resize, split and copy are the
+  automation clip gestures, one undo step each.
+- **Recording.** A take catches `pattern` changes of the rack's pattern devices whether or not AUTO LANES
+  is on (`has_pattern_device`): the first change adds the lane and every change after it is written on
+  the next downbeat (`downbeat_at_or_after`) in Latch mode with stepped points (`segment_clips_with`), so
+  the clip switches the pattern on a bar line and never ramps through the numbers between two patterns.
+  A pattern lane that exists records when it is armed, like any lane.
+- **Commands.** Track > Add Pattern Lane (`create_pattern_lane`) adds the lane for the selected pattern
+  device or track. Track > Pattern Lane to Notes (`pattern_lane_to_notes`) renders the tracks that play the
+  device offline, as Send Players to Track does, and writes the notes the patterns played, in the order the
+  lane chose them, into a clip on a new note lane named "Pattern". The stack keeps playing: mute it to hear
+  the copy alone.
+- **Not there yet.** A clip with its own pattern *offset* (starting the pattern part-way) and a bank view of
+  the device's patterns are not built: a pattern clip is the automation clip of the number.
+
 ### 2.7 Save and bounce
 
 ```
@@ -3877,7 +3903,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (412) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (414) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

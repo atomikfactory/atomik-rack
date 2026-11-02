@@ -68,6 +68,7 @@ mod markers;
 mod meters;
 mod organise;
 mod paint_cache;
+mod pattern_lane;
 mod restructure;
 mod stretch;
 mod takes;
@@ -3082,7 +3083,7 @@ impl ArrangementView {
                     // A double-click on an empty lane creates a one-bar clip.
                     let start = snap_floor(t, self.step(modifiers)).max(0);
                     let length = self.new_clip_length(start, modifiers);
-                    out.push(new_clip_cmd(device, lane, automation, start, length));
+                    out.push(self.drawn_clip((device, lane), automation, (start, length), pos));
                     return;
                 }
                 self.drag = Drag::Draw {
@@ -3496,6 +3497,17 @@ impl ArrangementView {
             self.selected_track = None;
         }
         match part {
+            // A pattern lane's clip has the pattern picker in place of the clip menu.
+            ClipPart::Body | ClipPart::Header | ClipPart::AutoBody
+                if button == PointerButton::Secondary && self.is_pattern_lane(track, lane) =>
+            {
+                if !self.selection.contains(&id) {
+                    self.selection.select_only(id);
+                }
+                self.point_sel = None;
+                self.selected_track = None;
+                self.open_pattern_menu(track, lane, &clip, pos);
+            }
             ClipPart::Body | ClipPart::Header | ClipPart::AutoBody | ClipPart::LoopHandle
                 if button == PointerButton::Secondary =>
             {
@@ -4797,6 +4809,7 @@ impl ArrangementView {
                 modifiers,
                 pencil,
             } => {
+                let press = start;
                 if !moved {
                     self.selection.clear();
                     self.point_sel = None;
@@ -4814,12 +4827,17 @@ impl ArrangementView {
                         // The pencil draws with a plain click: a one-bar clip.
                         let start = snap_floor(t0, self.step(modifiers)).max(0);
                         let length = self.new_clip_length(start, modifiers);
-                        out.push(new_clip_cmd(device, lane, automation, start, length));
+                        out.push(self.drawn_clip(
+                            (device, lane),
+                            automation,
+                            (start, length),
+                            press,
+                        ));
                     }
                     return;
                 }
                 let (start, length) = seq_edit::draw_span(t0, t1, self.step(modifiers), MIN_TICKS);
-                out.push(new_clip_cmd(device, lane, automation, start, length));
+                out.push(self.drawn_clip((device, lane), automation, (start, length), press));
             }
         }
         let _ = pos;
@@ -6331,7 +6349,11 @@ impl ArrangementView {
                 let (top, bottom) = value_range(r);
                 let ny =
                     |v: f32| bottom - f64::from(seq_edit::value_to_norm(param, v)) * (bottom - top);
-                for w in &windows {
+                let pattern = pattern_lane::is_pattern(param);
+                if pattern {
+                    self.paint_pattern_blocks(c, r, points, &windows, param, (accent, light), tl);
+                }
+                for w in windows.iter().filter(|_| !pattern) {
                     let (wx0, wx1) = (
                         self.axis.tick_to_x(w.song_start),
                         self.axis.tick_to_x(w.song_end),

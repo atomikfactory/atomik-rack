@@ -26,6 +26,10 @@ pub const MAX_STEPS: usize = 64;
 /// Longest pattern name, in characters.
 pub const MAX_NAME_CHARS: usize = 64;
 
+/// The device param that selects the playing pattern (1-based). A lane of it is a *pattern
+/// lane*: its values are pattern numbers, held until the next one.
+pub const PATTERN_PARAM: &str = "pattern";
+
 /// Step length of a pattern. Not the clip grid's `StepResolution` (1/8, 1/16, 1/32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SeqResolution {

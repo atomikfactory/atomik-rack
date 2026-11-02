@@ -1028,3 +1028,88 @@ fn a_tempo_take_that_never_moves_the_tempo_changes_nothing() {
     record(&mut c);
     assert_eq!(tempo_map(&c), before);
 }
+
+// ------------------------------------------------------------------ pattern changes
+
+/// A core with synth `a` on an armed track and a step sequencer `seq` (no track yet).
+fn with_pattern_device() -> AppCore<RecordingSink> {
+    let mut c = core();
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.step-sequencer".to_string(),
+        key: Some(key("seq")),
+    })
+    .unwrap();
+    c.apply_command(song(SongCommand::SetTrackFlags {
+        device: key("a"),
+        muted: false,
+        solo: false,
+        armed: true,
+    }))
+    .unwrap();
+    c.sink_mut().take();
+    c
+}
+
+#[test]
+fn a_pattern_change_during_a_take_makes_a_stepped_pattern_lane_on_the_next_downbeat() {
+    let mut c = with_pattern_device();
+    assert!(!c.auto_create_lanes(), "no AUTO LANES needed");
+    record(&mut c);
+    assert!(c.is_recording());
+    at(&mut c, BAR / 2, 0);
+    set_on(&mut c, "seq", "pattern", 2.0, None);
+    // A knob with a lane that is not armed takes nothing, and no other lane is made.
+    set_on(&mut c, "a", RESO, 0.4, Some(3));
+    release(&mut c);
+    at(&mut c, BAR + PPQ, 0);
+    set_on(&mut c, "seq", "pattern", 3.0, None);
+    // Nothing is written before the take ends.
+    assert!(lanes_of(&c, "seq").is_empty());
+    let depth = undo_depth(&mut c);
+    at(&mut c, 3 * BAR, 0);
+    record(&mut c);
+    assert_eq!(lanes_of(&c, "seq"), [("pattern".to_string(), 1)]);
+    assert!(clips(&c, 2).is_empty());
+    let t = c.doc().song.track(&key("seq")).unwrap();
+    let lane = t.pattern_lane().unwrap();
+    let clip = &t.lanes[lane].clips[0];
+    let ClipContent::Automation(points) = &clip.content else {
+        panic!("automation clip");
+    };
+    // The first change waits for bar 2, the second for bar 3; each number holds.
+    assert_eq!((clip.start, clip.length), (BAR, 2 * BAR));
+    assert_eq!(
+        points
+            .iter()
+            .map(|p| (p.tick, p.value, p.curve))
+            .collect::<Vec<_>>(),
+        [
+            (0, 2.0, atomik_model::Curve::Step),
+            (BAR, 3.0, atomik_model::Curve::Step)
+        ]
+    );
+    assert_eq!(
+        undo_depth(&mut c),
+        depth + 1,
+        "the lane and its clip are one undo step"
+    );
+    assert!(c.undo());
+    assert!(lanes_of(&c, "seq").is_empty());
+}
+
+#[test]
+fn a_pattern_device_alone_does_not_make_a_take_without_something_to_record() {
+    let mut c = with_pattern_device();
+    c.apply_command(song(SongCommand::SetTrackFlags {
+        device: key("a"),
+        muted: false,
+        solo: false,
+        armed: false,
+    }))
+    .unwrap();
+    record(&mut c);
+    assert!(!c.is_recording(), "an armed track or lane is still needed");
+    set_on(&mut c, "seq", "pattern", 2.0, None);
+    assert!(lanes_of(&c, "seq").is_empty());
+}

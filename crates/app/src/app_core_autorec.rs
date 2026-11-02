@@ -35,6 +35,12 @@
 //!   one is reported) starts a Touch recorder for it, and when the take ends the new lanes and
 //!   their clips are part of the same `Command::Batch`, so one undo removes both. A parameter
 //!   whose lane already exists records only when that lane is armed.
+//! * **Pattern changes.** A take also catches `pattern` changes of the pattern devices (step and CV
+//!   sequencer, drum generator) whether or not AUTO LANES is on: the first change creates a pattern
+//!   lane when none exists and records Latch from then on (each number held until the next). A
+//!   change is written on the next downbeat and as a `Step` point, so the clip it makes switches
+//!   the pattern on a bar line and never ramps through the numbers between two patterns. A
+//!   pattern lane that exists records when it is armed, like any lane.
 //! * **Override.** Moving a control with a gesture while the song plays and no take runs would
 //!   be undone at once by the lane that plays the parameter. The first such move puts the lane in
 //!   the *overridden* set, which joins the lanes a take writes in [`EngineSink::hold_automation`]
@@ -55,12 +61,12 @@
 use super::*;
 use atomik_engine::HOLD_CAPACITY;
 use atomik_model::automation_rec::{
-    PassRecorder, Segment, WriteMode, segment_clips, tempo_pass_map,
+    PassRecorder, Segment, WriteMode, downbeat_at_or_after, segment_clips_with, tempo_pass_map,
 };
 use atomik_model::song::{automation_value_at, flatten_automation};
 use atomik_model::{
-    AutomationPoint, Clip, ClipContent, Document, LaneKind, TEMPO_MAX, TEMPO_MIN, TempoEvent,
-    expand_bank_lane, expand_macro_lane,
+    AutomationPoint, Clip, ClipContent, Curve, Document, LaneKind, PATTERN_PARAM, TEMPO_MAX,
+    TEMPO_MIN, TempoEvent, expand_bank_lane, expand_macro_lane,
 };
 use std::collections::BTreeSet;
 
@@ -445,7 +451,9 @@ impl<S: EngineSink> AppCore<S> {
                 joinable: false,
             }
         });
-        if map.is_empty() && !self.autorec.auto_create && tempo.is_none() {
+        let writes = !map.is_empty() || self.autorec.auto_create || tempo.is_some();
+        // A pattern device in the rack: its pattern changes are caught whatever else is armed.
+        if !writes && !self.has_pattern_device() {
             return false;
         }
         let loop_count = self.sink.transport_state().loop_count;
@@ -456,7 +464,17 @@ impl<S: EngineSink> AppCore<S> {
             tempo,
         });
         self.update_automation_hold();
-        true
+        writes
+    }
+
+    /// True when the rack has a device with a `pattern` param (a step or CV sequencer, a drum
+    /// generator).
+    pub(super) fn has_pattern_device(&self) -> bool {
+        self.flat_devices().iter().any(|(_, d)| {
+            self.registry
+                .get(&d.type_id)
+                .is_some_and(|f| f.descriptor.param_by_key(PATTERN_PARAM).is_some())
+        })
     }
 
     /// The size of a lane's parameter range (1 for a parameter without a descriptor).
@@ -489,6 +507,11 @@ impl<S: EngineSink> AppCore<S> {
         self.advance_automation(&state);
         let tick = self.automation_tick(&state);
         let create = self.autorec.auto_create;
+        // A pattern change is written on the next downbeat, so a pattern clip starts on a bar.
+        let downbeat = {
+            let table = self.doc().song.meter_table();
+            downbeat_at_or_after(table.map(), tick)
+        };
         let bpm_now = self.doc().song.tempo_table().map().bpm(tick as f64) as f32;
         let Some(take) = self.autorec.take.as_mut() else {
             return;
@@ -506,16 +529,21 @@ impl<S: EngineSink> AppCore<S> {
             let SyncOp::ParamChanged { key, param, value } = op else {
                 continue;
             };
+            let at = if param == PATTERN_PARAM {
+                downbeat
+            } else {
+                tick
+            };
             if let Some(lane) = take.lanes.get_mut(&(key.clone(), param.clone())) {
-                lane.pass.change(tick, *value, merge.is_some());
+                lane.pass.change(at, *value, merge.is_some());
                 lane.value = *value;
                 touched = true;
-            } else if create {
-                fresh.push((key.clone(), param.clone(), *value));
+            } else if create || param == PATTERN_PARAM {
+                fresh.push((key.clone(), param.clone(), *value, at));
             }
         }
-        for (device, param, value) in fresh {
-            touched |= self.start_created_lane(device, param, value, tick, merge.is_some());
+        for (device, param, value, at) in fresh {
+            touched |= self.start_created_lane(device, param, value, at, merge.is_some());
         }
         if touched {
             self.update_automation_hold();
@@ -559,12 +587,18 @@ impl<S: EngineSink> AppCore<S> {
         let Some(take) = self.autorec.take.as_mut() else {
             return false;
         };
-        let mut pass = PassRecorder::new(WriteMode::Touch, tick, value);
+        // A pattern lane holds each number until the next change: Latch, not an instant touch.
+        let mode = if param == PATTERN_PARAM {
+            WriteMode::Latch
+        } else {
+            WriteMode::Touch
+        };
+        let mut pass = PassRecorder::new(mode, tick, value);
         pass.change(tick, value, held);
         take.lanes.insert(
             id,
             LaneTake {
-                mode: WriteMode::Touch,
+                mode,
                 pass,
                 done: Vec::new(),
                 value,
@@ -763,7 +797,13 @@ impl<S: EngineSink> AppCore<S> {
             let mut segments = lane.done;
             segments.extend(lane.pass.finish(end));
             let tolerance = self.autorec.thinning * lane.range;
-            let clips = segment_clips(&segments, tolerance);
+            // A pattern number holds until the next: stepped points, never a ramp between two.
+            let curve = if param == PATTERN_PARAM {
+                Curve::Step
+            } else {
+                Curve::Linear
+            };
+            let clips = segment_clips_with(&segments, tolerance, curve);
             if clips.is_empty() {
                 continue;
             }

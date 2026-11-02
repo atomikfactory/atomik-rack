@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Pattern lanes.** The `pattern` lane of a step sequencer, CV sequencer or drum generator is now a pattern
+  lane: it reads "Pattern", draws its held numbers as labelled blocks, and a right click on a clip lists the
+  device's patterns to pick from (a clip drawn on it starts with one stepped point). A take now catches pattern
+  changes without AUTO LANES: the first one adds the lane and each change is written on the next downbeat as a
+  held number, so the clip switches on a bar line. Track > Add Pattern Lane adds the lane, and Track > Pattern
+  Lane to Notes renders what the patterns play, in the order the lane chose them, into a clip on a new note
+  lane. No project format change: a pattern clip is an ordinary automation clip. A pattern offset is not built.
 - **Bent automation segments.** Shift-drag on an automation segment bends it so the curve passes through the
   pointer at the middle of the segment (one undo step); a click without a drag, or a Shift-click on a point,
   straightens it again. The bend is a power curve evaluated with plain arithmetic only, so a bounce is
