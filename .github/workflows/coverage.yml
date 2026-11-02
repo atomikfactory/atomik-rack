@@ -1,0 +1,77 @@
+name: Coverage
+
+# Line coverage with cargo-llvm-cov: the workspace gate of 90 percent and a floor per crate
+# (scripts/coverage-floors.sh, scripts/coverage-floors.txt). It is the slowest job of the
+# project, so a pull request does not run it by default: it runs on every push to main, once a
+# night, by hand, and on a pull request that carries the `coverage` label (Dependabot pull
+# requests do not carry it). The per-crate table is in the job summary; lcov.info is an artifact.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  coverage:
+    name: coverage (llvm-cov)
+    # The scheduled run belongs to this repository only. A pull request runs it when it has the
+    # `coverage` label (adding the label starts it, later pushes rerun it).
+    if: >-
+      (github.event_name != 'pull_request' && (github.event_name != 'schedule' || github.repository == 'atomikfactory/atomik-rack'))
+      || contains(github.event.pull_request.labels.*.name, 'coverage')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+          cache-key: coverage
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      # Excluded from the gate: binary entry points and GPU/audio-device glue that cannot run on
+      # CI runners (no GPU, no audio devices). Their logic is tested through pure cores. The CLAP
+      # and VST3 test plugin libraries only run inside the scanner child and the plugin host as
+      # loaded libraries, which the instrumented test binaries do not measure (their DSP core,
+      # testplugins/core, is measured). The patterns are anchored on the crate path.
+      - name: Run the tests with coverage
+        run: >-
+          cargo llvm-cov --no-report --workspace --no-fail-fast
+      - name: Drop profile files a killed child left empty
+        # A sandboxed plugin child that is killed on purpose by a test can leave an empty profile
+        # file, and the merge then stops with "no profile can be merged".
+        run: |
+          if [ -d target/llvm-cov-target ]; then
+            find target/llvm-cov-target -name '*.profraw' -size 0 -print -delete
+          fi
+      - name: Report
+        run: >-
+          cargo llvm-cov report --fail-under-lines 90
+          --ignore-filename-regex '(^|/)crates/([^/]+/src/main[.]rs|ui/src/scene_canvas[.]rs|ui/src/text[.]rs|audio-io/src/stream[.]rs|play/src/backend[.]rs|testplugins/(clap|vst3)[^/]*/src/[^/]*[.]rs)$'
+          --lcov --output-path lcov.info
+      - name: Coverage floor of each crate
+        run: sh scripts/coverage-floors.sh lcov.info
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: error
