@@ -1,6 +1,6 @@
 //! The utility devices in a patch bounce: each effect changes a fixed synth signal, renders the
 //! same bits at every host block size, never allocates on the render path (the allocation guard
-//! wraps every render), and Spider Audio merges cables of different latency sample-aligned.
+//! wraps every render), and Audio Split/Merge merges cables of different latency sample-aligned.
 atomik_testkit::install_alloc_guard!();
 
 use atomik_engine::{OfflineJob, render_offline_with};
@@ -137,8 +137,40 @@ fn every_effect_changes_the_phrase_and_renders_the_same_bits_at_every_block_size
     }
 }
 
+#[test]
+fn the_stereo_tool_mono_switch_makes_the_rendered_output_mono_in_every_mode() {
+    // A balance of 0.8 lowers the right side only, so the channels differ before the mono stage.
+    let stereo = render(
+        &patch_json(Some(("atomik.stereo-tool", r#"{"balance": 0.8}"#))),
+        64,
+        false,
+    );
+    let apart = stereo[0]
+        .iter()
+        .zip(&stereo[1])
+        .fold(0.0f32, |m, (l, r)| m.max((l - r).abs()));
+    assert!(apart > 0.01, "the channels differ without mono ({apart})");
+    for mode in 0..3 {
+        let json = patch_json(Some((
+            "atomik.stereo-tool",
+            &format!(r#"{{"balance": 0.8, "mono": 1, "mode": {mode}}}"#),
+        )));
+        let out = render(&json, 64, false);
+        // Skip the 10 ms ramp into mono.
+        let settled = 4800;
+        assert!(
+            out[0][settled..]
+                .iter()
+                .zip(&out[1][settled..])
+                .all(|(l, r)| l.to_bits() == r.to_bits()),
+            "mode {mode}: left and right differ with MONO on"
+        );
+        assert!(peak(&out[0]) > 1e-3, "mode {mode}: silent");
+    }
+}
+
 /// Two identical click synths, `a` direct and `b` through a compressor with 5 ms of lookahead
-/// (240 frames), merged by Spider Audio.
+/// (240 frames), merged by Audio Split/Merge.
 fn merge_json(second: &str) -> String {
     let click = |id: &str| {
         format!(
@@ -203,7 +235,7 @@ fn merge_peaks(second: &str) -> (f32, f32, f32) {
 }
 
 #[test]
-fn spider_audio_aligns_the_cables_of_one_merge_input_without_a_flag() {
+fn audio_split_merge_aligns_the_cables_of_one_merge_input_without_a_flag() {
     // Both cables into `m1_l`: a summing input delays the earlier cable by the difference, as a
     // console bus does, with the plain delay compensation.
     let json = merge_json("m:m1_l");
@@ -241,7 +273,7 @@ fn spider_audio_aligns_the_cables_of_one_merge_input_without_a_flag() {
 }
 
 #[test]
-fn spider_audio_aligns_separate_merge_inputs_with_the_input_alignment_option() {
+fn audio_split_merge_aligns_separate_merge_inputs_with_the_input_alignment_option() {
     let (aligned, unaligned, single) = merge_peaks("m:m2_l");
     assert!(single > 0.01);
     assert!(aligned > 1.8 * single, "{aligned} vs {single}");
