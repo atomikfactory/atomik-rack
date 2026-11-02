@@ -80,6 +80,18 @@ pub fn locate_cdylib(crate_name: &str) -> Result<PathBuf, TestingError> {
     }
 }
 
+/// The environment variable that says the test plugins were built by the workspace build before
+/// the tests started (CI does: `cargo build` of the plugin members). When it is set to anything
+/// but an empty value or `0`, [`build_cdylib`] only locates the library and never starts a nested
+/// `cargo build`; a missing library is still a loud [`TestingError::NotBuilt`]. Unset, the nested
+/// build stays as the local fallback.
+pub const PREBUILT_ENV: &str = "ATOMIK_TEST_PLUGINS_PREBUILT";
+
+/// Whether the value of [`PREBUILT_ENV`] asks to skip the nested build.
+pub fn prebuilt(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 /// Serialises builds inside one process (the file lock does it across processes).
 static BUILD_LOCK: Mutex<()> = Mutex::new(());
 
@@ -96,6 +108,9 @@ fn workspace_root() -> PathBuf {
 /// [`TestingError::BuildFailed`] when Cargo fails (an unknown package, a compile error) and
 /// [`TestingError::NotBuilt`] when it succeeds but the library is not where it should be.
 pub fn build_cdylib(package: &str) -> Result<PathBuf, TestingError> {
+    if prebuilt(std::env::var_os(PREBUILT_ENV).as_deref()) {
+        return locate_cdylib(&package.replace('-', "_"));
+    }
     let _in_process = BUILD_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let dir = profile_dir();
     let io = |e: std::io::Error| TestingError::Io(package.to_string(), e.to_string());
