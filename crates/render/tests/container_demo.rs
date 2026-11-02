@@ -200,6 +200,7 @@ pub fn demo_doc() -> RackDoc {
                 vel_lo: 1,
                 vel_hi: 127,
                 transpose: 0,
+                pass: atomik_model::SplitPass::ALL,
             },
             NoteSplit {
                 target: key("high"),
@@ -208,6 +209,7 @@ pub fn demo_doc() -> RackDoc {
                 vel_lo: 1,
                 vel_hi: 127,
                 transpose: 12,
+                pass: atomik_model::SplitPass::ALL,
             },
         ],
         merge: None,

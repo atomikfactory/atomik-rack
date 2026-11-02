@@ -14,6 +14,9 @@ pub const TYPE_ID: &str = "atomik.note-split";
 pub const SLOTS: usize = 8;
 /// Params per slot.
 pub const PARAMS_PER_SLOT: usize = 6;
+/// Pass flags per slot (`pass_bend`, `pass_cc`, `pass_pressure`), appended after the slot params:
+/// slot `k` (0-based) has them at ids `SLOTS * PARAMS_PER_SLOT + 3 * k`. Each defaults to on.
+pub const PASS_PER_SLOT: usize = 3;
 
 const fn sock(
     id: u16,
@@ -82,7 +85,17 @@ macro_rules! slot_params {
     };
 }
 
-static PARAMS: [ParamDescriptor; SLOTS * PARAMS_PER_SLOT] = slot_params!(
+macro_rules! pass_params {
+    ($(($n:literal, $b:literal)),* $(,)?) => {
+        [$(
+            param($b, concat!("s", $n, ".pass_bend"), concat!("Slot ", $n, " pass bend"), (0.0, 1.0, 1.0), Unit::Toggle),
+            param($b + 1, concat!("s", $n, ".pass_cc"), concat!("Slot ", $n, " pass CC"), (0.0, 1.0, 1.0), Unit::Toggle),
+            param($b + 2, concat!("s", $n, ".pass_pressure"), concat!("Slot ", $n, " pass pressure"), (0.0, 1.0, 1.0), Unit::Toggle),
+        )*]
+    };
+}
+
+const SLOT_PARAMS: [ParamDescriptor; SLOTS * PARAMS_PER_SLOT] = slot_params!(
     (1, 0),
     (2, 6),
     (3, 12),
@@ -92,6 +105,32 @@ static PARAMS: [ParamDescriptor; SLOTS * PARAMS_PER_SLOT] = slot_params!(
     (7, 36),
     (8, 42),
 );
+
+const PASS_PARAMS: [ParamDescriptor; SLOTS * PASS_PER_SLOT] = pass_params!(
+    (1, 48),
+    (2, 51),
+    (3, 54),
+    (4, 57),
+    (5, 60),
+    (6, 63),
+    (7, 66),
+    (8, 69),
+);
+
+static PARAMS: [ParamDescriptor; SLOTS * (PARAMS_PER_SLOT + PASS_PER_SLOT)] = {
+    let mut all = [SLOT_PARAMS[0]; SLOTS * (PARAMS_PER_SLOT + PASS_PER_SLOT)];
+    let mut i = 0;
+    while i < SLOT_PARAMS.len() {
+        all[i] = SLOT_PARAMS[i];
+        i += 1;
+    }
+    let mut j = 0;
+    while j < PASS_PARAMS.len() {
+        all[SLOT_PARAMS.len() + j] = PASS_PARAMS[j];
+        j += 1;
+    }
+    all
+};
 
 /// Static description of the split device.
 pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
@@ -128,6 +167,9 @@ struct Slot {
     vel_lo: u8,
     vel_hi: u8,
     transpose: i16,
+    pass_bend: bool,
+    pass_cc: bool,
+    pass_pressure: bool,
     route: [u8; KEYS],
     /// Per output key, the input key that currently owns the open note there (or [`NO_ROUTE`]):
     /// two input keys that transpose onto one output key never leave two open Ons.
@@ -145,6 +187,9 @@ impl Slot {
             vel_lo: 1,
             vel_hi: 127,
             transpose: 0,
+            pass_bend: true,
+            pass_cc: true,
+            pass_pressure: true,
             route: [NO_ROUTE; KEYS],
             owner: [NO_ROUTE; KEYS],
             last_offset: 0,
@@ -242,6 +287,19 @@ impl Device for NoteSplit {
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
         let id = id.0 as usize;
+        let pass_base = SLOTS * PARAMS_PER_SLOT;
+        if id >= pass_base {
+            let rel = id - pass_base;
+            if let Some(slot) = self.slots.get_mut(rel / PASS_PER_SLOT) {
+                let on = plain >= 0.5;
+                match rel % PASS_PER_SLOT {
+                    0 => slot.pass_bend = on,
+                    1 => slot.pass_cc = on,
+                    _ => slot.pass_pressure = on,
+                }
+            }
+            return;
+        }
         let Some(slot) = self.slots.get_mut(id / PARAMS_PER_SLOT) else {
             return;
         };
@@ -309,11 +367,17 @@ impl Device for NoteSplit {
                         s.emit(ctx, out, ev.offset, NoteKind::AllOff);
                     }
                     // Channel messages go to every enabled slot, whatever its
-                    // zone: a pitch bend or a CC belongs to the whole channel.
+                    // zone (a pitch bend or a CC belongs to the whole channel), unless
+                    // the slot has the pass flag of that kind off.
                     NoteKind::PitchBend { .. }
                     | NoteKind::Cc { .. }
                     | NoteKind::ChannelPressure { .. } => {
-                        if s.on {
+                        let passes = match ev.kind {
+                            NoteKind::PitchBend { .. } => s.pass_bend,
+                            NoteKind::Cc { .. } => s.pass_cc,
+                            _ => s.pass_pressure,
+                        };
+                        if s.on && passes {
                             s.emit(ctx, out, ev.offset, ev.kind);
                         }
                     }
@@ -321,7 +385,7 @@ impl Device for NoteSplit {
                     // opened this key, with the output key of the transposed note.
                     NoteKind::PolyPressure { key, value } => {
                         let routed = s.route[usize::from(key & 0x7F)];
-                        if routed != NO_ROUTE {
+                        if routed != NO_ROUTE && s.pass_pressure {
                             s.emit(
                                 ctx,
                                 out,

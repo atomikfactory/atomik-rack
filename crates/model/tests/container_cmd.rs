@@ -325,7 +325,7 @@ fn macro_edits_are_validated() {
     };
     bad(
         &mut d,
-        set_macro("c", 8, target("synth", "filter.cutoff", 0.0, 1.0)),
+        set_macro("c", 16, target("synth", "filter.cutoff", 0.0, 1.0)),
     );
     bad(
         &mut d,
@@ -913,6 +913,7 @@ fn the_random_generator_reaches_the_interesting_commands() {
                 Op::Disconnect(..) => "disconnect",
                 Op::Splits(..) => "splits",
                 Op::Macro(..) => "macro",
+                Op::MacroKind(..) => "macro_kind",
                 Op::Unmap(..) => "unmap",
                 Op::Remove(..) => "remove",
                 Op::Move(..) => "move",

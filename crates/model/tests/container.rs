@@ -37,7 +37,7 @@ fn a_new_container_is_empty_and_has_no_console_channel() {
             .iter()
             .all(|m| m.name.is_empty() && m.targets.is_empty())
     );
-    assert_eq!(inner.macros.len(), 8);
+    assert_eq!(inner.macros.len(), atomik_model::CONTAINER_MACROS);
     // No automatic channel: a container may be an effect.
     assert!(d.doc().console.channels.is_empty());
     assert_eq!(keys(&d), ["c"]);

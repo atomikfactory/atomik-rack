@@ -121,6 +121,7 @@ pub enum Op {
     Disconnect(u8, u8),
     Splits(u8, Vec<(u8, u8, u8, i8)>),
     Macro(u8, u8, u8, u8, u8, u8),
+    MacroKind(u8, u8, bool),
     Unmap(u8, u8, u8),
     Remove(u8),
     Move(u8, u8),
@@ -144,9 +145,10 @@ pub fn op() -> impl Strategy<Value = Op> {
             proptest::collection::vec((any::<u8>(), 0u8..=127, 0u8..=127, -50i8..=50), 0..4)
         )
             .prop_map(|(a, v)| Op::Splits(a, v)),
-        5 => (any::<u8>(), 0u8..9, any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>())
+        5 => (any::<u8>(), 0u8..17, any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>())
             .prop_map(|(a, b, c, d, e, f)| Op::Macro(a, b, c, d, e, f)),
-        2 => (any::<u8>(), 0u8..8, any::<u8>()).prop_map(|(a, b, c)| Op::Unmap(a, b, c)),
+        1 => (any::<u8>(), 0u8..17, any::<bool>()).prop_map(|(a, b, c)| Op::MacroKind(a, b, c)),
+        2 => (any::<u8>(), 0u8..16, any::<u8>()).prop_map(|(a, b, c)| Op::Unmap(a, b, c)),
         1 => any::<u8>().prop_map(Op::Remove),
         2 => (any::<u8>(), any::<u8>()).prop_map(|(a, b)| Op::Move(a, b)),
         2 => any::<u8>().prop_map(Op::Duplicate),
@@ -248,7 +250,9 @@ pub fn resolve_op(op: &Op, doc: &RackDoc, r: &Registry) -> Option<Command> {
             if scope.is_some() {
                 ends.push((
                     "boundary".into(),
-                    vec!["in_l".into(), "in_r".into()],
+                    ["in_l", "in_r", "cv1", "cv2", "cv3", "cv4"]
+                        .map(String::from)
+                        .to_vec(),
                     vec!["out_l".into(), "out_r".into()],
                 ));
             }
@@ -326,6 +330,21 @@ pub fn resolve_op(op: &Op, doc: &RackDoc, r: &Registry) -> Option<Command> {
                     f32::from(*hi) / 255.0,
                 ),
             ))
+        }
+        Op::MacroKind(c, m, switch) => {
+            let (c, _) = pick(
+                *c,
+                &containers.iter().map(|x| (*x).clone()).collect::<Vec<_>>(),
+            )?;
+            Some(Command::Container(ContainerCommand::SetMacroKind {
+                container: key(&c),
+                index: *m,
+                kind: if *switch {
+                    atomik_model::MacroKind::Switch
+                } else {
+                    atomik_model::MacroKind::Knob
+                },
+            }))
         }
         Op::Unmap(c, m, t) => {
             let (c, _) = pick(

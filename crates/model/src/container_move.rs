@@ -1379,8 +1379,8 @@ fn exit(doc: &RackDoc, registry: &Registry, ex: &Exit<'_>) -> Result<Planned, Mo
                     index: i as u8,
                     old: m.clone(),
                     new: MacroDoc {
-                        name: m.name.clone(),
                         targets: rest,
+                        ..m.clone()
                     },
                 });
             }

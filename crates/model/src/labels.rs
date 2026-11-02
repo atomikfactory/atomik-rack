@@ -134,6 +134,7 @@ fn container_label(c: &ContainerCommand) -> &'static str {
         ContainerCommand::MoveIntoContainer { .. } => "Move Into Container",
         ContainerCommand::MoveOutOfContainer { .. } => "Move Out of Container",
         ContainerCommand::DuplicateContainer { .. } => "Duplicate Container",
+        ContainerCommand::SetMacroKind { .. } => "Set Macro Type",
         _ => DEFAULT_LABEL,
     }
 }
