@@ -4,7 +4,7 @@
 
 use crate::timeline::{Quant, snap_ceil, snap_floor, snap_round};
 use crate::viewport::SnapMode;
-use atomik_core::ParamDescriptor;
+use atomik_core::{ParamDescriptor, Unit};
 use atomik_model::{AutomationPoint, Clip, Curve, Note};
 use std::collections::BTreeSet;
 use vello::kurbo::{Point, Rect};
@@ -614,6 +614,76 @@ pub fn remove_point(points: &[AutomationPoint], index: usize) -> Vec<AutomationP
     v
 }
 
+/// True for a param that is a list of choices, an on/off switch or otherwise rounded to whole
+/// values: a ramp over it only works
+/// through the device rounding the value, so new points on it hold (`Step`) instead.
+pub fn is_discrete(p: &ParamDescriptor) -> bool {
+    p.discrete || matches!(p.unit, Unit::Choice(_) | Unit::Toggle)
+}
+
+/// The curve of a point newly drawn on a lane of `p`: a ramp, or a hold for a discrete param.
+pub fn new_point_curve(p: &ParamDescriptor) -> Curve {
+    if is_discrete(p) {
+        Curve::Step
+    } else {
+        Curve::Linear
+    }
+}
+
+/// The segment content tick `tick` falls in, as the index of its first point: the points up to
+/// the last one only (a value is held before the first point and after the last one).
+pub fn segment_at(points: &[AutomationPoint], tick: i64) -> Option<usize> {
+    let k = points.partition_point(|p| p.tick <= tick);
+    let i = k.checked_sub(1)?;
+    (i + 1 < points.len()).then_some(i)
+}
+
+/// Bends segment `index` so that its midpoint passes through the plain value `target`: the
+/// exponent `k` with `0.5^k = (target - v0) / (v1 - v0)`, kept to the bend range and to a
+/// quantised amount. A segment whose bend rounds to nothing becomes a straight `Linear` ramp, as
+/// does one between equal values. Returns the points unchanged for a bad index or a discrete
+/// param.
+pub fn bend_to(
+    points: &[AutomationPoint],
+    index: usize,
+    target: f32,
+    param: &ParamDescriptor,
+) -> Vec<AutomationPoint> {
+    let mut v = points.to_vec();
+    let (Some(p), Some(q)) = (points.get(index), points.get(index + 1)) else {
+        return v;
+    };
+    if is_discrete(param) || !target.is_finite() {
+        return v;
+    }
+    let span = f64::from(q.value) - f64::from(p.value);
+    if span == 0.0 {
+        return v;
+    }
+    // The fraction of the way the curve has gone at the middle of the segment.
+    let f = ((f64::from(target) - f64::from(p.value)) / span).clamp(0.02, 0.98);
+    let k = -f.log2();
+    let max = f64::from(atomik_core::bend::BEND_MAX);
+    let amount = (32.0 * k.log2()).round().clamp(-max, max) as i8;
+    v[index].curve = if amount == 0 {
+        Curve::Linear
+    } else {
+        Curve::Bend(amount)
+    };
+    v
+}
+
+/// Segment `index` as a straight `Linear` ramp (a bent one is straightened; a `Step` is left).
+pub fn straighten(points: &[AutomationPoint], index: usize) -> Vec<AutomationPoint> {
+    let mut v = points.to_vec();
+    if let Some(p) = v.get_mut(index)
+        && matches!(p.curve, Curve::Bend(_))
+    {
+        p.curve = Curve::Linear;
+    }
+    v
+}
+
 /// Toggles point `index` between linear and step.
 pub fn toggle_curve(points: &[AutomationPoint], index: usize) -> Vec<AutomationPoint> {
     let mut v = points.to_vec();
@@ -1147,5 +1217,85 @@ mod tests {
         // A flat stroke on one tick.
         let out = velocity_stroke(&notes, None, (100, 0.4), (100, 0.9));
         assert!((out[1].velocity - 0.4).abs() < 1e-6);
+    }
+
+    fn bend_points(first: Curve) -> Vec<AutomationPoint> {
+        let p = |tick, value, curve| AutomationPoint { tick, value, curve };
+        vec![
+            p(0, 0.0, first),
+            p(100, 1.0, Curve::Step),
+            p(200, 0.5, Curve::Linear),
+        ]
+    }
+
+    fn unit_param(unit: Unit) -> ParamDescriptor {
+        ParamDescriptor {
+            unit,
+            min: 0.0,
+            max: 1.0,
+            ..crate::seq_paint::FALLBACK_PARAM
+        }
+    }
+
+    #[test]
+    fn a_bend_makes_the_middle_of_the_segment_pass_through_the_target() {
+        let param = unit_param(Unit::None);
+        for target in [0.12_f32, 0.25, 0.4, 0.6, 0.8] {
+            let out = bend_to(&bend_points(Curve::Linear), 0, target, &param);
+            let Curve::Bend(n) = out[0].curve else {
+                // The middle value 0.5 is a straight line.
+                assert!((target - 0.5).abs() < 0.05, "{target}");
+                continue;
+            };
+            let mid = out[0].curve.blend(0.0, 1.0, 0.5);
+            assert!(
+                (mid - f64::from(target)).abs() < 0.02,
+                "target {target}: bend {n} gives {mid}"
+            );
+        }
+        // A target on the straight line gives a straight line; the end values and the other
+        // segments are untouched.
+        let straight = bend_to(&bend_points(Curve::Bend(20)), 0, 0.5, &param);
+        assert_eq!(straight[0].curve, Curve::Linear);
+        assert_eq!(straight[1..], bend_points(Curve::Linear)[1..]);
+    }
+
+    #[test]
+    fn bending_stays_inside_its_range_and_leaves_flat_and_discrete_segments_alone() {
+        let param = unit_param(Unit::None);
+        let extreme = bend_to(&bend_points(Curve::Linear), 0, 0.0001, &param);
+        assert_eq!(extreme[0].curve, Curve::Bend(64));
+        let extreme = bend_to(&bend_points(Curve::Linear), 0, 0.9999, &param);
+        assert_eq!(extreme[0].curve, Curve::Bend(-64));
+        // Equal end values, a bad index, a step-only param.
+        let mut flat = bend_points(Curve::Linear);
+        flat[1].value = 0.0;
+        assert_eq!(bend_to(&flat, 0, 0.3, &param), flat);
+        assert_eq!(bend_to(&flat, 9, 0.3, &param), flat);
+        let choice = unit_param(Unit::Choice(&["a", "b"]));
+        let pts = bend_points(Curve::Linear);
+        assert_eq!(bend_to(&pts, 0, 0.2, &choice), pts);
+    }
+
+    #[test]
+    fn segments_are_found_between_points_and_straighten_only_bends() {
+        let pts = bend_points(Curve::Bend(10));
+        assert_eq!(segment_at(&pts, 0), Some(0));
+        assert_eq!(segment_at(&pts, 150), Some(1));
+        assert_eq!(segment_at(&pts, 200), None, "after the last point");
+        assert_eq!(segment_at(&pts, -5), None, "before the first point");
+        assert_eq!(straighten(&pts, 0)[0].curve, Curve::Linear);
+        assert_eq!(straighten(&pts, 1)[1].curve, Curve::Step);
+        assert_eq!(straighten(&pts, 7), pts);
+    }
+
+    #[test]
+    fn new_points_on_choices_and_toggles_hold_and_others_ramp() {
+        assert_eq!(new_point_curve(&unit_param(Unit::Toggle)), Curve::Step);
+        assert_eq!(
+            new_point_curve(&unit_param(Unit::Choice(&["a"]))),
+            Curve::Step
+        );
+        assert_eq!(new_point_curve(&unit_param(Unit::Hz)), Curve::Linear);
     }
 }

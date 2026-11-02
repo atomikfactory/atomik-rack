@@ -621,6 +621,22 @@ enum Drag {
         emitted: bool,
         last: Vec<AutomationPoint>,
     },
+    /// A segment of an automation clip is bent: the curve follows the pointer's height at the
+    /// middle of the segment (see [`seq_edit::bend_to`]); a click without a drag straightens it.
+    Bend {
+        start: Point,
+        id: ClipId,
+        merge: u64,
+        top: f64,
+        height: f64,
+        param: ParamDescriptor,
+        original: Vec<AutomationPoint>,
+        /// The first point of the segment.
+        index: usize,
+        moved: bool,
+        emitted: bool,
+        last: Vec<AutomationPoint>,
+    },
     /// Drawing a series of automation points with the pencil.
     Series(Box<draw_series::SeriesDrag>),
     /// Dragging the snap selector: up steps through the resolutions, a press without a drag
@@ -3489,6 +3505,15 @@ impl ArrangementView {
                 let ClipContent::Automation(points) = &clip.content else {
                     return;
                 };
+                // The fine-adjust role held on a segment bends it instead of adding a point.
+                if self
+                    .vp
+                    .roles()
+                    .is_active(Role::FineAdjust, modifiers, GestureClass::DragControl)
+                    && self.start_bend_drag(track, lane, &clip, points, pos)
+                {
+                    return;
+                }
                 self.selection.select_only(id);
                 let step = self.step(modifiers);
                 let raw = self.axis.x_to_tick(pos.x);
@@ -3508,7 +3533,7 @@ impl ArrangementView {
                     AutomationPoint {
                         tick,
                         value,
-                        curve: Curve::Linear,
+                        curve: seq_edit::new_point_curve(&param),
                     },
                 );
                 let merge = self.merge_id();
@@ -3745,6 +3770,53 @@ impl ArrangementView {
         };
     }
 
+    /// Starts bending the segment of `points` under the pointer (the fine-adjust role held on an
+    /// automation clip). `false` when the pointer is not over a segment, or the lane is discrete.
+    fn start_bend_drag(
+        &mut self,
+        track: usize,
+        lane: usize,
+        clip: &Clip,
+        points: &[AutomationPoint],
+        pos: Point,
+    ) -> bool {
+        let raw = self.axis.x_to_tick(pos.x);
+        let Some(w) = seq_edit::content_windows(clip)
+            .into_iter()
+            .find(|w| (w.song_start..w.song_end).contains(&raw))
+        else {
+            return false;
+        };
+        let content = raw - (w.song_start - w.content_start);
+        let Some(index) = seq_edit::segment_at(points, content) else {
+            return false;
+        };
+        let Some(row) = self.row_of(track, lane).map(|r| self.row_rect(r)) else {
+            return false;
+        };
+        let param = self.param_of(track, lane);
+        if seq_edit::is_discrete(&param) {
+            return false;
+        }
+        let (top, bottom) = value_range(self.clip_rect_in(row, clip));
+        let merge = self.merge_id();
+        self.selection.select_only(clip.id);
+        self.drag = Drag::Bend {
+            start: pos,
+            id: clip.id,
+            merge,
+            top,
+            height: bottom - top,
+            param,
+            original: points.to_vec(),
+            index,
+            moved: false,
+            emitted: false,
+            last: points.to_vec(),
+        };
+        true
+    }
+
     /// Moves the selected clips one snap step (a beat, a tick) earlier or later as one undo step:
     /// a batch of geometry commands, the whole group stopping at tick 0.
     fn nudge_clips(&self, id: &str) -> CommandOutcome {
@@ -3822,7 +3894,7 @@ impl ArrangementView {
         clip.content = ClipContent::Automation(vec![AutomationPoint {
             tick,
             value: seq_edit::value_from_y(&param, at.y, top, bottom - top),
-            curve: Curve::Linear,
+            curve: seq_edit::new_point_curve(&param),
         }]);
         Some(song_cmd(SongCommand::AddClip {
             device: device.clone(),
@@ -4300,6 +4372,32 @@ impl ArrangementView {
                 }
                 self.repaint = true;
             }
+            Drag::Bend {
+                start,
+                id,
+                merge,
+                top,
+                height,
+                param,
+                original,
+                index,
+                moved,
+                emitted,
+                last,
+            } => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                if !*moved {
+                    return;
+                }
+                let target = seq_edit::value_from_y(param, pos.y, *top, *height);
+                let new = seq_edit::bend_to(original, *index, target, param);
+                if new != *last {
+                    out.push(content_cmd(*id, new.clone(), Some(*merge)));
+                    *last = new;
+                    *emitted = true;
+                }
+                self.repaint = true;
+            }
             Drag::Point {
                 start,
                 id,
@@ -4585,6 +4683,24 @@ impl ArrangementView {
                 }
             }
             Drag::Series(_) => out.push(UiAction::EndMerge),
+            Drag::Bend {
+                id,
+                original,
+                index,
+                moved,
+                emitted,
+                ..
+            } => {
+                if emitted {
+                    out.push(UiAction::EndMerge);
+                } else if !moved {
+                    // A click on a bent segment straightens it.
+                    let straight = seq_edit::straighten(&original, index);
+                    if straight != original {
+                        out.push(content_cmd(id, straight, None));
+                    }
+                }
+            }
             Drag::Resize { emitted, .. }
             | Drag::Trim { emitted, .. }
             | Drag::Point { emitted, .. }
@@ -5383,6 +5499,16 @@ impl ArrangementView {
             }
             Drag::Series(s) => {
                 out.push(content_cmd(s.id, s.base, Some(s.merge)));
+                out.push(UiAction::EndMerge);
+            }
+            Drag::Bend {
+                id,
+                merge,
+                original,
+                emitted: true,
+                ..
+            } => {
+                out.push(content_cmd(id, original, Some(merge)));
                 out.push(UiAction::EndMerge);
             }
             Drag::Point {
@@ -7068,7 +7194,7 @@ fn button_shown(row: Rect, button: TrackButton) -> bool {
 }
 
 /// The polyline of an automation window: content ticks `[c0, c0 + len)`, mapped with `x`
-/// and `y`. `None` without points.
+/// and `y`. `None` without points. A bent segment is drawn as a curve through sampled points.
 fn automation_path(
     points: &[AutomationPoint],
     c0: i64,
@@ -7081,16 +7207,33 @@ fn automation_path(
     path.move_to(pt(x(c0), y(v0)));
     let end = c0 + len;
     let mut prev: Option<AutomationPoint> = points.iter().rev().find(|p| p.tick <= c0).copied();
+    // Where the path is now (a tick), for the samples of a bent segment.
+    let mut at = c0;
+    let bend = |path: &mut BezPath, from: i64, to: i64| {
+        const SAMPLES: i64 = 24;
+        for i in 1..SAMPLES {
+            let t = from + (to - from) * i / SAMPLES;
+            if let Some(v) = seq_edit::automation_value_at(points, t) {
+                path.line_to(pt(x(t), y(v)));
+            }
+        }
+    };
     for p in points.iter().filter(|p| p.tick > c0 && p.tick < end) {
         if prev.is_some_and(|q| q.curve == Curve::Step) {
             path.line_to(pt(x(p.tick), y(prev.map_or(v0, |q| q.value))));
+        } else if prev.is_some_and(|q| matches!(q.curve, Curve::Bend(_))) {
+            bend(&mut path, at, p.tick);
         }
         path.line_to(pt(x(p.tick), y(p.value)));
         prev = Some(*p);
+        at = p.tick;
     }
     let ve = if prev.is_some_and(|q| q.curve == Curve::Step) {
         prev.map_or(v0, |q| q.value)
     } else {
+        if prev.is_some_and(|q| matches!(q.curve, Curve::Bend(_))) {
+            bend(&mut path, at, end);
+        }
         seq_edit::automation_value_at(points, end)?
     };
     path.line_to(pt(x(end), y(ve)));
