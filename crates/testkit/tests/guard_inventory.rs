@@ -37,6 +37,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "render/midi_maps.rs",
     "render/midi_out_bounce.rs",
     "render/mix_channels.rs",
+    "render/mod_matrix.rs",
     "render/note_lanes.rs",
     "render/note_lanes_chase.rs",
     "render/note_mute.rs",

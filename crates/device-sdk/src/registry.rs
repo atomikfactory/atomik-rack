@@ -177,6 +177,24 @@ impl Registry {
         Ok(())
     }
 
+    /// Gives the already registered built-in type `type_id` a modulation matrix, for a registry
+    /// that is built by copying another one ([`Registry::register_with_mods`] does both steps).
+    /// The tables are checked like there; an unknown type is refused.
+    pub fn attach_mods(
+        &mut self,
+        type_id: &'static str,
+        tables: &'static ModTables,
+    ) -> Result<(), RegistryError> {
+        let Some(factory) = self.factories.get(type_id) else {
+            return Err(RegistryError::UnknownPlugin(type_id.to_owned()));
+        };
+        tables
+            .validate(factory.descriptor)
+            .map_err(|source| RegistryError::InvalidDescriptor { type_id, source })?;
+        self.modulated.insert(type_id, tables);
+        Ok(())
+    }
+
     /// The modulation tables of `type_id`, if it was registered with
     /// [`Registry::register_with_mods`].
     pub fn mod_tables(&self, type_id: &str) -> Option<&'static ModTables> {

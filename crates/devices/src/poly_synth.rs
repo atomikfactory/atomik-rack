@@ -60,8 +60,9 @@
 use atomik_core::NoteEvent;
 use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
-    Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
-    SocketDescriptor, SocketId, SocketKind,
+    Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, MOD_SLOT_PARAMS, ModBus,
+    ModSource, ModTables, ModTarget, PrepareInfo, ProcessContext, SocketDescriptor, SocketId,
+    SocketKind, join_params, mod_slot_params,
 };
 use atomik_dsp::chorus::Chorus;
 use atomik_dsp::wavetable::{WAVE_COUNT, WaveBank, level_for, wave_bank};
@@ -171,7 +172,11 @@ pub(crate) const P_CHORUS_DEPTH: u32 = 64;
 pub(crate) const P_DELAY_MIX: u32 = 65;
 pub(crate) const P_DELAY_TIME: u32 = 66;
 pub(crate) const P_DELAY_FEEDBACK: u32 = 67;
-pub(crate) const PARAM_COUNT: usize = 68;
+/// Params before the modulation slot block.
+pub(crate) const SYNTH_PARAM_COUNT: usize = 68;
+/// The first param of the modulation slot block ([`MOD_TABLES`]).
+pub(crate) const P_MOD_FIRST: u32 = SYNTH_PARAM_COUNT as u32;
+pub(crate) const PARAM_COUNT: usize = SYNTH_PARAM_COUNT + MOD_SLOT_PARAMS;
 
 /// `osc.table` choices: the PolyBLEP wave, then the additive bank.
 const WAVE_CHOICES: Unit = Unit::Choice(&[
@@ -224,7 +229,11 @@ const OFF_ON: Unit = Unit::Choice(&["off", "on"]);
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
-pub(crate) const BASE_PARAMS: [ParamDescriptor; PARAM_COUNT] = [
+/// The poly synth's own params, then the modulation slot block.
+pub(crate) const BASE_PARAMS: [ParamDescriptor; PARAM_COUNT] =
+    join_params(SYNTH_PARAMS, mod_slot_params(P_MOD_FIRST));
+
+const SYNTH_PARAMS: [ParamDescriptor; SYNTH_PARAM_COUNT] = [
     param(
         P_OSC1_WAVE,
         "osc1.wave",
@@ -842,6 +851,76 @@ pub(crate) const BASE_PARAMS: [ParamDescriptor; PARAM_COUNT] = [
 /// The poly synth's params.
 static PARAMS: [ParamDescriptor; PARAM_COUNT] = BASE_PARAMS;
 
+/// Modulation sources, in id order (ids are stored in projects: append only). Each is read per
+/// voice at the control rate.
+pub static MOD_SOURCES: [ModSource; 9] = [
+    mod_source(0, "amp_env", "Amp envelope", false),
+    mod_source(1, "filter_env", "Filter envelope", false),
+    mod_source(2, "mod_env", "Mod envelope", false),
+    mod_source(3, "lfo1", "LFO 1", true),
+    mod_source(4, "lfo2", "LFO 2", true),
+    mod_source(5, "velocity", "Velocity", false),
+    mod_source(6, "key", "Key (C4 is 0)", true),
+    mod_source(7, "mod_wheel", "Mod wheel", false),
+    mod_source(8, "pressure", "Pressure", false),
+];
+const SRC_AMP_ENV: usize = 0;
+const SRC_FILTER_ENV: usize = 1;
+const SRC_MOD_ENV: usize = 2;
+const SRC_LFO1: usize = 3;
+const SRC_LFO2: usize = 4;
+const SRC_VELOCITY: usize = 5;
+const SRC_KEY: usize = 6;
+const SRC_MOD_WHEEL: usize = 7;
+const SRC_PRESSURE: usize = 8;
+
+const fn mod_source(id: u16, key: &'static str, name: &'static str, bipolar: bool) -> ModSource {
+    ModSource {
+        id,
+        key,
+        name,
+        bipolar,
+    }
+}
+
+/// Modulation targets, in id order. `Pitch` is shown against the pitch CV trim and `Level`
+/// against the master level; the slot sum never changes the stored param.
+pub static MOD_TARGETS: [ModTarget; 3] = [
+    ModTarget {
+        id: 0,
+        key: "cutoff",
+        name: "Cutoff",
+        param: ParamId(P_CUTOFF),
+    },
+    ModTarget {
+        id: 1,
+        key: "pitch",
+        name: "Pitch",
+        param: ParamId(P_CV_PITCH),
+    },
+    ModTarget {
+        id: 2,
+        key: "level",
+        name: "Level",
+        param: ParamId(P_MASTER),
+    },
+];
+const TARGET_CUTOFF: u16 = 0;
+const TARGET_PITCH: u16 = 1;
+const TARGET_LEVEL: u16 = 2;
+
+/// Octaves of cutoff a full slot (amount 1, source 1) adds.
+const MOD_CUTOFF_OCTAVES: f32 = 6.0;
+/// Semitones of pitch a full slot adds (the range of the pitch CV).
+const MOD_PITCH_SEMITONES: f32 = 24.0;
+
+/// The poly synth's modulation matrix (also the mono bass's: the same voice code).
+pub static MOD_TABLES: ModTables = ModTables {
+    sources: &MOD_SOURCES,
+    targets: &MOD_TARGETS,
+    first_param: P_MOD_FIRST,
+};
+
 pub(crate) const NOTES_IN: SocketId = SocketId(0);
 pub(crate) const CUTOFF_CV_IN: SocketId = SocketId(1);
 pub(crate) const PITCH_CV_IN: SocketId = SocketId(2);
@@ -1091,6 +1170,8 @@ struct Shared {
     /// towards the target per step.
     drift_hold: u32,
     drift_coef: f32,
+    /// The modulation slots of the device ([`MOD_TABLES`]).
+    mods: ModBus,
 }
 
 /// Control-rate modulation values read by a voice.
@@ -1166,6 +1247,10 @@ struct Voice {
     /// Output gains of the left and right channel (the key spread).
     gl: f32,
     gr: f32,
+    /// The velocity the voice was played with (`0..=1`) and the pressure on its key, the sources
+    /// of the modulation slots. The pressure is set per render segment while a slot is in use.
+    vel: f32,
+    pressure: f32,
 }
 
 impl Voice {
@@ -1211,6 +1296,8 @@ impl Voice {
             drift_rng: Rng::new(derive_seed(seed, 1_000)),
             gl: 1.0,
             gr: 1.0,
+            vel: 0.0,
+            pressure: 0.0,
         }
     }
 
@@ -1265,6 +1352,7 @@ impl Voice {
         self.amp.gate_on();
         self.fenv.gate_on();
         self.menv.gate_on();
+        self.vel = velocity.clamp(0.0, 1.0);
         self.vel_gain
             .set_immediate(Self::velocity_gain(p, velocity));
         if p.drift > 0.0 {
@@ -1281,6 +1369,7 @@ impl Voice {
         self.amp.gate_on();
         self.fenv.gate_on();
         self.menv.gate_on();
+        self.vel = velocity.clamp(0.0, 1.0);
         self.vel_gain.set_target(Self::velocity_gain(p, velocity));
     }
 
@@ -1289,6 +1378,26 @@ impl Voice {
         self.amp.gate_off();
         self.fenv.gate_off();
         self.menv.gate_off();
+    }
+
+    /// The sum of the modulation slots for (cutoff, pitch, level), in the unit of the slots
+    /// (normalised, see [`ModBus::offset`]). Called only while a slot is in use.
+    fn mod_sums(&self, c: &Ctl, key: f32, p: &Shared) -> (f32, f32, f32) {
+        let mut src = [0.0f32; 9];
+        src[SRC_AMP_ENV] = self.amp.level();
+        src[SRC_FILTER_ENV] = self.fenv.level();
+        src[SRC_MOD_ENV] = self.menv.level();
+        src[SRC_LFO1] = c.lfo;
+        src[SRC_LFO2] = c.lfo2;
+        src[SRC_VELOCITY] = self.vel;
+        src[SRC_KEY] = (key - 60.0) / 60.0;
+        src[SRC_MOD_WHEEL] = p.wheel;
+        src[SRC_PRESSURE] = self.pressure;
+        (
+            p.mods.offset(TARGET_CUTOFF, &src),
+            p.mods.offset(TARGET_PITCH, &src),
+            p.mods.offset(TARGET_LEVEL, &src),
+        )
     }
 
     /// Control-rate update: oscillator pitch and the filter coefficient targets.
@@ -1305,6 +1414,11 @@ impl Voice {
         // The mod envelope, LFO 2 and drift, each zero at its default.
         let menv = self.menv.level() * p.menv_amount;
         let mut extra = c.lfo2 * p.lfo2_to_pitch;
+        // The modulation slots: one sum per target, computed only while a slot is in use.
+        let slots = p.mods.is_active().then(|| self.mod_sums(&c, key, p));
+        if let Some((_, pitch, _)) = slots {
+            extra += pitch * MOD_PITCH_SEMITONES;
+        }
         let mut extra2 = 0.0f32;
         let mut mix = p.osc_mix;
         let mut amount2 = p.osc2_amount;
@@ -1355,11 +1469,14 @@ impl Voice {
             }
         }
         self.inc2 = self.osc[1].increment();
-        let octaves = p.env_amount * 6.0 * self.fenv.level()
+        let mut octaves = p.env_amount * 6.0 * self.fenv.level()
             + p.key_track * (key - 60.0) / 12.0
             + p.lfo_to_cutoff * lfo
             + p.cv_amount * cv.clamp(-1.0, 1.0)
             + p.lfo2_to_cutoff * c.lfo2;
+        if let Some((cutoff, _, _)) = slots {
+            octaves += cutoff * MOD_CUTOFF_OCTAVES;
+        }
         let scale = if p.ladder {
             exp2_det(octaves)
         } else {
@@ -1416,7 +1533,10 @@ impl Voice {
             self.f2_cold = true;
         }
         // LFO 2 tremolo: unity at its top, `1 - to_level` at its bottom.
-        let trem = 1.0 - p.lfo2_to_level * (0.5 - 0.5 * c.lfo2);
+        let mut trem = 1.0 - p.lfo2_to_level * (0.5 - 0.5 * c.lfo2);
+        if let Some((_, _, level)) = slots {
+            trem *= (1.0 + level).clamp(0.0, 2.0);
+        }
         self.trem = if snap { trem } else { self.trem_target };
         self.trem_target = trem;
         self.trem_step = (trem - self.trem) / CONTROL_INTERVAL as f32;
@@ -1564,7 +1684,7 @@ impl Voice {
                 y = 0.0;
             }
             self.fenv.next_sample();
-            if p.menv_amount != 0.0 {
+            if p.menv_amount != 0.0 || p.mods.is_active() {
                 self.menv.next_sample();
             }
             self.trem += self.trem_step;
@@ -1744,6 +1864,7 @@ impl PolySynth {
                 drift: 0.0,
                 drift_hold: drift_timing(48_000.0).0,
                 drift_coef: drift_timing(48_000.0).1,
+                mods: ModBus::new(P_MOD_FIRST),
             },
             voices: std::array::from_fn(|i| Voice::new(derive_seed(0, i as u64 + 1))),
             voice_limit: MAX_VOICES,
@@ -1946,7 +2067,9 @@ impl PolySynth {
             }
             P_DELAY_TIME => self.delay_samples = v * 0.001 * sr,
             P_DELAY_FEEDBACK => self.delay_feedback = v,
-            _ => {}
+            P_MOD_FIRST.. => {
+                self.shared.mods.set_param(id, v);
+            }
         }
     }
 
@@ -2012,6 +2135,7 @@ impl PolySynth {
         if v.is_gated() && v.pending.is_none() {
             v.key = key;
             v.target = f32::from(key);
+            v.vel = velocity.clamp(0.0, 1.0);
             v.vel_gain.set_target(Voice::velocity_gain(&p, velocity));
         } else if v.is_active() && v.amp.stage() != AdsrStage::Fade {
             // Released but still sounding: restart the envelopes and glide on.
@@ -2059,6 +2183,7 @@ impl PolySynth {
         let back = self.held[self.held_len - 1];
         v.key = back.key;
         v.target = f32::from(back.key);
+        v.vel = back.velocity.clamp(0.0, 1.0);
         v.vel_gain
             .set_target(Voice::velocity_gain(&self.shared, back.velocity));
         self.last_pitch = Some(f32::from(back.key));
@@ -2126,7 +2251,11 @@ impl PolySynth {
         }
         // LFO 2 runs only while it has a destination (its phase waits otherwise).
         let s = &self.shared;
-        if s.lfo2_to_pitch != 0.0 || s.lfo2_to_cutoff != 0.0 || s.lfo2_to_level != 0.0 {
+        if s.lfo2_to_pitch != 0.0
+            || s.lfo2_to_cutoff != 0.0
+            || s.lfo2_to_level != 0.0
+            || s.mods.is_active()
+        {
             for b in &mut lfo2 {
                 *b = self.lfo2.next_sample();
             }
@@ -2156,7 +2285,11 @@ impl PolySynth {
                 pitch: &inp.pitch[start..end],
                 resonance: &inp.resonance[start..end],
             };
+            let slots_on = p.mods.is_active();
             for v in self.voices.iter_mut().filter(|v| v.is_active()) {
+                if slots_on {
+                    v.pressure = self.ctl.pressure(v.key);
+                }
                 v.render(&mut mix[start..end], &mut mix_r[start..end], &m, &p);
             }
             self.ctl.fill_gain(&mut ctl_gain[start..end]);
@@ -2417,78 +2550,80 @@ mod tests {
 
     #[test]
     fn descriptor_validates() {
+        let mut params: Vec<&str> = vec![
+            "osc1.wave",
+            "osc2.wave",
+            "osc1.octave",
+            "osc2.octave",
+            "osc1.semi",
+            "osc2.semi",
+            "osc1.fine",
+            "osc2.fine",
+            "osc.mix",
+            "noise.level",
+            "filter.mode",
+            "filter.cutoff",
+            "filter.resonance",
+            "filter.env_amount",
+            "filter.key_track",
+            "env.amp.attack",
+            "env.amp.decay",
+            "env.amp.release",
+            "env.amp.sustain",
+            "env.filter.attack",
+            "env.filter.decay",
+            "env.filter.release",
+            "env.filter.sustain",
+            "lfo.wave",
+            "lfo.rate",
+            "lfo.to_pitch",
+            "lfo.to_cutoff",
+            "velocity.amp",
+            "cv.cutoff_amount",
+            "voices",
+            "master.level",
+            "pitch_cv_trim",
+            "filter.resonance_cv_trim",
+            "master.level_cv_trim",
+            "pan_cv_trim",
+            "bend.range",
+            "osc1.table",
+            "osc2.table",
+            "osc2.mode",
+            "osc2.amount",
+            "filter.type",
+            "filter.drive",
+            "filter2.mode",
+            "filter2.cutoff",
+            "filter2.resonance",
+            "filter.link",
+            "filter2.routing",
+            "lfo2.wave",
+            "lfo2.rate",
+            "lfo2.to_pitch",
+            "lfo2.to_cutoff",
+            "lfo2.to_level",
+            "env.mod.attack",
+            "env.mod.decay",
+            "env.mod.sustain",
+            "env.mod.release",
+            "env.mod.amount",
+            "env.mod.dest",
+            "glide",
+            "legato",
+            "spread",
+            "drift",
+            "chorus.mix",
+            "chorus.rate",
+            "chorus.depth",
+            "delay.mix",
+            "delay.time",
+            "delay.feedback",
+        ];
+        params.extend(mod_slot_params(P_MOD_FIRST).iter().map(|p| p.key));
         assert_keys(
             &DESCRIPTOR,
-            &[
-                "osc1.wave",
-                "osc2.wave",
-                "osc1.octave",
-                "osc2.octave",
-                "osc1.semi",
-                "osc2.semi",
-                "osc1.fine",
-                "osc2.fine",
-                "osc.mix",
-                "noise.level",
-                "filter.mode",
-                "filter.cutoff",
-                "filter.resonance",
-                "filter.env_amount",
-                "filter.key_track",
-                "env.amp.attack",
-                "env.amp.decay",
-                "env.amp.release",
-                "env.amp.sustain",
-                "env.filter.attack",
-                "env.filter.decay",
-                "env.filter.release",
-                "env.filter.sustain",
-                "lfo.wave",
-                "lfo.rate",
-                "lfo.to_pitch",
-                "lfo.to_cutoff",
-                "velocity.amp",
-                "cv.cutoff_amount",
-                "voices",
-                "master.level",
-                "pitch_cv_trim",
-                "filter.resonance_cv_trim",
-                "master.level_cv_trim",
-                "pan_cv_trim",
-                "bend.range",
-                "osc1.table",
-                "osc2.table",
-                "osc2.mode",
-                "osc2.amount",
-                "filter.type",
-                "filter.drive",
-                "filter2.mode",
-                "filter2.cutoff",
-                "filter2.resonance",
-                "filter.link",
-                "filter2.routing",
-                "lfo2.wave",
-                "lfo2.rate",
-                "lfo2.to_pitch",
-                "lfo2.to_cutoff",
-                "lfo2.to_level",
-                "env.mod.attack",
-                "env.mod.decay",
-                "env.mod.sustain",
-                "env.mod.release",
-                "env.mod.amount",
-                "env.mod.dest",
-                "glide",
-                "legato",
-                "spread",
-                "drift",
-                "chorus.mix",
-                "chorus.rate",
-                "chorus.depth",
-                "delay.mix",
-                "delay.time",
-                "delay.feedback",
-            ],
+            &params,
             &[
                 "notes_in",
                 "cutoff_cv_in",

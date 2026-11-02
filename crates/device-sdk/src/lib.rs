@@ -22,7 +22,8 @@ pub use descriptor::{
 pub use midi_tap::{MIDI_TAP_EVENTS, MidiEvent, MidiTap, releases as midi_releases};
 pub use modulation::{
     MAX_MOD_SOURCES, MAX_MOD_TARGETS, MOD_SLOT_FIELDS, MOD_SLOT_PARAMS, MOD_SLOTS, ModBus,
-    ModField, ModSource, ModTables, ModTarget, join_params, mod_param_key, mod_slot_params,
+    ModField, ModSource, ModTables, ModTarget, is_mod_slot_key, join_params, mod_param_key,
+    mod_slot_params,
 };
 pub use panel::{ControlKind, PanelControl, PanelLayout, PanelSocket, RACK_UNIT, RACK_WIDTH};
 pub use player::{

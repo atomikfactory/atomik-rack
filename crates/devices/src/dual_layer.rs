@@ -30,8 +30,8 @@ use crate::poly_synth::{
     BASE_PARAMS, BatchIn, BatchOut, CUTOFF_CV_IN, LEVEL_CV_IN, NOTES_IN, OUT_L, OUT_R,
     P_BEND_RANGE, P_CHORUS_DEPTH, P_CHORUS_MIX, P_CHORUS_RATE, P_CV_LEVEL, P_CV_PAN, P_CV_PITCH,
     P_CV_RESONANCE, P_DELAY_FEEDBACK, P_DELAY_MIX, P_DELAY_TIME, P_DRIFT, P_GLIDE, P_LEGATO,
-    P_MASTER, P_OSC1_WAVE, P_OSC2_FINE, P_OSC2_WAVE, P_SPREAD, P_VOICES, PAN_CV_IN, PITCH_CV_IN,
-    PolySynth, RESONANCE_CV_IN, SOCKETS, derive_seed, soft_limit,
+    P_MASTER, P_MOD_FIRST, P_OSC1_WAVE, P_OSC2_FINE, P_OSC2_WAVE, P_SPREAD, P_VOICES, PAN_CV_IN,
+    PITCH_CV_IN, PolySynth, RESONANCE_CV_IN, SOCKETS, derive_seed, soft_limit,
 };
 
 const LAYER_MODES: Unit = Unit::Choice(&["stack", "morph"]);
@@ -121,7 +121,7 @@ fn spec() -> &'static Spec {
         }
         for (layer, prefix) in [(0usize, "a"), (1, "b")] {
             for p in BASE_PARAMS {
-                if SHARED.contains(&p.id.0) || HIDDEN.contains(&p.id.0) {
+                if SHARED.contains(&p.id.0) || HIDDEN.contains(&p.id.0) || p.id.0 >= P_MOD_FIRST {
                     continue;
                 }
                 let mut q = p;
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(layer("a."), layer("b."));
         assert_eq!(
             layer("a."),
-            crate::poly_synth::PARAM_COUNT - SHARED.len() - HIDDEN.len()
+            crate::poly_synth::SYNTH_PARAM_COUNT - SHARED.len() - HIDDEN.len()
         );
         assert_eq!(d.sockets.len(), 8);
         // Same descriptor on every call.
@@ -375,7 +375,7 @@ mod tests {
                     DeviceHarness::with_options(Box::new(PolySynth::new()), SR, 120.0, seed);
                 for p in poly.params {
                     let id = p.id.0;
-                    if SHARED.contains(&id) || HIDDEN.contains(&id) {
+                    if SHARED.contains(&id) || HIDDEN.contains(&id) || id >= P_MOD_FIRST {
                         continue;
                     }
                     d.set_param(&format!("{layer}.{}", p.key), p.default);

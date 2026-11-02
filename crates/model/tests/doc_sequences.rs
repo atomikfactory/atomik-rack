@@ -16,7 +16,7 @@ mod common;
 use atomik_device_sdk::Registry;
 use atomik_model::{
     ClipId, ClipSnapshot, Command, CreateOptions, CreateTarget, DeviceKey, DeviceSnapshot,
-    Document, ModelError, NoteSnapshot, NoteTool, QuantizeParams, RackDoc, SongCommand,
+    Document, ModSlot, ModelError, NoteSnapshot, NoteTool, QuantizeParams, RackDoc, SongCommand,
     WorkflowCommand, empty_doc, load_project, save_project, save_project_checked,
 };
 use common::audio::*;
@@ -78,6 +78,8 @@ enum WfOp {
     Warp(u8, usize, Vec<(i64, u64)>),
     /// The port of a MIDI Out device (the second value picks none or one of two names).
     MidiPort(usize, u8),
+    /// A modulation slot of a poly synth: the device, the slot, and what goes in (0 clears it).
+    ModSlot(usize, u8, u8),
     /// The song information: which of its texts changes and to which of three values.
     SongInfo(u8, u8),
     Tune(u8),
@@ -254,6 +256,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
         (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
+        (0usize..12, 0u8..8, 0u8..40).prop_map(|(d, s, v)| WfOp::ModSlot(d, s, v)),
         (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
         (0u8..5).prop_map(WfOp::Tune),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
@@ -558,6 +561,27 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             [SYNTH, DELAY, CONTAINER, SAMPLER, "atomik.midi-out"][*t],
             None,
         ),
+        WfOp::ModSlot(i, slot, v) => {
+            let synths: Vec<DeviceKey> = top
+                .iter()
+                .filter(|k| doc.device(k).is_some_and(|d| d.type_id == SYNTH))
+                .cloned()
+                .collect();
+            let value = (*v > 0).then(|| {
+                let (source, target) = (u16::from(*v) % 9, u16::from(*v / 9) % 3);
+                let slot = ModSlot::new(source, target);
+                if v % 3 == 0 {
+                    slot.via((source + 1) % 9)
+                } else {
+                    slot
+                }
+            });
+            wf(WorkflowCommand::SetModSlot {
+                device: pick(&synths, *i)?,
+                slot: *slot,
+                value,
+            })
+        }
         WfOp::MidiPort(i, p) => {
             let outs: Vec<DeviceKey> = top
                 .iter()

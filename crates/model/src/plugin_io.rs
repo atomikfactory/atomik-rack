@@ -416,6 +416,9 @@ pub(crate) fn stand_in_registry(
         } else {
             copy.register(factory).map_err(fail)?;
         }
+        if let Some(tables) = registry.mod_tables(t) {
+            copy.attach_mods(t, tables).map_err(fail)?;
+        }
     }
     for t in registry.plugin_type_ids() {
         let desc = registry.descriptor(t).expect("listed types are registered");

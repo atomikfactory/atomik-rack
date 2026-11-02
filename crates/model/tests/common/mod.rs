@@ -49,6 +49,9 @@ pub fn registry() -> Registry {
         } else {
             r.register(factory).unwrap();
         }
+        if let Some(tables) = all.mod_tables(t) {
+            r.attach_mods(t, tables).unwrap();
+        }
     }
     r
 }

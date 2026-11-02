@@ -121,7 +121,7 @@ fn with_device() -> (Document, Registry) {
         &r,
         [
             add(0, TYPE, Some("m")),
-            add(1, common::SYNTH, Some("plain")),
+            add(1, common::DELAY, Some("plain")),
         ],
     );
     (d, r)
@@ -136,7 +136,7 @@ fn a_new_device_has_no_slots() {
     let (d, r) = with_device();
     assert!(slots(&d, "m").is_empty());
     assert!(r.mod_tables(TYPE).is_some());
-    assert!(r.mod_tables(common::SYNTH).is_none());
+    assert!(r.mod_tables(common::DELAY).is_none());
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn the_field_is_refused_in_a_version_40_file_and_on_other_devices_and_when_malfo
     // On a device type without a matrix.
     let wrong = saved.replacen(
         &format!("\"type\": \"{TYPE}\""),
-        &format!("\"type\": \"{}\"", common::SYNTH),
+        &format!("\"type\": \"{}\"", common::DELAY),
         1,
     );
     assert_ne!(wrong, saved);

@@ -146,6 +146,12 @@ slot_strings! {
     AMOUNT_NAMES: "Mod " " amount";
 }
 
+/// Whether `key` is one of the slot block's param keys ([`ModField::key`]): a panel that shows
+/// the controls of a device by its params skips them and shows the matrix as a whole instead.
+pub fn is_mod_slot_key(key: &str) -> bool {
+    (0..MOD_SLOTS).any(|slot| ModField::ALL.iter().any(|f| f.key(slot) == key))
+}
+
 /// The param key of one field of one slot as a string (`slot` is `0..MOD_SLOTS`).
 pub fn mod_param_key(slot: usize, field: ModField) -> String {
     field.key(slot.min(MOD_SLOTS - 1)).to_owned()
