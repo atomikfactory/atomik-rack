@@ -52,6 +52,12 @@ jobs:
       # and VST3 test plugin libraries only run inside the scanner child and the plugin host as
       # loaded libraries, which the instrumented test binaries do not measure (their DSP core,
       # testplugins/core, is measured). The patterns are anchored on the crate path.
+      # The cache restores instrumented test programs of earlier builds, and the report reads every
+      # program it finds, so stale ones would add lines that no longer exist and count them
+      # uncovered. The clean keeps the dependencies and drops the workspace's own programs and
+      # profiles.
+      - name: Drop the instrumented programs and profiles of earlier builds
+        run: cargo llvm-cov clean --workspace
       - name: Run the tests with coverage
         run: >-
           cargo llvm-cov --no-report --workspace --no-fail-fast
