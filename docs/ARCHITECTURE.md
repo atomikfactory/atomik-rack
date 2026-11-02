@@ -3360,6 +3360,9 @@ parameter tables are in [DEVICES.md](DEVICES.md).
 | Device | Notes |
 |---|---|
 | `atomik.reverb` | 8-line feedback delay network with room, hall and plate settings, seeded parabolic LFO modulation, freeze, latency 0. |
+| `atomik.space-reverb` | The reverb engine with arena, cathedral, spring and echoverb algorithms, a wet high cut and a gated tail; latency 0. |
+| `atomik.convolver` | Convolution reverb: an impulse response from the project pool, a 256-sample direct head plus uniform frequency-domain partitions (zero latency), built a few partitions per batch and crossfaded on a swap. |
+| `atomik.vocoder` | 4 to 32 band channel vocoder with an internal noise carrier and a consonant hiss path; latency 0. |
 | `atomik.compressor` | Peak or RMS detector, soft knee, auto release, key filters, sidechain input, look-ahead 0 to 5 ms reported as latency. |
 | `atomik.eq` | Six bands (cut slopes 12/24/48 dB per octave), coarse band levels published for the analyser. |
 | `atomik.distortion` | Ten curves (the last five with ADAA, see [shaper.rs](../crates/dsp/src/shaper.rs)), cut and body sections, off/2x/4x halfband oversampling; the oversampler latency is reported and the dry path is delayed to match. |

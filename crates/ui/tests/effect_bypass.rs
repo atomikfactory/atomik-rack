@@ -33,8 +33,11 @@ const PLAYERS: [&str; 8] = [
 /// The container: its inside is left out while it is bypassed.
 const CONTAINER: &str = "atomik.container";
 
-const EFFECTS: [&str; 18] = [
+const EFFECTS: [&str; 21] = [
     "atomik.reverb",
+    "atomik.space-reverb",
+    "atomik.convolver",
+    "atomik.vocoder",
     "atomik.compressor",
     "atomik.eq",
     "atomik.distortion",

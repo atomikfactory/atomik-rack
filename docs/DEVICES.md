@@ -1,10 +1,10 @@
 # Device reference
 
-Atomik Rack ships forty-six original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships fifty original devices: the poly synth (with its mono bass and dual layer
 variants), the wavetable synth, the FM synth, the grain sampler, line mixer and stereo delay, the Mod
 Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
-a hardware synth or a virtual port), the effects (reverb, compressor, EQ,
+a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
@@ -935,6 +935,160 @@ A stereo algorithmic reverb with three algorithms. Source:
 - **Meter values.** `[output peak L, output peak R, tail RMS]`, linear, of the last batch.
 - **Buffers** are allocated in `prepare` for the largest size at the sample rate (about 0.17 s per
   FDN line, 0.25 s for the pre-delay).
+
+---
+
+## Space Reverb: `atomik.space-reverb` (Effect)
+
+A stereo algorithmic reverb for large and unusual spaces. It runs the same engine as the
+[reverb](#reverb-atomikreverb-effect) (feedback network, early taps, RT60-calibrated decay, damping,
+freeze, mix behaviour, buffers) with four other algorithms and two extra output stages. Source:
+[crates/devices/src/space_reverb.rs](../crates/devices/src/space_reverb.rs) around
+[crates/devices/src/reverb.rs](../crates/devices/src/reverb.rs).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `in_l` | Audio | in | |
+| `in_r` | Audio | in | |
+| `out_l` | Audio | out | |
+| `out_r` | Audio | out | |
+| `mix_cv_in` | CV | in | added to `mix` through `mix_cv_trim`, as in the reverb |
+
+### Params
+
+The first thirteen params are those of the reverb with the same meaning; `decay` defaults to 3 s.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `algorithm` | 0–3: arena, cathedral, spring, echoverb | 0 (arena) | choice | Linear | yes |
+| `predelay` | 0 to 250 | 20 | ms | Linear | no |
+| `size` | 0 to 1 | 0.5 | percent | Linear | no |
+| `decay` | 0.2 to 20 (seconds) | 3 | none | Exp | no |
+| `damping` | 0 to 1 | 0.4 | percent | Linear | no |
+| `lowcut` | 20 to 1000 | 80 | Hz | Exp | no |
+| `early` | 0 to 1 | 0.5 | percent | Linear | no |
+| `width` | 0 (mono) to 1 | 1 | percent | Linear | no |
+| `modulation` | 0 to 1 | 0.5 | percent | Linear | no |
+| `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
+| `freeze` | 0 or 1 | 0 | toggle | Linear | yes |
+| `output` | −24 to 12 | 0 | dB | Linear | no |
+| `mix_cv_trim` | −1 to 1 | 1 | percent | Linear | no |
+| `highcut` | 1000 to 20000 | 20000 | Hz | Exp | no |
+| `gate` | 0 (off) to 500 | 0 | ms | Linear | no |
+| `gate_level` | −60 to 0 | −40 | dB | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Algorithms.** *Arena*: lines 47–134 ms, widely spaced early reflections (12–90 ms). *Cathedral*:
+  lines 62–181 ms, late soft early reflections, dark (7 kHz at `damping` 0). *Spring*: lines 8–24 ms
+  with a high allpass coefficient (0.78): the highs arrive behind the lows, the chirp of a sprung tank.
+  *Echoverb*: lines 83–311 ms with little diffusion behind evenly spaced early repeats (61–485 ms), an
+  echo that melts into a tail. Delay times scale with `size` as in the reverb.
+- **High cut.** A one-pole lowpass on the wet signal, smoothed like the other controls.
+- **Gate.** `gate` is the hold time and `gate_level` the input level that keeps the gate open. The
+  wet output fades out over 12 ms `gate` ms after the input last exceeded the level, and opens again
+  within 1 ms. `gate` 0 keeps it open.
+- **Mix and latency.** As the reverb: latency 0, and at `mix` 0 the input is copied bit for bit.
+- **Meter values.** `[output peak L, output peak R, tail RMS]`.
+
+---
+
+## Convolution Reverb: `atomik.convolver` (Effect)
+
+Convolves the input with an impulse response (IR) taken from an audio file of the project. Source:
+[crates/devices/src/convolver.rs](../crates/devices/src/convolver.rs), the engine is
+[crates/dsp/src/convolver.rs](../crates/dsp/src/convolver.rs). No impulse files ship with Atomik: drop
+your own `.wav` on the device (a new drop replaces the old one).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `in_l` | Audio | in | |
+| `in_r` | Audio | in | |
+| `out_l` | Audio | out | |
+| `out_r` | Audio | out | |
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `predelay` | 0 to 250 | 0 | ms | Linear | no |
+| `lowcut` | 20 to 1000 | 20 | Hz | Exp | no |
+| `highcut` | 1000 to 20000 (20000 is off) | 20000 | Hz | Exp | no |
+| `width` | 0 (mono) to 1 | 1 | percent | Linear | no |
+| `output` | −24 to 12 | 0 | dB | Linear | no |
+| `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Impulse response.** The first zone of the device sample map, from its `start` to its `end`
+  frame, at the session rate. A mono IR convolves both channels; a stereo IR convolves the left input
+  with its left channel and the right input with its right channel. IRs longer than 5 seconds are cut
+  with a short fade. Without an IR the wet signal is silent.
+- **Level.** The IR is normalised to unit energy (the louder channel), so white noise keeps its power at
+  `mix` 1 and `output` 0 dB, and swapping IRs does not change the level.
+- **Zero latency.** The first 256 samples of the IR are convolved directly; the rest in uniform
+  256-sample partitions in the frequency domain (overlap-save). `latency_frames()` is 0 and the result
+  equals the direct convolution to float rounding. The sums run in a fixed order, so a bounce is
+  bit-identical at every host block size.
+- **Loading.** Everything is allocated in `prepare` (about 12 MB at 48 kHz for the longest IR). Installing
+  a sample map only stores it; the partitions are transformed a few per batch, which takes a few hundred
+  milliseconds for the longest IR. The first IR of a device is exact from the first sample. A later IR
+  is built while the old one keeps sounding and is crossfaded in over 256 samples, so a swap never clicks.
+- **Mix.** Output = dry × (1 − `mix`) + wet × `mix` × output gain; at `mix` 0 the input is copied bit for
+  bit. `predelay`, `width`, `lowcut` and `highcut` shape the wet signal only.
+
+---
+
+## Vocoder: `atomik.vocoder` (Effect)
+
+A 4 to 32 band channel vocoder: the carrier, band by band, scaled by the level of the modulator in
+the same band. Source: [crates/devices/src/vocoder.rs](../crates/devices/src/vocoder.rs).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `in_l` | Audio | in | modulator (L and R are summed) |
+| `in_r` | Audio | in | |
+| `carrier_l` | Audio | in | carrier; with neither carrier cabled an internal white noise is used |
+| `carrier_r` | Audio | in | |
+| `out_l` | Audio | out | |
+| `out_r` | Audio | out | |
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `bands` | 4 to 32 | 16 | none | Linear | yes |
+| `low` | 40 to 500 | 100 | Hz | Exp | no |
+| `high` | 2000 to 16000 | 8000 | Hz | Exp | no |
+| `bandwidth` | 0.5 to 2 | 1 | none | Linear | no |
+| `attack` | 0.1 to 50 | 2 | ms | Exp | no |
+| `release` | 1 to 500 | 40 | ms | Exp | no |
+| `hiss` | 0 to 1 | 0.3 | percent | Linear | no |
+| `mix` | 0 (dry) to 1 (wet) | 1 | percent | Linear | no |
+| `output` | −24 to 12 | 0 | dB | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Bands.** Centres are log-spaced from `low` to `high`. Each band is two cascaded 12 dB bandpass
+  filters of unit peak gain, in the analysis path and in the synthesis path (per carrier channel).
+  `bandwidth` scales the overlap of neighbours. Changing a band parameter retunes at the next batch.
+- **Followers.** One follower per band tracks the rectified analysis output with `attack` and
+  `release`; its value times 1.57 (the peak to mean-rectified ratio of a sine) is the band gain, so a
+  sine modulator of amplitude *a* at a band centre scales a carrier tone there by about *a*.
+- **Hiss.** The modulator highpassed at 6 kHz drives a follower that scales the internal noise by
+  `hiss`, which keeps consonants audible above the top band.
+- **Mix and latency.** Latency 0; at `mix` 0 the input is copied bit for bit. The wet signal is
+  clamped to ±32.
+- **Not built.** The 512-band STFT mode.
 
 ---
 

@@ -967,3 +967,40 @@ fn the_live_path_plays_the_sampler_demo_exactly_like_the_bounce() {
         }
     }
 }
+
+#[test]
+fn a_drop_onto_the_convolution_reverb_is_its_one_impulse_response() {
+    let t = Tmp::new("convolver-drop");
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.convolver".into(),
+        key: Some(key("cnv")),
+    })
+    .unwrap();
+    c.sink_mut().take();
+    let drop = |c: &mut AppCore<RecordingSink>, paths: Vec<PathBuf>| {
+        c.handle_action(UiAction::ImportSamples {
+            paths,
+            device: key("cnv"),
+            at_key: None,
+        });
+        c.wait_background();
+    };
+    drop(
+        &mut c,
+        vec![
+            wav(&t, "room.wav", 4_800, 1.0),
+            wav(&t, "hall.wav", 9_600, 0.5),
+        ],
+    );
+    let zones = c.doc().device(&key("cnv")).unwrap().zones.clone();
+    assert_eq!(zones.len(), 1, "one impulse response");
+    assert!(c.last_rejection().unwrap().contains("hall.wav"));
+    let sent = sample_calls(&c.sink_mut().take());
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1.as_ref().unwrap().zones().len(), 1);
+    drop(&mut c, vec![wav(&t, "plate.wav", 2_400, 0.5)]);
+    let zones = c.doc().device(&key("cnv")).unwrap().zones.clone();
+    assert_eq!((zones.len(), zones[0].end), (1, 2_400));
+}

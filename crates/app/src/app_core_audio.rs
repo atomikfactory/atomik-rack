@@ -707,8 +707,8 @@ impl<S: EngineSink> AppCore<S> {
         }
         let mut paths = paths;
         let mut ignored = Vec::new();
-        // A loop slicer takes one loop and a granular sampler one sample.
-        if (self.is_loop_slicer(&device) || self.is_granular(&device)) && paths.len() > 1 {
+        // A loop slicer takes one loop; a granular sampler or a convolver one sample.
+        if (self.is_loop_slicer(&device) || self.is_one_sample(&device)) && paths.len() > 1 {
             ignored = paths.split_off(1).iter().map(|p| display_name(p)).collect();
         }
         let samples = SampleImport {
@@ -748,17 +748,17 @@ impl<S: EngineSink> AppCore<S> {
         let (zones, dropped) =
             super::drums::zones_after_import(device, &import.files, import.at_key);
         let name = device.name.clone();
-        let granular = device.type_id == super::samples::GRANULAR;
+        let one_sample = super::samples::takes_one_sample(&device.type_id);
         // A rejection is already reported.
         let _ = self.apply_command(Command::SetZones {
             device: import.device,
             zones,
             merge: None,
         });
-        if granular {
+        if one_sample {
             return (!import.ignored.is_empty()).then(|| {
                 format!(
-                    "{name}: a granular sampler takes one sample; ignored {} file(s): {}",
+                    "{name}: this device takes one sample; ignored {} file(s): {}",
                     import.ignored.len(),
                     import.ignored.join(", ")
                 )
