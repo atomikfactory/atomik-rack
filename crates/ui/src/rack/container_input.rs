@@ -159,9 +159,9 @@ impl RackView {
             }
             if inline {
                 self.compute_inline_driven(&base);
-                let mut flat = base.into_owned();
-                super::inline::flatten(&mut flat);
-                return Cow::Owned(flat);
+                if let Some(flat) = super::inline::flatten(&base) {
+                    return Cow::Owned(flat);
+                }
             }
             return base;
         }

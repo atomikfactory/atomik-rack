@@ -163,20 +163,33 @@ fn push_entry(
     }));
 }
 
-/// Replaces the devices and cables of `doc` by the flat form (see the module documentation).
-/// Returns whether anything is unfolded; `doc` is left alone when nothing is.
-pub(super) fn flatten(doc: &mut RackDoc) -> bool {
+/// The flat form of `doc` (see the module documentation): its devices and cables replaced by
+/// the ones of the rack and of every unfolded container. `None` when nothing is unfolded.
+pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
     if !doc.devices.iter().any(is_open) {
-        return false;
+        return None;
     }
     let mut devices = Vec::with_capacity(doc.devices.len() + 8);
     let mut cables = doc.cables.clone();
     for d in &doc.devices {
         push_entry(d, None, d.column, &mut devices, &mut cables);
     }
-    doc.devices = devices;
-    doc.cables = cables;
-    true
+    Some(RackDoc {
+        sample_rate: doc.sample_rate,
+        tempo_bpm: doc.tempo_bpm,
+        seed: doc.seed,
+        output_channels: doc.output_channels,
+        input_channels: doc.input_channels,
+        assets: doc.assets.clone(),
+        devices,
+        columns: doc.columns,
+        cables,
+        song: doc.song.clone(),
+        console: doc.console.clone(),
+        midi_maps: doc.midi_maps.clone(),
+        macros: doc.macros.clone(),
+        info: doc.info.clone(),
+    })
 }
 
 impl RackView {
