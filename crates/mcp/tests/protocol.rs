@@ -233,3 +233,77 @@ fn the_binary_rejects_unknown_arguments() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown argument"));
 }
+
+#[test]
+fn a_line_is_read_up_to_the_limit_and_a_longer_one_is_skipped_whole() {
+    use atomik_mcp::rpc::{Line, read_line_limited};
+    let mut input = std::io::Cursor::new(b"abc\r\n0123456789\nxy\n\nlast".to_vec());
+    let mut next = |limit| read_line_limited(&mut input, limit).unwrap();
+    assert_eq!(
+        next(10),
+        Some(Line::Text("abc".into())),
+        "CRLF is a line end"
+    );
+    assert_eq!(
+        next(9),
+        Some(Line::TooLong(10)),
+        "ten bytes with a limit of nine"
+    );
+    assert_eq!(
+        next(9),
+        Some(Line::Text("xy".into())),
+        "the next line is intact"
+    );
+    assert_eq!(next(9), Some(Line::Text(String::new())));
+    assert_eq!(next(9), Some(Line::Text("last".into())), "no final newline");
+    assert_eq!(next(9), None);
+    // Bytes that are not UTF-8 give a line the parser then refuses, not an end of input.
+    let mut input = std::io::Cursor::new(vec![b'{', 0xFF, b'\n']);
+    assert!(matches!(
+        read_line_limited(&mut input, 10).unwrap(),
+        Some(Line::Text(_))
+    ));
+}
+
+#[test]
+fn an_oversized_line_gets_a_protocol_error_and_the_server_stays_usable() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_atomik-mcp"))
+        .current_dir(repo())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        // One byte over the limit, in pieces, then a normal request.
+        let chunk = vec![b'a'; 1024 * 1024];
+        for _ in 0..atomik_mcp::rpc::MAX_LINE_BYTES / chunk.len() {
+            stdin.write_all(&chunk).unwrap();
+        }
+        stdin.write_all(b"aa\n").unwrap();
+        let ping = json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list"});
+        writeln!(stdin, "{ping}").unwrap();
+    });
+    let replies: Vec<Value> = BufReader::new(child.stdout.take().unwrap())
+        .lines()
+        .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+        .collect();
+    writer.join().unwrap();
+    assert!(child.wait().unwrap().success());
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(replies[0]["error"]["code"], -32600);
+    assert!(
+        replies[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("over the limit"),
+        "{:?}",
+        replies[0]
+    );
+    assert_eq!(replies[1]["id"], 7);
+    assert!(
+        replies[1]["result"]["tools"].is_array(),
+        "the server went on"
+    );
+}
