@@ -235,3 +235,21 @@ event-loop wakeups per second, a plugin loaded
 keymap.json stats per second                    4             0 (on focus and menu open)
 ui-state.json writes per navigation click       1             at most one per 2 s
 ```
+
+## A tuned release profile (measured, not adopted)
+
+`atomik-render --stats` real-time factor, median of 3 runs on the Windows x86-64 development machine, the
+`release` profile (`debug = 1`, default LTO and codegen units) against the same profile with `lto = "fat"` and
+`codegen-units = 1` (`panic = "unwind"` kept in both). Every output bounced bit for bit the same.
+
+```text
+example                                  release    fat LTO, 1 unit    change
+patches/fm-demo.json                     24.2x      24.7x              +2.1 %
+patches/granular-demo.json               10.2x      10.7x              +4.9 %
+patches/wavetable-demo.json              30.9x      32.1x              +3.9 %
+projects/demo.atomik                     125.9x     131.3x             +4.3 %
+projects/fx-demo                         15.2x      15.4x              +1.3 %
+```
+
+The gain is below the 5 % a separate `dist` profile needs to be worth its much longer link, so none was added and
+the release builds keep the `release` profile.
