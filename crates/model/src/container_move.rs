@@ -26,6 +26,11 @@
 //! device it finds to be the owner: the only instrument, else the end of the track's note chain,
 //! else the only device (an FX return goes to the device its boundary input feeds).
 //!
+//! **Left in the rack.** A device a container can never hold (a mixer strip, an audio track, the
+//! split device, a macro bank) is left out of a combine with a note, and the rest is combined; a
+//! selection of such devices alone is refused naming the first. Two or more moving devices that
+//! have a song track, a mixer channel or an FX return refuse the combine and are named.
+//!
 //! **Not moved.** Project macros of a macro bank that drive a moving device stop the move (the
 //! bank would have nothing to drive), and so does a frozen track. MIDI mappings of a moving
 //! device's params stay in the project and drive nothing while the device is inside.
@@ -310,10 +315,12 @@ fn enter(p: &mut Planner<'_>, e: &Enter<'_>) -> Result<(), ModelError> {
         Target::New { device, index } => {
             // The container arrives with its inside, announced to the engine as one device.
             let mut new = (**device).clone();
+            // A new container arrives unfolded, so the rack still shows what was combined.
             let mut inside = ContainerDoc {
                 devices,
                 cables: wiring.inner,
                 splits: wiring.splits,
+                open: true,
                 ..ContainerDoc::default()
             };
             inside.cables.sort();
@@ -770,23 +777,41 @@ pub(crate) fn combine(
         rules::index_of(doc, key)?;
     }
     // In rack order, once each.
-    let moved: Vec<DeviceKey> = doc
+    let selected: Vec<DeviceKey> = doc
         .devices
         .iter()
         .filter(|d| keys.contains(&d.key))
         .map(|d| d.key.clone())
         .collect();
-    for key in &moved {
-        check_can_enter(doc, registry, key)?;
+    // What a container can never hold (a mixer strip, an audio track) stays in the rack and the
+    // rest is combined; any other refusal stops the combine.
+    let mut notes = Vec::new();
+    let mut moved: Vec<DeviceKey> = Vec::new();
+    let mut first_left_out: Option<ModelError> = None;
+    for key in &selected {
+        match check_can_enter(doc, registry, key) {
+            Ok(()) => moved.push(key.clone()),
+            Err(e @ ModelError::NotAllowedInContainer(_)) => {
+                notes.push(format!(
+                    "{} stays in the rack: a container cannot hold it",
+                    label(doc, key)
+                ));
+                first_left_out.get_or_insert(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    if moved.is_empty() {
+        return Err(first_left_out.unwrap_or_else(|| bad_scope("select a device to combine")));
     }
     // The song and the console name the container from now on: one owner at most.
     let owners: Vec<&DeviceKey> = moved.iter().filter(|k| has_role(doc, k)).collect();
     if owners.len() > 1 {
         let names: Vec<String> = owners.iter().map(|k| label(doc, k)).collect();
         return Err(bad_scope(format!(
-            "{} each have a song track, a console channel or an FX return, and a container keeps \
-             only one; combine them separately",
-            names.join(", ")
+            "Combine keeps one track and one mixer channel: {} each have a song track, a mixer \
+             channel or an FX return; combine them separately",
+            names.join(" and ")
         )));
     }
     for track in &doc.song.tracks {
@@ -813,7 +838,6 @@ pub(crate) fn combine(
     let mut device = new_device(registry, desc, container_key.clone(), name);
     device.column = doc.devices[first].column;
     let mut p = Planner::new(doc, registry);
-    let mut notes = Vec::new();
     let mut entry: Vec<DeviceKey> = Vec::new();
     if let Some(owner) = owners.first().copied() {
         let owner_device = rules::device(doc, owner)?;
@@ -1404,7 +1428,9 @@ fn exit(doc: &RackDoc, registry: &Registry, ex: &Exit<'_>) -> Result<Planned, Mo
             .cloned()
             .ok_or_else(|| ModelError::UnknownDevice(local.0.clone()))?;
         device.key = top(local);
-        device.column = if ex.dissolve { c_device.column } else { 0 };
+        // A device that leaves lands in the column of its container (the column order of the
+        // rack holds, whichever slot the drag chose).
+        device.column = c_device.column;
         p.push(Edit::Insert {
             index: rules::top_index(p.doc(), base + i),
             device,

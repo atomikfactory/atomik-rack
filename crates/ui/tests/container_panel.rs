@@ -128,7 +128,7 @@ fn an_empty_container_says_so() {
     );
     let mut v = view(d.doc(), &registry());
     let texts = paint_rack(&mut v, d.doc()).texts().join("|");
-    assert!(texts.contains("EMPTY") && texts.contains("double-click to open"));
+    assert!(texts.contains("EMPTY") && texts.contains("double-click: unfold"));
     assert!(texts.contains("no splits"));
 }
 
@@ -154,8 +154,39 @@ fn open_enters_the_container_and_reports_the_path() {
     assert_eq!(v.scope_depth(), 1);
 }
 
+fn set_open_command(open: bool) -> Command {
+    Command::Container(atomik_model::ContainerCommand::SetOpen {
+        container: key("layer"),
+        open,
+    })
+}
+
 #[test]
-fn a_double_click_on_the_panel_outside_its_controls_enters() {
+fn the_arrow_unfolds_the_container_in_place() {
+    let (d, mut v) = setup();
+    let p = center(&v, ContainerButton::Fold);
+    let a = click(&mut v, d.doc(), p);
+    assert_eq!(commands(&a), vec![set_open_command(true)], "{a:?}");
+    assert!(v.scope().is_empty(), "the rack does not change its view");
+    assert!(
+        a.iter()
+            .all(|x| !matches!(x, UiAction::EnterContainer { .. })),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn the_arrow_of_an_unfolded_container_folds_it() {
+    let (mut d, mut v) = setup();
+    apply(&mut d, set_open_command(true));
+    v.sync(d.doc(), &registry());
+    let p = center(&v, ContainerButton::Fold);
+    let a = click(&mut v, d.doc(), p);
+    assert_eq!(commands(&a), vec![set_open_command(false)], "{a:?}");
+}
+
+#[test]
+fn a_double_click_on_the_panel_outside_its_controls_unfolds_it_in_place() {
     let (d, mut v) = setup();
     let reg = registry();
     let desc = reg.get(CONTAINER).unwrap().descriptor;
@@ -164,13 +195,8 @@ fn a_double_click_on_the_panel_outside_its_controls_enters() {
     let r = v.device_rect(&key("layer")).unwrap();
     let p = v.rack_to_view(panel.summary.center() + atomik_ui::kurbo::Vec2::new(0.0, r.y0));
     let a = double_click(&mut v, d.doc(), p);
-    assert!(
-        a.contains(&UiAction::EnterContainer {
-            device: key("layer")
-        }),
-        "{a:?}"
-    );
-    assert_eq!(v.scope(), [key("layer")]);
+    assert_eq!(commands(&a), vec![set_open_command(true)], "{a:?}");
+    assert!(v.scope().is_empty());
 }
 
 #[test]
