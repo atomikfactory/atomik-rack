@@ -270,3 +270,94 @@ fn what_a_combine_dropped_is_told_and_a_refusal_is_reported() {
     );
     assert_eq!(c.doc(), &before);
 }
+
+/// [`core`] plus a second instrument with its own channel and song track.
+fn core_with_two_instruments() -> AppCore<OfflineSink> {
+    let mut c = core();
+    apply(
+        &mut c,
+        Command::AddDevice {
+            index: usize::MAX,
+            type_id: SYNTH.into(),
+            key: Some(key("synth2")),
+        },
+    );
+    apply(
+        &mut c,
+        Command::Song(SongCommand::AddTrack {
+            device: key("synth2"),
+        }),
+    );
+    c
+}
+
+#[test]
+fn the_edit_menu_dims_combine_for_two_instruments_and_a_key_says_which() {
+    let mut c = core_with_two_instruments();
+    select(&mut c, &["synth", "synth2"]);
+    assert_eq!(c.combine_menu(), (false, false));
+    let before = c.doc().clone();
+    assert!(!c.combine_selection());
+    let why = c.last_rejection().unwrap();
+    assert!(why.contains("\"Poly Synth\" and \"Poly Synth 2\""), "{why}");
+    assert!(why.contains("combine them separately"), "{why}");
+    assert_eq!(c.doc(), &before);
+    // One instrument alone is fine, and the answer follows the selection and the document.
+    select(&mut c, &["synth"]);
+    assert_eq!(c.combine_menu(), (true, false));
+    select(&mut c, &["synth", "synth2"]);
+    assert_eq!(c.combine_menu(), (false, false));
+    select(&mut c, &[]);
+    assert_eq!(c.combine_menu(), (false, false));
+}
+
+#[test]
+fn a_combine_leaves_the_container_unfolded_and_the_rack_shows_its_devices() {
+    let mut c = core();
+    select(&mut c, &["delay"]);
+    assert!(c.combine_selection());
+    let container = key("container");
+    assert!(c.doc().inner(&container).is_some_and(|i| i.open));
+    assert!(
+        c.view().device_rect(&key("container/delay")).is_some(),
+        "the combined device is drawn under the container"
+    );
+    // Folding it is one undo step of its own and takes the devices out of the rack's view.
+    apply(
+        &mut c,
+        Command::Container(atomik_model::ContainerCommand::SetOpen {
+            container: container.clone(),
+            open: false,
+        }),
+    );
+    assert!(c.view().device_rect(&key("container/delay")).is_none());
+    assert!(c.undo());
+    assert!(c.view().device_rect(&key("container/delay")).is_some());
+}
+
+#[test]
+fn move_out_takes_the_selected_inner_device_of_an_unfolded_container_back_to_the_rack() {
+    let mut c = core();
+    select(&mut c, &["delay"]);
+    assert!(c.combine_selection());
+    select(&mut c, &["container/delay"]);
+    assert!(c.move_out_selection(), "{:?}", c.last_rejection());
+    assert!(c.doc().device(&key("delay")).is_some());
+    assert!(c.doc().inner(&key("container")).unwrap().devices.is_empty());
+}
+
+#[test]
+fn the_unfolded_flag_never_reaches_the_engine() {
+    let mut c = core();
+    select(&mut c, &["delay"]);
+    assert!(c.combine_selection());
+    let open = bounce_of(c.doc());
+    apply(
+        &mut c,
+        Command::Container(atomik_model::ContainerCommand::SetOpen {
+            container: key("container"),
+            open: false,
+        }),
+    );
+    assert_eq!(open, bounce_of(c.doc()), "folding changes no sample");
+}
