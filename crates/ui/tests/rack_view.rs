@@ -597,9 +597,9 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let mut v = view(&doc, &reg);
     v.set_browser_visible(true);
     // Two more with the console devices shown (the default).
-    assert_eq!(v.browser_rows(&reg).len(), 44);
+    assert_eq!(v.browser_rows(&reg).len(), 47);
     v.set_show_console_devices(false);
-    assert_eq!(v.browser_rows(&reg).len(), 42); // arpeggiator, line mixer, poly synth, mono bass, dual layer, wavetable synth, FM synth, sampler, grain sampler, drum machine, loop slicer, delay, echo, reverb, compressor, eq, distortion, guitar amp, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank, midi out, gain tool, stereo tool, gate, gate + compressor, sidechain tool, envelope filter, spider audio, spider CV
+    assert_eq!(v.browser_rows(&reg).len(), 45); // arpeggiator, line mixer, poly synth, mono bass, dual layer, wavetable synth, FM synth, sampler, grain sampler, drum machine, loop slicer, delay, echo, reverb, space reverb, convolution reverb, vocoder, compressor, eq, distortion, guitar amp, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank, midi out, gain tool, stereo tool, gate, gate + compressor, sidechain tool, envelope filter, spider audio, spider CV
     for ch in "dela".chars() {
         let _ = v.handle(&key_event(Key::Char(ch), Modifiers::NONE), &doc, &reg);
     }
@@ -611,12 +611,12 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
-    assert_eq!(v.browser_rows(&reg).len(), 42); // as above (42 browsable devices, the container included)
+    assert_eq!(v.browser_rows(&reg).len(), 45); // as above (45 browsable devices, the container included)
     // Select the synth, then double-click the mixer row.
     let p = v.plate_center(&key("synth")).unwrap();
     let _ = v.handle(&down(p), &doc, &reg);
     let _ = v.handle(&up(p), &doc, &reg);
-    let row = v.browser_row_center(3).unwrap(); // atomik.drum-machine (rows sort by name, the players last: character, compressor, distortion, drum machine, ..., arpeggiator, step sequencer)
+    let row = v.browser_row_center(4).unwrap(); // atomik.drum-machine (rows sort by name, the players last: character, compressor, convolution reverb, distortion, drum machine, ..., arpeggiator, step sequencer)
     let a = v.handle(&down_with(row, PointerButton::Primary, 2), &doc, &reg);
     assert_eq!(
         commands(&a),

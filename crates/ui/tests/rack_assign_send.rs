@@ -205,7 +205,7 @@ fn enter_in_the_effect_browser_with_the_master_selected_reaches_the_send_rule() 
     let mut v = view(&doc, &reg);
     v.set_selected(Some(key("master")));
     v.open_browser_create(CreateKind::Effect, &reg);
-    for c in "reverb".chars() {
+    for c in "atomik.reverb".chars() {
         let _ = v.handle(&press(Key::Char(c), Modifiers::NONE), &doc, &reg);
     }
     let out = v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg);
