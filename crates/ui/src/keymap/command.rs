@@ -1270,6 +1270,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.add_pattern_lane",
+        "Add Pattern Lane",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.audio_crossfade",
         "Audio Crossfade",
         G::Sequencer,
@@ -1832,6 +1840,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
+    .decline(),
+    cmd(
+        "sequencer.pattern_lane_to_notes",
+        "Pattern Lane to Notes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
     .decline(),
     cmd(
         "sequencer.remove_bars",

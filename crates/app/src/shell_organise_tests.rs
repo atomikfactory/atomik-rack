@@ -154,6 +154,8 @@ fn the_track_menu_follows_the_selection() {
             "Direct Record",
             "Fold All Players",
             "Bypass All Players",
+            "Add Pattern Lane",
+            "Pattern Lane to Notes",
             "Fold Automation Lanes",
             "Unfold Automation Lanes",
             "Track Height: Small",
