@@ -1,9 +1,12 @@
 //! Help > About: a small box with the name, the version, the licence and where to find the
 //! source and the notices. It names the project and its public repository only.
 
-use atomik_ui::kurbo::{Point, Rect, RoundedRect, Size};
-use atomik_ui::peniko::Color;
+use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
+use atomik_ui::peniko::{
+    Blob, Brush, Color, ImageAlphaType, ImageBrush, ImageData, ImageFormat, ImageQuality,
+};
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
+use std::sync::{Arc, OnceLock};
 
 /// The project's public repository.
 pub const REPOSITORY_URL: &str = "https://github.com/atomikfactory/atomik-rack";
@@ -14,8 +17,18 @@ pub const LICENCE: &str = "GPL-3.0-or-later";
 /// The version of this build.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The logo (512 pixels, transparent background), embedded in the program.
+const LOGO_PNG: &[u8] = include_bytes!("../../../assets/logo/monogram.png");
+/// The logo's side in logical units.
+const LOGO: f64 = 128.0;
+/// The room the logo takes at the top of the box: its side plus the gaps around it.
+const LOGO_BLOCK: f64 = 136.0;
+/// The side of the decoded logo in pixels (half of the file, so a 1x screen shows it at a
+/// clean 2:1 and a 2x screen at 1:1).
+const LOGO_PIXELS: u32 = 256;
+
 const WIDTH: f64 = 520.0;
-const HEIGHT: f64 = 330.0;
+const HEIGHT: f64 = 330.0 + LOGO_BLOCK;
 const PAD: f64 = 24.0;
 const BUTTON: (f64, f64) = (96.0, 28.0);
 
@@ -92,7 +105,7 @@ impl AboutBox {
     /// The line that shows the repository address, where a click opens it.
     pub fn link(&self, view: Size) -> Rect {
         let r = self.rect(view);
-        let y = r.y0 + 40.0 + 12.0 * LINE;
+        let y = r.y0 + 40.0 + LOGO_BLOCK + 12.0 * LINE;
         Rect::new(r.x0 + PAD, y, r.x0 + PAD + 330.0, y + LINE)
     }
 
@@ -133,8 +146,16 @@ impl AboutBox {
         let panel = RoundedRect::from_rect(r, 10.0);
         canvas.fill_with(panel, theme.browser_bg);
         canvas.stroke_with(panel, 1.0, theme.section_line);
+        if let Some(brush) = logo_brush() {
+            let x = r.center().x - LOGO / 2.0;
+            let scale = LOGO / f64::from(LOGO_PIXELS);
+            canvas.push_transform(Affine::translate((x, r.y0 + 16.0)) * Affine::scale(scale));
+            let side = f64::from(LOGO_PIXELS);
+            canvas.fill_with(Rect::new(0.0, 0.0, side, side), brush.clone());
+            canvas.pop_transform();
+        }
         for (i, line) in self.lines().iter().enumerate() {
-            let y = r.y0 + 40.0 + LINE * i as f64;
+            let y = r.y0 + 40.0 + LOGO_BLOCK + LINE * i as f64;
             if i == 0 {
                 canvas.text(
                     &TextRun::new(line.clone(), Point::new(r.x0 + PAD, y), 22.0, theme.text)
@@ -181,6 +202,71 @@ impl AboutBox {
 
 /// The height of a text line of the box.
 const LINE: f64 = 18.0;
+
+/// The logo as an image brush, decoded and reduced once on first use (never on the audio path).
+/// `None` if the embedded file cannot be decoded; the box then shows no logo.
+fn logo_brush() -> Option<&'static Brush> {
+    static LOGO_BRUSH: OnceLock<Option<Brush>> = OnceLock::new();
+    LOGO_BRUSH
+        .get_or_init(|| {
+            let (side, rgba) = decode_logo(LOGO_PNG, LOGO_PIXELS)?;
+            let image = ImageData {
+                data: Blob::new(Arc::new(rgba)),
+                format: ImageFormat::Rgba8,
+                alpha_type: ImageAlphaType::AlphaPremultiplied,
+                width: side,
+                height: side,
+            };
+            let sampler = atomik_ui::peniko::ImageSampler::new().with_quality(ImageQuality::High);
+            Some(Brush::Image(ImageBrush { image, sampler }))
+        })
+        .as_ref()
+}
+
+/// Decodes a square 8-bit RGBA PNG and reduces it by whole 2x2 box averages until it is no
+/// larger than `max_side`. The result is premultiplied RGBA, so no colour bleeds out of the
+/// transparent pixels. `None` for anything that is not a square 8-bit RGBA PNG.
+fn decode_logo(png_bytes: &[u8], max_side: u32) -> Option<(u32, Vec<u8>)> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes))
+        .read_info()
+        .ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    if info.color_type != png::ColorType::Rgba
+        || info.bit_depth != png::BitDepth::Eight
+        || info.width != info.height
+        || info.width == 0
+    {
+        return None;
+    }
+    buf.truncate(info.buffer_size());
+    let mut side = info.width as usize;
+    // Premultiply in place.
+    for px in buf.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[3]);
+        for c in &mut px[..3] {
+            *c = ((u32::from(*c) * a + 127) / 255) as u8;
+        }
+    }
+    while side > max_side as usize && side.is_multiple_of(2) {
+        let half = side / 2;
+        let mut out = vec![0u8; half * half * 4];
+        for y in 0..half {
+            for x in 0..half {
+                for c in 0..4 {
+                    let at = |dx: usize, dy: usize| {
+                        u32::from(buf[((2 * y + dy) * side + 2 * x + dx) * 4 + c])
+                    };
+                    out[(y * half + x) * 4 + c] =
+                        ((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4) as u8;
+                }
+            }
+        }
+        buf = out;
+        side = half;
+    }
+    Some((u32::try_from(side).ok()?, buf))
+}
 
 #[cfg(test)]
 mod tests {
@@ -267,6 +353,31 @@ mod tests {
         );
         let inside = b.rect(VIEW).center();
         assert_eq!(b.handle(&down(inside), VIEW), AboutOutcome::Open);
+    }
+
+    #[test]
+    fn the_logo_decodes_reduced_and_premultiplied_and_the_box_draws_it_first() {
+        let (side, rgba) = decode_logo(LOGO_PNG, LOGO_PIXELS).expect("the embedded logo decodes");
+        assert_eq!(side, LOGO_PIXELS);
+        assert_eq!(rgba.len(), (side * side * 4) as usize);
+        // Transparent corners, visible artwork, and no colour outside the alpha (premultiplied).
+        assert_eq!(&rgba[..4], &[0, 0, 0, 0]);
+        assert!(rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 200));
+        assert!(
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| p[..3].iter().all(|&c| c <= p[3]))
+        );
+        assert_eq!(decode_logo(b"not a png", LOGO_PIXELS), None);
+
+        let mut list = DisplayList::new();
+        AboutBox::new("1").paint(&mut list, &Theme::dark(), VIEW);
+        assert!(list.to_json().contains("\"image\""), "the logo is painted");
+        // The logo sits inside the box, centred, above the title.
+        let b = AboutBox::new("1");
+        let r = b.rect(VIEW);
+        assert!(r.height() >= LOGO_BLOCK + 40.0 + 13.0 * LINE);
     }
 
     fn golden(name: &str, theme: &Theme) {

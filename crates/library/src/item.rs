@@ -70,7 +70,7 @@ impl LibrarySection {
             FileKind::Container => Some(Self::Containers),
             FileKind::Clip => Some(Self::Clips),
             FileKind::Project => Some(Self::Projects),
-            FileKind::Folder | FileKind::Audio(_) => None,
+            FileKind::Folder | FileKind::Audio(_) | FileKind::Midi => None,
         }
     }
 
