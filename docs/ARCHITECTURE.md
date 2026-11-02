@@ -322,6 +322,20 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   no history. The defaults are a working assumption
   ([DECISIONS.md](DECISIONS.md#k-undo-history-budget)). Undo runs on the step itself
   (`Edit::invert` swaps old and new in place, then back), so it copies none of the step.
+- **A swap edit is one table entry.** An edit that only replaces one value (a device's name, colour,
+  fold or patch name, the column count, the song information, the master tune, a track's chase,
+  Direct Record or note entry) is an entry of `Swap` (`history/swap.rs`): its name, what it is keyed
+  by, the type of the value and how to store it. The inverse and the perform arm come from the
+  table, so adding one touches nothing else.
+- **A drag is a `Gesture`.** `Document::begin_gesture` returns a guard that merges the commands of
+  one merge id into one undo step and ends the group when it is dropped, on any path out of the
+  scope. `end_merge` remains for a gesture that spans events, where no guard can be held (the
+  pointer release). `undo` and `redo` need no registry.
+- **Fades and envelope points stay inside their clip.** `AddAudioClip`, `SetAudioClip` and
+  `StripSilence` refuse a fade or a gain envelope point longer than the clip (in frames at the
+  song's tempo). A fade a later trim or tempo change leaves past the clip is a request: flattening
+  plays it clamped to each repetition. A project written before format 40 loads clamped, with one
+  warning per clip.
 - **Copies of a document are cheap.** `RackDoc::song` is an `Arc<Song>` and the notes of a note
   clip are a `NoteList` (shared, copied on first write), so cloning a document, a planner scratch
   or a clip copies no note: a rack, console or workflow command costs the same on a song of a

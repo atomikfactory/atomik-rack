@@ -817,6 +817,10 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **A fade or a gain envelope point can no longer run past its audio clip.** Adding or changing an
+  audio clip, or stripping silence, refuses a fade or an envelope point longer than the clip. A
+  project saved by an earlier version that has one loads with it clamped to the clip and a warning
+  naming the clip; the sound is the same, since the player already clamped it.
 - **A patch dropped on a device loads into it instead of adding a new device.** The drop used to
   load only on the small patch strip of the name plate; anywhere else on the panel it inserted a
   new device. Now a patch for the device's own type loads into the device wherever on its panel
@@ -926,6 +930,12 @@ may break APIs and the patch and project formats.
   behind the finished take.
 
 ### Changed
+- **Stricter device descriptors and a safer model API.** A device descriptor whose stages skip a
+  number, start above 0 or use 255 is refused when the type is registered. A plugin whose layout is
+  refused leaves nothing behind, `Registry::get` reports the descriptor of a plugin type instead of
+  a placeholder constructor, and a tempo or meter map is always built non-empty. `Document::undo`
+  and `redo` no longer take a registry, and `Document::begin_gesture` ends a drag's merge group by
+  itself when it goes out of scope.
 - **Saving no longer freezes the window.** File > Save and the file picked for Save As write the
   project beside the window: the plugins' states are collected first (all at once, so a project with
   many plugins waits for the slowest one), then the project text is built, the audio is copied and

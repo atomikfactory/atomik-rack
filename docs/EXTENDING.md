@@ -46,6 +46,7 @@ Rules, checked by `DeviceDescriptor::validate()` and therefore by `Registry::reg
   - `Taper::Exponential` requires `min > 0`. Use it for frequencies and times.
   - `Taper::Decibel` is linear in dB, and its `min` means silence (gain 0). Use `ParamDescriptor::db_param_gain` to turn a dB value into a gain.
   - `Taper::Linear` covers everything else.
+- **Stages.** `stages` is empty (every socket is stage 0) or has one entry per socket. The stages used must be `0..=max` with every number present and `max` below 255: a table with a lone stage 7, a skipped stage or a 255 is refused.
 - **Discrete.** Set `discrete: true` for choices (`Unit::Choice(&[..])`), toggles (`Unit::Toggle`) and counts. The engine then rounds the plain values for you.
 
 Socket naming conventions:
@@ -160,7 +161,7 @@ One convention for every dedicated CV input, with the shared helpers in [crates/
 
 ## 4. Registering the device
 
-Add one line to `register_all` in [crates/devices/src/lib.rs](../crates/devices/src/lib.rs), which registers each module's `factory()`. Registration validates the descriptor and rejects a duplicate `type_id`. The renderer's `default_registry()` ([crates/render/src/lib.rs](../crates/render/src/lib.rs)) calls `register_all`, so the new `type_id` becomes usable in patch files at once.
+Add one line to `register_all` in [crates/devices/src/lib.rs](../crates/devices/src/lib.rs), which registers each module's `factory()`. Registration validates the descriptor and rejects a duplicate `type_id`. The renderer's `default_registry()` ([crates/render/src/lib.rs](../crates/render/src/lib.rs)) calls `register_all`, so the new `type_id` becomes usable in patch files at once. `Registry::get` answers with the descriptor of any registered type (a plugin type too) and `Registry::create` builds an instance; only a built-in type has a constructor to hand out (`Registry::factory`).
 
 Then update the tests that list every type id:
 
