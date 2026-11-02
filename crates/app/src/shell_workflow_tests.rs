@@ -523,6 +523,7 @@ fn the_vertical_zooms_are_saved_in_the_window_state_and_restored_at_start() {
     s.set_focus(Pane::PianoRoll);
     keys(&mut s).tap("Shift+H");
     let kh = s.core().piano_roll().key_height();
+    s.flush_ui_state();
     let saved = atomik_ui_state(&path);
     assert!(
         (saved.track_zoom - zoom).abs() < 1e-12,

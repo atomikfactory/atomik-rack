@@ -8,6 +8,7 @@ use crate::windows::{DesktopSpace, MonitorInfo, WindowGeom, WindowHit, WindowKin
 use atomik_ui::UiEvent;
 use atomik_ui::kurbo::Point;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
 
 /// The icon of every app window (taskbar, Alt-Tab, title bar), from the embedded logo. `None`
@@ -176,6 +177,32 @@ pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
     open_windows <= 1
 }
 
+/// How often the loop looks at the plugins (their main-thread work, parameter notifications,
+/// dirty flags) while nothing else asks for frames.
+pub(super) const PLUGIN_IDLE_POLL: Duration = Duration::from_millis(100);
+
+/// What keeps the event loop awake between events.
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct Wakers {
+    /// Audio runs, a worker is busy, a menu or tooltip is about to open, the rack auto-scrolls,
+    /// a plugin is being created, or a plugin editor is open: frames at the full rate.
+    pub frames: bool,
+    /// A plugin instance is loaded: its notifications are polled.
+    pub plugins: bool,
+}
+
+/// How long the loop may sleep: a frame while something animates, the plugin poll period while
+/// only loaded plugins need looking at, forever (until an event) otherwise.
+pub(super) fn wake_after(w: Wakers, frame: Duration) -> Option<Duration> {
+    if w.frames {
+        Some(frame)
+    } else if w.plugins {
+        Some(PLUGIN_IDLE_POLL)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +211,22 @@ mod tests {
     #[test]
     fn the_window_icon_is_built_from_the_embedded_logo() {
         assert!(window_icon().is_some());
+    }
+
+    #[test]
+    fn an_idle_project_with_a_plugin_polls_at_ten_hertz_and_one_without_sleeps_on() {
+        let frame = Duration::from_micros(16_667);
+        assert_eq!(wake_after(Wakers::default(), frame), None);
+        let plugins = Wakers {
+            plugins: true,
+            ..Wakers::default()
+        };
+        assert_eq!(wake_after(plugins, frame), Some(Duration::from_millis(100)));
+        let busy = Wakers {
+            frames: true,
+            plugins: true,
+        };
+        assert_eq!(wake_after(busy, frame), Some(frame));
     }
 
     #[test]

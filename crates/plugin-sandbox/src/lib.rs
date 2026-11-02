@@ -22,8 +22,11 @@ mod tests;
 
 use crate::instance::RemoteInstance;
 use crate::link::{LiveGuard, Timeouts};
+use crate::transport::Transport;
 use atomik_device_sdk::{PluginFormat, PluginRef};
-use atomik_plugin_host::{BackendError, HostHandle, PluginBackend, PluginInstance, ScannedPlugin};
+use atomik_plugin_host::{
+    BackendError, HostHandle, PendingInstance, PluginBackend, PluginInstance, ScannedPlugin,
+};
 use atomik_plugin_ipc::{
     Doorbell, DoorbellName, ParentPort, SharedBlock, block_file_name, default_block_dir,
     sweep_stale_blocks,
@@ -157,35 +160,11 @@ impl SandboxBackend {
         self.live.load(Ordering::SeqCst)
     }
 
-    fn timeouts(&self) -> Timeouts {
-        Timeouts {
-            create: self.config.create_timeout,
-            call: self.config.call_timeout,
-            text: self.config.text_timeout,
-            watchdog: self.config.offline_watchdog,
-            hung: self.config.hung_after,
-            slow_retry: SLOW_RETRY,
-            bounce: self.config.bounce,
-        }
-    }
-}
-
-impl PluginBackend for SandboxBackend {
-    fn format(&self) -> PluginFormat {
-        self.format
-    }
-
-    fn scan_file(&self, _path: &Path) -> Result<Vec<ScannedPlugin>, BackendError> {
-        Err(BackendError::Unsupported(
-            "the sandbox does not scan: the scanner does".to_string(),
-        ))
-    }
-
-    fn instantiate(
+    /// Makes the shared block and the doorbell and starts the child for `plugin`.
+    fn spawn(
         &self,
         plugin: &PluginRef,
-        host: HostHandle,
-    ) -> Result<Box<dyn PluginInstance>, BackendError> {
+    ) -> Result<(Transport, ParentPort, LiveGuard), BackendError> {
         let file = self
             .files
             .lock()
@@ -224,7 +203,39 @@ impl PluginBackend for SandboxBackend {
                     file.display()
                 ))
             })?;
-        let live = LiveGuard::new(&self.live);
+        Ok((transport, port, LiveGuard::new(&self.live)))
+    }
+
+    fn timeouts(&self) -> Timeouts {
+        Timeouts {
+            create: self.config.create_timeout,
+            call: self.config.call_timeout,
+            text: self.config.text_timeout,
+            watchdog: self.config.offline_watchdog,
+            hung: self.config.hung_after,
+            slow_retry: SLOW_RETRY,
+            bounce: self.config.bounce,
+        }
+    }
+}
+
+impl PluginBackend for SandboxBackend {
+    fn format(&self) -> PluginFormat {
+        self.format
+    }
+
+    fn scan_file(&self, _path: &Path) -> Result<Vec<ScannedPlugin>, BackendError> {
+        Err(BackendError::Unsupported(
+            "the sandbox does not scan: the scanner does".to_string(),
+        ))
+    }
+
+    fn instantiate(
+        &self,
+        plugin: &PluginRef,
+        host: HostHandle,
+    ) -> Result<Box<dyn PluginInstance>, BackendError> {
+        let (transport, port, live) = self.spawn(plugin)?;
         let instance = RemoteInstance::start(
             transport,
             port,
@@ -233,5 +244,21 @@ impl PluginBackend for SandboxBackend {
             live,
         )?;
         Ok(Box::new(instance))
+    }
+
+    fn begin_instantiate(
+        &self,
+        plugin: &PluginRef,
+        host: HostHandle,
+    ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
+        let (transport, port, live) = self.spawn(plugin)?;
+        let pending = RemoteInstance::begin(
+            transport,
+            port,
+            self.timeouts(),
+            host.messenger().clone(),
+            live,
+        )?;
+        Ok(Some(Box::new(pending)))
     }
 }

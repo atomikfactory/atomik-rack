@@ -67,7 +67,7 @@ use crate::audio_import::{
 };
 use crate::sink::EngineSink;
 use crate::stream_source::STREAM_THRESHOLD_BYTES;
-use atomik_audio_file::{AudioFileError, Bundle, PeakPyramid, save_text_atomic};
+use atomik_audio_file::{AudioFileError, Bundle, PeakPyramid};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
 use atomik_model::{AssetMeta, Command, DeviceKey, SongCommand};
@@ -180,6 +180,10 @@ pub(super) struct AudioState {
     recovered: BTreeSet<PathBuf>,
     /// The `rec-*.wav` files whose audio is now in the project, deleted once it is saved.
     recovered_files: Vec<PathBuf>,
+    /// The save a worker is running ([`AppCore::save_in_background`]).
+    saving: Option<save::Flight>,
+    /// The window saves on a worker (see [`AppCore::set_background_save`]).
+    background_save: bool,
 }
 
 /// How long a recording in the shared scratch folder must have been left alone before it is
@@ -228,6 +232,8 @@ impl AudioState {
             adopt_from: None,
             recovered: BTreeSet::new(),
             recovered_files: Vec::new(),
+            saving: None,
+            background_save: false,
         }
     }
 
@@ -294,7 +300,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// True while an import or an asset load runs, or the file browser has work in flight.
     pub fn is_busy(&self) -> bool {
-        self.audio.pending > 0 || self.browser_busy()
+        self.audio.pending > 0 || self.saving() || self.browser_busy()
     }
 
     /// A status-bar text while audio is being imported or loaded.
@@ -396,11 +402,13 @@ impl<S: EngineSink> AppCore<S> {
     /// Applies what the workers finished since the last call (call it every frame). True when
     /// something changed.
     pub fn poll_background(&mut self) -> bool {
-        self.drain(false)
+        let saved = self.poll_save();
+        self.drain(false) || saved
     }
 
     /// Blocks until every worker is done and applied (tests, scripts).
     pub fn wait_background(&mut self) {
+        self.settle_save();
         self.drain(true);
         for writer in self.audio.cancelled.drain(..) {
             let _ = writer.join();
@@ -627,6 +635,8 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ import
 
     pub(super) fn import_bundle(&mut self) -> Result<Bundle, String> {
+        // A running save works on the bundle: it finishes first.
+        self.settle_save();
         if self.audio.bundle.is_none() {
             self.audio.scratch_count += 1;
             // The scratch folder of the preferences, else (or when it cannot be used) the OS
@@ -1248,82 +1258,20 @@ impl<S: EngineSink> AppCore<S> {
     /// file is never overwritten with a project. The file does not move; see the module docs
     /// for its bundle.
     pub fn save(&mut self) -> Result<(), AppError> {
-        let file = self
-            .file
-            .clone()
-            .filter(|p| super::is_project_path(p))
-            .ok_or(AppError::NoPath)?;
-        let root = existing_bundle_root(&file).unwrap_or_else(|| sibling_bundle_root(&file));
-        self.write_project(&file, Some(root))
+        let (file, root) = self.save_target()?;
+        self.save_now(&file, Some(root))
     }
 
     /// Saves as a project to `path`, which becomes the current file; a project with audio
     /// becomes a bundle folder (module docs), so the current file may be
     /// `<dir>/<name>/<name>.atomik`.
     pub fn save_as(&mut self, path: &Path) -> Result<(), AppError> {
-        let saved = if self.document.referenced_assets().is_empty() {
-            self.write_project(path, None)
-        } else {
-            let (file, root) = save_as_layout(path);
-            self.write_project(&file, Some(root))
-        };
+        let (file, root) = self.save_as_target(path);
+        let saved = self.save_now(&file, root);
         if saved.is_ok() {
             self.note_recent();
         }
         saved
-    }
-
-    fn write_project(&mut self, file: &Path, root: Option<PathBuf>) -> Result<(), AppError> {
-        // The plugins' own state goes into the document first.
-        self.plugins_capture_all();
-        let keep = self.document.referenced_assets();
-        let mut saved = self.doc().clone();
-        saved.prune_unreferenced_assets();
-        let text = atomik_model::save_project_checked(&saved)?;
-        let mut dest: Option<Bundle> = None;
-        if let (Some(root), false) = (&root, keep.is_empty()) {
-            let created = match &self.audio.bundle {
-                Some(b) if b.bundle.root() == root.as_path() => Ok(b.bundle.clone()),
-                Some(b) => Bundle::copy_bundle(b.bundle.root(), root),
-                None => Bundle::create(root),
-            };
-            dest = Some(created.map_err(|e| io_error(root, e))?);
-        } else if let (Some(root), Some(b)) = (&root, &self.audio.bundle)
-            && !b.scratch
-            && b.bundle.root() == root.as_path()
-        {
-            // The last audio was removed: its files still go.
-            dest = Some(b.bundle.clone());
-        }
-        save_text_atomic(file, &text).map_err(|e| io_error(file, e))?;
-        if let Some(bundle) = &mut dest {
-            bundle
-                .remove_orphans(&keep)
-                .map_err(|e| io_error(bundle.root(), e))?;
-        }
-        // The project is on disk: switch to its bundle and tidy the live state.
-        let was_scratch = self.audio.bundle.as_ref().is_some_and(|b| b.scratch);
-        self.audio.bundle = dest.map(|bundle| ProjectBundle {
-            bundle,
-            scratch: false,
-        });
-        if was_scratch && self.audio.pending == 0 {
-            self.audio.remove_scratch();
-        }
-        let before: Vec<String> = self.doc().assets.keys().cloned().collect();
-        self.document.prune_unreferenced_assets();
-        for hash in before {
-            if !self.doc().assets.contains_key(&hash) {
-                self.forget_asset(&hash);
-            }
-        }
-        self.file = Some(file.to_path_buf());
-        self.set_saved(self.doc().clone());
-        // The recovered recordings are in the saved project now: their files can go.
-        for path in std::mem::take(&mut self.audio.recovered_files) {
-            let _ = std::fs::remove_file(path);
-        }
-        Ok(())
     }
 
     /// Imports files dropped outside the arrangement as new tracks at the snapped playhead.
@@ -1332,6 +1280,9 @@ impl<S: EngineSink> AppCore<S> {
         self.import_audio(paths, ImportTarget::NewTracks, tick);
     }
 }
+
+#[path = "app_core_save.rs"]
+mod save;
 
 #[path = "app_core_relink.rs"]
 mod relink;

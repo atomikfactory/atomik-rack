@@ -18,8 +18,16 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-/// How many scanner children run at the same time.
-pub const MAX_PARALLEL_SCANS: usize = 2;
+/// The most scanner children that run at the same time.
+pub const MAX_PARALLEL_SCANS: usize = 8;
+
+/// How many scanner children run at the same time on a machine with `cores` logical cores: half
+/// of them, at least two and at most [`MAX_PARALLEL_SCANS`]. The scanners load plugin libraries,
+/// which is mostly waiting on the disk and on the plugins' own start-up, so more than one per core
+/// would only fight the audio thread.
+pub fn parallel_scans(cores: usize) -> usize {
+    (cores / 2).clamp(2, MAX_PARALLEL_SCANS)
+}
 
 /// Every plugin format the backends support, in the order a scan visits them.
 pub const ALL_FORMATS: [PluginFormat; 2] = [PluginFormat::Clap, PluginFormat::Vst3];
@@ -203,7 +211,7 @@ type JobResult = Result<ScanResult, ScanFailure>;
 
 /// Walks the search paths and scans what the cache says needs scanning, updating `cache`.
 /// Files are visited in path order; the cache is the same whatever order the (up to
-/// [`MAX_PARALLEL_SCANS`]) scanners finish in.
+/// [`parallel_scans`]) scanners finish in.
 ///
 /// # Errors
 /// [`ScanError::PluginsDisabled`] when the user has not enabled plugins; nothing is touched.
@@ -268,11 +276,12 @@ pub fn rescan(
     progress.total.store(jobs.len(), Ordering::Relaxed);
     progress.done.store(0, Ordering::Relaxed);
 
-    // Run them, two at a time, collecting by job index.
+    // Run them in parallel (see [`parallel_scans`]), collecting by job index.
     let results: Vec<Mutex<Option<JobResult>>> = jobs.iter().map(|_| Mutex::new(None)).collect();
     let next = AtomicUsize::new(0);
     let timeout = req.settings.timeout();
-    let workers = MAX_PARALLEL_SCANS.min(jobs.len());
+    let cores = std::thread::available_parallelism().map_or(2, std::num::NonZero::get);
+    let workers = parallel_scans(cores).min(jobs.len());
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {

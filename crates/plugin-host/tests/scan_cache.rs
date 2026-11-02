@@ -641,7 +641,7 @@ fn a_cancelled_scan_starts_nothing_and_blacklists_nothing() {
 }
 
 #[test]
-fn at_most_two_scanners_run_at_once_and_the_cache_order_is_deterministic() {
+fn scanners_run_in_parallel_up_to_the_core_count_and_the_cache_order_is_deterministic() {
     let d = temp("par");
     let names: Vec<String> = (0..10).map(|i| format!("p{i}.clap")).collect();
     plugin_files(&d, &names.iter().map(String::as_str).collect::<Vec<_>>());
@@ -656,7 +656,11 @@ fn at_most_two_scanners_run_at_once_and_the_cache_order_is_deterministic() {
     }));
     let mut cache = PluginCache::default();
     run(&s, &mut cache, &slow, RescanMode::Incremental);
-    assert_eq!(slow.max_running.load(Ordering::SeqCst), 2);
+    let cores = std::thread::available_parallelism().map_or(2, std::num::NonZero::get);
+    let expected = atomik_plugin_host::parallel_scans(cores).min(names.len());
+    let ran = slow.max_running.load(Ordering::SeqCst);
+    // Threads may not all overlap on a loaded machine: at least two did, never more than allowed.
+    assert!((2..=expected).contains(&ran), "{ran} of {expected}");
     let paths: Vec<_> = cache.files().map(|f| f.path.clone()).collect();
     let mut sorted = paths.clone();
     sorted.sort();

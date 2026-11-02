@@ -916,6 +916,20 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Saving no longer freezes the window.** File > Save and the file picked for Save As write the
+  project beside the window: the plugins' states are collected first (all at once, so a project with
+  many plugins waits for the slowest one), then the project text is built, the audio is copied and
+  the file is written on a worker while "Saving..." shows in the status line. You can keep editing;
+  a change made meanwhile stays unsaved afterwards, and undoing back to the saved state is clean. A
+  save that fails is reported and leaves the earlier file untouched. The saved file is
+  byte for byte what it was.
+- **Plugins load together and an idle project stays quiet.** Opening a project starts the processes
+  of up to eight sandboxed plugins at the same time instead of one after the other (they still
+  attach in document order). With a plugin loaded and nothing playing, the app looks at its
+  plugins ten times a second instead of sixty and sleeps in between. `ui-state.json` is written
+  atomically and at most every two seconds instead of at every click, `keymap.json` is checked when a
+  window gets the focus or a menu opens instead of four times a second, and the plugin scan uses as
+  many scanner processes as half the cores (two to eight).
 - **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
   is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
   their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two

@@ -143,6 +143,7 @@ fn dragging_the_divider_moves_the_split_and_saves_it_in_the_ui_state() {
     s.handle(&up(Point::new(d.x, d.y - 150.0)));
     let l = s.layout();
     assert!(close(l.divider.unwrap().center().y, d.y - 150.0));
+    s.flush_ui_state();
     let saved = UiState::load(&path);
     assert!((saved.rack_split - s.ui_state().rack_split).abs() < 1e-9);
     assert!(saved.rack_split < 0.45);

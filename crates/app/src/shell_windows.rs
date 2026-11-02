@@ -343,7 +343,7 @@ impl<B: AudioBackend> Shell<B> {
             self.layout_view();
             self.core.set_spectrum_eq_shown(detached);
             self.focused = self.window_of(self.focus);
-            self.save_ui_state();
+            self.write_ui_state();
             self.repaint = true;
             return;
         }
@@ -371,7 +371,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.focused = self.window_of(self.focus);
         self.layout_view();
-        self.save_ui_state();
+        self.write_ui_state();
     }
 
     /// The OS closed the window of `kind`: its pane is attached to the main window again.
@@ -404,6 +404,8 @@ impl<B: AudioBackend> Shell<B> {
     /// them there (the rack in the rack window, the console in the console window), and the
     /// keymap context follows. Global shortcuts work from every window.
     pub fn window_focused(&mut self, kind: WindowKind) {
+        // A window coming to the front shows the keys as `keymap.json` has them now.
+        self.reload_keymap_file();
         let Some(last) = self.win(kind).map(|w| w.last_focus) else {
             return;
         };
@@ -555,7 +557,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.geom_dirty && now_seconds - self.geom_saved_at >= GEOM_SAVE_SECONDS {
             self.geom_dirty = false;
             self.geom_saved_at = now_seconds;
-            self.save_ui_state();
+            self.write_ui_state();
         }
     }
 

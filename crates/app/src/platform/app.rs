@@ -207,6 +207,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
     ));
     // Creating a plugin blocks this thread: show LOADING one frame before it starts.
     shell.core_mut().set_plugin_load_paints_first(true);
+    // A save writes beside the window instead of freezing it.
+    shell.core_mut().set_background_save(true);
     if let Some(path) = cli.keymap.clone() {
         shell.use_keymap_file(path);
     }
@@ -1474,15 +1476,17 @@ impl ApplicationHandler for App {
         // time and starve the others while it animates.
         self.paint_due_windows();
         // Audio imports and loads finish on worker threads: poll them even without a stream.
-        let running = self.shell.core().sink().is_running()
-            || self.shell.is_busy()
-            || self.shell.context_menu_pending()
-            || self.shell.tooltip_pending()
-            || self.shell.core().view().is_auto_scrolling()
-            || self.plugin_windows.any()
-            || self.shell.core().plugin_instance_count() > 0
-            || !self.shell.core().plugins_ready();
-        let mut deadline = if running { Some(now + FRAME) } else { None };
+        let wakers = window_logic::Wakers {
+            frames: self.shell.core().sink().is_running()
+                || self.shell.is_busy()
+                || self.shell.context_menu_pending()
+                || self.shell.tooltip_pending()
+                || self.shell.core().view().is_auto_scrolling()
+                || self.plugin_windows.any()
+                || !self.shell.core().plugins_ready(),
+            plugins: self.shell.core().plugin_instance_count() > 0,
+        };
+        let mut deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
         for t in [self.quit_at, self.screenshot_at].into_iter().flatten() {
             deadline = Some(deadline.map_or(t, |d| d.min(t)));
         }

@@ -200,6 +200,7 @@ fn the_folder_browsed_for_a_type_is_kept_in_the_ui_state() {
     s.run_command("rack.browse_patch", None);
     s.run_command("rack.patch_next", None);
     press(&mut s, Key::Enter);
+    s.flush_ui_state();
     let saved = std::fs::read_to_string(dir.0.join("ui-state.json")).unwrap();
     assert!(
         saved.contains("patch_folders") && saved.contains(SYNTH),
