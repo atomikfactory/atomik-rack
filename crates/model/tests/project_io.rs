@@ -506,7 +506,7 @@ fn load_rejects_bad_projects_with_paths() {
                 v["song"]["tracks"][0]["lanes"][1]["clips"][0]["points"][0][2] = json!("cubic")
             }),
             format!("{auto0}.points[0][2]"),
-            "\"linear\" or \"step\"",
+            "\"linear\", \"step\" or \"bend\"",
         ),
         (
             Box::new(|v| v["song"]["tracks"][0]["lanes"][1]["clips"][0]["points"][1][0] = json!(0)),

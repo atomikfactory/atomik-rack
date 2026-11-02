@@ -125,7 +125,7 @@ fn a_bad_point_among_many_names_its_own_index_and_field() {
     let (path, message) = load_err(&v, &reg);
     assert_eq!(path, format!("{base}[2][2]"), "{message}");
     assert!(
-        message.contains("expected \"linear\" or \"step\""),
+        message.contains("expected \"linear\", \"step\" or \"bend\""),
         "{message}"
     );
 

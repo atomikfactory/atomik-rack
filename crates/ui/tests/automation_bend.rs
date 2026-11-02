@@ -146,3 +146,36 @@ fn a_shift_click_on_a_point_straightens_a_bent_segment_before_it_toggles_step() 
         Curve::Linear
     );
 }
+
+#[test]
+fn the_edit_commands_move_automation_into_a_note_clip_and_clear_the_lanes() {
+    use atomik_model::{Command, WorkflowCommand};
+    use atomik_ui::keymap::CommandOutcome;
+    let (doc, reg, mut v) = view();
+    // The bass note clip (1) and its cutoff automation clip (4).
+    v.set_selected_clips(&[ClipId(1), CLIP]);
+    assert_eq!(
+        v.command("sequencer.automation_into_clip", None, &doc, &reg),
+        CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
+            WorkflowCommand::AutomationIntoClip {
+                automation: CLIP,
+                into: ClipId(1)
+            }
+        ))])
+    );
+    // One kind alone, and no lanes to clear, are messages and no commands.
+    for (ids, id) in [
+        (vec![ClipId(1)], "sequencer.automation_into_clip"),
+        (vec![CLIP], "sequencer.automation_into_clip"),
+        (vec![ClipId(1)], "sequencer.clear_param_lanes"),
+    ] {
+        v.set_selected_clips(&ids);
+        assert!(
+            matches!(
+                v.command(id, None, &doc, &reg),
+                CommandOutcome::NotApplicable(_)
+            ),
+            "{id} with {ids:?}"
+        );
+    }
+}

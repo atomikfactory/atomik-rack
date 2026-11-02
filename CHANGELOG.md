@@ -17,6 +17,18 @@ may break APIs and the patch and project formats.
   41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
   and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. There
   is no panel for it yet: the slots are set through the command and the project file.
+- **Bent automation segments.** Shift-drag on an automation segment bends it so the curve passes through the
+  pointer at the middle of the segment (one undo step); a click without a drag, or a Shift-click on a point,
+  straightens it again. The bend is a power curve evaluated with plain arithmetic only, so a bounce is
+  bit-identical for every block size, worker count and platform, and the value a control shows is the value the
+  engine applies. Points added on a choice, a switch or another whole-valued parameter now hold their value
+  instead of ramping.
+- **Parameter lanes in note clips.** A note clip can carry device-parameter lanes (a cutoff sweep, a send
+  level) that move, duplicate, split and loop with the clip; a track's own automation lane of the same
+  parameter overrides them. Edit > Move Automation into Note Clip turns a selected automation clip into a
+  lane of the selected note clip, and Edit > Clear Clip Parameter Lanes removes them. Recording into a note
+  clip and drawing a lane inside the piano roll are not there yet. Both additions are written to the project
+  only when used (format 41), and the MCP `project_inspect` lists the lanes.
 - **Master tune.** Audio > Settings has a Master tune of -100 to +100 cents around A = 440 Hz. It
   shifts every pitched device (the synths, the sampler, the drum machine, the loop slicer and the grain
   sampler; a fixed-frequency FM operator keeps its Hz) and the reference of the audio track tuner, is

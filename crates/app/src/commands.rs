@@ -410,6 +410,11 @@ pub enum AppCommand {
     /// Edit, Cleanup Automation: thins the points of the selected automation clips, or of the
     /// automation lanes of the selected tracks.
     CleanupAutomation(ThinLevel),
+    /// Edit: moves the selected automation clip into the selected note clip as a device-parameter
+    /// lane that travels with the clip (one undo step).
+    AutomationIntoClip,
+    /// Edit: removes the device-parameter lanes of the selected note clips.
+    ClearParamLanes,
     /// Edit ▸ Normalise Audio: the clip gain that brings the peak of each selected audio clip to
     /// 0 dBFS.
     AudioNormalise,
@@ -794,6 +799,8 @@ impl AppCommand {
             AppCommand::CleanupAutomation(level) => {
                 ("sequencer.cleanup_automation", Some(level.id()))
             }
+            AppCommand::AutomationIntoClip => ("sequencer.automation_into_clip", None),
+            AppCommand::ClearParamLanes => ("sequencer.clear_param_lanes", None),
             AppCommand::AudioNormalise => ("sequencer.audio_normalise", None),
             AppCommand::AudioStripSilence => ("sequencer.audio_strip_silence", None),
             AppCommand::AudioQuantize => ("sequencer.audio_quantize", None),
@@ -1087,6 +1094,8 @@ impl AppCommand {
             ("sequencer.cleanup_automation", Some(arg)) => {
                 return ThinLevel::from_id(arg).map(AppCommand::CleanupAutomation);
             }
+            ("sequencer.automation_into_clip", None) => AppCommand::AutomationIntoClip,
+            ("sequencer.clear_param_lanes", None) => AppCommand::ClearParamLanes,
             ("sequencer.audio_normalise", None) => AppCommand::AudioNormalise,
             ("sequencer.audio_strip_silence", None) => AppCommand::AudioStripSilence,
             ("sequencer.audio_quantize", None) => AppCommand::AudioQuantize,
@@ -1958,6 +1967,11 @@ pub fn menus_with_lists(
                         .map(|l| item(l.label(), AppCommand::CleanupAutomation(l)))
                         .collect(),
                 }),
+                item(
+                    "Move Automation into Note Clip",
+                    AppCommand::AutomationIntoClip,
+                ),
+                item("Clear Clip Parameter Lanes", AppCommand::ClearParamLanes),
             ],
         },
         Menu {
@@ -3023,6 +3037,8 @@ mod tests {
             AppCommand::AudioReverse,
             AppCommand::InsertBars,
             AppCommand::RemoveBars,
+            AppCommand::AutomationIntoClip,
+            AppCommand::ClearParamLanes,
             AppCommand::ReverseClips(true),
             AppCommand::ReverseClips(false),
             AppCommand::AudioNormalise,
@@ -3544,7 +3560,9 @@ mod tests {
                 "1/16 Note",
                 "Normal",
                 "Heavy",
-                "Maximum"
+                "Maximum",
+                "Move Automation into Note Clip",
+                "Clear Clip Parameter Lanes"
             ]
         );
         assert_eq!(

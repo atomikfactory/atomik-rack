@@ -4902,7 +4902,9 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::ReverseClips(_)
             | AppCommand::ScaleTempo(_)
             | AppCommand::ChopClips(_)
-            | AppCommand::CleanupAutomation(_) => {
+            | AppCommand::CleanupAutomation(_)
+            | AppCommand::AutomationIntoClip
+            | AppCommand::ClearParamLanes => {
                 self.track_command(command);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()

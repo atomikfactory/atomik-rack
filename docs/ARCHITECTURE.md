@@ -224,7 +224,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 41 (older versions still load; version 41
   adds the device field `"mods"` (the modulation slots in use, written only when one is; see 3,
-  "Modulation matrix"); version 40
+  "Modulation matrix"), a note clip's `"param_lanes"` (device-parameter lanes, written only when it has
+  any) and the bent point `[tick, value, "bend", amount]` (written only when used; see 2.12); version 40
   adds the root's `"tune_cents"` after `"info"` (the master tune in cents, written only when not 0, a
   file without it loads at 0, refused in a version 39 file; see 3, "Master tune"); version 39
   adds the console's `"send_follow": true` (the sends of a strip that plays into a bus follow the
@@ -1205,6 +1206,49 @@ notes, and reach the track's device as the note events it already understands
   point shows its value as 0 to 127 (pitch bend as -8192 to +8191). All edits are pure functions on
   the lane list (`set_point`, `move_point`, `remove_point`, `toggle_curve`) and one
   `SetClipControllers` each.
+- **Parameter lanes** ([param_lane.rs](../crates/model/src/param_lane.rs)). A note clip can also carry
+  `Clip.param_lanes: Vec<ParamLane>`: the points of one parameter of one device (`device`, `param`
+  key, `AutomationPoint`s in content ticks, `Linear`, `Step` or `Bend`), sorted by `(device, param)`,
+  at most 32, no empty lane. They are clip data like the notes: a move, a duplicate, a split (the
+  content stays aligned) and a loop keep them, a join and a loop conversion rebuild them from the
+  pieces each clip plays, and a reverse and a tempo scale mirror and stretch them.
+  `SongCommand::SetClipParamLanes { clip, lanes, merge }` replaces a clip's lanes in one undo step; it
+  refuses a device that is not in the rack or has no such param, clamps the values into the param's
+  range and checks the points like an automation clip's (the check at `AddClip` and at load looks at
+  the shape only, so a clip pasted from another project keeps a lane whose device is missing; it
+  plays nothing). `WorkflowCommand::AutomationIntoClip { automation, into }` (Edit > Move Automation
+  into Note Clip; Edit > Clear Clip Parameter Lanes sends the empty list) turns what an automation
+  clip plays under a note clip into a lane of that clip and removes the automation clip.
+  `flatten_param_lanes` flattens them like an automation lane (a piece starts with the value it has
+  there, a ramp cut by the piece end is closed, the last point of a piece holds), merging the lanes of
+  several note lanes by tick. The render ([project.rs](../crates/render/src/project.rs)) hands them to the
+  engine as ordinary `SongAutomation` after every track lane and macro lane, and skips a param that
+  a track lane (even a muted or empty one), a macro bank or an earlier track already drives, so a
+  track lane wins; the engine needs no new code for them. The value a control shows
+  (`RackDoc::automation_curves`) follows the same rule. A frozen track plays its render and none of
+  its clips' lanes. The project file stores them as `"param_lanes"` after the clip's notes, a list of
+  `{"device", "param", "points"}`, written only when the clip has any (format 41; a file without it
+  is a file that never had them). The library's clip file leaves them out. `project_inspect` lists,
+  for a note lane, each `(device, param)` with its point count and how many points are bent
+  (`"param_lanes"`).
+- **Bent segments.** `Curve::Bend(amount)` (`-64..=64`) ramps to the next point along `x^k`, with
+  `k = 2^(amount / 32)`: 0 is the straight line, positive eases in (slow start), negative eases out,
+  and the extremes are `k = 4` and `k = 1/4`. The shape is `atomik_core::bend::bend_shape`, which
+  uses neither libm nor a table (an `atanh` series for the logarithm, a Taylor series and the
+  exponent bits for the exponential, only IEEE `+ - * /`), so it is bit-identical on every platform,
+  block size and worker count; it allocates and locks nothing, and costs about 100 flops for a
+  bent segment (a straight or held one costs what it did). The player (`lane_value`), the overlay
+  (`automation_value_at`) and the flattening all call it (`Curve::blend` in the model), which keeps
+  what a control shows equal to what the engine applies. A bend is not a power curve any more when a
+  piece cuts the segment, so a segment a clip edge, an offset or a loop end cuts is replayed as a
+  chain of at most 128 straight ramps that follow the curve; a segment the piece holds whole keeps
+  its bend. The file stores a bent point as `[tick, value, "bend", amount]` (format 41, only when
+  used; a bend in a controller lane is refused). Thinning keeps a bent point and the point it leads
+  to; a reverse flips the sign of a bend (the mirror image of `x^k` is close to `x^(1/k)`).
+  In the arrangement, a drag on an automation segment with the fine-adjust role held (Shift by
+  default) bends it so the curve passes through the pointer at the middle of the segment (one undo
+  step); a click without a drag, or a Shift-click on a point, straightens a bent segment. Points
+  added by a click or the pencil on a choice, switch or other whole-valued param are `Step`.
 - **Inspection.** `project_inspect` and `session_status` list, for a note lane, the controller kinds
   in use with their point counts (`"controllers"`, omitted when there are none).
 
@@ -3804,7 +3848,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (410) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (412) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
