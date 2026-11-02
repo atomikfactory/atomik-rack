@@ -125,7 +125,7 @@ pub enum DrumButton {
     Clear,
     /// Write the edited pattern from the role templates.
     Generate,
-    /// Write it again from the next seed.
+    /// Draw the style, density, variation, accent, swing and a new seed, then write it.
     Randomise,
     /// One step shorter (Shift: four).
     LenDec,
