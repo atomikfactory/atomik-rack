@@ -1244,6 +1244,7 @@ const COMMANDS: &[CommandDef] = &[
         G::Rack,
         C::Rack,
     ),
+    cmd("rack.mod_matrix", "Modulation Matrix", G::Rack, C::Rack),
     cmd("rack.move_out", "Move Out of Container", G::Rack, C::Rack),
     cmd("rack.patch_next", "Next Patch", G::Rack, C::Rack).rep(),
     cmd("rack.patch_pick", "Pick Patch", G::Rack, C::Rack),

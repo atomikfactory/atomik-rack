@@ -270,7 +270,14 @@
 //!   and fade settings; it emits [`UiAction::StripSilence`] (`APPLY`, `CLOSE`) and the app feeds it
 //!   with [`SilenceView::set_target`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
-//!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`).
+//!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
+//!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
+//!   [`UiEvent::Ime`] for the window system's input method and installs the system clipboard with
+//!   [`clipboard::install`] on the UI thread (without one the text stays inside the app).
+//! - **Modulation matrix.** [`ModMatrixView`] is the modal panel of a device's eight modulation
+//!   slots (source, target and via pickers on a [`context_menu::ContextMenu`], an amount bar); the host feeds it
+//!   [`ModMatrixInfo`] and its edits are ordinary [`UiAction::Command`]s, with
+//!   [`UiAction::ModMatrix`] to close it.
 //! - **Audio to notes.** [`NotesView`] is the modal panel of mode (pitched voice or drums),
 //!   sensitivity, minimum note, range, pitch drift, open hats, Beats timing and target; it emits
 //!   [`UiAction::AudioToNotes`] (`EXTRACT`, `CLOSE`) and the app feeds it with
@@ -301,6 +308,7 @@ pub mod canvas;
 pub mod character_panel;
 pub mod character_screen;
 pub mod chord_edit;
+pub mod clipboard;
 pub mod console;
 mod console_gang;
 pub mod console_layout;
@@ -337,6 +345,7 @@ pub mod marker_edit;
 pub mod master_panel;
 pub mod midi_maps_panel;
 pub mod midi_marks;
+pub mod mod_matrix_panel;
 pub mod modsrc_panel;
 pub mod note_tool_args;
 pub mod notes_panel;
@@ -368,6 +377,7 @@ pub mod step_drag;
 pub mod step_editor;
 pub mod tempo_lane;
 pub mod text;
+pub mod text_field;
 pub mod theme;
 pub mod timeline;
 pub mod tooltip;
@@ -399,7 +409,7 @@ pub use console_vca::VcaPart;
 pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use cursor::CursorHint;
 pub use display_list::{DisplayList, Op};
-pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
+pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
     EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues,
     ExportView,
@@ -410,6 +420,7 @@ pub use macros_panel::{MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, Mac
 pub use marker_edit::MarkSel;
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
+pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};
 pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
 pub use piano_keys::{KeysButton, KeysMode, PIANO_KEYS_HEIGHT, PianoKeysView};
@@ -433,6 +444,7 @@ pub use slice_editor::SliceEditorView;
 pub use song_info_panel::{InfoField, SongInfoAction, SongInfoView};
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
+pub use text_field::{FieldColors, FieldKey, TextField};
 pub use theme::{Theme, ThemeChoice};
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use transport::{

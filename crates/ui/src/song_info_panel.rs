@@ -18,17 +18,19 @@
 //! * `APPLY` (and Enter in a one-line text) emits [`SongInfoAction::Apply`].
 //! * `CLOSE` emits [`SongInfoAction::Close`]; the app also closes the panel on Esc.
 //!
-//! One text has the keys at a time (click it, or Tab and Shift+Tab). Typing adds characters at
-//! the end, Backspace removes the last one; a text stops growing at its limit
-//! ([`atomik_model::MAX_INFO_TITLE_CHARS`] and the like) and the keys that would put a control
-//! character into it are ignored (the notes take Enter as a new line).
+//! One text has the keys at a time (click it, or Tab and Shift+Tab). Each text is a
+//! [`TextField`]: a caret and a selection (the pointer, Shift+arrows, Ctrl+A), the clipboard,
+//! and input-method composition ([`UiEvent::Ime`]). A text stops growing at its limit
+//! ([`atomik_model::MAX_INFO_TITLE_CHARS`] and the like) and a control character never gets in
+//! (the notes take Enter as a new line).
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
 use crate::event::{Key, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
-use crate::theme::Theme;
+use crate::text_field::{FieldColors, TextField};
+use crate::theme::{Theme, mix};
 use crate::tooltip::Help;
 use atomik_model::{
     MAX_INFO_AUTHOR_CHARS, MAX_INFO_EMAIL_CHARS, MAX_INFO_NOTES_CHARS, MAX_INFO_TITLE_CHARS,
@@ -102,14 +104,6 @@ impl InfoField {
             InfoField::Notes => MAX_INFO_NOTES_CHARS,
         }
     }
-
-    fn rows(self) -> usize {
-        if self == InfoField::Notes {
-            NOTES_ROWS
-        } else {
-            1
-        }
-    }
 }
 
 /// The song information panel. See the module documentation.
@@ -119,7 +113,11 @@ pub struct SongInfoView {
     bounds: Rect,
     scale: f64,
     info: SongInfo,
+    /// The editors of the texts, in [`InfoField::ALL`] order; `info` follows them.
+    fields: [TextField; 5],
     focus: InfoField,
+    /// The text a pointer drag is selecting in.
+    dragging: Option<InfoField>,
     hover: Option<Point>,
     repaint: bool,
 }
@@ -133,12 +131,24 @@ impl SongInfoView {
 
     /// A panel editing `info`, with the keys on the title; call [`Self::set_bounds`].
     pub fn new(theme: Theme, info: SongInfo) -> Self {
+        let fields = InfoField::ALL.map(|f| {
+            let text = match f {
+                InfoField::Title => &info.title,
+                InfoField::Author => &info.author,
+                InfoField::Email => &info.email,
+                InfoField::Url => &info.url,
+                InfoField::Notes => &info.notes,
+            };
+            TextField::new(text, f.limit(), f == InfoField::Notes)
+        });
         Self {
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 900.0, 600.0),
             scale: 1.0,
             info,
+            fields,
             focus: InfoField::Title,
+            dragging: None,
             hover: None,
             repaint: true,
         }
@@ -178,38 +188,23 @@ impl SongInfoView {
         true
     }
 
-    fn text(&self, field: InfoField) -> &str {
-        match field {
-            InfoField::Title => &self.info.title,
-            InfoField::Author => &self.info.author,
-            InfoField::Email => &self.info.email,
-            InfoField::Url => &self.info.url,
-            InfoField::Notes => &self.info.notes,
-        }
+    fn index(field: InfoField) -> usize {
+        InfoField::ALL.iter().position(|f| *f == field).unwrap_or(0)
     }
 
-    fn text_mut(&mut self, field: InfoField) -> &mut String {
-        match field {
-            InfoField::Title => &mut self.info.title,
-            InfoField::Author => &mut self.info.author,
-            InfoField::Email => &mut self.info.email,
-            InfoField::Url => &mut self.info.url,
-            InfoField::Notes => &mut self.info.notes,
-        }
+    /// The editor of the focused text.
+    fn editor(&mut self) -> &mut TextField {
+        &mut self.fields[Self::index(self.focus)]
     }
 
-    /// Types `c` at the end of the focused text: ignored at the limit and for a control
-    /// character (a new line and a tab only go into the notes).
-    fn push(&mut self, c: char) {
-        let field = self.focus;
-        let multiline = field == InfoField::Notes;
-        if c.is_control() && !(multiline && (c == '\n' || c == '\t')) {
-            return;
-        }
-        if self.text(field).chars().count() >= field.limit() {
-            return;
-        }
-        self.text_mut(field).push(c);
+    /// Copies the editors' texts into [`Self::info`].
+    fn sync_info(&mut self) {
+        let [t, a, e, u, n] = &self.fields;
+        self.info.title = t.text().to_owned();
+        self.info.author = a.text().to_owned();
+        self.info.email = e.text().to_owned();
+        self.info.url = u.text().to_owned();
+        self.info.notes = n.text().to_owned();
         self.repaint = true;
     }
 
@@ -310,16 +305,24 @@ impl SongInfoView {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::PointerMove { pos, .. } => {
                 self.hover = Some(*pos);
+                if let Some(f) = self.dragging {
+                    self.fields[Self::index(f)].drag(*pos);
+                }
                 self.repaint = true;
             }
             UiEvent::PointerLeave => {
                 self.hover = None;
                 self.repaint = true;
             }
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => self.dragging = None,
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
-                ..
+                modifiers,
+                clicks,
             } => {
                 self.repaint = true;
                 if self.close_rect().contains(*pos) {
@@ -331,25 +334,31 @@ impl SongInfoView {
                     .find(|f| self.field_rect(*f).contains(*pos))
                 {
                     self.focus = f;
+                    self.dragging = Some(f);
+                    self.fields[Self::index(f)].press(*pos, *clicks, modifiers.shift);
+                }
+            }
+            UiEvent::Ime(ime) => {
+                if self.editor().handle_ime(ime) {
+                    self.sync_info();
                 }
             }
             UiEvent::Key {
                 key,
                 modifiers,
                 pressed: true,
-            } => match key {
-                Key::Char(c) if !(modifiers.ctrl || modifiers.meta) => self.push(*c),
-                Key::Space => self.push(' '),
-                Key::Backspace => {
-                    let field = self.focus;
-                    self.text_mut(field).pop();
-                    self.repaint = true;
+            } => {
+                let used = self.editor().handle_key(key, *modifiers);
+                if used.handled() {
+                    self.sync_info();
+                } else {
+                    match key {
+                        Key::Tab => self.move_focus(modifiers.shift),
+                        Key::Enter => out.push(UiAction::SongInfo(SongInfoAction::Apply)),
+                        _ => {}
+                    }
                 }
-                Key::Tab => self.move_focus(modifiers.shift),
-                Key::Enter if self.focus == InfoField::Notes => self.push('\n'),
-                Key::Enter => out.push(UiAction::SongInfo(SongInfoAction::Apply)),
-                _ => {}
-            },
+            }
             _ => {}
         }
         out
@@ -395,42 +404,12 @@ impl SongInfoView {
             );
             let focused = field == self.focus;
             sp::lcd(c, st, r, focused.then_some(t.focus));
-            let width = r.width() - 16.0;
-            c.push_clip(&r.into());
-            let text = self.text(field);
-            if field == InfoField::Notes {
-                // The last lines show, so the end being typed is in view.
-                let lines: Vec<&str> = text.split('\n').collect();
-                let first = lines.len().saturating_sub(field.rows());
-                for (n, line) in lines[first..].iter().enumerate() {
-                    let caret = if focused && first + n + 1 == lines.len() {
-                        "|"
-                    } else {
-                        ""
-                    };
-                    sp::label(
-                        c,
-                        &fit_tail(&format!("{line}{caret}"), width, f64::from(FONT)),
-                        r.x0 + 8.0,
-                        r.y0 + 14.0 + n as f64 * LINE_H,
-                        FONT,
-                        t.text,
-                        Align::Start,
-                    );
-                }
-            } else {
-                let caret = if focused { "|" } else { "" };
-                sp::label(
-                    c,
-                    &fit_tail(&format!("{text}{caret}"), width, f64::from(FONT)),
-                    r.x0 + 8.0,
-                    r.y0 + 14.0,
-                    FONT,
-                    t.text,
-                    Align::Start,
-                );
-            }
-            c.pop_clip();
+            let colors = FieldColors {
+                text: t.text,
+                caret: t.text,
+                selection: mix(t.lcd, t.focus, 0.5),
+            };
+            self.fields[Self::index(field)].paint(c, r, FONT, LINE_H, colors, focused);
         }
         let apply = self.apply_rect();
         sp::button(c, st, apply, "APPLY", Some(st.loop_on), hovered(apply));
@@ -449,29 +428,5 @@ impl SongInfoView {
         );
         c.pop_clip();
         c.pop_transform();
-    }
-}
-
-/// `text` with its head cut so that its end fits `width` (what is typed stays in view).
-fn fit_tail(text: &str, width: f64, size: f64) -> String {
-    let fits = (width / (size * 0.58)).max(1.0) as usize;
-    let count = text.chars().count();
-    if count <= fits {
-        return text.to_owned();
-    }
-    let tail: String = text.chars().skip(count - fits + 1).collect();
-    format!("\u{2026}{tail}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_long_text_keeps_its_end() {
-        let long = "a".repeat(40) + "END";
-        let cut = fit_tail(&long, 100.0, 10.0);
-        assert!(cut.starts_with('\u{2026}') && cut.ends_with("END"), "{cut}");
-        assert_eq!(fit_tail("short", 100.0, 10.0), "short");
     }
 }

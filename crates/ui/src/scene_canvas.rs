@@ -144,6 +144,9 @@ impl Canvas for SceneCanvas<'_> {
             self.transforms.pop();
         }
     }
+    fn text_width(&mut self, run: &TextRun) -> f64 {
+        f64::from(self.text.measure(run))
+    }
     fn text(&mut self, run: &TextRun) {
         let t = self.current();
         let shaped = self.text.shape_shared(run);

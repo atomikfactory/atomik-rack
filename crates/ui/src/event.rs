@@ -140,6 +140,26 @@ pub enum NumpadKey {
     Decimal,
 }
 
+/// An input-method event (the platform's composition of text: Japanese, Chinese, Korean, dead
+/// keys, the emoji picker). The app sends them while a view takes typed text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImeEvent {
+    /// The input method became active for the focused text.
+    Enabled,
+    /// The composition in progress: the text being composed (empty when it was cancelled) and
+    /// the method's own cursor as a byte range of it.
+    Preedit {
+        /// The pre-edit text.
+        text: String,
+        /// The cursor or selection inside it, as byte offsets.
+        cursor: Option<(usize, usize)>,
+    },
+    /// The user accepted this text: it goes into the field and the composition ends.
+    Commit(String),
+    /// The input method went away; a composition in progress is dropped.
+    Disabled,
+}
+
 /// An input or window event, in logical units.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
@@ -200,6 +220,8 @@ pub enum UiEvent {
         /// The new modifiers.
         modifiers: Modifiers,
     },
+    /// An input-method event for the view that takes typed text (see [`ImeEvent`]).
+    Ime(ImeEvent),
     /// The display scale factor changed (e.g. moving to another monitor).
     ScaleChanged(f64),
     /// The view was resized; size in logical pixels.

@@ -473,10 +473,16 @@ impl PhysChord {
     }
 
     /// Whether the chord carries the primary modifier of `os` (Ctrl, or Meta on macOS), or is
-    /// a function key or Esc: the chords that still run while a text field has focus.
+    /// a function key or Esc: the chords that still run while a text field has focus. Outside
+    /// macOS, Ctrl+Alt with a character is AltGr, which types that character: it is text.
     pub fn runs_in_text(&self, os: Os) -> bool {
+        let altgr = os != Os::Mac
+            && self.ctrl
+            && self.alt
+            && !self.meta
+            && matches!(self.key, ChordKey::Char(_));
         let primary = if os == Os::Mac { self.meta } else { self.ctrl };
-        primary || matches!(self.key, ChordKey::F(_) | ChordKey::Escape)
+        (primary && !altgr) || matches!(self.key, ChordKey::F(_) | ChordKey::Escape)
     }
 }
 
@@ -636,6 +642,20 @@ mod tests {
             !run("Ctrl+S", Os::Mac),
             "Control is not the primary on macOS"
         );
+    }
+
+    #[test]
+    fn altgr_types_in_a_text_field_outside_macos() {
+        // AltGr reports Ctrl+Alt: Ctrl+Alt+Q is the character Q's AltGr layer ("@" on some
+        // layouts), not a shortcut. On macOS Option types characters and Ctrl is not primary.
+        let run = |c: &str, os| p(c).physical(os).runs_in_text(os);
+        for os in [Os::Windows, Os::Linux] {
+            assert!(!run("Cmd+Alt+Q", os), "{os:?}");
+            assert!(!run("Cmd+Alt+Shift+I", os), "{os:?}");
+            assert!(run("Cmd+Alt+F5", os), "function keys still run");
+            assert!(run("Cmd+Q", os));
+        }
+        assert!(run("Cmd+Alt+Q", Os::Mac));
     }
 
     #[test]

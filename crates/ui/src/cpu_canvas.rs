@@ -75,6 +75,9 @@ impl Canvas for CpuCanvas<'_> {
             self.transforms.pop();
         }
     }
+    fn text_width(&mut self, run: &TextRun) -> f64 {
+        f64::from(self.text.measure(run))
+    }
     fn text(&mut self, run: &TextRun) {
         self.ctx.set_transform(self.current());
         self.ctx.set_paint(vello_cpu::PaintType::Solid(run.color));
