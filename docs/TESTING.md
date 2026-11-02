@@ -21,9 +21,18 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
   `float_cmp = deny`) and in [clippy.toml](../clippy.toml) (bans `HashMap`, `HashSet`,
   `Instant::now` and `SystemTime::now`).
 - CI also runs `cargo test --workspace --release` on Linux and on Windows (the Windows leg includes the
-  exact-hash goldens), because optimisation can change floating-point behaviour. It also runs
-  `cargo llvm-cov` and fails below 90 % of lines (binary
-  entry points and GPU or audio-device glue are excluded; the exact filter is in the workflow).
+  exact-hash goldens), because optimisation can change floating-point behaviour.
+- Coverage is the slowest job, so a pull request does not run it unless it carries the `coverage` label. It runs on
+  every push to `main`, nightly and by hand ([coverage.yml](../.github/workflows/coverage.yml)): `cargo llvm-cov`
+  fails below 90 % of lines for the workspace (binary entry points and GPU or audio-device glue are excluded; the
+  anchored filter is in the workflow) and below the floor of any crate. The floors are in
+  [coverage-floors.txt](../scripts/coverage-floors.txt), the check is
+  [coverage-floors.sh](../scripts/coverage-floors.sh) (`sh scripts/coverage-floors.sh --self-test` proves that it
+  fails a crate under its floor), and the table of every crate is in the job summary. Raise a floor when a crate
+  has risen and stays there.
+- A change to documents only (Markdown, `docs/`) skips the build, clippy and test jobs unless a test of the crates
+  names the document; the documentation checks always run.
+- The pull request caches are saved by `main` only; a pull request restores them.
 
 Optional coverage report (needs `cargo install cargo-llvm-cov`):
 
@@ -348,7 +357,9 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   `CARGO` environment variable, the current `CARGO_TARGET_DIR`) under a lock file in the target
   directory, so several test binaries running at once do not race, and copies the library to
   `<target>/<profile>/clap-plugins/*.clap`. A missing or unbuildable plugin fails the test loudly
-  with the package named. The scanner tests also need `atomik-plugin-scan` built
+  with the package named. CI builds the plugin libraries once with the workspace and sets
+  `ATOMIK_TEST_PLUGINS_PREBUILT=1`: the tests then only locate the libraries and start no nested `cargo build`
+  (a library that is missing is still a loud failure). The scanner tests also need `atomik-plugin-scan` built
   (`cargo test -p atomik-plugin-scan` does it).
 - **Reference oracle.** The effect and synth tests compare the output of the plugin through the real
   CLAP backend and the `PluginDevice` with the DSP core run directly, bit for bit, at host blocks 1,
@@ -385,6 +396,10 @@ synth, a mono effect, plugins that fail at activation or return errors or NaN) a
   engine one batch per frame (`stepped`), the cadence of the bounce.
   `app_core_plugins_latency_tests.rs` has the twins of a saved latency and of a latency a container
   macro moves mid-song, in both formats.
+- **The live deadline test.** `plugin-hostd/tests/e2e_chain.rs` renders sandboxed plugins against a real-time
+  deadline. Off CI the first render must be on time; with `CI=true` a shared runner may miss a deadline and the
+  render is repeated up to three times, so a sandbox that cannot keep up still fails. Every run prints which
+  attempt was on time, and a retry is also written to the job summary of a GitHub Actions run.
 - **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
   and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
   `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against

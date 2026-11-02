@@ -19,6 +19,52 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  # Which files the change touches: a change to documents only (Markdown and docs/) skips the
+  # build and test jobs. The hygiene job, which checks the documents against the code, always
+  # runs. Any doubt (a push, a manual run, an API failure) means the code jobs run.
+  changes:
+    name: changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.plan.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Look at the changed files
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -u
+          code=true
+          if [ "$EVENT" = "pull_request" ] \
+            && files="$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')" \
+            && [ -n "$files" ]; then
+            code=false
+            # A document counts as code when a test of the crates names it (the architecture
+            # guide's command count, the devices guide): such a change runs everything.
+            for file in $files; do
+              case "$file" in
+                docs/* | *.md)
+                  if grep -rqF --include='*.rs' "$(basename "$file")" crates; then code=true; fi
+                  ;;
+                *) code=true ;;
+              esac
+            done
+            if [ "$code" = "false" ]; then
+              echo "::notice title=Documents only::the build and test jobs are skipped"
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -32,6 +78,8 @@ jobs:
 
   clippy:
     name: clippy
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -45,6 +93,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }}, ${{ matrix.profile }})
+    needs: changes
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -59,18 +108,41 @@ jobs:
             profile: release
           - os: windows-latest
             profile: release
+    env:
+      # A documents-only change skips the steps below, not the job: a matrix job that is skipped
+      # as a whole never reports the names a required check waits for.
+      RUN_CODE: ${{ needs.changes.outputs.code }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
+        if: env.RUN_CODE == 'true'
         with:
           cache-key: test-${{ matrix.profile }}
+      # The test plugins are libraries of the workspace: build them once here, next to the tests'
+      # own dependencies, and tell the tests so (no nested `cargo build` under a lock in each
+      # test binary). Without the variable the tests build what they need themselves.
+      - name: Build the test plugins
+        if: env.RUN_CODE == 'true'
+        shell: bash
+        run: |
+          set -eu
+          packages=""
+          for manifest in crates/testplugins/*/Cargo.toml; do
+            name="$(sed -n 's/^name = "\(.*\)"/\1/p' "$manifest" | head -n 1)"
+            packages="$packages -p $name"
+          done
+          flags=""
+          if [ "${{ matrix.profile }}" = "release" ]; then flags="--release"; fi
+          # shellcheck disable=SC2086
+          cargo build $flags $packages
+          echo "ATOMIK_TEST_PLUGINS_PREBUILT=1" >> "$GITHUB_ENV"
       - name: cargo test (debug)
-        if: matrix.profile == 'debug'
+        if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
         run: cargo test --workspace --no-fail-fast
       - name: cargo test (release)
-        if: matrix.profile == 'release'
+        if: env.RUN_CODE == 'true' && matrix.profile == 'release'
         run: cargo test --workspace --release --no-fail-fast
 
   deny:
@@ -101,31 +173,3 @@ jobs:
         with:
           cache-key: hygiene
       - run: cargo test -p atomik-testkit --test docs_hygiene --test docs_match_code --test guard_inventory
-
-  coverage:
-    name: coverage (llvm-cov)
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-        with:
-          components: llvm-tools-preview
-          cache-key: coverage
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
-        with:
-          tool: cargo-llvm-cov
-      # Workspace line coverage gate. Per-crate coverage is well above the floor.
-      # Excluded from the gate: binary entry points and GPU/audio-device glue that cannot run on
-      # CI runners (no GPU, no audio devices). Their logic is tested through pure cores.
-      # The CLAP and VST3 test plugin libraries (crates/testplugins/clap* and vst3*) are excluded too: they only run
-      # inside the scanner child and the plugin host as loaded libraries, which the instrumented
-      # test binaries do not measure (their DSP core, testplugins/core, is measured).
-      - run: cargo llvm-cov --workspace --fail-under-lines 90 --ignore-filename-regex '(main[.]rs|scene_canvas[.]rs|ui/src/text[.]rs|audio-io/src/stream[.]rs|play/src/backend[.]rs|testplugins/(clap|vst3)[^/]*/src/[^/]*[.]rs)$' --lcov --output-path lcov.info
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: lcov
-          path: lcov.info
-          if-no-files-found: error

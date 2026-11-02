@@ -919,6 +919,9 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **A bypassed container can no longer close a loop.** Bypassing a container whose output is cabled back to its own
+  input, with something else fed from that output, made a saved file the loader refused ("would create a cycle").
+  The bypass is now refused when it would do that, so a project that was saved always loads.
 - **Device robustness.** A NaN or infinite sample on an audio input of the channel strip, the master,
   the line mixer, the audio track or the stereo delay now reads as silence, so one bad source can no
   longer silence the mix (finite audio is unchanged bit for bit). Two sample map swaps of one device
@@ -1074,6 +1077,14 @@ may break APIs and the patch and project formats.
   behind the finished take.
 
 ### Changed
+- **Faster and steadier continuous integration.** Coverage no longer runs on every pull request: it runs on pushes
+  to `main`, nightly, by hand and on a pull request that carries the `coverage` label, and it now also checks a
+  floor for each crate (`scripts/coverage-floors.txt`) and prints a table in the job summary. A change to documents
+  only skips the build and test jobs. Only `main` saves the build caches. The test plugin libraries are built once
+  by the workspace build instead of by a nested `cargo build` in each test binary (the nested build stays as the
+  local fallback). The live deadline test is strict off CI, retries only on CI and reports its attempts. The export
+  cancel test and the child shutdown tests no longer depend on how fast the machine is, and the locator test draws
+  with the Pencil tool. A weekly job keeps the `cargo build --timings` report.
 - **Stricter device descriptors and a safer model API.** A device descriptor whose stages skip a
   number, start above 0 or use 255 is refused when the type is registered. A plugin whose layout is
   refused leaves nothing behind, `Registry::get` reports the descriptor of a plugin type instead of

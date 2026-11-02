@@ -152,9 +152,13 @@ pub(crate) fn spawn(
     work: Work,
     (cancel, progress): (Arc<AtomicBool>, Arc<AtomicU32>),
 ) -> std::io::Result<()> {
+    #[cfg(test)]
+    let hold = hold::take();
     std::thread::Builder::new()
         .name("atomik-export".into())
         .spawn(move || {
+            #[cfg(test)]
+            hold::wait(hold);
             let mut guard = Guard {
                 tx,
                 generation,
@@ -172,4 +176,34 @@ pub(crate) fn spawn(
             guard.send(result);
         })
         .map(|_| ())
+}
+
+/// A test seam: the export the calling thread starts next waits for a release before it renders,
+/// so a test can press CANCEL while the worker is certainly still at its start.
+#[cfg(test)]
+pub(crate) mod hold {
+    use std::cell::RefCell;
+    use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::time::Duration;
+
+    thread_local! {
+        static NEXT: RefCell<Option<Receiver<()>>> = const { RefCell::new(None) };
+    }
+
+    /// Holds the next export started on this thread; send (or drop the sender) to let it run.
+    pub(crate) fn next_export() -> Sender<()> {
+        let (tx, rx) = channel();
+        NEXT.with(|n| *n.borrow_mut() = Some(rx));
+        tx
+    }
+
+    pub(super) fn take() -> Option<Receiver<()>> {
+        NEXT.with(|n| n.borrow_mut().take())
+    }
+
+    pub(super) fn wait(hold: Option<Receiver<()>>) {
+        if let Some(rx) = hold {
+            let _ = rx.recv_timeout(Duration::from_secs(60));
+        }
+    }
 }

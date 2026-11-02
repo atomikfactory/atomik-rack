@@ -56,3 +56,6 @@ runs:
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         key: ${{ inputs.cache-key }}
+        # Only main saves: a pull request restores the caches main saved and does not spend its
+        # time uploading a cache nobody else can use (the dependencies are what is cached).
+        save-if: ${{ github.ref == 'refs/heads/main' }}

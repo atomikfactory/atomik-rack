@@ -255,8 +255,10 @@ fn a_live_render_of_sandboxed_plugins_meets_every_batch_deadline_and_equals_in_p
             0,
         );
         reap(&mut local);
-        // A shared runner can preempt the child past one deadline, so a miss gets a few more
-        // tries; a sandbox that cannot keep up misses every time and still fails.
+        // A shared runner can preempt the child past one deadline, so on CI a miss gets a few more
+        // tries; a sandbox that cannot keep up misses every time and still fails. Locally the
+        // first render must be on time. The attempt count is always reported.
+        let attempts = live_attempts();
         let mut late = 0;
         loop {
             let mut sb = Sandbox::real(format);
@@ -272,17 +274,41 @@ fn a_live_render_of_sandboxed_plugins_meets_every_batch_deadline_and_equals_in_p
             reap(&mut sb.manager);
             sb.finish();
             if bits(&got) == bits(&reference) {
+                report_attempts(format.name(), late + 1, attempts);
                 break;
             }
             late += 1;
             assert!(
-                late < LIVE_ATTEMPTS,
-                "{}: a late batch in each of {LIVE_ATTEMPTS} live renders",
+                late < attempts,
+                "{}: a late batch in each of {attempts} live renders",
                 format.name()
             );
         }
     }
 }
 
-/// How many live renders may run before a late batch fails the test.
-const LIVE_ATTEMPTS: usize = 3;
+/// How many live renders may run before a late batch fails the test: three on CI (`CI=true`),
+/// one anywhere else.
+fn live_attempts() -> usize {
+    if std::env::var("CI").is_ok_and(|v| v == "true") {
+        3
+    } else {
+        1
+    }
+}
+
+/// Says how many live renders a format needed. A retry is also written to the job summary of a
+/// GitHub Actions run, so a runner that keeps missing deadlines shows up without opening the log.
+fn report_attempts(format: &str, used: usize, allowed: usize) {
+    println!("live deadline test, {format}: attempt {used} of {allowed} was on time");
+    if used > 1
+        && let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY")
+        && let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path)
+    {
+        use std::io::Write;
+        let _ = writeln!(
+            file,
+            "- live deadline test ({format}) needed {used} attempts"
+        );
+    }
+}

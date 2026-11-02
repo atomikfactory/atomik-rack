@@ -2069,9 +2069,24 @@ impl Document {
                         index + 1
                     )));
                 }
+                let value = p.clamp(value);
+                if device.inner.is_some() && param == expand::BYPASS_PARAM && value >= 0.5 {
+                    // A bypassed container passes its signal straight through: a cable that
+                    // fed it back to itself is a loop of pure pass-throughs only now.
+                    let mut devices = doc.devices.clone();
+                    if let Some(d) = container::find_relative_mut(&mut devices, &key.0) {
+                        d.params.insert(param.clone(), value);
+                    }
+                    if let Some(problem) = rules::expanded_problem(&devices, &doc.cables, registry)
+                    {
+                        return Err(ModelError::BadCable(format!(
+                            "{key} cannot be bypassed: {problem}"
+                        )));
+                    }
+                }
                 Edit::Param {
                     old: device.params.get(&param).copied(),
-                    new: Some(p.clamp(value)),
+                    new: Some(value),
                     default: p.default,
                     key,
                     param,

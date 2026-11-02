@@ -1,6 +1,6 @@
 name: Performance
 
-# Scheduled measurements, never on a pull request and never gating one. Three jobs:
+# Scheduled measurements, never on a pull request and never gating one. Four jobs:
 #
 # - benches: runs the criterion benches of render, devices, dsp and model (one command per crate)
 #   and keeps their output, with a description of the runner, as an artifact. Wall-clock time on
@@ -11,6 +11,7 @@ name: Performance
 #   passes: commit them as perf/baseline-instructions.txt to start gating. The manual input
 #   `inject_regression` inflates the counts by 20 % before the comparison, to prove that the gate
 #   fails.
+# - timings: the compile-time report of a full build (`cargo build --timings`), as an artifact.
 # - realtime: the release-profile check that a demo patch renders at least 50 times faster than
 #   real time.
 on:
@@ -125,3 +126,24 @@ jobs:
         with:
           cache-key: perf-realtime
       - run: cargo test --release -p atomik-render --test e2e -- --ignored --nocapture realtime_factor_release
+
+  # Where the compile time of a build goes: the HTML report of `cargo build --timings` for the
+  # test profile (what a pull request builds first), kept for reading.
+  timings:
+    name: build timings
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: perf-timings
+      - run: cargo build --workspace --all-targets --timings
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-timings
+          path: target/cargo-timings
+          if-no-files-found: error

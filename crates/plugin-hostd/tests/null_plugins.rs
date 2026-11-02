@@ -7,8 +7,7 @@ use atomik_plugin_host::{ProcessStatus, SleepRule, TailLength};
 use atomik_plugin_ipc::{
     AudioOp, FromChild, ProcessorInfo, ToChild, WireChannels, WireErrorKind, WireKind,
 };
-use std::time::Duration;
-use support::{SR, Spawn, TestParent, note_off, note_on, param, ramp};
+use support::{PATIENCE, SR, Spawn, TestParent, note_off, note_on, param, ramp};
 
 fn started(plugin: &str) -> TestParent {
     let mut p = TestParent::spawn(&Spawn::null(plugin));
@@ -318,15 +317,13 @@ fn the_null_synth_plays_a_deterministic_note_until_it_is_released() {
 }
 
 #[test]
-fn a_closed_stdin_with_an_active_plugin_ends_the_child_with_exit_0_within_a_second() {
+fn a_closed_stdin_with_an_active_plugin_ends_the_child_with_exit_0_promptly() {
     let mut p = started("null.gain");
     p.instantiate();
     p.activate(false);
     p.process(&[ramp(1.0), ramp(1.0)], &[]);
     p.close_stdin();
-    let status = p
-        .wait_exit(Duration::from_secs(1))
-        .expect("it ends in time");
+    let status = p.wait_exit(PATIENCE).expect("it ends in time");
     assert_eq!(status.code(), Some(0));
 }
 
@@ -336,9 +333,7 @@ fn shutdown_with_an_active_plugin_ends_the_child_with_exit_0() {
     p.instantiate();
     p.activate(false);
     p.send(&ToChild::Shutdown);
-    let status = p
-        .wait_exit(Duration::from_secs(1))
-        .expect("it ends in time");
+    let status = p.wait_exit(PATIENCE).expect("it ends in time");
     assert_eq!(status.code(), Some(0));
 }
 

@@ -1,0 +1,27 @@
+# Line coverage floor of each crate, in percent (see scripts/coverage-floors.sh). The coverage
+# run also keeps the 90 percent workspace gate. Every crate starts at a conservative 80, so that
+# only a real drop fails; ratchet each up from the table of a main run.
+default 80
+app 80
+audio-file 80
+audio-io 80
+core 80
+device-sdk 80
+devices 80
+dsp 80
+engine 80
+library 80
+mcp 80
+midi-io 80
+model 80
+play 80
+plugin-clap 80
+plugin-host 80
+plugin-hostd 80
+plugin-ipc 80
+plugin-sandbox 80
+plugin-scan 80
+plugin-vst3 80
+render 80
+testkit 80
+ui 80

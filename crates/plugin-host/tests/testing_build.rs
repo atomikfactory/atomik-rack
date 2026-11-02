@@ -31,6 +31,9 @@ fn concurrent_builds_of_the_same_plugin_both_succeed() {
 
 #[test]
 fn an_unknown_package_is_a_loud_build_error_naming_it() {
+    if skips_the_nested_build() {
+        return; // the nested build is the local fallback these tests cover
+    }
     let err = build_cdylib("atomik-test-no-such-plugin").unwrap_err();
     match err {
         TestingError::BuildFailed(name, _) => assert_eq!(name, "atomik-test-no-such-plugin"),
@@ -110,8 +113,28 @@ fn the_bundle_binary_follows_the_layout_of_each_operating_system() {
 #[test]
 fn a_vst3_package_that_is_not_built_fails_loudly() {
     use atomik_plugin_host::testing::vst3_test_plugin;
+    if skips_the_nested_build() {
+        return;
+    }
     assert!(matches!(
         vst3_test_plugin("atomik-test-no-such-plugin"),
         Err(TestingError::BuildFailed(..))
     ));
+}
+
+#[test]
+fn a_prebuilt_run_only_locates_the_library() {
+    use atomik_plugin_host::testing::prebuilt;
+    use std::ffi::OsStr;
+    assert!(!prebuilt(None));
+    assert!(!prebuilt(Some(OsStr::new(""))));
+    assert!(!prebuilt(Some(OsStr::new("0"))));
+    assert!(prebuilt(Some(OsStr::new("1"))));
+}
+
+/// CI sets the prebuilt variable: the nested build (and so its failure) does not happen.
+fn skips_the_nested_build() -> bool {
+    atomik_plugin_host::testing::prebuilt(
+        std::env::var_os(atomik_plugin_host::testing::PREBUILT_ENV).as_deref(),
+    )
 }
