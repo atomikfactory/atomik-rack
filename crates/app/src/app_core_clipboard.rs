@@ -615,6 +615,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::CutOut { .. }
             | WorkflowCommand::ReverseClips { .. }
             | WorkflowCommand::ScaleTempo { .. }
+            | WorkflowCommand::StretchClips { .. }
             | WorkflowCommand::ChopClips { .. }
             | WorkflowCommand::CleanupAutomation { .. }
             | WorkflowCommand::InsertTime { .. }

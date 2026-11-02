@@ -54,6 +54,31 @@ may break APIs and the patch and project formats.
   previous or next preset of the focused device (Mixer > Map Command arms one for the next
   control moved). Undo from a control takes back a whole mapped sweep as one step. The new
   mapping fields are written only when used, so older projects load and bounce unchanged.
+- **Alt+drag a clip edge to stretch it.** With the Select tool, hold Alt (the alternate-tool role)
+  over the start or end edge of a clip and drag: the clip gets longer or shorter by a ratio, the
+  opposite edge stays where it is, and everything in the clip follows. Note starts and lengths
+  and automation points scale proportionally, and an audio clip is warped to the new length with
+  its pitch kept (it keeps its warp mode, Repitch included; a clip that is not warped yet turns
+  warping on with the default engine, and one that plays backwards is refused). Every selected
+  clip stretches by the same ratio about its own fixed edge, so each keeps its own start (or end).
+  The edge snaps to the grid like a resize does (the disable-snap role works), the clips change
+  live while you drag, the release is one undo step and Esc puts everything back; over an edge
+  with Alt held the pointer is a split-bar cursor. Alt on the body of a clip keeps the alternate
+  tool. The same ratio code as Scale Tempo does the work (the model command is `StretchClips`;
+  the project format is unchanged).
+- **Insert and Remove Bars at Locators in the ruler menu.** Right-click the ruler: the two
+  commands sit under the locator items, next to the Edit menu entries that already did the same.
+- **The logo in the About box and in `assets/logo/`.** Help > About now draws the AR monogram at
+  the top. `assets/logo/monogram.png` (transparent) and `assets/logo/monogram-black.png` (the same
+  on opaque black), both 512 pixels, are derived from the master by the `make_icons` example. The
+  headless screenshots draw images too now.
+- **MIDI files in the browser.** The file browser now lists `.mid` and `.midi` files (with a MIDI
+  label, and `kind:midi` in the search field). Double-click or Enter, or Import in the row menu,
+  imports one as File > Import MIDI does. Drag one from the browser or the system onto the
+  arrangement: on a note lane it becomes one clip on that lane at the snapped drop position (a
+  file with several tracks is merged into the one clip), below the tracks or on another kind of
+  lane it makes new tracks from the drop position. Dropped anywhere else it still makes new
+  tracks at the playhead.
 - **Spectrum EQ window.** View > Spectrum EQ (F2) opens a floating, resizable window with a
   real-time analyser of the selected mixer strip, measured after its EQ and before its fader, and
   the strip's filters and EQ drawn as a response curve. Drag the HF, HMF, LMF and LF points (Shift
@@ -856,6 +881,20 @@ may break APIs and the patch and project formats.
   audio clip, or stripping silence, refuses a fade or an envelope point longer than the clip. A
   project saved by an earlier version that has one loads with it clamped to the clip and a warning
   naming the clip; the sound is the same, since the player already clamped it.
+- **Insert and Remove Bars at Locators moved some things wrongly.** A tempo or meter change that
+  starts exactly on the left locator stayed behind while the music after it moved, so the opened
+  bars took the new tempo or the new bar length and the following bars no longer sat on bar
+  lines; now it moves with the music (the song's first tempo and meter stay). A loop that starts
+  on the locator but is not the locator range moves too. Remove Bars shortens a note that would
+  ring on into the removed bars (with note tails on) so it ends where the cut starts. An
+  automation curve stays continuous across an insert and joins with the value from the end of the
+  range on a remove, and automation-only tracks and device lanes move like the rest (tests now
+  cover all of it).
+- **The Stereo Tool's MONO switch is the last stage.** It used to come before the Mid/side mode,
+  so with Mid/side set to encode the output was the mid on the left and silence on the right.
+  Now the two outputs are the same `(L + R) / 2` of whatever the mode produced, in every mode
+  (once the 10 ms ramp has settled they are bit-identical); a render test checks left equals right
+  with MONO on, and a panel test that MONO is a front toggle on the `mono` param.
 - **The drum generator's Generate always wrote the same pattern and Randomise did nothing.** The
   seed only jittered velocities, and only when the density was not zero, so at the default
   density the steps never changed. Now every press of GENERATE picks a new seed (written to the
@@ -995,6 +1034,21 @@ may break APIs and the patch and project formats.
   atomically and at most every two seconds instead of at every click, `keymap.json` is checked when a
   window gets the focus or a menu opens instead of four times a second, and the plugin scan uses as
   many scanner processes as half the cores (two to eight).
+- **The rack navigator is a miniature of the real rack.** The strip at the right edge of the rack
+  no longer shows colour blocks: every device is drawn as a scaled-down picture of its own panel
+  (plate, name, knobs, faders and displays as they stand, a folded panel folded), so you can tell
+  the devices apart and find the one you want at a glance. Text too small to read becomes a bar
+  and very small details are left out; when the rack is so tall that a panel would be only a few
+  pixels high the strip falls back to a flat block of the device colour. Clicking and dragging
+  move the view exactly as before, and the viewport rectangle and the selection outlines stay on
+  top. The miniature is recorded once per panel change, not per frame, and the live meters and
+  scopes do not make it redraw during playback (the strip keeps its 136 px width).
+- **Spider Audio and Spider CV are now Audio Split/Merge and CV Split/Merge.** Only the names
+  shown in the browser, the panels and the documentation change; the device ids are the same, so
+  saved projects and patches load as before.
+- **The application icon sits on a black background.** The window, taskbar, Explorer, installer,
+  Dock and Linux icons are regenerated from the logo on opaque black so they read on any
+  taskbar.
 - **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
   is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
   their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
