@@ -18,6 +18,24 @@ pub enum UiAction {
     Command(Command),
     /// A drag ended (pointer released): call [`atomik_model::Document::end_merge`].
     EndMerge,
+    /// A step of a clip edge dragged with the stretch role: the host puts the document back to
+    /// before the drag and stretches `ids` by `percent` (see
+    /// [`atomik_model::WorkflowCommand::StretchClips`]) as a preview that adds no undo step.
+    /// Any later command accepts the preview first.
+    StretchStep {
+        /// The clips being stretched.
+        ids: Vec<ClipId>,
+        /// The new tempo as a percentage of the old one.
+        percent: f64,
+        /// The start edge was grabbed.
+        from_start: bool,
+    },
+    /// The stretch drag ended: `commit` keeps the last preview as one undo step, otherwise the
+    /// document goes back to what it was before the drag.
+    StretchEnd {
+        /// Keep the stretch.
+        commit: bool,
+    },
     /// Undo (Ctrl+Z / Cmd+Z).
     Undo,
     /// Redo (Ctrl+Shift+Z, Ctrl+Y / Cmd+Shift+Z).

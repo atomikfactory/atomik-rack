@@ -268,12 +268,7 @@ fn scale_audio(
     Ok(out)
 }
 
-/// Plans `ScaleTempo`.
-pub(crate) fn scale_clips(
-    doc: &RackDoc,
-    ids: &[ClipId],
-    percent: f64,
-) -> Result<(Edit, Option<ClipId>), ModelError> {
+fn check_percent(percent: f64) -> Result<(), ModelError> {
     if !(SCALE_PERCENT_MIN..=SCALE_PERCENT_MAX).contains(&percent) {
         return Err(range(format!(
             "a tempo of {percent}% is outside {SCALE_PERCENT_MIN}..={SCALE_PERCENT_MAX}%"
@@ -282,36 +277,73 @@ pub(crate) fn scale_clips(
     if (percent - 100.0).abs() < f64::EPSILON {
         return Err(bad("a tempo of 100% changes nothing"));
     }
+    Ok(())
+}
+
+/// One clip at a tempo of `percent` per cent, its geometry scaled about the tick `anchor`
+/// (which stays where it is) and its content with it: notes, controller and automation points
+/// scale from the start of the content, an audio clip is warped to follow.
+fn scaled_clip(doc: &RackDoc, c: &Clip, percent: f64, anchor: i64) -> Result<Clip, ModelError> {
+    let start = anchor + st(c.start - anchor, percent);
+    let end = anchor + st(c.end() - anchor, percent);
+    let mut new = Clip {
+        start,
+        length: (end - start).max(1),
+        offset: st(c.offset, percent),
+        loop_length: c.loop_length.map(|n| st(n, percent).max(1)),
+        ..c.clone()
+    };
+    match &c.content {
+        ClipContent::Notes(notes) => {
+            new.content = ClipContent::Notes(scale_notes(notes, percent).into());
+            new.controllers = c
+                .controllers
+                .iter()
+                .map(|l| ControllerLane::new(l.kind, scale_points(&l.points, percent)))
+                .collect();
+        }
+        ClipContent::Automation(points) => {
+            new.content = ClipContent::Automation(scale_points(points, percent));
+        }
+        ClipContent::Audio(a) => {
+            new.content = ClipContent::Audio(scale_audio(doc, c, a, percent)?);
+        }
+    }
+    check_geometry(new.start, new.length, new.offset, new.loop_length).map_err(range)?;
+    Ok(new)
+}
+
+/// Plans `ScaleTempo`.
+pub(crate) fn scale_clips(
+    doc: &RackDoc,
+    ids: &[ClipId],
+    percent: f64,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    check_percent(percent)?;
     let clips = selection(doc, ids)?;
     let base = clips.iter().map(|(_, _, c)| c.start).min().unwrap_or(0);
     let mut edits = Vec::new();
     for (device, lane, c) in clips.iter().map(|(d, l, c)| (d, l, *c)) {
-        let start = base + st(c.start - base, percent);
-        let end = base + st(c.end() - base, percent);
-        let mut new = Clip {
-            start,
-            length: (end - start).max(1),
-            offset: st(c.offset, percent),
-            loop_length: c.loop_length.map(|n| st(n, percent).max(1)),
-            ..c.clone()
-        };
-        match &c.content {
-            ClipContent::Notes(notes) => {
-                new.content = ClipContent::Notes(scale_notes(notes, percent).into());
-                new.controllers = c
-                    .controllers
-                    .iter()
-                    .map(|l| ControllerLane::new(l.kind, scale_points(&l.points, percent)))
-                    .collect();
-            }
-            ClipContent::Automation(points) => {
-                new.content = ClipContent::Automation(scale_points(points, percent));
-            }
-            ClipContent::Audio(a) => {
-                new.content = ClipContent::Audio(scale_audio(doc, c, a, percent)?);
-            }
-        }
-        check_geometry(new.start, new.length, new.offset, new.loop_length).map_err(range)?;
+        let new = scaled_clip(doc, c, percent, base)?;
+        edits.push(replace(device, *lane, c, new));
+    }
+    Ok((Edit::Compound(edits), None))
+}
+
+/// Plans `StretchClips`: every clip is scaled by the same ratio about its own fixed edge, the
+/// end when the start edge is dragged (`from_start`) and the start when the end edge is.
+pub(crate) fn stretch_clips(
+    doc: &RackDoc,
+    ids: &[ClipId],
+    percent: f64,
+    from_start: bool,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    check_percent(percent)?;
+    let clips = selection(doc, ids)?;
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips.iter().map(|(d, l, c)| (d, l, *c)) {
+        let anchor = if from_start { c.end() } else { c.start };
+        let new = scaled_clip(doc, c, percent, anchor)?;
         edits.push(replace(device, *lane, c, new));
     }
     Ok((Edit::Compound(edits), None))
