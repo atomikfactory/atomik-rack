@@ -5154,9 +5154,11 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   are, so a replacement shorter than a zone or a clip offset needs is refused; the folder search
   matches by file name only (no content search), looks 8 levels deep and at 50 000 entries at most,
   and a bounce still stops with an error naming a missing asset.
-- **Sampler scope.** One interpolation mode (cubic Hermite), no release samples, no SoundFont or
-  SFZ import, stereo output only, no zero-crossing snap, and zones are RAM-only. A bounce stops with
-  an error on a missing zone asset, while the live app plays silence.
+- **Sampler scope.** One interpolation mode (cubic Hermite), no release samples, stereo output only, no
+  zero-crossing snap, and zones are RAM-only. SFZ and SoundFont 2 files import the common subset into
+  zones (the readers are in `atomik-audio-file`, the zones are made off the UI thread; see the sampler in
+  DEVICES.md for what is read); release samples, keyswitches, modulators and a SoundFont's other presets
+  are not. A bounce stops with an error on a missing zone asset, while the live app plays silence.
 - **Drum machine and slicer scope.** No kit presets, per-pad envelopes or sample-start, time-stretch
   inside slices or REX import; the slicer is one loop with at most 64 slices.
 - **Effects.** The limiter's true-peak detection is the BS.1770 4x one; a 16x oversampled reference

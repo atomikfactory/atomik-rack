@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **SFZ and SoundFont import into the sampler.** Drop an `.sfz` or `.sf2` file on a sampler (or load it from the
+  sample editor) and it becomes the sampler's zones in one undo step. An SFZ keeps its regions, key and velocity
+  ranges, root keys, loops, tuning, volume and pan, amplitude envelope, filter, round-robin, velocity crossfades
+  and `<group>` headers; a SoundFont brings its own samples, and its first preset is read (ranges, root, tuning,
+  attenuation, pan, loops, volume envelope, low-pass filter). Samples are converted to the project rate and
+  stored in the project. Whatever is not read (unknown opcodes, release-triggered regions, modulators, other
+  presets) is named once in a message and never stops the import. The readers cap file, region and sample
+  counts, never panic on damaged files and have a fuzz target. The loop slicer's eight slots and the sampler's
+  eight outputs are not built yet. No project format change.
 - **Space reverb, convolution reverb and vocoder.** Three new effects. The Space Reverb adds arena, cathedral,
   spring and echoverb algorithms to the reverb engine, with a wet high cut and a gated tail (hold time and level).
   The Convolution Reverb plays an impulse response from an audio file of the project (drop a `.wav` on the device;
