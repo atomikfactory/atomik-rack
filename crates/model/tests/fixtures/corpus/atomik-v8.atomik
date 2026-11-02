@@ -1,0 +1,215 @@
+{
+  "format": "atomik-project",
+  "version": 8,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "lead", "type": "atomik.stereo-delay",
+      "name": "Stereo Delay", "folded": false
+    },
+    {
+      "id": "layer", "type": "atomik.container",
+      "name": "Container", "folded": false,
+      "params": {
+        "macro1": 0.3
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "lo", "type": "atomik.poly-synth",
+            "name": "Poly Synth", "folded": false,
+            "params": {
+              "osc1.semi": -12
+            }
+          },
+          {
+            "id": "hi", "type": "atomik.poly-synth",
+            "name": "High", "folded": false, "color": "#aabbcc"
+          },
+          {
+            "id": "fx", "type": "atomik.container",
+            "name": "Container", "folded": true,
+            "inner": {
+              "devices": [
+                {
+                  "id": "comp", "type": "atomik.compressor",
+                  "name": "Compressor", "folded": false
+                },
+                {
+                  "id": "delay", "type": "atomik.stereo-delay",
+                  "name": "Stereo Delay", "folded": false
+                }
+              ],
+              "cables": [
+                {"from": "boundary:in_l", "to": "comp:in_l"},
+                {"from": "boundary:in_r", "to": "comp:in_r"},
+                {"from": "comp:out_l", "to": "delay:in_l"},
+                {"from": "comp:out_r", "to": "delay:in_r"},
+                {"from": "delay:out_l", "to": "boundary:out_l"},
+                {"from": "delay:out_r", "to": "boundary:out_r"}
+              ],
+              "macros": [
+                {"name": "", "targets": [
+                  {"device": "comp", "param": "threshold", "min": -40, "max": -10}
+                ]},
+                {"name": "", "targets": []},
+                {"name": "", "targets": []},
+                {"name": "", "targets": []},
+                {"name": "", "targets": []},
+                {"name": "", "targets": []},
+                {"name": "", "targets": []},
+                {"name": "", "targets": []}
+              ],
+              "splits": []
+            }
+          },
+          {
+            "id": "smp", "type": "atomik.sampler",
+            "name": "Sampler", "folded": false,
+            "zones": [
+              {"asset": "4242424242424242424242424242424242424242424242424242424242424242", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "root_key": 60, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 48000, "loop_mode": "off", "loop_start": 0, "loop_end": 48000, "crossfade": 0, "trigger": "gate", "reverse": false}
+            ]
+          },
+          {
+            "id": "seq", "type": "atomik.step-sequencer",
+            "name": "Step sequencer", "folded": false,
+            "params": {
+              "pattern": 1
+            },
+            "steps": {
+              "patterns": [
+                {
+                  "name": "Pattern 1", "length": 16, "resolution": "sixteenth", "swing": 0,
+                  "steps": [
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": true, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+                    {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false}
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "cables": [
+          {"from": "fx:out_l", "to": "boundary:out_l"},
+          {"from": "fx:out_r", "to": "boundary:out_r"},
+          {"from": "lo:out_l", "to": "fx:in_l"},
+          {"from": "lo:out_r", "to": "fx:in_r"},
+          {"from": "seq:notes_out", "to": "hi:notes_in"}
+        ],
+        "macros": [
+          {"name": "Tone \"é\"", "targets": [
+            {"device": "lo", "param": "filter.cutoff", "min": 200, "max": 8000},
+            {"device": "hi", "param": "filter.cutoff", "min": 8000, "max": 200},
+            {"device": "fx/delay", "param": "mix", "min": 0, "max": 1}
+          ]},
+          {"name": "", "targets": [
+            {"device": "fx", "param": "macro1", "min": 0, "max": 1}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "lo", "key_lo": 0, "key_hi": 59, "vel_lo": 1, "vel_hi": 127, "transpose": 0},
+          {"target": "smp", "key_lo": 60, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": -12}
+        ]
+      }
+    },
+    {
+      "id": "echo", "type": "atomik.stereo-delay",
+      "name": "Stereo Delay 2", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "layer:out_l", "to": "echo:in_l"},
+    {"from": "lead:out_l", "to": "layer:in_l"}
+  ],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "4242424242424242424242424242424242424242424242424242424242424242": {"channels": 2, "sample_rate": 48000, "frames": 48000, "name": "kick \"1\".wav"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
