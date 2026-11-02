@@ -86,9 +86,9 @@ fn check_undo_redo(d: &mut Document, r: &Registry, before: &RackDoc) {
     let after = d.doc().clone();
     d.doc().validate().expect("the combined document is valid");
     assert_invariants(d.doc(), r);
-    d.undo(r).expect("one undo step");
+    d.undo().expect("one undo step");
     assert_eq!(d.doc(), before, "undo restores the document exactly");
-    d.redo(r).expect("redo");
+    d.redo().expect("redo");
     assert_eq!(d.doc(), &after, "redo restores the combined document");
 }
 

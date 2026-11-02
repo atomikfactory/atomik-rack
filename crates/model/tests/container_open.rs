@@ -62,12 +62,12 @@ fn unfolding_a_container_is_one_undo_step_that_only_changes_the_view() {
     );
     d.apply(set_open("layer/fx", true), &r).unwrap();
     assert!(is_open(&d, "layer/fx"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(!is_open(&d, "layer/fx"));
     assert!(is_open(&d, "layer"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(!is_open(&d, "layer"));
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert!(is_open(&d, "layer"));
 }
 
