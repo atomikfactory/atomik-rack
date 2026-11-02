@@ -2651,9 +2651,14 @@ impl<B: AudioBackend> Shell<B> {
         }
         match event {
             UiEvent::FileHover { paths, .. } => {
-                // Library items hover only over the panes that take them.
-                let takes = matches!(target, Some(Pane::Rack | Pane::Arrangement))
-                    || !paths.iter().any(|p| is_library_item(p));
+                // Library items hover only over the panes that take them, MIDI files only over
+                // the arrangement (anywhere else they import at the playhead on release).
+                let takes = if paths.iter().any(|p| crate::midi_file::is_midi_path(p)) {
+                    target == Some(Pane::Arrangement)
+                } else {
+                    matches!(target, Some(Pane::Rack | Pane::Arrangement))
+                        || !paths.iter().any(|p| is_library_item(p))
+                };
                 if let Some(pane) = target
                     && takes
                 {
@@ -2673,8 +2678,8 @@ impl<B: AudioBackend> Shell<B> {
                 let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
                     .into_iter()
                     .partition(|p| crate::midi_file::is_midi_path(p));
-                for path in &midi {
-                    self.core.import_midi_tracks(path);
+                if !midi.is_empty() {
+                    self.drop_midi(target, *pos, midi);
                 }
                 let (items, rest): (Vec<PathBuf>, Vec<PathBuf>) =
                     rest.into_iter().partition(|p| is_library_item(p));
@@ -2704,6 +2709,27 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// MIDI files dropped at `pos`: the arrangement places them where they land (a clip on a
+    /// note lane, new tracks elsewhere in the track area); a drop anywhere else, and one on the
+    /// arrangement's ruler or corner, makes new tracks at the snapped playhead. The rack takes
+    /// no part: a drop on an instrument there is a drop at the playhead too.
+    fn drop_midi(&mut self, target: Option<Pane>, pos: Point, midi: Vec<PathBuf>) {
+        let placed = target == Some(Pane::Arrangement) && {
+            let event = UiEvent::FileDrop {
+                pos,
+                paths: midi.clone(),
+            };
+            self.forward(Pane::Arrangement, &event)
+                .iter()
+                .any(|a| matches!(a, UiAction::ImportMidi { .. }))
+        };
+        if !placed {
+            for path in &midi {
+                self.core.import_midi_tracks(path);
+            }
         }
     }
 

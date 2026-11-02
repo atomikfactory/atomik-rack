@@ -15,7 +15,8 @@
 //! on top, mono at full height), fade-in / fade-out / gain handles
 //! ([`ArrangementView::audio_handle_center`]) and trim edges. Audio track headers carry the
 //! arm button, an input selector (cable commands) and a monitor button. File drops
-//! ([`UiEvent::FileDrop`]) become [`UiAction::ImportAudio`].
+//! ([`UiEvent::FileDrop`]) become [`UiAction::ImportAudio`], or [`UiAction::ImportMidi`] for
+//! MIDI files.
 //!
 //! Track organisation (folders, track colours and comments, folded automation lanes, the
 //! height presets) is in the `organise` submodule.
@@ -2633,9 +2634,22 @@ impl ArrangementView {
             UiEvent::FileDrop { pos, paths } => {
                 self.set_drop_hover(None);
                 self.set_clip_hover(None);
+                // MIDI files land on the note lane under the pointer, else make new tracks.
                 // Library items are never imported as audio: a clip lands on a note lane,
                 // every other item (and a clip anywhere else) is refused.
-                if paths.iter().any(|p| library_drop::is_library(p)) {
+                let midi = library_drop::midi_files(paths);
+                if !midi.is_empty() {
+                    if let Some(tick) = self.drop_tick_at(*pos) {
+                        let lane = self
+                            .clip_drop_target_at(*pos)
+                            .map(|(track, lane, _)| (track, lane));
+                        out.push(UiAction::ImportMidi {
+                            paths: midi,
+                            lane,
+                            tick,
+                        });
+                    }
+                } else if paths.iter().any(|p| library_drop::is_library(p)) {
                     if let Some(path) = library_drop::clip_item(paths)
                         && let Some((track, lane, tick)) = self.clip_drop_target_at(*pos)
                     {
@@ -2668,6 +2682,21 @@ impl ArrangementView {
     }
 
     fn file_hover(&mut self, pos: Point, paths: &[std::path::PathBuf]) {
+        if !library_drop::midi_files(paths).is_empty() {
+            // The marker of a lane drop over a note lane, the new-tracks indicator elsewhere.
+            let lane = self.clip_drop_target_at(pos);
+            self.set_clip_hover(lane.clone());
+            let hover = match lane {
+                Some(_) => None,
+                None => self.drop_tick_at(pos).map(|tick| DropHover {
+                    target: ImportTarget::NewTracks,
+                    tick,
+                    count: paths.len(),
+                }),
+            };
+            self.set_drop_hover(hover);
+            return;
+        }
         if paths.iter().any(|p| library_drop::is_library(p)) {
             self.set_drop_hover(None);
             let target = library_drop::clip_item(paths).and_then(|_| self.clip_drop_target_at(pos));
