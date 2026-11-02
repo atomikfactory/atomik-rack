@@ -83,6 +83,10 @@ const P_MIX: u32 = 9;
 const P_FREEZE: u32 = 10;
 const P_OUTPUT: u32 = 11;
 const P_MIX_TRIM: u32 = 12;
+/// Space reverb only (see [`crate::space_reverb`]).
+pub(crate) const P_HIGHCUT: u32 = 13;
+pub(crate) const P_GATE: u32 = 14;
+pub(crate) const P_GATE_LEVEL: u32 = 15;
 
 static PARAMS: [ParamDescriptor; 14] = [
     ParamDescriptor {
@@ -314,7 +318,7 @@ struct Algorithm {
     early_scale: f32,
 }
 
-static ALGORITHMS: [Algorithm; 3] = [
+static ALGORITHMS: [Algorithm; 7] = [
     // Room.
     Algorithm {
         lines_ms: [17.3, 21.7, 24.9, 29.3, 31.7, 36.1, 39.3, 43.9],
@@ -393,6 +397,111 @@ static ALGORITHMS: [Algorithm; 3] = [
         mod_scale: 1.3,
         early_scale: 0.5,
     },
+    // Arena.
+    Algorithm {
+        lines_ms: [47.3, 59.9, 71.3, 83.9, 97.1, 109.7, 121.3, 133.9],
+        early: [
+            [
+                (12.1, 0.55),
+                (25.7, -0.45),
+                (39.9, 0.38),
+                (53.3, -0.30),
+                (68.9, 0.24),
+                (83.1, -0.18),
+            ],
+            [
+                (15.7, 0.53),
+                (29.3, -0.43),
+                (44.9, 0.36),
+                (58.1, -0.28),
+                (73.7, 0.22),
+                (89.9, -0.16),
+            ],
+        ],
+        ap_g: 0.50,
+        fc_top: 9_000.0,
+        mod_scale: 0.8,
+        early_scale: 0.8,
+    },
+    // Cathedral.
+    Algorithm {
+        lines_ms: [61.7, 79.3, 97.9, 113.3, 131.9, 149.3, 167.7, 181.1],
+        early: [
+            [
+                (19.1, 0.50),
+                (41.3, -0.42),
+                (66.7, 0.36),
+                (93.1, -0.30),
+                (121.9, 0.24),
+                (151.3, -0.18),
+            ],
+            [
+                (23.9, 0.48),
+                (47.9, -0.40),
+                (73.3, 0.34),
+                (101.9, -0.28),
+                (131.3, 0.22),
+                (163.7, -0.16),
+            ],
+        ],
+        ap_g: 0.60,
+        fc_top: 7_000.0,
+        mod_scale: 1.0,
+        early_scale: 0.6,
+    },
+    // Spring: short, strongly dispersed lines (a high allpass coefficient smears the highs
+    // behind the lows, the chirp of a sprung tank).
+    Algorithm {
+        lines_ms: [7.9, 9.7, 11.3, 13.1, 15.7, 17.9, 21.1, 23.9],
+        early: [
+            [
+                (1.3, 0.70),
+                (2.9, -0.60),
+                (4.3, 0.50),
+                (6.1, -0.45),
+                (7.9, 0.40),
+                (10.3, -0.32),
+            ],
+            [
+                (1.7, 0.68),
+                (3.3, -0.58),
+                (4.9, 0.48),
+                (6.7, -0.43),
+                (8.9, 0.38),
+                (11.3, -0.30),
+            ],
+        ],
+        ap_g: 0.78,
+        fc_top: 5_500.0,
+        mod_scale: 0.25,
+        early_scale: 0.4,
+    },
+    // Echoverb: long, sparsely diffused lines behind evenly spaced early repeats.
+    Algorithm {
+        lines_ms: [83.3, 109.1, 137.9, 167.3, 199.7, 233.9, 271.1, 311.3],
+        early: [
+            [
+                (61.3, 0.70),
+                (122.9, -0.55),
+                (184.1, 0.44),
+                (245.9, -0.35),
+                (307.3, 0.28),
+                (368.9, -0.22),
+            ],
+            [
+                (80.1, 0.66),
+                (161.3, -0.52),
+                (241.9, 0.42),
+                (322.7, -0.33),
+                (403.1, 0.26),
+                (484.7, -0.20),
+            ],
+        ],
+        ap_g: 0.30,
+        fc_top: 8_000.0,
+        mod_scale: 0.15,
+        early_scale: 1.2,
+    },
 ];
 
 /// In-loop allpass delays in samples at 48 kHz (about 3 to 7 ms), scaled with the sample rate.
@@ -435,7 +544,8 @@ const C_APG: usize = 11;
 const C_LINE: usize = 12;
 const C_ERT: usize = C_LINE + FDN_LINES;
 const C_ERG: usize = C_ERT + 2 * ER_TAPS;
-const NC: usize = C_ERG + 2 * ER_TAPS;
+const C_HIGHCUT: usize = C_ERG + 2 * ER_TAPS;
+const NC: usize = C_HIGHCUT + 1;
 
 /// Smoothing time constants in ms.
 const TAU_FAST_MS: f32 = 30.0;
@@ -444,11 +554,31 @@ const TAU_GEOMETRY_MS: f32 = 250.0;
 const TAU_TAP_GAIN_MS: f32 = 100.0;
 const TAU_FREEZE_MS: f32 = 25.0;
 
+/// Which algorithm set a [`Reverb`] serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Variant {
+    /// `atomik.reverb`: room, hall, plate.
+    Classic,
+    /// `atomik.space-reverb`: arena, cathedral, spring, echoverb, with a high cut and a gate.
+    Space,
+}
+
+impl Variant {
+    /// Index range of the set in [`ALGORITHMS`].
+    fn range(self) -> std::ops::Range<usize> {
+        match self {
+            Variant::Classic => 0..3,
+            Variant::Space => 3..7,
+        }
+    }
+}
+
 /// The reverb device.
 #[derive(Debug, Clone)]
 pub struct Reverb {
     sample_rate: f32,
     seed: u64,
+    variant: Variant,
     // Raw parameters.
     algorithm: usize,
     predelay_ms: f32,
@@ -463,6 +593,9 @@ pub struct Reverb {
     mix_trim: f32,
     freeze: bool,
     output_db: f32,
+    highcut: f32,
+    gate_hold_ms: f32,
+    gate_level_db: f32,
     // State.
     fresh: bool,
     ctl: [BlockSmoother; NC],
@@ -480,6 +613,74 @@ pub struct Reverb {
     g_prev: [f32; FDN_LINES],
     peak: [f32; 2],
     tail_rms: f32,
+    /// Wet high-cut one-pole state per channel (Space only).
+    hc: [f32; 2],
+    gate: Gate,
+}
+
+/// The gated tail (Space only): the wet output closes `hold` after the input falls below the
+/// level, with a 12 ms fade, and opens again in 1 ms.
+#[derive(Debug, Clone, Copy)]
+struct Gate {
+    env: f32,
+    hold: u32,
+    gain: f32,
+    release: f32,
+    open: f32,
+    close: f32,
+}
+
+impl Gate {
+    const fn new() -> Self {
+        Self {
+            env: 0.0,
+            hold: 0,
+            gain: 1.0,
+            release: 0.0,
+            open: 0.0,
+            close: 0.0,
+        }
+    }
+
+    fn set_rate(&mut self, sr: f32) {
+        let pole = |ms: f32| exp2_det(-1000.0 / (ms * sr) * std::f32::consts::LOG2_E);
+        self.release = pole(8.0);
+        self.open = 1.0 - pole(1.0);
+        self.close = 1.0 - pole(12.0);
+    }
+
+    fn clear(&mut self) {
+        self.env = 0.0;
+        self.hold = 0;
+        self.gain = 1.0;
+    }
+
+    /// Advances one sample and returns the wet gain. `hold_samples == 0` keeps it open.
+    #[inline]
+    fn tick(&mut self, level: f32, threshold: f32, hold_samples: u32) -> f32 {
+        self.env = if level > self.env {
+            level
+        } else {
+            flush_denormal(self.env * self.release)
+        };
+        let target = if hold_samples == 0 {
+            1.0
+        } else {
+            if self.env > threshold {
+                self.hold = hold_samples;
+            } else if self.hold > 0 {
+                self.hold -= 1;
+            }
+            if self.hold > 0 { 1.0 } else { 0.0 }
+        };
+        let c = if target > self.gain {
+            self.open
+        } else {
+            self.close
+        };
+        self.gain = flush_denormal(self.gain + (target - self.gain) * c);
+        self.gain
+    }
 }
 
 impl Default for Reverb {
@@ -491,10 +692,20 @@ impl Default for Reverb {
 impl Reverb {
     /// A reverb with default params; its buffers are sized by `prepare`.
     pub fn new() -> Self {
+        Self::with_variant(Variant::Classic)
+    }
+
+    /// The reverb of `atomik.space-reverb`.
+    pub(crate) fn space() -> Self {
+        Self::with_variant(Variant::Space)
+    }
+
+    fn with_variant(variant: Variant) -> Self {
         Self {
             sample_rate: 48_000.0,
             seed: 0,
-            algorithm: 1,
+            variant,
+            algorithm: variant.range().start + usize::from(variant == Variant::Classic),
             predelay_ms: 20.0,
             size: 0.5,
             decay: 2.0,
@@ -507,6 +718,9 @@ impl Reverb {
             mix_trim: 1.0,
             freeze: false,
             output_db: 0.0,
+            highcut: 20_000.0,
+            gate_hold_ms: 0.0,
+            gate_level_db: -40.0,
             fresh: true,
             ctl: [BlockSmoother::new(0.0); NC],
             pre_l: DelayLine::new(1),
@@ -521,6 +735,8 @@ impl Reverb {
             g_prev: [0.0; FDN_LINES],
             peak: [0.0; 2],
             tail_rms: 0.0,
+            hc: [0.0; 2],
+            gate: Gate::new(),
         }
     }
 
@@ -560,6 +776,8 @@ impl Reverb {
         t[C_OUT] = exp2_det(self.output_db * (std::f32::consts::LOG2_10 / 20.0));
         t[C_FREEZE] = if self.freeze { 1.0 } else { 0.0 };
         t[C_APG] = alg.ap_g;
+        t[C_HIGHCUT] =
+            1.0 - exp2_det(-std::f32::consts::TAU * self.highcut / sr * std::f32::consts::LOG2_E);
         for i in 0..FDN_LINES {
             t[C_LINE + i] = alg.lines_ms[i] * 0.001 * sr * scale;
         }
@@ -580,7 +798,7 @@ impl Reverb {
                 C_PRE | C_EARLY | C_LATE | C_WIDTH | C_OUT => TAU_FAST_MS,
                 C_MIX => 20.0,
                 C_FREEZE => TAU_FREEZE_MS,
-                C_DECAY | C_DAMP | C_LOWCUT | C_MOD | C_APG => TAU_MED_MS,
+                C_DECAY | C_DAMP | C_LOWCUT | C_MOD | C_APG | C_HIGHCUT => TAU_MED_MS,
                 i if (C_LINE..C_ERG).contains(&i) => TAU_GEOMETRY_MS,
                 _ => TAU_TAP_GAIN_MS,
             };
@@ -609,14 +827,15 @@ impl Device for Reverb {
         let pre = ceil(MAX_PREDELAY_MS * 0.001 * sr) + 4;
         self.pre_l = DelayLine::new(pre);
         self.pre_r = DelayLine::new(pre);
-        let max_er = ALGORITHMS
+        let set = &ALGORITHMS[self.variant.range()];
+        let max_er = set
             .iter()
             .flat_map(|a| a.early.iter().flatten())
             .fold(0.0f32, |m, (ms, _)| m.max(*ms));
         let er = ceil(max_er * 0.001 * sr * MAX_SCALE) + 8;
         self.er_l = DelayLine::new(er);
         self.er_r = DelayLine::new(er);
-        let max_line = ALGORITHMS
+        let max_line = set
             .iter()
             .flat_map(|a| a.lines_ms.iter())
             .fold(0.0f32, |m, ms| m.max(*ms));
@@ -630,6 +849,7 @@ impl Device for Reverb {
             std::array::from_fn(|k| Allpass::new(round(IN_AP_48K[ch][k])))
         });
         self.set_smoothing_times();
+        self.gate.set_rate(sr);
         self.reset();
     }
 
@@ -648,6 +868,8 @@ impl Device for Reverb {
         self.g_prev = [0.0; FDN_LINES];
         self.peak = [0.0; 2];
         self.tail_rms = 0.0;
+        self.hc = [0.0; 2];
+        self.gate.clear();
         self.reseed();
         self.fresh = true;
     }
@@ -655,7 +877,10 @@ impl Device for Reverb {
     fn set_param(&mut self, id: ParamId, plain: f32) {
         let v = if plain.is_finite() { plain } else { 0.0 };
         match id.0 {
-            P_ALGORITHM => self.algorithm = (v.max(0.0).round() as usize).min(2),
+            P_ALGORITHM => {
+                let r = self.variant.range();
+                self.algorithm = r.start + (v.max(0.0).round() as usize).min(r.len() - 1);
+            }
             P_PREDELAY => self.predelay_ms = v.clamp(0.0, MAX_PREDELAY_MS),
             P_SIZE => self.size = v.clamp(0.0, 1.0),
             P_DECAY => self.decay = v.clamp(0.2, 20.0),
@@ -668,6 +893,13 @@ impl Device for Reverb {
             P_MIX_TRIM => self.mix_trim = v.clamp(-1.0, 1.0),
             P_FREEZE => self.freeze = v >= 0.5,
             P_OUTPUT => self.output_db = v.clamp(-24.0, 12.0),
+            P_HIGHCUT if self.variant == Variant::Space => {
+                self.highcut = v.clamp(1_000.0, 20_000.0)
+            }
+            P_GATE if self.variant == Variant::Space => self.gate_hold_ms = v.clamp(0.0, 500.0),
+            P_GATE_LEVEL if self.variant == Variant::Space => {
+                self.gate_level_db = v.clamp(-60.0, 0.0);
+            }
             _ => {}
         }
     }
@@ -710,6 +942,9 @@ impl Device for Reverb {
         let g_inc: [f32; FDN_LINES] =
             std::array::from_fn(|i| (g_end[i] - g_start[i]) / BATCH as f32);
 
+        let space = self.variant == Variant::Space;
+        let gate_threshold = exp2_det(self.gate_level_db * (std::f32::consts::LOG2_10 / 20.0));
+        let gate_hold = (self.gate_hold_ms * 0.001 * sr).round() as u32;
         let mut out_l = [0.0f32; BATCH];
         let mut out_r = [0.0f32; BATCH];
         let mut peak = [0.0f32; 2];
@@ -789,8 +1024,17 @@ impl Device for Reverb {
             let s = 0.5 * (wl - wr) * ramps[C_WIDTH].at(n);
             let og = ramps[C_OUT].at(n);
             let mix = ramps[C_MIX].at(n);
-            let wet_l = (m + s).clamp(-WET_LIMIT, WET_LIMIT) * og;
-            let wet_r = (m - s).clamp(-WET_LIMIT, WET_LIMIT) * og;
+            let mut wet_l = (m + s).clamp(-WET_LIMIT, WET_LIMIT) * og;
+            let mut wet_r = (m - s).clamp(-WET_LIMIT, WET_LIMIT) * og;
+            if space {
+                let a = ramps[C_HIGHCUT].at(n);
+                self.hc[0] = flush_denormal(self.hc[0] + a * (wet_l - self.hc[0]));
+                self.hc[1] = flush_denormal(self.hc[1] + a * (wet_r - self.hc[1]));
+                let level = xl.abs().max(xr.abs());
+                let g = self.gate.tick(level, gate_threshold, gate_hold);
+                wet_l = self.hc[0] * g;
+                wet_r = self.hc[1] * g;
+            }
             let (yl, yr) = if mix == 0.0 {
                 (dry_l, dry_r)
             } else {

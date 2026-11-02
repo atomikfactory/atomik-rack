@@ -24,6 +24,7 @@ pub mod character;
 pub mod compressor;
 pub mod container;
 pub mod controller_state;
+pub mod convolver;
 mod cv_in;
 pub mod cv_sequencer;
 pub mod distortion;
@@ -63,12 +64,14 @@ pub mod poly_synth;
 mod recent_peak;
 pub mod reverb;
 pub mod sampler;
+pub mod space_reverb;
 pub mod spectrum;
 pub mod spider;
 pub mod step_sequencer;
 pub mod stereo_delay;
 pub mod stereo_tool;
 mod tool_support;
+pub mod vocoder;
 pub mod wavetable_synth;
 
 use atomik_device_sdk::{Registry, RegistryError};
@@ -148,6 +151,9 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(stereo_delay::factory())?;
     registry.register(stereo_tool::factory())?;
     registry.register(reverb::factory())?;
+    registry.register(space_reverb::factory())?;
+    registry.register(vocoder::factory())?;
+    registry.register_with_samples(convolver::factory())?;
     registry.register(compressor::factory())?;
     registry.register(container::factory())?;
     registry.register(distortion::factory())?;
@@ -188,7 +194,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 47] = [
+    const TYPE_IDS: [&str; 50] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -196,6 +202,7 @@ mod tests {
         "atomik.character",
         "atomik.compressor",
         "atomik.container",
+        "atomik.convolver",
         "atomik.cv-sequencer",
         "atomik.distortion",
         "atomik.drum-generator",
@@ -229,17 +236,19 @@ mod tests {
         "atomik.poly-synth",
         "atomik.reverb",
         "atomik.sampler",
+        "atomik.space-reverb",
         "atomik.spectrum",
         "atomik.spider-audio",
         "atomik.spider-cv",
         "atomik.step-sequencer",
         "atomik.stereo-delay",
         "atomik.stereo-tool",
+        "atomik.vocoder",
         "atomik.wavetable-synth",
     ];
 
     #[test]
-    // Name kept; it now covers all forty-seven devices.
+    // Name kept; it now covers all fifty devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -253,7 +262,8 @@ mod tests {
                 id == "atomik.sampler"
                     || id == "atomik.granular"
                     || id == "atomik.drum-machine"
-                    || id == "atomik.loop-slicer",
+                    || id == "atomik.loop-slicer"
+                    || id == "atomik.convolver",
                 "{id}"
             );
             assert_eq!(

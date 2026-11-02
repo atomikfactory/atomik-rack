@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 18, "{ids:?}");
+    assert_eq!(ids.len(), 21, "{ids:?}");
     ids
 }
 
@@ -35,8 +35,9 @@ fn wrapped(type_id: &str) -> DeviceHarness {
 fn raw(type_id: &str) -> DeviceHarness {
     use crate::stereo_delay;
     use crate::{
-        character, compressor, distortion, duck, dynamics, echo, env_filter, eq, gain_tool, gate,
-        guitar_amp, mastering, modulation, phase_meter, reverb, spectrum, stereo_tool,
+        character, compressor, convolver, distortion, duck, dynamics, echo, env_filter, eq,
+        gain_tool, gate, guitar_amp, mastering, modulation, phase_meter, reverb, space_reverb,
+        spectrum, stereo_tool, vocoder,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
@@ -57,6 +58,9 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.duck" => Box::new(duck::Duck::new()),
         "atomik.env-filter" => Box::new(env_filter::EnvFilter::new()),
         "atomik.echo" => Box::new(echo::Echo::new()),
+        "atomik.vocoder" => Box::new(vocoder::Vocoder::new()),
+        "atomik.convolver" => Box::new(convolver::ConvolutionReverb::new()),
+        "atomik.space-reverb" => Box::new(space_reverb::SpaceReverb::new()),
         other => panic!("{other}"),
     };
     DeviceHarness::new(d, SR)
