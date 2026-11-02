@@ -154,8 +154,8 @@ pub use song_info::{
 pub use stems::{StemKind, StemSource, safe_file_name, stem_file_names, stem_sources};
 pub use step_tools::{StepTool, apply_step_tool, pads_in_use};
 pub use steps::{
-    MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc,
-    SeqResolution, StepDoc, StepSeqDoc, pattern_cap, player_data_for,
+    MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PATTERN_PARAM,
+    PatternDoc, SeqResolution, StepDoc, StepSeqDoc, pattern_cap, player_data_for,
 };
 pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, neighbour_clip,

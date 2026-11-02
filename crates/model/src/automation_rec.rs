@@ -225,6 +225,28 @@ pub fn segment_clips(
     segments: &[Segment],
     tolerance: f32,
 ) -> Vec<(i64, i64, Vec<AutomationPoint>)> {
+    segment_clips_with(segments, tolerance, Curve::Linear)
+}
+
+/// The first bar line at or after `tick` (a tick on a bar line is its own downbeat): where a
+/// pattern change recorded at `tick` takes effect.
+pub fn downbeat_at_or_after(map: atomik_core::MeterMap<'_>, tick: i64) -> i64 {
+    let tick = tick.max(0);
+    if map.bar_start(map.bar_at(tick)) == tick {
+        tick
+    } else {
+        map.next_bar_line(tick)
+    }
+}
+
+/// [`segment_clips`] with every point on `curve`: `Step` for a param that holds its value
+/// (a pattern number), where a ramp between two values would pass through values in between.
+/// Points that are not `Linear` all stay when thinning.
+pub fn segment_clips_with(
+    segments: &[Segment],
+    tolerance: f32,
+    curve: Curve,
+) -> Vec<(i64, i64, Vec<AutomationPoint>)> {
     segments
         .iter()
         .filter(|s| !s.points.is_empty() && s.end > s.start)
@@ -235,7 +257,7 @@ pub fn segment_clips(
                 .map(|&(tick, value)| AutomationPoint {
                     tick: tick - s.start,
                     value,
-                    curve: Curve::Linear,
+                    curve,
                 })
                 .collect();
             (s.start, s.end - s.start, thin_points(&points, tolerance))

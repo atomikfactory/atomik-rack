@@ -4,12 +4,9 @@
 
 use crate::curves::{CurveDoc, CurvePatternDoc};
 use crate::history::Edit;
-use crate::steps::{MAX_NAME_CHARS, PatternDoc, StepSeqDoc, pattern_cap};
+use crate::steps::{MAX_NAME_CHARS, PATTERN_PARAM, PatternDoc, StepSeqDoc, pattern_cap};
 use crate::{Command, DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::Registry;
-
-/// The device param that selects the playing pattern (1-based).
-const PATTERN_PARAM: &str = "pattern";
 
 pub(crate) fn bad(message: impl Into<String>) -> ModelError {
     ModelError::BadPatterns(message.into())

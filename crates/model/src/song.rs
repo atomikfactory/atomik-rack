@@ -1810,10 +1810,18 @@ impl Track {
                 (_, Some(name)) => name.clone(),
                 (LaneKind::Notes, None) if i == 0 => "Notes".into(),
                 (LaneKind::Notes, None) => format!("Notes {}", i + 1),
+                (LaneKind::Automation(p), None) if p == crate::steps::PATTERN_PARAM => {
+                    "Pattern".into()
+                }
                 (LaneKind::Automation(p), None) => p.clone(),
                 (LaneKind::Audio, None) => "Audio".into(),
             },
         }
+    }
+
+    /// Index of the pattern lane (the automation lane of the `pattern` param), if any.
+    pub fn pattern_lane(&self) -> Option<usize> {
+        self.automation_lane(crate::steps::PATTERN_PARAM)
     }
 
     /// Index of the audio lane, if any.
