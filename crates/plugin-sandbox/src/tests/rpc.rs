@@ -378,6 +378,12 @@ fn presets_are_listed_and_loaded_through_the_child() {
 }
 
 #[test]
+fn param_values_are_read_through_the_child() {
+    let mut r = rig(FakeOptions::default());
+    assert_eq!(r.instance.read_params(), vec![(1, 0.5), (2, 2.0)]);
+}
+
+#[test]
 fn a_preset_the_child_refuses_keeps_its_error() {
     let mut r = rig(FakeOptions::default().script(|req, _| match req {
         ToChild::LoadPreset { id, .. } => Some(Action::Reply(vec![(

@@ -11,6 +11,7 @@
 use crate::slot::HostMessenger;
 use atomik_core::{BATCH, Batch, ExprKind};
 use atomik_device_sdk::{PluginFormat, PluginLayout, PluginRef, PluginStateBlob, RunMode};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -411,6 +412,13 @@ pub trait PluginInstance {
             "this plugin has no presets the host can load".to_string(),
         ))
     }
+    /// The param values the plugin holds now as `(id, host value)` pairs for the params of its
+    /// layout (the plain value for CLAP; for VST3 the step index of a stepped param and the
+    /// normalised value otherwise): what the rack's knobs show after the plugin changed its own
+    /// values (a preset or a patch change). Empty when the plugin cannot be asked.
+    fn read_params(&mut self) -> Vec<(u32, f64)> {
+        Vec::new()
+    }
     /// The display text of a param value, from the plugin.
     fn param_text(&mut self, id: u32, plain: f64) -> Option<String>;
     /// Opens the editor inside `parent`; returns its size in pixels.
@@ -685,6 +693,7 @@ impl PluginBackend for NullBackend {
             behavior: p.behavior,
             latency: p.latency,
             state: PluginStateBlob::default(),
+            held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
         }))
     }
@@ -695,12 +704,31 @@ struct NullInstance {
     behavior: NullBehavior,
     latency: u32,
     state: PluginStateBlob,
+    held: BTreeMap<u32, f64>,
     stats: Arc<NullStats>,
 }
 
 impl Drop for NullInstance {
     fn drop(&mut self) {
         self.stats.destroyed.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl NullInstance {
+    /// A preset moves every param: the k-th preset puts each at (k + 1) tenths of its range;
+    /// no preset leaves every param at its default.
+    fn hold_preset(&mut self, index: Option<usize>) {
+        self.held = match index {
+            Some(k) => {
+                let share = (k + 1) as f64 * 0.1;
+                self.layout
+                    .params
+                    .iter()
+                    .map(|p| (p.id, p.min + (p.max - p.min) * share))
+                    .collect()
+            }
+            None => BTreeMap::new(),
+        };
     }
 }
 
@@ -739,6 +767,11 @@ impl PluginInstance for NullInstance {
 
     fn restore_state(&mut self, state: &PluginStateBlob) -> Result<(), BackendError> {
         self.state = state.clone();
+        let index = std::str::from_utf8(&state.0)
+            .ok()
+            .and_then(|s| s.strip_prefix("preset:"))
+            .and_then(|id| NULL_PRESETS.iter().position(|(p, _, _)| *p == id));
+        self.hold_preset(index);
         Ok(())
     }
 
@@ -762,11 +795,20 @@ impl PluginInstance for NullInstance {
                 "the null plugin has no presets".to_string(),
             ));
         }
-        if !NULL_PRESETS.iter().any(|(p, _, _)| *p == id) {
+        let Some(index) = NULL_PRESETS.iter().position(|(p, _, _)| *p == id) else {
             return Err(BackendError::Failed(format!("no preset `{id}`")));
-        }
+        };
         self.state = PluginStateBlob(format!("preset:{id}").into_bytes());
+        self.hold_preset(Some(index));
         Ok(())
+    }
+
+    fn read_params(&mut self) -> Vec<(u32, f64)> {
+        self.layout
+            .params
+            .iter()
+            .map(|p| (p.id, self.held.get(&p.id).copied().unwrap_or(p.default)))
+            .collect()
     }
 
     fn param_text(&mut self, _id: u32, plain: f64) -> Option<String> {

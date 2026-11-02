@@ -69,6 +69,11 @@ pub enum ToChild {
         /// Request id.
         id: u64,
     },
+    /// Asks for the param values the plugin holds now; the answer is [`FromChild::ParamValues`].
+    ReadParams {
+        /// Request id.
+        id: u64,
+    },
     /// Asks for the presets the plugin offers; the answer is [`FromChild::Presets`].
     ListPresets {
         /// Request id.
@@ -179,6 +184,13 @@ pub enum FromChild {
         id: u64,
         /// Param ids.
         pins: Vec<u32>,
+    },
+    /// The param values of the plugin as `(param id, host value)`, one per layout param.
+    ParamValues {
+        /// The request's id.
+        id: u64,
+        /// The values.
+        values: Vec<(u32, f64)>,
     },
     /// The presets of the plugin, at most [`MAX_PRESETS`].
     Presets {
@@ -672,6 +684,7 @@ mod tests {
             ),
             (ToChild::LatencyFrames { id: 3 }, None),
             (ToChild::DefaultPins { id: 3 }, None),
+            (ToChild::ReadParams { id: 3 }, None),
             (ToChild::ListPresets { id: 3 }, None),
             (
                 ToChild::LoadPreset {
@@ -742,6 +755,13 @@ mod tests {
             ),
             (FromChild::Text { id: 5, text: None }, None),
             (FromChild::Latency { id: 5, frames: 17 }, None),
+            (
+                FromChild::ParamValues {
+                    id: 5,
+                    values: vec![(1, 0.25), (7, -3.0)],
+                },
+                None,
+            ),
             (
                 FromChild::Presets {
                     id: 5,

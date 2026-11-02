@@ -3,11 +3,12 @@
 
 use crate::hub::{AudioHandle, ClapHost, Hub, MainHandle, SharedHandle, now};
 use crate::layout::{self, AudioPlan, DescInfo, NotePlan, Read};
+use crate::presets::{self, Catalog};
 use crate::processor::ClapProcessor;
 use atomik_device_sdk::{PluginLayout, PluginStateBlob, RunMode};
 use atomik_plugin_host::{
     ActivateConfig, BackendError, NativeParent, PluginInstance as HostInstance, PluginProcessor,
-    assert_main_thread,
+    PresetInfo, assert_main_thread,
 };
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, GuiSize, PluginGui, Window};
 use clack_extensions::latency::PluginLatency;
@@ -35,6 +36,10 @@ pub(crate) struct ClapInstance {
     params_truncated: bool,
     gui_open: bool,
     rendering: Option<RunMode>,
+    entry: PluginEntry,
+    host_info: HostInfo,
+    plugin_id: String,
+    catalog: Option<Catalog>,
 }
 
 fn failed(what: &str, e: impl std::fmt::Display) -> BackendError {
@@ -79,6 +84,10 @@ impl ClapInstance {
             params_truncated,
             gui_open: false,
             rendering: None,
+            entry: entry.clone(),
+            host_info: info.clone(),
+            plugin_id: id.to_string_lossy().into_owned(),
+            catalog: None,
         })
     }
 
@@ -191,6 +200,50 @@ impl HostInstance for ClapInstance {
         ext.load(&handle, &mut reader)
             .map_err(|e| failed("loading the state", e))?;
         // A state can change the latency; it is read again at the next activation.
+        if self.plugin.is_active() {
+            self.read_latency();
+        }
+        Ok(())
+    }
+
+    fn read_params(&mut self) -> Vec<(u32, f64)> {
+        assert_main_thread("reading the params of a CLAP plugin");
+        let handle = self.plugin.plugin_handle();
+        let Some(ext) = handle.get_extension::<PluginParams>() else {
+            return Vec::new();
+        };
+        self.layout
+            .params
+            .iter()
+            .filter_map(|p| Some((p.id, ext.get_value(&handle, ClapId::from_raw(p.id)?)?)))
+            .collect()
+    }
+
+    fn list_presets(&mut self) -> Vec<PresetInfo> {
+        assert_main_thread("listing the presets of a CLAP plugin");
+        let catalog = presets::discover(&self.entry, &self.host_info, &self.plugin_id);
+        let list = catalog.list.clone();
+        self.catalog = Some(catalog);
+        list
+    }
+
+    fn load_preset(&mut self, id: &str) -> Result<(), BackendError> {
+        assert_main_thread("loading a CLAP preset");
+        if self.catalog.is_none() {
+            self.catalog = Some(presets::discover(
+                &self.entry,
+                &self.host_info,
+                &self.plugin_id,
+            ));
+        }
+        let target = self
+            .catalog
+            .as_ref()
+            .and_then(|c| c.target(id))
+            .cloned()
+            .ok_or_else(|| BackendError::Failed(format!("no preset `{id}`")))?;
+        presets::load(&mut self.plugin, &target)?;
+        // A preset can change the latency, as a state does.
         if self.plugin.is_active() {
             self.read_latency();
         }

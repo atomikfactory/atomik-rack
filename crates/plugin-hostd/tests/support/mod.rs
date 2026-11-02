@@ -115,6 +115,8 @@ pub fn reply_id(m: &FromChild) -> Option<u64> {
         | FromChild::Text { id, .. }
         | FromChild::Latency { id, .. }
         | FromChild::Pins { id, .. }
+        | FromChild::Presets { id, .. }
+        | FromChild::ParamValues { id, .. }
         | FromChild::LayoutChanged { id, .. }
         | FromChild::GuiOpened { id, .. } => Some(*id),
         _ => None,

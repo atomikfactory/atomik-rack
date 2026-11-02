@@ -443,6 +443,24 @@ impl HostInstance for Vst3Instance {
         Ok(())
     }
 
+    fn read_params(&mut self) -> Vec<(u32, f64)> {
+        assert_main_thread("reading the params of a VST3 plugin");
+        let Some(c) = self.controller.as_ref() else {
+            return Vec::new();
+        };
+        let steps = self.hub.steps();
+        self.read
+            .layout
+            .params
+            .iter()
+            .map(|p| {
+                // SAFETY: a live controller, on the main thread.
+                let n = unsafe { c.getParamNormalized(p.id) };
+                (p.id, values::host_value(&steps, p.id, n))
+            })
+            .collect()
+    }
+
     fn list_presets(&mut self) -> Vec<PresetInfo> {
         assert_main_thread("listing the presets of a VST3 plugin");
         presets::list(&self.preset_roots())

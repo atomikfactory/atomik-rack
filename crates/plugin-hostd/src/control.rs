@@ -9,7 +9,7 @@ use crate::audio::{AudioThread, HANDOVER_TIMEOUT, SHUTDOWN_TIMEOUT};
 use crate::builtin::BuiltinBackend;
 use crate::editor::{Editor, WindowSystem};
 use crate::notify::to_wire;
-use atomik_device_sdk::{PluginFormat, PluginRef, PluginStateBlob, RunMode};
+use atomik_device_sdk::{MAX_PLUGIN_PARAMS, PluginFormat, PluginRef, PluginStateBlob, RunMode};
 use atomik_plugin_clap::ClapBackend;
 use atomik_plugin_host::{
     ActivateConfig, BackendError, HostHandle, InstanceId, ManagerEnd, PluginBackend,
@@ -311,6 +311,14 @@ impl Control {
                 id,
                 pins: instance.default_pins(),
             },
+            ToChild::ReadParams { id } => FromChild::ParamValues {
+                id,
+                values: instance
+                    .read_params()
+                    .into_iter()
+                    .take(MAX_PLUGIN_PARAMS)
+                    .collect(),
+            },
             ToChild::ListPresets { id } => FromChild::Presets {
                 id,
                 presets: instance
@@ -437,6 +445,7 @@ fn request_id(msg: &ToChild) -> u64 {
         | ToChild::LatencyFrames { id }
         | ToChild::DefaultPins { id }
         | ToChild::ListPresets { id }
+        | ToChild::ReadParams { id }
         | ToChild::LoadPreset { id, .. }
         | ToChild::TakeLayoutChanged { id }
         | ToChild::OpenGui { id, .. }
