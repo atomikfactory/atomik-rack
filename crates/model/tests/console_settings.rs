@@ -101,9 +101,9 @@ fn a_paste_gives_equal_params_and_an_insert_chain_with_equal_effect_params() {
     assert_eq!(param(&d, &cb[0], "threshold"), Some(-30.0));
     assert_eq!(output_dest(d.doc(), &b), out_before, "the routing stays");
     // One undo step puts everything back, one redo does it again.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(insert_chain(d.doc(), &reg, &b).len(), 2);
 }
 
@@ -184,7 +184,7 @@ fn a_reset_puts_the_params_back_and_clears_the_inserts_but_not_the_routing() {
     }
     assert!(insert_chain(d.doc(), &reg, &a).is_empty());
     assert_eq!(output_dest(d.doc(), &a), out);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -196,7 +196,7 @@ fn clearing_the_inserts_leaves_the_params() {
         .unwrap();
     assert!(insert_chain(d.doc(), &reg, &a).is_empty());
     assert_eq!(param(&d, &a, "fader"), Some(0.5));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(insert_chain(d.doc(), &reg, &a).len(), 2);
 }
 
@@ -250,13 +250,13 @@ fn a_ganged_drag_is_one_undo_step() {
     }
     assert_eq!(param(&d, &a, "fader"), Some(0.3));
     assert_eq!(param(&d, &b, "fader"), Some(0.8));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "the whole drag is one step");
     // Another gesture is a step of its own.
     d.apply(gang(0.1, 8), &reg).unwrap();
     d.apply(gang(0.2, 9), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(param(&d, &a, "fader"), Some(0.1));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }

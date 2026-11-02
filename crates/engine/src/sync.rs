@@ -395,7 +395,7 @@ mod tests {
     fn a_constant_tempo_gives_a_clock_every_twenty_fourth_of_a_beat() {
         let seg = [TempoSegment::constant(Tempo::new(120.0).unwrap())];
         let mut frames = Vec::new();
-        clocks_in(TempoMap(&seg), SR, 0, 48_000, |f| frames.push(f));
+        clocks_in(TempoMap::new(&seg), SR, 0, 48_000, |f| frames.push(f));
         // One beat is 24_000 frames at 120 BPM: 1000 frames a clock, 48 clocks in a second.
         assert_eq!(frames.len(), 48);
         for (k, f) in frames.iter().enumerate() {
@@ -408,13 +408,13 @@ mod tests {
         let seg = [TempoSegment::constant(Tempo::new(97.3).unwrap())];
         let whole: Vec<u64> = {
             let mut v = Vec::new();
-            clocks_in(TempoMap(&seg), SR, 0, 200_000, |f| v.push(f));
+            clocks_in(TempoMap::new(&seg), SR, 0, 200_000, |f| v.push(f));
             v
         };
         let mut tiled = Vec::new();
         let mut a = 0;
         while a < 200_000 {
-            clocks_in(TempoMap(&seg), SR, a, a + 64, |f| tiled.push(f));
+            clocks_in(TempoMap::new(&seg), SR, a, a + 64, |f| tiled.push(f));
             a += 64;
         }
         assert_eq!(whole, tiled);

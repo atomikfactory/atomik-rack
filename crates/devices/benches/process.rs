@@ -30,7 +30,7 @@ fn noise(seed: &mut u32) -> [f32; BATCH] {
 
 /// A device of `type_id` with every input connected and a chord held on its notes inputs.
 fn rig(registry: &Registry, type_id: &str) -> DeviceHarness {
-    let factory = registry.get(type_id).expect("registered type");
+    let factory = registry.factory(type_id).expect("registered type");
     let mut h = DeviceHarness::new((factory.create)(), 48_000.0);
     let mut seed = 7;
     for s in factory.descriptor.sockets {

@@ -170,11 +170,11 @@ fn set_clip_grid_sets_clears_and_undoes() {
     );
     d.apply(set_grid(id, None, None), &reg).unwrap();
     assert_eq!(clip_of(&d, id).grid, None);
-    assert_eq!(d.undo(&reg).unwrap(), [SyncOp::SongChanged]);
+    assert_eq!(d.undo().unwrap(), [SyncOp::SongChanged]);
     assert_eq!(clip_of(&d, id).grid, Some(g));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(clip_of(&d, id), before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(clip_of(&d, id).grid, Some(g));
 }
 
@@ -238,21 +238,21 @@ fn swing_drags_merge_into_one_undo_step() {
             .unwrap();
     }
     assert_eq!(clip_of(&d, id).grid.unwrap().swing, 40);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         clip_of(&d, id).grid.unwrap().swing,
         0,
         "the drag was one step"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(clip_of(&d, id).grid, None);
     // A different merge id starts a new step.
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     d.apply(set_grid(id, Some(sixteenth(5)), Some(1)), &reg)
         .unwrap();
     d.apply(set_grid(id, Some(sixteenth(6)), Some(2)), &reg)
         .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(clip_of(&d, id).grid.unwrap().swing, 5);
 }
 
@@ -301,12 +301,12 @@ fn a_batch_sets_the_grid_and_the_length_as_one_undo_step() {
     assert_eq!(ops, [SyncOp::SongChanged], "one change report");
     let after = clip_of(&d, id);
     assert_eq!((after.grid, after.length), (Some(g), 2 * BAR));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo restores both");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(clip_of(&d, id), after);
     // Later commands see the earlier ones; the order of geometry and grid does not matter.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     d.apply(
         Command::Batch(vec![geometry(&c, BAR / 2), set_grid(id, Some(g), None)]),
         &reg,
@@ -371,7 +371,7 @@ fn a_batch_mixing_cables_and_clip_edits_reports_each_change_once() {
         )
         .unwrap();
     assert_eq!(ops, [SyncOp::RoutingChanged, SyncOp::SongChanged]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(clip_of(&d, id).grid, None);
 }
 

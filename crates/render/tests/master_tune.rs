@@ -139,6 +139,6 @@ fn undoing_the_tune_gives_the_untuned_bits_back() {
     let before = bits(&bounce(d.doc(), 512, 0));
     apply(&mut d, Command::SetMasterTune(50.0));
     assert!(bits(&bounce(d.doc(), 512, 0)) != before);
-    d.undo(&default_registry()).unwrap();
+    d.undo().unwrap();
     assert!(bits(&bounce(d.doc(), 512, 0)) == before);
 }

@@ -859,6 +859,10 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **A fade or a gain envelope point can no longer run past its audio clip.** Adding or changing an
+  audio clip, or stripping silence, refuses a fade or an envelope point longer than the clip. A
+  project saved by an earlier version that has one loads with it clamped to the clip and a warning
+  naming the clip; the sound is the same, since the player already clamped it.
 - **Combine says what it cannot do, and no longer stops at a mixer strip.** Choosing Combine on a
   selection that includes a mixer strip (a channel, a bus or the master) or an audio track used to
   be refused as a whole. Those devices can never go inside a container, so they now stay in the
@@ -1002,6 +1006,12 @@ may break APIs and the patch and project formats.
   behind the finished take.
 
 ### Changed
+- **Stricter device descriptors and a safer model API.** A device descriptor whose stages skip a
+  number, start above 0 or use 255 is refused when the type is registered. A plugin whose layout is
+  refused leaves nothing behind, `Registry::get` reports the descriptor of a plugin type instead of
+  a placeholder constructor, and a tempo or meter map is always built non-empty. `Document::undo`
+  and `redo` no longer take a registry, and `Document::begin_gesture` ends a drag's merge group by
+  itself when it goes out of scope.
 - **The rack navigator is a miniature of the real rack.** The strip at the right edge of the rack
   no longer shows colour blocks: every device is drawn as a scaled-down picture of its own panel
   (plate, name, knobs, faders and displays as they stand, a folded panel folded), so you can tell

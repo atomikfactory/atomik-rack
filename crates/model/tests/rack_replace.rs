@@ -96,7 +96,7 @@ fn a_replaced_instrument_keeps_its_track_channel_and_cables_in_one_undo() {
     let channel = &doc.console.channels[0].channel;
     assert_eq!(doc.device(channel), before.device(channel));
     // Undo brings back the old device with its params and the lane.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().devices, before.devices);
     assert_eq!(d.doc().song, before.song);
 }

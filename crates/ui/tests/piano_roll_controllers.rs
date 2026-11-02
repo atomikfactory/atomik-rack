@@ -159,7 +159,7 @@ fn a_click_in_the_lane_adds_a_snapped_point_at_midi_resolution_as_one_undo_step(
     assert_eq!(pts[0].curve, Curve::Linear);
     assert_eq!(v.controller_selection(), Some(0));
     assert!(a.iter().any(|x| matches!(x, UiAction::EndMerge)));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one step");
 }
 
@@ -185,9 +185,9 @@ fn dragging_with_the_pencil_draws_one_point_per_grid_step_in_one_merge_group() {
         pts.windows(2).all(|w| w[0].value < w[1].value),
         "a rising stroke"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "the whole stroke is one step");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(points(&d, MOD).len(), 5);
 }
 
@@ -245,7 +245,7 @@ fn dragging_a_point_moves_it_in_time_and_value_and_a_still_click_changes_nothing
         Curve::Linear,
         "the curve travels with the point"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -284,8 +284,8 @@ fn the_eraser_and_the_secondary_button_delete_a_point_and_the_last_one_drops_the
     let q = at(&v, MOD, 2 * PPQ, 0.9);
     gesture(&mut v, &mut d, &reg, &[down(q), up(q)]);
     assert!(lanes_of(&d).is_empty(), "no points, no lane");
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(points(&d, MOD).len(), 2);
 }
 

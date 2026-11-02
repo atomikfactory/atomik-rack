@@ -132,7 +132,7 @@ fn negative_zero_gain_and_huge_frames_survive() {
     let a = AudioClipContent {
         gain_db: -0.0,
         source_offset: 1 << 40,
-        fade_in: 1 << 40,
+        fade_in: 1000,
         ..audio(5)
     };
     d.apply(add_audio_clip_with("audio-track", 0, BAR, a), &reg)
@@ -541,6 +541,10 @@ proptest! {
             d.apply(add_audio_track(), &reg).unwrap();
         }
         for (i, (start, len, n, so, gain, fi, fo, eq)) in clips.into_iter().enumerate() {
+            // Fades stay inside the clip.
+            let sr = d.doc().sample_rate;
+            let span = d.doc().song.frame_at(start + len, sr) - d.doc().song.frame_at(start, sr);
+            let (fi, fo) = (fi.min(span), fo.min(span));
             let a = AudioClipContent {
                 asset: hash(n),
                 source_offset: so,

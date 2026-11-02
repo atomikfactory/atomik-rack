@@ -271,9 +271,9 @@ fn set_curves_validates_undoes_and_merges_drags() {
         device(d.doc(), "c").curves.as_ref().unwrap().patterns[0].rows[0][0].value,
         20
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(
         device(d.doc(), "c").curves.as_ref().unwrap().patterns[0].rows[0][0].value,
         20
@@ -301,7 +301,7 @@ fn set_curves_on_a_device_without_curves_starts_from_flat_and_undoes_to_none() {
     assert_eq!(c.patterns.len(), 2, "flat pattern 0 is filled in below it");
     assert!(c.patterns[0].is_flat());
     assert_eq!(c.patterns[1], ramp());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(device(d.doc(), "c").curves, None);
 }
 
@@ -338,7 +338,7 @@ fn duplicate_and_remove_pattern_keep_the_curves_with_their_pattern() {
     );
     assert_eq!(marker(&d, 0), 50, "the later patterns move up with theirs");
     // One undo step puts the pattern and its curves back.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(marker(&d, 0), 0);
     assert_eq!(
         device(d.doc(), "c").steps.as_ref().unwrap().patterns.len(),

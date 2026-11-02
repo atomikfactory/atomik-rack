@@ -105,9 +105,9 @@ fn a_name_and_a_colour_are_set_cleared_and_undone() {
         assert_eq!(c.color, Some([200, 30, 90]));
     }
     assert_eq!(d.undo_label(), Some("Rename Clip"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(*d.doc().song, *before.song);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     // Colour only: the names stay.
     one_step(
         &mut d,
@@ -129,7 +129,7 @@ fn a_name_and_a_colour_are_set_cleared_and_undone() {
     let c = &clips_of(&d, 0);
     assert_eq!((c[0].name.clone(), c[0].color), (None, None));
     assert_eq!(c[1].name.as_deref(), Some("Verse"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(clips_of(&d, 0)[0].name.as_deref(), Some("Verse"));
 }
 
@@ -390,7 +390,7 @@ proptest! {
             // No clip loops any more, the song validates, and undo gives the loop back.
             prop_assert!(clips_of(&d, 0).iter().all(|c| c.loop_length.is_none()));
             prop_assert!(clips_of(&d, 1).iter().all(|c| c.loop_length.is_none()));
-            d.undo(&r).unwrap();
+            d.undo().unwrap();
             prop_assert_eq!(played(&d), before);
             prop_assert!(clips_of(&d, 0)[0].loop_length.is_some());
         }

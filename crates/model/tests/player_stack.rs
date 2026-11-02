@@ -313,7 +313,7 @@ fn undo_restores_cables_and_entry() {
     let before = text(&d);
     d.apply(player(ARP, "synth"), &reg).unwrap();
     assert_ne!(text(&d), before);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         text(&d),
         before,
@@ -321,7 +321,7 @@ fn undo_restores_cables_and_entry() {
     );
     assert!(d.doc().devices.iter().all(|x| x.type_id != ARP));
     assert_eq!(entry(&d, "synth").as_deref(), Some("seq"));
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(entry(&d, "synth").is_some());
 }
 
@@ -574,7 +574,7 @@ fn connect_a_player_into_a_tracks_instrument_moves_the_entry_up() {
     run(&mut d, &reg, [add(1, ARP, Some("arp"))]);
     one_step(&mut d, &reg, connect("arp:notes_out", "synth:notes_in"));
     assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(entry(&d, "synth"), None, "undo restores the old entry");
 }
 
@@ -594,7 +594,7 @@ fn connect_a_second_player_above_the_first_moves_the_entry_again() {
     assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
     one_step(&mut d, &reg, connect("chord:notes_out", "arp:notes_in"));
     assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
 }
 

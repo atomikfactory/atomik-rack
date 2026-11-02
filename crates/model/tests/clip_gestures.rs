@@ -178,7 +178,7 @@ proptest! {
             // Growing shows what lay before the offset: the old notes are all still there.
             prop_assert!(expected.iter().all(|n| got.contains(n)));
         }
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         prop_assert_eq!(flat(&d), before);
     }
 }
@@ -296,7 +296,7 @@ proptest! {
         let starts = |v: &[(i64, i64, u8, f32)]| v.iter().map(|n| (n.0, n.2)).collect::<Vec<_>>();
         let got = flat(&d);
         prop_assert_eq!(starts(&got), starts(&before));
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         prop_assert_eq!(flat(&d), before);
     }
 }

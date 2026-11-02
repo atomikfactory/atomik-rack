@@ -233,8 +233,8 @@ proptest! {
         let mut d = Document::new(atomik_model::empty_doc());
         for o in &ops {
             match o {
-                POp::Undo | POp::Container(Op::Undo) => { d.undo(&r); }
-                POp::Redo | POp::Container(Op::Redo) => { d.redo(&r); }
+                POp::Undo | POp::Container(Op::Undo) => { d.undo(); }
+                POp::Redo | POp::Container(Op::Redo) => { d.redo(); }
                 other => {
                     if let Some(c) = resolve(other, d.doc(), &r) {
                         let before = d.doc().clone();
@@ -248,7 +248,7 @@ proptest! {
             assert_plugin_invariants(d.doc(), &r);
         }
         // Undo everything: the empty document comes back.
-        while d.undo(&r).is_some() {}
+        while d.undo().is_some() {}
         prop_assert_eq!(d.doc(), &atomik_model::empty_doc());
     }
 }
@@ -436,8 +436,8 @@ proptest! {
         let mut d = Document::new(doc);
         for o in &ops {
             match o {
-                SOp::Undo => { d.undo(&r); }
-                SOp::Redo => { d.redo(&r); }
+                SOp::Undo => { d.undo(); }
+                SOp::Redo => { d.redo(); }
                 other => {
                     if let Some(c) = resolve_stand_in(other, d.doc(), &r) {
                         let _ = d.apply(c, &r);

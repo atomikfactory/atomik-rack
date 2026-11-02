@@ -9,7 +9,7 @@
 
 use crate::console::is_console_type;
 use crate::console_cmd::{Planner, default_channel_name};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::song::LaneKind;
 use crate::song_cmd::has_notes_input;
 use crate::workflow_create::{CreateSource, is_note_player};
@@ -278,11 +278,11 @@ pub(crate) fn plan(
         {
             let renamed = default_channel_name(&new_name, &new_out.0);
             if renamed != current {
-                p.push(Edit::Name {
+                p.push(Edit::Swap(Swap::Name {
                     key: channel,
                     old: current,
                     new: renamed,
-                });
+                }));
             }
         }
     }

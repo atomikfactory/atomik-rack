@@ -587,3 +587,34 @@ fn run_mode_defaults_to_a_no_op_and_devices_are_not_pinned() {
     n.set_run_mode(RunMode::Realtime);
     assert_ne!(RunMode::Realtime, RunMode::Offline);
 }
+
+// ----- a refused layout leaks nothing -------------------------------------------------------
+
+fn leaks() -> usize {
+    LEAKS.with(std::cell::Cell::get)
+}
+
+#[test]
+fn a_refused_layout_leaks_nothing_and_an_accepted_one_leaks_only_its_descriptor() {
+    let before = leaks();
+    let mut dup = layout(PluginKindHint::Effect);
+    dup.params = vec![param(3, "A"), param(3, "B")];
+    let mut bad_range = layout(PluginKindHint::Effect);
+    let mut p = param(9, "Late");
+    p.min = 2.0;
+    p.max = 1.0;
+    bad_range.params = vec![param(1, "Fine"), param(2, "Fine too"), p];
+    let silent = PluginLayout {
+        main_in: None,
+        main_out: None,
+        ..layout(PluginKindHint::Effect)
+    };
+    for refused in [dup, bad_range, silent] {
+        assert!(build_descriptor(&clap("x.leak"), &refused).is_err());
+    }
+    assert!(build_descriptor(&clap("white space"), &layout(PluginKindHint::Effect)).is_err());
+    assert_eq!(leaks(), before, "a refused layout leaks nothing");
+
+    build_descriptor(&clap("x.leak"), &layout(PluginKindHint::Effect)).unwrap();
+    assert!(leaks() > before, "an accepted layout is leaked on purpose");
+}

@@ -64,11 +64,11 @@ fn undo_restores_both_the_cable_and_the_switch_byte_for_byte() {
     d.apply(connect("fx:out_l", "master:key_in"), &r).unwrap();
     let after = text(&d);
     assert_ne!(before, after);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), before);
     assert_eq!(key_on(&d, &r), 0.0);
     assert!(!stored(&d), "the default is not stored again");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(text(&d), after);
 }
 
@@ -98,7 +98,7 @@ fn a_key_already_on_is_not_touched_again() {
             .all(|o| !matches!(o, SyncOp::ParamChanged { .. })),
         "{ops:?}"
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         text(&d),
         steps,
@@ -184,7 +184,7 @@ fn the_rule_also_holds_inside_a_batch() {
         [Command::Batch(vec![connect("fx:out_l", "master:key_in")])],
     );
     assert_eq!(key_on(&d, &r), 1.0);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), before);
 }
 

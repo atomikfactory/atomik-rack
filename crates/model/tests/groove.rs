@@ -96,13 +96,13 @@ fn quantize_moves_every_clip_in_one_undo_step() {
     assert_eq!(lead, [0, S]);
     // The second clip starts on a bar, so its grid is the song's: 2S - 200 goes to 2S.
     assert_eq!(notes_of(&d, 2)[0].tick, 2 * S);
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(
         save_project(d.doc()),
         before,
         "one undo restores both clips"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(notes_of(&d, 1)[0].tick, 0);
     assert_eq!(notes_of(&d, 2)[0].tick, 2 * S);
 }
@@ -270,11 +270,11 @@ fn the_groove_library_is_undoable_and_shared_by_name() {
     assert_eq!(d.doc().song.grooves.len(), 1, "same name replaces");
     quantize(&mut d, &reg, &[1], q);
     assert_eq!(notes_of(&d, 1)[1].tick, S + S / 4);
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.grooves, [custom()]);
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.grooves.is_empty());
 }
 

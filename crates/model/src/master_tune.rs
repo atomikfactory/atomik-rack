@@ -8,7 +8,7 @@
 //! [`crate::Command::SetMasterTune`], one undo step that reports [`crate::SyncOp::TuneChanged`].
 //! Audio tracks and plugins are not affected: a plugin keeps its own tuning.
 
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::patch::{JsonPath, f32_text, number};
 use crate::{ModelError, RackDoc};
 use serde_json::Value;
@@ -41,10 +41,10 @@ pub(crate) fn plan_set(doc: &RackDoc, cents: f32) -> Result<Edit, ModelError> {
             "the master tune is already that".into(),
         ));
     }
-    Ok(Edit::Tune {
+    Ok(Edit::Swap(Swap::Tune {
         old: doc.tune_cents,
         new: cents,
-    })
+    }))
 }
 
 /// Writes `"tune_cents"` (with its trailing comma and newline) after `"macros"`; nothing for 0.

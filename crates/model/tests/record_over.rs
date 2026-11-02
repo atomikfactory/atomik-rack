@@ -131,7 +131,7 @@ fn engulf_trims_an_older_clip_that_starts_inside_the_take_and_the_whole_take_pla
             (4 * BAR, 72)
         ]
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
 }
 
@@ -211,7 +211,7 @@ fn layer_merges_a_take_into_the_clip_under_its_start_and_keeps_the_old_notes() {
         [(0, 100, 60), (BAR, 50, 62), (3 * BAR, 100, 64)],
         "old note kept, same start and key replaced, new note added"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
 }
 
@@ -393,7 +393,7 @@ fn group_as_takes_stacks_a_new_audio_clip_over_the_old_one_and_plays_it_over_the
     let lane = &d.doc().song.tracks[0].lanes[0];
     assert!(lane.clips.iter().all(|c| c.id != old));
     assert_eq!(lane.clips.len(), 3);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
     assert_eq!(group_count(&d), 0);
 }
@@ -453,7 +453,7 @@ fn add_take_puts_a_third_take_on_top_of_an_existing_group() {
     assert_eq!(g.take_at(BAR), Some(1));
     assert_eq!(g.take_at(BAR + BAR / 2), Some(2));
     assert_eq!(g.take_at(3 * BAR), Some(0));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
 }
 
@@ -633,12 +633,12 @@ fn apply_joined_folds_a_follow_up_into_the_step_before_it() {
     )
     .unwrap();
     assert_eq!(lane_clips(&d)[0].length, 2 * BAR);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         save_project(d.doc()),
         before,
         "one undo reverts the edit and its follow-up"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(lane_clips(&d)[0].length, 2 * BAR);
 }

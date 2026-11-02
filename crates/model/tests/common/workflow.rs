@@ -36,9 +36,9 @@ pub fn one_step(d: &mut Document, r: &Registry, c: Command) -> Vec<SyncOp> {
         .unwrap_or_else(|e| panic!("{c:?} rejected: {e}"));
     let after = text(d);
     assert_ne!(before, after, "the command changed something");
-    d.undo(r).expect("one step to undo");
+    d.undo().expect("one step to undo");
     assert_eq!(text(d), before, "undo restores the saved text");
-    d.redo(r).expect("one step to redo");
+    d.redo().expect("one step to redo");
     assert_eq!(text(d), after, "redo restores the saved text");
     ops
 }

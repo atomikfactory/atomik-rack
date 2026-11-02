@@ -169,7 +169,7 @@ fn a_recalled_snapshot_bounces_exactly_like_the_mix_set_by_hand() {
     apply(&mut d, recall(1));
     assert_eq!(bits(&bounce(d.doc())), bits(&want), "recalled A");
     // Undo puts the second mix back, bit for bit.
-    d.undo(&default_registry()).unwrap();
+    d.undo().unwrap();
     assert_eq!(bits(&bounce(d.doc())), bits(&other), "undone");
     // And a saved and loaded project plays the same.
     apply(&mut d, recall(1));

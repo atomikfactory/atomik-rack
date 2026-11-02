@@ -297,7 +297,7 @@ fn clicking_a_cell_toggles_the_step() {
         panic!("a step command")
     };
     assert_eq!((velocity, prob), (0, 50));
-    d.undo(&registry()).unwrap();
+    d.undo().unwrap();
     assert_eq!(drums(&d).patterns[0].steps[2][7].velocity, 45);
 }
 
@@ -340,7 +340,7 @@ fn a_vertical_drag_sets_the_velocity_in_one_undo_step() {
     assert!(out.iter().any(|a| matches!(a, UiAction::EndMerge)));
     apply(&mut d, &mut v, &out);
     assert_eq!(drums(&d).patterns[0].steps[0][4].velocity, 72);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "the drag is one undo step");
 
     // A drag on an empty cell places a hit that starts at the default velocity.
@@ -519,9 +519,9 @@ fn the_pattern_buttons_add_duplicate_remove_copy_paste_and_clear() {
     click(&mut v, &mut d, p);
     assert_eq!(drums(&d).patterns.len(), 4);
     assert_eq!(v.edited_pattern(&key("gen")), Some(3));
-    d.undo(&registry()).unwrap();
-    d.undo(&registry()).unwrap();
-    d.undo(&registry()).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     v.sync(d.doc(), &registry());
     assert_eq!(d.doc(), &before);
 
@@ -833,14 +833,13 @@ fn the_groove_steppers_change_the_resolution_and_the_shuffle() {
         click(&mut v, &mut d, p);
     }
     assert_eq!(drums(&d).patterns[0].swing, 0, "clamped at zero");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(drums(&d).patterns[0].swing, 1);
 }
 
 #[test]
 fn the_mode_button_cycles_and_a_click_sets_the_next_flam_or_ratchet() {
     let (mut d, mut v) = setup(only());
-    let reg = registry();
     assert!(texts_of(&mut v, &d).iter().any(|t| t == "VEL"));
     // Velocity mode first; one press gives the flam mode.
     let m = center(&v, DrumButton::Mode);
@@ -874,7 +873,7 @@ fn the_mode_button_cycles_and_a_click_sets_the_next_flam_or_ratchet() {
         commands(&out)[..],
         [Command::SetDrumStep { velocity: 0, .. }]
     ));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
 }
 
 #[test]
@@ -896,7 +895,7 @@ fn a_drag_in_the_flam_and_ratchet_modes_is_one_undo_step() {
         20,
         "100 px is the whole range"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step");
     v.sync(d.doc(), &reg);
     click(&mut v, &mut d, m); // ratchet

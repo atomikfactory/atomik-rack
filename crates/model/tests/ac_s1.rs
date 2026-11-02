@@ -171,12 +171,12 @@ proptest! {
             mirror.assert_matches(d.doc());
         }
         let last = d.doc().clone();
-        while let Some(sync) = d.undo(&reg) {
+        while let Some(sync) = d.undo() {
             mirror.replay(&sync, d.doc());
             mirror.assert_matches(d.doc());
         }
         prop_assert_eq!(d.doc(), &original);
-        while let Some(sync) = d.redo(&reg) {
+        while let Some(sync) = d.redo() {
             mirror.replay(&sync, d.doc());
             mirror.assert_matches(d.doc());
         }
@@ -190,12 +190,12 @@ proptest! {
         for (choice, op) in &ops {
             match choice {
                 0 | 1 => {
-                    if let Some(sync) = d.undo(&reg) {
+                    if let Some(sync) = d.undo() {
                         mirror.replay(&sync, d.doc());
                     }
                 }
                 2 => {
-                    if let Some(sync) = d.redo(&reg) {
+                    if let Some(sync) = d.redo() {
                         mirror.replay(&sync, d.doc());
                     }
                 }

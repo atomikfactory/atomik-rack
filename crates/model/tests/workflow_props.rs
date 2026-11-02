@@ -290,9 +290,9 @@ proptest! {
                     invariants(&d, &r);
                     // One undo step, and redo gives the same bytes.
                     let after = text(&d);
-                    d.undo(&r).expect("a step to undo");
+                    d.undo().expect("a step to undo");
                     prop_assert_eq!(text(&d), before.clone());
-                    d.redo(&r).expect("a step to redo");
+                    d.redo().expect("a step to redo");
                     prop_assert_eq!(text(&d), after.clone());
                     // The saved text loads back to the same text (the format is unchanged).
                     let loaded = load_project(&after, &r).expect("a saved state loads");
@@ -305,14 +305,14 @@ proptest! {
         }
         // Undo everything: each state comes back.
         for k in (0..accepted.len()).rev() {
-            d.undo(&r).expect("undo");
+            d.undo().expect("undo");
             prop_assert_eq!(text(&d), states[k].clone(), "undo to state {}", k);
         }
         prop_assert_eq!(text(&d), text(&start));
         prop_assert!(!d.can_undo());
         // Redo everything: every state equals the first-time state.
         for (k, s) in states.iter().enumerate().skip(1) {
-            d.redo(&r).expect("redo");
+            d.redo().expect("redo");
             prop_assert_eq!(text(&d), s.clone(), "redo to state {}", k);
         }
         // A replay on a fresh document gives the very same texts (no hidden state).
@@ -354,11 +354,11 @@ fn a_fixed_mix_of_commands_survives_undo_all_and_redo_all() {
         states.push(text(&d));
     }
     for k in (0..sequence.len()).rev() {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         assert_eq!(text(&d), states[k]);
     }
     for (k, s) in states.iter().enumerate().skip(1) {
-        d.redo(&r).unwrap();
+        d.redo().unwrap();
         assert_eq!(&text(&d), s, "redo {k}");
     }
 }

@@ -81,9 +81,9 @@ fn one_step(d: &mut Document, r: &Registry, c: Command) {
         .unwrap_or_else(|e| panic!("{c:?} rejected: {e}"));
     let after = d.doc().clone();
     assert_ne!(after, before, "{c:?} changed nothing");
-    d.undo(r).expect("undo");
+    d.undo().expect("undo");
     assert_eq!(d.doc(), &before, "{c:?} undone in one step");
-    d.redo(r).expect("redo");
+    d.redo().expect("redo");
     assert_eq!(d.doc(), &after, "{c:?} redone");
 }
 
@@ -614,7 +614,7 @@ fn removing_the_bus_device_generically_is_delete_bus() {
     b.apply(Command::RemoveDevice { key: key("bus") }, &r)
         .unwrap();
     assert_eq!(a.doc(), b.doc());
-    b.undo(&r).unwrap();
+    b.undo().unwrap();
     assert_eq!(dest_of(&b, "channel"), bus("bus"));
     // Through the workflow removal too (with the feeder removed in the same selection).
     b.apply(
@@ -1145,6 +1145,6 @@ fn a_new_bus_starts_folded_like_a_created_channel() {
     )
     .unwrap();
     assert!(d.doc().device(&key("bus-2")).unwrap().folded);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().device(&key("bus-2")).is_none());
 }

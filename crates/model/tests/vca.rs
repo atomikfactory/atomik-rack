@@ -85,9 +85,9 @@ fn one_step(d: &mut Document, r: &Registry, c: Command) {
     let after = d.doc().clone();
     assert_ne!(after, before, "{c:?} changed nothing");
     assert_console_invariants(&after);
-    d.undo(r).expect("undo");
+    d.undo().expect("undo");
     assert_eq!(d.doc(), &before, "{c:?} undone in one step");
-    d.redo(r).expect("redo");
+    d.redo().expect("redo");
     assert_eq!(d.doc(), &after, "{c:?} redone");
 }
 
@@ -260,13 +260,13 @@ fn a_level_drag_with_one_merge_id_is_one_undo_step() {
         d.apply(level(1, db, Some(7)), &r).unwrap();
     }
     assert_eq!(d.doc().console.vca(1).unwrap().level_db, -4.0);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "the whole drag is one step");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().console.vca(1).unwrap().level_db, -4.0);
     // Another gesture is another step.
     d.apply(level(1, -5.0, Some(8)), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().console.vca(1).unwrap().level_db, -4.0);
 }
 
@@ -277,7 +277,7 @@ fn every_vca_command_reports_a_console_change() {
     assert!(ops.contains(&SyncOp::ConsoleChanged), "{ops:?}");
     let ops = d.apply(level(1, -3.0, None), &r).unwrap();
     assert!(ops.contains(&SyncOp::ConsoleChanged), "{ops:?}");
-    let ops = d.undo(&r).unwrap();
+    let ops = d.undo().unwrap();
     assert!(ops.contains(&SyncOp::ConsoleChanged), "{ops:?}");
 }
 
@@ -295,7 +295,7 @@ fn removing_a_channel_takes_it_out_of_its_group_and_undo_puts_it_back() {
     .unwrap();
     assert_eq!(members(&d, 1), ["channel-2"]);
     assert_console_invariants(d.doc());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     assert_eq!(members(&d, 1), ["channel", "channel-2"]);
 }
@@ -316,7 +316,7 @@ fn deleting_a_bus_takes_it_out_of_its_group() {
     d.apply(con(ConsoleCommand::DeleteBus { bus: key("bus") }), &r)
         .unwrap();
     assert_eq!(members(&d, 1), ["channel"]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

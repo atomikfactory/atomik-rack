@@ -76,7 +76,7 @@ fn delete_on_a_picked_automation_lane_removes_only_the_lane() {
     let t = d.doc().song.track(&key("bass")).unwrap();
     assert!(t.automation_lane(RESO).is_none());
     assert!(t.automation_lane(CUTOFF).is_some());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(
         d.doc()
             .song
@@ -167,7 +167,7 @@ fn a_click_on_empty_automation_lane_draws_a_clip_with_a_point() {
             .len(),
         1
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(*d.doc().song, *before);
 }
 

@@ -33,8 +33,8 @@ fn changed() -> Vec<SyncOp> {
     vec![SyncOp::SongChanged]
 }
 
-fn undo_all_restores(d: &mut Document, before: &atomik_model::RackDoc, reg: &Registry) {
-    while d.undo(reg).is_some() {}
+fn undo_all_restores(d: &mut Document, before: &atomik_model::RackDoc) {
+    while d.undo().is_some() {}
     assert_eq!(d.doc(), before);
 }
 
@@ -60,9 +60,9 @@ fn add_track_creates_note_lane() {
         key("lead")
     );
     assert!(d.doc().song.track(&key("delay")).is_none());
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(ops, changed());
-    undo_all_restores(&mut d, &before, &reg);
+    undo_all_restores(&mut d, &before);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn remove_track_and_undo_restores_it_at_its_index_with_clips() {
     assert_eq!(ops, changed());
     assert_eq!(d.doc().song.tracks.len(), 1);
     assert_eq!(d.doc().song.tracks[0].device, key("lead"));
-    assert_eq!(d.undo(&reg).unwrap(), changed());
+    assert_eq!(d.undo().unwrap(), changed());
     assert_eq!(d.doc(), &before);
     assert!(matches!(
         rejects(
@@ -141,7 +141,7 @@ fn set_track_flags() {
     assert_eq!(d.apply(cmd, &reg).unwrap(), changed());
     let t = &d.doc().song.tracks[0];
     assert!(t.muted && !t.solo && t.armed);
-    undo_all_restores(&mut d, &before, &reg);
+    undo_all_restores(&mut d, &before);
     let bad = sc(SongCommand::SetTrackFlags {
         device: key("lead"),
         muted: true,
@@ -170,7 +170,7 @@ fn track_flags_batch_as_one_undo_step() {
     assert_eq!(d.apply(batch, &reg).unwrap(), changed());
     let t = &d.doc().song.tracks;
     assert!(!t[0].armed && t[1].armed);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo reverts both tracks");
 }
 
@@ -192,9 +192,9 @@ fn add_automation_lane_creates_track_when_needed() {
         LaneKind::Automation("filter.cutoff".into())
     );
     // One undo step removes the lane and the track created for it.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     // Duplicate lane, unknown param, unknown device.
     assert!(matches!(rejects(&mut d, cmd, &reg), ModelError::BadSong(_)));
     let unknown = sc(SongCommand::AddAutomationLane {
@@ -253,7 +253,7 @@ fn add_clip_allocates_ids_and_keeps_lane_sorted() {
     assert_eq!((t.device.as_str(), l, c.start), ("synth", 0, BAR));
     assert!(d.doc().song.clip(ClipId(7)).is_none());
     // Undo frees nothing: ids are never reused while history may restore them.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.next_clip_id, 3);
     d.apply(add_clip("synth", 0, notes_clip(0, 10, vec![])), &reg)
         .unwrap();
@@ -351,7 +351,7 @@ fn remove_clip_and_undo() {
         changed()
     );
     assert!(d.doc().song.tracks[0].lanes[0].clips.is_empty());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     assert!(matches!(
         rejects(&mut d, sc(SongCommand::RemoveClip { id: ClipId(9) }), &reg),
@@ -397,7 +397,7 @@ fn set_clip_geometry_moves_resorts_and_validates() {
         (c.start, c.length, c.offset, c.loop_length, c.muted),
         (2 * BAR, 3 * BAR, 7, Some(BAR), true)
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     for cmd in [
         geometry(1, -1, BAR, None),
@@ -444,7 +444,7 @@ fn set_clip_content_replaces_and_validates_kind() {
         d.doc().song.clip(ClipId(2)).unwrap().2.content,
         ClipContent::Automation(vec![point(3, 20_000.0, Curve::Linear)])
     );
-    undo_all_restores(&mut d, &before, &reg);
+    undo_all_restores(&mut d, &before);
     for (id, content) in [
         (1, ClipContent::Automation(vec![])),
         (2, ClipContent::Notes(vec![].into())),
@@ -486,9 +486,9 @@ fn clip_drags_with_the_same_merge_id_merge_into_one_step() {
     )
     .unwrap();
     let dragged = d.doc().clone();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &start, "the whole drag is one step");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc(), &dragged);
 
     // end_merge splits and another id splits; another clip of the same group joins the step
@@ -503,10 +503,10 @@ fn clip_drags_with_the_same_merge_id_merge_into_one_step() {
     d.apply(geometry(2, 70, BAR, None), &reg).unwrap();
     d.apply(geometry(2, 80, BAR, None), &reg).unwrap();
     for _ in 0..3 {
-        d.undo(&reg).unwrap();
+        d.undo().unwrap();
     }
     assert_eq!(d.doc(), &b);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &a);
     // A param drag with the same id does not merge into a clip drag.
     d.apply(geometry(1, 90, BAR, Some(8)), &reg).unwrap();
@@ -521,7 +521,7 @@ fn clip_drags_with_the_same_merge_id_merge_into_one_step() {
         &reg,
     )
     .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &c);
 }
 
@@ -569,7 +569,7 @@ fn split_clip_keeps_content_alignment() {
         atomik_model::song::flatten_notes(&d.doc().song.tracks[0]),
         atomik_model::song::flatten_notes(&track_before)
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     for at in [BAR, 3 * BAR, 0, 10 * BAR] {
         rejects(
@@ -642,7 +642,7 @@ fn duplicate_clip_copies_to_a_new_start() {
     expected.id = ClipId(2);
     expected.start = 4 * BAR;
     assert_eq!(lane.clips[1], expected);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     rejects(
         &mut d,
@@ -672,7 +672,7 @@ fn set_tempo_keeps_the_song_tempo_in_sync() {
     d.apply(Command::SetTempo(97.25), &reg).unwrap();
     assert_eq!(d.doc().song.tempo[0].bpm, 97.25);
     assert_tempo_invariant(d.doc());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_tempo_invariant(d.doc());
     assert_eq!(*d.doc().song, empty_song(120.0));
 }
@@ -690,7 +690,7 @@ fn set_tempo_map_updates_rack_tempo() {
     assert_eq!(d.doc().song.tempo, map);
     assert_eq!(d.doc().tempo_bpm, 90.5);
     assert_tempo_invariant(d.doc());
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(ops, [SyncOp::TempoChanged(120.0), SyncOp::SongChanged]);
     assert_eq!(d.doc(), &before);
     let ev = |tick, bpm| TempoEvent::step(tick, bpm);
@@ -744,7 +744,7 @@ fn set_meter_loop_and_end() {
     for e in [0, -5] {
         rejects(&mut d, sc(SongCommand::SetSongEnd(e)), &reg);
     }
-    undo_all_restores(&mut d, &before, &reg);
+    undo_all_restores(&mut d, &before);
 }
 
 // ---- rack interaction -----------------------------------------------------------------------
@@ -774,11 +774,11 @@ fn remove_device_removes_its_track_and_undo_restores_both() {
     );
     assert!(d.doc().song.track(&key("synth")).is_none());
     assert_eq!(d.doc().song.tracks.len(), 1);
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(ops.first(), Some(&SyncOp::DeviceAdded(key("synth"))));
     assert_eq!(ops.last(), Some(&SyncOp::SongChanged));
     assert_eq!(d.doc(), &before, "device and track (index, clips) restored");
-    let ops = d.redo(&reg).unwrap();
+    let ops = d.redo().unwrap();
     assert_eq!(ops[0], SyncOp::SongChanged);
     assert!(d.doc().song.track(&key("synth")).is_none());
 }
@@ -809,9 +809,9 @@ fn a_tempo_ramp_is_stored_and_undone_like_a_step() {
     assert_eq!(ops, [SyncOp::TempoChanged(60.0), SyncOp::SongChanged]);
     assert_eq!(d.doc().song.tempo, map);
     assert_tempo_invariant(d.doc());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.tempo, map);
 }
 
@@ -871,13 +871,13 @@ fn dragging_the_tempo_map_is_one_undo_step() {
         &reg,
     )
     .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc().song.tempo[1].bpm,
         160.0,
         "another drag is another step"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // A rejected drag step changes nothing.
     rejects(
@@ -916,7 +916,7 @@ fn the_meter_map_is_set_validated_and_undone() {
     ] {
         rejects(&mut d, sc(SongCommand::SetMeterMap(bad)), &reg);
     }
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -961,7 +961,7 @@ fn dragging_a_meter_change_is_one_undo_step() {
         .unwrap();
     }
     assert_eq!(d.doc().song.meter[1].bar, 6);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

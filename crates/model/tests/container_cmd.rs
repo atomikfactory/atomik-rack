@@ -61,7 +61,7 @@ fn rename_reaches_a_device_inside_a_container_and_a_blank_name_restores_its_defa
     // `synth` keeps the type's name, so the default of `pad` is the next free one.
     d.apply(rename(""), &r).unwrap();
     assert_eq!(inner(&d, "c").devices[1].name, "Poly Synth 2");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(inner(&d, "c").devices[1].name, "Strings");
 }
 
@@ -92,12 +92,12 @@ fn set_splits_replaces_the_list_in_one_undo_step() {
             container: key("c")
         }]
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(inner(&d, "c").splits, list);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(inner(&d, "c").splits.is_empty());
     assert!(!d.can_undo());
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(inner(&d, "c").splits, list);
 }
 
@@ -219,8 +219,8 @@ fn auto_split_adds_a_full_range_split_in_the_same_step() {
     d.apply(auto(DELAY, "delay"), &r).unwrap();
     assert_eq!(inner(&d, "c").splits.len(), 1);
     // One undo step undoes the device and its split.
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert!(inner(&d, "c").devices.is_empty() && inner(&d, "c").splits.is_empty());
     // No room: the device is added without a split.
     for i in 0..8 {
@@ -253,15 +253,15 @@ fn split_drags_merge_by_id() {
         ],
     );
     assert_eq!(inner(&d, "c").splits[0].key_hi, 80);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(inner(&d, "c").splits.is_empty(), "one step for the drag");
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     // A different merge id, or none, is a new step.
     d.apply(drag(70, Some(base + 1)), &r).unwrap();
     d.apply(drag(60, None), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(inner(&d, "c").splits[0].key_hi, 70);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(inner(&d, "c").splits[0].key_hi, 80);
 }
 
@@ -309,7 +309,7 @@ fn set_macro_adds_edits_and_removes_targets() {
     assert_eq!(inner(&d, "c").macros[0].targets.len(), 1);
     // Every step undoes.
     for _ in 0..4 {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
     }
     assert!(inner(&d, "c").macros[0].targets.is_empty());
     assert!(!d.can_undo());
@@ -501,8 +501,8 @@ fn a_mapped_param_rejects_set_param_until_unmapped() {
     d.apply(set_param("c/synth", "filter.cutoff", 500.0), &r)
         .unwrap();
     // Undo of the unmap re-drives it.
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert!(
         d.doc()
             .macro_driver(&key("c/synth"), "filter.cutoff")
@@ -588,7 +588,7 @@ fn removing_a_device_drops_its_targets_and_splits_in_the_same_step() {
     assert_eq!(c.macros[0].targets.len(), 1);
     assert_eq!(c.macros[0].targets[0].device, key("delay"));
     assert!(c.cables.is_empty());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step restores everything");
 }
 
@@ -614,14 +614,14 @@ fn removing_a_nested_device_drops_the_outer_targets_into_it() {
         .unwrap();
     assert_eq!(inner(&d, "o").macros[0].targets.len(), 1);
     assert_eq!(inner(&d, "o").macros[1].targets.len(), 1, "i itself stays");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // Removing the nested container drops every target into and at it.
     d.apply(Command::RemoveDevice { key: key("o/i") }, &r)
         .unwrap();
     assert_eq!(inner(&d, "o").macros[0].targets.len(), 1);
     assert!(inner(&d, "o").macros[1].targets.is_empty());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -649,9 +649,9 @@ fn macro_range_drags_merge() {
         ],
     );
     assert_eq!(inner(&d, "c").macros[0].targets[0].max, 0.7);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(inner(&d, "c").macros[0].targets[0].max, 0.2);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(inner(&d, "c").macros[0].targets.is_empty());
 }
 
@@ -729,9 +729,9 @@ fn duplicate_container_deep_copies_without_outer_wiring() {
     let copy_synth = format!("{}/synth", copy.key);
     assert!(keys.contains(&"c/synth".to_owned()));
     assert!(keys.contains(&copy_synth));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().devices.len(), before.devices.len() + 1);
 }
 
@@ -811,7 +811,7 @@ fn batch_accepts_the_four_macro_and_split_commands_only() {
     )
     .unwrap();
     assert_eq!(inner(&d, "c").macros[0].name, "Tone");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     for refused in [
         add_inner("c", 0, DELAY, "x"),
@@ -848,9 +848,9 @@ fn macro_edits_report_macros_changed_also_on_undo_and_redo() {
         .unwrap(),
         std::slice::from_ref(&changed)
     );
-    assert_eq!(d.undo(&r).unwrap(), std::slice::from_ref(&changed));
-    assert_eq!(d.undo(&r).unwrap(), std::slice::from_ref(&changed));
-    assert_eq!(d.redo(&r).unwrap(), [changed]);
+    assert_eq!(d.undo().unwrap(), std::slice::from_ref(&changed));
+    assert_eq!(d.undo().unwrap(), std::slice::from_ref(&changed));
+    assert_eq!(d.redo().unwrap(), [changed]);
 }
 
 #[test]
@@ -859,7 +859,7 @@ fn adding_a_container_with_contents_back_reports_one_device_added() {
     let mut d = layered(&r);
     d.apply(Command::RemoveDevice { key: key("c") }, &r)
         .unwrap();
-    let ops = d.undo(&r).unwrap();
+    let ops = d.undo().unwrap();
     // The inside comes with the container: the app expands it. No per-inner ops.
     assert_eq!(ops, [SyncOp::DeviceAdded(key("c")), SyncOp::RoutingChanged]);
 }
@@ -873,8 +873,8 @@ proptest! {
         let mut d = Document::new(empty_doc());
         for o in &ops {
             match o {
-                Op::Undo => { let _ = d.undo(&r); }
-                Op::Redo => { let _ = d.redo(&r); }
+                Op::Undo => { let _ = d.undo(); }
+                Op::Redo => { let _ = d.redo(); }
                 _ => {
                     if let Some(c) = resolve_op(o, d.doc(), &r) {
                         let before = d.doc().clone();
@@ -887,7 +887,7 @@ proptest! {
             assert_invariants(d.doc(), &r);
         }
         // Undo everything: back to the empty rack.
-        while d.undo(&r).is_some() {
+        while d.undo().is_some() {
             assert_invariants(d.doc(), &r);
         }
         prop_assert_eq!(d.doc(), &empty_doc());
@@ -924,10 +924,10 @@ fn the_random_generator_reaches_the_interesting_commands() {
             };
             match o {
                 Op::Undo => {
-                    let _ = d.undo(&r);
+                    let _ = d.undo();
                 }
                 Op::Redo => {
-                    let _ = d.redo(&r);
+                    let _ = d.redo();
                 }
                 _ => {
                     if let Some(c) = resolve_op(o, d.doc(), &r)

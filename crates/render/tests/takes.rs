@@ -256,7 +256,7 @@ fn picking_a_take_bounces_that_take_alone_and_undo_brings_the_comp_back() {
         );
         assert!((f - HZ_A).abs() < 3.0, "bar {}: {f}", bar + 1);
     }
-    d.undo(&default_registry()).unwrap();
+    d.undo().unwrap();
     assert!(bits(&render(d.doc(), &bundle, 512, 0)) == comp);
 }
 

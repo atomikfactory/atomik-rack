@@ -216,7 +216,7 @@ fn saving_loading_editing_and_undoing_mappings_leave_the_render_alone() {
     d.apply(Command::MidiMap(MidiMapCommand::Clear), &registry)
         .unwrap();
     assert_eq!(bits(&bounce_with(d.doc(), 512, 0)), reference);
-    d.undo(&registry).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().midi_maps.len(), 8);
     assert_eq!(bits(&bounce_with(d.doc(), 512, 0)), reference);
 }

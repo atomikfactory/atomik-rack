@@ -291,6 +291,6 @@ fn undo_of_a_quantize_brings_the_original_bounce_back() {
     let loose_bounce = bounce(d.doc());
     quantize(&mut d, QuantizeParams::default());
     assert!(bounce(d.doc()) != loose_bounce);
-    d.undo(&default_registry()).unwrap();
+    d.undo().unwrap();
     assert!(bounce(d.doc()) == loose_bounce);
 }

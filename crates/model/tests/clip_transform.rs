@@ -68,7 +68,7 @@ fn reversing_notes_mirrors_them_as_bars_or_by_their_starts() {
         notes_of(&the_clip(&d, 0)),
         [(BAR - PPQ - 2 * q, 2 * q, 62), (BAR - q, q, 60)]
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     one_step(&mut d, &r, reverse(vec![id], false));
     // Starts only: the first note stays on the downbeat, the other mirrors, lengths stay.
     assert_eq!(
@@ -230,7 +230,7 @@ proptest! {
             // Notes a piece cuts short stay as they were here (the notes are shorter than a piece
             // boundary gap), so the flatten output is identical.
             prop_assert_eq!(t(&d), before);
-            d.undo(&r).unwrap();
+            d.undo().unwrap();
             prop_assert_eq!(d.doc().song.track(&key("synth")).unwrap().lanes[0].clips.len(), 1);
         }
     }
@@ -294,7 +294,7 @@ fn chopping_a_bar_into_quarters_gives_four_clips() {
     );
     assert_eq!(t(&d), before);
     // Nothing to chop at or beyond the clip length.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     let e = rejected(&mut d, &r, chop(vec![id], BAR));
     assert!(matches!(e, ModelError::BadSong(_)), "{e:?}");
     let e = rejected(&mut d, &r, chop(vec![id], 0));
@@ -355,7 +355,7 @@ fn scaling_audio_warps_it_and_a_reversed_clip_is_refused() {
         "{}",
         a.warp.source_bpm
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     one_step(&mut d, &r, reverse(vec![id], false));
     let e = rejected(&mut d, &r, scale(vec![id], 200.0));
     assert!(matches!(e, ModelError::BadSong(_)), "{e:?}");

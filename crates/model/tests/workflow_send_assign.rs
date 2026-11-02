@@ -145,7 +145,7 @@ fn master_selected_takes_the_first_free_slot_in_one_undo_step() {
     assert_eq!(cables_of(&d, &fx), 4);
     // Directly under the master (the starter holds only the master).
     assert_eq!(keys(&d), vec!["master".to_string(), fx]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), start, "undo of the one step restores the starter");
     assert!(!d.can_undo());
 }
@@ -452,11 +452,11 @@ fn several_creates_undo_back_to_the_starting_document() {
         states.push(text(&d));
     }
     for want in states.iter().rev().skip(1) {
-        d.undo(&r).unwrap();
+        d.undo().unwrap();
         assert_eq!(&text(&d), want);
     }
     for want in states.iter().skip(1) {
-        d.redo(&r).unwrap();
+        d.redo().unwrap();
         assert_eq!(&text(&d), want, "redo is byte-identical");
     }
 }
@@ -665,17 +665,17 @@ proptest! {
         })]);
         for o in &ops {
             match o {
-                Op::Undo => { d.undo(&r); }
-                Op::Redo => { d.redo(&r); }
+                Op::Undo => { d.undo(); }
+                Op::Redo => { d.redo(); }
                 _ => {
                     let Some(cmd) = resolve(o, &d) else { continue };
                     let before = text(&d);
                     match d.apply(cmd, &r) {
                         Ok(_) => {
                             let after = text(&d);
-                            d.undo(&r).expect("one step to undo");
+                            d.undo().expect("one step to undo");
                             prop_assert_eq!(text(&d), before);
-                            d.redo(&r).expect("one step to redo");
+                            d.redo().expect("one step to redo");
                             prop_assert_eq!(text(&d), after);
                         }
                         Err(_) => prop_assert_eq!(text(&d), before, "a rejection changes nothing"),
@@ -685,7 +685,7 @@ proptest! {
             consistent(&d);
             prop_assert_eq!(d.doc().devices[0].key.clone(), key("master"));
         }
-        while d.undo(&r).is_some() {}
+        while d.undo().is_some() {}
         prop_assert_eq!(text(&d), start);
     }
 }

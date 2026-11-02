@@ -4,7 +4,7 @@ use crate::WriteMode;
 use crate::audio_edit::{slice_envelope, split_envelope};
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::controller::{canonical, check_lanes};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR,
@@ -310,6 +310,56 @@ pub(crate) fn check_audio(doc: &RackDoc, a: &AudioClipContent) -> Result<(), Mod
         return Err(range("a reversed clip cannot be warped or transposed"));
     }
     check_envelope(&a.envelope)
+}
+
+/// The frames a fade or an envelope point of an audio clip may span: the clip's length (the
+/// first repetition's, for a looped clip) at the song's tempo. The stored fade lengths and
+/// envelope frames are a request: flattening clamps them to the span of each played piece.
+pub(crate) fn audio_span_frames(
+    doc: &RackDoc,
+    start: i64,
+    length: i64,
+    loop_length: Option<i64>,
+) -> u64 {
+    let span = loop_length.map_or(length, |l| l.min(length));
+    let clock = doc.song.frame_clock(doc.sample_rate);
+    clock.at(start.saturating_add(span)) - clock.at(start)
+}
+
+/// Checks the fades and envelope points of audio content against the `span` of its clip in
+/// frames (see [`audio_span_frames`]).
+pub(crate) fn check_audio_span(a: &AudioClipContent, span: u64) -> Result<(), ModelError> {
+    for (name, frames) in [("fade in", a.fade_in), ("fade out", a.fade_out)] {
+        if frames > span {
+            return Err(range(format!(
+                "{name} of {frames} frames is longer than the clip's {span} frames"
+            )));
+        }
+    }
+    if let Some((i, p)) = a.envelope.iter().enumerate().find(|(_, p)| p.frame > span) {
+        return Err(range(format!(
+            "envelope point {i} at frame {} is past the clip's {span} frames",
+            p.frame
+        )));
+    }
+    Ok(())
+}
+
+/// Clamps the fades and envelope of audio content to the `span` of its clip in frames; returns
+/// whether anything changed. The envelope keeps its shape inside the span.
+pub(crate) fn clamp_audio_span(a: &mut AudioClipContent, span: u64) -> bool {
+    let mut changed = false;
+    for f in [&mut a.fade_in, &mut a.fade_out] {
+        if *f > span {
+            *f = span;
+            changed = true;
+        }
+    }
+    if a.envelope.iter().any(|p| p.frame > span) {
+        a.envelope = slice_envelope(&a.envelope, 0, span);
+        changed = true;
+    }
+    changed
 }
 
 /// Checks a gain envelope: at most [`MAX_GAIN_POINTS`] points, strictly increasing frames
@@ -795,9 +845,9 @@ fn strip_silence_edit(
         }
         prev_end = e;
     }
-    if fade > MAX_AUDIO_FRAMES {
+    if fade > clip_frames {
         return Err(range(format!(
-            "fade of {fade} frames is above {MAX_AUDIO_FRAMES}"
+            "fade of {fade} frames is longer than the clip's {clip_frames} frames"
         )));
     }
     let table = song.tempo_table();
@@ -944,22 +994,22 @@ pub(crate) fn plan(
         }
         SongCommand::SetTrackChase { device, chase } => {
             let t = &song.tracks[track_index(doc, &device)?];
-            Edit::TrackChase {
+            Edit::Swap(Swap::TrackChase {
                 device,
                 old: t.chase,
                 new: chase,
-            }
+            })
         }
         SongCommand::SetDirectRecord { device, on } => {
             let t = &song.tracks[track_index(doc, &device)?];
             if t.is_audio() || t.is_automation_only() {
                 return Err(bad(format!("{device} has no note lane to record into")));
             }
-            Edit::TrackDirectRecord {
+            Edit::Swap(Swap::TrackDirectRecord {
                 device,
                 old: t.direct_record,
                 new: on,
-            }
+            })
         }
         SongCommand::AddNoteLane { device, name } => {
             let t = &song.tracks[track_index(doc, &device)?];
@@ -1430,6 +1480,7 @@ pub(crate) fn plan(
                 warp: crate::warp::WarpSettings::default(),
             };
             check_audio(doc, &content)?;
+            check_audio_span(&content, audio_span_frames(doc, start, length, None))?;
             let clip = Clip {
                 id: ClipId(0),
                 start,
@@ -1503,6 +1554,10 @@ pub(crate) fn plan(
             check_geometry(start, length, 0, c.loop_length).map_err(range)?;
             check_audio_shape(0, c.loop_length, content.reverse)?;
             check_audio(doc, &content)?;
+            check_audio_span(
+                &content,
+                audio_span_frames(doc, start, length, c.loop_length),
+            )?;
             Edit::Clip {
                 device,
                 lane,

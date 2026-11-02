@@ -37,7 +37,7 @@ pub fn registry() -> Registry {
         .type_ids()
         .filter(|t| ![CHANNEL, BUS, MASTER, audio::AUDIO_TRACK].contains(t))
     {
-        let factory = *all.get(t).unwrap();
+        let factory = all.factory(t).unwrap();
         if all.takes_samples(t) {
             r.register_with_samples(factory).unwrap();
         } else if all.takes_curves(t) {

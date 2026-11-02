@@ -463,9 +463,9 @@ fn path_commands_edit_inner_devices() {
     assert_eq!(inner.devices[0].key, key("delay"));
     // Undo each of them, one step each.
     for _ in 0..5 {
-        assert!(d.undo(&r).is_some());
+        assert!(d.undo().is_some());
     }
-    assert!(d.undo(&r).is_some(), "the earlier cable steps are separate");
+    assert!(d.undo().is_some(), "the earlier cable steps are separate");
 }
 
 #[test]
@@ -491,9 +491,9 @@ fn removing_an_inner_device_takes_its_cables() {
     let inner = d.doc().device(&key("c")).unwrap().inner.as_ref().unwrap();
     assert_eq!(inner.devices.len(), 1);
     assert!(inner.cables.is_empty());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(
         d.doc()
             .device(&key("c"))
@@ -540,10 +540,10 @@ fn removing_and_restoring_a_container_brings_back_everything() {
     assert!(after.song.track(&key("c")).is_none());
     assert!(after.console.channels.is_empty());
     assert!(after.cables.iter().all(|c| c.to.device.0 != "c"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.redo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -677,16 +677,16 @@ fn undo_and_redo_of_inner_structure_are_single_steps() {
             .len(),
         0
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &s3);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &s2);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &s1);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &s0);
     for s in [&s1, &s2, &s3] {
-        d.redo(&r).unwrap();
+        d.redo().unwrap();
         assert_eq!(d.doc(), s);
     }
 }
@@ -707,7 +707,7 @@ fn batch_accepts_path_set_param_and_connect() {
         &r,
     )
     .unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step");
     // A bad member rejects the whole batch.
     let e = d

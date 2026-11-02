@@ -129,11 +129,11 @@ fn new_effect_is_created_after_the_previous_stage_and_is_one_undo_step() {
     let order = keys(&d);
     let c0 = order.iter().position(|k| *k == chain[0]).unwrap();
     assert_eq!(order[c0 + 1], chain[1]);
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(d.doc(), &after_one);
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(d.doc(), &before);
-    assert!(d.redo(&reg).is_some());
+    assert!(d.redo().is_some());
     assert_eq!(d.doc(), &after_one);
 }
 
@@ -167,7 +167,7 @@ fn removing_a_slot_closes_the_chain_and_keeps_the_device() {
     let e = rejects(&mut d, set("channel", 0, None), &reg);
     assert!(matches!(e, ModelError::BadConsole(_)));
     for _ in 0..3 {
-        assert!(d.undo(&reg).is_some());
+        assert!(d.undo().is_some());
     }
     assert_eq!(d.doc(), &full);
 }
@@ -201,7 +201,7 @@ fn move_insert_reorders_and_rewires() {
             .cables
             .contains(&cable("eq:out_r", "channel:insert_return_r"))
     );
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(d.doc(), &before);
     let e = rejects(&mut d, mv("channel", 0, 3), &reg);
     assert!(matches!(e, ModelError::BadConsole(_)));
@@ -384,11 +384,11 @@ fn bypass_all_is_one_undo_step_that_sets_every_effect_and_restores_them() {
         Some(false)
     );
     // Each batch is one undo step, and redo walks forward again.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (1.0, 1.0));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (0.0, 1.0));
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (1.0, 1.0));
 }
 

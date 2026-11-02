@@ -13,11 +13,13 @@ use crate::midi_map::MidiMapping;
 use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
-use crate::song_info::SongInfo;
 use crate::steps::StepSeqDoc;
 use crate::takes::TakeGroup;
 use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod swap;
+pub(crate) use swap::Swap;
 
 /// One reversible, already-validated change to a [`RackDoc`].
 // An edit lives in the undo history, never on a hot path: a clip edit holds two whole clips,
@@ -42,45 +44,6 @@ pub(crate) enum Edit {
     Layout {
         old: Vec<(DeviceKey, u16)>,
         new: Vec<(DeviceKey, u16)>,
-    },
-    /// The number of rack columns.
-    Columns {
-        old: u16,
-        new: u16,
-    },
-    /// Change presentation fields of a device.
-    Folded {
-        key: DeviceKey,
-        old: bool,
-        new: bool,
-    },
-    Name {
-        key: DeviceKey,
-        old: String,
-        new: String,
-    },
-    /// The display name of a pool asset.
-    AssetName {
-        asset: String,
-        old: String,
-        new: String,
-    },
-    Color {
-        key: DeviceKey,
-        old: Option<[u8; 3]>,
-        new: Option<[u8; 3]>,
-    },
-    /// The patch name a device shows (empty is none).
-    PatchName {
-        key: DeviceKey,
-        old: String,
-        new: String,
-    },
-    /// The MIDI port a MIDI Out device sends to (`None` is the settings' fallback port).
-    MidiOutPort {
-        key: DeviceKey,
-        old: Option<String>,
-        new: Option<String>,
     },
     Connect(Cable),
     Disconnect(Cable),
@@ -109,24 +72,6 @@ pub(crate) enum Edit {
         device: DeviceKey,
         old: [bool; 3],
         new: [bool; 3],
-    },
-    /// Track chase flag.
-    TrackChase {
-        device: DeviceKey,
-        old: bool,
-        new: bool,
-    },
-    /// Track Direct Record flag.
-    TrackDirectRecord {
-        device: DeviceKey,
-        old: bool,
-        new: bool,
-    },
-    /// Where a track's notes enter (`None`: its own device).
-    TrackEntry {
-        device: DeviceKey,
-        old: Option<DeviceKey>,
-        new: Option<DeviceKey>,
     },
     /// Write mode of an automation lane (`None` is the default).
     LaneWrite {
@@ -421,16 +366,8 @@ pub(crate) enum Edit {
         old: Box<RelinkData>,
         new: Box<RelinkData>,
     },
-    /// The song information (title, author, notes, address, e-mail).
-    Info {
-        old: SongInfo,
-        new: SongInfo,
-    },
-    /// The master tune in cents.
-    Tune {
-        old: f32,
-        new: f32,
-    },
+    /// A value swapped for another (a name, a flag, a colour...): see [`Swap`].
+    Swap(Swap),
     /// Several edits performed in order as one undo step; the inverse undoes them in reverse.
     Compound(Vec<Edit>),
 }
@@ -537,15 +474,15 @@ impl Edit {
                 .flat_map(|g| &g.takes)
                 .for_each(|c| clip(c, out)),
             Edit::Compound(edits) => edits.iter().for_each(|e| e.collect_assets(out)),
+            Edit::Swap(Swap::AssetName { asset, .. }) => {
+                out.insert(asset.clone());
+            }
             Edit::Insert { device, .. }
             | Edit::Remove { device, .. }
             | Edit::InnerInsert { device, .. }
             | Edit::InnerRemove { device, .. } => collect_device_assets(device, out),
             Edit::Zones { old, new, .. } => {
                 out.extend(old.iter().chain(new).map(|z| z.asset.clone()));
-            }
-            Edit::AssetName { asset, .. } => {
-                out.insert(asset.clone());
             }
             _ => {}
         }
@@ -587,39 +524,10 @@ impl Edit {
                 cables,
             },
             Edit::Layout { old, new } => Edit::Layout { old: new, new: old },
-            Edit::Columns { old, new } => Edit::Columns { old: new, new: old },
-            Edit::Folded { key, old, new } => Edit::Folded {
-                key,
-                old: new,
-                new: old,
-            },
-            Edit::Name { key, old, new } => Edit::Name {
-                key,
-                old: new,
-                new: old,
-            },
-            Edit::AssetName { asset, old, new } => Edit::AssetName {
-                asset,
-                old: new,
-                new: old,
-            },
-            Edit::Color { key, old, new } => Edit::Color {
-                key,
-                old: new,
-                new: old,
-            },
-            Edit::PatchName { key, old, new } => Edit::PatchName {
-                key,
-                old: new,
-                new: old,
-            },
-            Edit::MidiOutPort { key, old, new } => Edit::MidiOutPort {
-                key,
-                old: new,
-                new: old,
-            },
-            Edit::Info { old, new } => Edit::Info { old: new, new: old },
-            Edit::Tune { old, new } => Edit::Tune { old: new, new: old },
+            Edit::Swap(mut swap) => {
+                swap.invert();
+                Edit::Swap(swap)
+            }
             Edit::Connect(c) => Edit::Disconnect(c),
             Edit::Disconnect(c) => Edit::Connect(c),
             Edit::Param {
@@ -642,21 +550,6 @@ impl Edit {
                 new: old,
             },
             Edit::TrackFlags { device, old, new } => Edit::TrackFlags {
-                device,
-                old: new,
-                new: old,
-            },
-            Edit::TrackChase { device, old, new } => Edit::TrackChase {
-                device,
-                old: new,
-                new: old,
-            },
-            Edit::TrackDirectRecord { device, old, new } => Edit::TrackDirectRecord {
-                device,
-                old: new,
-                new: old,
-            },
-            Edit::TrackEntry { device, old, new } => Edit::TrackEntry {
                 device,
                 old: new,
                 new: old,
@@ -958,45 +851,7 @@ impl Edit {
                 }
                 vec![SyncOp::ViewChanged]
             }
-            Edit::Columns { new, .. } => {
-                doc.columns = *new;
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::Folded { key, new, .. } => {
-                device_mut(doc, key)?.folded = *new;
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::Name { key, new, .. } => {
-                device_mut(doc, key)?.name.clone_from(new);
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::AssetName { asset, new, .. } => {
-                match doc.assets.get_mut(asset) {
-                    Some(meta) => meta.original_name.clone_from(new),
-                    None => return fail(format!("there is no asset {asset}")),
-                }
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::Color { key, new, .. } => {
-                device_mut(doc, key)?.color = *new;
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::PatchName { key, new, .. } => {
-                device_mut(doc, key)?.patch_name.clone_from(new);
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::MidiOutPort { key, new, .. } => {
-                device_mut(doc, key)?.midi_out = new.as_deref().map(crate::MidiOutDoc::new);
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::Info { new, .. } => {
-                doc.info.clone_from(new);
-                vec![SyncOp::ViewChanged]
-            }
-            Edit::Tune { new, .. } => {
-                doc.tune_cents = *new;
-                vec![SyncOp::TuneChanged(*new)]
-            }
+            Edit::Swap(swap) => swap.perform(doc)?,
             Edit::Connect(c) => {
                 let Err(at) = doc.cables.binary_search(c) else {
                     return fail("the cable is already there");
@@ -1070,18 +925,6 @@ impl Edit {
             Edit::TrackFlags { device, new, .. } => {
                 let t = track_mut(doc, device)?;
                 [t.muted, t.solo, t.armed] = *new;
-                vec![SyncOp::SongChanged]
-            }
-            Edit::TrackChase { device, new, .. } => {
-                track_mut(doc, device)?.chase = *new;
-                vec![SyncOp::SongChanged]
-            }
-            Edit::TrackDirectRecord { device, new, .. } => {
-                track_mut(doc, device)?.direct_record = *new;
-                vec![SyncOp::SongChanged]
-            }
-            Edit::TrackEntry { device, new, .. } => {
-                track_mut(doc, device)?.notes_to.clone_from(new);
                 vec![SyncOp::SongChanged]
             }
             Edit::LaneMeta {
@@ -1796,7 +1639,6 @@ pub(crate) fn song_end_growth(doc: &RackDoc, edit: &Edit) -> Option<Edit> {
 mod tests {
     use super::*;
     use crate::{Document, empty_doc};
-    use atomik_device_sdk::Registry;
 
     fn ghost() -> DeviceKey {
         DeviceKey("ghost".into())
@@ -1823,11 +1665,11 @@ mod tests {
     }
 
     fn folded() -> Edit {
-        Edit::Folded {
+        Edit::Swap(Swap::Folded {
             key: ghost(),
             old: false,
             new: true,
-        }
+        })
     }
 
     #[test]
@@ -1883,7 +1725,7 @@ mod tests {
                 old: before.tempo_bpm,
                 new: before.tempo_bpm + 10.0,
             },
-            Edit::Columns { old: 1, new: 2 },
+            Edit::Swap(Swap::Columns { old: 1, new: 2 }),
             folded(),
         ]);
         assert!(compound.perform(&mut doc).is_err());
@@ -1892,23 +1734,19 @@ mod tests {
 
     #[test]
     fn an_undo_step_that_does_not_fit_is_an_error_and_stays_on_the_stack() {
-        let reg = Registry::new();
         let mut d = Document::new(empty_doc());
         d.undo.push_back(folded());
         let before = d.doc().clone();
         let revision = d.revision();
-        let err = d.try_undo(&reg).unwrap_err();
+        let err = d.try_undo().unwrap_err();
         assert!(matches!(err, crate::ModelError::Invariant(_)), "{err:?}");
         assert_eq!(d.doc(), &before);
         assert_eq!(d.revision(), revision);
         assert!(d.can_undo() && !d.can_redo(), "the history is untouched");
-        assert!(
-            d.undo(&reg).is_none(),
-            "the plain undo reports nothing done"
-        );
+        assert!(d.undo().is_none(), "the plain undo reports nothing done");
         d.undo.clear();
         d.redo.push(folded());
-        assert!(d.try_redo(&reg).is_err());
+        assert!(d.try_redo().is_err());
         assert!(d.can_redo() && !d.can_undo());
     }
 }

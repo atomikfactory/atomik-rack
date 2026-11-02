@@ -129,9 +129,9 @@ fn set_stores_sorts_reports_the_song_and_undoes_as_one_step() {
         clip(&d, 1).content,
         before.song.clip(ClipId(1)).unwrap().2.content
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(clip(&d, 1).controllers.len(), 2);
 }
 
@@ -146,7 +146,7 @@ fn drag_edits_with_one_merge_id_are_one_undo_step() {
         set(&mut d, 1, vec![l], Some(7), &reg).unwrap();
     }
     assert_eq!(clip(&d, 1).controllers[0].points[0].value, 0.9);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "the whole drag undoes at once");
 }
 

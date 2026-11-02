@@ -313,12 +313,12 @@ fn a_lane_defaults_to_touch_and_the_command_changes_it_undoably() {
     assert_eq!(mode_of(&d), WriteMode::Latch);
     d.apply(set_mode(WriteMode::Overwrite), &reg).unwrap();
     assert_eq!(mode_of(&d), WriteMode::Overwrite);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(mode_of(&d), WriteMode::Latch);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(mode_of(&d), WriteMode::Touch);
     assert!(d.doc().song.lane_write.is_empty());
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(mode_of(&d), WriteMode::Latch);
 }
 
@@ -390,7 +390,7 @@ fn a_take_of_several_clips_in_a_batch_is_one_undo_step_and_hides_the_old_points(
         Some(200.0),
         "the old clip still plays outside the take"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     let lane = &d.doc().song.track(&key("lead")).unwrap().lanes[1];
     assert_eq!(lane.clips.len(), 1, "one undo removes the whole take");
     let ClipContent::Automation(pts) = &lane.clips[0].content else {
@@ -496,7 +496,7 @@ fn entries_of_removed_lanes_are_not_saved() {
     )
     .unwrap();
     assert!(!save_project(d.doc()).contains("latch"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(save_project(d.doc()).contains("latch"));
 }
 
@@ -558,7 +558,7 @@ fn a_pass_from_the_start_that_ends_the_song_leaves_its_last_tempo_standing() {
     d.apply(sc(SongCommand::SetTempoMap(thinned.clone())), &reg)
         .unwrap();
     assert_eq!(d.doc().song.tempo, thinned);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.tempo.len(), 1);
     assert_eq!(d.doc().song.tempo[0].bpm, 120.0);
 }

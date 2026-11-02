@@ -876,11 +876,11 @@ fn run_sequence(steps: &[Step]) -> Result<(), TestCaseError> {
                     }
                 }
                 if d.undo_depth() == depth + 1 {
-                    let undone = d.undo(&reg);
+                    let undone = d.undo();
                     prop_assert!(undone.is_some(), "{:?}", cmd);
                     prop_assert!(norm(d.doc()) == before, "undo of {:?}", cmd);
                     prop_assert!(d.doc().validate().is_ok(), "undo of {:?}", cmd);
-                    let redone = d.redo(&reg);
+                    let redone = d.redo();
                     prop_assert!(redone.is_some(), "{:?}", cmd);
                     prop_assert!(norm(d.doc()) == after, "redo of {:?}", cmd);
                 } else {
@@ -904,11 +904,11 @@ fn run_sequence(steps: &[Step]) -> Result<(), TestCaseError> {
         }
     }
     let last = norm(d.doc());
-    while d.undo(&reg).is_some() {
+    while d.undo().is_some() {
         prop_assert!(d.doc().validate().is_ok());
     }
     prop_assert!(norm(d.doc()) == original, "undo of everything");
-    while d.redo(&reg).is_some() {
+    while d.redo().is_some() {
         prop_assert!(d.doc().validate().is_ok());
     }
     prop_assert!(norm(d.doc()) == last, "redo of everything");

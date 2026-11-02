@@ -22,7 +22,7 @@ use crate::console::{
 use crate::console_cmd::{
     Planner, at, bad, ensure_master, wire, wire_channel_to_master, wire_master_to_interface,
 };
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::{DeviceKey, ModelError, rules};
 
 /// The name the parent's parallel channel gets: `P<n>: <parent name>`.
@@ -69,19 +69,19 @@ fn new_sourceless_channel(
     if let Some(new) = name {
         let old = rules::device(p.doc(), &channel)?.name.clone();
         if old != new {
-            p.push(Edit::Name {
+            p.push(Edit::Swap(Swap::Name {
                 key: channel.clone(),
                 old,
                 new,
-            });
+            }));
         }
     }
     // Like a bus, the strip starts folded in the rack.
-    p.push(Edit::Folded {
+    p.push(Edit::Swap(Swap::Folded {
         key: channel.clone(),
         old: false,
         new: true,
-    });
+    }));
     wire_channel_to_master(p, &channel, &master)?;
     let at_index = p.doc().console.channels.len();
     p.push(Edit::ConsoleChannel {
@@ -153,11 +153,11 @@ pub(crate) fn follow_names(
             continue;
         };
         let kid_new = format!("{prefix}{new_name}");
-        p.push(Edit::Name {
+        p.push(Edit::Swap(Swap::Name {
             key: kid.clone(),
             old: kid_old.clone(),
             new: kid_new.clone(),
-        });
+        }));
         follow_names(p, &kid, &kid_old, &kid_new)?;
     }
     Ok(())

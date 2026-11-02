@@ -144,9 +144,9 @@ fn one_step(d: &mut Document, r: &Registry, c: Command) {
     let after = d.doc().clone();
     assert_ne!(after, before, "{c:?} changed nothing");
     assert_console_invariants(&after);
-    d.undo(r).expect("undo");
+    d.undo().expect("undo");
     assert_eq!(d.doc(), &before, "{c:?} undone in one step");
-    d.redo(r).expect("redo");
+    d.redo().expect("redo");
     assert_eq!(d.doc(), &after, "{c:?} redone");
 }
 
@@ -289,7 +289,7 @@ fn undoing_a_recall_puts_the_whole_mix_back() {
     mix_two(&mut d, &r);
     let before = d.doc().capture_mixer(&r);
     d.apply(recall(1), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().capture_mixer(&r), before);
     assert_eq!(d.doc().console.snapshots.len(), 1);
 }
@@ -598,8 +598,8 @@ fn ending_the_compare_keeps_the_live_side_and_recall_ends_it() {
     assert_eq!(d.doc().capture_mixer(&r), snapshot);
 
     // Ending on the working side keeps the working mix.
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().capture_mixer(&r), working);
     d.apply(compare(1), &r).unwrap();
     d.apply(compare(1), &r).unwrap();
@@ -656,9 +656,9 @@ fn undoing_a_compare_restores_the_mix_and_the_slot() {
     d.apply(compare(1), &r).unwrap();
     let on_b = d.doc().clone();
     d.apply(compare(1), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &on_b);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &start);
     assert!(d.doc().console.compare.is_none());
 }

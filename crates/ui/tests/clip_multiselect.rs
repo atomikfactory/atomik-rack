@@ -423,7 +423,7 @@ fn dragging_a_clip_onto_another_track_moves_it_there_as_one_undo_step() {
             .clips
             .is_empty()
     );
-    d.undo(&reg).expect("a step");
+    d.undo().expect("a step");
     assert_eq!(d.doc(), &before, "the gesture is one undo step");
     acts.clear();
 }
@@ -470,7 +470,7 @@ fn ctrl_dragging_drops_a_copy_and_leaves_the_clip_alone_meanwhile() {
             .len(),
         2
     );
-    d.undo(&reg).expect("a step");
+    d.undo().expect("a step");
     assert_eq!(d.doc(), &before);
 }
 
@@ -544,7 +544,7 @@ fn a_group_keeps_its_relative_tracks_and_offsets_across_lanes() {
     assert_eq!(list[0], (2, "bass".to_owned(), 2 * BAR));
     assert_eq!(list[1], (3, "lead".to_owned(), BAR));
     apply(&mut d, &reg, &acts);
-    d.undo(&reg).expect("a step");
+    d.undo().expect("a step");
     assert_eq!(d.doc(), &before, "the whole group is one undo step");
 }
 

@@ -151,10 +151,10 @@ fn a_mapping_is_added_with_the_next_id_in_one_undo_step() {
     add_map(&mut d, &r, mapping(cc(0, 9), param("channel", "width")));
     assert_eq!(ids(&d), [2, 3]);
     for _ in 0..4 {
-        assert!(d.undo(&r).is_some());
+        assert!(d.undo().is_some());
     }
     assert_eq!(d.doc(), &before, "four commands, four steps");
-    assert!(d.redo(&r).is_some());
+    assert!(d.redo().is_some());
     assert_eq!(ids(&d), [1]);
 }
 
@@ -263,7 +263,7 @@ fn set_edits_one_mapping_and_forget_removes_every_mapping_of_a_target() {
     )
     .unwrap();
     assert_eq!(d.doc().midi_maps.len(), before - 2);
-    assert!(d.undo(&r).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(d.doc().midi_maps.len(), before);
     // A mapping that does not exist cannot be edited or removed.
     assert!(run_map(&mut d, &r, MidiMapCommand::Remove { id: 99 }).is_err());
@@ -299,9 +299,9 @@ fn add_many_and_clear_are_one_step_each() {
     assert_eq!(ids(&d), [1, 2, 3]);
     run_map(&mut d, &r, MidiMapCommand::Clear).unwrap();
     assert!(d.doc().midi_maps.is_empty());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(ids(&d), [1, 2, 3]);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     assert!(run_map(&mut d, &r, MidiMapCommand::AddMany(vec![])).is_err());
     assert!(run_map(&mut d, &r, MidiMapCommand::Clear).is_err());
@@ -425,8 +425,8 @@ fn a_mapping_outlives_its_target_and_can_still_be_edited() {
     moved.target = param("a", "filter.resonance");
     assert!(run_map(&mut d, &r, MidiMapCommand::Set(moved)).is_err());
     // And the removal is one step that undo brings back with the device.
-    assert!(d.undo(&r).is_some());
-    assert!(d.undo(&r).is_some());
+    assert!(d.undo().is_some());
+    assert!(d.undo().is_some());
     assert!(d.doc().device(&key("a")).is_some());
 }
 
@@ -511,7 +511,7 @@ fn a_preset_applies_to_a_second_project_through_its_own_devices() {
     run_map(&mut o, &r, MidiMapCommand::AddMany(maps)).unwrap();
     assert_eq!(o.doc().midi_maps.len(), 6);
     assert_eq!(ids(&o), [1, 2, 3, 4, 5, 6]);
-    o.undo(&r).unwrap();
+    o.undo().unwrap();
     assert!(o.doc().midi_maps.is_empty());
 }
 
@@ -696,7 +696,7 @@ fn mapping_ids_are_not_the_device_keys_a_project_keeps_after_undo() {
     let text = save_project(d.doc());
     let mut loaded = Document::new(load_project(&text, &r).unwrap());
     run_map(&mut loaded, &r, MidiMapCommand::Remove { id: 4 }).unwrap();
-    loaded.undo(&r).unwrap();
+    loaded.undo().unwrap();
     assert_eq!(loaded.doc().midi_maps, d.doc().midi_maps);
 }
 

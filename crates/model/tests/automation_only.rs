@@ -76,10 +76,10 @@ fn a_lane_on_a_channel_or_an_effect_makes_a_track_with_automation_lanes_only() {
     assert!(d.apply(lane("channel", "pan"), &reg).is_err());
     // One undo per lane; everything undone is the document from before.
     for _ in 0..3 {
-        assert!(d.undo(&reg).is_some());
+        assert!(d.undo().is_some());
     }
     assert_eq!(d.doc(), &before);
-    assert!(d.redo(&reg).is_some());
+    assert!(d.redo().is_some());
     assert!(d.doc().song.track(&key("channel")).is_some());
 }
 
@@ -178,7 +178,7 @@ fn removing_the_track_or_the_device_takes_the_lanes_with_it_and_undoes() {
     )
     .unwrap();
     assert!(d.doc().song.tracks.is_empty());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &with);
     d.apply(
         Command::Console(ConsoleCommand::RemoveChannel {
@@ -188,7 +188,7 @@ fn removing_the_track_or_the_device_takes_the_lanes_with_it_and_undoes() {
     )
     .unwrap();
     assert!(d.doc().song.track(&key("channel")).is_none());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &with);
 }
 
@@ -354,7 +354,7 @@ fn duplicating_an_effect_track_copies_its_automation_track() {
         tracks[0].lanes[0].clips[0].id,
         tracks[1].lanes[0].clips[0].id
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.tracks.len(), 1);
 }
 
@@ -373,7 +373,7 @@ fn duplicating_a_channel_track_is_one_undo_step_or_a_clean_refusal() {
     match r {
         Ok(_) => {
             assert!(d.doc().song.tracks.iter().all(|t| t.is_automation_only()));
-            d.undo(&reg).unwrap();
+            d.undo().unwrap();
             assert_eq!(d.doc(), &before);
         }
         Err(_) => assert_eq!(d.doc(), &before, "a refusal changes nothing"),

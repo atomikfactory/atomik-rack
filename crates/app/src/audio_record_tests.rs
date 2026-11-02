@@ -437,12 +437,12 @@ fn a_gain_drag_is_one_undo_step_and_the_settings_save_and_load() {
     assert_eq!((s.gain_db, s.clip_safe), (7.5, true));
     assert_eq!(save_project(&loaded), text, "canonical round trip");
     // The clip-safe switch is its own step; the four drag moves are one.
-    assert!(doc.undo(&reg).is_some());
+    assert!(doc.undo().is_some());
     assert!(!input_settings(doc.doc(), &track, &reg).clip_safe);
     assert_eq!(input_settings(doc.doc(), &track, &reg).gain_db, 7.5);
-    assert!(doc.undo(&reg).is_some());
+    assert!(doc.undo().is_some());
     assert_eq!(input_settings(doc.doc(), &track, &reg).gain_db, 0.0);
-    assert!(doc.redo(&reg).is_some());
+    assert!(doc.redo().is_some());
     assert_eq!(input_settings(doc.doc(), &track, &reg).gain_db, 7.5);
 }
 

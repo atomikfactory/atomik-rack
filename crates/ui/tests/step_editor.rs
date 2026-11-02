@@ -284,7 +284,7 @@ fn dragging_across_empty_cells_paints_them_in_one_merge_group() {
         .collect();
     assert_eq!(row, vec![0, 1, 2, 3, 4, 5]);
     // One undo removes the whole stroke.
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     assert!(!notes_of(&d).iter().any(|n| n.key == pad_key(3)));
 }
 
@@ -462,7 +462,7 @@ fn a_resolution_change_is_one_batch_of_grid_and_length_and_moves_no_note() {
     assert_eq!(clip.grid, Some(grid(StepResolution::ThirtySecond, 16, 0)));
     assert_eq!(clip.length, 16 * S32, "the length follows the grid");
     assert_eq!(notes_of(&d), notes, "no note moved");
-    assert!(d.undo(&reg).is_some());
+    assert!(d.undo().is_some());
     let clip = clip_of(d.doc());
     assert_eq!(
         (clip.grid, clip.length),
@@ -596,7 +596,7 @@ fn a_swing_drag_emits_grid_commands_under_one_merge_id() {
     assert_eq!(ends(&a), 1);
     apply_all(&mut d, &reg, &a);
     assert_eq!(clip_of(d.doc()).grid.unwrap().swing, 25);
-    assert!(d.undo(&reg).is_some(), "one undo step");
+    assert!(d.undo().is_some(), "one undo step");
     assert_eq!(clip_of(d.doc()).grid.unwrap().swing, 0);
     resync(&mut v, &d, &reg);
     // Clamped to 0..=75; a second drag has a fresh id.
@@ -1032,7 +1032,7 @@ fn the_shift_buttons_move_every_hit_one_step_and_wrap() {
     apply_all(&mut d, &reg, &out);
     assert_eq!(cells_of(&d), before);
     // One undo step each.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(cells_of(&d), want);
 }
 

@@ -202,13 +202,13 @@ proptest! {
         }
         let last = d.doc().clone();
         for want in states.iter().rev().skip(1) {
-            d.undo(&r).unwrap();
+            d.undo().unwrap();
             d.doc().check_columns().unwrap();
             prop_assert_eq!(&save_project(d.doc()), want);
         }
         prop_assert!(!d.can_undo());
         for want in states.iter().skip(1) {
-            d.redo(&r).unwrap();
+            d.redo().unwrap();
             d.doc().check_columns().unwrap();
             prop_assert_eq!(&save_project(d.doc()), want);
         }

@@ -30,10 +30,10 @@ fn setting_the_tune_is_one_undo_step_that_reports_a_tune_change() {
     assert_eq!(ops, vec![SyncOp::TuneChanged(-12.5)]);
     assert_eq!(d.doc().tune_cents, -12.5);
     assert_eq!(d.undo_label(), Some("Change Master Tune"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(text(&d), none);
     assert_eq!(d.doc().tune_cents, 0.0);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().tune_cents, -12.5);
 }
 

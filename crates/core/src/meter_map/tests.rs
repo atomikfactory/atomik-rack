@@ -125,3 +125,11 @@ fn beats_walk_across_a_meter_change() {
     assert_eq!(four.map().beat_at_or_before(4 * PPQ + 1), (4 * PPQ, true));
     assert_eq!(four.map().beat_after(4 * PPQ), (5 * PPQ, false));
 }
+
+#[test]
+fn a_map_over_no_segments_reads_four_four() {
+    let map = MeterMap::new(&[]);
+    assert_eq!(map.meter_at(0), (4, 4));
+    assert_eq!(map.meter_at(1_000_000), (4, 4));
+    assert_eq!(map.bar_start(3), 2 * map.bar_ticks_at(0));
+}

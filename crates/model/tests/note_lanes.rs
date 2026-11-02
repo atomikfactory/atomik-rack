@@ -89,9 +89,9 @@ fn step(d: &mut Document, r: &atomik_device_sdk::Registry, c: Command) -> Vec<Sy
     let ops = d.apply(c, r).unwrap();
     let after = d.doc().clone();
     assert_ne!(before, after, "the command changed something");
-    d.undo(r).expect("one step to undo");
+    d.undo().expect("one step to undo");
     assert_eq!(d.doc(), &before);
-    d.redo(r).expect("one step to redo");
+    d.redo().expect("one step to redo");
     assert_eq!(d.doc(), &after);
     ops
 }
@@ -217,7 +217,7 @@ fn remove_note_lane_takes_its_clips_and_one_undo_step_brings_them_back() {
     assert_eq!(shape(&d, "a"), "na");
     assert!(d.doc().song.clip(on_two).is_none());
     assert_eq!(lane_of(&d, on_one), ("a".into(), 0));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(lane_of(&d, on_two), ("a".into(), 1));
     assert_eq!(track(&d, "a").lanes[1].name.as_deref(), Some("Two"));
 }
@@ -558,7 +558,7 @@ proptest! {
             }
         }
         for _ in 0..applied {
-            prop_assert!(d.undo(&r).is_some());
+            prop_assert!(d.undo().is_some());
         }
         prop_assert_eq!(text(&d), start);
     }

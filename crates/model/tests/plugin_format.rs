@@ -881,7 +881,7 @@ fn a_console_channel_and_a_song_track_survive_a_stand_in_load_and_save() {
         d.doc().console.channels.is_empty(),
         "the channel goes with its source"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().console.channels.len(), 1);
 }
 

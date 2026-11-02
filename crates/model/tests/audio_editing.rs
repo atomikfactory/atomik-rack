@@ -264,7 +264,7 @@ fn an_envelope_is_validated_by_the_commands() {
         a.envelope = vec![p(0, -3.0), p(10, 6.0)]
     })
     .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(audio_of(&d, id).envelope.is_empty());
 }
 
@@ -301,7 +301,7 @@ fn a_split_keeps_the_envelope_sounding_the_same_in_both_halves() {
             "right {n}"
         );
     }
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(audio_of(&d, id), a);
 }
 
@@ -398,9 +398,9 @@ fn strip_silence_replaces_a_clip_by_its_pieces_in_one_undo_step() {
     assert_eq!((a[1].fade_in, a[1].fade_out), (48, 48));
     assert_eq!((a[2].fade_in, a[2].fade_out), (48, 200));
     assert!(a.iter().all(|x| (x.gain_db + 3.0).abs() < 1e-6));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step");
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.tracks[0].lanes[0].clips.len(), 3);
 }
 
@@ -775,6 +775,6 @@ fn audio_edits_batch_into_one_undo_step_with_consecutive_clip_ids() {
     ids.sort();
     assert_eq!(ids, [a.0, b.0, next, next + 1], "ids follow one another");
     assert_eq!(d.doc().song.next_clip_id, next + 2);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "the whole batch is one undo step");
 }

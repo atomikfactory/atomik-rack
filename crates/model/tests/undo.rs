@@ -20,11 +20,10 @@ fn param(d: &Document, k: &str, p: &str) -> Option<f32> {
 
 #[test]
 fn empty_history_has_nothing_to_undo_or_redo() {
-    let reg = registry();
     let mut d = Document::new(empty_doc());
     assert!(!d.can_undo() && !d.can_redo());
-    assert_eq!(d.undo(&reg), None);
-    assert_eq!(d.redo(&reg), None);
+    assert_eq!(d.undo(), None);
+    assert_eq!(d.redo(), None);
 }
 
 #[test]
@@ -33,11 +32,11 @@ fn undo_add_device_removes_it_routing_first() {
     let mut d = Document::new(empty_doc());
     d.apply(add(0, SYNTH, Some("synth")), &reg).unwrap();
     assert!(d.can_undo());
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(ops, [routing(), SyncOp::DeviceRemoved(key("synth"))]);
     assert_eq!(d.doc(), &empty_doc());
     assert!(d.can_redo() && !d.can_undo());
-    let ops = d.redo(&reg).unwrap();
+    let ops = d.redo().unwrap();
     assert_eq!(ops, [SyncOp::DeviceAdded(key("synth")), routing()]);
     assert_eq!(keys(&d), ["synth"]);
 }
@@ -59,7 +58,7 @@ fn undo_remove_device_restores_index_params_view_and_cables() {
     let before = d.doc().clone();
     d.apply(Command::RemoveDevice { key: key("delay") }, &reg)
         .unwrap();
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // The engine re-creates the device, re-applies its stored params, then re-routes.
     assert_eq!(
@@ -79,7 +78,7 @@ fn undo_remove_device_restores_index_params_view_and_cables() {
             routing(),
         ]
     );
-    let ops = d.redo(&reg).unwrap();
+    let ops = d.redo().unwrap();
     assert_eq!(ops, [routing(), SyncOp::DeviceRemoved(key("delay"))]);
 }
 
@@ -126,12 +125,12 @@ fn undo_connect_disconnect_move_and_view() {
         vec![routing()],
     ];
     for (i, ops) in expected_undo_ops.iter().enumerate() {
-        assert_eq!(&d.undo(&reg).unwrap(), ops, "undo #{i}");
+        assert_eq!(&d.undo().unwrap(), ops, "undo #{i}");
         assert_eq!(d.doc(), &states[states.len() - 2 - i], "after undo #{i}");
     }
     assert_eq!(d.doc(), &original);
     for state in &states[1..] {
-        d.redo(&reg).unwrap();
+        d.redo().unwrap();
         assert_eq!(d.doc(), state);
     }
     assert!(!d.can_redo());
@@ -142,7 +141,7 @@ fn undo_set_param_restores_default_and_reports_it() {
     let reg = registry();
     let mut d = three_devices(&reg);
     d.apply(set("delay", "mix", 0.9, None), &reg).unwrap();
-    let ops = d.undo(&reg).unwrap();
+    let ops = d.undo().unwrap();
     let default = d.doc().param_value(&key("delay"), "mix", &reg).unwrap();
     assert_eq!(param(&d, "delay", "mix"), None, "back to 'not stored'");
     assert_eq!(
@@ -159,18 +158,18 @@ fn undo_set_param_restores_default_and_reports_it() {
 fn new_command_clears_redo() {
     let reg = registry();
     let mut d = three_devices(&reg);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.can_redo());
     d.apply(Command::SetTempo(90.0), &reg).unwrap();
     assert!(!d.can_redo());
-    assert_eq!(d.redo(&reg), None);
+    assert_eq!(d.redo(), None);
 }
 
 #[test]
 fn rejected_command_keeps_redo() {
     let reg = registry();
     let mut d = three_devices(&reg);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     d.apply(Command::SetTempo(5.0), &reg).unwrap_err();
     assert!(d.can_redo());
 }
@@ -184,22 +183,70 @@ fn drag_merge_collapses_into_one_step() {
         assert_eq!(ops.len(), 1, "every drag step still syncs the engine");
     }
     assert_eq!(param(&d, "delay", "mix"), Some(0.4));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         param(&d, "delay", "mix"),
         None,
         "one undo reverts the whole drag"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(
         param(&d, "delay", "mix"),
         Some(0.4),
         "redo restores the final value"
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     // The step before the drag (adding the mixer) is intact.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(keys(&d), ["synth", "delay"]);
+}
+
+#[test]
+fn a_gesture_merges_its_commands_and_ends_when_it_is_dropped() {
+    let reg = registry();
+    let mut d = three_devices(&reg);
+    {
+        let mut drag = d.begin_gesture();
+        drag.apply(set("delay", "mix", 0.1, Some(1)), &reg).unwrap();
+        drag.apply(set("delay", "mix", 0.2, Some(1)), &reg).unwrap();
+    }
+    // The next gesture carries the same id but is a step of its own: no end_merge call.
+    {
+        let mut drag = d.begin_gesture();
+        drag.apply(set("delay", "mix", 0.3, Some(1)), &reg).unwrap();
+    }
+    d.undo().unwrap();
+    assert_eq!(param(&d, "delay", "mix"), Some(0.2));
+    d.undo().unwrap();
+    assert_eq!(param(&d, "delay", "mix"), None);
+}
+
+#[test]
+fn a_gesture_never_merges_into_an_earlier_command_and_ends_on_an_early_exit() {
+    let reg = registry();
+    let mut d = three_devices(&reg);
+    d.apply(set("delay", "mix", 0.1, Some(1)), &reg).unwrap();
+    let outcome: Result<(), atomik_model::ModelError> = (|| {
+        let mut drag = d.begin_gesture();
+        drag.apply(set("delay", "mix", 0.2, Some(1)), &reg)?;
+        // A refused command leaves through `?`; the guard still ends the group.
+        drag.apply(set("ghost", "mix", 0.3, Some(1)), &reg)?;
+        Ok(())
+    })();
+    assert!(outcome.is_err());
+    d.apply(set("delay", "mix", 0.4, Some(1)), &reg).unwrap();
+    d.undo().unwrap();
+    assert_eq!(
+        param(&d, "delay", "mix"),
+        Some(0.2),
+        "the last command is its own step"
+    );
+    d.undo().unwrap();
+    assert_eq!(
+        param(&d, "delay", "mix"),
+        Some(0.1),
+        "the gesture did not join the first"
+    );
 }
 
 #[test]
@@ -210,9 +257,9 @@ fn end_merge_splits_drags_with_same_id() {
     d.apply(set("delay", "mix", 0.2, Some(1)), &reg).unwrap();
     d.end_merge();
     d.apply(set("delay", "mix", 0.3, Some(1)), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(param(&d, "delay", "mix"), Some(0.2));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(param(&d, "delay", "mix"), None);
 }
 
@@ -236,7 +283,7 @@ fn merge_breaks_on_other_id_param_device_or_command() {
     }
     let mut undone = 0;
     while d.can_undo() {
-        d.undo(&reg).unwrap();
+        d.undo().unwrap();
         undone += 1;
     }
     assert_eq!(undone, n + 3, "no merging happened (+3 device adds)");
@@ -248,10 +295,10 @@ fn merge_does_not_survive_undo() {
     let mut d = three_devices(&reg);
     d.apply(set("delay", "mix", 0.3, None), &reg).unwrap();
     d.apply(set("delay", "mix", 0.1, Some(1)), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     // The last step is now the standalone 0.3; a new drag must not merge into it.
     d.apply(set("delay", "mix", 0.2, Some(1)), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         param(&d, "delay", "mix"),
         Some(0.3),

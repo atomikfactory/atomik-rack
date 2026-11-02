@@ -13,7 +13,7 @@ use crate::console::{MASTER_TYPE, is_console_type};
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::container::{SPLIT_TYPE, split_path};
 use crate::controller::{ControllerKind, ControllerLane, canonical, window_points};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::lane_cmd::ExtractMode;
 use crate::loop_convert::{LoopConvert, content_pieces};
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
@@ -756,11 +756,11 @@ pub(crate) fn plan(
             let mut edits = Vec::new();
             for key in keys {
                 if rules::resolve(doc, &key)?.folded != folded {
-                    edits.push(Edit::Folded {
+                    edits.push(Edit::Swap(Swap::Folded {
                         key,
                         old: !folded,
                         new: folded,
-                    });
+                    }));
                 }
             }
             if edits.is_empty() {
@@ -1285,10 +1285,10 @@ fn paste_devices(
     };
     if container.is_none() && column >= p.doc().columns {
         let old = p.doc().columns;
-        p.push(Edit::Columns {
+        p.push(Edit::Swap(Swap::Columns {
             old,
             new: column + 1,
-        });
+        }));
     }
     let mut map: BTreeMap<DeviceKey, DeviceKey> = BTreeMap::new();
     let mut new_keys = Vec::with_capacity(snapshot.devices.len());

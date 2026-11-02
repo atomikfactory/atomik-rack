@@ -35,7 +35,7 @@ fn scene(reg: &Registry) -> Document {
     registered(&mut d, reg, 12, 88_200, 44_100);
     registered(&mut d, reg, 21, 960_000, 96_000);
     registered(&mut d, reg, 22, 192_000, 96_000);
-    d.apply(add_audio_clip("audio-track", 1_000, 2_000, 1), reg)
+    d.apply(add_audio_clip("audio-track", 1_000, 40_000, 1), reg)
         .unwrap();
     let id = last(&d);
     let mut content = audio(1);
@@ -56,7 +56,7 @@ fn scene(reg: &Registry) -> Document {
         Command::Song(SongCommand::SetAudioClip {
             id,
             start: 1_000,
-            length: 2_000,
+            length: 40_000,
             muted: false,
             content,
             merge: None,
@@ -103,7 +103,7 @@ fn conversion_keeps_ticks_and_scales_frames_in_one_step() {
     let doc = d.doc();
     assert_eq!(doc.sample_rate, 44_100);
     let (start, length, a) = first_clip(doc);
-    assert_eq!((start, length), (1_000, 2_000));
+    assert_eq!((start, length), (1_000, 40_000));
     assert_eq!(a.asset, hash(11));
     assert_eq!(a.source_offset, 44_100);
     assert_eq!((a.fade_in, a.fade_out), (4_410, 8_820));
@@ -115,9 +115,9 @@ fn conversion_keeps_ticks_and_scales_frames_in_one_step() {
     );
     assert!(!doc.referenced_assets().contains(&hash(1)));
     // One undo step restores the rate, the assets and every position.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().sample_rate, 44_100);
 }
 
@@ -186,7 +186,7 @@ fn output_channels_change_in_one_step_and_drop_the_cables_above() {
             .iter()
             .all(|c| c.to.socket != "out_2" && c.to.socket != "out_3")
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().output_channels, 8);
     assert!(matches!(
         d.apply(Command::SetOutputChannels(0), &reg),

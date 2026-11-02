@@ -194,9 +194,9 @@ fn set_clips_muted_is_one_undo_step_over_every_clip_kind() {
     );
     assert_eq!(ops, [SyncOp::SongChanged]);
     assert!(ids.iter().all(|&i| clip_muted(&d, i)));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(ids.iter().all(|&i| !clip_muted(&d, i)));
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert!(ids.iter().all(|&i| clip_muted(&d, i)));
     one_step(
         &mut d,

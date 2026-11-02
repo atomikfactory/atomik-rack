@@ -156,7 +156,7 @@ fn the_first_instrument_reuses_the_master_and_its_cables() {
             .contains(&cable("channel:out_l", "master:bus_l"))
     );
     // Undo takes the instrument and its channel and leaves the starter exactly as it was.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &new_project_doc());
 }
 
@@ -199,9 +199,9 @@ fn the_starter_saves_and_loads_after_edits_and_undo_restores_the_text() {
     run(&mut d, &r, [add(usize::MAX, SYNTH, Some("synth"))]);
     let after = save_project(d.doc());
     assert_eq!(load_project(&after, &r).unwrap(), *d.doc());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(save_project(d.doc()), before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(save_project(d.doc()), after);
 }
 

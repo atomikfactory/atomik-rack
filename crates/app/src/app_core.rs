@@ -1076,7 +1076,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn undo(&mut self) -> bool {
         self.commit_patch_browse();
         self.plugins_flush_dirty(true);
-        let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo(&self.registry)));
+        let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo()));
         self.after_history_step(done, "undo")
     }
 
@@ -1084,7 +1084,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn redo(&mut self) -> bool {
         self.commit_patch_browse();
         self.plugins_flush_dirty(false);
-        let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo(&self.registry)));
+        let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo()));
         self.after_history_step(done, "redo")
     }
 
@@ -1787,7 +1787,14 @@ impl<S: EngineSink> AppCore<S> {
         }
         let instance = match plugin_device {
             Some((device, _)) => device,
-            None => (factory.create)(),
+            None => match self.registry.create(&device.type_id) {
+                Some(instance) => instance,
+                None => {
+                    let message = format!("unknown device type `{}`", device.type_id);
+                    self.reject(message);
+                    return;
+                }
+            },
         };
         let id = DeviceInstanceId(self.next_id);
         self.next_id += 1;

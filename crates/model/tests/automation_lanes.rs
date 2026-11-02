@@ -86,9 +86,9 @@ fn removing_a_lane_takes_its_clips_with_it_and_one_undo_brings_them_back() {
             .clip(before.song.tracks[0].lanes[1].clips[0].id)
             .is_none()
     );
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(kinds(&d, "lead"), [LaneKind::Notes]);
 }
 
@@ -132,8 +132,8 @@ fn removing_a_lane_drops_its_write_mode_and_fold_and_undo_restores_them() {
         d.doc().song.write_mode(&key("lead"), CUTOFF),
         atomik_model::automation_rec::WriteMode::Touch
     );
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -156,8 +156,8 @@ fn removing_the_last_lane_of_an_automation_track_removes_the_track() {
     d.apply(remove_lane("channel", "pan"), &reg).unwrap();
     assert!(d.doc().song.track(&key("channel")).is_none());
     assert!(d.doc().validate().is_ok());
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -222,7 +222,7 @@ fn muting_with_the_held_value_is_one_undo_step() {
     let doc = d.doc();
     assert!(doc.song.tracks[0].lanes[1].muted);
     assert_eq!(doc.device(&key("lead")).unwrap().params[CUTOFF], 640.0);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -286,7 +286,7 @@ fn the_static_value_is_clamped_checked_and_undoable() {
         .expect_err("not a number");
     d.apply(set_static("lead", "filter.resonance", Some(0.5)), &reg)
         .expect_err("no such lane");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

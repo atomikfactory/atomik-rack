@@ -127,15 +127,15 @@ fn relink_is_one_undo_step_and_undo_redo_restore_exactly() {
     d.apply(relink(1, 3), &reg).unwrap();
     let after = d.doc().clone();
     assert_ne!(after, before);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     assert_eq!(save_project(d.doc()), text_before);
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc(), &after);
     // One step: a second undo does not return to the state before the relink twice.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_ne!(
         d.doc(),
         &before,
@@ -153,7 +153,7 @@ fn relink_reports_song_and_zone_changes_once() {
         let want = SyncOp::ZonesChanged(key(device));
         assert_eq!(ops.iter().filter(|o| **o == want).count(), 1, "{device}");
     }
-    let undo = d.undo(&reg).unwrap();
+    let undo = d.undo().unwrap();
     assert!(undo.contains(&SyncOp::SongChanged));
     assert!(undo.contains(&SyncOp::ZonesChanged(key("s"))));
 }
@@ -238,7 +238,7 @@ fn relink_is_a_step_inside_the_history_and_clears_redo_like_any_edit() {
     let reg = audio_registry();
     let mut d = scene(&reg);
     d.apply(relink(1, 3), &reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.can_redo());
     d.apply(relink(2, 3), &reg).unwrap();
     assert!(!d.can_redo());
@@ -285,7 +285,7 @@ proptest! {
         d.apply(register(4, 480_000), &reg).unwrap();
         let floor = {
             let mut probe = d.clone();
-            while probe.undo(&reg).is_some() {}
+            while probe.undo().is_some() {}
             save_project(probe.doc())
         };
         for op in ops {
@@ -295,22 +295,22 @@ proptest! {
                     match d.apply(relink(a, b), &reg) {
                         Ok(_) => {
                             let after = save_project(d.doc());
-                            d.undo(&reg).unwrap();
+                            d.undo().unwrap();
                             prop_assert_eq!(save_project(d.doc()), before);
-                            d.redo(&reg).unwrap();
+                            d.redo().unwrap();
                             prop_assert_eq!(save_project(d.doc()), after);
                         }
                         Err(_) => prop_assert_eq!(save_project(d.doc()), before),
                     }
                 }
-                Op::Undo => { d.undo(&reg); }
-                Op::Redo => { d.redo(&reg); }
+                Op::Undo => { d.undo(); }
+                Op::Redo => { d.redo(); }
             }
             assert_audio_invariants(d.doc());
             let text = save_project(d.doc());
             prop_assert_eq!(save_project(&load_project(&text, &reg).unwrap()), text);
         }
-        while d.undo(&reg).is_some() {}
+        while d.undo().is_some() {}
         prop_assert_eq!(save_project(d.doc()), floor);
     }
 }

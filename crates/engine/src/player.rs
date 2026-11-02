@@ -705,16 +705,16 @@ impl Player {
         // snapshots' own maps say.
         let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
         let old_map = match ext.as_ref() {
-            Some(e) => TempoMap(e),
+            Some(e) => TempoMap::new(e),
             None => old
                 .as_deref()
-                .map_or(TempoMap(&constant), SongSnapshot::map),
+                .map_or(TempoMap::new(&constant), SongSnapshot::map),
         };
         let new_map = match ext.as_ref() {
-            Some(e) => TempoMap(e),
-            None => TempoMap(&new.tempo),
+            Some(e) => TempoMap::new(e),
+            None => TempoMap::new(&new.tempo),
         };
-        if old_map.0 != new_map.0 {
+        if old_map.segments() != new_map.segments() {
             // Keep the musical position (the tick), not the frame.
             let tick = old_map.tick(self.pos as f64, sr);
             self.pos = new_map.frame(tick, sr).round().max(0.0) as u64;
@@ -754,7 +754,9 @@ impl Player {
             cursors,
             ..
         } = &mut *new;
-        let map = ext.as_ref().map_or(TempoMap(tempo), |e| TempoMap(e));
+        let map = ext
+            .as_ref()
+            .map_or(TempoMap::new(tempo), |e| TempoMap::new(e));
         seek(map, sr, tracks, cursors, self.pos);
         self.song = Some(new);
         old
@@ -803,11 +805,13 @@ impl Player {
         } = self;
         let (map, mut parts) = match song.as_deref_mut() {
             Some(s) => (
-                ext.as_ref().map_or(TempoMap(&s.tempo), |e| TempoMap(e)),
+                ext.as_ref()
+                    .map_or(TempoMap::new(&s.tempo), |e| TempoMap::new(e)),
                 Some((&s.tracks[..], &mut s.cursors[..])),
             ),
             None => (
-                ext.as_ref().map_or(TempoMap(&constant), |e| TempoMap(e)),
+                ext.as_ref()
+                    .map_or(TempoMap::new(&constant), |e| TempoMap::new(e)),
                 None,
             ),
         };
@@ -908,7 +912,7 @@ impl Player {
         let map = self
             .song
             .as_deref()
-            .map_or(TempoMap(&constant), SongSnapshot::map);
+            .map_or(TempoMap::new(&constant), SongSnapshot::map);
         let tick = map.tick(self.pos as f64, sr);
         (tick, Tempo::new(map.bpm(tick)).unwrap_or(engine_tempo))
     }
@@ -939,7 +943,7 @@ impl Player {
     fn leave_follow(&mut self, sr: f64, engine_tempo: Tempo, dropped: &AtomicU64) {
         self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
         let tempo = self.follow.map_or(engine_tempo, |f| f.tempo);
-        let tick = TempoMap(&[TempoSegment::constant(tempo)]).tick(self.pos as f64, sr);
+        let tick = TempoMap::new(&[TempoSegment::constant(tempo)]).tick(self.pos as f64, sr);
         self.follow = None;
         self.apply_command(
             TransportCommand::Locate(Ticks(tick.round() as i64)),
@@ -957,8 +961,8 @@ impl Player {
             .filter(|t| *t != f.tempo)
         {
             // The same musical position on the new tempo.
-            let tick = TempoMap(&[TempoSegment::constant(f.tempo)]).tick(self.pos as f64, sr);
-            self.pos = TempoMap(&[TempoSegment::constant(t)])
+            let tick = TempoMap::new(&[TempoSegment::constant(f.tempo)]).tick(self.pos as f64, sr);
+            self.pos = TempoMap::new(&[TempoSegment::constant(t)])
                 .frame(tick, sr)
                 .round()
                 .max(0.0) as u64;
@@ -996,8 +1000,8 @@ impl Player {
     /// The engine tempo changed: a song-less transport keeps its tick.
     pub(crate) fn engine_tempo_changed(&mut self, old: Tempo, new: Tempo, sr: f64) {
         if self.song.is_none() && old != new {
-            let tick = TempoMap(&[TempoSegment::constant(old)]).tick(self.pos as f64, sr);
-            self.pos = TempoMap(&[TempoSegment::constant(new)])
+            let tick = TempoMap::new(&[TempoSegment::constant(old)]).tick(self.pos as f64, sr);
+            self.pos = TempoMap::new(&[TempoSegment::constant(new)])
                 .frame(tick, sr)
                 .round()
                 .max(0.0) as u64;
@@ -1042,15 +1046,17 @@ impl Player {
         let four_four = [MeterSegment::FOUR_FOUR];
         let (map, meters, (lanes, lane_last), mut parts, mut aud) = match song.as_deref_mut() {
             Some(s) => (
-                ext.as_ref().map_or(TempoMap(&s.tempo), |e| TempoMap(e)),
-                MeterMap(&s.meter),
+                ext.as_ref()
+                    .map_or(TempoMap::new(&s.tempo), |e| TempoMap::new(e)),
+                MeterMap::new(&s.meter),
                 (&s.lanes[..], &mut s.lane_last[..]),
                 Some((&s.tracks[..], &mut s.cursors[..])),
                 ext.is_none().then_some((&s.audio[..], &mut s.audio_rt[..])),
             ),
             None => (
-                ext.as_ref().map_or(TempoMap(&constant), |e| TempoMap(e)),
-                MeterMap(&four_four),
+                ext.as_ref()
+                    .map_or(TempoMap::new(&constant), |e| TempoMap::new(e)),
+                MeterMap::new(&four_four),
                 (&[][..], &mut [][..]),
                 None,
                 None,

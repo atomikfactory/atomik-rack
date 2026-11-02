@@ -1022,9 +1022,9 @@ fn removing_several_clips_is_one_undo_step_and_an_unknown_clip_changes_nothing()
     );
     assert_eq!(ops, [SyncOp::SongChanged]);
     assert_eq!(ids(&d), [all[1]]);
-    assert!(d.undo(&r).is_some());
+    assert!(d.undo().is_some());
     assert_eq!(text(&d), before);
-    assert!(d.redo(&r).is_some());
+    assert!(d.redo().is_some());
     assert_eq!(ids(&d), [all[1]]);
     // A clip that does not exist, or no clips at all: rejected, nothing changed.
     let now = text(&d);
@@ -1112,7 +1112,7 @@ fn pasting_audio_clips_whose_track_is_missing_makes_an_audio_track_in_the_same_s
         lane.clips.iter().map(|c| c.start).collect::<Vec<_>>(),
         [2 * BAR, 4 * BAR]
     );
-    b.undo(&r).unwrap();
+    b.undo().unwrap();
     assert!(b.doc().song.tracks.is_empty());
 }
 

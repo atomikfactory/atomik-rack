@@ -34,7 +34,7 @@ use crate::console::{FX_SLOTS, INSERT_SLOTS, InsertEffect, is_console_type, sock
 use crate::console_cmd::{Planner, add_channel, console_available, source_outputs};
 use crate::console_insert::{insert_chain, set_insert, stereo_effect_type};
 use crate::container::split_path;
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::plugin::{PluginCommand, key_base_of_name};
 use crate::rack_columns;
 use crate::song::Track;
@@ -274,11 +274,11 @@ pub(crate) fn create_instrument(
     if options.route
         && let Some(channel) = p.doc().console.channel_of(&key).map(|c| c.channel.clone())
     {
-        p.push(Edit::Folded {
+        p.push(Edit::Swap(Swap::Folded {
             key: channel,
             old: false,
             new: true,
-        });
+        }));
     }
     if options.route && !options.skip_track && has_notes_input(desc) {
         arm_new_track(&mut p, &key, &options.disarm);
@@ -477,11 +477,11 @@ pub(crate) fn unroute(p: &mut Planner<'_>, key: &DeviceKey) {
             .collect();
         for device in entering {
             let new = next.clone().filter(|n| *n != device);
-            p.push(Edit::TrackEntry {
+            p.push(Edit::Swap(Swap::TrackEntry {
                 device,
                 old: Some(key.clone()),
                 new,
-            });
+            }));
         }
     }
     if let Some(slot) = p.doc().console.return_slot(key) {
@@ -943,11 +943,11 @@ pub(crate) fn with_entries(doc: &RackDoc, registry: &Registry, edit: Edit) -> Ed
         }
         let new = stack_top(&after, registry, &track.device);
         if new.as_ref() != track.notes_to.as_ref() {
-            moves.push(Edit::TrackEntry {
+            moves.push(Edit::Swap(Swap::TrackEntry {
                 device: track.device.clone(),
                 old: track.notes_to.clone(),
                 new,
-            });
+            }));
         }
     }
     if moves.is_empty() {
@@ -1067,11 +1067,11 @@ fn wire_player(
         .map(|t| (t.device.clone(), t.notes_to.clone()))
         .collect();
     for (device, old) in entering {
-        p.push(Edit::TrackEntry {
+        p.push(Edit::Swap(Swap::TrackEntry {
             device,
             old,
             new: Some(key.clone()),
-        });
+        }));
     }
     Some(())
 }

@@ -332,7 +332,7 @@ fn a_vertical_drag_in_a_column_moves_the_key_as_one_merged_undo_step() {
     assert_eq!(au.iter().rev().find(|x| x.2).map(|x| x.0), Some(44));
     settle(&mut v, &mut d, &reg, &a);
     assert_eq!(pattern_of(d.doc(), 0).steps[col].key, 44);
-    d.undo(&reg);
+    d.undo();
     assert_eq!(pattern_of(d.doc(), 0), bass(), "one undo step");
 }
 
@@ -422,7 +422,7 @@ fn a_press_in_the_velocity_lane_sets_the_bar_and_a_drag_paints_across_columns() 
         assert_eq!(last.steps[k].velocity, want, "step {k}");
     }
     settle(&mut v, &mut d, &reg, &a);
-    d.undo(&reg);
+    d.undo();
     assert_eq!(
         pattern_of(d.doc(), 0).steps[2].velocity,
         32,
@@ -570,7 +570,7 @@ fn the_length_field_drags_wheels_and_resets() {
         1
     );
     settle(&mut v, &mut d, &reg, &a);
-    d.undo(&reg);
+    d.undo();
     assert_eq!(pattern_of(d.doc(), 0).length, 16);
     v.sync(d.doc(), &reg);
     // Wheel steps by one.
@@ -978,7 +978,7 @@ proptest! {
             };
             let actions = match p {
                 Some(p) => click!(v, &d, &reg, p),
-                None => { d.undo(&reg); Vec::new() }
+                None => { d.undo(); Vec::new() }
             };
             for a in &actions {
                 if let UiAction::Command(c) = a {

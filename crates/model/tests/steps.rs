@@ -166,9 +166,9 @@ fn set_pattern_replaces_one_pattern_and_undoes() {
     assert_eq!(ops, vec![changed()]);
     assert_eq!(pats(&d), vec![busy()]);
     let after = d.doc().clone();
-    assert_eq!(d.undo(&r).unwrap(), vec![changed()]);
+    assert_eq!(d.undo().unwrap(), vec![changed()]);
     assert_eq!(d.doc(), &before);
-    assert_eq!(d.redo(&r).unwrap(), vec![changed()]);
+    assert_eq!(d.redo().unwrap(), vec![changed()]);
     assert_eq!(d.doc(), &after);
     assert!(!d.can_redo());
 }
@@ -294,10 +294,10 @@ fn drags_merge_into_one_undo_step() {
         d.apply(set(0, p.clone(), Some(6 << 40)), &r).unwrap();
     }
     assert_eq!(pats(&d)[0].steps[0].velocity, 30);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &original, "the whole drag is one step");
     assert!(!d.can_undo());
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(pats(&d)[0].steps[0].velocity, 30);
 }
 
@@ -317,7 +317,7 @@ fn different_merge_ids_patterns_or_no_id_do_not_merge() {
     step(&mut d, 1, 13, None); // standalone
     step(&mut d, 1, 14, None);
     let mut undone = 0;
-    while d.undo(&r).is_some() {
+    while d.undo().is_some() {
         undone += 1;
     }
     assert_eq!(undone, 1 + 5, "AddPattern plus five separate steps");
@@ -346,7 +346,7 @@ fn end_merge_and_other_commands_close_a_drag() {
     p.steps[0].velocity = 7;
     d.apply(set(0, p, Some(1)), &r).unwrap();
     let mut undone = 0;
-    while d.undo(&r).is_some() {
+    while d.undo().is_some() {
         undone += 1;
     }
     assert_eq!(undone, 4);
@@ -376,7 +376,7 @@ fn add_pattern_appends_empty_patterns_up_to_eight() {
     assert_eq!(d.doc(), &before);
     // Each add was one undo step.
     for n in (1..8).rev() {
-        assert_eq!(d.undo(&r).unwrap(), vec![changed()]);
+        assert_eq!(d.undo().unwrap(), vec![changed()]);
         assert_eq!(pats(&d).len(), n);
     }
     assert!(!d.can_undo());
@@ -399,9 +399,9 @@ fn duplicate_pattern_copies_to_the_end() {
         (all[0].length, all[0].resolution, all[0].swing)
     );
     assert!(copy.name.starts_with("Bass"));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(pats(&d).len(), 2);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(pats(&d), all);
 }
 
@@ -451,8 +451,8 @@ fn remove_pattern_shifts_the_later_ones_and_refuses_the_last() {
     let one = d.doc().clone();
     assert_bad(d.apply(remove(0), &r), "last");
     assert_eq!(d.doc(), &one);
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(pats(&d), before);
 }
 
@@ -490,7 +490,7 @@ fn removing_a_pattern_clamps_the_pattern_param_in_the_same_step() {
     );
     assert_eq!(d.doc().param_value(&key("q"), "pattern", &r), Some(2.0));
     // One undo step restores both.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // A param already inside the new count is left alone.
     set_param(&mut d, 1.0);
@@ -523,10 +523,10 @@ fn batch_accepts_the_pattern_commands_as_one_step() {
     assert_eq!(all[0], busy());
     assert_eq!(all[1].steps, busy().steps);
     let after = d.doc().clone();
-    assert_eq!(d.undo(&r).unwrap(), vec![changed()]);
+    assert_eq!(d.undo().unwrap(), vec![changed()]);
     assert_eq!(d.doc(), &before);
     assert!(!d.can_undo());
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc(), &after);
 }
 
@@ -561,7 +561,7 @@ fn batch_mixes_patterns_with_params() {
         .unwrap();
     assert!(ops.contains(&changed()));
     assert!(ops.iter().any(|o| matches!(o, SyncOp::ParamChanged { .. })));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert!(!d.can_undo());
 }
 
@@ -576,7 +576,7 @@ fn removing_and_restoring_a_sequencer_keeps_its_patterns() {
     d.apply(Command::RemoveDevice { key: key("q") }, &r)
         .unwrap();
     assert!(d.doc().devices.is_empty());
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 
@@ -746,9 +746,9 @@ proptest! {
             prop_assert!((1..=8).contains(&n));
         }
         let end = d.doc().clone();
-        while d.undo(&r).is_some() {}
+        while d.undo().is_some() {}
         prop_assert_eq!(d.doc(), &start);
-        while d.redo(&r).is_some() {}
+        while d.redo().is_some() {}
         prop_assert_eq!(d.doc(), &end);
     }
 }

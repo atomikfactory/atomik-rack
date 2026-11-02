@@ -94,7 +94,7 @@ fn insert_moves_clips_splits_the_straddling_one_and_moves_the_end() {
         assert_eq!(a.0, if b.0 >= 4 * BAR { b.0 + BAR } else { b.0 });
     }
     // One undo step gives it back.
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(ticks(&d), before);
     assert_eq!(d.doc().song.end_tick(), 8 * BAR);
 }
@@ -205,7 +205,7 @@ fn markers_ranges_loop_tempo_and_meter_follow() {
     assert_eq!(s.loop_range, (2 * BAR, 7 * BAR));
     assert_eq!(s.tempo[1].tick, 6 * BAR);
     assert_eq!(s.meter[1].bar, 8);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.meter[1].bar, 7);
     // Remove: markers inside go, the rest close up, the tempo in effect after carries on.
     one_step(&mut d, &r, remove(4 * BAR, 2 * BAR));
@@ -278,7 +278,7 @@ fn take_groups_move_whole_and_a_straddling_group_is_refused() {
             .take_groups
             .is_empty()
     );
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     // A group that straddles an edge is refused, and nothing changes.
     let text_before = text(&d);
     let e = rejected(&mut d, &r, insert(11 * BAR, BAR));

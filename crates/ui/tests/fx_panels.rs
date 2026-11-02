@@ -528,7 +528,7 @@ fn dragging_a_handle_sideways_sets_the_frequency_in_one_undo_step() {
     let moved = v.eq_handle_center(&key("fx"), 2).unwrap();
     assert!((moved.x - (h.x + 60.0)).abs() < 3.0, "{moved:?}");
     // One undo step.
-    document.undo(&registry());
+    document.undo();
     assert!((param(&document, "band3.freq") - before).abs() < 1e-3);
 }
 

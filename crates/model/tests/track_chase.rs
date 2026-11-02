@@ -40,9 +40,9 @@ fn set_track_chase_off_changes_one_track_reports_song_changed_and_undoes() {
     let ops = d.apply(set_chase("synth", false), &reg).unwrap();
     assert_eq!(ops, vec![SyncOp::SongChanged]);
     assert!(!chase_of(&d, "synth") && chase_of(&d, "lead"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(chase_of(&d, "synth"));
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert!(!chase_of(&d, "synth"));
 }
 
@@ -72,7 +72,7 @@ fn set_track_flags_leaves_chase_alone() {
     )
     .unwrap();
     assert!(!chase_of(&d, "synth"));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(!chase_of(&d, "synth"));
 }
 

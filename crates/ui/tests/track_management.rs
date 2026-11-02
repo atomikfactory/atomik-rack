@@ -168,7 +168,7 @@ fn dragging_a_header_shows_an_insertion_line_and_the_release_moves_the_track() {
     assert!(v.track_drop().is_none(), "the drag is over");
     apply(&mut d, &reg, &mut v, &actions);
     assert_eq!(order(&d), ["pad", "bass", "lead", "keys"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d), ["bass", "lead", "keys", "pad"]);
 }
 
@@ -209,7 +209,7 @@ fn several_selected_tracks_drag_together_to_the_end_of_the_list() {
     );
     apply(&mut d, &reg, &mut v, &actions);
     assert_eq!(order(&d), ["lead", "pad", "bass", "keys"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d), ["bass", "lead", "keys", "pad"], "one undo step");
 }
 
@@ -360,7 +360,7 @@ fn resizing_a_selected_track_scales_every_selected_track_by_the_same_factor() {
     assert_eq!(base_height(&d, "keys"), Some(120));
     assert_eq!(base_height(&d, "pad"), Some(32), "not selected");
     // One merge group: one undo gives the heights back.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(base_height(&d, "bass"), Some(40));
     assert_eq!(base_height(&d, "lead"), Some(60));
     assert_eq!(base_height(&d, "keys"), Some(80));
@@ -442,7 +442,7 @@ fn delete_track_and_device_removes_the_selected_tracks_devices_in_one_step() {
     assert_eq!(order(&d), ["bass", "keys"]);
     assert!(d.doc().device(&key("lead")).is_none());
     assert!(v.selected_tracks().is_empty());
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d), ["bass", "lead", "keys", "pad"]);
     assert!(d.doc().device(&key("lead")).is_some());
 }
@@ -461,7 +461,7 @@ fn a_track_colour_also_colours_the_device_and_one_undo_restores_both() {
         assert_eq!(colour(&d, k), blue, "{k}");
     }
     assert_eq!(colour(&d, "lead"), before[1], "not selected");
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     for k in ["bass", "keys"] {
         assert_eq!(d.doc().song.track_color(&key(k)), None, "{k}");
     }
@@ -502,12 +502,12 @@ fn alt_clicking_a_chevron_collapses_every_folder_in_one_step_and_again_expands_t
     let actions = alt_click(&d, &mut v, toggle);
     apply(&mut d, &reg, &mut v, &actions);
     assert!(d.doc().song.org.groups.iter().all(|g| g.collapsed));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(
         d.doc().song.org.groups.iter().all(|g| !g.collapsed),
         "one undo step"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     v.sync(d.doc(), &reg);
     // Alt on a chevron of a collapsed folder expands them all again.
     let toggle = v.folder_toggle_center(2).unwrap();

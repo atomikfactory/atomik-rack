@@ -170,3 +170,12 @@ fn a_constant_table_is_one_segment() {
     assert_eq!(t.segments().len(), 1);
     assert_eq!(t.map().song_frame(PPQ, SR), 24_000);
 }
+
+#[test]
+fn a_map_over_no_segments_reads_a_constant_120_bpm() {
+    let map = TempoMap::new(&[]);
+    assert_eq!(map.segments().len(), 1);
+    assert!((map.bpm(0.0) - 120.0).abs() < 1e-9);
+    assert!((map.seconds(f64::from(crate::PPQ as i32) * 2.0) - 1.0).abs() < 1e-9);
+    assert_eq!(map.song_frame(-5, SR), 0);
+}

@@ -16,7 +16,7 @@ use crate::console::{
     link_kind, output_dest, sockets,
 };
 use crate::console_cmd::{Planner, at, bad, ensure_master, wire, wire_master_to_interface};
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::{Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDoc, SocketRef, rules};
 use atomik_device_sdk::Registry;
 use std::collections::BTreeSet;
@@ -279,17 +279,17 @@ pub(crate) fn create_bus(
     let index = bus_insert_index(p.doc());
     let bus = p.insert_device(index, BUS_TYPE)?;
     let old = rules::device(p.doc(), &bus)?.name.clone();
-    p.push(Edit::Name {
+    p.push(Edit::Swap(Swap::Name {
         key: bus.clone(),
         old,
         new: name.clone(),
-    });
+    }));
     // Like a channel made by "Create instrument", the strip starts folded in the rack.
-    p.push(Edit::Folded {
+    p.push(Edit::Swap(Swap::Folded {
         key: bus.clone(),
         old: false,
         new: true,
-    });
+    }));
     for k in sockets::sends() {
         for side in ["l", "r"] {
             p.connect(wire(
@@ -336,11 +336,11 @@ pub(crate) fn rename_bus(
     }
     let device_name = rules::device(p.doc(), bus)?.name.clone();
     if device_name != name {
-        p.push(Edit::Name {
+        p.push(Edit::Swap(Swap::Name {
             key: bus.clone(),
             old: device_name.clone(),
             new: name.clone(),
-        });
+        }));
         crate::console_mix::follow_names(p, bus, &device_name, &name)?;
     }
     Ok(())

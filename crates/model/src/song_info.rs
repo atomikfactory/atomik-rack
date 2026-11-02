@@ -17,7 +17,7 @@
 //! The loader and the command enforce the same rules; the loader names the JSON path of the field
 //! that breaks one.
 
-use crate::history::Edit;
+use crate::history::{Edit, Swap};
 use crate::patch::{JsonPath, json_str, object, string};
 use crate::{ModelError, RackDoc};
 use serde_json::Value;
@@ -124,10 +124,10 @@ pub(crate) fn plan_set(doc: &RackDoc, info: &SongInfo) -> Result<Edit, ModelErro
             "the song information is already that".into(),
         ));
     }
-    Ok(Edit::Info {
+    Ok(Edit::Swap(Swap::Info {
         old: doc.info.clone(),
         new: info.clone(),
-    })
+    }))
 }
 
 /// Writes `"info"` (with its trailing comma and newline) after `"macros"`; nothing for an empty

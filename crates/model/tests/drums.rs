@@ -376,13 +376,13 @@ fn set_drum_step_validates_undoes_and_merges_drags() {
         );
     }
     assert_eq!(drums(&d, "g").patterns[0].steps[5][3].velocity, 20);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
-    d.redo(&r).unwrap();
+    d.redo().unwrap();
     assert_eq!(drums(&d, "g").patterns[0].steps[5][3].velocity, 20);
     // A step with another merge id is its own undo step.
     d.apply(set_step("g", 0, 5, 3, 30, Some(8)), &r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(drums(&d, "g").patterns[0].steps[5][3].velocity, 20);
 }
 
@@ -449,7 +449,7 @@ fn set_drum_lane_and_pattern_edit_one_undo_step_each() {
             ModelError::BadPatterns(_)
         ));
     }
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // Clearing a pattern keeps its name, grid and lanes.
     let cleared = groove().cleared();
@@ -506,7 +506,7 @@ fn add_duplicate_and_remove_pattern_move_the_param_in_one_undo_step() {
     .unwrap();
     assert_eq!(drums(&d, "g").patterns.len(), 31);
     assert_eq!(device(d.doc(), "g").params.get("pattern"), Some(&31.0));
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     // The last pattern stays.
     let mut one = Document::new(empty_doc());
@@ -587,11 +587,11 @@ fn generate_is_deterministic_for_a_seed_and_undoes() {
     a.check().unwrap();
     assert_eq!(a.name, "Groove 0");
     assert_eq!(a.lanes, groove().lanes, "lanes and grid are kept");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before, "one undo step restores the pattern");
     let again = generate(&mut d, 5);
     assert_eq!(again, a, "the same seed writes the same pattern");
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     let other = generate(&mut d, 6);
     assert_ne!(other.steps, a.steps, "another seed writes another one");
 }
@@ -669,8 +669,8 @@ fn flam_and_ratchet_commands_are_one_undo_step_and_keep_the_hit() {
     d.apply(set_step("g", 0, 0, 0, 80, None), &r).unwrap();
     let s = drums(&d, "g").patterns[0].steps[0][0];
     assert_eq!((s.velocity, s.flam, s.ratchet), (80, 12, 3));
-    d.undo(&r).unwrap();
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     for (flam, ratchet) in [(51, 0), (0, 9)] {
         let e = d

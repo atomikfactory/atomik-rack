@@ -67,9 +67,9 @@ fn one_step(d: &mut Document, r: &Registry, c: Command) {
     let after = d.doc().clone();
     assert_ne!(after, before, "{c:?} changed nothing");
     assert_console_invariants(&after);
-    d.undo(r).expect("undo");
+    d.undo().expect("undo");
     assert_eq!(d.doc(), &before, "{c:?} undone in one step");
-    d.redo(r).expect("redo");
+    d.redo().expect("redo");
     assert_eq!(d.doc(), &after, "{c:?} redone");
 }
 
@@ -359,7 +359,7 @@ fn deleting_the_strip_deletes_its_copies_and_undo_brings_them_back() {
     assert!(doc.console.parallels.is_empty());
     assert!(kids.iter().all(|k| doc.device(k).is_none()));
     assert_console_invariants(doc);
-    d.undo(&r).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
 }
 

@@ -137,13 +137,13 @@ fn grouping_gathers_the_tracks_at_the_first_one_and_undoes() {
     assert_eq!(d.doc().song.group_tracks(1), [0, 1, 2]);
     assert_eq!(d.doc().song.track_group(&key("lead")), Some(1));
     assert_eq!(d.doc().song.track_group(&key("a")), None);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         d.doc(),
         &before,
         "one undo step restores the order and the folders"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(order(&d), ["synth", "lead", "c", "a", "b", "d"]);
 }
 
@@ -295,7 +295,7 @@ fn ungrouping_leaves_the_tracks_in_the_parent() {
         ["[Band", "  synth", "  lead", "  a", "b", "c", "d"]
     );
     assert_eq!(d.doc().song.track_group(&key("lead")), Some(outer));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc(), &before);
     run(&mut d, &reg, SongCommand::Ungroup { group: outer });
     assert_eq!(
@@ -350,7 +350,7 @@ fn rename_colour_and_collapse_are_view_changes_and_undo() {
         "the header stays, its tracks hide"
     );
     for _ in 0..3 {
-        d.undo(&reg).unwrap();
+        d.undo().unwrap();
     }
     assert_eq!(d.doc().song.org.group(g).unwrap().name, "Keys");
     assert_eq!(d.doc().song.org.group(g).unwrap().color, None);
@@ -374,7 +374,7 @@ fn a_track_passes_its_neighbour_and_stops_at_the_ends() {
     mv(&mut d, &reg, "a", true);
     mv(&mut d, &reg, "a", true);
     assert_eq!(order(&d), ["synth", "lead", "b", "a", "c", "d"]);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d), ["synth", "lead", "a", "b", "c", "d"]);
     let e = rejects(
         &mut d,
@@ -434,7 +434,7 @@ fn a_track_leaves_a_folder_at_its_edge_and_enters_one_from_outside() {
     assert!(d.doc().song.org.group(solo).is_none());
     assert!(d.doc().song.normalised_org().groups.is_empty());
     // And undo brings the folder back.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(
         outline(&d),
         ["synth", "lead", "[Solo", "  a", "b", "c", "d"]
@@ -539,7 +539,7 @@ fn a_folder_moves_as_a_block_and_leaves_its_parent_at_the_edge() {
         ]
     );
     // One undo step each.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d)[1..3], ["b", "c"]);
 }
 
@@ -602,8 +602,8 @@ fn track_colour_and_comment_set_clear_and_undo() {
         },
     );
     assert!(d.doc().song.org.colors.is_empty() && d.doc().song.org.comments.is_empty());
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.track_color(&key("lead")), Some([10, 20, 30]));
     assert!(!d.doc().song.track_comment(&key("lead")).is_empty());
 }
@@ -683,9 +683,9 @@ fn a_lane_folds_and_unfolds_and_the_lane_must_exist() {
     );
     assert_eq!(ops, vec![SyncOp::ViewChanged]);
     assert!(d.doc().song.lane_folded(&key("lead"), CUTOFF));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(!d.doc().song.lane_folded(&key("lead"), CUTOFF));
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     run(
         &mut d,
         &reg,
@@ -742,7 +742,7 @@ fn take_rows_open_and_close_and_the_group_must_exist() {
     );
     assert_eq!(ops, vec![SyncOp::ViewChanged]);
     assert!(d.doc().song.org.open_takes.contains(&id));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.org.open_takes.is_empty());
     rejects(
         &mut d,
@@ -786,8 +786,8 @@ fn removing_a_track_keeps_the_folder_and_undo_brings_everything_back() {
         "{text}"
     );
     assert!(load_project(&text, &reg).is_ok());
-    d.undo(&reg).unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
     assert_eq!(
         outline(&d),
         ["synth", "[Keys", "  lead", "  a", "b", "c", "d"]
@@ -1212,7 +1212,7 @@ fn colours_and_folds_batch_into_one_undo_step() {
     assert_eq!(ops, vec![SyncOp::ViewChanged]);
     let org = &d.doc().song.org;
     assert_eq!((org.colors.len(), org.folded_lanes.len()), (2, 2));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     let org = &d.doc().song.org;
     assert_eq!((org.colors.len(), org.folded_lanes.len()), (0, 0));
 }
@@ -1289,7 +1289,7 @@ fn a_track_hops_over_a_collapsed_folder_instead_of_vanishing_into_it() {
         "the folder keeps its tracks"
     );
     // One undo step per press.
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(order(&d), ["synth", "a", "b", "lead", "c", "d"]);
 }
 

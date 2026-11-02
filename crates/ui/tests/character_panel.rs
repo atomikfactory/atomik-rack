@@ -819,11 +819,11 @@ fn each_preset_click_is_its_own_undo_step() {
         click_at(&mut document, &mut v, c);
     }
     assert_eq!(param(&document, "preset"), 2.0);
-    document.undo(&registry());
+    document.undo();
     assert_eq!(param(&document, "preset"), 11.0);
-    document.undo(&registry());
+    document.undo();
     assert_eq!(param(&document, "preset"), 4.0);
-    document.redo(&registry());
+    document.redo();
     assert_eq!(param(&document, "preset"), 11.0);
 }
 
@@ -1005,7 +1005,7 @@ fn a_knob_drag_is_one_merged_undo_step_for_every_knob() {
         assert!(matches!(a.last(), Some(UiAction::EndMerge)));
         let after = param(&document, k);
         assert!(after > before, "{k}: {before} -> {after}");
-        document.undo(&registry());
+        document.undo();
         assert!((param(&document, k) - before).abs() < 1e-6, "{k}: one undo");
     }
 }

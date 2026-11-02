@@ -69,11 +69,11 @@ fn set_track_heights_replaces_the_map_reports_a_view_change_and_undoes() {
     )
     .unwrap();
     assert_eq!(d.doc().song.track_heights.len(), 2);
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.track_heights, heights(&[("synth", 120)]));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(d.doc().song.track_heights.is_empty());
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.track_heights, heights(&[("synth", 120)]));
 }
 
@@ -129,12 +129,12 @@ fn a_drag_is_one_undo_step() {
         .unwrap();
     }
     assert_eq!(d.doc().song.track_heights, heights(&[("lead", 130)]));
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert!(
         d.doc().song.track_heights.is_empty(),
         "one step undone it all"
     );
-    d.redo(&reg).unwrap();
+    d.redo().unwrap();
     assert_eq!(d.doc().song.track_heights, heights(&[("lead", 130)]));
     // Another drag is another step.
     d.apply(
@@ -145,7 +145,7 @@ fn a_drag_is_one_undo_step() {
         &reg,
     )
     .unwrap();
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.track_heights, heights(&[("lead", 130)]));
 }
 
@@ -298,6 +298,6 @@ fn a_removed_track_leaves_no_height_in_the_file() {
     );
     // Undoing the removal brings the track back, and its height with it (the map was never
     // touched).
-    d.undo(&reg).unwrap();
+    d.undo().unwrap();
     assert_eq!(d.doc().song.track_heights.get(&key("lead")), Some(&200));
 }
