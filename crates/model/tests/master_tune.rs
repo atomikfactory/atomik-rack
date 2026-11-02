@@ -1,5 +1,5 @@
 //! The master tune: `SetMasterTune` as one undo step, the optional `"tune_cents"` field of project
-//! format 39 (written only when not 0, byte-identical save, load and save), its limits and the
+//! format 40 (written only when not 0, byte-identical save, load and save), its limits and the
 //! way old projects load.
 
 mod common;
@@ -99,10 +99,10 @@ fn the_loader_names_the_path_of_a_bad_value() {
 }
 
 #[test]
-fn the_field_is_unknown_in_a_version_38_file() {
+fn the_field_is_unknown_in_a_version_39_file() {
     let (mut d, r) = doc();
     one_step(&mut d, &r, Command::SetMasterTune(10.0));
-    let old = text(&d).replacen("\"version\": 39", "\"version\": 38", 1);
+    let old = text(&d).replacen("\"version\": 40", "\"version\": 39", 1);
     let e = load_project(&old, &r).unwrap_err().to_string();
     assert!(
         e.contains("tune_cents") && e.contains("unknown field"),

@@ -245,8 +245,8 @@ fn the_project_version_is_thirty_four_and_an_automation_only_track_round_trips()
     )
     .unwrap();
     let text = saved(&d);
-    assert_eq!(PROJECT_VERSION, 39);
-    assert!(text.contains("\"version\": 39"));
+    assert_eq!(PROJECT_VERSION, 40);
+    assert!(text.contains("\"version\": 40"));
     let loaded = load_project(&text, &reg).unwrap();
     assert_eq!(&loaded, d.doc());
     assert_eq!(save_project(&loaded), text);
@@ -258,7 +258,7 @@ fn a_version_33_file_loads_unchanged_and_resaves_as_34() {
     let mut d = start(&reg);
     d.apply(lane("synth", "filter.cutoff"), &reg).unwrap();
     let text = saved(&d);
-    let v33 = text.replacen("\"version\": 39", "\"version\": 33", 1);
+    let v33 = text.replacen("\"version\": 40", "\"version\": 33", 1);
     let loaded = load_project(&v33, &reg).unwrap();
     assert_eq!(save_project(&loaded), text);
 }
@@ -268,7 +268,7 @@ fn before_version_34_a_track_on_a_device_without_notes_is_refused() {
     let reg = console_registry();
     let mut d = start(&reg);
     d.apply(lane("channel", FADER), &reg).unwrap();
-    let v33 = saved(&d).replacen("\"version\": 39", "\"version\": 33", 1);
+    let v33 = saved(&d).replacen("\"version\": 40", "\"version\": 33", 1);
     let e = load_project(&v33, &reg).unwrap_err().to_string();
     assert!(e.contains("no Notes input"), "{e}");
 }

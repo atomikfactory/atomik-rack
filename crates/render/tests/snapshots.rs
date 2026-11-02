@@ -231,7 +231,7 @@ fn a_project_without_snapshots_is_bit_identical_to_the_plain_project() {
     apply(&mut d, store("B"));
     assert_eq!(bits(&bounce(d.doc())), bits(&plain), "stored only");
     // A project saved before the format had snapshots plays as it did.
-    let old = save_project(song().doc()).replace("\"version\": 39", "\"version\": 26");
+    let old = save_project(song().doc()).replace("\"version\": 40", "\"version\": 26");
     let loaded = load_project(&old, &default_registry()).unwrap();
     assert_eq!(bits(&bounce(&loaded)), bits(&plain), "a version 26 file");
     // Recalling a snapshot of the plain mix after edits comes back to the plain bounce (the

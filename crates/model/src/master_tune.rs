@@ -3,7 +3,7 @@
 //! [`RackDoc::tune_cents`] is project data with a part in the sound: every pitched device (the
 //! synths, the drum machine, the sampler, the loop slicer, the granular device and the tuner
 //! reference) plays that many cents away from equal temperament at A = 440. It is 0 for a new
-//! project, saved as the root field `"tune_cents"` only when it is not 0 (project format 39, so
+//! project, saved as the root field `"tune_cents"` only when it is not 0 (project format 40, so
 //! a project at 0 differs from the same file without the field in nothing) and edited with
 //! [`crate::Command::SetMasterTune`], one undo step that reports [`crate::SyncOp::TuneChanged`].
 //! Audio tracks and plugins are not affected: a plugin keeps its own tuning.

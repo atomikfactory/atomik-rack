@@ -216,7 +216,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Root, "midi_maps", 28),
     field(Root, "macros", 29),
     field(Root, "info", 38),
-    field(Root, "tune_cents", 39),
+    field(Root, "tune_cents", 40),
     field(Root, "assets", 3),
     field(Root, "song", 1).req(),
     // A device (the fields shared with the patch format come first).

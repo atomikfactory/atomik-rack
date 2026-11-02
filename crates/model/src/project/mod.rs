@@ -23,7 +23,7 @@
 //!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"? }…], "names"?: [{ "bank", "macro", "name" }…] }
 //!                                                               (v29; written only when non-empty),
 //!   "info"?: { "title"?, "author"?, "email"?, "url"?, "notes"? }  (v38; written only when set),
-//!   "tune_cents"?: number                  (v39, -100..=100 around A = 440 Hz; written only when not 0),
+//!   "tune_cents"?: number                  (v40, -100..=100 around A = 440 Hz; written only when not 0),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
@@ -359,10 +359,10 @@
 //! tabs), stored as typed and written only when not empty, the whole object only when something is
 //! set. A project without information differs from its version 37 file in the version line
 //! alone, and plays and bounces bit for bit as it did.
-//! Version 39 adds the root `"tune_cents"` after `"info"` (see [`crate::master_tune`]): the master
+//! Version 40 adds the root `"tune_cents"` after `"info"` (see [`crate::master_tune`]): the master
 //! tune, a number of cents within -100..=100 (a value outside is refused), written only when it is
 //! not 0, so a project at 0 differs from the same file without the field in nothing, and plays and
-//! bounces bit for bit as it did. Saving always writes version 39.
+//! bounces bit for bit as it did. Saving always writes version 40.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -457,7 +457,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
 /// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
 /// information) and 39 (no send follow, no parallel channels).
-pub const PROJECT_VERSION: u32 = 39;
+pub const PROJECT_VERSION: u32 = 40;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()
