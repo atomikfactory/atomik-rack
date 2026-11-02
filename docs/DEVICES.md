@@ -2342,6 +2342,31 @@ and map swaps never carry state across. The sample editor's SYNTH page edits all
 envelope or filter edit reaches every zone of the same non-zero group. Project files write these
 fields only when they are set, so older zone data is unchanged.
 
+**Instrument files (SFZ and SoundFont).** Dropping an `.sfz` or `.sf2` file on the sampler (its panel
+or its sample editor, or the editor's Load button) loads it as a whole instrument: its samples are
+converted to the session rate and stored in the project, its regions become zones, and the sampler's
+zones are replaced in one undo step (audio files dropped with it, and further instrument files, are
+ignored; other devices refuse the file). Frame positions in the file scale with the converted length.
+Anything that cannot be played is left out and named in one message, never an error.
+- *SFZ*: the `<control>` `default_path`; `<global>`, `<master>`, `<group>` and `<region>` with their
+  inheritance; `sample` (relative paths only; spaces are fine; `.wav`, `.flac`, `.ogg`, `.aif`, `.mp3`);
+  `key`, `lokey`, `hikey`, `lovel`, `hivel` (note names such as `c#4` are read, C4 is 60) and
+  `pitch_keycenter`; `transpose`, `tune`, `volume`, `pan`; `offset`, `end`, `loop_mode`, `loop_start`,
+  `loop_end`, `direction`; `ampeg_attack`, `ampeg_decay`, `ampeg_sustain`, `ampeg_release` as the zone
+  envelope; `cutoff`, `resonance`, `fil_type`, `fil_keytrack`, `fileg_depth` as the zone filter;
+  `seq_length` and `seq_position` as round-robin; `xfin_lovel`, `xfin_hivel`, `xfout_lovel`, `xfout_hivel`
+  as the velocity crossfade (one width, the larger of the two); the `<group>` headers become zone groups
+  (beyond 31 they share ids); `#define` variables. `#include` is not followed. An opcode that is not read
+  is listed once for the file; regions that sound on release, built-in generators and sample formats the
+  decoder does not read are left out.
+- *SoundFont 2*: the first preset, its zones walked through their instruments: key and velocity ranges,
+  root key, coarse and fine tune, attenuation, pan, start, end and loop offsets, loop mode, the volume
+  envelope and the low-pass filter. Generators of the preset add to those of the instrument. Modulators, the
+  hold stage, the modulation envelope, LFOs and ROM samples are not read; a stereo sample is two mono samples
+  placed by their own pan.
+- *Limits*: an SFZ file up to 8 MiB, a SoundFont up to 1 GiB, at most 4096 regions and 512 samples; the
+  readers never panic on a damaged file (a fuzz target covers them).
+
 ### Behaviour (as built)
 
 - **Pitch.** The playback ratio is 2^((key − root + transpose + `tune.semi` + pitch bend)/12 + (zone

@@ -30,6 +30,7 @@ pub mod export_prefs;
 pub mod export_worker;
 pub mod freeze_worker;
 pub mod import_warp;
+pub(crate) mod instrument_import;
 pub mod interface_tab;
 pub mod keyboard_tab;
 pub mod keymap_store;

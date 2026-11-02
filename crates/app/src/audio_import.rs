@@ -79,6 +79,14 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<crate::archive_worker::Done, atomik_audio_file::ArchiveError>>,
     },
+    /// An instrument file (SFZ, SoundFont) was read, its samples stored and its regions made
+    /// into zones (or it failed): see [`crate::instrument_import`].
+    Instrument {
+        generation: u64,
+        device: atomik_model::DeviceKey,
+        path: PathBuf,
+        result: Box<Result<crate::instrument_import::ImportedInstrument, String>>,
+    },
     /// An asset was loaded fully into RAM for a sampler, or failed.
     Sampled {
         generation: u64,
@@ -461,6 +469,33 @@ pub(crate) fn spawn_import(
                     result,
                 });
             }
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that reads the instrument file `path`, stores its samples in `bundle` at
+/// `rate` and sends [`Msg::Instrument`].
+pub(crate) fn spawn_instrument(
+    tx: Sender<Msg>,
+    generation: u64,
+    mut bundle: Bundle,
+    rate: u32,
+    threshold: u64,
+    device: atomik_model::DeviceKey,
+    path: PathBuf,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-instrument".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let result =
+                crate::instrument_import::load_instrument(&mut bundle, &path, rate, threshold);
+            let _ = tx.send(Msg::Instrument {
+                generation,
+                device,
+                path,
+                result: Box::new(result),
+            });
         })
         .map(|_| ())
 }

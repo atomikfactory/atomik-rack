@@ -101,7 +101,8 @@ toolchain, so the crate is its own workspace and no normal build or test touches
 [load_patch](../fuzz/fuzz_targets/load_patch.rs) (also clip files, library items, MIDI mapping
 presets and the library database), [smf_read](../fuzz/fuzz_targets/smf_read.rs),
 [audio_decode](../fuzz/fuzz_targets/audio_decode.rs) (the symphonia decoder, the WAV readers and the
-preview decoder) and [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel).
+preview decoder), [instrument_read](../fuzz/fuzz_targets/instrument_read.rs) (the SFZ and SoundFont
+readers) and [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel).
 To run one:
 
 ```sh

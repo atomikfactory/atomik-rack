@@ -486,6 +486,12 @@ impl<S: EngineSink> AppCore<S> {
                         }
                     }
                 }
+                Msg::Instrument {
+                    generation,
+                    device,
+                    path,
+                    result,
+                } if generation == current => self.apply_instrument(device, &path, *result),
                 Msg::Edited {
                     generation,
                     job,
@@ -565,6 +571,7 @@ impl<S: EngineSink> AppCore<S> {
                 Msg::Imported { .. }
                 | Msg::Loaded { .. }
                 | Msg::Sampled { .. }
+                | Msg::Instrument { .. }
                 | Msg::Sliced { .. }
                 | Msg::Warped { .. }
                 | Msg::Frozen { .. }
@@ -704,6 +711,13 @@ impl<S: EngineSink> AppCore<S> {
             .is_some_and(|d| self.registry.takes_samples(&d.type_id));
         if !takes {
             return self.reject(format!("{device} does not take samples"));
+        }
+        // An instrument file (SFZ, SoundFont) loads alone, into a sampler (see `app_core_instrument.rs`).
+        let (instruments, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+            .into_iter()
+            .partition(|p| atomik_audio_file::is_instrument_path(p));
+        if !instruments.is_empty() && self.import_instrument(&device, &instruments, paths.len()) {
+            return;
         }
         let mut paths = paths;
         let mut ignored = Vec::new();

@@ -185,8 +185,16 @@ impl Bundle {
     /// A file of more than [`crate::DEFAULT_MAX_SAMPLES`] samples is refused, and NaN or
     /// infinite samples are stored as silence (counted in [`AssetInfo::replaced_samples`]).
     pub fn import(&mut self, src: &Path, session_rate: u32) -> Result<AssetInfo> {
+        self.import_counted(src, session_rate).map(|(info, _)| info)
+    }
+
+    /// [`Self::import`] that also returns the frames the file had before it was converted to
+    /// `session_rate` (frame positions written against the file scale by the ratio of the two
+    /// lengths).
+    pub fn import_counted(&mut self, src: &Path, session_rate: u32) -> Result<(AssetInfo, u64)> {
         let decoded = decode_file_with(src, crate::DEFAULT_MAX_SAMPLES)?;
         let replaced = decoded.replaced;
+        let original = decoded.audio.frames() as u64;
         let data = resample_owned(decoded.audio, session_rate)?;
         let name = src.file_name().map_or_else(
             || src.display().to_string(),
@@ -194,7 +202,20 @@ impl Bundle {
         );
         let mut info = self.store(&data, &name)?;
         info.replaced_samples = replaced;
-        Ok(info)
+        Ok((info, original))
+    }
+
+    /// Stores audio that came from inside another file (a sample of a SoundFont) converted to
+    /// `session_rate`, like [`Self::import_counted`]: the asset and the frames it had before.
+    pub fn add_sample(
+        &mut self,
+        data: AudioData,
+        session_rate: u32,
+        name: &str,
+    ) -> Result<(AssetInfo, u64)> {
+        let original = data.frames() as u64;
+        let data = resample_owned(data, session_rate)?;
+        Ok((self.store(&data, name)?, original))
     }
 
     /// Stores already-decoded audio (a finished recording) the same way, without decoding.

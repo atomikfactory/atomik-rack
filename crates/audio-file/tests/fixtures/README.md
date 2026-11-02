@@ -51,3 +51,6 @@ information (the LAME/Xing header, the Ogg granule positions), which symphonia a
 decode to exactly 4410 frames. The tests still allow up to 2 MP3 frames (2304) of extra length,
 and measure level and pitch only over the middle half of the clip, so a decoder that does not
 trim padding passes too.
+
+`small.sf2` is a hand-built SoundFont 2 (two 100-frame samples at 22.05 kHz, two zones) written by the
+`sf2` unit tests; `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-audio-file --lib sf2` rewrites it.
