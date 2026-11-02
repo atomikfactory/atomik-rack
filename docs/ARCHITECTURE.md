@@ -2229,6 +2229,10 @@ app re-send them after an edit), and the device sums its slots with a `ModBus` a
 runs none of that code, so a project without slots bounces bit for bit as before. The poly synth and the mono bass
 are the first users (nine sources, three targets); the framework is written down for device authors in
 [EXTENDING.md](EXTENDING.md#modulation-matrix) and the sources and targets in [DEVICES.md](DEVICES.md).
+The matrix is edited in [`mod_matrix_panel.rs`](../crates/ui/src/mod_matrix_panel.rs) (`ModMatrixView`), a modal
+view the device's context menu opens (`rack.mod_matrix`): the app feeds it `ModMatrixInfo` from the registry's tables
+and the device's slots (`AppCore::mod_matrix_info`), the pickers are a `ContextMenu` of the table's names, and every
+edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amount` with one merge id per drag).
 
 ## 4. Threading model
 
@@ -3156,7 +3160,13 @@ and the native menu. Audio adds:
   session scratch bundle is made there from the next import on, with a fallback to the temporary
   folder, and the orphan-recording scan looks there too). The Song Information panel is
   [`ui/src/song_info_panel.rs`](../crates/ui/src/song_info_panel.rs) (`SongInfoView`,
-  `UiAction::SongInfo`): one focused text, Tab between them, the model's limits applied as you type.
+  `UiAction::SongInfo`): one focused text, Tab between them, the model's limits applied as you type. Each
+  text is a [`TextField`](../crates/ui/src/text_field.rs): a caret and a selection (pointer, Shift+arrows,
+  Ctrl+A), the clipboard (`atomik_ui::clipboard`, backed by the system's through
+  [`text_clipboard.rs`](../crates/app/src/text_clipboard.rs) and the `arboard` crate, text only),
+  input-method composition (`UiEvent::Ime`, sent by `platform/app.rs` from winit's `Ime` events while
+  `Shell::wants_text_input` holds) and AltGr characters as text. `Canvas::text_width` measures a run so the caret
+  sits on the shaped glyphs (the display-list recorder falls back to an estimate).
 - [`app_core_archive.rs`](../crates/app/src/app_core_archive.rs) and
   [`archive_worker.rs`](../crates/app/src/archive_worker.rs): File > Export and Import Project
   Archive. The archive is one `.atomikz` file, a stored (uncompressed) ZIP with ZIP64 fields for
@@ -3912,7 +3922,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (414) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (415) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

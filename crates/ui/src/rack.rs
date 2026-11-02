@@ -2881,6 +2881,7 @@ impl RackView {
                 self.clamp_scroll();
                 self.repaint = true;
             }
+            UiEvent::Ime(_) => {}
             UiEvent::ScaleChanged(s) => {
                 self.scale = s.max(0.1);
                 self.repaint = true;

@@ -332,3 +332,54 @@ fn the_mono_bass_has_the_matrix_too() {
     let open = level(&mut m);
     assert!(open > base * 1.5, "{open} vs {base}");
 }
+
+/// Edits a slot while a note sounds (the panel does this with the mouse) and returns the render
+/// of the edit and of the same run without it.
+fn edited_run(edit: impl Fn(&mut DeviceHarness)) -> (Vec<f32>, Vec<f32>) {
+    let run = |edited: bool| {
+        let mut h = synth();
+        h.set_param("env.amp.sustain", 1.0);
+        h.push_note("notes_in", on(0, 48, 1.0));
+        let mut out = render(&mut h, 0.3);
+        if edited {
+            edit(&mut h);
+        }
+        out.extend(render(&mut h, 0.3));
+        out
+    };
+    (run(true), run(false))
+}
+
+#[test]
+fn editing_a_slot_while_a_note_sounds_does_not_click() {
+    // A held note through a level slot: filling the slot, moving its amount and clearing it are
+    // each a gentle change, never a jump between two samples beyond the voice's own steps.
+    type Edit = Box<dyn Fn(&mut DeviceHarness)>;
+    let cases: [(&str, Edit); 3] = [
+        (
+            "fill",
+            Box::new(|h| slot(h, 0, "velocity", "level", None, 0.5)),
+        ),
+        (
+            "cutoff",
+            Box::new(|h| slot(h, 0, "key", "cutoff", None, 1.0)),
+        ),
+        (
+            "pitch",
+            Box::new(|h| slot(h, 0, "lfo1", "pitch", None, 0.2)),
+        ),
+    ];
+    for (name, edit) in cases {
+        let (edited, plain) = edited_run(&*edit);
+        let (a, b) = (max_step(&edited[..9_000]), max_step(&plain[..9_000]));
+        assert_eq!(a, b, "{name}: before the edit the runs are identical");
+        let at = 0.3 * SR;
+        let around = &edited[at as usize - 64..at as usize + 2_048];
+        let base = &plain[at as usize - 64..at as usize + 2_048];
+        let (jump, natural) = (max_step(around), max_step(base));
+        assert!(
+            jump <= natural * 1.6 + 0.01,
+            "{name}: the edit steps {jump}, the voice alone {natural}"
+        );
+    }
+}

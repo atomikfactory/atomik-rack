@@ -108,6 +108,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.plugin_settings {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.mod_matrix {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.macros_panel {
             return v.help_at(pos);
         }

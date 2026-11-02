@@ -274,6 +274,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let status = shell.status_text().to_string();
     log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+    crate::text_clipboard::install();
     let now = clock::now();
     let screenshot_at = cli
         .screenshot_after
@@ -281,6 +282,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         .map(|s| now + Duration::from_secs_f64(s));
     let zoom_applied = shell.app_zoom();
     let mut app = App {
+        ime_on: false,
         shell,
         zoom_applied,
         gpu: GpuContext::new(),
@@ -342,6 +344,8 @@ struct AppWindow {
 }
 
 struct App {
+    /// The input method is on for the windows (a text field has the keys).
+    ime_on: bool,
     shell: Shell<SystemBackend>,
     gpu: GpuContext,
     /// The open windows; the main window is created at start and lives to the end.
@@ -867,11 +871,25 @@ impl App {
         self.sync_windows(event_loop);
         self.update_titles();
         self.update_cursors(event_loop);
+        self.update_ime();
         #[cfg(target_os = "macos")]
         if let Some(native) = &mut self.native {
             native.update(&self.shell.menu_model());
         }
         self.request_redraws();
+    }
+
+    /// Switches the input method on while a text field has the keys and off otherwise, so the
+    /// IME window only appears where text is typed.
+    fn update_ime(&mut self) {
+        let want = self.shell.wants_text_input();
+        if want == self.ime_on {
+            return;
+        }
+        self.ime_on = want;
+        for w in self.windows.values() {
+            w.window.set_ime_allowed(want);
+        }
     }
 
     /// Brings the window of `kind` forward and gives it the keyboard.
@@ -1400,6 +1418,10 @@ impl ApplicationHandler for App {
                     modifiers: self.modifiers,
                     pressed: event.state.is_pressed(),
                 };
+                self.ui(event_loop, kind, event);
+            }
+            WindowEvent::Ime(ime) => {
+                let event = translate::ime(&ime);
                 self.ui(event_loop, kind, event);
             }
             WindowEvent::RedrawRequested => self.redraw(kind),

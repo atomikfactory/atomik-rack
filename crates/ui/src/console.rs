@@ -2129,6 +2129,7 @@ impl ConsoleView {
                 modifiers,
                 pressed: true,
             } => self.key(key, *modifiers, &mut out),
+            UiEvent::Ime(_) => {}
             UiEvent::Key { .. } => {}
         }
         out

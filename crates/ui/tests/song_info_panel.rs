@@ -6,7 +6,8 @@ mod support;
 use atomik_model::{MAX_INFO_TITLE_CHARS, SongInfo};
 use atomik_ui::kurbo::{Point, Rect};
 use atomik_ui::{
-    DisplayList, InfoField, Key, Modifiers, SongInfoAction, SongInfoView, Theme, UiAction, UiEvent,
+    DisplayList, ImeEvent, InfoField, Key, Modifiers, PointerButton, SongInfoAction, SongInfoView,
+    Theme, UiAction, UiEvent,
 };
 use support::*;
 
@@ -257,4 +258,108 @@ fn the_panel_stays_inside_a_small_window_and_has_tooltips() {
     assert!(v.help_at(v.apply_rect().center()).is_some());
     assert!(v.help_at(v.close_rect().center()).is_some());
     assert!(v.help_at(Point::new(2.0, 2.0)).is_none());
+}
+
+// ---- the text field: caret, selection, clipboard, input method --------------------------------
+
+fn ime(v: &mut SongInfoView, e: ImeEvent) {
+    v.handle(&UiEvent::Ime(e));
+}
+
+#[test]
+fn an_input_method_composition_commits_into_the_focused_text() {
+    let mut v = view(SongInfo::default());
+    type_text(&mut v, "Song ");
+    ime(&mut v, ImeEvent::Enabled);
+    ime(
+        &mut v,
+        ImeEvent::Preedit {
+            text: "\u{306b}\u{307b}".into(),
+            cursor: Some((6, 6)),
+        },
+    );
+    assert_eq!(v.info().title, "Song ", "a composition is not text yet");
+    assert!(
+        texts(&v).iter().any(|t| t.contains("\u{306b}\u{307b}")),
+        "but it is drawn in the field"
+    );
+    // The keys of a composition belong to the input method.
+    press(&mut v, Key::Char('q'));
+    assert_eq!(v.info().title, "Song ");
+    ime(&mut v, ImeEvent::Commit("\u{65e5}\u{672c}\u{8a9e}".into()));
+    assert_eq!(v.info().title, "Song \u{65e5}\u{672c}\u{8a9e}");
+    // A Cyrillic commit goes into the next text after Tab.
+    press(&mut v, Key::Tab);
+    ime(
+        &mut v,
+        ImeEvent::Commit("\u{410}\u{432}\u{442}\u{43e}\u{440}".into()),
+    );
+    assert_eq!(v.info().author, "\u{410}\u{432}\u{442}\u{43e}\u{440}");
+}
+
+#[test]
+fn the_caret_selection_and_clipboard_edit_a_text_in_place() {
+    let mut v = view(SongInfo {
+        title: "Example Song".into(),
+        ..SongInfo::default()
+    });
+    // Home, then select the word with Ctrl+Shift+Right and cut it.
+    press(&mut v, Key::Home);
+    press_with(
+        &mut v,
+        Key::Right,
+        Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Modifiers::NONE
+        },
+    );
+    press_with(&mut v, Key::Char('x'), Modifiers::CTRL);
+    assert_eq!(v.info().title, "Song");
+    // Paste it at the end, then replace the whole text by typing over a Select All.
+    press(&mut v, Key::End);
+    press_with(&mut v, Key::Char('v'), Modifiers::CTRL);
+    assert_eq!(v.info().title, "SongExample ");
+    press_with(&mut v, Key::Char('a'), Modifiers::CTRL);
+    press(&mut v, Key::Char('N'));
+    assert_eq!(v.info().title, "N");
+}
+
+#[test]
+fn a_character_typed_with_altgr_is_text() {
+    let mut v = view(SongInfo::default());
+    let altgr = Modifiers {
+        ctrl: true,
+        alt: true,
+        ..Modifiers::NONE
+    };
+    press_with(&mut v, Key::Char('@'), altgr);
+    assert_eq!(v.info().title, "@");
+}
+
+#[test]
+fn the_pointer_places_the_caret_and_a_double_click_selects_a_word() {
+    let mut v = view(SongInfo {
+        title: "alpha beta".into(),
+        ..SongInfo::default()
+    });
+    // Paint once so the field knows its character widths.
+    let _ = texts(&v);
+    let r = v.field_rect(InfoField::Title);
+    click(&mut v, Point::new(r.x0 + 8.0 + 1.0, r.center().y));
+    type_text(&mut v, "X");
+    assert_eq!(
+        v.info().title,
+        "Xalpha beta",
+        "a click at the start puts the caret there"
+    );
+    let end = Point::new(r.x1 - 20.0, r.center().y);
+    v.handle(&down_with(end, PointerButton::Primary, 2));
+    v.handle(&up(end));
+    press(&mut v, Key::Backspace);
+    assert_eq!(
+        v.info().title,
+        "Xalpha ",
+        "the last word was selected and removed"
+    );
 }

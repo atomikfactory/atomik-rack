@@ -9,6 +9,30 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
+  slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
+  control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
+  worker count. The document stores the slots per device with one undoable command, the amount of a slot is an
+  ordinary automatable param, and a project without slots saves, loads and bounces as before (project format
+  41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
+  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. A device's
+  right-click menu opens its matrix (see below).
+- **Modulation matrix panel.** Right-click a device that has a matrix (the poly synth, the mono bass) and choose
+  Modulation Matrix: eight rows of source, target and via pickers (a menu of the device's own entries, the current
+  one checked) and an amount bar, with the amount from -100 to +100 %. A slot needs a source and a target; until
+  both are chosen the row stays a draft, and clearing either side of a slot in use clears it. Picks and the
+  amount bar are ordinary undoable edits (a drag is one undo step) and the engine hears them like any other
+  parameter change; editing a slot while a note sounds does not click. Esc closes the menu, then the panel.
+- **Text fields with a caret, a selection, the clipboard and input methods.** One text field now serves the Song
+  Information panel: click to place the caret, drag or Shift+arrows to select, double-click a word, Ctrl+A,
+  Ctrl+arrows by word, copy, cut and paste with the system clipboard (the `arboard` library, MIT or Apache-2.0,
+  text only), and input-method composition (Japanese, Chinese, Korean, dead keys) with the pre-edit text
+  underlined in the field. A character typed with AltGr is text and never runs a shortcut in a text field. The
+  in-place name edits of the rack, mixer and arrangement keep their end-of-text editing for now.
+- **The piano roll keeps the same notes selected through edits that reorder them.** A quantize that moves a note
+  past another, an undo, or a note added before the selection used to leave the selection on whatever sat at the
+  old positions; it now follows the notes (by key and order within the key, else by start and key) and goes back
+  to the original notes when an edit it could not follow, such as a transpose, is undone.
 - **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
   every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
   canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
@@ -61,14 +85,6 @@ may break APIs and the patch and project formats.
   lane of the selected note clip, and Edit > Clear Clip Parameter Lanes removes them. Recording into a note
   clip and drawing a lane inside the piano roll are not there yet. Both additions are written to the project
   only when used (format 41), and the MCP `project_inspect` lists the lanes.
-- **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
-  slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
-  control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and
-  worker count. The document stores the slots per device with one undoable command, the amount of a slot is an
-  ordinary automatable param, and a project without slots saves, loads and bounces as before (project format
-  41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
-  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. There
-  is no panel for it yet: the slots are set through the command and the project file.
 - **Containers fold and unfold in the rack.** A container no longer has to be opened in a view of
   its own to be worked on: the arrow on the title strip of its panel, or a double-click on the
   panel, draws its devices straight under it in the same column, framed in the container's colour

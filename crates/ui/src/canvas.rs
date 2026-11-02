@@ -164,6 +164,13 @@ pub trait Canvas {
     fn pop_transform(&mut self);
     /// Draws a line of text.
     fn text(&mut self, run: &TextRun);
+    /// The advance width of `run` in the units of the current transform's input (logical
+    /// pixels). A backend with a text engine measures the shaped run; the default is the
+    /// estimate that [`crate::paint::estimate_width`] gives, so a recorded list and a test canvas
+    /// stay deterministic.
+    fn text_width(&mut self, run: &TextRun) -> f64 {
+        run.text.chars().count() as f64 * f64::from(run.size) * 0.58
+    }
     /// Draws a recorded list under the current transform. Backends may cache it by
     /// `(list.id(), list.revision())`; the default replays every op.
     fn draw_list(&mut self, list: &DisplayList) {

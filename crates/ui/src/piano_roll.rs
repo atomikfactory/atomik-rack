@@ -300,6 +300,14 @@ enum Drag {
     },
 }
 
+/// The names of selected notes an edit left without a note, and the indices the selection
+/// showed then (a different selection means the user chose again).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LatentSelection {
+    names: Vec<(i64, u8)>,
+    shown: std::collections::BTreeSet<usize>,
+}
+
 /// The piano roll. See the module documentation.
 #[derive(Debug)]
 pub struct PianoRollView {
@@ -341,6 +349,12 @@ pub struct PianoRollView {
     bars: Bars,
     fit_pending: bool,
     selection: Selection<usize>,
+    /// The notes that were selected before an edit moved them, by what names them (start and
+    /// key), kept until they are found again (see [`Self::resolve_selection`]).
+    latent: Option<LatentSelection>,
+    /// The selection as of the last sync: a selection that differs was changed since by a
+    /// gesture, which already speaks of the notes of the clip it is about to be given.
+    seen: std::collections::BTreeSet<usize>,
     drag: Drag,
     hover: Hit,
     /// The controller area: its state and the point selected in the lane being edited.
@@ -427,6 +441,8 @@ impl PianoRollView {
             bars: Bars::default(),
             fit_pending: false,
             selection: Selection::new(),
+            latent: None,
+            seen: std::collections::BTreeSet::new(),
             drag: Drag::None,
             hover: Hit::None,
             ctl: LaneEditor::default(),
@@ -449,6 +465,7 @@ impl PianoRollView {
     pub fn open(&mut self, id: ClipId) {
         if self.clip_id != Some(id) {
             self.selection.clear();
+            self.latent = None;
         }
         self.clip_id = Some(id);
         self.clip = None;
@@ -467,6 +484,7 @@ impl PianoRollView {
         self.device = None;
         self.drag = Drag::None;
         self.selection.clear();
+        self.latent = None;
         self.repaint = true;
     }
 
@@ -999,9 +1017,11 @@ impl PianoRollView {
         let Some(id) = self.clip_id else {
             return;
         };
+        let touched = *self.selection.items() != self.seen;
         if let Some(rev) = revision
             && self.clip_rev == Some((rev, Some(id)))
         {
+            self.seen = self.selection.items().clone();
             self.sync_rest(doc);
             return;
         }
@@ -1024,6 +1044,7 @@ impl PianoRollView {
         };
         if !same_clip || meter != self.meter {
             self.rows_dirty = true;
+            let before = self.notes_snapshot();
             let (clip, device) = match found {
                 Some((t, c)) => (Some(c.clone()), Some(t.device.clone())),
                 None => (None, None),
@@ -1032,14 +1053,131 @@ impl PianoRollView {
             self.device = device;
             self.meter = meter;
             self.bars = Bars::single(meter);
-            let n = self.notes().len();
-            self.selection.retain(|i| *i < n);
+            self.resolve_selection(before, touched);
             if let Some(s) = self.scale() {
                 self.root_pref = s.root;
             }
             self.repaint = true;
         }
+        self.seen = self.selection.items().clone();
         self.sync_rest(doc);
+    }
+
+    /// The notes as they are now, for [`Self::resolve_selection`] (a shared list: no copy).
+    fn notes_snapshot(&self) -> atomik_model::NoteList {
+        match self.clip.as_ref().map(|c| &c.content) {
+            Some(ClipContent::Notes(n)) => n.clone(),
+            _ => atomik_model::NoteList::new(),
+        }
+    }
+
+    /// The indices of the notes named by `names` (start and key) now, when every name finds a
+    /// note (and one only).
+    fn find_names(&self, names: &[(i64, u8)]) -> Option<Vec<usize>> {
+        let found: Vec<usize> = self
+            .notes()
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| names.contains(&(n.tick, n.key)))
+            .map(|(i, _)| i)
+            .collect();
+        (found.len() == names.len()).then_some(found)
+    }
+
+    /// Where the notes of `selected` went when the list changed from `old` to the notes now,
+    /// when no note changed its key and none came or went: the j-th note of a key is the same
+    /// note whatever its start became, because an edit that moves notes (a quantize, a drag, a
+    /// nudge) never reorders the notes of one key.
+    fn follow_by_rank(
+        &self,
+        old: &[Note],
+        selected: &std::collections::BTreeSet<usize>,
+    ) -> Option<Vec<usize>> {
+        let new = self.notes();
+        if old.len() != new.len() {
+            return None;
+        }
+        let mut count = [0u32; 128];
+        for n in old {
+            count[usize::from(n.key & 0x7f)] += 1;
+        }
+        for n in new {
+            let c = &mut count[usize::from(n.key & 0x7f)];
+            *c = c.checked_sub(1)?;
+        }
+        let rank =
+            |list: &[Note], i: usize| list[..i].iter().filter(|n| n.key == list[i].key).count();
+        let mut out = Vec::with_capacity(selected.len());
+        for &i in selected {
+            let key = old.get(i)?.key;
+            let r = rank(old, i);
+            let at = new
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.key == key)
+                .nth(r)?
+                .0;
+            out.push(at);
+        }
+        Some(out)
+    }
+
+    /// Re-aims the selection after the clip changed from `before`. A selection is a set of notes,
+    /// not of positions: an edit that reorders the list (a quantize that moves a note past
+    /// another, an undo that puts notes back, a note added before one) must not move it onto other
+    /// notes. The notes are followed by key and rank ([`Self::follow_by_rank`]); when notes came
+    /// or went, by start and key. An edit the selected notes cannot be followed through (a
+    /// transpose) leaves the indices as they were and remembers the old names; when an undo makes
+    /// them name notes again, and the selection was not changed meanwhile, the selection goes
+    /// back to those notes.
+    fn resolve_selection(&mut self, before: atomik_model::NoteList, touched: bool) {
+        let n = self.notes().len();
+        if touched {
+            // A gesture chose the notes of the clip it is about to be given: indices are right.
+            self.latent = None;
+            self.selection.retain(|i| *i < n);
+            return;
+        }
+        if let Some(latent) = self.latent.take() {
+            // A selection changed by hand since is a new choice: the old names are forgotten.
+            if latent.shown == *self.selection.items() {
+                if let Some(found) = self.find_names(&latent.names) {
+                    self.selection.set(found);
+                    return;
+                }
+                self.latent = Some(latent);
+            }
+        }
+        let selected = self.selection.items().clone();
+        if selected.is_empty() {
+            return;
+        }
+        let names: Vec<(i64, u8)> = selected
+            .iter()
+            .filter_map(|i| before.get(*i))
+            .map(|n| (n.tick, n.key))
+            .collect();
+        let followed = self
+            .follow_by_rank(&before, &selected)
+            .or_else(|| self.find_names(&names));
+        match followed {
+            Some(found) => {
+                self.selection.set(found);
+                // The old names still wait for an undo; the selection they would replace moved.
+                if let Some(l) = &mut self.latent {
+                    l.shown = self.selection.items().clone();
+                }
+            }
+            None => {
+                self.selection.retain(|i| *i < n);
+                if self.latent.is_none() {
+                    self.latent = Some(LatentSelection {
+                        names,
+                        shown: self.selection.items().clone(),
+                    });
+                }
+            }
+        }
     }
 
     /// The part of the sync that follows the view's own state: rows, accent, title, fit.

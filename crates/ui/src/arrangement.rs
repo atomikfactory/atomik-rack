@@ -2625,6 +2625,7 @@ impl ArrangementView {
             return out;
         }
         match event {
+            UiEvent::Ime(_) => {}
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::Resize(_) => {}
             UiEvent::ModifiersChanged { modifiers } => {

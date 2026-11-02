@@ -532,6 +532,9 @@ pub enum UiAction {
     /// The Macros panel ([`crate::MacrosView`]) asks for something: move a macro, edit or remove an
     /// assignment, name a macro, make a bank, learn a controller for a macro, or close.
     Macros(crate::macros_panel::MacrosAction),
+    /// The modulation matrix panel ([`crate::ModMatrixView`]) asks to close; its edits are
+    /// ordinary [`UiAction::Command`]s.
+    ModMatrix(crate::mod_matrix_panel::ModMatrixAction),
     /// The parameter search ([`crate::ParamSearchView`]) asks for something: a new query, an action
     /// on a result, or to close.
     ParamSearch(crate::param_search_panel::ParamSearchAction),
