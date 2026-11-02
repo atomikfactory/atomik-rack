@@ -3326,10 +3326,12 @@ rejects the type with a message.
 | `in_l`, `in_r` | Audio | In |
 | `notes_in` | Notes | In |
 | `out_l`, `out_r` | Audio | Out |
+| `cv1` to `cv4` | CV | In |
 
 Inside, the pseudo-device `boundary` mirrors them: its outputs `in_l`, `in_r` carry what arrives at
-the container, its inputs `out_l`, `out_r` leave through it (it has no notes socket: notes enter
-through the note splits).
+the container, its CV outputs `cv1` to `cv4` carry what is cabled to the container's CV inputs of the
+same name (one cable per input, any number of inner inputs), its inputs `out_l`, `out_r` leave
+through it (it has no notes socket: notes enter through the note splits).
 
 ### Params
 
@@ -3337,9 +3339,11 @@ through the note splits).
 |---|---|---|---|---|---|---|
 | `macro1` to `macro8` | 0 to 7 | 0 to 1 | 0 | none | Linear | no |
 | `bypass` | 8 | 0 to 1 | 0 | toggle | Linear | yes |
+| `macro9` to `macro16` | 9 to 16 | 0 to 1 | 0 | none | Linear | no |
 
 The macro values are applied to inner params outside the engine (one `set_param` per mapped target;
-linear `min + (max - min) * m`, then clamp and rounding of discrete and choice params).
+linear `min + (max - min) * m`, then clamp and rounding of discrete and choice params). A macro may
+be a switch (set in the container editor): its targets get `min` below 0.5 and `max` from 0.5 up.
 
 `bypass` is read by the model's expansion, not by the device: at 0.5 or more the inside is left out
 of the flat graph (no inner device, cable or macro) and `in_l`, `in_r` go straight to whatever
@@ -3415,6 +3419,11 @@ Six per slot *k* = 1 to 8, ids `6(k-1)` to `6(k-1)+5`, all discrete, in this ord
 | `sK.vel_lo` | 1 to 127 | 1 | none |
 | `sK.vel_hi` | 1 to 127 | 127 | none |
 | `sK.transpose` | -48 to 48 | 0 | semitones |
+
+Then three per slot, ids 48 to 71 (slot *k* has them at `48 + 3(k-1)`), all discrete toggles that
+default to on: `sK.pass_bend`, `sK.pass_cc`, `sK.pass_pressure`. They say whether the slot passes
+pitch bend, controller changes and pressure (channel and per-key) to its output; a slot that is on
+and has a flag off still plays and releases its notes.
 
 ### Behaviour (as built)
 

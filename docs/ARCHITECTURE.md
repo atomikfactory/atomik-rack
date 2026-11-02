@@ -3505,28 +3505,28 @@ trigger CV. Details, socket and param tables are in [DEVICES.md](DEVICES.md).
 
 ## 6e. The container device
 
-`atomik.container` is a device whose inside is another rack: its own devices and cables, eight macro
-knobs that drive inner params, and note splits that route incoming notes by key and velocity to
-inner instruments. It has stereo audio in and out and a notes in, and it is saved inside the
-project. The decisive design choice is **flattening**: the engine has no container concept. A pure
+`atomik.container` is a device whose inside is another rack: its own devices and cables, sixteen
+macros (knobs or switches) that drive inner params, and note splits that route incoming notes by key
+and velocity to inner instruments. It has stereo audio in and out, four CV inputs and a notes in, and it is saved
+inside the project. The decisive design choice is **flattening**: the engine has no container concept. A pure
 model function turns the tree into the flat device and cable lists the engine already understands,
 so PDC, multicore levels, summing order, seeds and hot edits work on the exact flat graph unchanged.
 
 - **Document** ([model/src/container.rs](../crates/model/src/container.rs)).
   `RackDevice::inner: Option<Box<ContainerDoc>>`, only on devices of `DeviceKind::Container`.
-  `ContainerDoc { devices, cables, macros: [MacroDoc; 8], splits: Vec<NoteSplit>, open: bool }`
+  `ContainerDoc { devices, cables, macros: [MacroDoc; 16], splits: Vec<NoteSplit>, open: bool }`
   (`open`: unfolded in the rack, view state only, stored as an optional `"open": true`); inner cables
   and splits use local keys, and the reserved key `boundary` names the inside edge (outputs `in_l`,
-  `in_r`; inputs `out_l`, `out_r`). Limits: nesting depth 3, 32 devices per container, 256 inner
-  devices per project, 8 splits, 32 targets per macro and 128 per container; no console devices,
-  audio tracks, the interface or the split device inside.
+  `in_r` and the CV outputs `cv1` to `cv4`; inputs `out_l`, `out_r`). Limits: nesting depth 3, 32 devices per
+  container, 256 inner devices per project, 8 splits, 32 targets per macro and 128 per container; no
+  console devices, audio tracks, the interface or the split device inside.
 - **Path keys.** An inner device is addressed everywhere by the keys from the top joined with `/`
   (`layer/synth`); `/` and `~` are not valid in a user key, so a path never collides.
   `RackDoc::resolve` and `resolve_mut` walk the tree; `RackDoc::device` stays top-level only so a
   site that forgot the expansion fails loudly. Song tracks, console sources, returns and the
   interface cannot name an inner device. Commands
   ([container_cmd.rs](../crates/model/src/container_cmd.rs)):
-  `ContainerCommand::{AddInner, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, DuplicateContainer}`
+  `ContainerCommand::{AddInner, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetMacroKind, DuplicateContainer}`
   and the four moves below, plus path keys in the existing commands; each is one undo step, drags
   merge (ids from 7 x 2^40), and the new sync ops are `MacrosChanged` and `SplitsChanged`.
 - **Expansion** ([model/src/expand.rs](../crates/model/src/expand.rs)).
@@ -3578,6 +3578,29 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   goes to every enabled slot whose ranges contain it; each slot keeps a per-key route (and an owner
   table per output key) so the matching Off follows the same route even after a param change, a
   retrigger closes the old note first and `AllOff` clears every table. Allocation-free, latency 0.
+- **Boundary CV.** The container has the CV inputs `cv1` to `cv4`; inside, the boundary has the CV
+  outputs of the same name. Nothing new is expanded: a cable from a CV source to `container:cv1` and
+  an inner cable `boundary:cv1 -> synth:cutoff_cv_in` are spliced by the same backward trace as the
+  audio sockets into the flat cable `source -> synth:cutoff_cv_in`, so the engine sees the patch
+  one would have built without a container, bit for bit
+  ([render/tests/container_modulation.rs](../crates/render/tests/container_modulation.rs) bounces
+  both, and a property test in [model/tests/container_modulation.rs](../crates/model/tests/container_modulation.rs)
+  compares the flat cables of random patches). One boundary CV fans out to any number of inner
+  inputs; an uncabled one is a silent edge; a bypassed container passes none. CV is not
+  summed or scaled here: use a device's modulation slots
+  ([decision E](DECISIONS.md#e-modulation-framework)) for that.
+- **Macro kinds and sixteen macros.** `MacroDoc::kind` is `Knob` or `Switch`; a switch gives its
+  targets `min` for a value below one half and `max` from one half up (`MacroKind::effective`, one
+  comparison, applied before `macro_value`, also to the points of a macro automation lane, so a
+  switch lane should use stepped points). The container's `macro9` to `macro16` params follow `bypass`
+  in the descriptor (ids 9 to 16) so older ids keep their place; one param is still driven by at most
+  one of the sixteen. A macro bank keeps eight. The container panel shows the first eight knobs; the
+  container editor lists the rest on its MACROS 9-16 tab and has the KNOB / SWITCH button.
+- **Split pass flags.** `NoteSplit::pass` (`SplitPass { bend, cc, pressure }`, all on by default,
+  which is what a split always did) says which channel messages the split sends to its device;
+  notes always play. The flags travel to the split device as the params `sK.pass_bend`,
+  `sK.pass_cc` and `sK.pass_pressure` (ids 48 to 71, default on; the expansion sets one only when it
+  is off), and the editor's SPLITS list has the B, C and P chips.
 - **Macros** (`macro_value` in expand.rs). `v = min + (max - min) x m`, clamped to the descriptor
   range, discrete and choice params rounded half up by comparison; only IEEE `+ - *`. A param is
   driven by one macro in the whole project; `SetParam` on a driven param is `MacroDriven`; an outer
@@ -3587,7 +3610,12 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
 - **Format v8** ([model/src/container_io.rs](../crates/model/src/container_io.rs),
   [project/mod.rs](../crates/model/src/project/mod.rs)). `inner` is written after `steps` only when present,
   in the canonical form of the top level; v1 to v7 load; every violation is a load error naming its
-  JSON path; a v1 to v7 device keyed `boundary` is renamed `boundary-N` with a warning.
+  JSON path; a v1 to v7 device keyed `boundary` is renamed `boundary-N` with a warning. The
+  container's macros, kinds and pass flags added later are optional fields of `inner` (the project
+  format stays at 41): `macros` has 8 entries, or 16 when one of the last eight is used, a
+  macro's `"kind": "switch"` is written only for a switch, and a split's `"pass_bend"`,
+  `"pass_cc"`, `"pass_pressure"` only when `false`, so a project that uses none of it saves as
+  before. A CV cable to a container is an ordinary cable to its socket `cv1` to `cv4`.
 - **App and render** ([app/src/app_core_containers.rs](../crates/app/src/app_core_containers.rs),
   [render/src/flat.rs](../crates/render/src/flat.rs),
   [render/src/project.rs](../crates/render/src/project.rs)). Everything that feeds the engine reads
