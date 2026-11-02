@@ -41,6 +41,11 @@ jobs:
   build:
     name: build
     needs: version
+    # The checksums job of build.yml attests the provenance of the files (Sigstore).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/build.yml
     with:
       version: ${{ needs.version.outputs.version }}

@@ -145,6 +145,29 @@ jobs:
         if: env.RUN_CODE == 'true' && matrix.profile == 'release'
         run: cargo test --workspace --release --no-fail-fast
 
+  # The plugin sandbox with a real child process on the two platforms where its wake-up calls and
+  # the redirection of the child's stdout are not Windows code: the doorbell, the shared block,
+  # the life cycle, a crash, a hang and a kill, each against the real `atomik-plugin-host`. The
+  # test matrix runs these tests too; this job names them, so a failure here says what it is.
+  sandbox:
+    name: sandbox end to end (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: sandbox
+      - run: cargo test -p atomik-plugin-ipc -p atomik-plugin-sandbox -p atomik-plugin-hostd --no-fail-fast
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest

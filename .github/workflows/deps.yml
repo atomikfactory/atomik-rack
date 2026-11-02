@@ -1,0 +1,87 @@
+name: Dependencies
+
+# Scheduled upkeep, never on a pull request and never gating one (see docs/DEPENDENCIES.md):
+#
+# - drift: every Monday, `cargo update --dry-run` lists what a lock file refresh would change
+#   and which pins hold crates back. The list is in the job summary; nothing is committed.
+# - review: on the first of January, April, July and October, opens one issue (when none is
+#   open) that asks for the quarterly bump of the 0.x GUI stack (vello, parley, winit, muda,
+#   rfd, cpal, midir) and the review of the advisory ignores in deny.toml.
+on:
+  schedule:
+    - cron: "43 5 * * 1"
+    - cron: "11 6 1 1,4,7,10 *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: cargo update --dry-run
+    if: github.repository == 'atomikfactory/atomik-rack' && github.event.schedule != '11 6 1 1,4,7,10 *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: deps
+      - name: What a lock file refresh would change
+        shell: bash
+        run: |
+          set -eu
+          cargo update --dry-run 2> update.txt
+          {
+            echo "## cargo update --dry-run"
+            echo
+            echo "What the lock file would change today (compatible updates only). Pins that hold a crate back are listed in docs/DEPENDENCIES.md."
+            echo
+            echo '```'
+            cat update.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat update.txt
+      - name: Advisory ignores are within their review date
+        run: sh scripts/check-advisory-ignores.sh
+
+  review:
+    name: quarterly review issue
+    if: github.repository == 'atomikfactory/atomik-rack' && (github.event.schedule == '11 6 1 1,4,7,10 *' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Open the review issue unless one is open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          title="Quarterly dependency review"
+          open="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq 'length')"
+          if [ "$open" != "0" ]; then
+            echo "an issue for the review is already open"
+            exit 0
+          fi
+          body="$(cat <<'BODY'
+          The quarterly pass over the dependencies (docs/DEPENDENCIES.md):
+
+          - [ ] Bump the 0.x GUI and audio stack together where a release exists: vello, vello_cpu, parley, winit, muda, rfd, cpal, midir. Build and run the UI tests; look at `cargo deny check bans` for duplicates that go away, and drop the matching `skip` and `skip-tree` entries in deny.toml.
+          - [ ] Look at the advisory ignores in deny.toml again; remove the ones that no longer apply and renew the review date of the others on purpose.
+          - [ ] Check the exact pins (clack-host, clack-extensions, vst3) against their latest releases.
+          - [ ] `cargo update`, run the whole test suite, commit Cargo.lock.
+          BODY
+          )"
+          gh issue create --repo "$REPO" --title "$title" --body "$body"
