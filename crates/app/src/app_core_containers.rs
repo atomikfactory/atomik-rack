@@ -331,7 +331,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         let command = Command::Container(ContainerCommand::MoveOutOfContainer {
             key: key.clone(),
-            index: self.view.move_out_index(),
+            index: self.view.move_out_index_for(key, self.doc()),
         });
         self.apply_command(command).is_ok()
     }

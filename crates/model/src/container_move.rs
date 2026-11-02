@@ -315,10 +315,12 @@ fn enter(p: &mut Planner<'_>, e: &Enter<'_>) -> Result<(), ModelError> {
         Target::New { device, index } => {
             // The container arrives with its inside, announced to the engine as one device.
             let mut new = (**device).clone();
+            // A new container arrives unfolded, so the rack still shows what was combined.
             let mut inside = ContainerDoc {
                 devices,
                 cables: wiring.inner,
                 splits: wiring.splits,
+                open: true,
                 ..ContainerDoc::default()
             };
             inside.cables.sort();
@@ -1426,7 +1428,9 @@ fn exit(doc: &RackDoc, registry: &Registry, ex: &Exit<'_>) -> Result<Planned, Mo
             .cloned()
             .ok_or_else(|| ModelError::UnknownDevice(local.0.clone()))?;
         device.key = top(local);
-        device.column = if ex.dissolve { c_device.column } else { 0 };
+        // A device that leaves lands in the column of its container (the column order of the
+        // rack holds, whichever slot the drag chose).
+        device.column = c_device.column;
         p.push(Edit::Insert {
             index: rules::top_index(p.doc(), base + i),
             device,

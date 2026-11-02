@@ -1050,3 +1050,40 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_device_leaves_a_container_in_a_later_column_in_that_column() {
+    let r = registry();
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &r,
+        [
+            Command::AddRackColumn,
+            add(0, DELAY, Some("a")),
+            Command::AddDeviceAt {
+                slot: atomik_model::RackSlot {
+                    column: 1,
+                    index: usize::MAX,
+                },
+                type_id: CONTAINER.into(),
+                key: Some(key("box")),
+            },
+            add_inner("box", 0, DELAY, "echo"),
+        ],
+    );
+    d.apply(move_out("box/echo", 2), &r).unwrap();
+    let layout: Vec<(String, u16)> = d
+        .doc()
+        .devices
+        .iter()
+        .map(|x| (x.key.0.clone(), x.column))
+        .collect();
+    assert_eq!(
+        layout,
+        [("a".into(), 0), ("box".into(), 1), ("echo".into(), 1)],
+        "the device joins its container's column"
+    );
+    d.doc().validate().unwrap();
+    d.doc().check_columns().unwrap();
+}
