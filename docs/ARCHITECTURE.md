@@ -3371,15 +3371,19 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   bit when no moved device draws from the project seed, which a device gets from its place in the
   flat list). A cable the container has no socket for (CV, a third audio input or output, a notes
   output, a second notes source) refuses the command and names each such cable, as do a frozen
-  track, a macro bank that drives a moved device, a group over the device limits and a type a
-  container cannot hold. A container has one song track, one console channel and one FX return: at
-  most one moved device may have them (its *owner*), and the track, the channels and the return then
+  track, a macro bank that drives a moved device and a group over the device limits. A device no
+  container can hold (a mixer strip, an audio track) is left in the rack with a note and the rest
+  is combined; only a selection made of such devices is refused, naming the first. A container has
+  one song track, one console channel and one FX return: at most one moved device may have them
+  (its *owner*; two refuse the combine and are named), and the track, the channels and the return then
   name the container (the track keeps its place, folder and colour; its automation lanes are dropped,
   because they name params of the owner, and the track's note entry becomes the splits).
   `Uncombine` hands them to the inner device that stands out (the only instrument, else the end of
   the track's note chain, else the only device) and drops the container's macros and macro lanes.
   What a command dropped comes back as text from `RackDoc::container_move_notes`, which the app
-  shows after the step. The moves work on top-level devices and top-level containers.
+  shows after the step; the Edit menu enables Combine from the same scratch-document plan the context
+  menu uses (`combine_menu`, computed once per revision and selection). The moves work on top-level
+  devices and top-level containers.
 - **Bypass.** The container's `bypass` param (a toggle) is read by `RackDoc::expand`, so the engine
   needs no change: a bypassed container has no inner devices, cables or macros in the flat graph,
   and a signal into `in_l`, `in_r` goes straight to whatever `out_l`, `out_r` feed (its `~split`

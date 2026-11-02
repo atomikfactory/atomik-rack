@@ -1684,6 +1684,11 @@ combine bit for bit, on instrument and effect selections and across host blocks,
 bypassed container without its inside. `crates/app/src/app_core_combine_tests.rs` proves the live
 render equals the bounce through combine, undo, redo, uncombine and the bypass switch.
 
+`crates/model/tests/combine_multi.rs` covers selections of several devices: two instruments that each
+have a track and a channel are refused naming both, each instrument combines with its own effects,
+a selection with mixer strips or an audio track leaves them in the rack, and a drum machine with its
+generator combines and uncombines to the exact document.
+
 The rack's side is `crates/ui/tests/rack_combine.rs` (the reasons the menus show, a drop on a
 container's panel and on the breadcrumb, the BYPASS switch of the panel, goldens
 `container_bypassed_front_1x.json` and `container_drop_target_1x.json`), the menu tests in
