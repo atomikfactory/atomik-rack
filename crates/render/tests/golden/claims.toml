@@ -1,0 +1,37 @@
+# Which parts of the sound claim bit-identical output on every operating system, and how each
+# claim is enforced. Read by crates/dsp/tests/stage_blocks.rs (the pinned list must match this
+# file) and described in docs/TESTING.md ("Bit-identity claims").
+#
+# "bit-identical" means the same IEEE bits on Windows x86-64, Linux x86-64 and macOS arm64. The
+# rest of the sound uses the platform's math library (sin, tan, tanh, powf, ...), whose last bits
+# differ between operating systems; it is checked by an exact hash on Windows x86-64 and by a
+# fingerprint (RMS per window, 0.5 dB) on every platform.
+
+[stage_blocks]
+# One FNV-1a hash per block over a fixed input, checked on every platform in CI.
+enforced_by = "crates/dsp/tests/stage_blocks.rs renders_are_pinned_across_platforms"
+bit_identical = [
+  "shaper_soft", "shaper_asym", "shaper_hard", "shaper_fold", "shaper_dynamic",
+  "leveller", "phaser", "chorus", "echo", "comb", "room_small", "room_large",
+  "ringmod", "bitcrush", "noise",
+  "spectral_identity", "spectral_gate", "spectral_slew", "spectral_pass", "spectral_stop",
+  "spectral_quant", "spectral_lossy", "modal", "wobble", "smoother2",
+]
+# The crossover designs its coefficients with the biquad code, which calls the math library.
+not_bit_identical = ["crossover"]
+
+[helpers]
+# Scalar helpers written with IEEE + - * only (no math library call).
+bit_identical = ["exp2_det", "exp2_det_f64", "log2_det", "sin_cycles", "hadamard8", "flush_denormal"]
+
+[projects]
+# Hash goldens valid on all three platforms: no project qualifies yet, because every example
+# project reaches a device that calls the math library. A project joins this list when its
+# bounce hash is the same on all three platforms.
+bit_identical = []
+
+[projects.windows_x86_64]
+# Exact-hash goldens (checked on Windows x86-64 only) next to their fingerprints (all platforms).
+hash = ["slice-demo", "demo-project"]
+fingerprint_only = ["guitar-amp"]
+corpus = "corpus.f32.sha256.json"

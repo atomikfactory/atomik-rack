@@ -252,3 +252,25 @@ const PINS: &[(&str, u64)] = &[
     ("wobble", 0xf0452f8697a3dfaa),
     ("smoother2", 0x85d808cff66d9ccb),
 ];
+
+/// `crates/render/tests/golden/claims.toml` lists exactly the blocks pinned above (minus the
+/// crossover, which is named as not bit-identical), so a claim cannot drift from its enforcement.
+#[test]
+fn the_claims_file_lists_every_pinned_block() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../render/tests/golden/claims.toml");
+    let text = std::fs::read_to_string(path).expect("claims.toml");
+    let section = text
+        .split("bit_identical = [")
+        .nth(1)
+        .and_then(|s| s.split(']').next())
+        .expect("stage block list");
+    let claimed: Vec<&str> = section
+        .split(',')
+        .map(|s| s.trim().trim_matches('"'))
+        .filter(|s| !s.is_empty())
+        .collect();
+    let pinned: Vec<&str> = PINS.iter().map(|(n, _)| *n).collect();
+    assert_eq!(claimed, pinned);
+    assert!(text.contains("not_bit_identical = [\"crossover\"]"));
+}
