@@ -9,7 +9,7 @@
 use crate::util::{c_array_text, utf16_text};
 use crate::values::Steps;
 use atomik_device_sdk::{
-    Channels, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
+    Channels, MAX_AUX_OUTPUTS, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
 };
 use std::ffi::c_void;
 use vst3::ComPtr;
@@ -97,8 +97,11 @@ pub(crate) enum Role {
     Main,
     /// The sidechain: the first aux input bus.
     Sidechain,
-    /// Any other bus: deactivated (a further aux output, a second aux input).
+    /// Any other bus: deactivated (a second aux input, a surround or surplus aux output).
     Unused,
+    /// An aux output bus (mono or stereo, at most [`MAX_AUX_OUTPUTS`]): the host collects it into
+    /// the device's `out_aux_<k>` sockets, in bus order. Outputs only.
+    Aux,
 }
 
 /// One bus as the host drives it.
@@ -146,6 +149,11 @@ impl AudioPlan {
     /// The main output bus.
     pub(crate) fn main_out(&self) -> Option<(usize, BusPlan)> {
         Self::find(&self.outputs, Role::Main)
+    }
+
+    /// How many aux output pairs the host collects.
+    pub(crate) fn aux_out(&self) -> u8 {
+        self.outputs.iter().filter(|b| b.role == Role::Aux).count() as u8
     }
 }
 
@@ -213,6 +221,21 @@ fn bus_info(
     (unsafe { component.getBusInfo(media, dir, i, &mut info) } == kResultOk).then_some(info)
 }
 
+/// Keeps the first [`MAX_AUX_OUTPUTS`] mono or stereo aux output buses as `Aux` and turns every
+/// other one into `Unused` (deactivated): surround and surplus aux outputs are not collected.
+pub(crate) fn limit_aux_outputs(outputs: &mut [BusPlan]) {
+    let mut aux = 0usize;
+    for b in outputs {
+        if b.role == Role::Aux {
+            if matches!(b.channels, 1 | 2) && aux < MAX_AUX_OUTPUTS {
+                aux += 1;
+            } else {
+                b.role = Role::Unused;
+            }
+        }
+    }
+}
+
 /// Negotiates the bus arrangements: proposes stereo for the main buses and the
 /// sidechain, accepts what the plugin answers when it is mono or stereo, activates the buses the
 /// host drives and deactivates the others.
@@ -244,7 +267,7 @@ pub(crate) fn negotiate(
     let in_roles = roles(&in_infos.iter().map(main_flag).collect::<Vec<_>>());
     let out_roles: Vec<Role> = roles(&out_infos.iter().map(main_flag).collect::<Vec<_>>())
         .into_iter()
-        .map(|r| if r == Role::Main { r } else { Role::Unused })
+        .map(|r| if r == Role::Main { r } else { Role::Aux })
         .collect();
 
     // What the plugin currently has, as the proposal's base for the buses we do not care about.
@@ -260,7 +283,7 @@ pub(crate) fn negotiate(
     let mut ins: Vec<SpeakerArrangement> = (0..n_in)
         .map(|i| match in_roles[i as usize] {
             Role::Main | Role::Sidechain => SpeakerArr::kStereo,
-            Role::Unused => current(K_INPUT, i, SpeakerArr::kStereo),
+            Role::Unused | Role::Aux => current(K_INPUT, i, SpeakerArr::kStereo),
         })
         .collect();
     let mut outs: Vec<SpeakerArrangement> = (0..n_out)
@@ -316,9 +339,11 @@ pub(crate) fn negotiate(
             })
             .collect()
     };
+    let mut outputs = plan_of(&out_roles, &outs);
+    limit_aux_outputs(&mut outputs);
     let plan = AudioPlan {
         inputs: plan_of(&in_roles, &ins),
-        outputs: plan_of(&out_roles, &outs),
+        outputs,
         // SAFETY: a live component.
         event_in: unsafe { component.getBusCount(K_EVENT, K_INPUT) } > 0,
         // SAFETY: a live component.
@@ -533,6 +558,7 @@ pub(crate) fn empty_read(class: &ClassInfo) -> Read {
             sidechain: false,
             notes_in: false,
             notes_out: false,
+            aux_out: 0,
             params: Vec::new(),
         },
         plan: AudioPlan::default(),
@@ -570,6 +596,7 @@ pub(crate) fn read(
         sidechain: plan.sidechain().is_some(),
         notes_in: plan.event_in,
         notes_out: plan.event_out,
+        aux_out: plan.aux_out(),
         params,
     };
     Ok(Read {
@@ -607,6 +634,37 @@ mod tests {
         );
         // No flag: the first bus is the main one.
         assert_eq!(roles(&[false, false]), [Role::Main, Role::Sidechain]);
+    }
+
+    #[test]
+    fn aux_outputs_are_the_mono_and_stereo_buses_up_to_the_cap() {
+        let bus = |channels, role| BusPlan { channels, role };
+        let mut outs = vec![
+            bus(2, Role::Main),
+            bus(1, Role::Aux),
+            bus(6, Role::Aux),
+            bus(2, Role::Aux),
+        ];
+        outs.extend((0..6).map(|_| bus(2, Role::Aux)));
+        limit_aux_outputs(&mut outs);
+        let roles: Vec<Role> = outs.iter().map(|b| b.role).collect();
+        assert_eq!(roles[0], Role::Main);
+        assert_eq!(roles[1], Role::Aux, "mono counts");
+        assert_eq!(roles[2], Role::Unused, "surround is deactivated");
+        let plan = AudioPlan {
+            outputs: outs,
+            ..AudioPlan::default()
+        };
+        assert_eq!(plan.aux_out() as usize, MAX_AUX_OUTPUTS);
+        assert!(plan.outputs[1].active() && !plan.outputs[2].active());
+        assert_eq!(
+            plan.outputs
+                .iter()
+                .filter(|b| b.role == Role::Unused)
+                .count(),
+            2,
+            "the surround bus and the one past the cap"
+        );
     }
 
     #[test]

@@ -2,7 +2,10 @@
 //! descriptor, the cut of an over-long param table, and the check that a layout still fits the
 //! descriptor a device was built from.
 
-use atomik_device_sdk::{DeviceDescriptor, MAX_PLUGIN_PARAMS, PluginLayout, SocketId};
+use atomik_device_sdk::{
+    AUX_OUT_KEYS, CV_AMOUNT_KEYS, CV_DEST_KEYS, CV_IN_KEYS, DeviceDescriptor, MAX_AUX_OUTPUTS,
+    MAX_PLUGIN_PARAMS, PLUGIN_CV_INPUTS, PluginLayout, SocketId,
+};
 
 /// The key of a plugin param: `p` and the plugin's own 32-bit id in decimal.
 pub fn param_key(id: u32) -> String {
@@ -19,7 +22,7 @@ pub fn parse_param_key(key: &str) -> Option<u32> {
 }
 
 /// The plugin param ids of a plugin descriptor, in descriptor order (every param after
-/// `bypass`).
+/// `bypass`, the CV programmer's `cv.*` params excluded).
 pub fn param_ids(descriptor: &DeviceDescriptor) -> Vec<u32> {
     descriptor
         .params
@@ -59,6 +62,10 @@ pub struct PluginSockets {
     pub out_r: Option<SocketId>,
     /// Notes out.
     pub notes_out: Option<SocketId>,
+    /// The CV inputs `cv_in_1` to `cv_in_8`.
+    pub cv_in: [Option<SocketId>; PLUGIN_CV_INPUTS],
+    /// The aux output pairs `out_aux_<k>_l/r` the descriptor has.
+    pub aux_out: [[Option<SocketId>; 2]; MAX_AUX_OUTPUTS],
 }
 
 impl PluginSockets {
@@ -74,6 +81,8 @@ impl PluginSockets {
             out_l: id("out_l"),
             out_r: id("out_r"),
             notes_out: id("notes_out"),
+            cv_in: std::array::from_fn(|k| id(CV_IN_KEYS[k])),
+            aux_out: std::array::from_fn(|k| [id(AUX_OUT_KEYS[k][0]), id(AUX_OUT_KEYS[k][1])]),
         }
     }
 }
@@ -81,7 +90,7 @@ impl PluginSockets {
 /// Whether `descriptor` is what [`atomik_device_sdk::descriptor_for`] builds for `layout`: the
 /// same sockets in the same order and the same params (by key, in order).
 pub fn layout_matches(layout: &PluginLayout, descriptor: &DeviceDescriptor) -> bool {
-    let mut want: Vec<&str> = Vec::with_capacity(8);
+    let mut want: Vec<&str> = Vec::with_capacity(8 + PLUGIN_CV_INPUTS);
     if layout.main_in.is_some() {
         want.extend(["in_l", "in_r"]);
     }
@@ -97,13 +106,22 @@ pub fn layout_matches(layout: &PluginLayout, descriptor: &DeviceDescriptor) -> b
     if layout.notes_out {
         want.push("notes_out");
     }
+    want.extend(CV_IN_KEYS);
+    for pair in AUX_OUT_KEYS.iter().take(usize::from(layout.aux_out)) {
+        want.extend(pair);
+    }
     let sockets_ok = descriptor.sockets.iter().map(|s| s.key).eq(want);
-    let params_ok = descriptor.params.len() == layout.params.len() + 1
+    let n = layout.params.len();
+    let params_ok = descriptor.params.len() == n + 1 + 2 * PLUGIN_CV_INPUTS
         && descriptor
             .params
             .iter()
             .skip(1)
             .zip(&layout.params)
-            .all(|(d, p)| d.key == param_key(p.id));
+            .all(|(d, p)| d.key == param_key(p.id))
+        && (0..PLUGIN_CV_INPUTS).all(|k| {
+            descriptor.params[1 + n + 2 * k].key == CV_DEST_KEYS[k]
+                && descriptor.params[2 + n + 2 * k].key == CV_AMOUNT_KEYS[k]
+        });
     sockets_ok && params_ok
 }

@@ -74,6 +74,7 @@ fn unlink_removes_the_path_while_both_mappings_keep_working() {
         sidechain: &[],
         sidechain_silent: true,
         main_out: &mut main_out,
+        aux_out: &mut [],
         events_in: &[],
         events_out: &mut events_out,
         transport: PluginTransport::default(),

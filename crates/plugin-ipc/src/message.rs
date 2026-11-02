@@ -505,6 +505,9 @@ pub struct WireLayout {
     pub notes_in: bool,
     /// The plugin emits notes.
     pub notes_out: bool,
+    /// Extra stereo output pairs after the main output (older children send none).
+    #[serde(default)]
+    pub aux_out: u8,
     /// The params, in the plugin's order.
     pub params: Vec<WireParam>,
 }
@@ -530,6 +533,7 @@ impl From<&PluginLayout> for WireLayout {
             sidechain: l.sidechain,
             notes_in: l.notes_in,
             notes_out: l.notes_out,
+            aux_out: l.aux_out,
             params: l
                 .params
                 .iter()
@@ -569,6 +573,7 @@ impl From<WireLayout> for PluginLayout {
             sidechain: w.sidechain,
             notes_in: w.notes_in,
             notes_out: w.notes_out,
+            aux_out: w.aux_out,
             params: w
                 .params
                 .into_iter()
@@ -624,6 +629,7 @@ mod tests {
             sidechain: true,
             notes_in: true,
             notes_out: false,
+            aux_out: 0,
             params: vec![
                 PluginParamInfo {
                     id: 7,

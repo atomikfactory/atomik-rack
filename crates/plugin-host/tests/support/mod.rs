@@ -53,6 +53,7 @@ pub fn fx_layout() -> PluginLayout {
         sidechain: true,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             param(core::GainFx::GAIN, "Gain", -60.0, 12.0, 0.0, false),
             param(core::GainFx::MUTE, "Mute", 0.0, 1.0, 0.0, true),
@@ -73,6 +74,7 @@ pub fn synth_layout() -> PluginLayout {
         sidechain: false,
         notes_in: true,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             param(core::TestSynth::WAVE, "Wave", 0.0, 1.0, 0.0, true),
             param(core::TestSynth::LEVEL, "Level", 0.0, 1.0, 0.5, false),
@@ -91,6 +93,7 @@ pub fn shift_layout() -> PluginLayout {
         sidechain: false,
         notes_in: true,
         notes_out: true,
+        aux_out: 0,
         params: vec![param(
             core::NoteShift::SEMITONES,
             "Semitones",

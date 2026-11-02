@@ -5,7 +5,7 @@
 
 use crate::hub::ClapHost;
 use atomik_device_sdk::{
-    Channels, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
+    Channels, MAX_AUX_OUTPUTS, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
 };
 use clack_extensions::audio_ports::{AudioPortFlags, AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialects, NotePortInfoBuffer, PluginNotePorts};
@@ -30,6 +30,9 @@ pub(crate) enum InRole {
     Sidechain,
     /// Another aux input: the host feeds it silence.
     Unused,
+    /// An aux output (mono or stereo): the host collects it into the device's `out_aux_<k>`
+    /// sockets, in port order. Outputs only.
+    Aux,
 }
 
 /// One audio port as the host will fill it.
@@ -37,8 +40,8 @@ pub(crate) enum InRole {
 pub(crate) struct PortPlan {
     /// Channels of the port.
     pub channels: u32,
-    /// Role of an input port; `Main` for the main output (an output port that is not main is
-    /// `Unused` and gets a scratch buffer).
+    /// Role of a port: `Main` for the main output; an output port that is not main is `Aux`
+    /// (mono or stereo, at most [`MAX_AUX_OUTPUTS`]) or `Unused` and gets a scratch buffer.
     pub role: InRole,
 }
 
@@ -75,6 +78,14 @@ impl AudioPlan {
             .find(|p| p.role == InRole::Main)
             .map(|p| p.channels)
     }
+
+    /// How many aux output pairs the host collects.
+    pub fn aux_out(&self) -> u8 {
+        self.outputs
+            .iter()
+            .filter(|p| p.role == InRole::Aux)
+            .count() as u8
+    }
 }
 
 /// An audio port as the plugin declares it.
@@ -95,8 +106,9 @@ fn channels_of(n: u32, what: &str) -> Result<Channels, String> {
 }
 
 /// Decides which ports the host drives and how: the main bus must be mono or stereo,
-/// the first other input is the sidechain, every further port is fed silence or collected into
-/// scratch.
+/// the first other input is the sidechain, every other mono or stereo output (up to
+/// [`MAX_AUX_OUTPUTS`]) is an aux output, and every further port is fed silence or collected
+/// into scratch.
 ///
 /// # Errors
 /// The reason the plugin cannot be hosted.
@@ -125,10 +137,14 @@ pub(crate) fn classify_audio(
             role,
         });
     }
+    let mut aux = 0usize;
     for (i, p) in outputs.iter().enumerate() {
         let role = if Some(i) == main_out {
             channels_of(p.channels, "main output")?;
             InRole::Main
+        } else if aux < MAX_AUX_OUTPUTS && (p.channels == 1 || p.channels == 2) {
+            aux += 1;
+            InRole::Aux
         } else {
             InRole::Unused
         };
@@ -310,6 +326,7 @@ pub(crate) fn read(
         sidechain: audio.sidechain().is_some(),
         notes_in: notes.input.is_some(),
         notes_out: notes.output,
+        aux_out: audio.aux_out(),
         params,
     };
     Ok(Read {
@@ -376,8 +393,27 @@ mod tests {
         );
         assert_eq!(
             plan.outputs[1].role,
-            InRole::Unused,
-            "aux output into scratch"
+            InRole::Aux,
+            "a stereo aux output is collected"
+        );
+        assert_eq!(plan.aux_out(), 1);
+    }
+
+    #[test]
+    fn aux_outputs_are_the_mono_or_stereo_ports_up_to_the_cap_and_the_rest_is_scratch() {
+        let mut outs = vec![port(2, true)];
+        outs.push(port(1, false));
+        outs.push(port(6, false));
+        outs.extend((0..9).map(|_| port(2, false)));
+        let plan = classify_audio(&[], &outs).unwrap();
+        let roles: Vec<InRole> = plan.outputs.iter().map(|p| p.role).collect();
+        assert_eq!(roles[0], InRole::Main);
+        assert_eq!(roles[1], InRole::Aux, "mono counts");
+        assert_eq!(roles[2], InRole::Unused, "surround is scratch");
+        assert_eq!(plan.aux_out() as usize, MAX_AUX_OUTPUTS);
+        assert_eq!(
+            roles.iter().filter(|r| **r == InRole::Unused).count(),
+            1 + 3
         );
     }
 

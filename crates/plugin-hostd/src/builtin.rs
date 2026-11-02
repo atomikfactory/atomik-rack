@@ -80,6 +80,7 @@ fn layout_of(kind: Kind, id: &str) -> PluginLayout {
         sidechain: false,
         notes_in: synth,
         notes_out: false,
+        aux_out: 0,
         params: if kind == Kind::Gain {
             vec![PluginParamInfo {
                 id: 0,

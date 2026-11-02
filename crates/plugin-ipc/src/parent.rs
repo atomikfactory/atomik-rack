@@ -8,7 +8,9 @@ use crate::block::SharedBlock;
 use crate::codec::{AudioOp, sleep_rule_from_code, status_from_code, tail_from_code};
 use crate::deadline::{Deadline, now};
 use crate::doorbell::Doorbell;
-use crate::layout::{MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, WireEvent, WireTransport};
+use crate::layout::{
+    MAX_AUX_CHANNELS, MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, WireEvent, WireTransport,
+};
 use atomik_core::{BATCH, Batch};
 use atomik_plugin_host::{PluginIo, PluginTransport, ProcessStatus, SleepRule, TailLength};
 use std::ptr::{addr_of, addr_of_mut, copy_nonoverlapping};
@@ -130,6 +132,7 @@ impl ParentPort {
             addr_of_mut!((*req).sc_ch).write(sidechain.len() as u32);
             addr_of_mut!((*req).sc_silent).write(u32::from(io.sidechain_silent));
             addr_of_mut!((*req).main_out_ch).write(io.main_out.len().min(MAX_CHANNELS) as u32);
+            addr_of_mut!((*req).aux_out_ch).write(io.aux_out.len().min(MAX_AUX_CHANNELS) as u32);
             addr_of_mut!((*req).n_events).write(n_events as u32);
             addr_of_mut!((*req).transport).write(WireTransport::encode(&io.transport));
             copy_batches(addr_of_mut!((*req).main_in).cast::<f32>(), main_in);
@@ -158,6 +161,7 @@ impl ParentPort {
             addr_of_mut!((*req).sc_ch).write(0);
             addr_of_mut!((*req).sc_silent).write(1);
             addr_of_mut!((*req).main_out_ch).write(0);
+            addr_of_mut!((*req).aux_out_ch).write(0);
             addr_of_mut!((*req).n_events).write(0);
             addr_of_mut!((*req).transport)
                 .write(WireTransport::encode(&PluginTransport::default()));
@@ -238,6 +242,11 @@ impl ParentPort {
             let channels = io.main_out.len().min(MAX_CHANNELS);
             let src = addr_of!((*resp).main_out).cast::<f32>();
             for (ch, out) in io.main_out[..channels].iter_mut().enumerate() {
+                copy_nonoverlapping(src.add(ch * BATCH), out.as_mut_ptr(), BATCH);
+            }
+            let aux = io.aux_out.len().min(MAX_AUX_CHANNELS);
+            let src = addr_of!((*resp).aux_out).cast::<f32>();
+            for (ch, out) in io.aux_out[..aux].iter_mut().enumerate() {
                 copy_nonoverlapping(src.add(ch * BATCH), out.as_mut_ptr(), BATCH);
             }
             let n = (addr_of!((*resp).n_events).read() as usize).min(MAX_EVENTS_OUT);

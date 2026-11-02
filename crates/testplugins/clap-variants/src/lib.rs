@@ -58,6 +58,7 @@ impl Dsp for Mono {
             notes_in: 0,
             notes_in_preferred: 0,
             notes_out: false,
+            aux_out: 0,
         }
     }
 
@@ -92,6 +93,56 @@ impl Dsp for Mono {
         let level = self.level as f32;
         for i in 0..BLOCK {
             io.output[0][i] = io.input[0][i] * level;
+        }
+        Status::Continue
+    }
+}
+
+/// Gain of each stereo output pair of [`MultiOut`], main pair first.
+const PAIR_GAIN: [f32; 4] = [1.0, 0.5, 0.25, 0.125];
+
+/// The test synth with four stereo outputs: the main pair is the synth itself and each aux pair
+/// is the synth's left channel at half, a quarter and an eighth of its level, with the right
+/// channel inverted, so every pair and every side is told apart (and all are exact in f32).
+struct MultiOut {
+    synth: TestSynth,
+    buf: Vec<TimedEvent>,
+}
+
+impl Dsp for MultiOut {
+    fn ports(&self) -> Ports {
+        Ports {
+            aux_out: 3,
+            ..Ports::instrument(dialect::CLAP | dialect::MIDI, dialect::CLAP)
+        }
+    }
+
+    fn params(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    fn set_param(&mut self, id: u32, value: f64) {
+        self.synth.set_param(id, value);
+    }
+
+    fn param(&self, id: u32) -> f64 {
+        self.synth.param(id)
+    }
+
+    fn process(&mut self, io: &mut Io<'_>) -> Status {
+        self.buf.clear();
+        for e in io.events {
+            if self.buf.len() < self.buf.capacity() && !matches!(e.event, Event::Param { .. }) {
+                self.buf.push(*e);
+            }
+        }
+        self.synth.process(&self.buf, &mut io.output);
+        for k in 0..3 {
+            let gain = PAIR_GAIN[k + 1];
+            for i in 0..BLOCK {
+                io.aux[k][0][i] = io.output[0][i] * gain;
+                io.aux[k][1][i] = -io.output[0][i] * gain;
+            }
         }
         Status::Continue
     }
@@ -169,6 +220,11 @@ info!(
     feat::CLAP_PLUGIN_FEATURE_INSTRUMENT
 );
 info!(
+    MULTI_INFO,
+    c"atomik.test.multiout",
+    feat::CLAP_PLUGIN_FEATURE_INSTRUMENT
+);
+info!(
     MONO_INFO,
     c"atomik.test.mono",
     feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
@@ -199,7 +255,7 @@ info!(
     feat::CLAP_PLUGIN_FEATURE_AUDIO_EFFECT
 );
 
-static PLUGINS: [PluginDef; 7] = [
+static PLUGINS: [PluginDef; 8] = [
     PluginDef {
         info: &MIDI_INFO,
         create: || {
@@ -232,6 +288,15 @@ static PLUGINS: [PluginDef; 7] = [
     PluginDef {
         info: &NAN_INFO,
         create: || Box::new(Faulty(Fault::Nan)),
+    },
+    PluginDef {
+        info: &MULTI_INFO,
+        create: || {
+            Box::new(MultiOut {
+                synth: TestSynth::new(48_000.0),
+                buf: Vec::with_capacity(8_192),
+            })
+        },
     },
 ];
 

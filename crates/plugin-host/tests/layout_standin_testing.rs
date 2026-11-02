@@ -102,6 +102,27 @@ fn a_layout_matches_the_descriptor_built_from_it_and_no_other() {
 }
 
 #[test]
+fn the_cv_inputs_and_aux_outputs_are_found_and_part_of_the_match() {
+    let mut l = synth_layout();
+    l.aux_out = 2;
+    let d = descriptor("lay.aux", &l);
+    let s = PluginSockets::of(d);
+    for (k, socket) in s.cv_in.iter().enumerate() {
+        let id = socket.expect("every plugin has eight CV inputs");
+        assert_eq!(d.sockets[usize::from(id.0)].key, format!("cv_in_{}", k + 1));
+    }
+    assert!(s.aux_out[0][0].is_some() && s.aux_out[1][1].is_some());
+    assert!(s.aux_out[2][0].is_none(), "only the pairs the layout has");
+    assert!(layout_matches(&l, d));
+    // The same plugin without the aux pairs is another descriptor, and neither matches the other.
+    let plain = descriptor("lay.aux-plain", &synth_layout());
+    assert!(!layout_matches(&l, plain));
+    assert!(!layout_matches(&synth_layout(), d));
+    // The plugin ids exclude the programmer's own params.
+    assert_eq!(param_ids(d), [1, 2]);
+}
+
+#[test]
 fn the_stand_in_of_an_effect_is_dry_and_of_an_instrument_silent() {
     let d = descriptor("lay.standin", &fx_layout());
     let dev = stand_in(d);

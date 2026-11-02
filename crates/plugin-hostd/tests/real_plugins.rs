@@ -206,6 +206,7 @@ fn in_process(
                 sidechain: &[],
                 sidechain_silent: true,
                 main_out: &mut main_out,
+                aux_out: &mut [],
                 events_in: &step.events,
                 events_out: &mut events_out,
                 transport: PluginTransport::default(),

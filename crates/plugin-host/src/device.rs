@@ -13,6 +13,24 @@
 //!    is gone and the device is CRASHED for good),
 //! 5. writes the outputs through the 5 ms bypass crossfade and forwards a note effect's notes.
 //!
+//! **Aux outputs.** A plugin with more stereo output buses than the main one has up to seven pairs
+//! of `out_aux_<k>_l/r` sockets; the processor fills them beside the main output. They are wet
+//! only: a bypassed device fades them to silence with the same 5 ms crossfade as the main output
+//! (the dry path of an effect is its main input), and a batch with no wet signal leaves them
+//! silent. Their buffers are sized in `new` like every other.
+//!
+//! **The CV programmer.** Every plugin device has eight CV inputs, each with a destination (a
+//! plugin param) and a bipolar amount: the params `cv.dest_<k>` and `cv.amount_<k>` that follow
+//! the plugin's own. Once per batch the device reads the mean of each cabled CV batch (every
+//! sample cleaned and clamped to -1..+1, as the built-in devices do), and sends the destination
+//! `base + amount x cv x range` (`range` is the destination's whole plain range, summed over the
+//! CVs that share a destination, clamped to the range, rounded for a stepped param) as an
+//! ordinary param event at frame 0 of the same batch, so the plugin hears the CV of batch N in
+//! batch N. A destination that loses its CV (cable pulled, amount at 0, destination changed)
+//! goes back to the value set in the rack. The events take the usual path: in a sandbox they ride
+//! the shared block like any other param change, so the result does not depend on where the
+//! plugin runs.
+//!
 //! **Bypass keeps the delay compensation.** An effect's dry signal is the main input delayed by
 //! the plugin's reported latency (a ring of 100 ms, written every sample), so a bypassed latent
 //! plugin still lands where the engine's plugin delay compensation expects it, the crossfade
@@ -37,8 +55,8 @@ use atomik_core::{
     BATCH, Batch, ExprKind, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, PPQ, ParamId,
 };
 use atomik_device_sdk::{
-    Channels, Device, DeviceDescriptor, DeviceKind, PluginLayout, PrepareInfo, ProcessContext,
-    RunMode, SocketId,
+    Channels, Device, DeviceDescriptor, DeviceKind, MAX_AUX_OUTPUTS, PLUGIN_CV_INPUTS,
+    PluginLayout, PrepareInfo, ProcessContext, RunMode, SocketId,
 };
 use rtrb::{Consumer, Producer, PushError};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -99,12 +117,24 @@ pub struct PluginDevice {
     from_manager: Consumer<ProcBox>,
     reaper: Option<ReaperQueue>,
 
-    // Params: index 0 is bypass, 1.. the plugin params in descriptor order.
+    // Params: index 0 is bypass, 1.. the plugin params in descriptor order, then the CV
+    // programmer's `cv.dest_k`/`cv.amount_k` pairs.
     ids: Vec<u32>,
     values: Vec<f64>,
     ever_set: Vec<bool>,
     dirty: Vec<bool>,
     pending: Vec<u32>,
+    /// Descriptor index where the CV programmer's params start (`ids.len() + 1`).
+    cv_base: usize,
+    /// The plugin param index each CV input drives (0 for none).
+    cv_dest: [usize; PLUGIN_CV_INPUTS],
+    cv_amount: [f32; PLUGIN_CV_INPUTS],
+    /// `(min, max, discrete)` of each plugin param index (index 0 unused).
+    ranges: Vec<(f64, f64, bool)>,
+    /// What the CV adds to the value set in the rack, per param index.
+    offset: Vec<f64>,
+    /// The param indices that had a CV offset in the last batch.
+    modded: Vec<usize>,
     bypass: bool,
     bypass_mix: f32,
     fade_step: f32,
@@ -125,6 +155,10 @@ pub struct PluginDevice {
     in_main: [Batch; 2],
     sidechain: [Batch; 2],
     wet: [Batch; 2],
+    /// The aux outputs the processor fills: two channels per pair.
+    aux_wet: Vec<Batch>,
+    /// The bypass mix of every frame of the last batch (what the aux outputs fade with).
+    fade: Batch,
     events_in: EventList,
     events_out: EventList,
 
@@ -161,6 +195,20 @@ fn channel_count(c: Option<Channels>) -> usize {
 
 fn finite_or(v: f32, fallback: f32) -> f32 {
     if v.is_finite() { v } else { fallback }
+}
+
+/// Mean of a CV batch, each sample cleaned (non-finite is 0) and clamped to -1..+1; the batch
+/// rate reading every built-in device uses.
+fn cv_mean(b: &Batch) -> f32 {
+    let mut sum = 0.0f32;
+    for &x in b {
+        sum += if x.is_finite() {
+            x.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+    }
+    sum / BATCH as f32
 }
 
 fn peak(a: &Batch, b: &Batch) -> f32 {
@@ -210,6 +258,16 @@ impl PluginDevice {
         );
         let ids = param_ids(descriptor);
         let n = ids.len() + 1;
+        let ranges: Vec<(f64, f64, bool)> = descriptor
+            .params
+            .iter()
+            .take(n)
+            .map(|p| (f64::from(p.min), f64::from(p.max), p.discrete))
+            .collect();
+        let mut values = vec![0.0; n];
+        for (v, p) in values.iter_mut().zip(descriptor.params.iter()) {
+            *v = f64::from(p.default);
+        }
         let dry_len = if descriptor.kind == DeviceKind::Effect {
             dry_ring_len(activation_rate)
         } else {
@@ -239,10 +297,16 @@ impl PluginDevice {
             from_manager,
             reaper: None,
             ids,
-            values: vec![0.0; n],
+            values,
             ever_set: vec![false; n],
             dirty: vec![false; n],
             pending: Vec::with_capacity(n),
+            cv_base: n,
+            cv_dest: [0; PLUGIN_CV_INPUTS],
+            cv_amount: [0.0; PLUGIN_CV_INPUTS],
+            ranges,
+            offset: vec![0.0; n],
+            modded: Vec::with_capacity(PLUGIN_CV_INPUTS),
             bypass: false,
             bypass_mix: 0.0,
             fade_step: fade_step_for(activation_rate),
@@ -258,6 +322,8 @@ impl PluginDevice {
             in_main: [SILENCE; 2],
             sidechain: [SILENCE; 2],
             wet: [SILENCE; 2],
+            aux_wet: vec![SILENCE; 2 * usize::from(layout.aux_out).min(MAX_AUX_OUTPUTS)],
+            fade: SILENCE,
             events_in: EventList::with_capacity(EVENT_CAPACITY + n),
             events_out: EventList::with_capacity(MAX_EVENTS_PER_BATCH),
             in_peak: 0.0,
@@ -278,6 +344,73 @@ impl PluginDevice {
     /// The run mode set by [`Device::set_run_mode`].
     pub fn run_mode(&self) -> RunMode {
         self.run_mode
+    }
+
+    /// The value sent for plugin param `index`: the one set in the rack plus the CV offset,
+    /// clamped to the param range (and rounded when it is stepped). Exactly the rack value
+    /// while no CV drives it.
+    fn effective(&self, index: usize) -> f64 {
+        let offset = self.offset[index];
+        if offset == 0.0 {
+            return self.values[index];
+        }
+        let (min, max, discrete) = self.ranges[index];
+        let v = (self.values[index] + offset).clamp(min, max);
+        if discrete { v.round() } else { v }
+    }
+
+    fn set_offset(&mut self, index: usize, offset: f64) {
+        if self.offset[index].to_bits() == offset.to_bits() {
+            return;
+        }
+        let before = self.effective(index);
+        self.offset[index] = offset;
+        if self.effective(index).to_bits() != before.to_bits() {
+            self.ever_set[index] = true;
+            self.mark_dirty(index);
+        }
+    }
+
+    /// Reads the cabled CV inputs once for this batch and moves the destinations (see the
+    /// module documentation). Allocation free: every table is sized in `new`.
+    fn apply_cv(&mut self, ctx: &ProcessContext<'_>) {
+        let programmed = self
+            .cv_dest
+            .iter()
+            .zip(&self.cv_amount)
+            .any(|(d, a)| *d != 0 && *a != 0.0);
+        if !programmed && self.modded.is_empty() {
+            return;
+        }
+        let mut now = [(0usize, 0.0f64); PLUGIN_CV_INPUTS];
+        let mut count = 0;
+        for k in 0..PLUGIN_CV_INPUTS {
+            let (dest, amount) = (self.cv_dest[k], self.cv_amount[k]);
+            if dest == 0 || amount == 0.0 || !connected(ctx, self.sockets.cv_in[k]) {
+                continue;
+            }
+            let cv = self.sockets.cv_in[k].map_or(0.0, |s| cv_mean(ctx.input(s)));
+            let (min, max, _) = self.ranges[dest];
+            let delta = f64::from(amount) * f64::from(cv) * (max - min);
+            match now[..count].iter_mut().find(|(i, _)| *i == dest) {
+                Some(entry) => entry.1 += delta,
+                None => {
+                    now[count] = (dest, delta);
+                    count += 1;
+                }
+            }
+        }
+        for m in 0..self.modded.len() {
+            let index = self.modded[m];
+            if !now[..count].iter().any(|(i, _)| *i == index) {
+                self.set_offset(index, 0.0);
+            }
+        }
+        self.modded.clear();
+        for &(index, delta) in &now[..count] {
+            self.set_offset(index, delta);
+            self.modded.push(index);
+        }
     }
 
     fn mark_dirty(&mut self, index: usize) {
@@ -338,7 +471,7 @@ impl PluginDevice {
             self.close_all_notes();
             // A restarted plugin has restored its state: every param the rack ever set goes
             // out again, so the rack-side values win.
-            for i in 1..self.values.len() {
+            for i in 1..self.cv_base {
                 if self.ever_set[i] {
                     self.mark_dirty(i);
                 }
@@ -355,7 +488,7 @@ impl PluginDevice {
             self.dirty[i] = false;
             let kind = PluginEventKind::Param {
                 id: self.ids[i - 1],
-                value: self.values[i],
+                value: self.effective(i),
             };
             self.events_in.push(0, kind);
         }
@@ -605,7 +738,9 @@ impl PluginDevice {
         powered: bool,
     ) -> bool {
         self.gather_inputs(ctx, raw);
+        self.apply_cv(ctx);
         self.wet = [SILENCE; 2];
+        self.aux_wet.fill(SILENCE);
         let stopped = !powered && self.bypass_mix >= 1.0;
         if stopped {
             // Powered off and fully bypassed: only the end of a note is delivered, so a held
@@ -686,6 +821,7 @@ impl PluginDevice {
                 in_main,
                 sidechain,
                 wet,
+                aux_wet,
                 events_in,
                 events_out,
                 in_channels,
@@ -700,6 +836,7 @@ impl PluginDevice {
                 sidechain: if *has_sidechain { &sidechain[..] } else { &[] },
                 sidechain_silent: !sidechain_connected,
                 main_out: &mut wet[..*out_channels],
+                aux_out: &mut aux_wet[..],
                 events_in: events_in.as_slice(),
                 events_out,
                 transport,
@@ -735,6 +872,7 @@ impl PluginDevice {
             Ok(status) => {
                 if self.wet[..self.out_channels]
                     .iter()
+                    .chain(&self.aux_wet)
                     .any(|b| !b.iter().all(|s| s.is_finite()))
                 {
                     self.fail("the plugin produced non-finite output");
@@ -746,6 +884,7 @@ impl PluginDevice {
                 if instrument {
                     let silent = self.wet[..self.out_channels]
                         .iter()
+                        .chain(&self.aux_wet)
                         .all(|b| b.iter().all(|s| s.abs() <= IDLE_PEAK));
                     self.quiet_batches = if silent && self.events_in.is_empty() {
                         self.quiet_batches.saturating_add(1)
@@ -797,11 +936,13 @@ impl PluginDevice {
     ) {
         let target = if bypassed { 1.0 } else { 0.0 };
         let (Some(out_l), Some(out_r)) = (self.sockets.out_l, self.sockets.out_r) else {
-            self.bypass_mix = target;
+            self.fade_to(target);
+            self.write_aux(ctx, wet_valid);
             return;
         };
         if !wet_valid {
             self.bypass_mix = target;
+            self.write_aux(ctx, false);
             *ctx.output(out_l) = dry[0];
             *ctx.output(out_r) = dry[1];
             self.out_peak = peak(&dry[0], &dry[1]);
@@ -822,12 +963,45 @@ impl PluginDevice {
                 self.bypass_mix = (self.bypass_mix - self.fade_step).max(target);
             }
             let m = self.bypass_mix;
+            self.fade[i] = m;
             left[i] = mix(wet_left[i], dry[0][i], m);
             right[i] = mix(wet_right[i], dry[1][i], m);
         }
         self.out_peak = peak(&left, &right);
         *ctx.output(out_l) = left;
         *ctx.output(out_r) = right;
+        self.write_aux(ctx, true);
+    }
+
+    /// Moves the bypass mix towards `target` for one batch, recording each frame's mix.
+    fn fade_to(&mut self, target: f32) {
+        for i in 0..BATCH {
+            if self.bypass_mix < target {
+                self.bypass_mix = (self.bypass_mix + self.fade_step).min(target);
+            } else if self.bypass_mix > target {
+                self.bypass_mix = (self.bypass_mix - self.fade_step).max(target);
+            }
+            self.fade[i] = self.bypass_mix;
+        }
+    }
+
+    /// Writes the aux output sockets: the wet signal faded out by the bypass mix, or silence
+    /// when there is no valid wet signal.
+    fn write_aux(&mut self, ctx: &mut ProcessContext<'_>, wet_valid: bool) {
+        for (k, pair) in self.sockets.aux_out.iter().enumerate() {
+            for (side, socket) in pair.iter().enumerate() {
+                let Some(socket) = *socket else { continue };
+                let out = ctx.output(socket);
+                match self.aux_wet.get(2 * k + side) {
+                    Some(wet) if wet_valid => {
+                        for i in 0..BATCH {
+                            out[i] = mix(wet[i], 0.0, self.fade[i]);
+                        }
+                    }
+                    _ => *out = SILENCE,
+                }
+            }
+        }
     }
 }
 
@@ -881,6 +1055,18 @@ impl Device for PluginDevice {
         let i = id.0 as usize;
         if i == 0 {
             self.bypass = plain >= 0.5;
+        } else if i >= self.cv_base {
+            // The CV programmer: destination and amount of one CV input.
+            let j = i - self.cv_base;
+            let k = j / 2;
+            if k < PLUGIN_CV_INPUTS {
+                if j.is_multiple_of(2) {
+                    let dest = plain.round().max(0.0) as usize;
+                    self.cv_dest[k] = if dest < self.cv_base { dest } else { 0 };
+                } else {
+                    self.cv_amount[k] = plain.clamp(-1.0, 1.0);
+                }
+            }
         } else if i < self.values.len() {
             self.values[i] = f64::from(plain);
             self.ever_set[i] = true;

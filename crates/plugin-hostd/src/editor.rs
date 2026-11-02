@@ -291,6 +291,7 @@ pub(crate) mod fakes {
                     sidechain: false,
                     notes_in: false,
                     notes_out: false,
+                    aux_out: 0,
                     params: Vec::new(),
                 },
                 gui_size: (400, 300),

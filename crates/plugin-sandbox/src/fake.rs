@@ -209,6 +209,7 @@ pub(crate) fn fake_layout() -> WireLayout {
         kind: WireKind::Effect,
         main_in: Some(WireChannels::Stereo),
         main_out: Some(WireChannels::Stereo),
+        aux_out: 0,
         sidechain: false,
         notes_in: false,
         notes_out: false,

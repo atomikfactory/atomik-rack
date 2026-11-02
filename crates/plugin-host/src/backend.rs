@@ -236,6 +236,10 @@ pub struct PluginIo<'a> {
     pub sidechain_silent: bool,
     /// Main output channels (0, 1 or 2); arrive zeroed.
     pub main_out: &'a mut [Batch],
+    /// Aux output channels, two per pair (left, right) of the pairs the layout's `aux_out`
+    /// counts; arrive zeroed. A processor fills both channels of a pair (a mono aux bus is
+    /// copied to both), or leaves the pair silent.
+    pub aux_out: &'a mut [Batch],
     /// Events for this block, offsets non-decreasing: param changes first, then notes.
     pub events_in: &'a [PluginEvent],
     /// Where a note effect puts its notes (the host copies On and Off to `notes_out`).

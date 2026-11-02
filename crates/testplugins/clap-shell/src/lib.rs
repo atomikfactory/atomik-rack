@@ -112,7 +112,12 @@ pub struct Ports {
     pub notes_in_preferred: u32,
     /// A note output port exists.
     pub notes_out: bool,
+    /// Extra stereo output ports after the main one (0 to [`MAX_AUX`]).
+    pub aux_out: u32,
 }
+
+/// Most extra stereo output ports a test plugin declares.
+pub const MAX_AUX: usize = 7;
 
 /// The note dialect bits.
 pub mod dialect {
@@ -132,6 +137,7 @@ impl Ports {
             notes_in: 0,
             notes_in_preferred: 0,
             notes_out: false,
+            aux_out: 0,
         }
     }
 
@@ -144,6 +150,7 @@ impl Ports {
             notes_in: dialects,
             notes_in_preferred: preferred,
             notes_out: false,
+            aux_out: 0,
         }
     }
 
@@ -156,6 +163,7 @@ impl Ports {
             notes_in: dialect::CLAP | dialect::MIDI,
             notes_in_preferred: dialect::CLAP,
             notes_out: true,
+            aux_out: 0,
         }
     }
 }
@@ -226,6 +234,9 @@ pub struct Io<'a> {
     pub sidechain_constant: bool,
     /// Main output.
     pub output: [Block; 2],
+    /// The extra output ports, one stereo pair each (only the first `Ports::aux_out` are
+    /// delivered to the host).
+    pub aux: [[Block; 2]; MAX_AUX],
 }
 
 /// The DSP and state of one plugin.
@@ -1150,6 +1161,7 @@ extern "C" fn plugin_process(
         sidechain,
         sidechain_constant,
         output: [[0.0; BLOCK]; 2],
+        aux: [[[0.0; BLOCK]; 2]; MAX_AUX],
     };
     // GUI edits are applied by the plugin and reported to the host as output events.
     for &(id, value) in &inner.gui_edits {
@@ -1160,6 +1172,15 @@ extern "C" fn plugin_process(
         // SAFETY: `audio_outputs` has `audio_outputs_count` valid buffers.
         let out = unsafe { &*p.audio_outputs };
         write_channels(out, frames, &io.output);
+    }
+    for k in 0..(i.ports.aux_out as usize).min(MAX_AUX) {
+        let port = usize::from(i.ports.audio_out > 0) + k;
+        if (port as u32) < p.audio_outputs_count && !p.audio_outputs.is_null() {
+            // SAFETY: `audio_outputs` has `audio_outputs_count` valid buffers and `port` is in
+            // range.
+            let out = unsafe { &*p.audio_outputs.add(port) };
+            write_channels(out, frames, &io.aux[k]);
+        }
     }
     write_out_events(p.out_events, io.out_events);
     write_gui_edits(p.out_events, &inner.gui_edits);
@@ -1182,7 +1203,7 @@ extern "C" fn audio_ports_count(plugin: *const clap_plugin, is_input: bool) -> u
     if is_input {
         u32::from(ports.audio_in > 0) + u32::from(ports.sidechain)
     } else {
-        u32::from(ports.audio_out > 0)
+        u32::from(ports.audio_out > 0) + ports.aux_out.min(MAX_AUX as u32)
     }
 }
 
@@ -1214,6 +1235,11 @@ extern "C" fn audio_ports_get(
         ),
         (true, has_main, n) if ports.sidechain && n == u32::from(has_main) => {
             (1, "Sidechain", 2, 0)
+        }
+        (false, has_main, n)
+            if n >= u32::from(has_main) && n - u32::from(has_main) < ports.aux_out =>
+        {
+            (10 + n, "Aux Out", 2, 0)
         }
         _ => return false,
     };

@@ -215,7 +215,7 @@ impl ClapProcessor {
             let (source, silent): (&[Batch], bool) = match port.role {
                 InRole::Main => (io.main_in, io.main_in_silent),
                 InRole::Sidechain => (io.sidechain, io.sidechain_silent),
-                InRole::Unused => (&[], true),
+                InRole::Unused | InRole::Aux => (&[], true),
             };
             for c in 0..n {
                 self.in_data[first + c] = source
@@ -450,6 +450,25 @@ impl PluginProcessor for ClapProcessor {
                     *out = self.out_data[first + c];
                 }
             }
+        }
+
+        // The aux outputs, in port order, two channels per pair (a mono port fills both).
+        let mut pair = 0usize;
+        let mut first = 0usize;
+        for port in &self.audio.outputs {
+            let n = port.channels as usize;
+            if port.role == InRole::Aux && 2 * pair + 1 < io.aux_out.len() {
+                let left = self.out_data[first];
+                let right = if n >= 2 {
+                    self.out_data[first + 1]
+                } else {
+                    left
+                };
+                io.aux_out[2 * pair] = left;
+                io.aux_out[2 * pair + 1] = right;
+                pair += 1;
+            }
+            first += n;
         }
 
         if let Some(ext) = self.tail_ext {
