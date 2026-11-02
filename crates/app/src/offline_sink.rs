@@ -187,6 +187,10 @@ impl EngineSink for OfflineSink {
         handle!(self).set_tempo(tempo)
     }
 
+    fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError> {
+        handle!(self).set_master_tune(cents, glide)
+    }
+
     fn collect_garbage(&mut self) -> usize {
         self.handle
             .as_mut()

@@ -141,7 +141,7 @@ fn a_group_at_zero_db_or_no_group_is_bit_identical_to_the_plain_project() {
     let text = save_project(d.doc());
     let loaded = load_project(&text, &default_registry()).unwrap();
     assert_eq!(bits(&bounce(&loaded)), bits(&plain));
-    let old = save_project(song().doc()).replace("\"version\": 39", "\"version\": 25");
+    let old = save_project(song().doc()).replace("\"version\": 40", "\"version\": 25");
     let loaded = load_project(&old, &default_registry()).unwrap();
     assert_eq!(bits(&bounce(&loaded)), bits(&plain), "a version 25 file");
 }

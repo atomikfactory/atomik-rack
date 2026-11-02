@@ -394,3 +394,98 @@ fn a_preset_the_child_refuses_keeps_its_error() {
     assert!(e.to_string().contains("no such preset"), "{e}");
     assert!(!r.instance.is_lost());
 }
+
+#[test]
+fn a_capture_begun_ahead_is_collected_by_capture_state() {
+    let mut r = rig(FakeOptions::default());
+    r.instance.begin_capture_state();
+    let blob = r.instance.capture_state().unwrap();
+    assert_eq!(blob, PluginStateBlob(b"fake state".to_vec()));
+    // One request went out, not two.
+    let asked = r
+        .fake
+        .ctl
+        .requests()
+        .iter()
+        .filter(|q| matches!(q, ToChild::CaptureState { .. }))
+        .count();
+    assert_eq!(asked, 1);
+    // The next capture is an ordinary call again.
+    assert!(r.instance.capture_state().is_ok());
+}
+
+#[test]
+fn another_call_abandons_a_capture_begun_ahead() {
+    let mut r = rig(FakeOptions::default());
+    r.instance.begin_capture_state();
+    assert_eq!(
+        r.instance.param_text(1, 0.25).as_deref(),
+        Some("0.25 units")
+    );
+    // The abandoned answer is dropped and the capture asks again.
+    assert!(r.instance.capture_state().is_ok());
+    assert!(!r.instance.is_lost());
+}
+
+#[test]
+fn a_capture_begun_ahead_on_a_lost_child_fails_when_collected() {
+    let mut r = rig(FakeOptions::default());
+    r.fake
+        .ctl
+        .exit("the plugin process exited with code 9 (0x9)");
+    eventually("the instance to be lost", || r.instance.is_lost());
+    r.instance.begin_capture_state();
+    assert!(r.instance.capture_state().is_err());
+}
+
+/// Begins an instance over a fake child and polls it to the end.
+fn begun(
+    options: FakeOptions,
+) -> (
+    Result<Box<dyn PluginInstance>, BackendError>,
+    crate::fake::Fake,
+) {
+    use crate::fake::{fake_transport, make_ports};
+    use crate::link::LiveGuard;
+    use atomik_plugin_host::PendingInstance;
+    let (_device, manager) = atomik_plugin_host::plugin_channel(atomik_plugin_host::InstanceId(1));
+    let live = Arc::new(AtomicUsize::new(0));
+    let (transport, port, fake) = fake_transport(options, make_ports());
+    let mut pending = RemoteInstance::begin(
+        transport,
+        port,
+        test_timeouts(),
+        manager.messenger(),
+        LiveGuard::new(&live),
+    )
+    .map_err(|e| e.to_string())
+    .expect("the threads start");
+    let mut done = None;
+    eventually("the instance to start", || {
+        done = pending.poll();
+        done.is_some()
+    });
+    (done.expect("an answer"), fake)
+}
+
+#[test]
+fn a_begun_instance_becomes_ready_without_the_caller_waiting() {
+    let (result, fake) = begun(FakeOptions::default());
+    let instance = result.map_err(|e| e.to_string()).expect("ready");
+    assert_eq!(instance.layout().name, "Fake Gain");
+    assert_eq!(instance.latency_frames(), 7);
+    let requests = fake.ctl.requests();
+    assert!(matches!(requests[0], ToChild::Hello { .. }), "{requests:?}");
+    assert!(matches!(requests[1], ToChild::Instantiate { .. }));
+}
+
+#[test]
+fn a_begun_instance_whose_child_speaks_another_protocol_fails_and_the_child_is_stopped() {
+    let (result, fake) = begun(FakeOptions {
+        protocol: 99,
+        ..FakeOptions::default()
+    });
+    let err = result.map(|_| ()).unwrap_err().to_string();
+    assert!(err.contains("protocol 99"), "{err}");
+    assert!(fake.ctl.was_killed());
+}

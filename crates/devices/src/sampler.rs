@@ -606,6 +606,8 @@ struct Shared {
     sample_rate: f32,
     tune_semi: f32,
     tune_fine: f32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`).
+    master_cents: f32,
     /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
     velocity_amount: f32,
@@ -876,7 +878,7 @@ impl Voice {
         let z = &self.zone;
         let semis = (i32::from(self.key) - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
         let exponent = (semis + p.tune_semi + p.bend) / 12.0
-            + (z.tune_cents + p.tune_fine) / 1200.0
+            + (z.tune_cents + p.tune_fine + p.master_cents) / 1200.0
             + (lfo * p.lfo_to_pitch + cv_pitch.clamp(-1.0, 1.0) * p.cv_pitch) / 12.0;
         self.ratio = f64::from(exponent.exp2());
         if !p.filter_on {
@@ -1093,6 +1095,7 @@ impl Sampler {
                 sample_rate: 48_000.0,
                 tune_semi: 0.0,
                 tune_fine: 0.0,
+                master_cents: 0.0,
                 bend: 0.0,
                 velocity_amount: 0.5,
                 filter_on: false,
@@ -1457,6 +1460,7 @@ impl Device for Sampler {
             self.master.set_immediate(m);
             self.fresh = false;
         }
+        self.shared.master_cents = ctx.time.tune_cents;
         let mut lfo = [0.0f32; BATCH];
         for s in &mut lfo {
             *s = self.lfo.next_sample();

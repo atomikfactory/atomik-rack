@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v39), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v40), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -228,7 +228,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 39 (older versions still load; version 39
+- **Project files** are `.atomik` JSON, format version 40 (older versions still load; version 40
+  adds the root's `"tune_cents"` after `"info"` (the master tune in cents, written only when not 0, a
+  file without it loads at 0, refused in a version 39 file; see 3, "Master tune"); version 39
   adds the console's `"send_follow": true` (the sends of a strip that plays into a bus follow the
   bus fader and mute; written only when on, a file without it loads with it off) and
   `"parallels": [[parent, child], ...]` (the parallel channels, written only when there are some;
@@ -788,6 +790,32 @@ track, goes with the device when the device is removed (`Planner`), and is copie
  Bounce: load_project ─► Bundle::open ─► load_song_assets (every asset fully in RAM, never streamed)
          ─► song_input ─► render_offline_song ─► WAV      (bit-identical for any block size and workers)
 ```
+
+The window saves on a worker ([crates/app/src/app_core_save.rs](../crates/app/src/app_core_save.rs)).
+On the UI thread a save asks every sandboxed plugin for its state first (one request each, then the
+answers: `PluginInstance::begin_capture_state`, so the wait is the slowest plugin's), clones the
+document (the song, the note lists and the plugin states are shared, so nothing bulky is copied) and
+plans the bundle. A worker builds and validates the project text, copies the bundle for Save As,
+writes the file atomically and removes the orphans. The file name, the bundle and the saved baseline
+switch when the worker reports in (`AppCore::poll_background`), so an edit made meanwhile is still
+unsaved afterwards and undoing back to the saved state is clean; a failed save is reported and
+changes nothing. An import, a recording or opening another project waits for the save first
+(`AppCore::settle_save`), and a save that starts while audio is loading, recording, converting or
+freezing runs blocking. Scripts, tests and the QA server keep the blocking `AppCore::save`.
+
+The event loop sleeps until an event when nothing is due. A loaded plugin only asks for a look every
+100 ms (`PLUGIN_IDLE_POLL`: its notifications, dirty flags and main-thread work); frames at 60 Hz
+run while audio runs, a worker is busy, a plugin is being created or an editor is open.
+`ui-state.json` is written atomically and at most every two seconds (`Shell::flush_ui_state`, and on
+shutdown, detaching and attaching a pane); `keymap.json` is looked at when a window gets the focus
+and when a menu opens.
+
+A project opens its plugins together: `PluginManager::begin_create` starts the child processes of up
+to eight pending devices (`PluginBackend::begin_instantiate`, `PendingInstance::poll`), and the
+devices attach one per frame in document order, so the result does not depend on which plugin
+loads first. Plugins loaded into the app process are still created one per frame. A freeze or a bounce
+with sandboxed plugins starts its own children next to the live ones, so the process count doubles
+while it runs; the live children are not reused, because the offline output must stay bit-identical.
 
 ### 2.7a Export as an audio file
 
@@ -2084,6 +2112,21 @@ samples, forms a load once 200 ms of audio have passed, smooths it, and hands th
 view, which draws them on the name plates over the cached panels; a container shows the sum of the
 devices inside it. The switch is not saved.
 
+### Master tune
+
+The project's tune (`RackDoc::tune_cents`, -100 to +100 cents around A = 440 Hz, set by
+`Command::SetMasterTune`, one undo step) reaches the devices as `TimeInfo::tune_cents`. The app sends it
+through the ordered control queue (`EngineHandle::set_master_tune`): with a glide for an edit (about 20 ms,
+one exponential step per batch, so held notes do not step) and without one for a fresh engine and for
+`render_core`, which queues the document's value before the first batch of a bounce. It is never a live
+atomic: every batch carries one value that changed at a batch boundary, so a bounce is the same for any host
+block size and a project at 0 renders bit for bit as before (every device adds a literal 0 cents). The
+synths add it as the cents offset of `note_to_hz`; the sampler, drum machine, loop slicer and grain sampler
+add it to their playback ratio; the tuner in the app reads against `tuner_ref` shifted by it. Audio tracks
+and plugins are not touched. The per-device audit is in [DEVICES.md](DEVICES.md#master-tune). The Audio
+tab of Settings edits the open project's tune and, once changed there, keeps the value as the tune new
+projects start with (`master_tune_cents` in the settings file).
+
 ## 4. Threading model
 
 | Thread | Runs | May allocate or block? |
@@ -2723,12 +2766,31 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
   device query goes out on connect and "go offline" on disconnect. Every bank move and a handshake
   make the next pass send the whole surface again. Level meters, flip and the function keys are not
   implemented.
+- **The generic controller** (`Generic`, id `generic`, "Generic controller (mapped)"). It has no
+  layout: its messages are not decoded by the driver (`feeds_mappings`) but parsed by the host and
+  run through the project's MIDI mappings tagged with the surface. A mapping whose source names a
+  surface (`"surface"` in the source, learnt automatically when the control moved is on a surface)
+  hears that surface only; a source without one hears every surface and every port, so older
+  projects map as they did. Two surfaces can drive two devices at the same time with the same
+  controller numbers.
+- **Several surfaces and the focused device.** `settings.json` `"surfaces"` is a list (name, `use`,
+  driver, ports; at most eight); each enabled one runs its own driver and link in
+  `AppCore::surface_frame`, in settings order, and an older file with one `"surface"` loads as a
+  list of one. A mapping target `focused` is a param of the focused device: the device the surface
+  of the message is locked to (`AppCore::lock_surface`, Mixer > Lock Surfaces to Selection; never
+  saved), else the device selected in the rack. A locked surface never falls back to the selection
+  for a device that lacks the param.
+- **Commands as targets.** A `command` target (`RemoteCommand`: select the previous or next track,
+  undo, redo, previous or next preset of the focused device) is a trigger run on the press. It ends
+  an open mapped sweep first, so undo takes back the whole sweep. The preset step uses the plugin
+  presets of a plugin device and the patch list of the library folder for the others. Mixer > Map
+  Command arms one for the next control moved.
 - **Ports and threads.** `SurfaceLink` is the surface's two ports (`SystemLink`: a `midir` listener
   that keeps SysEx and only queues the bytes, and an output; `LoopbackSurface`: the same in memory,
   for tests and the MCP server). `AppCore::surface_frame(now)` runs on the UI thread, never the
   audio thread: it polls the link, hands every message to the driver, applies the actions, and sends
   the feedback at most every 1/30 s. The surface is an **app** setting, not part of the project:
-  `settings.json` `"surface": {"driver", "input", "output"}`, the Surfaces tab of Settings; a port
+  `settings.json` `"surfaces"`, the Surfaces tab of Settings; a port
   that cannot be opened is reported and the surface is not set up.
 
 ### Macro banks, the parameter search and automation that follows the selection
@@ -3738,7 +3800,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (408) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (410) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

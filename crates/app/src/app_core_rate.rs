@@ -22,6 +22,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Replaces the project with the starter project at `rate` Hz (44100, 48000 or 96000).
     pub fn new_document_at(&mut self, rate: u32) {
         let mut doc = super::new_project_doc();
+        doc.tune_cents = self.default_tune;
         if SAMPLE_RATES.contains(&rate) {
             doc.sample_rate = rate;
         }

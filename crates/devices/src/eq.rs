@@ -44,7 +44,11 @@
 //!
 //! The mono mix `(L + R) / 2` of the *output* feeds a fixed bank of 16 band-pass biquads (RBJ
 //! constant 0 dB peak gain) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915 per band,
-//! Q = 2.485), computed once in `prepare`. The bank runs at the full sample rate on the audio
+//! Q = 2.485), computed once in `prepare`. The bank runs only while the app has set
+//! `internal.analyser_live` (never stored, default off; the rack view turns it on for the panels
+//! on screen), so an EQ nobody looks at costs the six bands alone and its band energies read
+//! zero; the bank starts from silence each time it is switched on, and the audio output is the
+//! same either way. While it runs it works at the full sample rate on the audio
 //! thread (16 `f64` biquads per sample, a few million multiply-adds per second at 48 kHz, small
 //! next to the six EQ bands, so no decimation or round-robin was needed) and the mean square of
 //! every band is taken once per batch and smoothed over batches with a 50 ms one-pole (so low
@@ -184,6 +188,8 @@ const fn slope(id: u32, key: &'static str, name: &'static str) -> ParamDescripto
 /// `on, freq, gain, q`.
 const BASE: [u32; NB] = [0, 4, 8, 12, 16, 20];
 const P_OUTPUT: u32 = 24;
+/// The analyser switch (`internal.analyser_live`), set by the app for the panels on screen.
+const P_ANALYSER_LIVE: u32 = 30;
 /// First gain-CV trim param (bands 2..5 in order).
 const P_GAIN_TRIM: u32 = 25;
 /// Range of a band gain in dB, the CV's full-scale swing.
@@ -203,7 +209,7 @@ const fn trim(id: u32, key: &'static str, name: &'static str) -> ParamDescriptor
     }
 }
 
-static PARAMS: [ParamDescriptor; 30] = [
+static PARAMS: [ParamDescriptor; 31] = [
     on(0, "band1.on", "Low cut on", 0.0),
     freq(1, "band1.freq", "Low cut freq", 20.0, 2_000.0, 80.0),
     q(2, "band1.q", "Low cut Q", 0.3, 4.0, FRAC_1_SQRT_2),
@@ -258,6 +264,17 @@ static PARAMS: [ParamDescriptor; 30] = [
     trim(27, "band4.gain_cv_trim", "Peak 2 gain CV trim"),
     trim(28, "band5.gain_cv_trim", "High shelf gain CV trim"),
     bypass_param(29),
+    ParamDescriptor {
+        id: ParamId(P_ANALYSER_LIVE),
+        key: "internal.analyser_live",
+        name: "Analyser live",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::Toggle,
+        discrete: true,
+    },
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -572,6 +589,8 @@ pub struct Equalizer {
     energy: [f64; ANALYSER_BANDS],
     energy_alpha: f64,
     peaks: [f32; 2],
+    /// The analyser bank runs (a panel with the display is on screen).
+    analyser: bool,
 }
 
 impl Default for Equalizer {
@@ -594,6 +613,7 @@ impl Equalizer {
             energy: [0.0; ANALYSER_BANDS],
             energy_alpha: 1.0,
             peaks: [0.0; 2],
+            analyser: false,
         };
         e.setup(48_000.0);
         e.reset();
@@ -670,6 +690,18 @@ impl Device for Equalizer {
             self.output_db = v;
             return;
         }
+        if id.0 == P_ANALYSER_LIVE {
+            let on = v >= 0.5;
+            if on && !self.analyser {
+                // The bank was idle: it starts from silence, not from an old tail.
+                for f in &mut self.bank {
+                    f.reset();
+                }
+                self.energy = [0.0; ANALYSER_BANDS];
+            }
+            self.analyser = on;
+            return;
+        }
         if id.0 >= P_GAIN_TRIM {
             self.bands[(id.0 - P_GAIN_TRIM) as usize + 1].cv_trim = v;
             return;
@@ -733,16 +765,20 @@ impl Device for Equalizer {
             r[n] = yr;
             peaks[0] = peaks[0].max(yl.abs());
             peaks[1] = peaks[1].max(yr.abs());
-            let mono = 0.5 * (f64::from(yl) + f64::from(yr));
-            for ((f, c), acc) in self.bank.iter_mut().zip(&self.bank_coeffs).zip(&mut sq) {
-                let y = f.process(c, mono);
-                *acc += y * y;
+            if self.analyser {
+                let mono = 0.5 * (f64::from(yl) + f64::from(yr));
+                for ((f, c), acc) in self.bank.iter_mut().zip(&self.bank_coeffs).zip(&mut sq) {
+                    let y = f.process(c, mono);
+                    *acc += y * y;
+                }
             }
         }
-        for (en, s) in self.energy.iter_mut().zip(sq) {
-            let e = s / BATCH as f64;
-            let v = *en + self.energy_alpha * (e - *en);
-            *en = if v < 1e-30 { 0.0 } else { v };
+        if self.analyser {
+            for (en, s) in self.energy.iter_mut().zip(sq) {
+                let e = s / BATCH as f64;
+                let v = *en + self.energy_alpha * (e - *en);
+                *en = if v < 1e-30 { 0.0 } else { v };
+            }
         }
         self.peaks = peaks;
         *ctx.output(OUT_L) = l;

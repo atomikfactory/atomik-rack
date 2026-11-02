@@ -26,6 +26,24 @@ may break APIs and the patch and project formats.
   combined stays in view. Whether a container is unfolded is saved with the project (an optional
   `"open": true` in the container, written only when it is set; the project format is unchanged)
   and is one undo step. The OPEN button still shows the inside in a view of its own.
+- **Master tune.** Audio > Settings has a Master tune of -100 to +100 cents around A = 440 Hz. It
+  shifts every pitched device (the synths, the sampler, the drum machine, the loop slicer and the grain
+  sampler; a fixed-frequency FM operator keeps its Hz) and the reference of the audio track tuner, is
+  saved with the song and is part of a bounce, so the file sounds as it was heard. Changing it while
+  notes ring glides instead of stepping, and it is one undo step. A value changed in Settings is also
+  the tune new projects start with. Audio tracks and plugins are not affected. It is written only when
+  not 0, so older projects load and bounce unchanged.
+- **Several control surfaces, generic controllers and command mappings.** Settings > Surfaces now
+  lists any number of surfaces (up to eight), each with its own driver, ports and an on/off
+  switch; an older settings file with one surface loads as a list of one. A new Generic
+  controller driver has no fixed layout: its controls are mapped with MIDI Learn, and a mapping
+  learnt from a surface hears that surface only, so two controllers can send the same controller
+  numbers to two devices at once. A mapping can address the focused device (the device selected
+  in the rack) and Mixer > Lock Surfaces to Selection pins each surface to that device while the
+  selection moves on. A control can also run a command: undo, redo, previous or next track,
+  previous or next preset of the focused device (Mixer > Map Command arms one for the next
+  control moved). Undo from a control takes back a whole mapped sweep as one step. The new
+  mapping fields are written only when used, so older projects load and bounce unchanged.
 - **Alt+drag a clip edge to stretch it.** With the Select tool, hold Alt (the alternate-tool role)
   over the start or end edge of a clip and drag: the clip gets longer or shorter by a ratio, the
   opposite edge stays where it is, and everything in the clip follows. Note starts and lengths
@@ -972,6 +990,16 @@ may break APIs and the patch and project formats.
 - **`settings.json` and `ui-state.json` can no longer be left truncated.** They are written to a
   temporary file and renamed. A file that cannot be read is kept as `.bad` and Atomik starts with
   the defaults and says so.
+- **Play and Stop no longer wait on a parked retirement.** Transport commands travel on a lane of
+  their own that applies even while the engine holds its control queue for the UI to collect
+  retired plans, the retirement queue is four times larger, and the status line counts the batches
+  the control path stood still.
+- **A note off is never the note that is dropped.** The last slots of a device's note input and of
+  the live MIDI queue are kept for note offs and All Off, so a dense controller lane or a pile of
+  chords that overflows a batch cannot leave a note hanging. Nothing changes below the overflow line,
+  so existing bounces are bit-identical.
+- **A record tap whose stop was refused is stopped on the next frame** instead of recording on
+  behind the finished take.
 
 ### Changed
 - **The rack navigator is a miniature of the real rack.** The strip at the right edge of the rack
@@ -989,6 +1017,25 @@ may break APIs and the patch and project formats.
 - **The application icon sits on a black background.** The window, taskbar, Explorer, installer,
   Dock and Linux icons are regenerated from the logo on opaque black so they read on any
   taskbar.
+- **Saving no longer freezes the window.** File > Save and the file picked for Save As write the
+  project beside the window: the plugins' states are collected first (all at once, so a project with
+  many plugins waits for the slowest one), then the project text is built, the audio is copied and
+  the file is written on a worker while "Saving..." shows in the status line. You can keep editing;
+  a change made meanwhile stays unsaved afterwards, and undoing back to the saved state is clean. A
+  save that fails is reported and leaves the earlier file untouched. The saved file is
+  byte for byte what it was.
+- **Plugins load together and an idle project stays quiet.** Opening a project starts the processes
+  of up to eight sandboxed plugins at the same time instead of one after the other (they still
+  attach in document order). With a plugin loaded and nothing playing, the app looks at its
+  plugins ten times a second instead of sixty and sleeps in between. `ui-state.json` is written
+  atomically and at most every two seconds instead of at every click, `keymap.json` is checked when a
+  window gets the focus or a menu opens instead of four times a second, and the plugin scan uses as
+  many scanner processes as half the cores (two to eight).
+- **Idle effects cost less.** The EQ's 16-band analyser runs only for panels on screen (its output
+  is unchanged, the default-settings EQ costs about 5 times less), the compressor and the gate skip
+  their `log10`/`powf` while at rest, delay lines wrap with a mask, and a bypassed effect stops two
+  seconds after the bypass is fully engaged (see Effect bypass in DEVICES). The two-second rule can
+  change the tail heard when an effect is switched back on.
 - **A bigger drum machine panel that shows what is loaded.** The pad grid now takes the width and
   height of the panel instead of a small corner of it, with the 14 pad knobs and the master level
   in two columns at the right and the readout and the EDIT, SAMPLE and TO CH buttons under the
@@ -1103,6 +1150,9 @@ may break APIs and the patch and project formats.
   files, that every function the guides cite exists, and the command count the architecture guide
   quotes. The long documents are hard-wrapped at 100 columns, and the continuous integration job
   checks the wrapping and the links of the Markdown files.
+- Test builds now catch a device that takes a lock or makes a blocking call inside `process`
+  (`docs/EXTENDING.md`); release builds contain none of it. `docs/TESTING.md` has a recipe for a
+  scheduled hardware run.
 
 ## [0.2.0-rc.2] - 2026-10-28
 

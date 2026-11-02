@@ -160,6 +160,11 @@ fn render_event_overflow_drops_and_counts() {
     }
     handle.send_note(note(64, l, CallLog::NOTES_IN)).unwrap();
     render_blocks(&mut engine, &[], 1, 128, 128);
-    assert_eq!(handle.dropped_events(), extra as u64);
-    assert_eq!(counts.notes_seen(), MAX_EVENTS_PER_BATCH as u64 + 1);
+    // The last slots of the input are kept for releases, so the notes stop that much earlier.
+    let kept = (MAX_EVENTS_PER_BATCH - atomik_engine::RELEASE_HEADROOM) as u64;
+    assert_eq!(
+        handle.dropped_events(),
+        MAX_EVENTS_PER_BATCH as u64 + extra as u64 - kept
+    );
+    assert_eq!(counts.notes_seen(), kept + 1);
 }

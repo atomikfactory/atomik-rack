@@ -218,7 +218,7 @@ impl UiState {
             std::fs::create_dir_all(dir)?;
         }
         let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(path, text + "\n")
+        crate::recovery::atomic_write(path, (text + "\n").as_bytes())
     }
 
     /// The split clamped into 0.05..=0.95 (0.5 when not finite), the file browser width to at

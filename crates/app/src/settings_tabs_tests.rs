@@ -1127,13 +1127,21 @@ fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
             "Control surface",
             "Surface MIDI input",
             "Surface MIDI output",
-            "MIDI Out device port"
+            "MIDI Out device port",
+            "Surfaces"
         ]
     );
     let sections = d.sections();
     let labels =
         |i: usize| -> Vec<String> { sections[i].options.iter().map(|(l, _)| l.clone()).collect() };
-    assert_eq!(labels(0), ["None", "Control surface (MCU-compatible)"]);
+    assert_eq!(
+        labels(0),
+        [
+            "None",
+            "Control surface (MCU-compatible)",
+            "Generic controller (mapped)"
+        ]
+    );
     assert_eq!(labels(1), ["None", "Example Surface", "Example Keyboard"]);
     assert_eq!(labels(2), ["None", "Example Surface"]);
     assert_eq!(labels(3), ["None", "Example Surface"]);
@@ -1169,15 +1177,19 @@ fn choosing_a_surface_is_applied_with_the_settings() {
     let DialogOutcome::Apply(s) = down(&mut d, apply) else {
         panic!("apply");
     };
-    assert_eq!(s.surface.driver.as_deref(), Some("mcu"));
-    assert_eq!(s.surface.input.as_deref(), Some("Example Surface"));
-    assert_eq!(s.surface.output.as_deref(), Some("Example Surface"));
+    assert_eq!(s.surfaces.len(), 1);
+    assert_eq!(s.surfaces[0].driver.as_deref(), Some("mcu"));
+    assert_eq!(s.surfaces[0].input.as_deref(), Some("Example Surface"));
+    assert_eq!(s.surfaces[0].output.as_deref(), Some("Example Surface"));
     // Choosing None again clears one.
     let mut d = surfaces_dialog(s);
     goto(&mut d, Tab::Surfaces);
     pick(&mut d, "Surface MIDI output", "None");
-    assert_eq!(d.draft().surface.output, None);
-    assert_eq!(d.draft().surface.input.as_deref(), Some("Example Surface"));
+    assert_eq!(d.draft().surfaces[0].output, None);
+    assert_eq!(
+        d.draft().surfaces[0].input.as_deref(),
+        Some("Example Surface")
+    );
 }
 
 #[test]
@@ -1187,8 +1199,8 @@ fn the_port_of_the_midi_out_devices_is_chosen_with_the_settings() {
     pick(&mut d, "MIDI Out device port", "Example Surface");
     assert_eq!(d.draft().midi_out_port.as_deref(), Some("Example Surface"));
     assert_eq!(
-        d.draft().surface.output,
-        None,
+        d.draft().surfaces.len(),
+        0,
         "the surface's own port is separate"
     );
     let apply = d.layout(VIEW).apply.center();
@@ -1213,11 +1225,12 @@ fn the_port_of_the_midi_out_devices_is_chosen_with_the_settings() {
 #[test]
 fn a_saved_surface_that_is_not_there_stays_selectable() {
     let current = AudioSettings {
-        surface: crate::settings::SurfaceSettings {
+        surfaces: vec![crate::settings::SurfaceSettings {
             driver: Some("legacy".into()),
             input: Some("Old Desk".into()),
             output: Some("Old Desk".into()),
-        },
+            ..crate::settings::SurfaceSettings::named("Desk")
+        }],
         ..AudioSettings::default()
     };
     let mut d = surfaces_dialog(current);

@@ -13,9 +13,16 @@
 //!   time moves the dry tap at that batch boundary. The ring holds 100 ms at the prepared sample
 //!   rate (rounded up to a power of two), far above any built-in latency; a larger latency is
 //!   clamped to the ring.
-//! * **The effect keeps running.** `process` always runs the inner effect, so its state and tail
-//!   continue and its other outputs (CV outs, meters) are untouched; only `out_l`/`out_r` are
-//!   replaced by the blend.
+//! * **The effect runs, then stops.** While the bypass fades in and for the first two seconds
+//!   after it is fully engaged `process` runs the inner effect, so its state and tail continue
+//!   and its other outputs (CV outs, meters) are untouched; only `out_l`/`out_r` are replaced by
+//!   the blend. After that the effect is reset once and skipped: its audio and CV outputs read
+//!   zero, its meters read the reset state, and only the delayed dry signal is written, so a
+//!   bypassed effect costs almost nothing. Switching the bypass off runs the effect again from
+//!   the reset state (the first 5 ms fade from the dry signal to a cold effect; a tail that
+//!   was still ringing after the two seconds is gone). The rule counts batches only, so live
+//!   playback and offline renders stop at the same frame. A bypass that is on when the project
+//!   loads stops two seconds after it starts.
 //! * **Crossfade.** A per-sample linear ramp of 5 ms (`1 / round(sr * 0.005)` per sample, the
 //!   same as plugin devices) between wet and the delayed dry: `wet * (1 - m) + dry * m`. At
 //!   `m == 0` the wet output is left bit-for-bit as the effect wrote it, at `m == 1` it is the
@@ -27,13 +34,15 @@
 use atomik_core::{BATCH, Batch, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, PlayerDataRef, PrepareInfo, ProcessContext, RunMode, SampleMapRef,
-    SocketId,
+    SocketId, SocketKind,
 };
 
 /// Length of the bypass crossfade in seconds.
 const FADE_SECONDS: f64 = 0.005;
 /// Dry ring length in seconds (rounded up to a power of two frames).
 const RING_SECONDS: f64 = 0.1;
+/// How long the bypass is fully engaged before the effect stops, in seconds.
+const STOP_SECONDS: f64 = 2.0;
 /// Smallest ring in frames.
 const MIN_RING: usize = 8192;
 
@@ -84,6 +93,14 @@ pub struct Bypassable<D: Device> {
     ring: [Vec<f32>; 2],
     mask: usize,
     write: usize,
+    /// Every output but the main pair (audio and CV), silenced when the effect stops.
+    side_outs: Vec<SocketId>,
+    /// Batches the bypass has been fully engaged for.
+    settled: u32,
+    /// Batches of full bypass after which the effect stops (`0` until `prepare`).
+    stop_after: u32,
+    /// The effect is stopped (and was reset): `process` skips it.
+    stopped: bool,
 }
 
 impl<D: Device> Bypassable<D> {
@@ -110,6 +127,17 @@ impl<D: Device> Bypassable<D> {
             socket("out_l"),
             socket("out_r"),
         );
+        let side_outs: Vec<SocketId> = d
+            .sockets
+            .iter()
+            .filter(|s| {
+                !s.direction.is_input()
+                    && s.kind != SocketKind::Notes
+                    && s.id != out_l
+                    && s.id != out_r
+            })
+            .map(|s| s.id)
+            .collect();
         Self {
             inner,
             bypass_id,
@@ -124,11 +152,46 @@ impl<D: Device> Bypassable<D> {
             ring: [Vec::new(), Vec::new()],
             mask: 0,
             write: 0,
+            side_outs,
+            settled: 0,
+            stop_after: 0,
+            stopped: false,
         }
     }
 
     fn target(&self) -> f32 {
         if self.bypassed { 1.0 } else { 0.0 }
+    }
+
+    /// Stops the effect: it is reset (so it starts clean when it is switched back on) and its
+    /// side outputs go silent; from now on `process` only passes the delayed dry signal.
+    fn stop(&mut self, ctx: &mut ProcessContext<'_>) {
+        self.inner.reset();
+        for id in &self.side_outs {
+            *ctx.output(*id) = [0.0; BATCH];
+        }
+        self.stopped = true;
+    }
+
+    /// One batch of the stopped state: the dry input, `latency_frames()` late, on the main
+    /// outputs (the ring keeps recording so the switch back on finds the same delay line).
+    fn pass_dry(&mut self, ctx: &mut ProcessContext<'_>, dry_in: &[Batch; 2]) {
+        if self.ring[0].is_empty() {
+            return;
+        }
+        let latency = (self.inner.latency_frames() as usize).min(self.mask);
+        let (mut left, mut right) = ([0.0; BATCH], [0.0; BATCH]);
+        for i in 0..BATCH {
+            let w = self.write;
+            self.ring[0][w & self.mask] = dry_in[0][i];
+            self.ring[1][w & self.mask] = dry_in[1][i];
+            let r = w.wrapping_sub(latency) & self.mask;
+            self.write = w.wrapping_add(1);
+            left[i] = self.ring[0][r];
+            right[i] = self.ring[1][r];
+        }
+        *ctx.output(self.out_l) = left;
+        *ctx.output(self.out_r) = right;
     }
 }
 
@@ -148,6 +211,10 @@ impl<D: Device> Device for Bypassable<D> {
         self.mask = len - 1;
         self.write = 0;
         self.snap = true;
+        self.settled = 0;
+        self.stopped = false;
+        let frames = (sr * STOP_SECONDS).ceil() as u64;
+        self.stop_after = (frames / BATCH as u64).clamp(1, u64::from(u32::MAX)) as u32;
     }
 
     fn reset(&mut self) {
@@ -157,6 +224,8 @@ impl<D: Device> Device for Bypassable<D> {
         }
         self.write = 0;
         self.snap = true;
+        self.settled = 0;
+        self.stopped = false;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
@@ -171,8 +240,18 @@ impl<D: Device> Device for Bypassable<D> {
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         let dry_in: [Batch; 2] = [*ctx.input(self.in_l), *ctx.input(self.in_r)];
-        self.inner.process(ctx);
         let target = self.target();
+        if self.stopped && target >= 1.0 {
+            // Stopped: nothing of the effect is heard, so it costs nothing (module docs).
+            self.pass_dry(ctx, &dry_in);
+            return;
+        }
+        if self.stopped {
+            // Switched back on: the effect starts again from the reset state.
+            self.stopped = false;
+            self.settled = 0;
+        }
+        self.inner.process(ctx);
         if self.snap {
             self.mix = target;
             self.snap = false;
@@ -205,6 +284,14 @@ impl<D: Device> Device for Bypassable<D> {
         }
         *ctx.output(self.out_l) = left;
         *ctx.output(self.out_r) = right;
+        if target >= 1.0 && self.mix >= 1.0 {
+            self.settled = self.settled.saturating_add(1);
+            if self.settled >= self.stop_after {
+                self.stop(ctx);
+            }
+        } else {
+            self.settled = 0;
+        }
     }
 
     fn process_stage(&mut self, stage: u8, ctx: &mut ProcessContext<'_>) {

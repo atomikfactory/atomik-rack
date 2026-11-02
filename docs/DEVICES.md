@@ -27,6 +27,28 @@ Conventions used throughout:
   *Exp* is exponential, and *dB* is linear in decibels with the minimum meaning silence.
 - **Audio** is nominally ±1.0. **CV** is nominally −1..+1. Stereo is a pair of mono sockets `*_l` and `*_r`.
 
+## Master tune
+
+The project has one reference pitch, a shift of -100 to +100 cents around A = 440 Hz (Audio > Settings,
+the Master tune chips; saved with the song as the root field `tune_cents`, written only when it is not
+0). It reaches every device the same way: the engine puts the value of the batch in `TimeInfo::tune_cents`
+(a change glides over about 20 ms, so held notes do not step), so a bounce of the song is what was heard
+and is the same for every block size. A project at 0 bounces bit for bit as it did before the setting
+existed. Where each pitched path stands:
+
+| Path | Master tune |
+|---|---|
+| Poly synth, Mono Bass, Dual Layer (both layers) | Shifts both oscillators (note, bend, LFO and CV all add to it) |
+| Wavetable synth | Shifts both oscillators and the sub oscillator |
+| FM synth | Shifts the key frequency every ratio operator follows; a fixed-frequency operator keeps its own Hz |
+| Sampler | Adds to the playback ratio with the zone and global tune |
+| Drum machine | Adds to every pad's playback ratio with the pad's tune, fine tune and the zone's cents |
+| Loop slicer | Adds to every slice's playback ratio, with the slice's own tune and the global tune |
+| Grain Sampler | Adds to every grain's ratio |
+| Audio track tuner | Its A4 is the track's `tuner_ref` shifted by the master tune; the readout shows that A4 |
+| Audio tracks (clips, recording), plugins, effects, the note players | Not affected |
+| Audio-to-notes conversion | Not affected: it reads the pitch of a recording against A = 440 Hz |
+
 ---
 
 ## Poly Synth: `atomik.poly-synth` (Instrument)
@@ -1027,7 +1049,9 @@ order 1 to 6; the param ids are in that order too (`band1.on` is 0, `output` is 
   0 after about 100 ms). A band that is off, and a shelf or peak with exactly 0 dB gain, is skipped,
   so with every band off and `output` 0 dB the output equals the input bit for bit (also the default
   state).
-- **Analyser.** The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak
+- **Analyser.** It runs only while the app sets `internal.analyser_live` (never stored; the rack view
+  sets it for the EQ panels on screen), the audio output is the same either way, and the band
+  energies read 0 while it is off. The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak
   gain, Q 2.485) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915), designed in `prepare`.
   It runs at the full sample rate on the audio thread (16 `f64` biquads per sample; no FFT, no
   decimation) and the mean square of every band is taken per batch and smoothed with a 50 ms
@@ -3695,9 +3719,11 @@ modules know nothing about it.
   Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in
   `prepare`; a latency that changes at run time (Character across its two latency classes) moves the
   dry tap at the next batch boundary.
-- **The effect keeps running.** Its state and tail continue and every other output (the compressor's
-  `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged;
-  un-bypassing is seamless, and the CPU cost does not drop.
+- **The effect runs, then stops.** While the bypass fades in and for two seconds after it is fully
+  engaged the effect runs and its CV outs and meters keep coming from it. Then it is reset once and
+  skipped: its CV outs read 0, its meters the reset state, only the delayed dry signal is written, and
+  it costs almost nothing. Un-bypassing runs it again from the reset state, so a tail that was still
+  ringing after the two seconds is gone. The rule counts batches, so live and offline stop together.
 - **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample,
   `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's
   own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed

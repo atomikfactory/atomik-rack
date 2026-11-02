@@ -496,6 +496,8 @@ pub(crate) struct Shared {
     pub sample_rate: f32,
     /// Attack length in samples (at least 1).
     pub attack: u32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`).
+    pub master_cents: f32,
 }
 
 /// Indices of a pad's zones in the current map.
@@ -598,6 +600,7 @@ impl DrumMachine {
             shared: Shared {
                 sample_rate: 48_000.0,
                 attack: 24,
+                master_cents: 0.0,
             },
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             fresh: true,
@@ -943,6 +946,7 @@ impl Device for DrumMachine {
             self.master.set_immediate(m);
             self.fresh = false;
         }
+        self.shared.master_cents = ctx.time.tune_cents;
         let mut routed = [false; PAD_COUNT];
         let mut fx_on = [false; PAD_COUNT];
         for (p, r) in routed.iter_mut().enumerate() {

@@ -7,6 +7,7 @@ mod meter_map;
 mod midi;
 mod note;
 mod param;
+pub mod rt_guard;
 mod tempo_map;
 pub mod theory;
 mod time;

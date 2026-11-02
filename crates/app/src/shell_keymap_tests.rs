@@ -322,9 +322,15 @@ fn an_edited_keymap_file_is_hot_reloaded_while_the_app_runs() {
     tap(&mut s, Os::Windows, "Cmd+Alt+L");
     assert!(looping(&s));
     assert!(!s.reload_keymap_file(), "nothing changed since");
-    // The status poll also notices an edit.
+    // A window that gets the focus notices an edit; the status poll does not look.
     std::fs::write(dir.join(KEYMAP_FILE), r#"{"profile": "legacy"}"#).unwrap();
     s.poll_status();
+    assert_ne!(
+        s.profile(),
+        Profile::Legacy,
+        "the poll does not stat the file"
+    );
+    s.window_focused(WindowKind::Main);
     assert_eq!(s.profile(), Profile::Legacy);
 }
 

@@ -78,6 +78,7 @@ impl<S: EngineSink> AppCore<S> {
             {
                 let lit = AnalyserData {
                     tuner_on: true,
+                    tuner_ref_hz: self.tuner_reference(&device).1,
                     ..AnalyserData::default()
                 };
                 self.view.set_analyser(&device, &lit);
@@ -87,6 +88,22 @@ impl<S: EngineSink> AppCore<S> {
             self.view.set_analyser(&device, &AnalyserData::default());
         }
         self.push_tuner_live();
+    }
+
+    /// The A4 the tuner of `key` reads against: the track's `tuner_ref` shifted by the master
+    /// tune. The second value is what the panel shows instead of its own `tuner_ref`, 0 while the
+    /// project is in tune.
+    pub(super) fn tuner_reference(&self, key: &DeviceKey) -> (f32, f32) {
+        let own = self
+            .doc()
+            .param_value(key, TUNER_REF_PARAM, &self.registry)
+            .unwrap_or(tuner::REF_DEFAULT_HZ);
+        let cents = self.doc().tune_cents;
+        if cents.to_bits() == 0 {
+            return (own, 0.0);
+        }
+        let shifted = (f64::from(own) * atomik_model::tune_ratio(cents)) as f32;
+        (shifted, shifted)
     }
 
     /// Whether the tuner of an audio track is showing.
@@ -149,10 +166,7 @@ impl<S: EngineSink> AppCore<S> {
             let Some(id) = self.ids.get(&key).copied() else {
                 continue;
             };
-            let ref_hz = self
-                .doc()
-                .param_value(&key, TUNER_REF_PARAM, &self.registry)
-                .unwrap_or(tuner::REF_DEFAULT_HZ);
+            let (ref_hz, shown_ref) = self.tuner_reference(&key);
             let Some(mut shown) = self.tuners.shown.remove(&key) else {
                 continue;
             };
@@ -175,6 +189,7 @@ impl<S: EngineSink> AppCore<S> {
                 let data = AnalyserData {
                     tuner_on: true,
                     tuner: reading,
+                    tuner_ref_hz: shown_ref,
                     ..AnalyserData::default()
                 };
                 self.view.set_analyser(&key, &data);

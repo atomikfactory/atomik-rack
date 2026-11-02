@@ -853,6 +853,43 @@ mod tests {
         assert_eq!(feed.last_frame, 2_000);
     }
 
+    /// Two sources with interleaved (and out of order) stamps leave the feed sorted whatever the
+    /// host frame, and a far-future stamp never holds back the ones after it.
+    #[test]
+    fn interleaved_sources_leave_the_feed_sorted_at_any_host_frame() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let (_engine, mut handle) = atomik_engine::new_engine(atomik_engine::EngineConfig {
+            sample_rate: atomik_core::SampleRate::new(48_000.0).unwrap(),
+            tempo: atomik_core::Tempo::new(120.0).unwrap(),
+            input_channels: 0,
+            output_channels: 2,
+            seed: 0,
+        });
+        let mut feed = LiveFeed::new(handle.live_notes().unwrap());
+        for host in [0u64, 1, 63, 64, 4_096, 1_000_003] {
+            let ceiling = host + 2 * 256;
+            let mut last_seen = 0;
+            for i in 0..400u64 {
+                let base = host + (i / 2) * 7;
+                let stamp = match (i % 2, next() % 20) {
+                    (_, 0) => host + 480_000, // ten seconds ahead
+                    (0, _) => base,
+                    _ => base.saturating_sub(next() % 40), // the other source lags
+                };
+                let frame = feed.admit(stamp, Some(ceiling));
+                assert!(frame >= last_seen, "host {host}: sorted");
+                assert!(frame <= ceiling, "host {host}: bounded by the ceiling");
+                last_seen = frame;
+            }
+        }
+    }
+
     /// The link's ceiling is the host frame plus the time since it was published plus two
     /// buffers.
     #[test]

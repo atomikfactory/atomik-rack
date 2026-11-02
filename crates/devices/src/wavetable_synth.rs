@@ -756,6 +756,8 @@ struct Shared {
     lfo_to_position: [f32; 2],
     /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`).
+    tune_cents: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
     velocity_amount: f32,
@@ -927,7 +929,7 @@ impl Voice {
             + p.cv_pitch_amount * clean(c.pitch);
         let max_hz = MAX_FREQ_RATIO * p.sample_rate;
         for o in 0..2 {
-            let hz = note_to_hz(key + p.pitch_offset[o] + pitch, 0.0).min(max_hz);
+            let hz = note_to_hz(key + p.pitch_offset[o] + pitch, p.tune_cents).min(max_hz);
             self.mip[o] = atomik_dsp::wavetable::level_for(hz * p.uni_top, p.sample_rate);
             for u in 0..p.unison {
                 let step = (hz * p.uni_ratio[u]).min(max_hz) / p.sample_rate;
@@ -947,7 +949,8 @@ impl Voice {
             self.position_target[o] = target;
             self.position_step[o] = (target - self.position[o]) / CONTROL_INTERVAL as f32;
         }
-        self.sub_step = f64::from(note_to_hz(key + pitch - 12.0, 0.0).min(max_hz) / p.sample_rate);
+        self.sub_step =
+            f64::from(note_to_hz(key + pitch - 12.0, p.tune_cents).min(max_hz) / p.sample_rate);
 
         let octaves = p.env_amount * 6.0 * env
             + p.key_track * (key - 60.0) / 12.0
@@ -1128,6 +1131,7 @@ impl WavetableSynth {
                 lfo_to_cutoff: 0.0,
                 lfo_to_position: [0.0; 2],
                 bend: 0.0,
+                tune_cents: 0.0,
                 wheel: 0.0,
                 velocity_amount: 0.5,
                 cv_cutoff_amount: 2.0,
@@ -1408,6 +1412,7 @@ impl Device for WavetableSynth {
             self.master.set_immediate(m);
             self.fresh = false;
         }
+        self.shared.tune_cents = ctx.time.tune_cents;
         let mut lfo = [0.0f32; BATCH];
         for s in &mut lfo {
             *s = self.lfo.next_sample();
@@ -2388,5 +2393,19 @@ mod tests {
         assert_eq!(l0.to_bits(), r0.to_bits(), "unconnected: dual mono");
         let (l, r) = sides(Some(1.0));
         assert!(l < r0 * 1e-3 && (r - r0).abs() < r0 * 1e-3, "{l} {r}");
+    }
+
+    #[test]
+    fn master_tune_shifts_the_pitch_by_the_cents_ratio() {
+        for cents in [50.0f32, -100.0, 100.0] {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.time_mut().tune_cents = cents;
+            h.push_note("notes_in", on(0, 69, 1.0));
+            let o = h.render(seconds(1.0), &OUT);
+            let f = dominant_frequency(&o[0][..48_000], SR);
+            let want = 440.0 * 2f64.powf(f64::from(cents) / 1200.0);
+            assert!((f - want).abs() < 0.6, "{cents} cents: {f} vs {want}");
+        }
     }
 }

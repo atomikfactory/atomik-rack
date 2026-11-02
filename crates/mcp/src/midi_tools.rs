@@ -47,8 +47,10 @@ const SURFACE_STEP: f64 = 0.1;
 pub struct MidiTools {
     /// The monotonic time of the control path, in seconds.
     pub clock: f64,
-    /// The in-memory port of the control surface, while one is attached.
-    pub surface: Option<LoopbackSurface>,
+    /// The in-memory ports of the control surfaces that are attached, by name.
+    pub surfaces: std::collections::BTreeMap<String, LoopbackSurface>,
+    /// The surface attached last (the default of `send` and `lock`).
+    pub last_surface: Option<String>,
 }
 
 /// Parses `F0 00 ...`: hex bytes separated by spaces.
@@ -376,11 +378,25 @@ fn id(args: &Args) -> Result<u32, String> {
 fn surface_def() -> Value {
     definition(
         "session_surface",
-        "Plays a control surface (the eight-fader protocol) on an in-memory port, so a headless session can test the surface driver. `action`: `attach` (the driver `mcu`; returns what the host sends first: the device query, then the faders, LEDs, rings, scribble strips and time display for the console), `send` (`messages`: the surface's messages as hex separated by `;`: a fader is pitch bend `E0 <lsb> <msb>` on channel 0 to 7 and 8 for the master, a key is a note on `90 <note> 7F`, a V-pot is `B0 10 <value>`, a SysEx is `F0 ... F7`; the host handles them and answers), `frame` (just run a frame, to see the feedback for a change made by another tool) and `detach` (the host lets the surface go offline). Returns the messages the host sent to the surface as hex (`sent`), and the surface counters.",
+        "Plays control surfaces on in-memory ports, so a headless session can test the surface drivers and the mappings of a generic controller. `action`: `attach` (the driver `mcu`, the eight-fader protocol, or `generic`, a controller whose controls feed the mappings; without `name` it replaces every surface, with `name` it adds a surface of that name beside the others; returns what the host sends first), `send` (`messages`: the surface's messages as hex separated by `;`, to the surface `name`, default the last attached: an MCU fader is pitch bend `E0 <lsb> <msb>` on channel 0 to 7 and 8 for the master, a key is a note on `90 <note> 7F`, a V-pot is `B0 10 <value>`; a generic controller sends notes, controllers and pitch bend that its mappings (learned with `session_midi_input` or `midi_map_*`, tied to the surface by name) turn into commands), `frame` (just run a frame), `lock` (the surface `name` acts on the device `device`, default the one selected in the rack, whatever is selected later), `unlock` and `detach` (the host lets the surfaces go offline). Returns the messages the host sent to the surfaces as hex (`sent`), the lock of each surface and the counters.",
         &[
-            ("action", "string", "attach, send, frame or detach."),
+            (
+                "action",
+                "string",
+                "attach, send, frame, lock, unlock or detach.",
+            ),
             ("driver", "string", "attach: the driver id (default `mcu`)."),
+            (
+                "name",
+                "string",
+                "attach, send, lock, unlock: the surface's name (default: the driver, or the last attached).",
+            ),
             ("messages", "string", "send: hex messages separated by `;`."),
+            (
+                "device",
+                "string",
+                "lock: the device key (default the selected device).",
+            ),
         ],
         &["action"],
     )
@@ -388,38 +404,71 @@ fn surface_def() -> Value {
 
 fn surface(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let action = args.str("action")?;
+    let name = args.opt_str("name")?.map(str::to_owned);
     let session = server.require_session()?;
     match action {
         "attach" => {
             let driver = args.opt_str("driver")?.unwrap_or("mcu").to_owned();
-            let port = session
-                .shell_mut()
-                .core_mut()
-                .attach_loopback_surface(&driver)?;
-            session.midi.surface = Some(port);
+            if name.is_none() {
+                session.midi.surfaces.clear();
+            }
+            let core = session.shell_mut().core_mut();
+            let (label, port) = match &name {
+                Some(n) => (n.clone(), core.add_loopback_surface(n, &driver)?),
+                None => (driver.clone(), core.attach_loopback_surface(&driver)?),
+            };
+            session.midi.surfaces.insert(label.clone(), port);
+            session.midi.last_surface = Some(label);
         }
         "send" => {
             let list = messages(args.str("messages")?)?;
+            let label = name
+                .clone()
+                .or_else(|| session.midi.last_surface.clone())
+                .ok_or("no surface is attached: use action attach")?;
             let port = session
                 .midi
-                .surface
-                .clone()
-                .ok_or("no surface is attached: use action attach")?;
+                .surfaces
+                .get(&label)
+                .cloned()
+                .ok_or_else(|| format!("no surface named {label:?} is attached"))?;
             for m in &list {
                 port.feed(m);
             }
         }
         "frame" => {
-            if session.midi.surface.is_none() {
+            if session.midi.surfaces.is_empty() {
                 return Err("no surface is attached: use action attach".into());
             }
         }
+        "lock" | "unlock" => {
+            let label = name
+                .clone()
+                .or_else(|| session.midi.last_surface.clone())
+                .ok_or("no surface is attached: use action attach")?;
+            let core = session.shell_mut().core_mut();
+            let device = if action == "lock" {
+                let device = match args.opt_str("device")? {
+                    Some(d) => atomik_model::DeviceKey(d.to_owned()),
+                    None => core
+                        .view()
+                        .primary()
+                        .ok_or("select a device first or pass `device`")?,
+                };
+                Some(device)
+            } else {
+                None
+            };
+            if !core.lock_surface(&label, device) {
+                return Err(core.last_rejection().unwrap_or_default().to_owned());
+            }
+        }
         "detach" => {
-            session.shell_mut().core_mut().set_surface(None);
+            session.shell_mut().core_mut().set_surfaces(Vec::new());
         }
         other => {
             return Err(format!(
-                "action {other:?} is not attach, send, frame or detach"
+                "action {other:?} is not attach, send, frame, lock, unlock or detach"
             ));
         }
     }
@@ -431,14 +480,13 @@ fn surface(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         session.shell_mut().core_mut().surface_frame(t);
     }
     session.shell_mut().frame();
-    let sent: Vec<String> = session
-        .midi
-        .surface
-        .as_ref()
-        .map(|p| p.take_sent().iter().map(|m| hex(m)).collect())
-        .unwrap_or_default();
+    let mut sent: Vec<String> = Vec::new();
+    for port in session.midi.surfaces.values() {
+        sent.extend(port.take_sent().iter().map(|m| hex(m)));
+    }
     if action == "detach" {
-        session.midi.surface = None;
+        session.midi.surfaces.clear();
+        session.midi.last_surface = None;
     }
     let core = session.shell().core();
     Ok(ToolOutput::json(&json!({
@@ -449,6 +497,13 @@ fn surface(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             "sent": s.sent(),
             "received": s.received(),
         })),
+        "surfaces": core.surfaces().iter().map(|s| json!({
+            "name": s.id(),
+            "driver": s.driver_name(),
+            "locked_to": core.surface_lock(s.id()).map(|d| d.0.clone()),
+            "sent": s.sent(),
+            "received": s.received(),
+        })).collect::<Vec<_>>(),
         "message": core.last_rejection(),
         "can_undo": core.document().can_undo(),
     })))

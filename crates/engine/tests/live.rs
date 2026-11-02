@@ -6,8 +6,8 @@ mod common;
 
 use atomik_core::{MAX_EVENTS_PER_BATCH, NoteKind};
 use atomik_engine::{
-    DeviceInstanceId, Engine, EngineError, EngineHandle, FrameClock, Graph, NOTE_QUEUE_CAPACITY,
-    ScheduledNote, new_engine,
+    DeviceInstanceId, Engine, EngineError, EngineHandle, FrameClock, Graph, LIVE_RELEASE_HEADROOM,
+    NOTE_QUEUE_CAPACITY, RELEASE_HEADROOM, ScheduledNote, new_engine,
 };
 use atomik_testkit::fakes::{ImpulseOnNote, NoteEvents, NoteLog};
 use atomik_testkit::no_alloc::assert_no_alloc;
@@ -140,7 +140,7 @@ fn live_note_reaches_an_impulse_at_its_frame() {
 fn live_queue_overflow_is_dropped_and_counted() {
     let (mut engine, mut handle, log, events) = log_engine();
     let mut live = handle.live_notes().unwrap();
-    for _ in 0..NOTE_QUEUE_CAPACITY {
+    for _ in 0..NOTE_QUEUE_CAPACITY - LIVE_RELEASE_HEADROOM {
         live.push(note(1_000_000, log, on(1))).unwrap();
     }
     for _ in 0..2 {
@@ -155,6 +155,31 @@ fn live_queue_overflow_is_dropped_and_counted() {
 }
 
 #[test]
+fn live_queue_keeps_room_for_releases() {
+    let (mut engine, mut handle, log, events) = log_engine();
+    let mut live = handle.live_notes().unwrap();
+    for _ in 0..NOTE_QUEUE_CAPACITY {
+        let _ = live.push(note(1, log, on(1)));
+    }
+    // Notes are refused, but every release up to the headroom still fits.
+    for key in 0..LIVE_RELEASE_HEADROOM as u8 {
+        live.push(note(1, log, NoteKind::Off { key })).unwrap();
+    }
+    assert_eq!(
+        live.push(note(1, log, NoteKind::AllOff)),
+        Err(EngineError::QueueFull),
+        "only the headroom is reserved"
+    );
+    render_blocks(&mut engine, &[], 1, 128, 128);
+    let offs = events
+        .events()
+        .iter()
+        .filter(|(_, k)| matches!(k, NoteKind::Off { .. }))
+        .count();
+    assert_eq!(offs, LIVE_RELEASE_HEADROOM);
+}
+
+#[test]
 fn live_and_scheduled_batch_overflow_is_dropped_and_counted() {
     let (mut engine, mut handle, log, events) = log_engine();
     let mut live = handle.live_notes().unwrap();
@@ -164,11 +189,40 @@ fn live_and_scheduled_batch_overflow_is_dropped_and_counted() {
         live.push(note(1, log, on(2))).unwrap();
     }
     render_blocks(&mut engine, &[], 1, 128, 128);
-    assert_eq!(events.events().len(), MAX_EVENTS_PER_BATCH);
-    assert_eq!(
-        handle.dropped_events(),
-        (2 * half - MAX_EVENTS_PER_BATCH) as u64
-    );
+    // The last slots of the input are kept for releases.
+    let room = MAX_EVENTS_PER_BATCH - RELEASE_HEADROOM;
+    assert_eq!(events.events().len(), room);
+    assert_eq!(handle.dropped_events(), (2 * half - room) as u64);
+}
+
+#[test]
+fn a_dense_lane_and_chords_never_leave_a_hanging_note() {
+    let (mut engine, mut handle, log, events) = log_engine();
+    // A chord, then a flood of controller events in one batch, then the chord's releases.
+    let chord = [60u8, 64, 67, 71];
+    for key in chord {
+        handle.send_note(note(1, log, on(key))).unwrap();
+    }
+    for i in 0..MAX_EVENTS_PER_BATCH * 2 {
+        let kind = NoteKind::Cc {
+            controller: 1,
+            value: (i % 100) as f32 / 100.0,
+        };
+        handle.send_note(note(2, log, kind)).unwrap();
+    }
+    for key in chord {
+        handle
+            .send_note(note(3, log, NoteKind::Off { key }))
+            .unwrap();
+    }
+    handle.send_note(note(3, log, NoteKind::AllOff)).unwrap();
+    render_blocks(&mut engine, &[], 1, 128, 128);
+    let seen = events.events();
+    let count = |f: fn(&NoteKind) -> bool| seen.iter().filter(|(_, k)| f(k)).count();
+    assert_eq!(count(|k| matches!(k, NoteKind::On { .. })), chord.len());
+    assert_eq!(count(|k| matches!(k, NoteKind::Off { .. })), chord.len());
+    assert_eq!(count(|k| matches!(k, NoteKind::AllOff)), 1);
+    assert!(handle.dropped_events() > 0, "the controllers were dropped");
 }
 
 #[test]

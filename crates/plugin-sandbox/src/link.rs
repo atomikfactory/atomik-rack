@@ -182,6 +182,16 @@ impl Shared {
         }
     }
 
+    /// What the wait would return now, without waiting.
+    fn try_take(&self) -> Option<Waited> {
+        let mut mb = lock(&self.mailbox);
+        if let Some(reply) = mb.reply.take() {
+            mb.expect = Expect::Nothing;
+            return Some(Waited::Reply(reply));
+        }
+        mb.ended.then_some(Waited::Ended)
+    }
+
     /// Waits until the child is reaped and returns why it ended.
     pub fn wait_reason(&self, timeout: Duration) -> Option<String> {
         let start = now();
@@ -518,15 +528,18 @@ pub(crate) struct Link {
     last_miss: Option<std::time::Instant>,
     /// When the child was asked to end (set once; the drop waits from then on).
     shutdown_at: Option<std::time::Instant>,
+    /// A request sent by [`Link::begin_call`] whose answer [`Link::finish_call`] has not taken.
+    pending: bool,
 }
 
 impl Link {
-    /// Starts the helper threads over `transport` and performs the Hello exchange.
+    /// Starts the helper threads over `transport` and sends the Hello; the greeting is awaited
+    /// by [`Link::hello`] or polled by [`Link::poll_reply`].
     ///
     /// # Errors
     /// The child did not greet in time, spoke another protocol, or ended first (the error
     /// then carries the exit description and the stderr tail).
-    pub fn start(
+    pub fn launch(
         transport: Transport,
         death: DeathHandle,
         timeouts: Timeouts,
@@ -588,6 +601,7 @@ impl Link {
             misses: 0,
             last_miss: None,
             shutdown_at: None,
+            pending: false,
         };
         if link.reader.is_none() || link.writer.is_none() {
             link.shared
@@ -596,20 +610,41 @@ impl Link {
                 "cannot start the plugin's helper threads".to_string(),
             ));
         }
-        link.hello()?;
+        link.send_hello()?;
         Ok(link)
     }
 
-    fn hello(&mut self) -> Result<(), BackendError> {
+    /// Starts the helper threads over `transport` and performs the Hello exchange.
+    ///
+    /// # Errors
+    /// The child did not greet in time, spoke another protocol, or ended first (the error
+    /// then carries the exit description and the stderr tail).
+    pub fn start(
+        transport: Transport,
+        death: DeathHandle,
+        timeouts: Timeouts,
+        messenger: HostMessenger,
+        live: LiveGuard,
+    ) -> Result<Self, BackendError> {
+        let mut link = Self::launch(transport, death, timeouts, messenger, live)?;
+        let reply = link
+            .await_reply("Hello", timeouts.create)
+            .map_err(|e| link.explain(e))?;
+        link.check_hello(reply)?;
+        Ok(link)
+    }
+
+    fn send_hello(&mut self) -> Result<(), BackendError> {
         self.send(
             &ToChild::Hello {
                 protocol: PROTOCOL_VERSION,
             },
             None,
-        )?;
-        let reply = self
-            .await_reply("Hello", self.timeouts.create)
-            .map_err(|e| self.explain(e))?;
+        )
+    }
+
+    /// Checks the child's greeting: the protocol must be the app's.
+    pub fn check_hello(&mut self, reply: Reply) -> Result<(), BackendError> {
         match reply.msg {
             FromChild::Hello { protocol, .. } if protocol == PROTOCOL_VERSION => Ok(()),
             FromChild::Hello { protocol, .. } => {
@@ -621,6 +656,24 @@ impl Link {
             }
             other => Err(self.unexpected("Hello", &other)),
         }
+    }
+
+    /// The answer to the request sent last, without waiting: `None` while it has not come and
+    /// `since + timeout` has not passed. Like [`Link::call`], an answer that is too late kills
+    /// the child.
+    pub fn poll_reply(
+        &mut self,
+        what: &str,
+        since: std::time::Instant,
+        timeout: Duration,
+    ) -> Option<Result<Reply, BackendError>> {
+        let waited = match self.shared.try_take() {
+            Some(waited) => waited,
+            None if now().saturating_duration_since(since) >= timeout => Waited::TimedOut,
+            None => return None,
+        };
+        self.pending = false;
+        Some(self.settle(waited, what, timeout))
     }
 
     /// For the errors of a call made while the child may be starting or ending: a lost link
@@ -668,7 +721,18 @@ impl Link {
     }
 
     fn await_reply(&mut self, what: &str, timeout: Duration) -> Result<Reply, BackendError> {
-        match self.shared.wait(timeout) {
+        let waited = self.shared.wait(timeout);
+        self.settle(waited, what, timeout)
+    }
+
+    /// Turns what a wait ended with into the reply or the error.
+    fn settle(
+        &mut self,
+        waited: Waited,
+        what: &str,
+        timeout: Duration,
+    ) -> Result<Reply, BackendError> {
+        match waited {
             Waited::Reply(reply) => match reply.msg {
                 FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
                 _ => Ok(reply),
@@ -686,6 +750,36 @@ impl Link {
         }
     }
 
+    /// Sends the request `make(id)` and returns without waiting: [`Link::finish_call`] takes the
+    /// answer. A pipelined burst (one request to every child, then the answers) costs the
+    /// slowest child, not the sum. Any other call on this link before the finish abandons the
+    /// request (its answer is dropped).
+    pub fn begin_call(&mut self, make: impl FnOnce(u64) -> ToChild) -> Result<(), BackendError> {
+        self.pending = false;
+        if self.shared.is_lost() {
+            return Err(lost());
+        }
+        self.next_id += 1;
+        let id = self.next_id;
+        self.shared.expect(Expect::Id(id));
+        self.send(&make(id), None)?;
+        self.pending = true;
+        Ok(())
+    }
+
+    /// The answer to the request [`Link::begin_call`] sent, waiting up to `timeout` for it like
+    /// [`Link::call`]; `None` when no request is pending.
+    pub fn finish_call(
+        &mut self,
+        what: &str,
+        timeout: Duration,
+    ) -> Option<Result<Reply, BackendError>> {
+        if !std::mem::take(&mut self.pending) {
+            return None;
+        }
+        Some(self.await_reply(what, timeout))
+    }
+
     /// Sends the request `make(id)` (with `blob`) and waits `timeout` for its answer. A lost
     /// link fails at once without sending anything; a call that times out kills the child.
     pub fn call(
@@ -695,6 +789,7 @@ impl Link {
         make: impl FnOnce(u64) -> ToChild,
         blob: Option<&[u8]>,
     ) -> Result<Reply, BackendError> {
+        self.pending = false;
         if self.shared.is_lost() {
             return Err(lost());
         }
@@ -718,6 +813,7 @@ impl Link {
         timeout: Duration,
         make: impl FnOnce(u64) -> ToChild,
     ) -> Result<Reply, BackendError> {
+        self.pending = false;
         if self.shared.is_lost() {
             return Err(lost());
         }

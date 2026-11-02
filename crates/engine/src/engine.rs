@@ -53,6 +53,7 @@ use crate::plan::{Node, RenderPlan, mix_seed};
 use crate::player::{AutomationHold, Player, TransportCell};
 use crate::record::{RecordTap, TapChannel, TapControls, TapRt};
 use crate::stream::{REQUEST_CAPACITY, StreamControl, StreamStats};
+use crate::tune::Glide;
 use crate::workers::Pool;
 use atomik_core::{BATCH, Batch, NoteKind, ParamId, Tempo, TimeInfo};
 use atomik_device_sdk::{DeviceDescriptor, PlayerDataRef, PrepareInfo, SampleMapRef, SocketId};
@@ -67,7 +68,9 @@ pub const PLAN_QUEUE_CAPACITY: usize = 64;
 /// Capacity of the retired plan and routing return queue. When it is full the engine parks one
 /// item in a single-slot "pending retire" holder and postpones further control messages; it
 /// never drops one.
-pub const RETIRE_QUEUE_CAPACITY: usize = 64;
+pub const RETIRE_QUEUE_CAPACITY: usize = 256;
+/// Capacity of the transport lane ([`EngineHandle::transport`]).
+pub const TRANSPORT_QUEUE_CAPACITY: usize = 64;
 /// Capacity of the param message queue.
 pub const PARAM_QUEUE_CAPACITY: usize = 4096;
 /// Capacity of the scheduled note queue (4 × `MAX_EVENTS_PER_BATCH`).
@@ -253,6 +256,14 @@ struct Control {
     op: ControlOp,
 }
 
+/// One message of the transport lane: a transport command that waits only for the `after`
+/// control messages queued before it, and applies even while a retirement is parked.
+#[derive(Clone, Copy)]
+struct TransportMsg {
+    after: u64,
+    command: crate::TransportCommand,
+}
+
 enum ControlOp {
     /// Put a prepared node into a free arena slot.
     Insert {
@@ -270,6 +281,9 @@ enum ControlOp {
     Param(ParamMessage),
     /// Tempo for `TimeInfo` from now on.
     Tempo(Tempo),
+    /// The master tune for `TimeInfo::tune_cents`: `glide` moves there over a few batches,
+    /// otherwise the value is in force from this boundary on.
+    Tune { cents: f32, glide: bool },
     /// Swap the song snapshot; the old one is handed back.
     Song(Box<crate::SongSnapshot>),
     /// A transport command.
@@ -372,6 +386,9 @@ pub struct Engine {
     config: EngineConfig,
     /// Tempo reported in `TimeInfo` (starts at `config.tempo`; changed by control messages).
     tempo: Tempo,
+    /// The master tune the devices are told this batch, and the one it glides to
+    /// ([`EngineHandle::set_master_tune`]).
+    tune: Glide,
     /// The persistent device arena.
     arena: Arena,
     routing: Option<Box<RoutingPlan>>,
@@ -381,6 +398,11 @@ pub struct Engine {
     /// A garbage item that did not fit its return queue; control messages wait until it does.
     pending_retire: Option<Garbage>,
     control_rx: Consumer<Control>,
+    /// The transport lane and the number of control messages applied so far (its ordering).
+    transport_rx: Consumer<TransportMsg>,
+    control_applied: u64,
+    /// Batches that began with a retirement parked (shared with the handle).
+    stalled: Arc<AtomicU64>,
     retire_tx: Producer<Retired>,
     removed_tx: Producer<Box<Node>>,
     param_rx: Consumer<ParamMessage>,
@@ -419,6 +441,10 @@ pub struct Engine {
 pub struct EngineHandle {
     config: EngineConfig,
     control_tx: Producer<Control>,
+    transport_tx: Producer<TransportMsg>,
+    /// Control messages pushed so far; a transport message carries it as its place in line.
+    control_sent: u64,
+    stalled: Arc<AtomicU64>,
     retire_rx: Consumer<Retired>,
     removed_rx: Consumer<Box<Node>>,
     param_tx: Producer<ParamMessage>,
@@ -509,6 +535,8 @@ pub fn new_engine_with_arena(
 
 pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, EngineHandle) {
     let (control_tx, control_rx) = RingBuffer::new(CONTROL_QUEUE_CAPACITY);
+    let (transport_tx, transport_rx) = RingBuffer::new(TRANSPORT_QUEUE_CAPACITY);
+    let stalled = Arc::new(AtomicU64::new(0));
     let (retire_tx, retire_rx) = RingBuffer::new(RETIRE_QUEUE_CAPACITY);
     let (removed_tx, removed_rx) = RingBuffer::new(caps.arena.max(1));
     let (param_tx, param_rx) = RingBuffer::new(caps.params);
@@ -529,11 +557,15 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let engine = Engine {
         config: cfg,
         tempo: cfg.tempo,
+        tune: Glide::new(cfg.sample_rate.hz()),
         arena: Arena::new(caps.arena),
         routing: None,
         spare: None,
         pending_retire: None,
         control_rx,
+        transport_rx,
+        control_applied: 0,
+        stalled: Arc::clone(&stalled),
         retire_tx,
         removed_tx,
         param_rx,
@@ -559,6 +591,9 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let handle = EngineHandle {
         config: cfg,
         control_tx,
+        transport_tx,
+        control_sent: 0,
+        stalled,
         retire_rx,
         removed_rx,
         param_tx,
@@ -721,6 +756,15 @@ impl EngineHandle {
     /// tempo (a playing song-less transport keeps its tick across the change).
     pub fn set_tempo(&mut self, tempo: atomik_core::Tempo) -> Result<(), EngineError> {
         self.push(0, ControlOp::Tempo(tempo))
+    }
+
+    /// Queues the master tune through the control queue: from the next batch boundary on,
+    /// `TimeInfo::tune_cents` reports it (every batch carries one value, so a bounce is the same
+    /// for any host block size). With `glide` the value moves there over about 20 ms, so held
+    /// notes do not step; without it the value is in force at once (a fresh engine, a render).
+    /// The engine starts at 0.
+    pub fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError> {
+        self.push(0, ControlOp::Tune { cents, glide })
     }
 
     /// Queues `edit` to be applied at the first batch boundary at or after timeline `frame`,
@@ -980,7 +1024,14 @@ impl EngineHandle {
     /// # Errors
     /// [`EngineError::QueueFull`].
     pub fn transport(&mut self, command: crate::TransportCommand) -> Result<(), EngineError> {
-        self.push(0, ControlOp::Transport(command))
+        // A lane of its own: it keeps its place behind the control messages queued before it,
+        // but a parked retirement cannot hold it back.
+        self.transport_tx
+            .push(TransportMsg {
+                after: self.control_sent,
+                command,
+            })
+            .map_err(|_| EngineError::QueueFull)
     }
 
     /// The engine's lock-free meter bank. Meter endpoints with
@@ -1104,7 +1155,16 @@ impl EngineHandle {
         // On failure the message (and anything it owns) is dropped here, on the non-RT thread.
         self.control_tx
             .push(Control { frame, op })
-            .map_err(|_| EngineError::QueueFull)
+            .map_err(|_| EngineError::QueueFull)?;
+        self.control_sent += 1;
+        Ok(())
+    }
+
+    /// Batches the engine began with a retirement parked: its return queue was full, so the
+    /// control queue waited for [`EngineHandle::collect_garbage`]. Transport commands still
+    /// applied. A UI shows it as a stalled control path.
+    pub fn stalled_batches(&self) -> u64 {
+        self.stalled.load(Ordering::Relaxed)
     }
 
     fn insert_at(
@@ -1335,6 +1395,7 @@ impl Engine {
             loop_wrap: bt.loop_wrap,
             loop_ticks: bt.loop_ticks,
             time_signature: bt.time_signature,
+            tune_cents: self.tune.next(),
         };
         match (&mut self.routing, &mut self.pool) {
             (Some(routing), None) => routing.process(
@@ -1388,6 +1449,8 @@ impl Engine {
             self.retire(old);
         }
         while self.pending_retire.is_none() {
+            // Transport commands sent before the next control message go first.
+            self.apply_transport_lane();
             // Streams the preview voice finished since the last boundary go back first, so
             // the voice's dead list is empty when a control message is applied.
             self.drain_preview();
@@ -1402,6 +1465,30 @@ impl Engine {
                 break;
             };
             self.apply(op);
+            self.control_applied += 1;
+        }
+        // The rest of the lane: in order behind the control queue, or at once while a parked
+        // retirement holds the queue, so Play and Stop never wait for the UI to collect garbage.
+        self.apply_transport_lane();
+        if self.pending_retire.is_some() {
+            self.stalled.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Applies the transport lane's due messages: those queued behind no control message that
+    /// is still waiting, or all of them while a retirement is parked.
+    fn apply_transport_lane(&mut self) {
+        loop {
+            match self.transport_rx.peek() {
+                Ok(m) if self.pending_retire.is_some() || m.after <= self.control_applied => {}
+                _ => break,
+            }
+            let Ok(TransportMsg { command, .. }) = self.transport_rx.pop() else {
+                break;
+            };
+            self.player.invalidate_lanes();
+            let sr = self.config.sample_rate.hz();
+            self.player.command(command, self.tempo, sr, &self.dropped);
         }
     }
 
@@ -1457,6 +1544,7 @@ impl Engine {
                 self.player.engine_tempo_changed(self.tempo, tempo, sr);
                 self.tempo = tempo;
             }
+            ControlOp::Tune { cents, glide } => self.tune.set(cents, glide),
             ControlOp::Song(song) => {
                 let sr = self.config.sample_rate.hz();
                 if let Some(old) = self.player.swap_song(song, self.tempo, sr, &self.dropped) {

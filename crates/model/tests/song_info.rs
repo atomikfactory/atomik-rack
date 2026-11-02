@@ -31,7 +31,7 @@ fn a_new_project_has_no_information_and_saves_no_field() {
     let (d, _) = doc();
     assert!(d.doc().info.is_empty());
     assert!(!text(&d).contains("\"info\""));
-    assert_eq!(PROJECT_VERSION, 39);
+    assert_eq!(PROJECT_VERSION, 40);
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn the_loader_names_the_json_path_of_a_text_that_breaks_a_limit() {
 fn the_field_is_unknown_in_a_version_37_file() {
     let (mut d, r) = doc();
     one_step(&mut d, &r, Command::SetSongInfo(info()));
-    let old = text(&d).replacen("\"version\": 39", "\"version\": 37", 1);
+    let old = text(&d).replacen("\"version\": 40", "\"version\": 37", 1);
     let e = load_project(&old, &r).unwrap_err().to_string();
     assert!(e.contains("info") && e.contains("unknown field"), "{e}");
 }
@@ -222,7 +222,7 @@ fn the_field_is_unknown_in_a_version_37_file() {
 fn an_old_project_loads_without_the_field_and_differs_in_the_version_line_alone() {
     let r = registry();
     let current = save_project(&empty_doc());
-    let old = current.replacen("\"version\": 39", "\"version\": 37", 1);
+    let old = current.replacen("\"version\": 40", "\"version\": 37", 1);
     let loaded = load_project(&old, &r).expect("a version 37 file loads");
     assert!(loaded.info.is_empty());
     assert_eq!(save_project(&loaded), current);
@@ -243,7 +243,7 @@ fn the_corpus_file_with_information_is_what_the_writer_makes() {
     one_step(&mut d, &r, Command::SetSongInfo(info()));
     let saved = text(&d);
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/song-info-v39.atomik");
+        .join("tests/fixtures/song-info-v40.atomik");
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some() {
         std::fs::write(&path, &saved).unwrap();
     }

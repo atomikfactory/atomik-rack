@@ -270,6 +270,23 @@ fn the_reference_pitch_is_the_tracks_param() {
 }
 
 #[test]
+fn a_shifted_reference_from_the_app_replaces_the_tracks_own_in_the_readout() {
+    let (mut doc, mut v) = rack(FxKind::AudioTrack);
+    doc.devices[0].params.insert("tuner_ref".into(), 432.0);
+    let mut data = shown(None);
+    data.tuner_ref_hz = 432.0 * 2f32.powf(100.0 / 1200.0);
+    v.set_analyser(&key("fx"), &data);
+    v.sync(&doc, &registry());
+    let t: Vec<String> = paint(&doc, &mut v)
+        .texts()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert!(has(&t, "A4 = 458 Hz"), "{t:?}");
+    assert!(!has(&t, "A4 = 432 Hz"), "{t:?}");
+}
+
+#[test]
 fn the_button_sits_on_the_plate_under_the_name() {
     let (_, v) = rack(FxKind::AudioTrack);
     let b = v.tuner_button_center(&key("fx")).expect("the button");

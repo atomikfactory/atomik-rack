@@ -50,6 +50,7 @@ mod help;
 mod inline;
 mod io_input;
 mod jacks;
+mod live_panels;
 mod navigator;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;

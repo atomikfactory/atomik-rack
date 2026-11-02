@@ -192,6 +192,15 @@ pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
 pub const INPUT_CHANNEL_ARGS: &[&str] = &["0", "1", "2", "4", "8", "16", "32"];
 /// The values of `audio.output_channels`: the host outputs the project asks for.
 pub const OUTPUT_CHANNEL_ARGS: &[&str] = &["1", "2", "4", "8", "16", "32"];
+/// The values of `midi.map_command`: the commands a control can be mapped to.
+pub const MAP_COMMAND_ARGS: &[&str] = &[
+    "undo",
+    "redo",
+    "track_prev",
+    "track_next",
+    "preset_prev",
+    "preset_next",
+];
 /// The values of `sequencer.set_snap_mode`.
 pub const SNAP_MODE_ARGS: &[&str] = &["absolute", "relative"];
 /// The values of `sequencer.set_snap`.
@@ -936,6 +945,16 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("midi.learn", "MIDI Learn", G::Mixer, C::Global).menu(),
     cmd("midi.learn_control", "Learn MIDI", G::Mixer, C::Global),
+    cmd(
+        "midi.lock_surfaces",
+        "Lock Surfaces to Selection",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd("midi.map_command", "Map Command", G::Mixer, C::Global)
+        .arg(MAP_COMMAND_ARGS)
+        .menu(),
     cmd("midi.mappings", "MIDI Mappings...", G::Mixer, C::Global).menu(),
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
     cmd("mixer.add_to_vca", "Add to VCA", G::Mixer, C::Global).menu(),

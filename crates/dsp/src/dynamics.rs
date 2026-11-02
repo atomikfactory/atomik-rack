@@ -125,6 +125,10 @@ pub struct Compressor {
     y1: f32,
     /// Smoothed gain reduction, dB.
     gr: f32,
+    /// Linear level below which the static curve is exactly 0 dB (0 when the shortcut is off).
+    quiet_below: f32,
+    /// The last gain reduction (bits) and the gain it made, so a steady value costs no `powf`.
+    memo: (u32, f32),
 }
 
 impl Compressor {
@@ -143,7 +147,10 @@ impl Compressor {
             ms: 0.0,
             y1: 0.0,
             gr: 0.0,
+            quiet_below: 0.0,
+            memo: (0, 1.0),
         };
+        c.set_quiet_below();
         c.set_sample_rate(sample_rate);
         c
     }
@@ -160,6 +167,7 @@ impl Compressor {
     /// Threshold in dB.
     pub fn set_threshold_db(&mut self, db: f32) {
         self.threshold_db = finite_or(db, 0.0);
+        self.set_quiet_below();
     }
 
     /// Ratio (≥ 1).
@@ -206,13 +214,42 @@ impl Compressor {
                 (2.0 * self.ms).sqrt()
             }
         };
-        let c = static_gain_reduction_db(level_db(level), self.threshold_db, self.ratio);
+        // Well under the knee the curve is exactly 0: skip the `log10`.
+        let c = if level < self.quiet_below {
+            0.0
+        } else {
+            static_gain_reduction_db(level_db(level), self.threshold_db, self.ratio)
+        };
         self.y1 = c.max(c + self.alpha_release * (self.y1 - c));
         self.gr = self.y1 + self.alpha_attack * (self.gr - self.y1);
         if self.gr < 1e-9 {
             self.gr = 0.0;
         }
-        10f32.powf(-self.gr / 20.0)
+        self.gain_for(self.gr)
+    }
+
+    /// `10^(-gr/20)`: exactly 1 at rest, and a steady `gr` is not computed again.
+    #[inline]
+    fn gain_for(&mut self, gr: f32) -> f32 {
+        if gr == 0.0 {
+            return 1.0;
+        }
+        if gr.to_bits() != self.memo.0 {
+            self.memo = (gr.to_bits(), 10f32.powf(-gr / 20.0));
+        }
+        self.memo.1
+    }
+
+    /// Recomputes the linear level under which the static curve is exactly 0 dB: the knee's
+    /// lower edge less a 0.1 % margin (far above the rounding of the dB conversion). Off (0)
+    /// when that edge is below the detectors' floor, where the dB conversion clamps.
+    fn set_quiet_below(&mut self) {
+        let edge_db = self.threshold_db - KNEE_DB / 2.0;
+        self.quiet_below = if edge_db >= -180.0 {
+            10f32.powf(edge_db / 20.0) * 0.999
+        } else {
+            0.0
+        };
     }
 
     /// Current gain reduction in dB (≥ 0).
@@ -241,6 +278,12 @@ pub struct Gate {
     gain_db: f32,
     /// Deterministic maths (see [`Gate::set_deterministic`]).
     det: bool,
+    /// Linear envelope bounds around the threshold: at or under `shut_below` the level is below
+    /// it, at or over `open_above` it is not (`0` and infinity when the shortcut is off).
+    shut_below: f32,
+    open_above: f32,
+    /// The last gain (bits of dB) and the linear gain it made.
+    memo: (u32, f32),
 }
 
 impl Gate {
@@ -262,7 +305,11 @@ impl Gate {
             hold_left: 0,
             gain_db: 0.0,
             det: false,
+            shut_below: -1.0,
+            open_above: f32::INFINITY,
+            memo: (u32::MAX, 1.0),
         };
+        g.set_bounds();
         g.set_sample_rate(sample_rate);
         g
     }
@@ -302,6 +349,7 @@ impl Gate {
     /// Threshold in dB.
     pub fn set_threshold_db(&mut self, db: f32) {
         self.threshold_db = finite_or(db, -80.0);
+        self.set_bounds();
     }
 
     /// Maximum attenuation in dB (≥ 0) when closed.
@@ -347,19 +395,30 @@ impl Gate {
         if self.env < 1e-30 {
             self.env = 0.0;
         }
-        let lvl = if self.det {
-            (DB_PER_LOG2 * log2_det(self.env)).max(-200.0)
-        } else {
-            level_db(self.env)
+        // The level in dB is needed only close to the threshold and by the expander below it:
+        // far from it the linear envelope already says which side it is on.
+        let lvl = |g: &Self| {
+            if g.det {
+                (DB_PER_LOG2 * log2_det(g.env)).max(-200.0)
+            } else {
+                level_db(g.env)
+            }
         };
-        let target = if lvl >= self.threshold_db {
+        let open = if self.env >= self.open_above {
+            true
+        } else if self.env <= self.shut_below {
+            false
+        } else {
+            lvl(self) >= self.threshold_db
+        };
+        let target = if open {
             self.hold_left = self.hold_samples;
             0.0
         } else if self.hold_left > 0 {
             self.hold_left -= 1;
             0.0
         } else if self.expander {
-            ((lvl - self.threshold_db) * (EXPANDER_RATIO - 1.0)).max(-self.range_db)
+            ((lvl(self) - self.threshold_db) * (EXPANDER_RATIO - 1.0)).max(-self.range_db)
         } else {
             -self.range_db
         };
@@ -372,10 +431,29 @@ impl Gate {
         if (self.gain_db - target).abs() < 1e-6 {
             self.gain_db = target;
         }
-        if self.det {
-            exp2_det(self.gain_db * LOG2_10_20)
+        // A steady gain (open, or fully closed) is not computed again.
+        if self.gain_db.to_bits() != self.memo.0 {
+            let g = if self.det {
+                exp2_det(self.gain_db * LOG2_10_20)
+            } else {
+                10f32.powf(self.gain_db / 20.0)
+            };
+            self.memo = (self.gain_db.to_bits(), g);
+        }
+        self.memo.1
+    }
+
+    /// Recomputes the linear envelope bounds around the threshold (1 % margins, far above the
+    /// error of either dB conversion). Off when the threshold is near the detectors' floor,
+    /// where the dB conversion clamps.
+    fn set_bounds(&mut self) {
+        if self.threshold_db >= -180.0 && self.threshold_db <= 120.0 {
+            let lin = 10f32.powf(self.threshold_db / 20.0);
+            self.shut_below = lin * 0.99;
+            self.open_above = lin * 1.01;
         } else {
-            10f32.powf(self.gain_db / 20.0)
+            self.shut_below = -1.0;
+            self.open_above = f32::INFINITY;
         }
     }
 
@@ -589,5 +667,137 @@ mod tests {
             worst = worst.max((db(ga) - db(gb)).abs());
         }
         assert!(worst < 0.05, "{worst} dB apart");
+    }
+}
+
+/// The shortcuts (no `log10` under the knee, no `powf` for a steady gain) change no bit: both
+/// processors are compared with the plain formulas on a signal that rests, bursts and rests.
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    const SR: f32 = 48_000.0;
+
+    fn signal(i: usize) -> f32 {
+        let level = match (i / 4_000) % 5 {
+            0 => 0.0,
+            1 => 0.5,
+            2 => 0.01,
+            3 => 1e-5,
+            _ => 0.2,
+        };
+        level * (std::f32::consts::TAU * 330.0 * i as f32 / SR).sin()
+    }
+
+    fn reference_compress(c: &mut Compressor, l: f32, r: f32) -> f32 {
+        let (l, r) = (finite_or(l, 0.0), finite_or(r, 0.0));
+        let level = match c.detector {
+            Detector::Peak => l.abs().max(r.abs()),
+            Detector::Rms => {
+                let x2 = 0.5 * (l * l + r * r);
+                c.ms = x2 + c.alpha_rms * (c.ms - x2);
+                if c.ms < 1e-30 {
+                    c.ms = 0.0;
+                }
+                (2.0 * c.ms).sqrt()
+            }
+        };
+        let g = static_gain_reduction_db(level_db(level), c.threshold_db, c.ratio);
+        c.y1 = g.max(g + c.alpha_release * (c.y1 - g));
+        c.gr = c.y1 + c.alpha_attack * (c.gr - c.y1);
+        if c.gr < 1e-9 {
+            c.gr = 0.0;
+        }
+        10f32.powf(-c.gr / 20.0)
+    }
+
+    #[test]
+    fn the_compressor_shortcuts_keep_every_bit() {
+        for (threshold, detector) in [
+            (-18.0, Detector::Rms),
+            (-18.0, Detector::Peak),
+            (-60.0, Detector::Rms),
+            (-170.0, Detector::Peak),
+            (-190.0, Detector::Peak),
+        ] {
+            let mut fast = Compressor::new(SR);
+            fast.set_threshold_db(threshold);
+            fast.set_detector(detector);
+            let mut slow = fast.clone();
+            for i in 0..60_000 {
+                let x = signal(i);
+                let (a, b) = (
+                    fast.process(x, x * 0.7),
+                    reference_compress(&mut slow, x, x * 0.7),
+                );
+                assert_eq!(a.to_bits(), b.to_bits(), "threshold {threshold} sample {i}");
+            }
+        }
+    }
+
+    fn reference_gate(g: &mut Gate, l: f32, r: f32) -> f32 {
+        let x = finite_or(l, 0.0).abs().max(finite_or(r, 0.0).abs());
+        g.env = x.max(g.alpha_detector * g.env);
+        if g.env < 1e-30 {
+            g.env = 0.0;
+        }
+        let lvl = if g.det {
+            (DB_PER_LOG2 * log2_det(g.env)).max(-200.0)
+        } else {
+            level_db(g.env)
+        };
+        let target = if lvl >= g.threshold_db {
+            g.hold_left = g.hold_samples;
+            0.0
+        } else if g.hold_left > 0 {
+            g.hold_left -= 1;
+            0.0
+        } else if g.expander {
+            ((lvl - g.threshold_db) * (EXPANDER_RATIO - 1.0)).max(-g.range_db)
+        } else {
+            -g.range_db
+        };
+        let a = if target > g.gain_db {
+            g.alpha_attack
+        } else {
+            g.alpha_release
+        };
+        g.gain_db = target + a * (g.gain_db - target);
+        if (g.gain_db - target).abs() < 1e-6 {
+            g.gain_db = target;
+        }
+        if g.det {
+            exp2_det(g.gain_db * LOG2_10_20)
+        } else {
+            10f32.powf(g.gain_db / 20.0)
+        }
+    }
+
+    #[test]
+    fn the_gate_shortcuts_keep_every_bit() {
+        for (threshold, expander, det) in [
+            (-30.0, false, false),
+            (-30.0, true, false),
+            (-30.0, false, true),
+            (-30.0, true, true),
+            (-190.0, false, false),
+            (-80.0, true, false),
+        ] {
+            let mut fast = Gate::new(SR);
+            fast.set_deterministic(det);
+            fast.set_threshold_db(threshold);
+            fast.set_expander(expander);
+            fast.set_range_db(40.0);
+            let mut slow = fast.clone();
+            for i in 0..60_000 {
+                let x = signal(i);
+                let (a, b) = (fast.process(x, x), reference_gate(&mut slow, x, x));
+                assert_eq!(
+                    a.to_bits(),
+                    b.to_bits(),
+                    "threshold {threshold} expander {expander} det {det} sample {i}"
+                );
+            }
+        }
     }
 }

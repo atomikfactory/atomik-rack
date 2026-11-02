@@ -2448,3 +2448,12 @@ fn the_built_in_source_is_shared_between_devices_of_one_sample_rate() {
     assert_eq!(a.frames, 144_000);
     assert_eq!(builtin_buffer(44_100.0).frames, 132_300);
 }
+
+#[test]
+fn master_tune_shifts_the_grains_by_the_cents_ratio() {
+    for cents in [50.0f32, -100.0] {
+        let got = heard_hz(480.0, |h| h.time_mut().tune_cents = cents, 60);
+        let want = 480.0 * 2f64.powf(f64::from(cents) / 1200.0);
+        assert!((got / want - 1.0).abs() < 5e-4, "{cents} cents: {got}");
+    }
+}

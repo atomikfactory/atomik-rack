@@ -325,6 +325,8 @@ pub(crate) struct Shared {
     pub gate: bool,
     pub velocity_amount: f32,
     pub tune_semi: f32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`).
+    pub master_cents: f32,
     pub cv_pitch: f32,
     pub filter_cutoff: f32,
     pub cv_cutoff: f32,
@@ -399,6 +401,7 @@ impl LoopSlicer {
                 gate: false,
                 velocity_amount: 0.5,
                 tune_semi: 0.0,
+                master_cents: 0.0,
                 cv_pitch: 12.0,
                 filter_cutoff: FILTER_OPEN_HZ,
                 cv_cutoff: CV_CUTOFF_RANGE_OCT,
@@ -738,6 +741,7 @@ impl Device for LoopSlicer {
             self.master.set_immediate(m);
             self.fresh = false;
         }
+        self.shared.master_cents = ctx.time.tune_cents;
         let cv = *ctx.input(PITCH_CV_IN);
         let cv_cutoff = *ctx.input(CUTOFF_CV_IN);
         let cutoff_on = ctx.is_connected(CUTOFF_CV_IN);

@@ -12,14 +12,14 @@
 //! Every entry point is `[main-thread]` and checks it in debug builds.
 
 use crate::backend::{
-    ActivateConfig, BackendError, EditorKind, HostHandle, NativeParent, PluginBackend,
-    PluginInstance, PluginProcessor,
+    ActivateConfig, BackendError, EditorKind, HostHandle, NativeParent, PendingInstance,
+    PluginBackend, PluginInstance, PluginProcessor,
 };
 use crate::device::PluginDevice;
 use crate::layout::truncate_params;
 use crate::slot::{
-    InstanceId, LogLevel, ManagerEnd, ParamPhase, PluginMessage, PluginSlot, ReaperQueue,
-    plugin_channel,
+    DeviceEnd, InstanceId, LogLevel, ManagerEnd, ParamPhase, PluginMessage, PluginSlot,
+    ReaperQueue, plugin_channel,
 };
 use crate::threads::assert_main_thread;
 use atomik_core::BATCH;
@@ -207,6 +207,23 @@ struct Managed {
     parked: bool,
 }
 
+/// A creation started by [`PluginManager::begin_create`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CreateTicket(u64);
+
+/// A plugin that is starting in another process.
+struct Started {
+    pending: Box<dyn PendingInstance>,
+    device_end: DeviceEnd,
+    end: ManagerEnd,
+}
+
+struct Creating {
+    request: InstantiateRequest,
+    /// `None`: the backend creates the instance when the ticket is first polled.
+    started: Option<Started>,
+}
+
 /// The main-thread owner of the plugin instances.
 #[derive(Default)]
 pub struct PluginManager {
@@ -215,6 +232,8 @@ pub struct PluginManager {
     reaper: ReaperQueue,
     queued: Vec<ManagerEvent>,
     next_id: u64,
+    creating: BTreeMap<u64, Creating>,
+    next_ticket: u64,
 }
 
 fn descriptor_of(
@@ -235,6 +254,8 @@ impl PluginManager {
             reaper: ReaperQueue::default(),
             queued: Vec::new(),
             next_id: 1,
+            creating: BTreeMap::new(),
+            next_ticket: 1,
         }
     }
 
@@ -308,8 +329,94 @@ impl PluginManager {
             .ok_or(ManagerError::NoBackend(request.plugin.format))?;
         let id = InstanceId(self.next_id);
         let (device_end, end) = plugin_channel(id);
-        let mut instance =
-            backend.instantiate(&request.plugin, HostHandle::new(end.messenger()))?;
+        let instance = backend.instantiate(&request.plugin, HostHandle::new(end.messenger()))?;
+        let handle = self.complete(request, instance, device_end, end)?;
+        self.next_id += 1;
+        Ok(handle)
+    }
+
+    /// Starts creating an instance for `request` and returns at once: a plugin that loads in
+    /// another process loads while the caller goes on, so many plugins load at the same time.
+    /// [`PluginManager::poll_create`] moves it on and gives the handle. A backend that cannot
+    /// start in the background (a plugin loaded into this process) creates the instance in the
+    /// `poll_create` that first asks, which then blocks like [`PluginManager::instantiate`].
+    ///
+    /// # Errors
+    /// [`ManagerError::NoBackend`], or what the backend could not start.
+    pub fn begin_create(
+        &mut self,
+        request: &InstantiateRequest,
+    ) -> Result<CreateTicket, ManagerError> {
+        assert_main_thread("PluginManager::begin_create");
+        let backend = self
+            .backends
+            .iter()
+            .find(|b| b.format() == request.plugin.format)
+            .ok_or(ManagerError::NoBackend(request.plugin.format))?;
+        let id = InstanceId(self.next_id);
+        let (device_end, end) = plugin_channel(id);
+        let pending =
+            backend.begin_instantiate(&request.plugin, HostHandle::new(end.messenger()))?;
+        let started = pending.map(|pending| {
+            // The id belongs to this start: the next one gets another.
+            self.next_id += 1;
+            Started {
+                pending,
+                device_end,
+                end,
+            }
+        });
+        let ticket = CreateTicket(self.next_ticket);
+        self.next_ticket += 1;
+        self.creating.insert(
+            ticket.0,
+            Creating {
+                request: request.clone(),
+                started,
+            },
+        );
+        Ok(ticket)
+    }
+
+    /// Moves the creation `ticket` on without blocking (see [`PluginManager::begin_create`]):
+    /// `None` while the plugin is not ready, then the handle or the error. The answer spends
+    /// the ticket.
+    pub fn poll_create(
+        &mut self,
+        ticket: CreateTicket,
+    ) -> Option<Result<PluginHandle, ManagerError>> {
+        assert_main_thread("PluginManager::poll_create");
+        let creating = self.creating.get_mut(&ticket.0)?;
+        let ready = match creating.started.as_mut() {
+            Some(started) => Some(started.pending.poll()?),
+            None => None,
+        };
+        let Creating { request, started } = self.creating.remove(&ticket.0)?;
+        Some(match (started, ready) {
+            (Some(started), Some(Ok(instance))) => {
+                self.complete(&request, instance, started.device_end, started.end)
+            }
+            (Some(_), Some(Err(e))) => Err(e.into()),
+            _ => self.instantiate(&request),
+        })
+    }
+
+    /// Abandons the creation `ticket`: a plugin that was starting in another process ends.
+    pub fn cancel_create(&mut self, ticket: CreateTicket) {
+        assert_main_thread("PluginManager::cancel_create");
+        self.creating.remove(&ticket.0);
+    }
+
+    /// The rest of an instantiation once the backend gave the instance: the state, the
+    /// descriptor, the activation and the device.
+    fn complete(
+        &mut self,
+        request: &InstantiateRequest,
+        mut instance: Box<dyn PluginInstance>,
+        device_end: DeviceEnd,
+        end: ManagerEnd,
+    ) -> Result<PluginHandle, ManagerError> {
+        let id = end.slot().id();
         // State first (so a latency that depends on it is right at activation), rack params
         // after (the device re-sends every param the rack sets).
         let restore_error = request
@@ -324,7 +431,6 @@ impl PluginManager {
             mode: request.mode,
         };
         let processor = instance.activate(&cfg)?;
-        self.next_id += 1;
         let latency = instance.latency_frames();
         let slot = end.slot().clone();
         slot.set_latency(latency, cfg.sample_rate);
@@ -364,6 +470,18 @@ impl PluginManager {
     pub fn capture_state(&mut self, id: InstanceId) -> Result<PluginStateBlob, ManagerError> {
         assert_main_thread("PluginManager::capture_state");
         Ok(self.get(id)?.instance.capture_state()?)
+    }
+
+    /// Sends the capture request to the instances in `ids` without waiting; the
+    /// [`PluginManager::capture_state`] of each collects its answer. A remote instance not
+    /// collected afterwards just drops the answer.
+    pub fn begin_capture(&mut self, ids: &[InstanceId]) {
+        assert_main_thread("PluginManager::begin_capture");
+        for id in ids {
+            if let Some(m) = self.instances.get_mut(id) {
+                m.instance.begin_capture_state();
+            }
+        }
     }
 
     /// Saves every instance's state (before a save a).

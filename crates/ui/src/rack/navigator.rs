@@ -500,6 +500,7 @@ mod tests {
             midi_maps: Vec::new(),
             macros: Default::default(),
             info: Default::default(),
+            tune_cents: 0.0,
         };
         let mut v = RackView::new(Theme::dark());
         v.set_navigator_visible(true);

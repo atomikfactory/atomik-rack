@@ -151,7 +151,7 @@ pub fn channel_meters(
 ///   its stored params (a container: its whole inside) (the `ParamChanged`s that follow for it are folded into the insert),
 ///   `RoutingChanged` rebuilds the [`Topology`] from the document and submits its routing,
 ///   `DeviceRemoved` removes the instance (always after the routing that dropped it),
-///   `ParamChanged` and `TempoChanged` go to the sink, `ViewChanged` needs no engine work.
+///   `ParamChanged`, `TempoChanged` and `TuneChanged` go to the sink, `ViewChanged` needs no engine work.
 /// - **Song.** `SongChanged` and `TempoChanged` mark the song stale; it is
 ///   rebuilt ([`atomik_render::project::song_input`]: effective tracks, flattened notes and automation, the tempo
 ///   map), compiled ([`compile_song`]) and submitted before the next device or routing op of
@@ -210,8 +210,9 @@ pub struct AppCore<S: EngineSink> {
     midi: midimap::MidiControl,
     /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
     macros: macro_ops::MacroState,
-    /// The control surface driving the console, if one is set up (see `app_core_surface.rs`).
-    surface: Option<crate::surface::SurfaceHost>,
+    /// The control surfaces that are set up, each with its own driver and ports (see
+    /// `app_core_surface.rs`).
+    surfaces: Vec<crate::surface::SurfaceHost>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
     rack_focus_request: bool,
     /// `follow_console_selection` saw a new console selection (cleared by the pane event).
@@ -271,6 +272,8 @@ pub struct AppCore<S: EngineSink> {
     analysers: analysers::Analysers,
     /// The audio track tuners that show and what the engine was told about them.
     tuners: tuner::Tuners,
+    /// The EQs whose analyser the engine was told to run.
+    eq_live: eq_live::EqLive,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
     /// The pattern clipboard both sequencer views last agreed on.
@@ -284,6 +287,8 @@ pub struct AppCore<S: EngineSink> {
     playing: bool,
     metronome: bool,
     metronome_gain: f32,
+    /// The master tune new projects start with (cents, from the settings).
+    default_tune: f32,
     /// Bars of click counted in before a recording starts (0 = off).
     pre_count_bars: u8,
     /// The length the pre-count toggle returns to (1 to 4).
@@ -463,7 +468,7 @@ impl<S: EngineSink> AppCore<S> {
             snapshot_hint: None,
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
-            surface: None,
+            surfaces: Vec::new(),
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),
@@ -501,6 +506,7 @@ impl<S: EngineSink> AppCore<S> {
             vca_sent: BTreeMap::new(),
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
+            eq_live: eq_live::EqLive::default(),
             sampling: sampling::Sampling::default(),
             pattern_clip_seen: None,
             drum_draws: clock_entropy(),
@@ -542,6 +548,7 @@ impl<S: EngineSink> AppCore<S> {
             playing: false,
             metronome: false,
             metronome_gain: DEFAULT_METRONOME_GAIN,
+            default_tune: 0.0,
             pre_count_bars: 0,
             pre_count_resume: 1,
             quantize: InputQuantize::OFF,
@@ -1221,10 +1228,24 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ files
 
+    /// The master tune a new project starts with ([`AppCore::new_document`],
+    /// [`AppCore::new_document_at`]); a value outside +/-100 cents is taken as 0.
+    pub fn set_default_tune(&mut self, cents: f32) {
+        let ok = cents.is_finite() && cents.abs() <= atomik_model::MASTER_TUNE_MAX_CENTS;
+        self.default_tune = if ok && cents != 0.0 { cents } else { 0.0 };
+    }
+
+    /// The master tune a new project starts with.
+    pub fn default_tune(&self) -> f32 {
+        self.default_tune
+    }
+
     /// Replaces the rack with the starter project (Audio I/O, the locked
     /// master and the two `main` cables; a fresh engine and an empty undo history).
     pub fn new_document(&mut self) {
-        self.replace(new_project_doc(), None);
+        let mut doc = new_project_doc();
+        doc.tune_cents = self.default_tune;
+        self.replace(doc, None);
     }
 
     /// Opens project or patch JSON as if read from `path`. On error nothing changes. What the
@@ -1302,6 +1323,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn replace(&mut self, doc: RackDoc, file: Option<PathBuf>) {
+        // A save that is still writing finishes first: it works on the old project.
+        self.settle_save();
         // A new document does not keep the old one's plugin instances.
         self.plugins_discard_on_next_reset();
         self.plugin_params_open = false;
@@ -1385,12 +1408,18 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_before_reset();
         self.sink.reset(&config);
         self.plugins_after_reset();
+        // A fresh engine starts in tune; a project that is not has its tune in force at once.
+        if self.doc().tune_cents.to_bits() != 0 {
+            let result = self.sink.set_master_tune(self.doc().tune_cents, false);
+            self.engine_result(result);
+        }
         self.ids.clear();
         self.split_sent.clear();
         self.vca_sent.clear();
         self.fx_meter_seq.clear();
         self.analysers.restart();
         self.tuners.restart();
+        self.eq_live.restart();
         self.speq.restart();
         self.next_id = 1;
         self.sent_loop = None;
@@ -1458,6 +1487,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_device_scopes();
         self.feed_tuners();
         self.feed_spectrum_eq();
+        self.feed_eq_analysers();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
@@ -1607,6 +1637,11 @@ impl<S: EngineSink> AppCore<S> {
                     stale = (true, true);
                 }
                 SyncOp::ViewChanged => {}
+                // A change of the master tune: the engine glides to it at the next boundary.
+                SyncOp::TuneChanged(cents) => {
+                    let result = self.sink.set_master_tune(*cents, true);
+                    self.engine_result(result);
+                }
                 // Plugin pins, run mode, power or link: power and run mode reach the
                 // live instance, a relink makes the engine rebuild.
                 SyncOp::PluginChanged { .. } => self.plugins_sync_op(op),
@@ -3172,6 +3207,9 @@ pub use sampling::{SAMPLE_SECONDS, SamplingInput, TRIGGER_DB, sampling_inputs};
 #[path = "app_core_spectrum_eq.rs"]
 mod spectrum_eq;
 
+#[path = "app_core_eq_live.rs"]
+mod eq_live;
+
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
@@ -3307,6 +3345,10 @@ mod sampling_tests;
 #[cfg(test)]
 #[path = "app_core_spectrum_eq_tests.rs"]
 mod spectrum_eq_tests;
+
+#[cfg(test)]
+#[path = "app_core_eq_live_tests.rs"]
+mod eq_live_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]

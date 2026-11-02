@@ -276,6 +276,7 @@ impl Device for DualLayer {
                 resonance_on: ctx.is_connected(RESONANCE_CV_IN),
                 level_on: ctx.is_connected(LEVEL_CV_IN),
                 pan_on: ctx.is_connected(PAN_CV_IN),
+                tune_cents: ctx.time.tune_cents,
             };
             self.layers[0].render_batch(&inp, false, &mut a);
             self.layers[1].render_batch(&inp, false, &mut b);
@@ -501,5 +502,29 @@ mod tests {
         };
         assert_eq!(run(4), run(4));
         assert_ne!(run(4), run(5));
+    }
+
+    #[test]
+    fn master_tune_reaches_both_layers() {
+        let play = |cents: f32| {
+            let mut d = dual();
+            for layer in ["a", "b"] {
+                d.set_param(&format!("{layer}.osc1.wave"), 3.0);
+                d.set_param(&format!("{layer}.osc.mix"), 0.0);
+                d.set_param(&format!("{layer}.filter.cutoff"), 20_000.0);
+            }
+            d.set_param("layer.mode", 1.0);
+            d.set_param("layer.morph", 0.5);
+            d.time_mut().tune_cents = cents;
+            d.push_note("notes_in", on(0, 57, 1.0));
+            let o = d.render(seconds(1.0), &OUT);
+            atomik_testkit::signal::dominant_frequency(&o[0][4_800..4_800 + 32_768], SR)
+        };
+        let (flat, sharp) = (play(0.0), play(100.0));
+        assert!((flat - 220.0).abs() < 1.0, "{flat}");
+        assert!(
+            (sharp / flat - 2f64.powf(100.0 / 1200.0)).abs() < 0.002,
+            "{sharp}"
+        );
     }
 }
