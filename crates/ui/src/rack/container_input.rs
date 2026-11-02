@@ -309,7 +309,9 @@ impl RackView {
 
     pub(super) fn notify_driven(&mut self, i: usize, param: &str) {
         if let Some(m) = self.driven_by(i, param) {
-            self.toast = Some(if self.scope.is_empty() {
+            let in_container =
+                !self.scope.is_empty() || super::inline::is_inner(&self.devices[i].key);
+            self.toast = Some(if !in_container {
                 format!(
                     "Driven by macro {}: right-click to remove it from the macro first",
                     u16::from(m) + 1
@@ -921,7 +923,7 @@ impl RackView {
         button: PointerButton,
         modifiers: Modifiers,
     ) -> bool {
-        if self.scope.is_empty() || button != PointerButton::Secondary {
+        if self.macro_container(i).is_none() || button != PointerButton::Secondary {
             return false;
         }
         let Some((_, kind, _)) = self.param_of(i, slot) else {
@@ -947,7 +949,7 @@ impl RackView {
         } else {
             (0..MACRO_COUNT as u8)
                 .map(|m| {
-                    let name = &self.scope_macros[usize::from(m)];
+                    let name = &self.macro_names(i)[usize::from(m)];
                     let label = if name.is_empty() {
                         format!("Map to macro {}", m + 1)
                     } else {
@@ -994,12 +996,44 @@ impl RackView {
         true
     }
 
+    /// The container whose macros the controls of device view `i` map to: the open container
+    /// in a scope, else the unfolded container the device is drawn in (`None` for a device of
+    /// the rack itself).
+    pub(super) fn macro_container(&self, i: usize) -> Option<DeviceKey> {
+        if !self.scope.is_empty() {
+            return self.scope_path();
+        }
+        let key = &self.devices.get(i)?.key;
+        super::inline::parent_of(key)
+    }
+
+    /// The names of the macros of the container device view `i` maps to (empty: unnamed).
+    fn macro_names(&self, i: usize) -> [String; 8] {
+        if !self.scope.is_empty() {
+            return self.scope_macros.clone();
+        }
+        let container = self.macro_container(i);
+        self.devices
+            .iter()
+            .find(|d| Some(&d.key) == container.as_ref())
+            .and_then(|d| d.device.as_ref())
+            .and_then(|d| d.inner.as_ref())
+            .map(|inner| std::array::from_fn(|n| inner.macros[n].name.clone()))
+            .unwrap_or_default()
+    }
+
     fn apply_entry(&mut self, menu: &MacroMenu, entry: MenuEntry) {
-        let Some(container) = self.scope_path() else {
+        let Some(container) = self.macro_container(menu.dev) else {
             return;
         };
         let d = &self.devices[menu.dev];
-        let device = d.key.clone();
+        // A macro names its target relative to the container: the view key in a scope, the last
+        // segment of the path key of an unfolded device.
+        let device = if self.scope.is_empty() {
+            atomik_model::split_path(&d.key).1
+        } else {
+            d.key.clone()
+        };
         let param = menu.param.clone();
         let action = match entry {
             MenuEntry::Map(index) => {

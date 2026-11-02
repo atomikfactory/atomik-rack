@@ -26,12 +26,14 @@
 //! top-level or the container-local index the commands take.
 
 use super::{DeviceView, Flip, PluginDeviceStatus, RackView, autolayout};
+use crate::cables::SocketEnd;
 use crate::interface::{
     BOUNDARY_IN_TYPE_ID, BOUNDARY_OUT_TYPE_ID, boundary_in_descriptor, boundary_out_descriptor,
 };
 use atomik_device_sdk::{RACK_UNIT, RACK_WIDTH};
 use atomik_model::{BOUNDARY_KEY, Cable, DeviceKey, RackDevice, RackDoc, SocketRef, split_path};
 use std::collections::BTreeMap;
+use vello::kurbo::Point;
 use vello::kurbo::{Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
@@ -334,6 +336,103 @@ impl RackView {
                 accent: head.accent,
             });
         }
+    }
+
+    // ------------------------------------------------------------------ cables
+
+    /// Whether a cable may join the jacks `a` and `b`: the kinds and directions agree (see
+    /// [`crate::cables::compatible`]) and both are in the same container (the rack's own
+    /// devices share the top level; a container's own jacks and its INPUT and OUTPUT strips
+    /// belong to the scope of the container's inside, as the model has it).
+    pub(super) fn can_cable(&self, a: &SocketEnd, b: &SocketEnd) -> bool {
+        crate::cables::compatible(a, b) && parent_of(&a.at.device) == parent_of(&b.at.device)
+    }
+
+    // ------------------------------------------------------------------ positions
+
+    /// The project itself while a gesture runs on an unfolded rack: the view's own document is
+    /// the flat one, but a command is planned on the project. Without it (the top level or a
+    /// scope) the document the view was given is the project's.
+    pub(super) fn host<'a>(&'a self, view: &'a RackDoc) -> &'a RackDoc {
+        if self.inline {
+            self.host_doc.as_ref().unwrap_or(view)
+        } else {
+            view
+        }
+    }
+
+    /// The innermost frame whose inside holds the rack point `rp` (a frame also takes the
+    /// margin around it, so a drop a little outside still counts), not counting the frames of
+    /// the devices being moved or of anything inside them.
+    pub(super) fn frame_at(&self, rp: Point, moving: &[DeviceKey]) -> Option<&Frame> {
+        self.frames
+            .iter()
+            .filter(|f| {
+                !moving
+                    .iter()
+                    .any(|m| f.container == *m || f.container.0.starts_with(&format!("{}/", m.0)))
+            })
+            .filter(|f| f.outline().contains(rp))
+            .max_by_key(|f| f.depth)
+    }
+
+    /// The flags of the views that move with `moving`: the devices themselves and, for an
+    /// unfolded container, everything drawn inside it.
+    pub(super) fn moving_flags(&self, moving: &[DeviceKey]) -> Vec<bool> {
+        self.devices
+            .iter()
+            .map(|d| {
+                moving
+                    .iter()
+                    .any(|m| d.key == *m || d.key.0.starts_with(&format!("{}/", m.0)))
+            })
+            .collect()
+    }
+
+    /// Where the block of device view `i` ends: the bottom of its panel, or of its frame when
+    /// it is an unfolded container (the inside moves and drops with it).
+    pub(super) fn block_bottom(&self, i: usize) -> f64 {
+        let d = &self.devices[i];
+        self.frames
+            .iter()
+            .find(|f| f.container == d.key)
+            .map_or(d.y + d.height, |f| f.rect.y1)
+    }
+
+    /// The place of a drop at `rp` inside the container `container` while the views flagged
+    /// in `moving` are dragged: how many of its devices that stay lie above the pointer (the
+    /// index the commands take, as the container's own list without the moved ones), the
+    /// height of the drop line and the column.
+    pub(super) fn inside_drop(
+        &self,
+        container: &DeviceKey,
+        rp: Point,
+        moving: &[bool],
+    ) -> (usize, f64, u16) {
+        let mut line_y = self
+            .devices
+            .iter()
+            .find(|d| d.key.0 == format!("{}/{BOUNDARY_KEY}", container.0))
+            .map_or(0.0, |d| d.y + d.height);
+        let mut above = 0;
+        let mut column = 0;
+        for (i, d) in self.devices.iter().enumerate() {
+            if parent_of(&d.key).as_ref() != Some(container) || d.is_interface() {
+                continue;
+            }
+            column = d.column;
+            if moving.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            if (d.y + self.block_bottom(i)) / 2.0 < rp.y {
+                line_y = self.block_bottom(i);
+                above += 1;
+            }
+        }
+        if let Some(c) = self.devices.iter().find(|d| d.key == *container) {
+            column = c.column;
+        }
+        (above, line_y, column)
     }
 
     /// Paints the frames behind the panels (rack coordinates, clipped to `top..bottom`).

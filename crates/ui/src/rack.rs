@@ -2663,7 +2663,7 @@ impl RackView {
             let Some(g) = self.sockets.get(socket) else {
                 return SocketHighlight::Idle;
             };
-            if !cables::compatible(anchor, &g.end) {
+            if !self.can_cable(anchor, &g.end) {
                 return SocketHighlight::Incompatible;
             }
             if self.drop_target().is_some_and(|t| &t.end.at == socket) {
@@ -2819,7 +2819,7 @@ impl RackView {
         match self.hit(self.pointer) {
             Some(Hit::Socket(i, slot)) => self
                 .socket_geo(i, slot)
-                .filter(|g| cables::compatible(anchor, &g.end)),
+                .filter(|g| self.can_cable(anchor, &g.end)),
             _ => None,
         }
     }
@@ -2848,10 +2848,23 @@ impl RackView {
     /// container the commands and actions carry **path keys** (`layer/synth`), and a gesture
     /// that changes the scope has already changed it when this returns.
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
+        // An unfolded container is part of the rack itself: its devices carry path keys and
+        // the commands go to the project as they are (see [`inline`]).
         // A press inside a container may start a drag out of it, which the model plans on the
         // whole project (the scope document has only the inside).
-        self.host_doc = (matches!(event, UiEvent::PointerDown { .. }) && self.scope.len() == 1)
-            .then(|| doc.clone());
+        let unfolded = self.scope.is_empty() && doc.devices.iter().any(inline::is_open);
+        self.host_doc = match event {
+            UiEvent::PointerDown { .. } if self.scope.len() == 1 => Some(doc.clone()),
+            UiEvent::PointerDown { .. }
+            | UiEvent::PointerUp { .. }
+            | UiEvent::Key { .. }
+            | UiEvent::FileDrop { .. }
+                if unfolded =>
+            {
+                Some(doc.clone())
+            }
+            _ => None,
+        };
         let view = self.prepare(doc, registry);
         let out = self.handle_in(event, &view, registry);
         self.finish(out, registry)
@@ -2971,10 +2984,20 @@ impl RackView {
                         let index = self.slot_index(doc, &dp, &[]);
                         // Inside a container there is one column: the index counts its devices.
                         let column = if self.scope.is_empty() { dp.column } else { 0 };
+                        // Dropped in the frame of an unfolded container it lands inside it.
+                        let rp = self.view_to_rack(at);
+                        let frame = self.frame_at(rp, &[]).map(|f| f.container.clone());
+                        let (container, slot) = match frame {
+                            Some(c) => {
+                                let (index, _, _) = self.inside_drop(&c, rp, &none);
+                                (Some(c), RackSlot { column: 0, index })
+                            }
+                            None => (self.scope_path(), RackSlot { column, index }),
+                        };
                         out.push(UiAction::InsertLibrary {
                             path: path.clone(),
-                            container: self.scope_path(),
-                            slot: RackSlot { column, index },
+                            container,
+                            slot,
                         });
                     }
                     return out;
@@ -3338,7 +3361,11 @@ impl RackView {
                 let keys: Vec<DeviceKey> = self
                     .inner_range()
                     .map(|j| &self.devices[j])
-                    .filter(|d| d.column == column && self.locked.as_ref() != Some(&d.key))
+                    .filter(|d| {
+                        d.column == column
+                            && !inline::is_inner(&d.key)
+                            && self.locked.as_ref() != Some(&d.key)
+                    })
                     .map(|d| d.key.clone())
                     .collect();
                 out.push(UiAction::Command(Command::Workflow(
@@ -3449,7 +3476,7 @@ impl RackView {
             (Hit::ToChannel(i), PointerButton::Primary) => {
                 self.select(i, out);
                 let d = &self.devices[i];
-                if !self.scope.is_empty() {
+                if !self.scope.is_empty() || inline::is_inner(&d.key) {
                     self.toast = Some(
                         "Devices inside a container reach the console through the container".into(),
                     );
@@ -3761,7 +3788,7 @@ impl RackView {
             } => {
                 // Released over the navigator the move is dropped, not applied.
                 if (at - start).hypot() > MOVE_THRESHOLD && !self.in_navigator(pos) {
-                    self.move_drop(dev, doc, modifiers, out);
+                    self.move_drop(dev, doc, registry, modifiers, out);
                 } else if collapse {
                     self.collapse_to(dev, out);
                 }
@@ -3860,12 +3887,29 @@ impl RackView {
         self.scroll_by(d * SCROLL_STEP);
     }
 
-    /// Where a device added from the browser goes: below the selection, else at the end.
-    fn add_index(&self, doc: &RackDoc) -> usize {
-        self.selected
-            .as_ref()
-            .and_then(|k| doc.devices.iter().position(|d| &d.key == k))
-            .map_or(doc.devices.len(), |i| i + 1)
+    /// Where a device added from the browser goes: below the selection, else at the end. The
+    /// container is `Some` when the selection is inside an unfolded container (`doc` is the
+    /// project): the device is added there, after the selected one.
+    fn add_place(&self, doc: &RackDoc) -> (Option<DeviceKey>, usize) {
+        match self.selected.as_ref() {
+            Some(k) if self.scope.is_empty() && inline::is_inner(k) => {
+                let (parent, local) = atomik_model::split_path(k);
+                let at = parent
+                    .as_ref()
+                    .and_then(|p| doc.inner(p))
+                    .and_then(|c| c.devices.iter().position(|d| d.key == local))
+                    .map_or(usize::MAX, |i| i + 1);
+                (parent, at)
+            }
+            Some(k) => (
+                None,
+                doc.devices
+                    .iter()
+                    .position(|d| &d.key == k)
+                    .map_or(doc.devices.len(), |i| i + 1),
+            ),
+            None => (None, doc.devices.len()),
+        }
     }
 
     /// The action the browser's add (Enter on a device row) emits for the built-in device
@@ -3879,7 +3923,12 @@ impl RackView {
         doc: &RackDoc,
         modifiers: Modifiers,
     ) -> UiAction {
-        self.add_device_action(desc.type_id, desc.kind, self.add_index(doc), modifiers)
+        match self.add_place(doc) {
+            (Some(container), index) => {
+                self.add_device_inside(desc.type_id, desc.kind, &container, index)
+            }
+            (None, index) => self.add_device_action(desc.type_id, desc.kind, index, modifiers),
+        }
     }
 
     fn add_device_action(
@@ -3993,7 +4042,10 @@ impl RackView {
         doc: &RackDoc,
         modifiers: Modifiers,
     ) -> Option<UiAction> {
-        self.add_row_action_at(row, self.add_index(doc), modifiers)
+        match self.add_place(self.host(doc)) {
+            (Some(container), index) => self.add_row_inside(row, &container, index),
+            (None, index) => self.add_row_action_at(row, index, modifiers),
+        }
     }
 
     /// [`Self::add_row_action`] at rack index `index` (the flat index of the add commands).
