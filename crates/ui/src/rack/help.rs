@@ -79,6 +79,9 @@ fn plugin_button(b: PluginButton) -> &'static str {
         PluginButton::ToChannel => "Add a mixer channel for this instrument",
         PluginButton::Reload => "Recreate the plugin instance from its saved state",
         PluginButton::Relink => "Point this stand-in at another installed plugin",
+        PluginButton::Cv(_) => {
+            "The parameter this CV input drives: click to choose it in the parameter pane"
+        }
     }
 }
 

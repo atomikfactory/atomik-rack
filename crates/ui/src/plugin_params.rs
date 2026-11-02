@@ -42,7 +42,10 @@
 //!   one). **AUTO** asks the app to add an automation lane for the param on the song track of
 //!   the selected clip ([`UiAction::AutomatePluginParam`]). **MAP** (only for a device inside a
 //!   container) opens the macro menu: `Map to macro 1..8`, or `Edit range` and `Unmap` for a
-//!   param this container's macro drives. A param driven by a macro is **locked**.
+//!   param this container's macro drives. A param driven by a macro is **locked**. **CV**
+//!   opens the CV menu: `Drive from CV 1..8` sets the destination of that CV input of the
+//!   device's CV programmer to this param (the button then reads `C1`..`C8`), `Clear` removes it.
+//!   The amounts are the knobs of the device panel.
 //!
 //! # Gestures
 //!
@@ -63,7 +66,7 @@ use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
 use crate::tooltip::Help;
 use atomik_core::ParamDescriptor;
-use atomik_device_sdk::Registry;
+use atomik_device_sdk::{CV_DEST_KEYS, PLUGIN_CV_INPUTS, Registry};
 use atomik_model::{
     Command, ContainerCommand, DeviceKey, MacroTarget, PLUGIN_GESTURE_MERGE_BASE, PluginCommand,
     PluginDoc, RackDoc,
@@ -92,6 +95,7 @@ const BTN_GAP: f64 = 6.0;
 const PIN_W: f64 = 36.0;
 const AUTO_W: f64 = 44.0;
 const MAP_W: f64 = 44.0;
+const CV_W: f64 = 34.0;
 const STEP_W: f64 = 24.0;
 const MENU_ROW_H: f64 = 18.0;
 const MENU_W: f64 = 170.0;
@@ -129,6 +133,8 @@ pub enum Hit {
     Auto(u32),
     /// The MAP button.
     Map(u32),
+    /// The CV button.
+    Cv(u32),
     /// A row's free space (name and value text).
     Row(u32),
     /// The `<` of the preset bar.
@@ -201,6 +207,10 @@ enum Drag {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MenuEntry {
+    /// Drive this param from CV input `k` (0-based).
+    Cv(u8),
+    /// Stop CV input `k` driving this param.
+    ClearCv(u8),
     Map(u8),
     Unmap(u8),
     EditRange(u8),
@@ -245,6 +255,8 @@ pub struct PluginParamsView {
     pins: Vec<u32>,
     /// Params a macro drives: param id to (container path key, macro 0-based), outermost first.
     drivers: BTreeMap<u32, (DeviceKey, u8)>,
+    /// Params a CV input of the device drives: param id to the first CV input (0-based).
+    cv_drivers: BTreeMap<u32, u8>,
     /// Name of each macro of the immediate container (menu labels).
     macro_names: [String; atomik_model::CONTAINER_MACROS],
     /// Display texts: param id to (bits of the value it was asked for, text).
@@ -312,6 +324,7 @@ impl PluginParamsView {
             shown: Default::default(),
             pins: Vec::new(),
             drivers: BTreeMap::new(),
+            cv_drivers: BTreeMap::new(),
             macro_names: Default::default(),
             texts: BTreeMap::new(),
             requested: BTreeSet::new(),
@@ -587,8 +600,8 @@ impl PluginParamsView {
         })
     }
 
-    /// The columns of a row at `r`: (slider area, value text, pin, auto, map).
-    fn parts(&self, r: Rect) -> (Rect, Rect, Rect, Rect, Option<Rect>) {
+    /// The columns of a row at `r`: (slider area, value text, pin, auto, map, cv).
+    fn parts(&self, r: Rect) -> (Rect, Rect, Rect, Rect, Option<Rect>, Rect) {
         let (y0, y1) = (r.y0 + 3.0, r.y1 - 3.0);
         let mut x = r.x1 - PAD;
         let mut take = |w: f64| {
@@ -599,10 +612,11 @@ impl PluginParamsView {
         let map = self.in_scope.then(|| take(MAP_W));
         let auto = take(AUTO_W);
         let pin = take(PIN_W);
+        let cv = take(CV_W);
         let text = Rect::new(x - TEXT_W, y0, x, y1);
         let sx0 = r.x0 + PAD + NAME_W + 10.0;
         let slider = Rect::new(sx0, y0, (text.x0 - 10.0).max(sx0 + 60.0), y1);
-        (slider, text, pin, auto, map)
+        (slider, text, pin, auto, map, cv)
     }
 
     fn part_of(&self, id: u32) -> Option<(Rect, Row)> {
@@ -661,6 +675,17 @@ impl PluginParamsView {
         self.parts(r).4
     }
 
+    /// The CV button of a param in view.
+    pub fn cv_rect(&self, id: u32) -> Option<Rect> {
+        let (r, _) = self.part_of(id)?;
+        Some(self.parts(r).5)
+    }
+
+    /// The CV input (0-based) that drives param `id`, if one does.
+    pub fn cv_driver_of(&self, id: u32) -> Option<u8> {
+        self.cv_drivers.get(&id).copied()
+    }
+
     /// The rows of the open macro menu: (label, centre).
     pub fn menu_rows(&self) -> Vec<(String, Point)> {
         let Some(m) = &self.menu else {
@@ -699,6 +724,10 @@ impl PluginParamsView {
                 "Show this parameter's automation lane in the arrangement",
             ),
             Hit::Map(id) => help(self.map_rect(id), "Drive this parameter from a macro"),
+            Hit::Cv(id) => help(
+                self.cv_rect(id),
+                "Drive this parameter from one of the device's CV inputs",
+            ),
             Hit::PresetPrev => help(self.preset_prev_rect(), "Load the previous preset"),
             Hit::PresetNext => help(self.preset_next_rect(), "Load the next preset"),
             Hit::PresetName => help(self.preset_name_rect(), "Choose a preset of this plugin"),
@@ -743,10 +772,13 @@ impl PluginParamsView {
                 continue;
             }
             let row = &self.rows[ri];
-            let (slider, _, pin, auto, map) = self.parts(r);
+            let (slider, _, pin, auto, map, cv) = self.parts(r);
             let id = row.id;
             if pin.contains(pos) {
                 return Hit::Pin(id);
+            }
+            if cv.contains(pos) {
+                return Hit::Cv(id);
             }
             if auto.contains(pos) {
                 return Hit::Auto(id);
@@ -912,6 +944,20 @@ impl PluginParamsView {
             }
         }
         self.sync_drivers(doc, &key);
+        // The CV inputs of the programmer: destination ordinal 1 is the first row.
+        let mut cv_drivers = BTreeMap::new();
+        for (k, dest_key) in CV_DEST_KEYS.iter().enumerate() {
+            let ordinal = d.params.get(*dest_key).copied().unwrap_or(0.0).round();
+            if ordinal >= 1.0
+                && let Some(row) = self.rows.get(ordinal as usize - 1)
+            {
+                cv_drivers.entry(row.id).or_insert(k as u8);
+            }
+        }
+        if cv_drivers != self.cv_drivers {
+            self.cv_drivers = cv_drivers;
+            self.repaint = true;
+        }
     }
 
     fn rebuild_rows(&mut self, p: &PluginDoc, desc: Option<&atomik_device_sdk::DeviceDescriptor>) {
@@ -1209,6 +1255,7 @@ impl PluginParamsView {
                 }
             }
             Hit::Map(id) => self.open_menu(id, doc),
+            Hit::Cv(id) => self.open_cv_menu(id),
         }
     }
 
@@ -1289,6 +1336,32 @@ impl PluginParamsView {
         )));
     }
 
+    /// Opens the CV menu of param `id`: one row per CV input of the device's programmer, and
+    /// Clear when a CV input drives the param.
+    fn open_cv_menu(&mut self, id: u32) {
+        let Some(r) = self.cv_rect(id) else { return };
+        let mut entries: Vec<(MenuEntry, String)> = (0..PLUGIN_CV_INPUTS as u8)
+            .map(|k| (MenuEntry::Cv(k), format!("Drive from CV {}", k + 1)))
+            .collect();
+        if let Some(k) = self.cv_drivers.get(&id) {
+            entries.push((MenuEntry::ClearCv(*k), format!("Clear CV {}", k + 1)));
+        }
+        let h = entries.len() as f64 * MENU_ROW_H + 4.0;
+        let b = self.bounds;
+        let x0 = (r.x1 - MENU_W).max(b.x0 + 4.0);
+        let y0 = if r.y1 + h > b.y1 {
+            r.y0 - h
+        } else {
+            r.y1 + 2.0
+        };
+        self.menu = Some(Menu {
+            id,
+            entries,
+            rect: Rect::new(x0, y0, x0 + MENU_W, y0 + h),
+            hover: None,
+        });
+    }
+
     fn open_menu(&mut self, id: u32, doc: &RackDoc) {
         let Some(key) = self.device.clone() else {
             return;
@@ -1337,6 +1410,28 @@ impl PluginParamsView {
         let Some(key) = self.device.clone() else {
             return;
         };
+        // The CV programmer: the destination is the ordinal of the row (1 for the first param).
+        let cv = |k: u8, value: f32| {
+            UiAction::Command(Command::SetParam {
+                key: key.clone(),
+                param: CV_DEST_KEYS[usize::from(k).min(PLUGIN_CV_INPUTS - 1)].to_string(),
+                value,
+                merge: None,
+            })
+        };
+        match entry {
+            MenuEntry::Cv(k) => {
+                if let Some(ri) = self.row_index(menu.id) {
+                    out.push(cv(k, (ri + 1) as f32));
+                }
+                return;
+            }
+            MenuEntry::ClearCv(k) => {
+                out.push(cv(k, 0.0));
+                return;
+            }
+            MenuEntry::Map(_) | MenuEntry::Unmap(_) | MenuEntry::EditRange(_) => {}
+        }
         let Some((container, local)) = key.0.rsplit_once('/') else {
             return;
         };
@@ -1377,6 +1472,7 @@ impl PluginParamsView {
                 device: container,
                 macros: Some(index),
             }),
+            MenuEntry::Cv(_) | MenuEntry::ClearCv(_) => {}
         }
     }
 

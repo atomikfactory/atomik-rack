@@ -262,7 +262,7 @@ fn param_row(v: &PluginParamsView, c: &mut dyn Canvas, row: &Row, r: Rect, ri: u
         t.text,
         Align::Start,
     );
-    let (slider, text, pin, auto, map) = v.parts(r);
+    let (slider, text, pin, auto, map, cv) = v.parts(r);
     let driver = v.drivers.get(&id).map(|(_, m)| *m);
     let accent = v.accent;
     match row.widget {
@@ -356,6 +356,15 @@ fn param_row(v: &PluginParamsView, c: &mut dyn Canvas, row: &Row, r: Rect, ri: u
         "AUTO",
         None,
         matches!(v.hover, Hit::Auto(i) if i == id),
+    );
+    let cv_driver = v.cv_drivers.get(&id).copied();
+    sp::button(
+        c,
+        st,
+        cv,
+        &cv_driver.map_or_else(|| "CV".to_string(), |k| format!("C{}", u16::from(k) + 1)),
+        cv_driver.map(|_| accent),
+        matches!(v.hover, Hit::Cv(i) if i == id),
     );
     if let Some(map) = map {
         let label = driver.map_or_else(|| "MAP".to_string(), |m| format!("M{}", u16::from(m) + 1));
