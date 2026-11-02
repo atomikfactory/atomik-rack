@@ -92,6 +92,7 @@ fn format_of(row: &FileRow) -> Option<AudioFormat> {
     match row.kind {
         FileKind::Audio(f) => Some(f),
         FileKind::Folder
+        | FileKind::Midi
         | FileKind::Patch
         | FileKind::Container
         | FileKind::Clip

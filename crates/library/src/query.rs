@@ -7,7 +7,7 @@ use crate::{AudioFormat, FileKind, FileRow};
 /// Whitespace-separated tokens, all of which must match (AND):
 /// - `#name` or `tag:name`: the row has that tag (case-insensitive, exact tag name).
 /// - `fav` or `is:fav` (case-insensitive): the row is a favourite.
-/// - `kind:x`: the row is of that kind. `x` is `folder`, `audio`, `patch`, `container`,
+/// - `kind:x`: the row is of that kind. `x` is `folder`, `audio`, `midi`, `patch`, `container`,
 ///   `clip`, `project`, `device`, `item` (any library item) or an audio format (`wav`, `aiff`,
 ///   `flac`, `mp3`, `ogg`). An unknown kind matches nothing.
 /// - `cat:x`: a case-insensitive substring of the category of the row, whether the probed one
@@ -43,6 +43,7 @@ pub struct Query {
 enum KindTerm {
     Folder,
     Audio,
+    Midi,
     Format(AudioFormat),
     Patch,
     Container,
@@ -62,6 +63,8 @@ impl KindTerm {
             Self::Folder
         } else if is("audio") || is("sample") {
             Self::Audio
+        } else if is("midi") || is("mid") {
+            Self::Midi
         } else if is("wav") || is("wave") {
             Self::Format(AudioFormat::Wav)
         } else if is("aif") || is("aiff") {
@@ -93,6 +96,7 @@ impl KindTerm {
         match self {
             Self::Folder => kind == FileKind::Folder,
             Self::Audio => matches!(kind, FileKind::Audio(_)),
+            Self::Midi => kind == FileKind::Midi,
             Self::Format(f) => kind == FileKind::Audio(f),
             Self::Patch => kind == FileKind::Patch,
             Self::Container => kind == FileKind::Container,
@@ -418,6 +422,9 @@ mod tests {
         assert!(m("kind:flac", &flac));
         assert!(m("kind:patch", &patch) && m("kind:item", &patch) && !m("kind:item", &wav));
         assert!(m("kind:folder", &dir) && !m("kind:folder", &wav));
+        let midi = rich("/s/a.mid", FileKind::Midi);
+        assert!(m("kind:midi", &midi) && m("kind:mid", &midi));
+        assert!(!m("kind:midi", &wav) && !m("kind:audio", &midi) && !m("kind:item", &midi));
         assert!(!m("kind:nonsense", &wav), "an unknown kind matches nothing");
         assert!(m("kind:", &wav), "no value is ignored");
         assert!(Query::parse("kind:").is_empty());
