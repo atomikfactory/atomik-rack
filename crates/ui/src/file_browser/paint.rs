@@ -81,6 +81,7 @@ impl FileBrowserView {
         self.paint_path_bar(c, &lay);
         self.paint_column_header(c, &lay);
         self.paint_list(c, &lay);
+        self.paint_info(c, &lay);
         let hot = self.gesture == Gesture::Resize;
         c.fill_with(
             Rect::new(
@@ -518,6 +519,84 @@ impl FileBrowserView {
         if let Some(size) = cols.size {
             label("Size", Some(SortKey::Size), size.1, Align::End);
         }
+    }
+
+    /// The info pane under the list: what the selected file is (name, facts, tags) and, for
+    /// audio, its loudness picture.
+    fn paint_info(&self, c: &mut dyn Canvas, lay: &Layout) {
+        let pane = lay.info;
+        let Some(row) = self.pane_row().filter(|_| pane.height() > 0.0) else {
+            return;
+        };
+        let t = &self.theme;
+        c.fill_with(pane, t.lcd);
+        c.fill_with(
+            Rect::new(pane.x0, pane.y0, pane.x1, pane.y0 + 1.0),
+            t.bevel_dark,
+        );
+        c.push_clip(&pane.into());
+        let width = pane.width() - 2.0 * lay::PAD;
+        let tempo = self
+            .detail
+            .as_ref()
+            .filter(|(p, _)| *p == row.path)
+            .and_then(|(_, d)| d.tempo);
+        let line = |y: f64| Rect::new(pane.x0 + lay::PAD, y, pane.x1 - lay::PAD, y + 14.0);
+        let mut y = pane.y0 + 4.0;
+        for (text, size, color) in [
+            (row.name.clone(), ROW_FONT, t.text),
+            (lay::pane_facts(row, tempo), SMALL_FONT, t.text_muted),
+            (lay::pane_marks(row), SMALL_FONT, t.text_muted),
+        ] {
+            if !text.is_empty() {
+                let at = line(y);
+                c.text(&TextRun::new(
+                    fit_label(&text, width, size),
+                    pt(at.x0, baseline(at, size)),
+                    size,
+                    color,
+                ));
+                y += 13.0;
+            }
+        }
+        // The loudness picture fills the rest of the pane: one bar per column, mirrored round
+        // the middle.
+        let wave = Rect::new(
+            pane.x0 + lay::PAD,
+            y + 3.0,
+            pane.x1 - lay::PAD,
+            pane.y1 - 4.0,
+        );
+        let levels = self
+            .detail
+            .as_ref()
+            .filter(|(p, _)| *p == row.path)
+            .map(|(_, d)| d.levels.as_slice())
+            .filter(|l| !l.is_empty());
+        if let Some(levels) = levels
+            && wave.height() >= 4.0
+            && wave.width() >= 4.0
+        {
+            let columns = wave.width() as usize;
+            let mid = wave.center().y;
+            let half = wave.height() / 2.0;
+            for x in 0..columns {
+                let h = (f64::from(lay::level_at(levels, x, columns)) * half).max(0.5);
+                let x0 = wave.x0 + x as f64;
+                c.fill_with(Rect::new(x0, mid - h, x0 + 1.0, mid + h), t.cable_audio);
+            }
+            // The preview position runs over the picture while the file plays.
+            if let Some(progress) = self
+                .preview
+                .as_ref()
+                .filter(|(p, _)| *p == row.path)
+                .map(|(_, p)| f64::from(*p))
+            {
+                let x = wave.x0 + wave.width() * progress.clamp(0.0, 1.0);
+                c.fill_with(Rect::new(x, wave.y0, x + 1.0, wave.y1), t.text);
+            }
+        }
+        c.pop_clip();
     }
 
     fn paint_list(&self, c: &mut dyn Canvas, lay: &Layout) {

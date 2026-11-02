@@ -2243,6 +2243,7 @@ are the first users (nine sources, three targets); the framework is written down
 | `atomik-browse` | file browser: folder listings, the tree's sub-folders, the recursive walk, favourite and tag places, the drives | Yes (disk) |
 | `atomik-probe` | file browser: audio header reads (`probe_file`), visible rows first | Yes (disk) |
 | `atomik-preview` | file browser: decodes the previewed file and fills the preview ring | Yes (disk) |
+| `atomik-detail` | file browser: the tempo a file states and its loudness picture for the info pane (newest request only) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
@@ -3721,8 +3722,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   (undoable, merge ids from `8 x 2^40 + 2^38`) at the next quiet capture, when the editor closes
   and before an undo, unless a param was turned meanwhile; undo gives the old blob back to the live
   plugin through `SyncOp::PluginStateChanged`. Presets: `PluginInstance::list_presets` /
-  `load_preset` (VST3 `.vstpreset` files; the null backend has fixed ones), the sandbox messages
-  `ListPresets`, `LoadPreset` and `Presets`, and `AppCore::load_plugin_preset` as one `SetState`.
+  `load_preset` (VST3 `.vstpreset` files; CLAP preset discovery and preset-load in
+  [plugin-clap/src/presets.rs](../crates/plugin-clap/src/presets.rs), with short stable ids so the
+  plugin is only asked for locations it declared; the null backend has fixed ones), the sandbox
+  messages `ListPresets`, `LoadPreset` and `Presets`, and `AppCore::load_plugin_preset` as one
+  `SetState`. `PluginInstance::read_params` (sandbox: `ReadParams` and `ParamValues`) gives the host
+  values the plugin holds, and `AppCore::refresh_knobs` writes the changed ones into the document as
+  `SetParam`s folded into the same undo step, without echoing them back to the plugin.
 - **Format v9.** `plugin` is written after `inner`: format, id, name, vendor, version, `path_hint`
   (shown, never used), a compact `layout` (sockets and **only the used param rows**), base64
   `state`, pins, run mode, powered. Params are saved sparsely. Canonical save, load, save is
@@ -4485,7 +4491,12 @@ and on Rename, and nowhere else.
   Categories (an inline entry, empty clears), and the named favourite lists: Add to a list, New
   list and, inside a list, Remove from it. The view owns the query, sort, selection, scroll, expansion and the
   filtered index list, and paints only the visible rows, so painting does not grow with the folder
-  size. It does no disk access: the app pushes everything it shows (`set_places`, `set_children`,
+  size. With exactly one file or library item selected, an info pane takes the foot of the list (when
+  the panel is tall enough): the name, the facts (format, channels, rate, length, size, the tempo the
+  file states), tags, author and categories, and for audio a loudness picture; the view asks for the
+  picture with `take_detail_request` (a poll, not an action) and the app answers with `set_detail`. A
+  patch browser aimed at a plugin device adds the plugin's presets as virtual `Preset` rows. It does
+  no disk access: the app pushes everything it shows (`set_places`, `set_children`,
   `set_location`, `set_rows`, `append_rows`, `patch_info`, `patch_marks`, `set_preview`) and answers
   the `UiAction::Browse(BrowseAction)` actions it emits (navigate, show a `Place`, preview,
   favourite, tags, bookmarks, `RequestInfo`, `DragFiles`). In the list, `Ctrl+A` (`Cmd+A`) selects
@@ -4497,7 +4508,9 @@ and on Rename, and nowhere else.
   folder (`read_dir` and metadata), the sub-folders of a tree node, the drives, the files of a
   favourite or tag place, and walks the sub-folders for the recursive search (results stream in
   batches, capped at 100 000 entries). `atomik-probe` reads audio headers for the rows the view asks
-  for, visible rows first, and the results patch the rows by path. Every listing, walk and lookup
+  for, visible rows first, and the results patch the rows by path. `atomik-detail` streams the one
+  file of the info pane into 480 loudness levels (`overview_levels`, at most ten minutes of it, no
+  more than the newest request) and reads its tempo from the file's metadata. Every listing, walk and lookup
   carries a generation, so a newer request makes older answers stale and stops a running walk.
   Folders are not watched: a folder is listed again when it is shown and on refresh.
 - **The library file** ([app/src/library_store.rs](../crates/app/src/library_store.rs),

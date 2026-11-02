@@ -525,6 +525,16 @@ impl PluginManager {
         Ok(self.get(id)?.instance.load_preset(preset)?)
     }
 
+    /// The param values the plugin holds now (see [`crate::PluginInstance::read_params`]); empty
+    /// for an unknown instance.
+    pub fn read_params(&mut self, id: InstanceId) -> Vec<(u32, f64)> {
+        assert_main_thread("PluginManager::read_params");
+        self.instances
+            .get_mut(&id)
+            .map(|m| m.instance.read_params())
+            .unwrap_or_default()
+    }
+
     /// The plugin's display text of a param value (never asked on the audio thread).
     pub fn param_text(&mut self, id: InstanceId, param: u32, plain: f64) -> Option<String> {
         assert_main_thread("PluginManager::param_text");

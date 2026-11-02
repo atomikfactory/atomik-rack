@@ -1,10 +1,11 @@
 //! The file browser's worker threads and every disk access it makes besides the library file.
 //!
-//! Four threads, all message-passing: `atomik-browse` lists folders, sub-folders, favourite
+//! Five threads, all message-passing: `atomik-browse` lists folders, sub-folders, favourite
 //! and tag places, the drives, and walks folders for the recursive search and the library
 //! sections; `atomik-probe` reads audio headers and summarises library items; `atomik-library`
 //! copies the audio of a saved library item beside it; `atomik-preview` decodes the file being
-//! previewed into the engine's ring. They answer over one channel of [`BrowseMsg`]s which
+//! previewed into the engine's ring. `atomik-detail` reads the tempo and a loudness picture of the one file the info
+//! pane shows. They answer over one channel of [`BrowseMsg`]s which
 //! [`crate::AppCore`] drains with `try_recv` every frame. Each submitted job ends with exactly
 //! one [`BrowseMsg::Done`] (also when it panics or the result is stale), so the core can count
 //! jobs in flight.
@@ -16,7 +17,7 @@
 //! [`split_devices`] takes it out before any lookup, and the probe and stat functions skip it
 //! again.
 
-use atomik_audio_file::{Bundle, StreamDecoder, probe_file};
+use atomik_audio_file::{Bundle, StreamDecoder, overview_levels, probe_file, read_file_meta};
 use atomik_engine::PreviewFeed;
 use atomik_library::{
     AudioInfo, FileKind, FileRow, ItemInfo, LibrarySection, classify, device_type_of, natural_cmp,
@@ -114,6 +115,12 @@ pub(crate) enum BrowseMsg {
         path: PathBuf,
         report: CopyReport,
     },
+    /// The tempo and loudness picture of the file the info pane shows.
+    Detail {
+        path: PathBuf,
+        tempo: Option<f64>,
+        levels: Vec<f32>,
+    },
     /// One submitted job (or probe request) ended.
     Done,
 }
@@ -160,6 +167,7 @@ pub(crate) struct Workers {
     probe: Sender<Vec<PathBuf>>,
     preview: Sender<PreviewJob>,
     library: Sender<CopyAssets>,
+    detail: Sender<PathBuf>,
     /// Answers of all four workers.
     pub(crate) rx: Receiver<BrowseMsg>,
     /// Bumped by the core whenever a listing is replaced; walks stop when theirs is stale.
@@ -175,6 +183,7 @@ impl Workers {
         let (probe, probe_rx) = channel();
         let (preview, preview_rx) = channel();
         let (library, library_rx) = channel();
+        let (detail, detail_rx) = channel();
         let t = tx.clone();
         let g = Arc::clone(&generation);
         spawn_named("atomik-browse", move || browse_thread(&browse_rx, &t, &g));
@@ -182,12 +191,15 @@ impl Workers {
         spawn_named("atomik-probe", move || probe_thread(&probe_rx, &t));
         let t = tx.clone();
         spawn_named("atomik-library", move || library_thread(&library_rx, &t));
+        let t = tx.clone();
+        spawn_named("atomik-detail", move || detail_thread(&detail_rx, &t));
         spawn_named("atomik-preview", move || preview_thread(&preview_rx, &tx));
         Self {
             browse,
             probe,
             preview,
             library,
+            detail,
             rx,
             generation,
         }
@@ -201,6 +213,12 @@ impl Workers {
     /// Queues paths for probing (visible rows first); false when the thread is gone.
     pub(crate) fn probe(&self, paths: Vec<PathBuf>) -> bool {
         self.probe.send(paths).is_ok()
+    }
+
+    /// Asks for the detail of `path` (newer requests replace older ones that did not start
+    /// yet); false when the thread is gone.
+    pub(crate) fn detail(&self, path: PathBuf) -> bool {
+        self.detail.send(path).is_ok()
     }
 
     /// Hands a preview to the decoder thread; false when the thread is gone.
@@ -413,7 +431,11 @@ pub(crate) fn item_kind_of(kind: FileKind) -> Option<ItemKind> {
         FileKind::Container => Some(ItemKind::Container),
         FileKind::Clip => Some(ItemKind::Clip),
         FileKind::Project => Some(ItemKind::Project),
-        FileKind::Folder | FileKind::Audio(_) | FileKind::Midi | FileKind::Device => None,
+        FileKind::Folder
+        | FileKind::Audio(_)
+        | FileKind::Midi
+        | FileKind::Device
+        | FileKind::Preset => None,
     }
 }
 
@@ -673,6 +695,47 @@ fn finish_requests(tx: &Sender<BrowseMsg>, requests: &mut usize) -> bool {
         }
     }
     true
+}
+
+// ---------------------------------------------------------------------------------- detail
+
+/// The frames of a file the loudness picture reads at most (ten minutes at 48 kHz).
+pub(crate) const DETAIL_MAX_FRAMES: u64 = 48_000 * 600;
+/// Parts of the loudness picture.
+pub(crate) const DETAIL_BUCKETS: usize = 480;
+
+/// The tempo a file states and its loudness picture; the picture is empty for a file that
+/// cannot be decoded.
+pub(crate) fn detail_of(path: &Path) -> (Option<f64>, Vec<f32>) {
+    let tempo = read_file_meta(path).tempo_bpm;
+    let levels = overview_levels(path, DETAIL_BUCKETS, DETAIL_MAX_FRAMES).unwrap_or_default();
+    (tempo, levels)
+}
+
+fn detail_thread(rx: &Receiver<PathBuf>, tx: &Sender<BrowseMsg>) {
+    while let Ok(mut path) = rx.recv() {
+        // Only the newest request is worth reading: the pane follows the selection.
+        let mut requests = 1usize;
+        while let Ok(newer) = rx.try_recv() {
+            path = newer;
+            requests += 1;
+        }
+        let read = catch_unwind(AssertUnwindSafe(|| detail_of(&path)));
+        if let Ok((tempo, levels)) = read
+            && tx
+                .send(BrowseMsg::Detail {
+                    path,
+                    tempo,
+                    levels,
+                })
+                .is_err()
+        {
+            return;
+        }
+        if !finish_requests(tx, &mut requests) {
+            return;
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------- library

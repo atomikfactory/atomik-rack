@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **CLAP presets, knobs that follow a preset, and a browser info pane.** A CLAP plugin's presets (those inside the
+  plugin and the files in the folders it declares) are listed and loaded in PARAMS like VST3 presets, also from a
+  sandboxed plugin. After a preset is loaded, or a patch is changed inside the plugin's window, the rack's knobs show
+  the values the plugin now holds, and undo puts them back together with the sound. With Browse aimed at a plugin
+  device the file browser lists the plugin's presets as rows (Enter or a double-click loads one). Selecting one audio
+  file in the browser shows an info pane under the list: format, channels, rate, length, size, the tempo the file
+  states, tags, author and categories, and a loudness picture read on a worker thread. VST3 program lists and a
+  background index of the browser are not built yet. No project format change.
 - **SFZ and SoundFont import into the sampler.** Drop an `.sfz` or `.sf2` file on a sampler (or load it from the
   sample editor) and it becomes the sampler's zones in one undo step. An SFZ keeps its regions, key and velocity
   ranges, root keys, loops, tuning, volume and pan, amplitude envelope, filter, round-robin, velocity crossfades

@@ -608,3 +608,23 @@ fn presets_are_listed_and_loaded_through_the_manager() {
     assert_eq!(m.capture_state(id).unwrap().0, b"preset:warm");
     assert!(m.load_preset(id, "nope").is_err());
 }
+
+#[test]
+fn a_preset_moves_the_param_values_the_manager_reads_back() {
+    let (mut m, stats) = manager();
+    let id = m.instantiate(&request("null.fx")).unwrap().id;
+    stats.set_presets(true);
+    let before = m.read_params(id);
+    m.load_preset(id, "warm").unwrap();
+    let after = m.read_params(id);
+    assert_eq!(before.len(), after.len());
+    assert_ne!(before, after, "the preset changed the values");
+    // Restoring a state that is no preset puts the defaults back.
+    m.restore_state(id, &atomik_device_sdk::PluginStateBlob(b"x".to_vec()))
+        .unwrap();
+    assert_eq!(m.read_params(id), before);
+    assert!(
+        m.read_params(atomik_plugin_host::InstanceId(999))
+            .is_empty()
+    );
+}

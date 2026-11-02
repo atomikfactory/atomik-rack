@@ -13,6 +13,7 @@ mod error;
 mod hash;
 mod instrument;
 mod meta;
+mod overview;
 mod peaks;
 mod resample;
 mod sf2;
@@ -39,6 +40,7 @@ pub use instrument::{
     read_instrument,
 };
 pub use meta::{FileMeta, parse_meta, read_file_meta};
+pub use overview::overview_levels;
 pub use peaks::{FINEST_PEAK_FRAMES, PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks, raw_min_max};
 pub use resample::{resample, resample_owned};
 pub use sf2::{parse_sf2, read_sf2, sf2_presets};

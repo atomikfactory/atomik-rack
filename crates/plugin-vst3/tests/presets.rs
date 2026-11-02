@@ -54,12 +54,19 @@ fn a_preset_file_is_listed_and_loads_into_the_plugin() {
     assert_eq!(presets[0].name, "Quiet");
     assert_eq!(presets[0].group, "Factory");
 
+    let values_before = rig.instance.read_params();
+    assert!(!values_before.is_empty(), "the controller answers");
     let before = rig.instance.capture_state().unwrap();
     assert_ne!(
         component_state(Format::Vst3, &before),
         component_state(Format::Vst3, &saved)
     );
     rig.instance.load_preset(&presets[0].id).unwrap();
+    assert_ne!(
+        rig.instance.read_params(),
+        values_before,
+        "the knobs can follow the preset"
+    );
     let after = rig.instance.capture_state().unwrap();
     assert_eq!(
         component_state(Format::Vst3, &after),

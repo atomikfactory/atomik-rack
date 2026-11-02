@@ -21,6 +21,8 @@
 // of them `unsafe` would only move the same `SAFETY` argument one call up.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+mod presets;
+
 use atomik_test_plugin_core::{BLOCK, Block, Event, ExprKind, TimedEvent};
 pub use clap_sys as sys;
 use clap_sys::audio_buffer::clap_audio_buffer;
@@ -51,6 +53,7 @@ use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_STEPPED, CLAP_PARAM_RESCAN_ALL,
     clap_host_params, clap_param_info, clap_plugin_params,
 };
+use clap_sys::ext::preset_load::CLAP_EXT_PRESET_LOAD;
 use clap_sys::ext::remote_controls::{
     CLAP_EXT_REMOTE_CONTROLS, clap_plugin_remote_controls, clap_remote_controls_page,
 };
@@ -69,6 +72,10 @@ use clap_sys::process::{
 };
 use clap_sys::stream::{clap_istream, clap_ostream};
 use clap_sys::version::CLAP_VERSION;
+pub use presets::{
+    PRESET_DIR_ENV, PresetDef, count as presets_count, create as presets_create,
+    descriptor as presets_descriptor,
+};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -317,6 +324,8 @@ pub struct LibraryDef {
     pub plugins: &'static [PluginDef],
     /// Entry `init`; false fails loading the library.
     pub init: fn() -> bool,
+    /// The presets the library offers through preset discovery (see [`LibraryDef::with_presets`]).
+    pub presets: &'static [PresetDef],
     descriptors: OnceLock<Vec<Descriptor>>,
 }
 
@@ -326,8 +335,15 @@ impl LibraryDef {
         Self {
             plugins,
             init,
+            presets: &[],
             descriptors: OnceLock::new(),
         }
+    }
+
+    /// The library also offers `presets` through the preset discovery factory and `preset-load`.
+    pub const fn with_presets(mut self, presets: &'static [PresetDef]) -> Self {
+        self.presets = presets;
+        self
     }
 }
 
@@ -521,7 +537,12 @@ pub fn lib_deinit(_lib: &'static LibraryDef) {
 }
 
 /// Entry `get_factory`: the plugin factory for its id, null otherwise.
-pub fn lib_factory(id: *const c_char, factory: *const c_void) -> *const c_void {
+pub fn lib_factory(
+    lib: &'static LibraryDef,
+    id: *const c_char,
+    factory: *const c_void,
+    preset_factory: *const c_void,
+) -> *const c_void {
     if id.is_null() {
         return std::ptr::null();
     }
@@ -529,6 +550,11 @@ pub fn lib_factory(id: *const c_char, factory: *const c_void) -> *const c_void {
     let id = unsafe { CStr::from_ptr(id) };
     if id == clap_sys::factory::plugin_factory::CLAP_PLUGIN_FACTORY_ID {
         factory
+    } else if (id == clap_sys::factory::preset_discovery::CLAP_PRESET_DISCOVERY_FACTORY_ID
+        || id == clap_sys::factory::preset_discovery::CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT)
+        && presets::offered(lib)
+    {
+        preset_factory
     } else {
         std::ptr::null()
     }
@@ -581,6 +607,7 @@ pub fn factory_create(
         },
         host,
         info: def.info,
+        presets: lib.presets,
         ports,
         probe: Probe::new(),
         ext: OnceLock::new(),
@@ -645,6 +672,7 @@ struct Instance {
     plugin: clap_plugin,
     host: *const clap_host,
     info: &'static Info,
+    presets: &'static [PresetDef],
     ports: Ports,
     probe: Probe,
     ext: OnceLock<HostExt>,
@@ -1669,6 +1697,8 @@ extern "C" fn plugin_get_extension(plugin: *const clap_plugin, id: *const c_char
         (&raw const REMOTE).cast()
     } else if id == CLAP_EXT_TIMER_SUPPORT && i.info.gui {
         (&raw const TIMER).cast()
+    } else if id == CLAP_EXT_PRESET_LOAD && (!i.presets.is_empty() || presets::dir_set()) {
+        (&raw const presets::PRESET_LOAD).cast()
     } else if id == CLAP_EXT_GUI && i.info.gui {
         (&raw const GUI).cast()
     } else {
@@ -1845,10 +1875,45 @@ macro_rules! clap_library {
                 create_plugin: Some(__atomik_create),
             };
 
+        extern "C" fn __atomik_presets_count(
+            _factory: *const $crate::sys::factory::preset_discovery::clap_preset_discovery_factory,
+        ) -> u32 {
+            $crate::presets_count()
+        }
+
+        extern "C" fn __atomik_presets_descriptor(
+            _factory: *const $crate::sys::factory::preset_discovery::clap_preset_discovery_factory,
+            index: u32,
+        ) -> *const $crate::sys::factory::preset_discovery::clap_preset_discovery_provider_descriptor
+        {
+            $crate::presets_descriptor(index)
+        }
+
+        extern "C" fn __atomik_presets_create(
+            _factory: *const $crate::sys::factory::preset_discovery::clap_preset_discovery_factory,
+            indexer: *const $crate::sys::factory::preset_discovery::clap_preset_discovery_indexer,
+            id: *const ::std::ffi::c_char,
+        ) -> *const $crate::sys::factory::preset_discovery::clap_preset_discovery_provider {
+            $crate::presets_create(&__ATOMIK_LIB, indexer, id)
+        }
+
+        static __ATOMIK_PRESET_FACTORY:
+            $crate::sys::factory::preset_discovery::clap_preset_discovery_factory =
+            $crate::sys::factory::preset_discovery::clap_preset_discovery_factory {
+                count: Some(__atomik_presets_count),
+                get_descriptor: Some(__atomik_presets_descriptor),
+                create: Some(__atomik_presets_create),
+            };
+
         extern "C" fn __atomik_get_factory(
             id: *const ::std::ffi::c_char,
         ) -> *const ::std::ffi::c_void {
-            $crate::lib_factory(id, (&raw const __ATOMIK_FACTORY).cast())
+            $crate::lib_factory(
+                &__ATOMIK_LIB,
+                id,
+                (&raw const __ATOMIK_FACTORY).cast(),
+                (&raw const __ATOMIK_PRESET_FACTORY).cast(),
+            )
         }
 
         /// The CLAP entry point.

@@ -1649,6 +1649,46 @@ fn tag_places_list_tagged_devices_from_the_registry() {
     );
 }
 
+// ------------------------------------------------------------------------------- info pane
+
+#[test]
+fn the_one_selected_audio_file_gets_its_loudness_picture_from_a_worker_once() {
+    let lib = library("detail");
+    let mut c = core();
+    show(&mut c, &lib.0);
+    assert!(c.file_browser_mut().select_path(&lib.path("kick 2.wav")));
+    wait_until(&mut c, "the detail", |c| {
+        trace(c)
+            .iter()
+            .any(|t| matches!(t, ViewCall::Detail(p, _, _) if p == &lib.path("kick 2.wav")))
+    });
+    wait_browser(&mut c);
+    let details: Vec<_> = trace(&c)
+        .iter()
+        .filter_map(|t| match t {
+            ViewCall::Detail(p, tempo, levels) => Some((p.clone(), *tempo, levels.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(details.len(), 1, "asked for once: {details:?}");
+    let (_, tempo, levels) = &details[0];
+    assert_eq!(*tempo, None, "a plain wav states no tempo");
+    assert!(!levels.is_empty() && levels.iter().all(|l| (0.0..=0.51).contains(l)));
+    assert!(
+        levels.iter().any(|l| *l > 0.4),
+        "the sine is half scale: {levels:?}"
+    );
+}
+
+#[test]
+fn a_file_that_cannot_be_decoded_gets_an_empty_picture_and_the_core_stays_idle() {
+    let lib = library("detail-bad");
+    std::fs::write(lib.path("broken.wav"), b"not a wav").unwrap();
+    let (tempo, levels) = crate::browser_workers::detail_of(&lib.path("broken.wav"));
+    assert_eq!(tempo, None);
+    assert!(levels.is_empty());
+}
+
 #[test]
 fn midi_files_are_listed_with_their_own_kind_in_every_case() {
     let lib = library("midi-rows");

@@ -404,7 +404,7 @@ pub use export_panel::{
     EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues,
     ExportView,
 };
-pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
+pub use file_browser::{DetailData, FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
 pub use macros_panel::{MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView};
 pub use marker_edit::MarkSel;

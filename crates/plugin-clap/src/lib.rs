@@ -19,6 +19,7 @@ mod backend;
 mod hub;
 mod instance;
 mod layout;
+mod presets;
 mod processor;
 
 pub use backend::ClapBackend;

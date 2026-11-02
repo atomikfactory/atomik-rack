@@ -259,6 +259,10 @@ fn default_script(ctl: &Control, req: &ToChild, blob: Option<&[u8]>) -> Action {
             id: *id,
             pins: vec![1, 2],
         }),
+        ToChild::ReadParams { id } => reply(FromChild::ParamValues {
+            id: *id,
+            values: vec![(1, 0.5), (2, 2.0)],
+        }),
         ToChild::ListPresets { id } => reply(FromChild::Presets {
             id: *id,
             presets: vec![

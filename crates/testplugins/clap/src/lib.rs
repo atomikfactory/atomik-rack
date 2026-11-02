@@ -4,8 +4,8 @@
 //! over the DSP of `atomik-test-plugin-core`.
 
 use atomik_test_clap_shell::{
-    Dsp, Info, Io, LibraryDef, ParamSpec, PluginDef, Ports, Requests, Status, clap_library,
-    dialect, sys::plugin_features as feat,
+    Dsp, Info, Io, LibraryDef, ParamSpec, PluginDef, Ports, PresetDef, Requests, Status,
+    clap_library, dialect, sys::plugin_features as feat,
 };
 use atomik_test_plugin_core::{BLOCK, Event, GainFx, NoteShift, ParamBank, TestSynth, TimedEvent};
 
@@ -469,4 +469,26 @@ static PLUGINS: [PluginDef; 4] = [
     },
 ];
 
-clap_library!(LibraryDef::new(&PLUGINS, || true));
+/// The presets of the gain and the synth: `preset-load` sets their params.
+static PRESETS: [PresetDef; 3] = [
+    PresetDef {
+        plugin: c"atomik.test.gain",
+        name: c"Quiet",
+        key: c"quiet",
+        values: &[(GainFx::GAIN, -12.0)],
+    },
+    PresetDef {
+        plugin: c"atomik.test.gain",
+        name: c"Loud",
+        key: c"loud",
+        values: &[(GainFx::GAIN, 6.0), (GainFx::DUCK, 0.25)],
+    },
+    PresetDef {
+        plugin: c"atomik.test.synth",
+        name: c"Square Lead",
+        key: c"square",
+        values: &[(TestSynth::WAVE, 1.0), (TestSynth::LEVEL, 0.8)],
+    },
+];
+
+clap_library!(LibraryDef::new(&PLUGINS, || true).with_presets(&PRESETS));

@@ -210,3 +210,96 @@ fn escape_cancels_the_audition_and_stops_the_preview_without_a_target() {
         "{acts:?}"
     );
 }
+
+fn preset_row(id: &str, name: &str, group: &str) -> FileRow {
+    FileRow {
+        path: atomik_library::preset_uri("lead", id),
+        name: name.to_string(),
+        kind: FileKind::Preset,
+        size: 0,
+        info: None,
+        item: Some(ItemInfo {
+            detail: group.to_string(),
+            category: "PRESET".to_string(),
+            ..ItemInfo::default()
+        }),
+        favorite: false,
+        tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
+    }
+}
+
+fn with_presets() -> FileBrowserView {
+    let mut v = aimed();
+    let mut all = vec![
+        preset_row("a", "Init", "Factory"),
+        preset_row("b", "Warm", "Factory"),
+    ];
+    all.extend(rows());
+    v.set_rows(all);
+    v.handle(&UiEvent::Resize(Size::new(300.0, 600.0)));
+    v
+}
+
+#[test]
+fn a_plugins_presets_are_listed_next_to_its_patches_and_load_on_double_click_or_enter() {
+    let mut v = with_presets();
+    let t = texts(&mut v);
+    assert!(has(&t, "Init") && has(&t, "Warm"), "{t:?}");
+    assert!(
+        has(&t, "Factory"),
+        "the group shows in the detail column: {t:?}"
+    );
+    assert!(has(&t, "Warm Pad"), "the patches stay: {t:?}");
+
+    // The folder comes first, then the rows by name: Init, Unknown, Warm, Warm Pad.
+    // A single click only selects: a preset is not auditioned as a patch.
+    let acts = browse(v.handle(&down(row_pt(3), 1)));
+    assert!(
+        !acts.iter().any(|a| matches!(a, BrowseAction::Audition(_))),
+        "{acts:?}"
+    );
+    let uri = atomik_library::preset_uri("lead", "b");
+    assert_eq!(
+        browse(v.handle(&down(row_pt(3), 2))),
+        vec![BrowseAction::Load(uri.clone())]
+    );
+    assert_eq!(
+        browse(v.handle(&key(Key::Enter))),
+        vec![BrowseAction::Load(uri)]
+    );
+}
+
+#[test]
+fn a_preset_row_has_no_drag_no_star_and_a_menu_with_load_only() {
+    let mut v = with_presets();
+    let at = row_pt(1);
+    v.handle(&down(at, 1));
+    let far = Point::new(at.x + 40.0, at.y);
+    let moved = UiEvent::PointerMove {
+        pos: far,
+        modifiers: Modifiers::NONE,
+    };
+    assert!(
+        browse(v.handle(&moved)).is_empty(),
+        "a preset cannot be dragged"
+    );
+    v.handle(&UiEvent::PointerUp {
+        pos: far,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    v.handle(&UiEvent::PointerDown {
+        pos: at,
+        button: PointerButton::Secondary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    let t = texts(&mut v);
+    assert!(has(&t, "Load"), "{t:?}");
+    assert!(
+        !has(&t, "Toggle favourite") && !has(&t, "Show in Folder") && !has(&t, "New tag"),
+        "{t:?}"
+    );
+}

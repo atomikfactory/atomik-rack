@@ -320,6 +320,48 @@ fn the_clap_state_round_trips_through_a_new_child() {
 }
 
 #[test]
+fn the_clap_presets_load_through_the_child_and_the_params_read_back() {
+    let file = Format::Clap.file("atomik-test-clap");
+    let id = Format::Clap.id(Kind::Gain);
+    let mut p = TestParent::spawn(&Spawn::real("clap", &file, &id));
+    p.hello();
+    p.instantiate();
+    let presets = match p.call(|id| ToChild::ListPresets { id }, None).0 {
+        FromChild::Presets { presets, .. } => presets,
+        other => panic!("{other:?}"),
+    };
+    let names: Vec<&str> = presets.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Quiet", "Loud"], "{presets:?}");
+    let quiet = presets[0].id.clone();
+    let (reply, _) = p.call(
+        |id| ToChild::LoadPreset {
+            id,
+            preset: quiet.clone(),
+        },
+        None,
+    );
+    assert!(matches!(reply, FromChild::Ok { .. }), "{reply:?}");
+    let values = match p.call(|id| ToChild::ReadParams { id }, None).0 {
+        FromChild::ParamValues { values, .. } => values,
+        other => panic!("{other:?}"),
+    };
+    assert!(values.contains(&(1, -12.0)), "{values:?}");
+    // An id the child never listed is an error and the child lives on.
+    let (reply, _) = p.call(
+        |id| ToChild::LoadPreset {
+            id,
+            preset: "../x".into(),
+        },
+        None,
+    );
+    assert!(matches!(reply, FromChild::Err { .. }), "{reply:?}");
+    assert!(matches!(
+        p.call(|id| ToChild::ReadParams { id }, None).0,
+        FromChild::ParamValues { .. }
+    ));
+}
+
+#[test]
 fn the_clap_param_text_is_the_plugins_own() {
     let file = Format::Clap.file("atomik-test-clap");
     let id = Format::Clap.id(Kind::Gain);

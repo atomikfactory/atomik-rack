@@ -16,6 +16,10 @@ pub const CLIP_EXT: &str = "atomikclip";
 pub const PROJECT_EXT: &str = "atomik";
 /// Scheme of the virtual path of a built-in device row. Never a file system path.
 pub const DEVICE_URI_PREFIX: &str = "atomik-device:";
+/// The prefix of the virtual path of a plugin preset.
+pub const PRESET_URI_PREFIX: &str = "atomik-preset:";
+/// What separates the device from the preset id in a preset URI.
+const PRESET_SEPARATOR: char = 31_u8 as char;
 
 /// The sections of the library in the browser tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -70,7 +74,7 @@ impl LibrarySection {
             FileKind::Container => Some(Self::Containers),
             FileKind::Clip => Some(Self::Clips),
             FileKind::Project => Some(Self::Projects),
-            FileKind::Folder | FileKind::Audio(_) | FileKind::Midi => None,
+            FileKind::Folder | FileKind::Audio(_) | FileKind::Midi | FileKind::Preset => None,
         }
     }
 
@@ -83,6 +87,22 @@ impl LibrarySection {
 /// The virtual path of the built-in device `type_id`.
 pub fn device_uri(type_id: &str) -> PathBuf {
     PathBuf::from(format!("{DEVICE_URI_PREFIX}{type_id}"))
+}
+
+/// The virtual path of the preset `preset` of the plugin device `device` (its key in the rack).
+pub fn preset_uri(device: &str, preset: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{PRESET_URI_PREFIX}{device}{PRESET_SEPARATOR}{preset}"
+    ))
+}
+
+/// The `(device key, preset id)` of a virtual preset path, or `None` for any other path.
+pub fn preset_of(path: &Path) -> Option<(&str, &str)> {
+    let (device, preset) = path
+        .to_str()?
+        .strip_prefix(PRESET_URI_PREFIX)?
+        .split_once(PRESET_SEPARATOR)?;
+    (!device.is_empty() && !preset.is_empty()).then_some((device, preset))
 }
 
 /// The device type id of a virtual device path, or `None` for any other path.
@@ -201,6 +221,20 @@ mod tests {
         let uri = device_uri("poly-synth");
         assert_eq!(device_type_of(&uri), Some("poly-synth"));
         assert_eq!(uri.to_str(), Some("atomik-device:poly-synth"));
+    }
+
+    #[test]
+    fn preset_uri_round_trips_and_other_paths_are_not_presets() {
+        let uri = preset_uri("rack/amp", "c00ff");
+        assert_eq!(preset_of(&uri), Some(("rack/amp", "c00ff")));
+        let odd = preset_uri("a b", "Factory/Warm Pad.vstpreset");
+        assert_eq!(preset_of(&odd), Some(("a b", "Factory/Warm Pad.vstpreset")));
+        assert_eq!(preset_of(Path::new("C:/x/kick.wav")), None);
+        assert_eq!(preset_of(Path::new("atomik-preset:no-separator")), None);
+        assert_eq!(preset_of(&preset_uri("", "a")), None);
+        assert_eq!(preset_of(&preset_uri("a", "")), None);
+        assert!(LibrarySection::of(FileKind::Preset).is_none());
+        assert!(FileKind::Preset.is_item());
     }
 
     #[test]

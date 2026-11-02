@@ -1463,6 +1463,9 @@ impl<S: EngineSink> AppCore<S> {
             merge: Some(id),
         }));
         self.plugins.from_plugin = false;
+        if done.is_ok() {
+            self.refresh_knobs(key);
+        }
         self.plugins.preset_current.remove(key);
         if let Some(r) = &mut self.plugins.recovery {
             r.wanted = true;
@@ -1471,6 +1474,44 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     // ------------------------------------------------------------------ presets
+
+    /// Puts the param values the live plugin holds into the document, so the rack's knobs show
+    /// them: a preset or a patch change moves the plugin's own params and the document still
+    /// holds the old ones. The changes join the undo step the state change just made (undo
+    /// puts the old knobs back together with the old state), and nothing is sent to the
+    /// plugin, which has the values already.
+    fn refresh_knobs(&mut self, key: &DeviceKey) {
+        let Some(id) = self.plugins.instances.get(key).copied() else {
+            return;
+        };
+        let values = self.plugins.host.manager().read_params(id);
+        let changes: Vec<(String, f32)> = values
+            .into_iter()
+            .filter(|(param, _)| self.param_known(key, *param))
+            .filter_map(|(param, value)| {
+                let name = format!("p{param}");
+                let wanted = value as f32;
+                let current = self.doc().param_value(key, &name, &self.registry)?;
+                // A NaN from a plugin must not become a knob value.
+                (wanted.is_finite() && (current - wanted).abs() > 1e-6).then_some((name, wanted))
+            })
+            .collect();
+        if changes.is_empty() {
+            return;
+        }
+        self.plugins.from_plugin = true;
+        for (param, value) in changes {
+            self.join_next = true;
+            let _ = self.apply_command(Command::SetParam {
+                key: key.clone(),
+                param,
+                value,
+                merge: None,
+            });
+            self.join_next = false;
+        }
+        self.plugins.from_plugin = false;
+    }
 
     /// The presets the plugin behind `device` offers, read once per instance. Empty for a
     /// device without a live instance or for a plugin with none.
@@ -1525,6 +1566,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.from_plugin = false;
         match done {
             Ok(()) => {
+                self.refresh_knobs(device);
                 self.plugins
                     .preset_current
                     .insert(device.clone(), preset.to_string());

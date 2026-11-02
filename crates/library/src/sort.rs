@@ -97,7 +97,8 @@ fn format_of(row: &FileRow) -> Option<AudioFormat> {
         | FileKind::Container
         | FileKind::Clip
         | FileKind::Project
-        | FileKind::Device => None,
+        | FileKind::Device
+        | FileKind::Preset => None,
     }
 }
 

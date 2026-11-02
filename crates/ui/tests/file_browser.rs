@@ -6,8 +6,8 @@ use atomik_library::{
 };
 use atomik_ui::kurbo::{Point, Rect, Size, Vec2};
 use atomik_ui::{
-    BrowseAction, DisplayList, FileBrowserView, Key, Modifiers, PlacesData, PointerButton, Theme,
-    TreeChild, UiAction, UiEvent, action::Place,
+    BrowseAction, DetailData, DisplayList, FileBrowserView, Key, Modifiers, PlacesData,
+    PointerButton, Theme, TreeChild, UiAction, UiEvent, action::Place,
 };
 use std::path::{Path, PathBuf};
 
@@ -520,10 +520,9 @@ fn wheel_scrolls_three_rows_per_notch_and_clamps() {
         vec![BrowseAction::Preview(p("s000000.wav"))]
     );
     run(&mut v, &[wheel(row_pt(2), -500.0)]);
-    let last = run(
-        &mut v,
-        &[down(Point::new(80.0, 599.0)), up(Point::new(80.0, 599.0))],
-    );
+    // The row at the foot of the list: the info pane of the selected file takes the last 74 px.
+    let foot = Point::new(80.0, 600.0 - 74.0 - 1.0);
+    let last = run(&mut v, &[down(foot), up(foot)]);
     assert_eq!(last, vec![BrowseAction::Preview(p("s000099.wav"))]);
 }
 
@@ -2314,6 +2313,78 @@ fn the_search_field_filters_with_kind_in_author_and_cat() {
     assert!(shown(&mut v).is_empty());
 }
 
+// ----- the info pane ---------------------------------------------------------------------------------
+
+/// The y where the pane of a 300 x 600 panel starts.
+const PANE_Y: f64 = 600.0 - 74.0;
+
+#[test]
+fn the_info_pane_follows_the_one_selected_file_and_asks_for_its_detail_once() {
+    let mut v = golden_view(300.0);
+    assert_eq!(v.take_detail_request(), None, "nothing is selected");
+    // Row 0 is the folder: a folder has no pane.
+    click(&mut v, 0);
+    assert_eq!(v.take_detail_request(), None);
+    assert!(!paint(&mut v).texts().iter().any(|t| t.contains("stereo")));
+    // A file: the pane names it, and its detail is asked for once.
+    click(&mut v, 1);
+    assert_eq!(v.take_detail_request(), Some(p("hat.wav")));
+    assert_eq!(v.take_detail_request(), None, "once");
+    let facts = paint(&mut v);
+    assert!(
+        facts
+            .texts()
+            .iter()
+            .any(|t| t.contains("WAV") && t.contains("stereo")),
+        "{:?}",
+        facts.texts()
+    );
+    v.set_detail(
+        p("hat.wav"),
+        DetailData {
+            tempo: Some(93.5),
+            levels: vec![0.2, 0.9, 0.5],
+        },
+    );
+    let with = paint(&mut v);
+    assert!(
+        with.texts().iter().any(|t| t.contains("93.5 BPM")),
+        "{:?}",
+        with.texts()
+    );
+    // Another file asks again; the first one is not asked for after it has its detail.
+    click(&mut v, 2);
+    assert_eq!(v.take_detail_request(), Some(p("kick 1.wav")));
+    click(&mut v, 1);
+    assert_eq!(v.take_detail_request(), None);
+    // A selection of several files has no pane.
+    run(&mut v, &[down_with(row_pt(3), Modifiers::SHIFT, 1)]);
+    assert_eq!(v.take_detail_request(), None);
+}
+
+#[test]
+fn the_pane_takes_the_foot_of_the_list_and_a_click_there_selects_nothing() {
+    let mut v = golden_view(300.0);
+    click(&mut v, 1);
+    let before = v.take_detail_request();
+    assert!(before.is_some());
+    // The foot of the list is the pane now: a click in it leaves the selection alone.
+    let acts = click_at(&mut v, Point::new(80.0, PANE_Y + 30.0));
+    assert!(acts.is_empty(), "{acts:?}");
+    assert!(paint(&mut v).texts().iter().any(|t| t.contains("WAV")));
+}
+
+#[test]
+fn a_short_panel_has_no_pane() {
+    let mut v = golden_view(300.0);
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 340.0));
+    click(&mut v, 1);
+    assert!(
+        !paint(&mut v).texts().iter().any(|t| t.contains("stereo")),
+        "no room for the pane"
+    );
+}
+
 // ----- MIDI files --------------------------------------------------------------------------
 
 fn midi_row(name: &str) -> FileRow {
@@ -2362,6 +2433,21 @@ fn double_click_and_enter_on_a_midi_row_load_it_and_a_single_click_only_selects(
         run(&mut v, &[key(Key::Enter)]),
         vec![BrowseAction::Load(p("groove.mid"))]
     );
+}
+
+#[test]
+fn golden_info_pane() {
+    let mut v = golden_view(300.0);
+    click(&mut v, 3);
+    v.set_detail(
+        p("kick 1.wav"),
+        DetailData {
+            tempo: Some(120.0),
+            levels: (0..40).map(|i| (i as f32 * 0.7).sin().abs()).collect(),
+        },
+    );
+    v.set_preview(Some(p("kick 1.wav")), 0.25);
+    check_golden("file_browser_info_pane_1x.json", &paint(&mut v).to_json());
 }
 
 #[test]

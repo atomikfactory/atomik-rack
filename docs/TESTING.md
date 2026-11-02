@@ -1752,8 +1752,10 @@ What is automated: `crates/model/tests/plugin.rs` (`SetState`: one undo step, me
 `crates/plugin-vst3/tests/presets.rs` and the unit tests in `plugin-vst3/src/presets.rs` (a
 `.vstpreset` written from a saved state, listed from a folder, loaded into the test plugin, which then
 saves the same component state; wrong class, damaged files and paths outside the folder are refused),
-`crates/plugin-sandbox/src/tests/rpc.rs` (the `ListPresets` and `LoadPreset` messages through the
-fake child), `crates/plugin-host/tests/manager.rs` (the null backend's presets), and in
+`crates/plugin-sandbox/src/tests/rpc.rs` (the `ListPresets`, `LoadPreset` and `ReadParams` messages through the
+fake child), `crates/plugin-clap/tests/presets.rs` (the CLAP test plugin's presets: listed for their
+plugin only, loaded through preset-load, param values read back, unknown ids refused) and
+`crates/plugin-hostd/tests/real_plugins.rs` (the same through a real child process), `crates/plugin-host/tests/manager.rs` (the null backend's presets), and in
 `crates/app/src/app_core_plugins_sandbox_tests.rs` the load, step, undo and redo of a preset, a patch
 changed in the plugin window becoming an undo step, a param gesture staying one step, the CRASHED
 mark and RETRY. The window geometry is in `app_core_plugins_gui_tests.rs` and `ui_state.rs`; the
@@ -1772,6 +1774,16 @@ and with a sandboxed and an in-process plugin:
   a visible screen.
 - A sandboxed editor stays in front of the app window on Windows; on macOS and X11 it may sit behind
   (known): note what you see for each OS.
+- With a CLAP plugin that ships presets (and one that keeps its presets in files): PARAMS lists them
+  and loads them, the rack knobs move to the preset's values, one undo puts the sound and the knobs
+  back. Choose Browse on the plugin device: the file browser lists the presets as rows; Enter or a
+  double-click loads one and the list stays. Do it with the plugin sandboxed and in process: the same
+  presets, the same sound. The CLAP test plugin's file location is read from the
+  `ATOMIK_TEST_CLAP_PRESET_DIR` folder of `.tpreset` files (see the shell's `presets.rs`).
+- Select an audio file in the browser: the pane under the list shows its format, length, rate and
+  tempo (a loop with a tempo in its file) and the loudness picture; select another: the picture
+  follows within a moment; select a folder or several files: no pane. A very long file shows the
+  picture of its first ten minutes.
 - Kill the plugin's process from the task manager while it plays: Settings > Plugins shows CRASHED
   with the reason, the device shows CRASHED, RELOAD brings it back, and RETRY in the list clears the
   CRASHED word (it survives a restart of the app until then).

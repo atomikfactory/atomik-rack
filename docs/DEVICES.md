@@ -3743,9 +3743,15 @@ the searchable list with every param (also the editor for a plugin without a win
   plugin in that state as one undo step; undo gives the previous state back to the plugin. VST3
   presets are the `.vstpreset` files under `Documents/VST3 Presets/<vendor>/<plugin>` (Windows),
   `~/Library/Audio/Presets/...` (macOS) and `~/.vst3/presets/...` (Linux), also the system
-  folders; `ATOMIK_VST3_PRESET_DIRS` replaces the list. A sandboxed plugin lists and loads them
-  through the same protocol. CLAP presets and VST3 program lists are not listed yet, and the rack
-  knobs of a plugin show the values they had before the preset until they are touched.
+  folders; `ATOMIK_VST3_PRESET_DIRS` replaces the list. CLAP presets come from the plugin's preset
+  discovery (the presets inside the plugin and the files in the folders it declares, for this
+  plugin only) and load through the plugin's own preset-load. A sandboxed plugin lists and loads
+  them through the same protocol. VST3 program lists are not listed yet. After a preset loads, or a
+  patch is changed in the plugin's window, the rack knobs show the values the plugin now holds, and
+  undo puts the knobs back together with the state (one step). With the patch browser aimed at a
+  plugin device (Browse on the device), the file browser also lists the plugin's presets as rows
+  (kind `preset`, sorted by name with the patches); Enter or a double-click loads one as an undo
+  step and the browser stays aimed.
 - **Missing plugins.** A plugin that is not installed, disabled, or on a machine without plugins
   enabled opens as a stand-in (an instrument is silent, an effect passes its dry input) with MISSING
   and the reason; cables, console channel, track, automation, macro targets, pins and state are kept

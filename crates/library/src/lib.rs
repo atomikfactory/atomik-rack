@@ -34,7 +34,7 @@ mod tag;
 pub use db::{LIBRARY_VERSION, LibraryDb, LibraryError, MAX_AUTHOR_CHARS, Mark, NamedList};
 pub use item::{
     CLIP_EXT, CONTAINER_EXT, DEVICE_URI_PREFIX, ItemInfo, LibrarySection, PATCH_EXT, PROJECT_EXT,
-    device_type_of, device_uri, unique_name,
+    device_type_of, device_uri, preset_of, preset_uri, unique_name,
 };
 pub use path_key::PathKey;
 pub use query::Query;

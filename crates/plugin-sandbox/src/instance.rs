@@ -332,6 +332,21 @@ impl PluginInstance for RemoteInstance {
         }
     }
 
+    fn read_params(&mut self) -> Vec<(u32, f64)> {
+        match self.link.call(
+            "ReadParams",
+            self.timeouts().create,
+            |id| ToChild::ReadParams { id },
+            None,
+        ) {
+            Ok(Reply {
+                msg: FromChild::ParamValues { values, .. },
+                ..
+            }) => values,
+            _ => Vec::new(),
+        }
+    }
+
     fn list_presets(&mut self) -> Vec<PresetInfo> {
         match self.link.call(
             "ListPresets",
