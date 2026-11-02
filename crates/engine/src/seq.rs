@@ -599,11 +599,11 @@ impl SongSnapshot {
     }
 
     pub(crate) fn map(&self) -> TempoMap<'_> {
-        TempoMap(&self.tempo)
+        TempoMap::new(&self.tempo)
     }
 
     pub(crate) fn meter_map(&self) -> MeterMap<'_> {
-        MeterMap(&self.meter)
+        MeterMap::new(&self.meter)
     }
 
     /// Converts a live event's engine frame (the `ScheduledNote::frame` timeline) into a song

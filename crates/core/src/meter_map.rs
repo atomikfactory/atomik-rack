@@ -98,11 +98,22 @@ pub fn compile_meter(events: &[MeterEvent]) -> Result<Vec<MeterSegment>, MapErro
     Ok(segments)
 }
 
-/// Meter maths over a segment table. Pure and allocation-free. Ticks before 0 read as 0.
+/// Meter maths over a segment table. Pure and allocation-free. Ticks before 0 read as 0. The
+/// table is never empty: [`MeterMap::new`] reads 4/4 over an empty slice.
 #[derive(Debug, Clone, Copy)]
-pub struct MeterMap<'a>(pub &'a [MeterSegment]);
+pub struct MeterMap<'a>(&'a [MeterSegment]);
 
 impl<'a> MeterMap<'a> {
+    /// A map over `segments` (a compiled table), or the constant 4/4 map when `segments` is
+    /// empty.
+    pub fn new(segments: &'a [MeterSegment]) -> Self {
+        if segments.is_empty() {
+            Self(&[MeterSegment::FOUR_FOUR])
+        } else {
+            Self(segments)
+        }
+    }
+
     fn at_tick(self, tick: i64) -> &'a MeterSegment {
         let k = self.0.partition_point(|s| s.tick <= tick);
         &self.0[k.saturating_sub(1)]
@@ -233,7 +244,7 @@ impl MeterTable {
 
     /// The maths view.
     pub fn map(&self) -> MeterMap<'_> {
-        MeterMap(&self.segments)
+        MeterMap::new(&self.segments)
     }
 
     /// The compiled segments.

@@ -171,13 +171,37 @@ pub fn compile_tempo(points: &[TempoPoint]) -> Result<Vec<TempoSegment>, MapErro
     }
     Ok(segments)
 }
+/// The one-segment table a [`TempoMap`] reads when it is built over no segments: 120 BPM.
+static FALLBACK_TEMPO: [TempoSegment; 1] = [TempoSegment {
+    tick: 0,
+    seconds: 0.0,
+    bpm: 120.0,
+    end_tick: i64::MAX,
+    end_bpm: 120.0,
+}];
 
 /// Tempo maths over a segment table (a compiled map, or a constant one-segment map). Pure and
-/// allocation-free.
+/// allocation-free. The table is never empty: [`TempoMap::new`] reads a constant 120 BPM map
+/// over an empty slice, so the maths needs no empty case.
 #[derive(Debug, Clone, Copy)]
-pub struct TempoMap<'a>(pub &'a [TempoSegment]);
+pub struct TempoMap<'a>(&'a [TempoSegment]);
 
 impl<'a> TempoMap<'a> {
+    /// A map over `segments` (a compiled table, sorted by tick from tick 0), or the constant
+    /// 120 BPM map when `segments` is empty.
+    pub fn new(segments: &'a [TempoSegment]) -> Self {
+        if segments.is_empty() {
+            Self(&FALLBACK_TEMPO)
+        } else {
+            Self(segments)
+        }
+    }
+
+    /// The segment table the map reads (never empty).
+    pub fn segments(self) -> &'a [TempoSegment] {
+        self.0
+    }
+
     fn seg(self, tick: f64) -> &'a TempoSegment {
         let k = self.0.partition_point(|s| s.tick as f64 <= tick);
         &self.0[k.saturating_sub(1)]
@@ -240,7 +264,7 @@ impl TempoTable {
 
     /// The maths view.
     pub fn map(&self) -> TempoMap<'_> {
-        TempoMap(&self.segments)
+        TempoMap::new(&self.segments)
     }
 
     /// The compiled segments.

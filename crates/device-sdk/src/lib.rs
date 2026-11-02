@@ -31,7 +31,7 @@ pub use plugin::{
     PluginKindHint, PluginLayout, PluginParamInfo, PluginRef, PluginStandIn, PluginStateBlob,
     RunMode, VST3_PREFIX, descriptor_for, is_plugin_type_id,
 };
-pub use registry::{DeviceFactory, Registry, RegistryError};
+pub use registry::{DeviceEntry, DeviceFactory, Registry, RegistryError};
 pub use samples::{
     LoopMode, MAX_RR_LEN, MAX_VEL_XFADE, MAX_ZONE_GROUPS, SampleBuffer, SampleMap, SampleMapError,
     SampleMapRef, TriggerMode, ZONE_CUTOFF_RANGE, ZONE_ENV_MS, ZONE_FILTER_MODES, ZONE_GAIN_RANGE,

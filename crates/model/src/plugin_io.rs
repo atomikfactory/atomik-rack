@@ -404,7 +404,7 @@ pub(crate) fn stand_in_registry(
         message: e.to_string(),
     };
     for t in registry.type_ids() {
-        let factory = *registry.get(t).expect("listed types are registered");
+        let factory = registry.factory(t).expect("listed types are registered");
         if registry.takes_samples(t) {
             copy.register_with_samples(factory).map_err(fail)?;
         } else if registry.takes_curves(t) {

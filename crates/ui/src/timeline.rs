@@ -98,7 +98,7 @@ impl Bars {
 
     /// The maths view.
     pub fn map(&self) -> MeterMap<'_> {
-        MeterMap(&self.segments)
+        MeterMap::new(&self.segments)
     }
 
     /// The segments: one per meter event.

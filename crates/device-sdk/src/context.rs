@@ -55,28 +55,45 @@ impl<'a> ProcessContext<'a> {
         self.playback.get(channel)
     }
 
+    /// A socket id outside the device's descriptor is a device bug (an adapter that builds
+    /// its own ids, such as a plugin's, is the likely place); debug builds say so by name.
+    #[inline]
+    fn check(&self, socket: SocketId) {
+        debug_assert!(
+            (socket.0 as usize) < self.signals.len(),
+            "socket {} is outside the device's {} sockets",
+            socket.0,
+            self.signals.len()
+        );
+    }
+
     /// The batch of an Audio or Cv input socket (zeros when unconnected).
     pub fn input(&self, socket: SocketId) -> &Batch {
+        self.check(socket);
         &self.signals[socket.0 as usize]
     }
 
     /// The batch of an Audio or Cv output socket (arrives zeroed).
     pub fn output(&mut self, socket: SocketId) -> &mut Batch {
+        self.check(socket);
         &mut self.signals[socket.0 as usize]
     }
 
     /// The note events received on a Notes input socket this batch.
     pub fn notes_in(&self, socket: SocketId) -> &[NoteEvent] {
+        self.check(socket);
         self.notes[socket.0 as usize].as_slice()
     }
 
     /// The note buffer of a Notes output socket (arrives cleared).
     pub fn notes_out(&mut self, socket: SocketId) -> &mut NoteBuffer {
+        self.check(socket);
         &mut self.notes[socket.0 as usize]
     }
 
     /// Whether a cable is attached to the socket.
     pub fn is_connected(&self, socket: SocketId) -> bool {
+        self.check(socket);
         self.connected[socket.0 as usize]
     }
 

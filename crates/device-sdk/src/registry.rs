@@ -1,6 +1,6 @@
 //! Registry of device factories keyed by type id.
 
-use crate::plugin::{PluginStandIn, is_plugin_type_id, placeholder_stand_in};
+use crate::plugin::{PluginStandIn, is_plugin_type_id};
 use crate::{DescriptorError, Device, DeviceDescriptor};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,6 +19,13 @@ impl std::fmt::Debug for DeviceFactory {
             .field("type_id", &self.descriptor.type_id)
             .finish()
     }
+}
+
+/// A registered device type as [`Registry::get`] reports it (built-in or plugin).
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceEntry {
+    /// The type's descriptor.
+    pub descriptor: &'static DeviceDescriptor,
 }
 
 /// Registration failure.
@@ -71,7 +78,7 @@ pub struct Registry {
     drummed: BTreeSet<&'static str>,
     /// Dynamically registered plugin types. Kept apart from `factories`, so the
     /// sorted static list and its counts do not change.
-    plugins: BTreeMap<String, DeviceFactory>,
+    plugins: BTreeMap<String, &'static DeviceDescriptor>,
 }
 
 impl Registry {
@@ -178,13 +185,7 @@ impl Registry {
         if self.plugins.contains_key(&type_id) {
             return Err(RegistryError::DuplicatePlugin(type_id));
         }
-        self.plugins.insert(
-            type_id,
-            DeviceFactory {
-                descriptor,
-                create: placeholder_stand_in,
-            },
-        );
+        self.plugins.insert(type_id, descriptor);
         Ok(())
     }
 
@@ -208,7 +209,7 @@ impl Registry {
 
     /// The descriptor of `type_id`, built-in or plugin.
     pub fn descriptor(&self, type_id: &str) -> Option<&'static DeviceDescriptor> {
-        self.get(type_id).map(|f| f.descriptor)
+        self.get(type_id).map(|e| e.descriptor)
     }
 
     /// Creates a new (unprepared) instance of `type_id`. For a plugin type this is the
@@ -220,16 +221,23 @@ impl Registry {
         }
         self.plugins
             .get(type_id)
-            .map(|f| Box::new(PluginStandIn::new(f.descriptor)) as Box<dyn Device>)
+            .map(|d| Box::new(PluginStandIn::new(d)) as Box<dyn Device>)
     }
 
-    /// The factory for `type_id`. For a plugin type the factory's `descriptor` is right, but its
-    /// `create` cannot know the plugin (a `fn()` carries no data) and builds a placeholder:
-    /// use [`Registry::create`] to get the stand-in.
-    pub fn get(&self, type_id: &str) -> Option<&DeviceFactory> {
-        self.factories
-            .get(type_id)
-            .or_else(|| self.plugins.get(type_id))
+    /// What is registered under `type_id`, built-in or plugin. The entry carries the
+    /// descriptor only: a constructor cannot know a plugin (a `fn()` carries no data), so
+    /// instances come from [`Registry::create`].
+    pub fn get(&self, type_id: &str) -> Option<DeviceEntry> {
+        let descriptor = match self.factories.get(type_id) {
+            Some(f) => f.descriptor,
+            None => *self.plugins.get(type_id)?,
+        };
+        Some(DeviceEntry { descriptor })
+    }
+
+    /// The constructor of a built-in type. Plugin types have none (see [`Registry::get`]).
+    pub fn factory(&self, type_id: &str) -> Option<DeviceFactory> {
+        self.factories.get(type_id).copied()
     }
 
     /// Registered type ids in sorted order.

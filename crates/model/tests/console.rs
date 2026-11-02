@@ -382,7 +382,7 @@ fn reg_without_console() -> Registry {
     let all = console_registry();
     let mut r = Registry::new();
     for t in all.type_ids().filter(|t| ![CHANNEL, MASTER].contains(t)) {
-        r.register(*all.get(t).unwrap()).unwrap();
+        r.register(all.factory(t).unwrap()).unwrap();
     }
     r
 }

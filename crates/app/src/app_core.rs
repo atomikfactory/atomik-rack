@@ -1765,7 +1765,14 @@ impl<S: EngineSink> AppCore<S> {
         }
         let instance = match plugin_device {
             Some((device, _)) => device,
-            None => (factory.create)(),
+            None => match self.registry.create(&device.type_id) {
+                Some(instance) => instance,
+                None => {
+                    let message = format!("unknown device type `{}`", device.type_id);
+                    self.reject(message);
+                    return;
+                }
+            },
         };
         let id = DeviceInstanceId(self.next_id);
         self.next_id += 1;

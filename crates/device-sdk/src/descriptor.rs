@@ -124,6 +124,12 @@ pub enum DescriptorError {
         /// Socket count.
         sockets: usize,
     },
+    /// A stage number is 255, which leaves no room to count the stages.
+    #[error("stage 255 is reserved: stages run 0..=254")]
+    StageOverflow,
+    /// The stage table skips a stage: stages must be `0..=max` with every number used.
+    #[error("stage {0} is unused but a later stage is declared")]
+    StageGap(u8),
     /// A param's default, min and max are inconsistent.
     #[error("param `{0}` has an invalid range or default")]
     InvalidRange(&'static str),
@@ -164,7 +170,11 @@ impl DeviceDescriptor {
 
     /// Number of processing stages (at least 1).
     pub fn stage_count(&self) -> u8 {
-        self.stages.iter().copied().max().map_or(1, |m| m + 1)
+        self.stages
+            .iter()
+            .copied()
+            .max()
+            .map_or(1, |m| m.saturating_add(1))
     }
 
     /// Finds a parameter by key.
@@ -179,45 +189,64 @@ impl DeviceDescriptor {
 
     /// Checks: ids equal indices, keys unique (params and sockets separately),
     /// `min < max` (or equal for constant params), `default` within range,
-    /// and `min > 0` for exponential tapers.
+    /// `min > 0` for exponential tapers, and a stage table whose stages are `0..=max`
+    /// without a gap, with `max` below 255.
     pub fn validate(&self) -> Result<(), DescriptorError> {
-        if !self.stages.is_empty() && self.stages.len() != self.sockets.len() {
-            return Err(DescriptorError::StageMismatch {
-                stages: self.stages.len(),
-                sockets: self.sockets.len(),
+        validate_parts(self.params, self.sockets, self.stages)
+    }
+}
+
+/// The checks of [`DeviceDescriptor::validate`] over the tables themselves, so a descriptor
+/// built on the heap can be checked before its tables are leaked.
+pub(crate) fn validate_parts(
+    params: &[ParamDescriptor],
+    sockets: &[SocketDescriptor],
+    stages: &[u8],
+) -> Result<(), DescriptorError> {
+    if !stages.is_empty() && stages.len() != sockets.len() {
+        return Err(DescriptorError::StageMismatch {
+            stages: stages.len(),
+            sockets: sockets.len(),
+        });
+    }
+    if let Some(&max) = stages.iter().max() {
+        if max == u8::MAX {
+            return Err(DescriptorError::StageOverflow);
+        }
+        if let Some(gap) = (0..max).find(|s| !stages.contains(s)) {
+            return Err(DescriptorError::StageGap(gap));
+        }
+    }
+    for (index, p) in params.iter().enumerate() {
+        if p.id.0 as usize != index {
+            return Err(DescriptorError::ParamIdMismatch {
+                key: p.key,
+                id: p.id.0,
+                index,
             });
         }
-        for (index, p) in self.params.iter().enumerate() {
-            if p.id.0 as usize != index {
-                return Err(DescriptorError::ParamIdMismatch {
-                    key: p.key,
-                    id: p.id.0,
-                    index,
-                });
-            }
-            if self.params[..index].iter().any(|q| q.key == p.key) {
-                return Err(DescriptorError::DuplicateKey(p.key));
-            }
-            let exp_ok = !matches!(p.taper, atomik_core::Taper::Exponential) || p.min > 0.0;
-            let range_ok = p.min.is_finite() && p.max.is_finite() && p.min <= p.max;
-            if !(exp_ok && range_ok && p.default >= p.min && p.default <= p.max) {
-                return Err(DescriptorError::InvalidRange(p.key));
-            }
+        if params[..index].iter().any(|q| q.key == p.key) {
+            return Err(DescriptorError::DuplicateKey(p.key));
         }
-        for (index, s) in self.sockets.iter().enumerate() {
-            if s.id.0 as usize != index {
-                return Err(DescriptorError::SocketIdMismatch {
-                    key: s.key,
-                    id: s.id.0,
-                    index,
-                });
-            }
-            if self.sockets[..index].iter().any(|t| t.key == s.key) {
-                return Err(DescriptorError::DuplicateKey(s.key));
-            }
+        let exp_ok = !matches!(p.taper, atomik_core::Taper::Exponential) || p.min > 0.0;
+        let range_ok = p.min.is_finite() && p.max.is_finite() && p.min <= p.max;
+        if !(exp_ok && range_ok && p.default >= p.min && p.default <= p.max) {
+            return Err(DescriptorError::InvalidRange(p.key));
         }
-        Ok(())
     }
+    for (index, s) in sockets.iter().enumerate() {
+        if s.id.0 as usize != index {
+            return Err(DescriptorError::SocketIdMismatch {
+                key: s.key,
+                id: s.id.0,
+                index,
+            });
+        }
+        if sockets[..index].iter().any(|t| t.key == s.key) {
+            return Err(DescriptorError::DuplicateKey(s.key));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

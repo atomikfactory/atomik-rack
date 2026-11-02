@@ -11,6 +11,7 @@
 //!
 //! This module has no plugin-format code and no `unsafe`; the formats live in the backends.
 
+use crate::descriptor::validate_parts;
 use crate::{
     DescriptorError, Device, DeviceDescriptor, DeviceKind, Direction, PrepareInfo, ProcessContext,
     SocketDescriptor, SocketId, SocketKind,
@@ -247,6 +248,8 @@ impl PluginLayout {
 // ----- descriptor building -----------------------------------------------------------------
 
 fn leak_str(s: &str) -> &'static str {
+    #[cfg(test)]
+    LEAKS.with(|n| n.set(n.get() + 1));
     Box::leak(s.to_string().into_boxed_str())
 }
 
@@ -309,6 +312,19 @@ fn plain_range(format: PluginFormat, p: &PluginParamInfo) -> Result<(f32, f32, f
     }
 }
 
+// Counts, per thread, what `build_descriptor` leaks, so a test can pin that a refused layout
+// leaks nothing.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LEAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn leaked<T: ?Sized>(value: Box<T>) -> &'static T {
+    #[cfg(test)]
+    LEAKS.with(|n| n.set(n.get() + 1));
+    Box::leak(value)
+}
+
 fn build_descriptor(
     plugin: &PluginRef,
     layout: &PluginLayout,
@@ -322,32 +338,17 @@ fn build_descriptor(
             max: MAX_PLUGIN_PARAMS,
         });
     }
+    // Everything that can refuse the layout is decided before anything is leaked.
     let mut seen = BTreeSet::new();
-    let mut params = Vec::with_capacity(layout.params.len() + 1);
-    params.push(BYPASS);
+    let mut ranges = Vec::with_capacity(layout.params.len());
     for p in &layout.params {
         if !seen.insert(p.id) {
             return Err(DescriptorError::DuplicatePluginParam(p.id));
         }
-        let (min, max, default, discrete) = plain_range(plugin.format, p)
-            .map_err(|()| DescriptorError::InvalidPluginParam(p.id))?;
-        let key = leak_str(&format!("p{}", p.id));
-        let name = if p.name.is_empty() {
-            key
-        } else {
-            leak_str(&p.name)
-        };
-        params.push(ParamDescriptor {
-            id: ParamId(params.len() as u32),
-            key,
-            name,
-            min,
-            max,
-            default,
-            taper: Taper::Linear,
-            unit: Unit::None,
-            discrete,
-        });
+        ranges.push(
+            plain_range(plugin.format, p)
+                .map_err(|()| DescriptorError::InvalidPluginParam(p.id))?,
+        );
     }
 
     let mut sockets: Vec<SocketDescriptor> = Vec::with_capacity(8);
@@ -397,6 +398,30 @@ fn build_descriptor(
         return Err(DescriptorError::NoSockets);
     }
 
+    let mut params = Vec::with_capacity(layout.params.len() + 1);
+    params.push(BYPASS);
+    for (p, &(min, max, default, discrete)) in layout.params.iter().zip(&ranges) {
+        let key = leak_str(&format!("p{}", p.id));
+        let name = if p.name.is_empty() {
+            key
+        } else {
+            leak_str(&p.name)
+        };
+        params.push(ParamDescriptor {
+            id: ParamId(params.len() as u32),
+            key,
+            name,
+            min,
+            max,
+            default,
+            taper: Taper::Linear,
+            unit: Unit::None,
+            discrete,
+        });
+    }
+    // The tables are checked on the heap; only a valid descriptor has its tables leaked.
+    validate_parts(&params, &sockets, &[])?;
+
     let has_audio = layout.main_in.is_some() || layout.main_out.is_some();
     let kind = if layout.notes_in
         && layout.main_out.is_some()
@@ -414,12 +439,11 @@ fn build_descriptor(
         name: leak_str(&layout.name),
         kind,
         version: 1,
-        params: Box::leak(params.into_boxed_slice()),
-        sockets: Box::leak(sockets.into_boxed_slice()),
+        params: leaked(params.into_boxed_slice()),
+        sockets: leaked(sockets.into_boxed_slice()),
         stages: &[],
     };
-    descriptor.validate()?;
-    Ok(Box::leak(Box::new(descriptor)))
+    Ok(leaked(Box::new(descriptor)))
 }
 
 type InternKey = (PluginFormat, String, u64);
@@ -550,22 +574,6 @@ impl Device for PluginStandIn {
             *ctx.output(*output) = batch;
         }
     }
-}
-
-/// What `DeviceFactory::create` builds for a plugin type: a stand-in over a placeholder
-/// descriptor. A `fn()` cannot carry the plugin's descriptor, so users that need the right
-/// stand-in call [`crate::Registry::create`], which knows the type.
-pub(crate) fn placeholder_stand_in() -> Box<dyn Device> {
-    static PLACEHOLDER: DeviceDescriptor = DeviceDescriptor {
-        type_id: "clap.atomik.placeholder",
-        name: "Plugin",
-        kind: DeviceKind::Utility,
-        version: 1,
-        params: &[],
-        sockets: &[],
-        stages: &[],
-    };
-    Box::new(PluginStandIn::new(&PLACEHOLDER))
 }
 
 #[cfg(test)]

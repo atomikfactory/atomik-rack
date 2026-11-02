@@ -16,9 +16,9 @@ use atomik_device_sdk::{Direction, Registry, SocketKind};
 pub fn without_console(registry: &Registry) -> Registry {
     let mut out = Registry::new();
     for type_id in registry.type_ids().filter(|t| !is_console_type(t)) {
-        if let Some(f) = registry.get(type_id) {
+        if let Some(f) = registry.factory(type_id) {
             // Already validated by `registry`, and the ids are unique there.
-            let _ = out.register(*f);
+            let _ = out.register(f);
         }
     }
     out
