@@ -123,6 +123,10 @@ fn combine_uncombine_and_bypass_run_as_menu_commands_of_the_session() {
     assert_eq!(c["inside"].as_array().unwrap().len(), 1);
     assert_eq!(c["inside"][0]["type_id"], "atomik.reverb");
     assert!(c["bypassed"].is_null(), "off until switched");
+    assert_eq!(
+        c["unfolded"], true,
+        "a combine leaves the container unfolded"
+    );
     // The container is selected now: Uncombine is on, and it is one undo step each way.
     assert_eq!(command_row(&mut s, "rack.uncombine")["enabled"], true);
     ok(&mut s, "session_command", json!({"id": "rack.uncombine"}));
