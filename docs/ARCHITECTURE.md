@@ -785,6 +785,32 @@ track, goes with the device when the device is removed (`Planner`), and is copie
          ─► song_input ─► render_offline_song ─► WAV      (bit-identical for any block size and workers)
 ```
 
+The window saves on a worker ([crates/app/src/app_core_save.rs](../crates/app/src/app_core_save.rs)).
+On the UI thread a save asks every sandboxed plugin for its state first (one request each, then the
+answers: `PluginInstance::begin_capture_state`, so the wait is the slowest plugin's), clones the
+document (the song, the note lists and the plugin states are shared, so nothing bulky is copied) and
+plans the bundle. A worker builds and validates the project text, copies the bundle for Save As,
+writes the file atomically and removes the orphans. The file name, the bundle and the saved baseline
+switch when the worker reports in (`AppCore::poll_background`), so an edit made meanwhile is still
+unsaved afterwards and undoing back to the saved state is clean; a failed save is reported and
+changes nothing. An import, a recording or opening another project waits for the save first
+(`AppCore::settle_save`), and a save that starts while audio is loading, recording, converting or
+freezing runs blocking. Scripts, tests and the QA server keep the blocking `AppCore::save`.
+
+The event loop sleeps until an event when nothing is due. A loaded plugin only asks for a look every
+100 ms (`PLUGIN_IDLE_POLL`: its notifications, dirty flags and main-thread work); frames at 60 Hz
+run while audio runs, a worker is busy, a plugin is being created or an editor is open.
+`ui-state.json` is written atomically and at most every two seconds (`Shell::flush_ui_state`, and on
+shutdown, detaching and attaching a pane); `keymap.json` is looked at when a window gets the focus
+and when a menu opens.
+
+A project opens its plugins together: `PluginManager::begin_create` starts the child processes of up
+to eight pending devices (`PluginBackend::begin_instantiate`, `PendingInstance::poll`), and the
+devices attach one per frame in document order, so the result does not depend on which plugin
+loads first. Plugins loaded into the app process are still created one per frame. A freeze or a bounce
+with sandboxed plugins starts its own children next to the live ones, so the process count doubles
+while it runs; the live children are not reused, because the offline output must stay bit-identical.
+
 ### 2.7a Export as an audio file
 
 File > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
