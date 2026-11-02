@@ -3891,6 +3891,39 @@ inputs `in_1..in_N` (outputs of the device, N = `input_channels`) and the host o
 
 ---
 
+## Robustness notes
+
+- **Non-finite audio.** The channel strip and the master read every audio input through one guard
+  (`finite` in [crates/devices/src/channel.rs](../crates/devices/src/channel.rs)); the line mixer, the
+  audio track (its playback too) and the stereo delay use the same one. A NaN or infinite sample reads as
+  silence, so one bad source cannot silence the mix, and the later audio is exactly what it would have
+  been with a 0 there. The guard is a select per sample without allocation, and a finite sample passes
+  bit for bit, so renders of finite audio are unchanged. Plugin output is checked in the plugin host,
+  and audio decoded from a file is cleaned when it is read.
+- **Event overflow.** A note player queues up to 512 note-ons (`QUEUE_CAP` in
+  [note_queue.rs](../crates/devices/src/note_queue.rs)) and closes at most 64 notes at a time (the
+  pending-off table). A note-on past the limit is refused or dropped; a note-off is never dropped, and
+  when the pending-off table is full the oldest note is closed. A note-on is refused while fewer than 129
+  slots (a note-off for each of the 128 keys, plus one) are free in the output buffer, so a flood of
+  note-ons cannot leave a key hanging.
+- **Sample map swaps.** A sampler, drum machine, grain sampler or loop slicer hands one map back per
+  swap and drains the voices of the map it left over 5 ms. The engine therefore spaces two swaps of one
+  device by at least 5 ms: a second swap inside that time is held, a newer one replaces it, and the
+  held one is applied when the drain has run, so no voice is cut. Other control messages are not held.
+- **Built-in grain source.** The built-in source is made once for each of the standard rates (44.1,
+  48, 88.2, 96 and 192 kHz); any other rate gets its own buffer, freed with the device.
+- **Arpeggiator and step sequencer with `run` set to always.** With the transport stopped they follow an
+  internal clock, so starting or stopping the transport is a clock jump: the notes close and the
+  pattern restarts from the playhead.
+- **EQ.** A change of the sample rate (a new `prepare`) restarts the filters from silence, as a hard
+  restart; a parameter change never does.
+- **Character voicing.** If the embedded voicing tables were ever rejected, the device would pass audio
+  through unchanged. `Character::voicing_failed` reports it (a test asserts it is false) and debug
+  builds panic at creation.
+- **Bypass wrapper.** `Bypassable::try_new` returns a `BypassError` for a descriptor that lacks the
+  `bypass` param or a main stereo socket, or that has stages; `new` is the same call for the built-in
+  effects, whose descriptors the registry tests check.
+
 ## How to verify these tables
 
 The descriptors are plain `static` tables, so you can read them directly:
