@@ -6,6 +6,7 @@
 mod context;
 mod descriptor;
 mod midi_tap;
+mod modulation;
 mod panel;
 mod player;
 mod plugin;
@@ -19,6 +20,10 @@ pub use descriptor::{
     SocketKind,
 };
 pub use midi_tap::{MIDI_TAP_EVENTS, MidiEvent, MidiTap, releases as midi_releases};
+pub use modulation::{
+    MAX_MOD_SOURCES, MAX_MOD_TARGETS, MOD_SLOT_FIELDS, MOD_SLOT_PARAMS, MOD_SLOTS, ModBus,
+    ModField, ModSource, ModTables, ModTarget, join_params, mod_param_key, mod_slot_params,
+};
 pub use panel::{ControlKind, PanelControl, PanelLayout, PanelSocket, RACK_UNIT, RACK_WIDTH};
 pub use player::{
     CURVE_ROWS, CurveStep, CvSeqData, DRUM_LANES, DrumData, DrumLane, DrumPattern, DrumRole,
