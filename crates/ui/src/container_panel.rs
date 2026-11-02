@@ -1,9 +1,9 @@
-//! The container's rack panel: the name line with a summary of the inside,
+//! The container's rack panel: the name line with a summary of the inside and the fold arrow,
 //! the OPEN, EDIT and TO CH buttons, the eight macro knobs with their names and a mapped-count
 //! badge each, and a small map of the note splits.
 //!
 //! ```text
-//! CONTAINER            MACROS
+//! CONTAINER  [v]       MACROS
 //! +--------------+     Macro 1  Macro 2  ...                   Macro 8
 //! | 3 devices    |      (knob)   (knob)                         (knob)
 //! | 2 splits ... |
@@ -15,8 +15,10 @@
 //!
 //! The macro knobs are the container's `macro1` to `macro8` params, so a drag, a double-click
 //! (reset) and the wheel are ordinary `SetParam`s. A double-click on a macro's name renames it
-//! (`ContainerCommand::RenameMacro`). A double-click on the panel outside its controls, or OPEN,
-//! enters the container (the rack view's scope, see [`crate::RackView::set_scope`]).
+//! (`ContainerCommand::RenameMacro`). The arrow on the title strip, or a double-click on the panel
+//! outside its controls, folds and unfolds the inside in place: the container's devices are drawn
+//! under its panel in the same rack column (`ContainerCommand::SetOpen`). OPEN shows the inside
+//! in a view of its own instead (the rack view's scope, see [`crate::RackView::set_scope`]).
 //!
 //! This module holds the geometry and the pure helpers; the rack view drives the gestures and
 //! `paint_panel` draws the extras.
@@ -28,7 +30,7 @@ use crate::seq_panel::{back_layout, place_controls};
 use crate::theme::{Theme, hsl, mix};
 use atomik_device_sdk::{ControlKind, DeviceDescriptor};
 use atomik_model::{BOUNDARY_KEY, ContainerDoc, MACRO_COUNT, NoteSplit, RackDevice};
-use vello::kurbo::{Circle, Rect, RoundedRect};
+use vello::kurbo::{BezPath, Circle, Rect, RoundedRect};
 use vello::peniko::Color;
 
 /// Type id of the container (it has its own panel, [`container_layout`]).
@@ -45,7 +47,9 @@ const NAME_H: f64 = 13.0;
 /// A button or area of the container panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerButton {
-    /// Enter the container.
+    /// Fold or unfold the inside in the rack (the arrow of the title strip).
+    Fold,
+    /// Enter the container: its inside in a view of its own.
     Open,
     /// Open the container editor.
     Edit,
@@ -58,6 +62,8 @@ pub enum ContainerButton {
 pub struct ContainerPanel {
     /// Title strip of the left block.
     pub title: Rect,
+    /// The fold arrow, at the right end of the title strip.
+    pub fold: Rect,
     /// The summary window.
     pub summary: Rect,
     /// OPEN.
@@ -78,6 +84,7 @@ impl ContainerPanel {
     /// The rectangle of a button.
     pub fn button(&self, b: ContainerButton) -> Rect {
         match b {
+            ContainerButton::Fold => self.fold,
             ContainerButton::Open => self.open,
             ContainerButton::Edit => self.edit,
             ContainerButton::ToChannel => self.to_channel,
@@ -118,6 +125,12 @@ pub fn container_layout(desc: &DeviceDescriptor) -> PanelSpec {
     let btn_y = top + 62.0;
     let panel = ContainerPanel {
         title: Rect::new(x0, MARGIN_TOP, x0 + LEFT_W, MARGIN_TOP + TITLE_H),
+        fold: Rect::new(
+            x0 + LEFT_W - 22.0,
+            MARGIN_TOP - 2.0,
+            x0 + LEFT_W,
+            MARGIN_TOP + TITLE_H + 3.0,
+        ),
         summary: Rect::new(x0, top + 2.0, x0 + LEFT_W, top + 56.0),
         open: Rect::new(x0, btn_y, x0 + 52.0, btn_y + 20.0),
         edit: Rect::new(x0 + 56.0, btn_y, x0 + LEFT_W, btn_y + 20.0),
@@ -183,7 +196,7 @@ pub fn summary(inner: Option<&ContainerDoc>) -> Summary {
         return Summary {
             devices: "EMPTY".into(),
             splits: String::new(),
-            hint: "double-click to open".into(),
+            hint: "double-click: unfold".into(),
         };
     };
     let n = inner.devices.len();
@@ -199,8 +212,10 @@ pub fn summary(inner: Option<&ContainerDoc>) -> Summary {
             plural(n, "device", "devices")
         },
         splits: format!("{} · {} mapped", plural(s, "split", "splits"), mapped),
-        hint: if n == 0 {
-            "double-click to open".into()
+        hint: if n == 0 && inner.open {
+            "drop devices below".into()
+        } else if n == 0 {
+            "double-click: unfold".into()
         } else if !cabled_out {
             "output not cabled".into()
         } else {
@@ -277,6 +292,13 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         }
         y += 15.0;
     }
+    fold_arrow(
+        c,
+        theme,
+        panel.fold,
+        device.inner.as_deref().is_some_and(|i| i.open),
+        accent,
+    );
     edit_button(c, theme, panel.open, "OPEN", true);
     edit_button(c, theme, panel.edit, "EDIT", true);
     edit_button(c, theme, panel.to_channel, "TO CH", !info.has_channel);
@@ -318,6 +340,24 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         panel.splits,
         device.inner.as_deref().map_or(&[][..], |i| &i.splits),
     );
+}
+
+/// The disclosure arrow of the title strip: right while the inside is folded, down while it is
+/// unfolded in the rack.
+fn fold_arrow<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, open: bool, accent: Color) {
+    let at = r.center();
+    let mut p = BezPath::new();
+    if open {
+        p.move_to(pt(at.x - 4.5, at.y - 2.5));
+        p.line_to(pt(at.x + 4.5, at.y - 2.5));
+        p.line_to(pt(at.x, at.y + 3.5));
+    } else {
+        p.move_to(pt(at.x - 2.5, at.y - 4.5));
+        p.line_to(pt(at.x + 3.5, at.y));
+        p.line_to(pt(at.x - 2.5, at.y + 4.5));
+    }
+    p.close_path();
+    c.fill_with(p, if open { accent } else { theme.text_muted });
 }
 
 /// The map of the splits: the 128 keys across, one coloured bar per split.
@@ -385,7 +425,10 @@ mod tests {
     fn the_summary_says_empty_and_unconnected() {
         assert_eq!(summary(None).devices, "EMPTY");
         let mut inner = ContainerDoc::default();
-        assert_eq!(summary(Some(&inner)).hint, "double-click to open");
+        assert_eq!(summary(Some(&inner)).hint, "double-click: unfold");
+        inner.open = true;
+        assert_eq!(summary(Some(&inner)).hint, "drop devices below");
+        inner.open = false;
         inner.devices.push(RackDevice {
             key: atomik_model::DeviceKey("a".into()),
             type_id: "atomik.poly-synth".into(),

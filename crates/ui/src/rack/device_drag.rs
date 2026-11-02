@@ -3,6 +3,7 @@
 //! draw the same drop line and the new-column zone, and end in one slot command.
 
 use super::columns::column_left;
+use super::inline::{is_inner, parent_of, strip_of};
 use super::{Drag, RackView, UiAction};
 use crate::browser::{BrowserRow, CreateKind};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
@@ -10,9 +11,10 @@ use crate::event::Modifiers;
 use crate::paint;
 use atomik_device_sdk::{PluginKindHint, RACK_WIDTH, Registry};
 use atomik_model::{
-    Command, CreateOptions, CreateSource, DeviceKey, PluginCommand, RackDoc, RackSlot,
-    WorkflowCommand,
+    Command, ContainerCommand, CreateOptions, CreateSource, DeviceKey, PluginCommand, RackDoc,
+    RackSlot, WorkflowCommand,
 };
+use std::collections::BTreeSet;
 use vello::kurbo::{Line, Point, RoundedRect, Stroke};
 
 /// Where a dragged device would drop.
@@ -33,13 +35,29 @@ pub(super) struct DropPoint {
 impl RackView {
     /// The drop point at rack position `rp`; `moving[i]` marks the device views being moved.
     pub(super) fn drop_point(&self, rp: Point, moving: &[bool]) -> DropPoint {
-        let column = self.drop_column(rp.x);
+        self.drop_point_in(rp, moving, None)
+    }
+
+    /// [`Self::drop_point`] in column `force` instead of the one under the pointer (a device
+    /// that leaves a container drops in the column of that container). Only the devices of the
+    /// rack itself are members: an unfolded container counts as one block with its inside.
+    pub(super) fn drop_point_in(
+        &self,
+        rp: Point,
+        moving: &[bool],
+        force: Option<u16>,
+    ) -> DropPoint {
+        let column = force.unwrap_or_else(|| self.drop_column(rp.x));
         let new_column = column >= self.columns;
         let members: Vec<usize> = if new_column {
             Vec::new()
         } else {
             self.inner_range()
-                .filter(|&i| !moving[i] && self.devices[i].column == column)
+                .filter(|&i| {
+                    !moving[i]
+                        && !is_inner(&self.devices[i].key)
+                        && self.devices[i].column == column
+                })
                 .collect()
         };
         // The line starts at the top of the column; column 0 starts below the Audio I/O strip
@@ -65,8 +83,9 @@ impl RackView {
         let mut above = 0;
         for &i in &members {
             let d = &self.devices[i];
-            if d.y + d.height / 2.0 < rp.y {
-                line_y = d.y + d.height;
+            let bottom = self.block_bottom(i);
+            if (d.y + bottom) / 2.0 < rp.y {
+                line_y = bottom;
                 above += 1;
             }
         }
@@ -99,7 +118,7 @@ impl RackView {
         let others: Vec<&DeviceKey> = doc.devices[doc.column_range(dp.column)]
             .iter()
             .map(|d| &d.key)
-            .filter(|k| !moving.contains(k))
+            .filter(|k| !moving.contains(k) && !is_inner(k))
             .collect();
         let pos = |k: &DeviceKey| others.iter().position(|o| *o == k);
         match dp.above.checked_sub(1) {
@@ -112,11 +131,14 @@ impl RackView {
 
     /// The release of a device move: one command that puts the dragged device, or the whole
     /// selection it belongs to, at the slot under the pointer. Inside a container (one
-    /// column) it is the flat move command.
+    /// column) it is the flat move command; on an unfolded rack a device dropped in the frame
+    /// of a container goes inside it, one dropped outside the frame of its own container leaves
+    /// it.
     pub(super) fn move_drop(
         &mut self,
         dev: usize,
         doc: &RackDoc,
+        registry: &Registry,
         modifiers: Modifiers,
         out: &mut Vec<UiAction>,
     ) {
@@ -131,20 +153,21 @@ impl RackView {
             self.toast = Some(Self::MASTER_LOCKED_TEXT.to_string());
             return;
         }
-        let flags: Vec<bool> = self
-            .devices
-            .iter()
-            .map(|d| moving.contains(&d.key))
-            .collect();
+        let flags = self.moving_flags(&moving);
         // Over a container's panel the device goes inside, over the breadcrumb's project
         // segment it leaves the open container.
         if self.container_drop(&key, &moving, &flags, out) {
             return;
         }
+        if self.inline {
+            self.inline_drop(&moving, &flags, doc, registry, modifiers, out);
+            return;
+        }
         let dp = self.drop_point(self.view_to_rack(self.pointer), &flags);
         let index = self.slot_index(doc, &dp, &moving);
         if !self.scope.is_empty() {
-            flat_move(doc, key, moving, index, out);
+            let list: Vec<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
+            flat_move(&list, key, moving, index, out);
             return;
         }
         let slot = RackSlot {
@@ -159,6 +182,112 @@ impl RackView {
                     route: self.auto_route != modifiers.shift,
                 },
             )));
+        }
+    }
+
+    /// The release of a device move on an unfolded rack (`doc` is the flat document): the
+    /// devices keep their container (reordered in it), enter the unfolded container whose frame
+    /// they were dropped in, or leave their container for the rack. A drop the model would
+    /// refuse says why instead.
+    fn inline_drop(
+        &mut self,
+        moving: &[DeviceKey],
+        flags: &[bool],
+        doc: &RackDoc,
+        registry: &Registry,
+        modifiers: Modifiers,
+        out: &mut Vec<UiAction>,
+    ) {
+        let rp = self.view_to_rack(self.pointer);
+        let homes: BTreeSet<Option<DeviceKey>> = moving.iter().map(parent_of).collect();
+        if homes.len() > 1 {
+            self.toast = Some(ONE_CONTAINER_AT_A_TIME.to_string());
+            return;
+        }
+        let home: Option<DeviceKey> = homes.into_iter().next().flatten();
+        let target = self.frame_at(rp, moving).map(|f| f.container.clone());
+        match (home, target) {
+            // Dropped in the frame of the devices' own container: a reorder.
+            (Some(h), Some(t)) if h == t => {
+                let (index, _, _) = self.inside_drop(&t, rp, flags);
+                inner_move(doc, &t, moving, index, out);
+            }
+            // Into an unfolded container of the rack, or from one container into another.
+            (home, Some(t)) => {
+                let [key] = moving else {
+                    self.toast = Some(super::container_move::ONE_AT_A_TIME.to_string());
+                    return;
+                };
+                if home.is_some() || is_inner(&t) {
+                    self.toast = Some(NOT_BETWEEN_CONTAINERS.to_string());
+                    return;
+                }
+                let (index, _, _) = self.inside_drop(&t, rp, flags);
+                let command = Command::Container(ContainerCommand::MoveIntoContainer {
+                    key: key.clone(),
+                    container: t,
+                    index,
+                });
+                self.emit_planned(command, registry, out);
+            }
+            // Out of the frame of its container to the rack, in the container's column.
+            (Some(h), None) => {
+                let [key] = moving else {
+                    self.toast = Some(super::container_move::ONE_AT_A_TIME.to_string());
+                    return;
+                };
+                if is_inner(&h) {
+                    self.toast = Some(NOT_BETWEEN_CONTAINERS.to_string());
+                    return;
+                }
+                let column = self
+                    .devices
+                    .iter()
+                    .find(|d| d.key == h)
+                    .map_or(0, |d| d.column);
+                let dp = self.drop_point_in(rp, flags, Some(column));
+                let index = self.slot_index(doc, &dp, moving);
+                let before = doc
+                    .devices
+                    .iter()
+                    .filter(|d| !is_inner(&d.key) && d.column < column)
+                    .count();
+                let command = Command::Container(ContainerCommand::MoveOutOfContainer {
+                    key: key.clone(),
+                    index: before + index,
+                });
+                self.emit_planned(command, registry, out);
+            }
+            // Within the rack itself.
+            (None, None) => {
+                let dp = self.drop_point(rp, flags);
+                let index = self.slot_index(doc, &dp, moving);
+                let slot = RackSlot {
+                    column: dp.column,
+                    index,
+                };
+                if move_changes(doc, moving, slot, self.locked.as_ref()) {
+                    out.push(UiAction::Command(Command::Workflow(
+                        WorkflowCommand::MoveDevicesToSlot {
+                            keys: moving.to_vec(),
+                            slot,
+                            route: self.auto_route != modifiers.shift,
+                        },
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Emits `command` when the model takes it on the project, else tells the user why not.
+    fn emit_planned(&mut self, command: Command, registry: &Registry, out: &mut Vec<UiAction>) {
+        let reason = self
+            .host_doc
+            .as_ref()
+            .and_then(|host| super::container_move::plan_reason(host, registry, command.clone()));
+        match reason {
+            None => out.push(UiAction::Command(command)),
+            Some(why) => self.toast = Some(why),
         }
     }
 
@@ -177,10 +306,23 @@ impl RackView {
         if !self.rack_area().contains(self.pointer) {
             return;
         }
+        // Dropped in the frame of an unfolded container the device is added inside it.
+        let rp = self.view_to_rack(self.pointer);
+        if let Some(container) = self.frame_at(rp, &[]).map(|f| f.container.clone()) {
+            let none = vec![false; self.devices.len()];
+            let (index, _, _) = self.inside_drop(&container, rp, &none);
+            if let Some(action) = self.add_row_inside(row, &container, index) {
+                out.push(action);
+                if self.browser.create.is_some() && !self.browser.keep_open {
+                    self.set_browser_visible(false);
+                }
+            }
+            return;
+        }
         // Over the middle of a device of the same kind the row replaces it; a replacement the
         // model refuses is an ordinary drop at the slot.
         if let Some(target) = self.replace_target(row, self.view_to_rack(self.pointer))
-            && let Some(action) = self.replace_action(row, target, doc, registry)
+            && let Some(action) = self.replace_action(row, target, self.host(doc), registry)
         {
             out.push(action);
             if self.browser.create.is_some() && !self.browser.keep_open {
@@ -206,6 +348,51 @@ impl RackView {
         if self.browser.create.is_some() && !self.browser.keep_open {
             self.set_browser_visible(false);
         }
+    }
+
+    /// The action that adds a browser row inside the unfolded container `container` at
+    /// `index` among its devices: a plain add (an instrument also gets its full-range split).
+    pub(super) fn add_row_inside(
+        &self,
+        row: &BrowserRow,
+        container: &DeviceKey,
+        index: usize,
+    ) -> Option<UiAction> {
+        match row {
+            BrowserRow::Device(d) => {
+                Some(self.add_device_inside(d.type_id, d.kind, container, index))
+            }
+            BrowserRow::Plugin(n) => {
+                let e = self.plugin_catalog.get(*n)?;
+                Some(UiAction::Command(Command::Plugin(PluginCommand::Add {
+                    index,
+                    container: Some(container.clone()),
+                    plugin: e.plugin.clone(),
+                    layout: e.layout.clone(),
+                    path_hint: e.path.clone(),
+                    key: None,
+                    auto_split: e.kind == PluginKindHint::Instrument,
+                })))
+            }
+            _ => None,
+        }
+    }
+
+    /// The action that adds the built-in device `type_id` inside `container` at `index`.
+    pub(super) fn add_device_inside(
+        &self,
+        type_id: &str,
+        kind: atomik_device_sdk::DeviceKind,
+        container: &DeviceKey,
+        index: usize,
+    ) -> UiAction {
+        UiAction::Command(Command::Container(ContainerCommand::AddInner {
+            container: container.clone(),
+            index,
+            type_id: type_id.to_string(),
+            key: None,
+            auto_split: kind == atomik_device_sdk::DeviceKind::Instrument,
+        }))
     }
 
     /// The slot version of [`Self::add_row_action`] (top level only).
@@ -372,7 +559,8 @@ impl RackView {
             let d = &self.devices[i];
             let r = d.rect();
             let band = r.height() / 4.0;
-            r.x0 <= rp.x
+            !is_inner(&d.key)
+                && r.x0 <= rp.x
                 && rp.x <= r.x1
                 && r.y0 + band <= rp.y
                 && rp.y <= r.y1 - band
@@ -410,17 +598,18 @@ impl RackView {
             return;
         }
         let theme = &self.theme;
-        let moving: Vec<bool> = match &self.drag {
+        let (moving, moving_keys): (Vec<bool>, Vec<DeviceKey>) = match &self.drag {
             Drag::Move { dev, .. } => {
                 // The dragged device, or every device of the selection it belongs to.
                 let group = self.drags_as_group(*dev);
-                self.devices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, d)| i == *dev || (group && self.selection.contains(&d.key)))
-                    .collect()
+                let keys: Vec<DeviceKey> = if group {
+                    self.local_selection()
+                } else {
+                    vec![self.devices[*dev].key.clone()]
+                };
+                (self.moving_flags(&keys), keys)
             }
-            _ => vec![false; self.devices.len()],
+            _ => (vec![false; self.devices.len()], Vec::new()),
         };
         for (d, _) in self.devices.iter().zip(&moving).filter(|(_, m)| **m) {
             paint::fill_rect(c, d.rect(), theme.dim.with_alpha(0.4));
@@ -446,7 +635,30 @@ impl RackView {
             c.stroke(&outline.into(), &Stroke::new(3.0), &theme.highlight.into());
             return;
         }
-        let dp = self.drop_point(self.view_to_rack(self.pointer), &moving);
+        let rp = self.view_to_rack(self.pointer);
+        // Over the frame of an unfolded container the line shows among its devices.
+        if let Some(f) = self.frame_at(rp, &moving_keys) {
+            let (_, line_y, column) = self.inside_drop(&f.container, rp, &moving);
+            let x = column_left(column);
+            let outline = RoundedRect::from_rect(f.outline(), 5.0);
+            c.stroke(&outline.into(), &Stroke::new(3.0), &theme.highlight.into());
+            c.stroke(
+                &Line::new((x - 4.0, line_y), (x + f64::from(RACK_WIDTH) + 4.0, line_y)).into(),
+                &Stroke::new(3.0),
+                &theme.highlight.into(),
+            );
+            return;
+        }
+        // A device of an unfolded container leaves it in the column of the container.
+        let leaving = if self.inline {
+            moving_keys
+                .first()
+                .and_then(parent_of)
+                .and_then(|h| self.devices.iter().find(|d| d.key == h).map(|d| d.column))
+        } else {
+            None
+        };
+        let dp = self.drop_point_in(rp, &moving, leaving);
         if self.zone_visible() {
             let zone = self.zone_rect();
             let alpha = if dp.new_column { 1.0 } else { 0.45 };
@@ -499,9 +711,10 @@ impl RackView {
     }
 }
 
-/// The flat move of a container's inside (one column): the plain commands.
+/// The flat move inside one list of devices (a container's inside): the plain commands.
+/// `list` holds the keys of the devices in order.
 fn flat_move(
-    doc: &RackDoc,
+    list: &[&DeviceKey],
     key: DeviceKey,
     moving: Vec<DeviceKey>,
     to: usize,
@@ -509,10 +722,9 @@ fn flat_move(
 ) {
     if moving.len() > 1 {
         // Where the group would end up, compared with where it is now.
-        let others: Vec<&DeviceKey> = doc
-            .devices
+        let others: Vec<&DeviceKey> = list
             .iter()
-            .map(|d| &d.key)
+            .copied()
             .filter(|d| !moving.contains(d))
             .collect();
         let mut target = others.clone();
@@ -520,8 +732,7 @@ fn flat_move(
         for (n, m) in moving.iter().enumerate() {
             target.insert(at + n, m);
         }
-        let now: Vec<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
-        if target != now {
+        if target != list {
             out.push(UiAction::Command(Command::Workflow(
                 WorkflowCommand::MoveDevices {
                     keys: moving,
@@ -530,10 +741,37 @@ fn flat_move(
                 },
             )));
         }
-    } else if doc.devices.iter().position(|d| d.key == key) != Some(to) {
+    } else if list.iter().position(|d| **d == key) != Some(to) {
         out.push(UiAction::Command(Command::MoveDevice { key, to }));
     }
 }
+
+/// [`flat_move`] inside the unfolded container `container` of the flat document `doc` (keys
+/// are path keys).
+fn inner_move(
+    doc: &RackDoc,
+    container: &DeviceKey,
+    moving: &[DeviceKey],
+    to: usize,
+    out: &mut Vec<UiAction>,
+) {
+    let list: Vec<&DeviceKey> = doc
+        .devices
+        .iter()
+        .filter(|d| strip_of(d).is_none() && parent_of(&d.key).as_ref() == Some(container))
+        .map(|d| &d.key)
+        .collect();
+    if let Some(first) = moving.first() {
+        flat_move(&list, first.clone(), moving.to_vec(), to, out);
+    }
+}
+
+/// Why a device cannot be dropped from one container into another.
+const NOT_BETWEEN_CONTAINERS: &str = "A device moves between the rack and a container of the rack, not from one container into another";
+
+/// What a refused move says when the devices come from different containers.
+const ONE_CONTAINER_AT_A_TIME: &str =
+    "Devices of different containers move one container at a time";
 
 /// Whether moving `moving` to `slot` changes the rack (the model rejects a move that does
 /// not): simulates the move on (key, column) pairs, with the same clamps as the model.
@@ -543,7 +781,12 @@ fn move_changes(
     slot: RackSlot,
     locked: Option<&DeviceKey>,
 ) -> bool {
-    let now: Vec<(&DeviceKey, u16)> = doc.devices.iter().map(|d| (&d.key, d.column)).collect();
+    let now: Vec<(&DeviceKey, u16)> = doc
+        .devices
+        .iter()
+        .filter(|d| !is_inner(&d.key))
+        .map(|d| (&d.key, d.column))
+        .collect();
     let mut rest: Vec<(&DeviceKey, u16)> = now
         .iter()
         .copied()
