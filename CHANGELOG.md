@@ -48,8 +48,24 @@ may break APIs and the patch and project formats.
   worker count. The document stores the slots per device with one undoable command, the amount of a slot is an
   ordinary automatable param, and a project without slots saves, loads and bounces as before (project format
   41). The poly synth and the mono bass use it first: the three envelopes, both LFOs, velocity, key, mod wheel
-  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. There
-  is no panel for it yet: the slots are set through the command and the project file.
+  and pressure (channel and poly pressure finally have a destination) can move cutoff, pitch and level. A device's
+  right-click menu opens its matrix (see below).
+- **Modulation matrix panel.** Right-click a device that has a matrix (the poly synth, the mono bass) and choose
+  Modulation Matrix: eight rows of source, target and via pickers (a menu of the device's own entries, the current
+  one checked) and an amount bar, with the amount from -100 to +100 %. A slot needs a source and a target; until
+  both are chosen the row stays a draft, and clearing either side of a slot in use clears it. Picks and the
+  amount bar are ordinary undoable edits (a drag is one undo step) and the engine hears them like any other
+  parameter change; editing a slot while a note sounds does not click. Esc closes the menu, then the panel.
+- **Text fields with a caret, a selection, the clipboard and input methods.** One text field now serves the Song
+  Information panel: click to place the caret, drag or Shift+arrows to select, double-click a word, Ctrl+A,
+  Ctrl+arrows by word, copy, cut and paste with the system clipboard (the `arboard` library, MIT or Apache-2.0,
+  text only), and input-method composition (Japanese, Chinese, Korean, dead keys) with the pre-edit text
+  underlined in the field. A character typed with AltGr is text and never runs a shortcut in a text field. The
+  in-place name edits of the rack, mixer and arrangement keep their end-of-text editing for now.
+- **The piano roll keeps the same notes selected through edits that reorder them.** A quantize that moves a note
+  past another, an undo, or a note added before the selection used to leave the selection on whatever sat at the
+  old positions; it now follows the notes (by key and order within the key, else by start and key) and goes back
+  to the original notes when an edit it could not follow, such as a transpose, is undone.
 - **Bent automation segments.** Shift-drag on an automation segment bends it so the curve passes through the
   pointer at the middle of the segment (one undo step); a click without a drag, or a Shift-click on a point,
   straightens it again. The bend is a power curve evaluated with plain arithmetic only, so a bounce is

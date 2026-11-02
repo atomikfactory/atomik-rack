@@ -201,8 +201,9 @@ device-level: the engine has no concept of it, the sums are computed inside the 
   slot render the same bits as no slots, that the output is the same bit for bit however the render is cut
   into calls and for every block size and worker count, and the allocation guard (the harness has it).
   The poly synth's tests are the model; its render test is in `crates/render/tests/mod_matrix.rs`.
-- **Panel.** The generated front panel skips the slot params (`is_mod_slot_key`); a generic matrix panel built
-  from the tables is not part of this change.
+- **Panel.** The generated front panel skips the slot params (`is_mod_slot_key`). The matrix itself is edited in
+  the modal panel the device's right-click menu opens (Modulation Matrix, command `rack.mod_matrix`): it is built
+  from the registered tables, so a device that registers `ModTables` gets it with no panel code.
 
 ## 4. Registering the device
 
