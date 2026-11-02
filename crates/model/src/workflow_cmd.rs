@@ -313,6 +313,20 @@ pub enum WorkflowCommand {
         /// The repetition.
         index: usize,
     },
+    /// Moves what an automation clip plays under a note clip into that note clip as a
+    /// device-parameter lane (see [`crate::param_lane`]) and removes the automation clip. The
+    /// lane drives the param of the automation clip's lane, on the track's device, from the note
+    /// clip's own start: the clip's offset, the automation clip's offset and loop, and where the
+    /// two overlap are honoured, and a segment cut by the note clip's edges follows the same
+    /// rules as flattening. Rejected for an automation clip that is not under the note clip, a
+    /// looped note clip, a note clip that already has a lane for the param, and a clip of the
+    /// wrong kind. One undo step.
+    AutomationIntoClip {
+        /// The automation clip.
+        automation: ClipId,
+        /// The note clip that takes the lane.
+        into: ClipId,
+    },
     /// Joins note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
     /// window, notes cut at the window end); where two notes or points coincide the later
@@ -853,6 +867,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
+        WorkflowCommand::AutomationIntoClip { automation, into } => {
+            crate::clip_lanes::automation_into_clip(doc, registry, automation, into)
+        }
         WorkflowCommand::ConvertLoop { ids, mode } => {
             crate::loop_convert::convert_loop(doc, registry, &ids, mode)
         }

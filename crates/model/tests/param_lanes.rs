@@ -423,3 +423,145 @@ fn a_lane_whose_device_is_gone_loads_and_plays_nothing() {
         key("ghost")
     );
 }
+
+// ---- AutomationIntoClip ----------------------------------------------------------------------
+
+/// The note clip (id 1) over two bars, and a cutoff automation clip (id 2) from beat 2, three
+/// beats long, with a bend and a ramp.
+fn with_automation(reg: &Registry, start: i64) -> Document {
+    let mut d = doc(reg);
+    d.apply(
+        sc(SongCommand::AddAutomationLane {
+            device: key("synth"),
+            param: CUTOFF.into(),
+        }),
+        reg,
+    )
+    .unwrap();
+    d.apply(
+        add_clip(
+            "synth",
+            1,
+            auto_clip(
+                start,
+                3 * PPQ,
+                vec![
+                    point(0, 200.0, Curve::Bend(24)),
+                    point(PPQ, 4000.0, Curve::Linear),
+                    point(2 * PPQ, 800.0, Curve::Step),
+                ],
+            ),
+        ),
+        reg,
+    )
+    .unwrap();
+    d
+}
+
+fn into(d: &mut Document, reg: &Registry) -> Result<Vec<SyncOp>, ModelError> {
+    d.apply(
+        Command::Workflow(WorkflowCommand::AutomationIntoClip {
+            automation: ClipId(2),
+            into: ClipId(1),
+        }),
+        reg,
+    )
+}
+
+#[test]
+fn automation_moves_into_a_note_clip_as_a_lane_in_one_undo_step() {
+    let reg = registry();
+    let mut d = with_automation(&reg, PPQ);
+    let before = d.doc().clone();
+    into(&mut d, &reg).unwrap();
+    assert!(
+        d.doc().song.clip(ClipId(2)).is_none(),
+        "the automation clip is gone"
+    );
+    let lanes = clip(&d, 1).param_lanes;
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].param, CUTOFF);
+    // The clip starts at 0 and the automation at beat 2: its first point is at tick PPQ with
+    // its bend kept.
+    assert_eq!(lanes[0].points[0].tick, PPQ);
+    assert_eq!(lanes[0].points[0].curve, Curve::Bend(24));
+    // Like an automation lane, the clip's lane holds its first value from the clip start.
+    let flat = flatten_param_lanes(&d.doc().song.tracks[0]);
+    assert!(
+        flat[0].2.contains(&(PPQ, 200.0, Curve::Bend(24))),
+        "{:?}",
+        flat[0].2
+    );
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn automation_over_a_clip_edge_is_cut_to_the_clip_and_refused_when_it_does_not_overlap() {
+    let reg = registry();
+    // The note clip spans [0, 2 bars): an automation clip starting before it is cut at 0.
+    let mut d = with_automation(&reg, 2 * BAR - PPQ);
+    into(&mut d, &reg).unwrap();
+    let lane = &clip(&d, 1).param_lanes[0];
+    let last = lane.points.last().unwrap();
+    assert!(
+        last.tick < 2 * BAR,
+        "the lane ends inside the clip: {last:?}"
+    );
+    // No overlap at all.
+    let mut far = with_automation(&reg, 4 * BAR);
+    let before = far.doc().clone();
+    assert!(into(&mut far, &reg).is_err());
+    assert_eq!(far.doc(), &before);
+}
+
+#[test]
+fn a_second_move_for_the_same_param_a_looped_clip_and_wrong_kinds_are_refused() {
+    let reg = registry();
+    let mut d = with_automation(&reg, PPQ);
+    // Wrong kinds: a note clip as the automation, an automation clip as the target.
+    let swap = Command::Workflow(WorkflowCommand::AutomationIntoClip {
+        automation: ClipId(1),
+        into: ClipId(2),
+    });
+    assert!(d.apply(swap, &reg).is_err());
+    // A looped note clip.
+    let mut looped = d.clone();
+    looped
+        .apply(
+            sc(SongCommand::SetClipGeometry {
+                id: ClipId(1),
+                start: 0,
+                length: 2 * BAR,
+                offset: 0,
+                loop_length: Some(BAR),
+                muted: false,
+                merge: None,
+            }),
+            &reg,
+        )
+        .unwrap();
+    assert!(into(&mut looped, &reg).is_err());
+    // The lane is taken: a second automation clip for the same param is refused.
+    into(&mut d, &reg).unwrap();
+    d.apply(
+        add_clip(
+            "synth",
+            1,
+            auto_clip(0, BAR, vec![point(0, 500.0, Curve::Step)]),
+        ),
+        &reg,
+    )
+    .unwrap();
+    let again = clip_ids(d.doc()).into_iter().find(|i| i.0 > 2).unwrap();
+    let e = d
+        .apply(
+            Command::Workflow(WorkflowCommand::AutomationIntoClip {
+                automation: again,
+                into: ClipId(1),
+            }),
+            &reg,
+        )
+        .expect_err("lane taken");
+    assert!(e.to_string().contains("already has a lane"), "{e}");
+}

@@ -369,7 +369,12 @@
 //! object per used slot in ascending slot order (ids are indices into the device's source and
 //! target tables), written only when a slot is in use. The amount of a slot is the ordinary param
 //! `mod<n>_amount`. A project without slots differs from its version 40 file in the version line
-//! alone and plays and bounces bit for bit as it did. Saving always writes version 41.
+//! alone and plays and bounces bit for bit as it did.
+//! Version 41 also adds, under the same version, a note clip's `"param_lanes"` (see
+//! [`crate::param_lane`]), a list of `{ "device", "param", "points" }` written after the clip's notes
+//! only when the clip has lanes, and the bent automation point `[tick, value, "bend", amount]` with
+//! a whole `amount` in `-64..=64` (refused in a controller lane). A file with neither differs from its
+//! version 40 file in the version line alone. Saving always writes version 41.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
