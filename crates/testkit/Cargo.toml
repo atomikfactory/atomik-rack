@@ -10,7 +10,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-atomik-core.workspace = true
+atomik-core = { workspace = true, features = ["rt-guard"] }
 atomik-device-sdk.workspace = true
 rustfft.workspace = true
 

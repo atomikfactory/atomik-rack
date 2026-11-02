@@ -311,6 +311,10 @@ pub struct LiveSession<B: AudioBackend> {
     liveness: Option<Liveness>,
     /// Control pushes (parameters, routing, transport, ...) that found the engine's queue full.
     control_stalled: u64,
+    /// Batches the engine ran with a parked retirement (the last polled value).
+    stalled_batches: u64,
+    /// A tap stop the full control queue refused; retried on the next poll.
+    stop_tap_pending: bool,
     /// A message for the user that the next [`Self::take_notice`] hands out.
     notice: Option<String>,
     /// The port each MIDI Out device chose (by engine device id); a device that has none uses
@@ -358,6 +362,8 @@ impl<B: AudioBackend> LiveSession<B> {
             status,
             liveness: None,
             control_stalled: 0,
+            stalled_batches: 0,
+            stop_tap_pending: false,
             notice: None,
             out_ports: BTreeMap::new(),
             clock_error: None,
@@ -476,6 +482,7 @@ impl<B: AudioBackend> LiveSession<B> {
             self.status.faulted_device = r.handle.fault().map(|id| id.0);
             self.status.stream_underruns = r.handle.stream_underruns();
             self.status.overload.dropped_events = r.handle.dropped_events();
+            self.stalled_batches = r.handle.stalled_batches();
             self.status.overload.tap_overflow_frames = self.tap_overflow_base
                 + self
                     .audio_tap_overflow
@@ -487,11 +494,20 @@ impl<B: AudioBackend> LiveSession<B> {
                     .store(u64::from(t.buffer_frames), Ordering::Relaxed);
             }
         }
+        if self.stop_tap_pending {
+            if let Some(r) = &mut self.running {
+                self.stop_tap_pending = r.handle.stop_record_tap().is_err();
+            } else {
+                self.stop_tap_pending = false;
+            }
+        }
         self.poll_sync(at);
         // Pushes that found the engine's queue full, and control messages (MIDI to
         // parameters, surfaces) the inbox had no room for.
-        self.status.overload.control_stalled =
-            self.control_stalled.saturating_add(self.hub.dropped());
+        self.status.overload.control_stalled = self
+            .control_stalled
+            .saturating_add(self.hub.dropped())
+            .saturating_add(self.stalled_batches);
         &self.status
     }
 
@@ -1209,6 +1225,8 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             .handle
             .record_tap_gained(channels, capacity_frames, controls)
             .ok()?;
+        // A new tap replaces the last (and a stop still waiting to be retried).
+        self.stop_tap_pending = false;
         // A new tap replaces the last: what the last one dropped stays counted.
         if let Some(last) = self.audio_tap_overflow.replace(tap.overflow_counter()) {
             self.tap_overflow_base += last.load(Ordering::Relaxed);
@@ -1218,8 +1236,9 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn stop_audio_record(&mut self) {
         if let Some(r) = &mut self.running {
-            // A full control queue leaves the tap running; the next one replaces it.
-            let _ = r.handle.stop_record_tap();
+            // A full control queue refuses the stop: poll retries it on the next frame, so
+            // the tap never keeps recording behind a finished take.
+            self.stop_tap_pending = r.handle.stop_record_tap().is_err();
         }
     }
 
