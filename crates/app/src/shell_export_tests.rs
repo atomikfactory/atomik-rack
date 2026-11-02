@@ -242,9 +242,13 @@ fn cancel_during_the_render_stops_it_and_leaves_no_file() {
     let mut s = shell(&t.0);
     let path = t.file("mix.wav");
     s.export_audio_to(ExportScope::Song, &path);
+    // The worker waits at its start until CANCEL was pressed: a fast machine cannot finish the
+    // render first.
+    let release = crate::export_worker::hold::next_export();
     press(&mut s, "EXPORT");
     assert!(s.export_view().unwrap().in_progress());
     press(&mut s, "CANCEL");
+    drop(release);
     s.core_mut().wait_background();
     s.frame();
     assert!(!s.export_open());

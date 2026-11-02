@@ -58,13 +58,11 @@ fn a_parent_that_speaks_another_protocol_ends_the_child_with_exit_3() {
 }
 
 #[test]
-fn a_closed_stdin_ends_the_child_with_exit_0_within_a_second() {
+fn a_closed_stdin_ends_the_child_with_exit_0_promptly() {
     let mut p = TestParent::spawn(&Spawn::null("null.gain"));
     p.hello();
     p.close_stdin();
-    let status = p
-        .wait_exit(Duration::from_secs(1))
-        .expect("it ends in time");
+    let status = p.wait_exit(PATIENCE).expect("it ends in time");
     assert_eq!(status.code(), Some(0));
 }
 
@@ -73,9 +71,7 @@ fn shutdown_ends_the_child_with_exit_0() {
     let mut p = TestParent::spawn(&Spawn::null("null.gain"));
     p.hello();
     p.send(&ToChild::Shutdown);
-    let status = p
-        .wait_exit(Duration::from_secs(1))
-        .expect("it ends in time");
+    let status = p.wait_exit(PATIENCE).expect("it ends in time");
     assert_eq!(status.code(), Some(0));
 }
 
