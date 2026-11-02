@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn unsafe_and_unreadable_samples_are_left_out() {
-        let sfz = "<region> sample=/etc/x.wav\n<region> sample=C:\\x.wav\n\
+        let sfz = "<region> sample=/etc/x.wav\n<region> sample=D\u{3a}\\x.wav\n\
                    <region> sample=a.wv\n<region> sample=*sine\n<region> sample=ok.flac\n";
         let inst = parse(sfz);
         assert_eq!(inst.regions.len(), 1);
