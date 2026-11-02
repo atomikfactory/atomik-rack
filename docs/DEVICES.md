@@ -3150,8 +3150,9 @@ of the flat graph (no inner device, cable or macro) and `in_l`, `in_r` go straig
   it. A container inside a container has it too.
 - **Combine** and **Uncombine** are in the Edit menu and in the device context menu
   (`Ctrl+Shift+G` and `Ctrl+Shift+U`, `Cmd` on macOS). Combine takes the selected top-level
-  devices, Uncombine the selected container. In the context menu an item the model would refuse
-  is dimmed; running one anyway (key or Edit menu) shows the refusal in the status toast, with
+  devices (a mixer strip or an audio track stays in the rack; two devices that each have a song
+  track or mixer channel are refused), Uncombine the selected container. An item the model would refuse
+  is dimmed in both menus; running one anyway (key) shows the refusal in the status toast, with
   the cables that have no socket on the container.
 - **Move Out of Container** is in the context menu while a container is open: the selected
   device goes back to the rack right after the container.

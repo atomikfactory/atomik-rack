@@ -269,3 +269,43 @@ fn what_a_combine_dropped_is_told_and_a_refusal_is_reported() {
     );
     assert_eq!(c.doc(), &before);
 }
+
+/// [`core`] plus a second instrument with its own channel and song track.
+fn core_with_two_instruments() -> AppCore<OfflineSink> {
+    let mut c = core();
+    apply(
+        &mut c,
+        Command::AddDevice {
+            index: usize::MAX,
+            type_id: SYNTH.into(),
+            key: Some(key("synth2")),
+        },
+    );
+    apply(
+        &mut c,
+        Command::Song(SongCommand::AddTrack {
+            device: key("synth2"),
+        }),
+    );
+    c
+}
+
+#[test]
+fn the_edit_menu_dims_combine_for_two_instruments_and_a_key_says_which() {
+    let mut c = core_with_two_instruments();
+    select(&mut c, &["synth", "synth2"]);
+    assert_eq!(c.combine_menu(), (false, false));
+    let before = c.doc().clone();
+    assert!(!c.combine_selection());
+    let why = c.last_rejection().unwrap();
+    assert!(why.contains("\"Poly Synth\" and \"Poly Synth 2\""), "{why}");
+    assert!(why.contains("combine them separately"), "{why}");
+    assert_eq!(c.doc(), &before);
+    // One instrument alone is fine, and the answer follows the selection and the document.
+    select(&mut c, &["synth"]);
+    assert_eq!(c.combine_menu(), (true, false));
+    select(&mut c, &["synth", "synth2"]);
+    assert_eq!(c.combine_menu(), (false, false));
+    select(&mut c, &[]);
+    assert_eq!(c.combine_menu(), (false, false));
+}

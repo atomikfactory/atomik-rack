@@ -185,7 +185,9 @@ pub enum ContainerCommand {
     /// input or output, a notes output, a second notes source) refuses the command and names
     /// each such cable. A device with a song track, a console channel or an FX return slot
     /// passes them to the container (at most one such device may be combined); the track's
-    /// automation lanes are dropped. See [`RackDoc::container_move_notes`] for what is dropped.
+    /// automation lanes are dropped. A device a container cannot hold (a mixer strip, an audio
+    /// track) stays in the rack and the rest is combined. See [`RackDoc::container_move_notes`]
+    /// for what is dropped and what stays.
     Combine {
         /// The top-level devices to combine.
         keys: Vec<DeviceKey>,

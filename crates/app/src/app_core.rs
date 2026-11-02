@@ -234,6 +234,9 @@ pub struct AppCore<S: EngineSink> {
     saved_gen: u64,
     /// `is_dirty` for the (document revision, saved generation) it was last computed at.
     dirty_memo: std::cell::Cell<Option<(u64, u64, bool)>>,
+    /// What `combine_menu` last asked the model: the document revision and the selection it asked
+    /// about, and the answer (the plan is made on a copy of the document, so it is made once).
+    combine_memo: std::cell::RefCell<Option<(u64, Vec<DeviceKey>, bool)>>,
     /// The document revision every view was last synced at by `after_view_change`.
     views_synced_at: Option<u64>,
     /// Time spent in the stages of the latest [`AppCore::rebuild_engine`].
@@ -466,6 +469,7 @@ impl<S: EngineSink> AppCore<S> {
             saved: doc.clone(),
             saved_gen: 0,
             dirty_memo: std::cell::Cell::new(None),
+            combine_memo: std::cell::RefCell::new(None),
             views_synced_at: None,
             rebuild_stages: Stages::new(),
             open_stages: Stages::new(),

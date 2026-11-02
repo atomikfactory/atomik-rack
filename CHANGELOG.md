@@ -824,6 +824,16 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Combine says what it cannot do, and no longer stops at a mixer strip.** Choosing Combine on a
+  selection that includes a mixer strip (a channel, a bus or the master) or an audio track used to
+  be refused as a whole. Those devices can never go inside a container, so they now stay in the
+  rack with a note and the rest of the selection is combined; a selection made only of such
+  devices is still refused, naming the first. A container has one song track, one mixer channel
+  and one FX return, so two or more selected devices that each have one are refused with a
+  message naming them ("Combine keeps one track and one mixer channel: ... each have ...;
+  combine them separately"). The Edit menu now enables Combine only when the model would take the
+  selection, as the context menu does, so a refused multi-selection is dimmed and a shortcut
+  shows the reason in the status line. The project format is unchanged.
 - **Insert and Remove Bars at Locators moved some things wrongly.** A tempo or meter change that
   starts exactly on the left locator stayed behind while the music after it moved, so the opened
   bars took the new tempo or the new bar length and the following bars no longer sat on bar
