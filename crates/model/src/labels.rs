@@ -126,6 +126,8 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
 
 fn container_label(c: &ContainerCommand) -> &'static str {
     match c {
+        ContainerCommand::SetOpen { open: true, .. } => "Unfold Container",
+        ContainerCommand::SetOpen { open: false, .. } => "Fold Container",
         ContainerCommand::Combine { .. } => "Combine",
         ContainerCommand::Uncombine { .. } => "Uncombine",
         ContainerCommand::MoveIntoContainer { .. } => "Move Into Container",
@@ -181,6 +183,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::TrimClips { .. } => "Trim Clips",
         WorkflowCommand::ReverseClips { .. } => "Reverse Clips",
         WorkflowCommand::ScaleTempo { .. } => "Scale Tempo",
+        WorkflowCommand::StretchClips { .. } => "Stretch Clips",
         WorkflowCommand::ChopClips { .. } => "Chop Clips",
         WorkflowCommand::CleanupAutomation { .. } => "Cleanup Automation",
         WorkflowCommand::InsertTime { .. } => "Insert Bars",

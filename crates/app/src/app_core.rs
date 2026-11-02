@@ -235,6 +235,9 @@ pub struct AppCore<S: EngineSink> {
     saved_gen: u64,
     /// `is_dirty` for the (document revision, saved generation) it was last computed at.
     dirty_memo: std::cell::Cell<Option<(u64, u64, bool)>>,
+    /// What `combine_menu` last asked the model: the document revision and the selection it asked
+    /// about, and the answer (the plan is made on a copy of the document, so it is made once).
+    combine_memo: std::cell::RefCell<Option<(u64, Vec<DeviceKey>, bool)>>,
     /// The document revision every view was last synced at by `after_view_change`.
     views_synced_at: Option<u64>,
     /// Time spent in the stages of the latest [`AppCore::rebuild_engine`].
@@ -314,6 +317,8 @@ pub struct AppCore<S: EngineSink> {
     /// The next applied command is a step of the open patch trial: no undo entry (see
     /// `Document::apply_trial`).
     trial_next: bool,
+    /// A clip-edge stretch drag is open as a trial (`app_core_workflow`).
+    stretch_open: bool,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
@@ -469,6 +474,7 @@ impl<S: EngineSink> AppCore<S> {
             saved: doc.clone(),
             saved_gen: 0,
             dirty_memo: std::cell::Cell::new(None),
+            combine_memo: std::cell::RefCell::new(None),
             views_synced_at: None,
             rebuild_stages: Stages::new(),
             open_stages: Stages::new(),
@@ -557,6 +563,7 @@ impl<S: EngineSink> AppCore<S> {
             keep_pending: None,
             join_next: false,
             trial_next: false,
+            stretch_open: false,
             take: None,
             autorec: autorec::AutoRec::new(),
             autoview: autoview::AutoView::default(),
@@ -720,6 +727,7 @@ impl<S: EngineSink> AppCore<S> {
         let trial = std::mem::take(&mut self.trial_next);
         if !trial {
             self.commit_patch_browse();
+            self.commit_stretch();
         }
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
@@ -806,6 +814,12 @@ impl<S: EngineSink> AppCore<S> {
                     let _ = self.apply_command(c);
                 }
             }
+            UiAction::StretchStep {
+                ids,
+                percent,
+                from_start,
+            } => self.stretch_step(ids, percent, from_start),
+            UiAction::StretchEnd { commit } => self.end_stretch(commit),
             UiAction::EndMerge => {
                 if let Some(id) = self.keep_pending.take() {
                     self.complete_note_edit(id);
@@ -929,6 +943,11 @@ impl<S: EngineSink> AppCore<S> {
                 target,
                 tick,
             } => self.import_audio(paths, target, tick),
+            UiAction::ImportMidi { paths, lane, tick } => {
+                for path in &paths {
+                    self.import_midi_at(path, lane.clone(), tick);
+                }
+            }
             UiAction::InsertLibrary {
                 path,
                 container,

@@ -47,6 +47,7 @@ mod device_drag;
 mod drum_input;
 mod fx_input;
 mod help;
+mod inline;
 mod io_input;
 mod jacks;
 mod live_panels;
@@ -299,6 +300,12 @@ struct DeviceView {
     cv: [bool; 2],
     /// Character panel: how often a feed changed the display (the screen animation phase).
     anim: u32,
+    /// How many of the `revision` bumps were live display feeds (meters, scopes, analysers):
+    /// `revision - live` only moves when the panel's picture changes for another reason, which
+    /// is what the navigator's miniature follows.
+    live: u64,
+    /// The panel recorded for the navigator (see [`navigator`]).
+    mini: Option<navigator::Mini>,
     /// Params a macro of an enclosing container drives (key, macro 0-based): drawn locked.
     driven: Vec<(String, u8)>,
     /// Params with an automation lane (keys): their controls are marked.
@@ -342,6 +349,17 @@ fn descriptor_id(registry: &Registry, d: &RackDevice) -> usize {
 }
 
 impl DeviceView {
+    /// Counts a display feed (meter, scope or analyser values) as a revision of the panel.
+    fn bump_live(&mut self) {
+        self.revision += 1;
+        self.live += 1;
+    }
+
+    /// The panel's revision without the live display feeds.
+    fn still_revision(&self) -> u64 {
+        self.revision.saturating_sub(self.live)
+    }
+
     /// The panel has the BYPASS switch of the name strip (see
     /// [`autolayout::has_strip_bypass`]).
     fn has_strip_bypass(&self) -> bool {
@@ -649,6 +667,10 @@ pub struct RackView {
     /// The Workflow setting "Auto-route new devices" (default on): creating routes the device,
     /// deleting bridges its audio path. Shift at the create action inverts it for one device.
     auto_route: bool,
+    /// The view works on the flat document of the unfolded containers (see [`inline`]).
+    inline: bool,
+    /// The frames around the inside of the unfolded containers.
+    frames: Vec<inline::Frame>,
 }
 
 /// What a [`Rename`] types.
@@ -848,6 +870,8 @@ impl RackView {
             popped: 0,
             epoch: 0,
             auto_route: true,
+            inline: false,
+            frames: Vec::new(),
         }
     }
 
@@ -1003,7 +1027,12 @@ impl RackView {
                 .all(|(v, d)| {
                     v.key == d.key
                         && (trailing == 1 || v.column == d.column.min(self.columns - 1))
-                        && v.device
+                        && match inline::strip_of(d) {
+                            Some(_) => v.is_interface() && v.folded == self.strip_folded(),
+                            None => true,
+                        }
+                        && (inline::strip_of(d).is_some()
+                            || v.device
                             .as_ref()
                             .is_some_and(|s| s.type_id == d.type_id && s.folded == d.folded)
                         && v.device
@@ -1012,7 +1041,7 @@ impl RackView {
                         && v.desc_id == descriptor_id(registry, d)
                         // An audio track's panel opens and closes with its tuner.
                         && (v.fx != Some(FxKind::AudioTrack)
-                            || v.spec.fx.is_some() == v.analyser.tuner_on)
+                            || v.spec.fx.is_some() == v.analyser.tuner_on))
                 });
         if !same_structure {
             self.rebuild(doc, registry);
@@ -1022,6 +1051,9 @@ impl RackView {
         let mut renewed = false;
         for (i, d) in shown.iter().enumerate() {
             let d: &RackDevice = d;
+            if inline::strip_of(d).is_some() {
+                continue;
+            }
             let driven = self.driven_for(&d.key);
             let automated = self.automated_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
@@ -1316,6 +1348,8 @@ impl RackView {
             sc: None,
             cv: [false; 2],
             anim: 0,
+            live: 0,
+            mini: None,
             driven: Vec::new(),
             automated: Vec::new(),
             has_channel: false,
@@ -1339,6 +1373,14 @@ impl RackView {
         for d in self.shown(doc, registry) {
             let column = if scoped { 0 } else { d.column.min(columns - 1) };
             let (x, y) = (columns::column_left(column), ys[usize::from(column)]);
+            // The strips of an unfolded container have no device behind them.
+            if let Some(out) = inline::strip_of(d) {
+                let prev = old.remove(&d.key);
+                let view = self.strip_view(d, out, x, y, column, prev);
+                ys[usize::from(column)] += view.height;
+                self.devices.push(view);
+                continue;
+            }
             let desc = registry.get(&d.type_id).map(|f| *f.descriptor);
             let desc_id = descriptor_id(registry, d);
             let samples = registry.takes_samples(&d.type_id);
@@ -1408,6 +1450,8 @@ impl RackView {
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
             let anim = prev.as_ref().map_or(0, |p| p.anim);
+            let live = prev.as_ref().map_or(0, |p| p.live);
+            let mini = prev.as_mut().and_then(|p| p.mini.take());
             let scope = prev
                 .as_mut()
                 .map(|p| std::mem::take(&mut p.scope))
@@ -1479,6 +1523,8 @@ impl RackView {
                 sc,
                 cv,
                 anim,
+                live,
+                mini,
                 driven,
                 automated,
                 has_channel,
@@ -1533,6 +1579,8 @@ impl RackView {
                 sc: None,
                 cv: [false; 2],
                 anim: 0,
+                live: 0,
+                mini: None,
                 driven: Vec::new(),
                 automated: Vec::new(),
                 has_channel: false,
@@ -1553,6 +1601,7 @@ impl RackView {
         self.nav_layout += 1;
         self.columns = columns;
         self.content_height = ys.iter().copied().fold(0.0, f64::max);
+        self.compute_frames(doc);
         self.cables.clone_from(&doc.cables);
         self.refresh_console(doc, registry, true);
         self.input_channels = doc.input_channels;
@@ -1685,6 +1734,7 @@ impl RackView {
                         }
                         if let Some(cp) = d.spec.container {
                             for b in [
+                                ContainerButton::Fold,
                                 ContainerButton::Open,
                                 ContainerButton::Edit,
                                 ContainerButton::ToChannel,
@@ -2260,6 +2310,10 @@ impl RackView {
     pub fn set_flip(&mut self, flip: Flip) {
         if self.flip != flip {
             self.flip = flip;
+            // The strips of an unfolded container change height with the side.
+            if self.inline {
+                self.synced = false;
+            }
             self.drag = Drag::None;
             self.hover = None;
             self.hover_cable = None;
@@ -2558,7 +2612,7 @@ impl RackView {
 
     /// The cables of the open scope (the document's at the top level).
     fn cables_in_scope<'a>(&'a self, doc: &'a RackDoc) -> &'a [Cable] {
-        if self.scope.is_empty() {
+        if self.scope.is_empty() && !self.inline {
             &doc.cables
         } else {
             &self.cables
@@ -2610,7 +2664,7 @@ impl RackView {
             let Some(g) = self.sockets.get(socket) else {
                 return SocketHighlight::Idle;
             };
-            if !cables::compatible(anchor, &g.end) {
+            if !self.can_cable(anchor, &g.end) {
                 return SocketHighlight::Incompatible;
             }
             if self.drop_target().is_some_and(|t| &t.end.at == socket) {
@@ -2766,7 +2820,7 @@ impl RackView {
         match self.hit(self.pointer) {
             Some(Hit::Socket(i, slot)) => self
                 .socket_geo(i, slot)
-                .filter(|g| cables::compatible(anchor, &g.end)),
+                .filter(|g| self.can_cable(anchor, &g.end)),
             _ => None,
         }
     }
@@ -2795,10 +2849,23 @@ impl RackView {
     /// container the commands and actions carry **path keys** (`layer/synth`), and a gesture
     /// that changes the scope has already changed it when this returns.
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
+        // An unfolded container is part of the rack itself: its devices carry path keys and
+        // the commands go to the project as they are (see [`inline`]).
         // A press inside a container may start a drag out of it, which the model plans on the
         // whole project (the scope document has only the inside).
-        self.host_doc = (matches!(event, UiEvent::PointerDown { .. }) && self.scope.len() == 1)
-            .then(|| doc.clone());
+        let unfolded = self.scope.is_empty() && doc.devices.iter().any(inline::is_open);
+        self.host_doc = match event {
+            UiEvent::PointerDown { .. } if self.scope.len() == 1 => Some(doc.clone()),
+            UiEvent::PointerDown { .. }
+            | UiEvent::PointerUp { .. }
+            | UiEvent::Key { .. }
+            | UiEvent::FileDrop { .. }
+                if unfolded =>
+            {
+                Some(doc.clone())
+            }
+            _ => None,
+        };
         let view = self.prepare(doc, registry);
         let out = self.handle_in(event, &view, registry);
         self.finish(out, registry)
@@ -2918,10 +2985,20 @@ impl RackView {
                         let index = self.slot_index(doc, &dp, &[]);
                         // Inside a container there is one column: the index counts its devices.
                         let column = if self.scope.is_empty() { dp.column } else { 0 };
+                        // Dropped in the frame of an unfolded container it lands inside it.
+                        let rp = self.view_to_rack(at);
+                        let frame = self.frame_at(rp, &[]).map(|f| f.container.clone());
+                        let (container, slot) = match frame {
+                            Some(c) => {
+                                let (index, _, _) = self.inside_drop(&c, rp, &none);
+                                (Some(c), RackSlot { column: 0, index })
+                            }
+                            None => (self.scope_path(), RackSlot { column, index }),
+                        };
                         out.push(UiAction::InsertLibrary {
                             path: path.clone(),
-                            container: self.scope_path(),
-                            slot: RackSlot { column, index },
+                            container,
+                            slot,
                         });
                     }
                     return out;
@@ -3285,7 +3362,11 @@ impl RackView {
                 let keys: Vec<DeviceKey> = self
                     .inner_range()
                     .map(|j| &self.devices[j])
-                    .filter(|d| d.column == column && self.locked.as_ref() != Some(&d.key))
+                    .filter(|d| {
+                        d.column == column
+                            && !inline::is_inner(&d.key)
+                            && self.locked.as_ref() != Some(&d.key)
+                    })
                     .map(|d| d.key.clone())
                     .collect();
                 out.push(UiAction::Command(Command::Workflow(
@@ -3396,7 +3477,7 @@ impl RackView {
             (Hit::ToChannel(i), PointerButton::Primary) => {
                 self.select(i, out);
                 let d = &self.devices[i];
-                if !self.scope.is_empty() {
+                if !self.scope.is_empty() || inline::is_inner(&d.key) {
                     self.toast = Some(
                         "Devices inside a container reach the console through the container".into(),
                     );
@@ -3441,7 +3522,7 @@ impl RackView {
                     && self.flip == Flip::Front
                     && self.devices[i].spec.container.is_some() =>
             {
-                self.container_down(i, ContainerButton::Open, out);
+                self.container_down(i, ContainerButton::Fold, out);
             }
             (Hit::Device(i), PointerButton::Primary)
                 if clicks >= 2
@@ -3708,7 +3789,7 @@ impl RackView {
             } => {
                 // Released over the navigator the move is dropped, not applied.
                 if (at - start).hypot() > MOVE_THRESHOLD && !self.in_navigator(pos) {
-                    self.move_drop(dev, doc, modifiers, out);
+                    self.move_drop(dev, doc, registry, modifiers, out);
                 } else if collapse {
                     self.collapse_to(dev, out);
                 }
@@ -3807,12 +3888,29 @@ impl RackView {
         self.scroll_by(d * SCROLL_STEP);
     }
 
-    /// Where a device added from the browser goes: below the selection, else at the end.
-    fn add_index(&self, doc: &RackDoc) -> usize {
-        self.selected
-            .as_ref()
-            .and_then(|k| doc.devices.iter().position(|d| &d.key == k))
-            .map_or(doc.devices.len(), |i| i + 1)
+    /// Where a device added from the browser goes: below the selection, else at the end. The
+    /// container is `Some` when the selection is inside an unfolded container (`doc` is the
+    /// project): the device is added there, after the selected one.
+    fn add_place(&self, doc: &RackDoc) -> (Option<DeviceKey>, usize) {
+        match self.selected.as_ref() {
+            Some(k) if self.scope.is_empty() && inline::is_inner(k) => {
+                let (parent, local) = atomik_model::split_path(k);
+                let at = parent
+                    .as_ref()
+                    .and_then(|p| doc.inner(p))
+                    .and_then(|c| c.devices.iter().position(|d| d.key == local))
+                    .map_or(usize::MAX, |i| i + 1);
+                (parent, at)
+            }
+            Some(k) => (
+                None,
+                doc.devices
+                    .iter()
+                    .position(|d| &d.key == k)
+                    .map_or(doc.devices.len(), |i| i + 1),
+            ),
+            None => (None, doc.devices.len()),
+        }
     }
 
     /// The action the browser's add (Enter on a device row) emits for the built-in device
@@ -3826,7 +3924,12 @@ impl RackView {
         doc: &RackDoc,
         modifiers: Modifiers,
     ) -> UiAction {
-        self.add_device_action(desc.type_id, desc.kind, self.add_index(doc), modifiers)
+        match self.add_place(doc) {
+            (Some(container), index) => {
+                self.add_device_inside(desc.type_id, desc.kind, &container, index)
+            }
+            (None, index) => self.add_device_action(desc.type_id, desc.kind, index, modifiers),
+        }
     }
 
     fn add_device_action(
@@ -3940,7 +4043,10 @@ impl RackView {
         doc: &RackDoc,
         modifiers: Modifiers,
     ) -> Option<UiAction> {
-        self.add_row_action_at(row, self.add_index(doc), modifiers)
+        match self.add_place(self.host(doc)) {
+            (Some(container), index) => self.add_row_inside(row, &container, index),
+            (None, index) => self.add_row_action_at(row, index, modifiers),
+        }
     }
 
     /// [`Self::add_row_action`] at rack index `index` (the flat index of the add commands).
@@ -4214,6 +4320,7 @@ impl RackView {
                 canvas.pop_transform();
             }
         }
+        self.paint_frames(canvas, top, bottom);
         let side = self.flip as usize;
         for i in 0..self.devices.len() {
             let d = &self.devices[i];
@@ -4224,78 +4331,7 @@ impl RackView {
                 .as_ref()
                 .is_none_or(|l| l.revision() != d.revision);
             if stale {
-                let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
-                let info = PanelInfo {
-                    name: &d.name,
-                    editing_name: self
-                        .rename
-                        .as_ref()
-                        .filter(|r| r.dev == i && r.kind == RenameKind::Device)
-                        .map(|r| r.text.as_str()),
-                    caption: &d.caption,
-                    accent: d.accent,
-                    desc: d.desc.as_ref(),
-                    device: d.device.as_ref(),
-                    spec: &d.spec,
-                    side: self.flip,
-                    folded: d.folded,
-                    height: d.height,
-                    patch_browse: self.patch_browse.as_ref() == Some(&d.key),
-                    seed: paint::seed_of(&d.key.0),
-                    pad: d.pad,
-                    pad_names: &d.pad_names,
-                    pad_cabled: d.pad_cabled[usize::from(d.pad - 1)],
-                    sensitivity: d.sens,
-                    fx_meters: &d.meters,
-                    analyser: &d.analyser,
-                    sc_source: d.sc.as_deref(),
-                    fx_cv: d.cv,
-                    fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
-                    player: PlayerInfo {
-                        edit: d.edit,
-                        meters: &d.meters,
-                        page: d.page,
-                        fx_mode: d.fx_mode,
-                        pad_names: &d.pad_names,
-                        scope: d.spec.modsrc.is_some().then_some(&d.scope),
-                        rename: self
-                            .rename
-                            .as_ref()
-                            .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
-                            .map(|r| r.text.as_str()),
-                    },
-                    plugin: PluginInfo {
-                        status: &d.plugin_status,
-                        meters: &d.meters,
-                        has_channel: d.has_channel,
-                    },
-                    container: ContainerInfo {
-                        rename: self
-                            .rename
-                            .as_ref()
-                            .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
-                            .map(|r| (usize::from(r.index), r.text.as_str())),
-                        has_channel: d.has_channel,
-                    },
-                    driven: &d.driven,
-                    automated: &d.automated,
-                    io: self.io.info(),
-                    master: d.master.info(),
-                    from_clip: self.clip_scale.is_some(),
-                    sampling: self.sampling.as_ref() == Some(&d.key),
-                    grain: crate::granular_panel::GrainInfo {
-                        meters: &d.meters,
-                        sample: d.sample.as_ref(),
-                        peaks: d
-                            .device
-                            .as_ref()
-                            .filter(|_| d.spec.granular.is_some())
-                            .and_then(|dev| crate::granular_panel::shown_zone(dev, &d.meters))
-                            .and_then(|z| self.sample_peaks.get(&z.asset))
-                            .map(|p| &**p),
-                    },
-                };
-                paint::record_panel(&mut list, &self.theme, &info);
+                let list = self.record_panel_list(i, side);
                 self.devices[i].lists[side] = Some(list);
             }
             let d = &self.devices[i];
@@ -4325,6 +4361,85 @@ impl RackView {
         canvas.pop_transform();
         self.tree.clear_dirty();
         self.repaint = false;
+    }
+
+    /// Records the panel of device `i` as seen from `side` into a display list stamped for the
+    /// panel cache (the rack paints it, the navigator draws it scaled down).
+    fn record_panel_list(&self, i: usize, side: usize) -> DisplayList {
+        let d = &self.devices[i];
+        let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
+        let info = PanelInfo {
+            name: &d.name,
+            editing_name: self
+                .rename
+                .as_ref()
+                .filter(|r| r.dev == i && r.kind == RenameKind::Device)
+                .map(|r| r.text.as_str()),
+            caption: &d.caption,
+            accent: d.accent,
+            desc: d.desc.as_ref(),
+            device: d.device.as_ref(),
+            spec: &d.spec,
+            side: self.flip,
+            folded: d.folded,
+            height: d.height,
+            patch_browse: self.patch_browse.as_ref() == Some(&d.key),
+            seed: paint::seed_of(&d.key.0),
+            pad: d.pad,
+            pad_names: &d.pad_names,
+            pad_cabled: d.pad_cabled[usize::from(d.pad - 1)],
+            sensitivity: d.sens,
+            fx_meters: &d.meters,
+            analyser: &d.analyser,
+            sc_source: d.sc.as_deref(),
+            fx_cv: d.cv,
+            fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
+            player: PlayerInfo {
+                edit: d.edit,
+                meters: &d.meters,
+                page: d.page,
+                fx_mode: d.fx_mode,
+                pad_names: &d.pad_names,
+                scope: d.spec.modsrc.is_some().then_some(&d.scope),
+                rename: self
+                    .rename
+                    .as_ref()
+                    .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
+                    .map(|r| r.text.as_str()),
+            },
+            plugin: PluginInfo {
+                status: &d.plugin_status,
+                meters: &d.meters,
+                has_channel: d.has_channel,
+            },
+            container: ContainerInfo {
+                rename: self
+                    .rename
+                    .as_ref()
+                    .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
+                    .map(|r| (usize::from(r.index), r.text.as_str())),
+                has_channel: d.has_channel,
+            },
+            driven: &d.driven,
+            automated: &d.automated,
+            io: self.io.info(),
+            master: d.master.info(),
+            from_clip: self.clip_scale.is_some(),
+            sampling: self.sampling.as_ref() == Some(&d.key),
+            grain: crate::granular_panel::GrainInfo {
+                meters: &d.meters,
+                sample: d.sample.as_ref(),
+                peaks: d
+                    .device
+                    .as_ref()
+                    .filter(|_| d.spec.granular.is_some())
+                    .and_then(|dev| crate::granular_panel::shown_zone(dev, &d.meters))
+                    .and_then(|z| self.sample_peaks.get(&z.asset))
+                    .map(|p| &**p),
+            },
+        };
+        paint::record_panel(&mut list, &self.theme, &info);
+        list
     }
 
     /// The marks of the mapped controls of the front panels in view.

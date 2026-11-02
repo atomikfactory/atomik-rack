@@ -38,7 +38,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
-| `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
+| `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v40), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
@@ -209,12 +209,18 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   narrow to leave the rack 240 px hides it. It draws one uniform-scale overview of the whole
   content: the narrower of "all columns fit the width" and "the whole height fits", so the strip
   always shows every column and the viewport rectangle (the rack area's part of the rack, with the
-  zoom) is the only moving part; a very tall rack gets small blocks (at least 1.5 px high), not a
-  scrolling overview. Blocks are the rectangles `column_device_rects` reports (device colour, folded
-  heights, the Audio I/O strip on column 0, an empty column as an empty slot) and are recorded once
-  into a cached `DisplayList` keyed by the layout revision (bumped by `rebuild`) and the strip
-  geometry; scrolling, selecting and hovering redraw only the viewport rectangle and the selection
-  outlines, and no device panel is painted. A press outside the viewport rectangle centres it on the
+  zoom) is the only moving part; a very tall rack gets small pictures, not a scrolling overview. Each
+  device is a miniature of its real panel: the panel's own display list (`record_panel_list`, the
+  list the rack caches; one the rack already recorded is reused) is replayed under a scale
+  transform by `replay_scaled`, which drops fills too small to see, keeps text of 4 px or more,
+  draws smaller text as a bar of its colour and drops text under 1.4 px. A folded panel is drawn
+  folded, the Audio I/O strip tops column 0, and a panel shorter than 4 px is a flat block of its
+  device colour (at least 1.5 px high). Each panel is recorded for the strip once per picture
+  change (`Mini`, keyed by `still_revision`: the panel revision without the live meter, scope and
+  analyser feeds counted by `bump_live`, so playback never records it again), and the miniature is one
+  cached `DisplayList` keyed by those stamps, the layout revision (bumped by `rebuild`), the shown
+  side and the strip geometry; scrolling, selecting and hovering redraw only the viewport
+  rectangle and the selection outlines. A press outside the viewport rectangle centres it on the
   point, a press inside keeps the grab point, a drag follows the pointer (`Drag::Navigator`, also
   outside the strip, clamped to the content), the wheel scrolls as over the rack (Shift sideways).
   The strip never starts a device drag, and a device or browser row released over it is dropped.
@@ -1465,8 +1471,15 @@ of them touching the engine or the audio thread.
   track (the track selected in the arrangement, the track of a selected or open clip, or the
   selected rack device) at the snapped playhead, and makes new tracks (a poly synth each) at the
   playhead when no note track is selected; File > Import MIDI as Song makes new tracks from tick 0
-  and also takes the tempo map, meter map and markers; a `.mid` or `.midi` file dropped on the
-  window always makes new tracks at the playhead (audio files in the same drop go on as before).
+  and also takes the tempo map, meter map and markers. The file browser lists `.mid` and `.midi`
+  files (`FileKind::Midi`, the extensions are `atomik_library::MIDI_EXTENSIONS`, shared with the
+  import dialog) with a MIDI label, and a double click or Enter on one is File > Import MIDI. A
+  MIDI file dropped from the browser or the system on the arrangement goes where it lands
+  (`UiAction::ImportMidi`, `AppCore::import_midi_at`): on a note lane it is one clip on that lane
+  at the snapped drop tick (a file of several tracks is merged into that one clip, as the import
+  does), elsewhere in the track area it makes new tracks from the drop tick; dropped anywhere else
+  in the window (the rack included, an instrument there is not a target) it makes new tracks at the
+  playhead (audio files in the same drop go on as before).
   File > Export MIDI Clip, Track and Song are disabled while there is nothing to write (a note clip
   selected or open, a note track selected, a note track in the song). The dialogs are
   `ShellRequest::PickImportMidi` and `PickExportMidi`; the file is read and converted before
@@ -3302,7 +3315,7 @@ parameter tables are in [DEVICES.md](DEVICES.md).
   upgrades, section 5); the strip's own `insert.bypass` is a separate switch that is not delay
   compensated. See [DEVICES.md](DEVICES.md#effect-bypass).
 - **Utility devices.** Gain Tool, Stereo Tool, Gate, Gate + Compressor, Sidechain Tool and Envelope
-  Filter are `Bypassable` effects; Spider Audio and Spider CV are plain utilities whose merge inputs
+  Filter are `Bypassable` effects; Audio Split/Merge and CV Split/Merge are plain utilities whose merge inputs
   are `Direction::SummingInput` (the model's cable rules and the engine's summing and delay
   compensation treat them like a console bus input, in source order). They share the descriptor
   builders of `devices/src/tool_support.rs`, use the deterministic `log2_det`/`exp2_det`, and the
@@ -3398,7 +3411,8 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
 
 - **Document** ([model/src/container.rs](../crates/model/src/container.rs)).
   `RackDevice::inner: Option<Box<ContainerDoc>>`, only on devices of `DeviceKind::Container`.
-  `ContainerDoc { devices, cables, macros: [MacroDoc; 8], splits: Vec<NoteSplit> }`; inner cables
+  `ContainerDoc { devices, cables, macros: [MacroDoc; 8], splits: Vec<NoteSplit>, open: bool }`
+  (`open`: unfolded in the rack, view state only, stored as an optional `"open": true`); inner cables
   and splits use local keys, and the reserved key `boundary` names the inside edge (outputs `in_l`,
   `in_r`; inputs `out_l`, `out_r`). Limits: nesting depth 3, 32 devices per container, 256 inner
   devices per project, 8 splits, 32 targets per macro and 128 per container; no console devices,
@@ -3434,15 +3448,19 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   bit when no moved device draws from the project seed, which a device gets from its place in the
   flat list). A cable the container has no socket for (CV, a third audio input or output, a notes
   output, a second notes source) refuses the command and names each such cable, as do a frozen
-  track, a macro bank that drives a moved device, a group over the device limits and a type a
-  container cannot hold. A container has one song track, one console channel and one FX return: at
-  most one moved device may have them (its *owner*), and the track, the channels and the return then
+  track, a macro bank that drives a moved device and a group over the device limits. A device no
+  container can hold (a mixer strip, an audio track) is left in the rack with a note and the rest
+  is combined; only a selection made of such devices is refused, naming the first. A container has
+  one song track, one console channel and one FX return: at most one moved device may have them
+  (its *owner*; two refuse the combine and are named), and the track, the channels and the return then
   name the container (the track keeps its place, folder and colour; its automation lanes are dropped,
   because they name params of the owner, and the track's note entry becomes the splits).
   `Uncombine` hands them to the inner device that stands out (the only instrument, else the end of
   the track's note chain, else the only device) and drops the container's macros and macro lanes.
   What a command dropped comes back as text from `RackDoc::container_move_notes`, which the app
-  shows after the step. The moves work on top-level devices and top-level containers.
+  shows after the step; the Edit menu enables Combine from the same scratch-document plan the context
+  menu uses (`combine_menu`, computed once per revision and selection). The moves work on top-level
+  devices and top-level containers.
 - **Bypass.** The container's `bypass` param (a toggle) is read by `RackDoc::expand`, so the engine
   needs no change: a bypassed container has no inner devices, cables or macros in the flat graph,
   and a signal into `in_l`, `in_r` goes straight to whatever `out_l`, `out_r` feed (its `~split`
@@ -3482,17 +3500,28 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
 - **UI** ([ui/src/container_panel.rs](../crates/ui/src/container_panel.rs),
   [breadcrumb.rs](../crates/ui/src/breadcrumb.rs),
   [container_editor.rs](../crates/ui/src/container_editor.rs),
-  [rack/container_input.rs](../crates/ui/src/rack/container_input.rs)). A double-click or OPEN
-  enters a container: the rack view works on a scope document (the container's devices and cables
-  with local keys, boundary drawn as two pseudo-panels) and lifts what it emits to path keys and
-  `ContainerCommand`s; a breadcrumb bar, Back, Esc and Backspace go up. The 2 U panel has OPEN,
-  EDIT, TO CH and eight named macro knobs; a right-click on an inner control maps it to a macro, a
+  [rack/container_input.rs](../crates/ui/src/rack/container_input.rs)). OPEN enters a container:
+  the rack view works on a scope document (the container's devices and cables with local keys,
+  boundary drawn as two pseudo-panels) and lifts what it emits to path keys and
+  `ContainerCommand`s; a breadcrumb bar, Back, Esc and Backspace go up. A double-click on the
+  panel or its fold arrow instead unfolds the container in place
+  ([rack/inline.rs](../crates/ui/src/rack/inline.rs)): `ContainerDoc::open` (saved as an optional
+  `"open"` flag, undoable with `ContainerCommand::SetOpen`, never seen by `expand`) makes the
+  view work on a flat document, `flatten`, that holds each unfolded container's devices (path
+  keys), its two strips (pseudo-devices `<path>/boundary` and `<path>/boundary~out`, half a unit
+  tall on the front and whole on the back) and its inner cables with path keys, so a gesture
+  emits path keys with nothing to lift. A `Frame` per unfolded container is drawn in the margin
+  beside the column and is a drop target; `inline_drop` turns a drop into a reorder
+  (`MoveDevice`), `MoveIntoContainer` or `MoveOutOfContainer` (planned on the project, kept
+  in `host_doc` while an unfolded rack handles an event, so a refusal reads as the model's own
+  message), and `can_cable` keeps a cable inside one container. The 2 U panel has the fold
+  arrow, OPEN, EDIT, TO CH and eight named macro knobs; a right-click on an inner control maps it to a macro, a
   mapped control is locked, and Ctrl/Cmd+D duplicates the selected container. The container's name
   strip has the BYPASS switch of the built-in effects (one `SetParam` of `bypass`, the body veiled
   while it is on, locked while a macro drives it).
   [rack/container_move.rs](../crates/ui/src/rack/container_move.rs) holds the rack's side of
   Combine, Uncombine and the moves: the device menu and the Edit menu list Combine and Uncombine
-  (Ctrl/Cmd+Shift+G and U), and Move Out of Container while a container is open; the device menu
+  (Ctrl/Cmd+Shift+G and U), and Move Out of Container for a device of an open or unfolded container; the device menu
   enables each by planning the command on a scratch copy of the document
   (`combine_reason`, `uncombine_reason`, `move_out_reason`), so a refusal is the model's own message
   and the key or the Edit menu shows it as a toast. Dropping one device on the body of a
@@ -4098,11 +4127,16 @@ creation chain in the **Creation chain** bullet.
   (`RemoveClips`, `RemoveTrack`, the points) are workflow commands, so each is one undo step; the
   piano roll duplicates notes (`DuplicateNotes`). The restructuring commands are workflow
   commands too: `InsertTime` and `RemoveTime` (the `time_edit` module of the model) move clips,
-  take groups, markers, ranges, tempo and meter events, the loop and the song End together and are
-  refused while a track is frozen; `ReverseClips`, `ScaleTempo`, `ChopClips` and
+  take groups, markers, ranges, tempo and meter events, the loop and the song End together (what
+  starts on the point moves, but the song's first tempo and meter) and are refused while a track is
+  frozen; `ReverseClips`, `ScaleTempo`, `ChopClips` and
   `CleanupAutomation` (`clip_transform`) work on a selection, and `JoinClips` leaves muted clips
   out and unrolls loops. They act at the loop locators and on the selection through the
-  `sequencer.*` ids the Edit menu and the clip menu use. *Clipboard*
+  `sequencer.*` ids the Edit menu and the clip menu use. `StretchClips` is `ScaleTempo` about each
+  clip's own fixed edge: the gesture is an Alt+drag on a clip edge (`Drag::Stretch`), whose steps
+  reach the app as `UiAction::StretchStep` and run as a `Document::apply_trial` preview
+  (`AppCore::stretch_step`: the trial is cancelled and re-planned from the original at every
+  step, so no undo step exists until the release commits one). *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of

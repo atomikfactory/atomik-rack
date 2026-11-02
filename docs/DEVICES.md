@@ -3174,15 +3174,31 @@ of the flat graph (no inner device, cable or macro) and `in_l`, `in_r` go straig
   it. A container inside a container has it too.
 - **Combine** and **Uncombine** are in the Edit menu and in the device context menu
   (`Ctrl+Shift+G` and `Ctrl+Shift+U`, `Cmd` on macOS). Combine takes the selected top-level
-  devices, Uncombine the selected container. In the context menu an item the model would refuse
-  is dimmed; running one anyway (key or Edit menu) shows the refusal in the status toast, with
+  devices (a mixer strip or an audio track stays in the rack; two devices that each have a song
+  track or mixer channel are refused), Uncombine the selected container. An item the model would refuse
+  is dimmed in both menus; running one anyway (key) shows the refusal in the status toast, with
   the cables that have no socket on the container.
-- **Move Out of Container** is in the context menu while a container is open: the selected
-  device goes back to the rack right after the container.
-- **Drag in and out.** Drop one device on the body of a container's panel to move it inside (the
-  panel is outlined while you hold it there; the top and bottom edge of the panel still place a
-  device above or below it). While a container is open, drop a device on **Project** or Back in the
-  breadcrumb to move it out. A group of devices is placed like any other move, not moved inside.
+- **Fold and unfold.** The arrow on the title strip of a container's panel, or a double-click on
+  the panel outside its controls, unfolds the inside in place: the container's devices are drawn
+  under its panel in the same column, in a frame in the container's colour, between a thin INPUT
+  strip and a thin OUTPUT strip. A container nested in it unfolds the same way inside its own
+  frame. Everything works on those devices as on the ones of the rack (knobs, patch strips,
+  selection, delete, duplicate, rename, mapping a control to a macro, Tab for the back panel and
+  its cables, the container's own jacks being on the two strips); the selection stays inside one
+  container, and a cable joins two jacks of the same container only. Whether it is unfolded is
+  saved with the project and is an undo step. A Combine leaves the new container unfolded. OPEN
+  (the button next to EDIT) still shows the inside in a view of its own.
+- **Move Out of Container** is in the context menu while a container is open or unfolded: the
+  selected device goes back to the rack right after the container.
+- **Drag in and out.** Drag a device of the rack into the frame of an unfolded container, or drop
+  it on the body of a container's panel, to move it inside (the panel or the frame is outlined
+  while you hold it there; the top and bottom edge of the panel still place a device above or
+  below it). Drag an inner device out of its frame to move it back to the rack, in the column of
+  its container; inside the frame it reorders (a group moves together). While a container is open
+  in a view of its own, drop a device on **Project** or Back in the breadcrumb to move it out. A
+  group of devices is placed like any other move, not moved in or out. A device of a nested
+  container stays in it: only the containers of the rack take devices from the rack and give them
+  back. When the model refuses a move the toast says why.
 
 ## Note split: `atomik.note-split` (Utility, internal)
 
@@ -3284,8 +3300,10 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
 | `mono` | 0 or 1 | 0 | toggle |
 | `bypass` | 0 or 1 | 0 | toggle |
 
-- **Order:** polarity, width, balance, mono, then the mid/side mode. Encode writes
+- **Order:** polarity, width, balance, the mid/side mode, then mono. Encode writes
   `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
+- **Mono** is the last stage: both outputs become `(L + R) / 2` of what the mode produced (10 ms
+  ramp), so the output is mono in every mode, an encoded signal included.
 - **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
   that frequency; only the band above it is widened, the bass stays as it was.
 - Width 1, balance 0, polarity and mono off, mode stereo: the output is the input bit for bit.
@@ -3402,7 +3420,7 @@ Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `gate_cv_in` (CV in),
 - A step-gated variant is not a mode: the step sequencer and CV sequencer gate it through
   `gate_cv_in`.
 
-### Spider Audio: `atomik.spider-audio` (Utility)
+### Audio Split/Merge: `atomik.spider-audio` (Utility)
 
 Four stereo merge inputs and a four-way stereo split.
 Source: [spider.rs](../crates/devices/src/spider.rs).
@@ -3414,7 +3432,7 @@ Sockets: `m1_l`, `m1_r` to `m4_l`, `m4_r` (Audio summing inputs: any number of c
 source endpoints, so the sum is the same for every block size; the delay compensation aligns
 the merged cables like those of a console bus.
 
-### Spider CV: `atomik.spider-cv` (Utility)
+### CV Split/Merge: `atomik.spider-cv` (Utility)
 
 Four trimmed CV merge inputs and two split-and-invert inputs.
 Source: [spider.rs](../crates/devices/src/spider.rs).

@@ -586,7 +586,8 @@ alone). `crates/app/src/app_core_midi_tests.rs` and `shell_midi_tests.rs` run th
 headless core and `Shell`: what an export picks, a song written to a file and imported into a new
 project, one clip on a selected track, new tracks at the playhead, bad, truncated and corrupted
 files (the document stays valid), the menu entries and their enabled flags, the dialog requests and
-a file dropped on the window. The QA server's `session_midi` has a test in
+a file dropped on the window, on a note lane and below the tracks, and a MIDI file loaded from the
+browser. The QA server's `session_midi` has a test in
 `crates/mcp/tests/session.rs`.
 
 Hand checks, not automated (they need another program or a real window):
@@ -1697,6 +1698,16 @@ combine bit for bit, on instrument and effect selections and across host blocks,
 bypassed container without its inside. `crates/app/src/app_core_combine_tests.rs` proves the live
 render equals the bounce through combine, undo, redo, uncombine and the bypass switch.
 
+`crates/model/tests/combine_multi.rs` covers selections of several devices: two instruments that each
+have a track and a channel are refused naming both, each instrument combines with its own effects,
+a selection with mixer strips or an audio track leaves them in the rack, and a drum machine with its
+generator combines and uncombines to the exact document.
+
+The unfolded container is `crates/ui/tests/container_inline.rs` (the flat view, its layout and frames,
+the fold gestures, selection, delete, reorder and the moves in and out of a frame, browser and
+library drops in a frame, the macro menu, the back panel and its cables, goldens
+`container_inline_*`); the model side of the flag is `crates/model/tests/container_open.rs`.
+
 The rack's side is `crates/ui/tests/rack_combine.rs` (the reasons the menus show, a drop on a
 container's panel and on the breadcrumb, the BYPASS switch of the panel, goldens
 `container_bypassed_front_1x.json` and `container_drop_target_1x.json`), the menu tests in
@@ -1720,7 +1731,13 @@ Hand checks, not automated (they need a real window, your mouse and your ears):
   container" and the effect goes inside on release (the container's summary counts it). Drag it
   to the top edge of the panel instead: it is placed above the container. Drag a group of devices
   over a container: they are placed, not moved inside.
-- Open a container (double-click) and drag one inner device onto **Project** in the breadcrumb (the
+- Click the arrow on a container's panel (or double-click the panel): its devices are drawn under
+  it in a frame, between a thin INPUT strip and a thin OUTPUT strip. Turn a knob of an inner
+  device, drag it up and down inside the frame, drag one out of the frame to the rack and back
+  in, and press Tab: the strips show the container's jacks and a cable from the INPUT strip to an
+  inner device holds. Combine two devices: the new container is unfolded. Undo folds and
+  unfolds as one step each; save, reopen and the container is as you left it.
+- Open a container (the OPEN button) and drag one inner device onto **Project** in the breadcrumb (the
   segment lights up): it lands in the rack right after the container. Select one inner device and
   choose Move Out of Container from its context menu: the same. Both are one undo step.
 - Click BYPASS in a container's name strip while a note plays through it: the inside drops out at

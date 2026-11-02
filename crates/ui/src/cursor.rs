@@ -19,6 +19,8 @@ pub enum CursorHint {
     Pen,
     /// An eraser: the eraser tool.
     Eraser,
+    /// A bar with arrows each side: a clip edge that stretches the clip (the stretch role).
+    Stretch,
     /// A blade: the razor tool.
     Razor,
     /// A speaker: the speaker tool.
