@@ -469,6 +469,38 @@ pub(super) fn load_song(
         &song,
         warnings,
     )?;
+    // Formats before 40 never bounded the values; from 40 on a fade past its clip is only a
+    // request left by a later trim or tempo change, which flattening clamps without a warning.
+    if version < 40 {
+        clamp_audio_spans(&mut song, doc.sample_rate, warnings);
+    }
     warnings.append(&mut loose.warnings);
     Ok(song)
+}
+
+/// Clamps the fades and gain envelope of every audio clip to the clip's length (an older file
+/// may hold values past it; flattening played them clamped, so the sound is unchanged), one
+/// warning per clip.
+fn clamp_audio_spans(song: &mut Song, sample_rate: u32, warnings: &mut Vec<String>) {
+    let clock = song.frame_clock(sample_rate);
+    let mut clamp = |c: &mut Clip| {
+        let span = c.loop_length.map_or(c.length, |l| l.min(c.length));
+        let frames = clock.at(c.start.saturating_add(span)) - clock.at(c.start);
+        if let ClipContent::Audio(a) = &mut c.content
+            && crate::song_cmd::clamp_audio_span(a, frames)
+        {
+            warnings.push(format!(
+                "audio clip {} had a fade or envelope point past its length; clamped to the clip",
+                c.id.0
+            ));
+        }
+    };
+    for lane in song.tracks.iter_mut().flat_map(|t| &mut t.lanes) {
+        for c in &mut lane.clips {
+            clamp(c);
+        }
+        for c in lane.take_groups.iter_mut().flat_map(|g| &mut g.takes) {
+            clamp(c);
+        }
+    }
 }

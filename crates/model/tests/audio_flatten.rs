@@ -238,8 +238,23 @@ fn fades_longer_than_the_clip_are_clamped_and_multiply() {
         fade_out: 10 * BAR_F,
         ..audio(1)
     };
-    d.apply(add_audio_clip_with("audio-track", 0, BAR, a), &reg)
+    // A trim keeps the stored fades (they are a request); flattening clamps them.
+    d.apply(add_audio_clip_with("audio-track", 0, 10 * BAR, a), &reg)
         .unwrap();
+    let id = last(&d);
+    d.apply(
+        sc(SongCommand::SetClipGeometry {
+            id,
+            start: 0,
+            length: BAR,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
     let r = &flat(&d, "audio-track")[0];
     assert_eq!((r.fade_in, r.fade_out), (BAR_F, BAR_F));
     // Halfway: 0.5 in, 0.5 out.
