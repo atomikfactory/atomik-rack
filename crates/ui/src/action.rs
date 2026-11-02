@@ -18,6 +18,24 @@ pub enum UiAction {
     Command(Command),
     /// A drag ended (pointer released): call [`atomik_model::Document::end_merge`].
     EndMerge,
+    /// A step of a clip edge dragged with the stretch role: the host puts the document back to
+    /// before the drag and stretches `ids` by `percent` (see
+    /// [`atomik_model::WorkflowCommand::StretchClips`]) as a preview that adds no undo step.
+    /// Any later command accepts the preview first.
+    StretchStep {
+        /// The clips being stretched.
+        ids: Vec<ClipId>,
+        /// The new tempo as a percentage of the old one.
+        percent: f64,
+        /// The start edge was grabbed.
+        from_start: bool,
+    },
+    /// The stretch drag ended: `commit` keeps the last preview as one undo step, otherwise the
+    /// document goes back to what it was before the drag.
+    StretchEnd {
+        /// Keep the stretch.
+        commit: bool,
+    },
     /// Undo (Ctrl+Z / Cmd+Z).
     Undo,
     /// Redo (Ctrl+Shift+Z, Ctrl+Y / Cmd+Shift+Z).
@@ -140,6 +158,19 @@ pub enum UiAction {
     /// for [`UiAction::ImportAudio`] with the selected audio track (or new tracks) and the
     /// playhead as `tick`. The arrangement view itself has no menu and never emits this.
     ImportAudioDialog,
+    /// MIDI files were dropped on the arrangement at the snapped song tick `tick` (never
+    /// negative). With `lane` (the track's instrument and an index into its lanes, always a
+    /// note lane) each file becomes one clip on that lane starting at `tick`; with `None`
+    /// (dropped anywhere else in the track area) each file makes new tracks starting at `tick`.
+    /// One undo step per file.
+    ImportMidi {
+        /// The dropped `.mid` / `.midi` files, in drop order.
+        paths: Vec<PathBuf>,
+        /// The note lane under the pointer, if it was on one.
+        lane: Option<(DeviceKey, usize)>,
+        /// Song tick of the first clip.
+        tick: i64,
+    },
     /// The TUNER button of an audio track panel: show (`on`) or hide that track's tuner. The app
     /// then reads the track's input at the display rate and feeds the panel with
     /// [`crate::RackView::set_analyser`]; the track is muted while it shows when its

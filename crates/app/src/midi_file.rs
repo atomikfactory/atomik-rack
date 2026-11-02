@@ -47,16 +47,12 @@ use std::path::Path;
 /// The most markers an import takes from one file (the rest is dropped).
 pub const MAX_IMPORTED_MARKERS: usize = 1000;
 
-/// File extensions the import dialog offers.
-pub const MIDI_EXTENSIONS: [&str; 2] = ["mid", "midi"];
+/// File extensions the import dialog offers: the list the file browser classifies by.
+pub use atomik_library::MIDI_EXTENSIONS;
 
 /// True if `path` has one of the [`MIDI_EXTENSIONS`] (any case).
 pub fn is_midi_path(path: &Path) -> bool {
-    path.extension().is_some_and(|e| {
-        MIDI_EXTENSIONS
-            .iter()
-            .any(|known| e.eq_ignore_ascii_case(known))
-    })
+    atomik_library::classify(path, false) == Some(atomik_library::FileKind::Midi)
 }
 
 /// Why a MIDI file could not be imported.

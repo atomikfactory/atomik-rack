@@ -1688,3 +1688,24 @@ fn a_file_that_cannot_be_decoded_gets_an_empty_picture_and_the_core_stays_idle()
     assert_eq!(tempo, None);
     assert!(levels.is_empty());
 }
+
+#[test]
+fn midi_files_are_listed_with_their_own_kind_in_every_case() {
+    let lib = library("midi-rows");
+    for name in ["riff.mid", "Long.MIDI", "notes.txt"] {
+        std::fs::write(lib.path(name), b"MThd").unwrap();
+    }
+    let mut c = core();
+    show(&mut c, &lib.0);
+    let listed = rows(&c);
+    let kind_of = |n: &str| listed.iter().find(|r| r.name == n).map(|r| r.kind);
+    assert_eq!(kind_of("riff.mid"), Some(FileKind::Midi));
+    assert_eq!(kind_of("Long.MIDI"), Some(FileKind::Midi));
+    assert_eq!(
+        kind_of("notes.txt"),
+        None,
+        "other files stay out of the list"
+    );
+    let riff = listed.iter().find(|r| r.name == "riff.mid").unwrap();
+    assert!(riff.info.is_none() && riff.item.is_none());
+}
