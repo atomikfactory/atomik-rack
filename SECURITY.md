@@ -50,6 +50,22 @@ process.
   share with the child. Report a plugin that, through that channel, crashes or hangs the
   application, corrupts its memory, or escapes the sandbox's guarantees (a hostile child must not be
   able to take the application down).
+- The plugin cache (`plugins.json` in the settings folder) is trusted as the user's own file. It is
+  written by Atomik after a scan and lists the plugin files found, their ids and how to load them; the
+  app does not sign it, and a scan compares each file's stamp (size and modification time) with it
+  to decide whether the file is read again. Whoever can write to the
+  settings folder can already run code as the user, so the cache is not a boundary: a plugin that the
+  cache names is loaded the way a scanned one is (in the sandbox child when the sandbox is on).
+  A cache of another schema version is rebuilt.
+- The macOS app is built with the hardened runtime and the entitlement
+  `com.apple.security.cs.disable-library-validation` (with the two that allow generated code), because
+  it must load plugin libraries that other developers signed, or did not sign. That entitlement is
+  what lets a library signed by anyone be loaded into the application or the plugin host process:
+  the sandbox child limits the damage of a crash, not of a hostile plugin. See
+  [docs/RELEASING.md](docs/RELEASING.md) for the full list of entitlements.
+- Where plugins run is shown, not assumed: Settings > Plugins and the status line say `sandbox` or
+  `in-process`, and when the sandbox is switched on but cannot start the app says so once and runs
+  the plugins in-process instead of failing silently.
 - A crash or hang of the plugin's own process, or of the application when the sandbox is off, caused
   by a buggy plugin is a normal bug, not a vulnerability.
 
