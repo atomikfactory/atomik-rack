@@ -43,6 +43,7 @@ mod library_io;
 mod loop_convert;
 mod macros;
 mod macros_io;
+mod master_tune;
 mod midi_import;
 mod midi_map;
 mod midi_map_io;
@@ -115,6 +116,7 @@ pub use macros::{
     MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MacroAssign, MacroCommand, MacroName, MacroSet,
     assign_position, assign_value, expand_bank_lane, macro_index_of, macro_key,
 };
+pub use master_tune::{MASTER_TUNE_MAX_CENTS, tune_ratio};
 pub use midi_import::{ImportedTrack, MidiImport};
 pub use midi_map::{
     DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
@@ -371,6 +373,10 @@ pub struct RackDoc {
     /// What the user wrote about the song: title, author, notes, address and e-mail (empty for a
     /// new project). Project data with no part in the sound: see [`crate::song_info`].
     pub info: SongInfo,
+    /// The master tune in cents around A = 440 Hz, within +/-[`MASTER_TUNE_MAX_CENTS`] (0 for a
+    /// new project and when the file has none). Shifts every pitched device: see
+    /// [`crate::master_tune`].
+    pub tune_cents: f32,
 }
 
 /// An edit. Every command is undoable.
@@ -533,6 +539,10 @@ pub enum Command {
     /// info equal to the current one is rejected. Reports [`SyncOp::ViewChanged`]. Not accepted
     /// by [`Command::Batch`].
     SetSongInfo(SongInfo),
+    /// Sets the master tune in cents (finite, within +/-[`MASTER_TUNE_MAX_CENTS`]), one undo
+    /// step; the current value is rejected. Reports [`SyncOp::TuneChanged`]. Not accepted by
+    /// [`Command::Batch`].
+    SetMasterTune(f32),
     /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
     /// in one undo step. The app has already resampled the assets the song uses and registered
     /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
@@ -772,6 +782,7 @@ pub enum Command {
 /// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
 /// | `SetInputChannels`, `SetOutputChannels` | `RoutingChanged` |
 /// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
+/// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
@@ -831,6 +842,9 @@ pub enum SyncOp {
     },
     /// Tempo changed.
     TempoChanged(f64),
+    /// The master tune changed (cents, see [`crate::master_tune`]); the app sends it to the engine,
+    /// which applies it at the next batch boundary.
+    TuneChanged(f32),
     /// Only presentation changed (fold, name, colour, order); no engine work.
     ViewChanged,
     /// The song changed (tracks, clips, tempo map, meter, loop); the app recompiles and
@@ -2033,6 +2047,7 @@ impl Document {
             Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
             Command::SetOutputChannels(n) => rules::plan_output_channels(doc, n)?,
             Command::SetSongInfo(info) => song_info::plan_set(doc, &info)?,
+            Command::SetMasterTune(cents) => master_tune::plan_set(doc, cents)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
@@ -2208,6 +2223,7 @@ pub fn empty_doc() -> RackDoc {
         midi_maps: Vec::new(),
         macros: MacroSet::default(),
         info: SongInfo::default(),
+        tune_cents: 0.0,
     }
 }
 

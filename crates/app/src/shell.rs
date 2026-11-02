@@ -747,6 +747,8 @@ impl<B: AudioBackend> Shell<B> {
         }
         let pre_count = shell.core.sink().settings().pre_count_bars;
         shell.core.set_pre_count_bars(pre_count);
+        let default_tune = shell.core.sink().settings().master_tune_cents;
+        shell.core.set_default_tune(default_tune);
         shell.layout_view();
         shell.poll_status();
         shell
@@ -1792,7 +1794,10 @@ impl<B: AudioBackend> Shell<B> {
         .into_iter()
         .flatten()
         .collect();
-        let mut dialog = SettingsDialog::new(session.settings().clone(), lists).with_preferences(
+        // The tune field edits the open project's tune; the saved default only changes with it.
+        let mut current = session.settings().clone();
+        current.master_tune_cents = self.core.doc().tune_cents;
+        let mut dialog = SettingsDialog::new(current, lists).with_preferences(
             KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),
             self.workflow.clone(),
         );
@@ -5973,7 +5978,29 @@ impl<B: AudioBackend> Shell<B> {
         self.apply_settings(settings);
     }
 
-    fn apply_settings(&mut self, settings: AudioSettings) {
+    /// Applies the tune the Settings dialog asked for: `chosen` replaces the project's tune (one
+    /// undo step) and is kept as the default for new projects when it is not the tune the dialog
+    /// opened with; otherwise `saved` stays the default. Returns the default to save.
+    fn apply_tune_setting(&mut self, chosen: f32, saved: f32) -> f32 {
+        let project = self.core.doc().tune_cents;
+        if chosen.to_bits() == project.to_bits() {
+            return saved;
+        }
+        if let Err(e) = self
+            .core
+            .apply_command(atomik_model::Command::SetMasterTune(chosen))
+        {
+            self.notify(format!("Master tune not changed: {e}"));
+            return saved;
+        }
+        chosen
+    }
+
+    fn apply_settings(&mut self, mut settings: AudioSettings) {
+        let saved_tune = self.core.sink().settings().master_tune_cents;
+        settings.master_tune_cents =
+            self.apply_tune_setting(settings.master_tune_cents, saved_tune);
+        self.core.set_default_tune(settings.master_tune_cents);
         let gain = settings.metronome_gain;
         let pre_count = settings.pre_count_bars;
         let before = self.core.sink().settings().clone();

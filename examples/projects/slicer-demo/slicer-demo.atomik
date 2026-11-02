@@ -1,6 +1,6 @@
 {
   "format": "atomik-project",
-  "version": 39,
+  "version": 40,
   "sample_rate": 48000,
   "tempo_bpm": 100,
   "seed": 0,

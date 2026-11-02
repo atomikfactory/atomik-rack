@@ -330,3 +330,40 @@ fn the_native_menu_layout_has_no_in_window_bar() {
     s.paint(&mut list);
     assert!(!list.texts().contains(&"File"));
 }
+
+#[test]
+fn the_settings_master_tune_edits_the_project_and_becomes_the_default_for_new_ones() {
+    let mut s = shell();
+    // Opening the dialog shows the project's tune, not the saved default.
+    s.core_mut()
+        .apply_command(Command::SetMasterTune(12.0))
+        .unwrap();
+    s.execute(AppCommand::AudioSettings);
+    let shown = s.dialog().unwrap().draft().master_tune_cents;
+    assert!((shown - 12.0).abs() < 1e-6);
+    s.dialog = None;
+
+    // Applying another value is one undo step on the project and the new default.
+    let mut wanted = s.core().sink().settings().clone();
+    wanted.master_tune_cents = -30.0;
+    s.apply_settings(wanted);
+    assert!((s.core().doc().tune_cents + 30.0).abs() < 1e-6);
+    assert!((s.core().sink().settings().master_tune_cents + 30.0).abs() < 1e-6);
+    s.core_mut().undo();
+    assert!((s.core().doc().tune_cents - 12.0).abs() < 1e-6);
+
+    // A new project starts with the default.
+    s.core_mut().new_document();
+    assert!((s.core().doc().tune_cents + 30.0).abs() < 1e-6);
+
+    // Applying other settings with the project's own tune leaves the default alone.
+    s.core_mut()
+        .apply_command(Command::SetMasterTune(5.0))
+        .unwrap();
+    let mut other = s.core().sink().settings().clone();
+    other.master_tune_cents = 5.0;
+    other.buffer_frames = 512;
+    s.apply_settings(other);
+    assert!((s.core().sink().settings().master_tune_cents + 30.0).abs() < 1e-6);
+    assert!((s.core().default_tune() + 30.0).abs() < 1e-6);
+}

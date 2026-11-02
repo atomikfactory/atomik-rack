@@ -205,6 +205,7 @@ impl RackView {
             midi_maps: Vec::new(),
             macros: Default::default(),
             info: Default::default(),
+            tune_cents: doc.tune_cents,
         })
     }
 

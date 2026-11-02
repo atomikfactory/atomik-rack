@@ -86,6 +86,9 @@ pub struct TimeInfo {
     pub loop_ticks: Option<(f64, f64)>,
     /// Time signature `(numerator, denominator)` in effect at `tick`; 4/4 without a song.
     pub time_signature: (u8, u8),
+    /// The master tune in cents around A = 440 Hz for this batch (the project value, glided by
+    /// the engine when it changes). 0 outside a project. Pitched devices shift by it.
+    pub tune_cents: f32,
 }
 
 /// A loop wrap inside one batch (see [`TimeInfo::loop_wrap`]).
@@ -112,6 +115,7 @@ impl TimeInfo {
             loop_wrap: None,
             loop_ticks: None,
             time_signature: (4, 4),
+            tune_cents: 0.0,
         }
     }
 }

@@ -73,6 +73,7 @@ impl Mirror {
                 | SyncOp::PluginChanged { .. }
                 | SyncOp::PluginStateChanged { .. }
                 | SyncOp::SplitsChanged { .. }
+                | SyncOp::TuneChanged(_)
                 | SyncOp::FrozenChanged => {}
             }
         }

@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Master tune.** Audio > Settings has a Master tune of -100 to +100 cents around A = 440 Hz. It
+  shifts every pitched device (the synths, the sampler, the drum machine, the loop slicer and the grain
+  sampler; a fixed-frequency FM operator keeps its Hz) and the reference of the audio track tuner, is
+  saved with the song and is part of a bounce, so the file sounds as it was heard. Changing it while
+  notes ring glides instead of stepping, and it is one undo step. A value changed in Settings is also
+  the tune new projects start with. Audio tracks and plugins are not affected. It is written only when
+  not 0, so older projects load and bounce unchanged.
 - **Several control surfaces, generic controllers and command mappings.** Settings > Surfaces now
   lists any number of surfaces (up to eight), each with its own driver, ports and an on/off
   switch; an older settings file with one surface loads as a list of one. A new Generic

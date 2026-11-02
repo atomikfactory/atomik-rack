@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v39), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v40), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -222,7 +222,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 39 (older versions still load; version 39
+- **Project files** are `.atomik` JSON, format version 40 (older versions still load; version 40
+  adds the root's `"tune_cents"` after `"info"` (the master tune in cents, written only when not 0, a
+  file without it loads at 0, refused in a version 39 file; see 3, "Master tune"); version 39
   adds the console's `"send_follow": true` (the sends of a strip that plays into a bus follow the
   bus fader and mute; written only when on, a file without it loads with it off) and
   `"parallels": [[parent, child], ...]` (the parallel channels, written only when there are some;
@@ -2070,6 +2072,21 @@ The app side is [app_core_cpu.rs](../crates/app/src/app_core_cpu.rs): once per f
 samples, forms a load once 200 ms of audio have passed, smooths it, and hands the loads to the rack
 view, which draws them on the name plates over the cached panels; a container shows the sum of the
 devices inside it. The switch is not saved.
+
+### Master tune
+
+The project's tune (`RackDoc::tune_cents`, -100 to +100 cents around A = 440 Hz, set by
+`Command::SetMasterTune`, one undo step) reaches the devices as `TimeInfo::tune_cents`. The app sends it
+through the ordered control queue (`EngineHandle::set_master_tune`): with a glide for an edit (about 20 ms,
+one exponential step per batch, so held notes do not step) and without one for a fresh engine and for
+`render_core`, which queues the document's value before the first batch of a bounce. It is never a live
+atomic: every batch carries one value that changed at a batch boundary, so a bounce is the same for any host
+block size and a project at 0 renders bit for bit as before (every device adds a literal 0 cents). The
+synths add it as the cents offset of `note_to_hz`; the sampler, drum machine, loop slicer and grain sampler
+add it to their playback ratio; the tuner in the app reads against `tuner_ref` shifted by it. Audio tracks
+and plugins are not touched. The per-device audit is in [DEVICES.md](DEVICES.md#master-tune). The Audio
+tab of Settings edits the open project's tune and, once changed there, keeps the value as the tune new
+projects start with (`master_tune_cents` in the settings file).
 
 ## 4. Threading model
 

@@ -320,6 +320,7 @@ pub(crate) fn load_rack(
         midi_maps: Vec::new(),
         macros: crate::macros::MacroSet::default(),
         info: crate::SongInfo::default(),
+        tune_cents: 0.0,
     };
     let (v, p) = field("devices");
     let mut first_use: BTreeMap<String, JsonPath> = BTreeMap::new();

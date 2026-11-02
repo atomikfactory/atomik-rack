@@ -110,6 +110,7 @@ fn kinds(calls: &[SinkCall]) -> Vec<&'static str> {
             SinkCall::Samples { .. } => "samples",
             SinkCall::PlayerData { .. } => "player-data",
             SinkCall::Tempo(_) => "tempo",
+            SinkCall::Tune { .. } => "tune",
             SinkCall::Song(_) => "song",
             SinkCall::Transport(_) => "transport",
             SinkCall::LiveNote { .. } => "live",
@@ -2187,4 +2188,41 @@ fn dub_in_the_middle_of_a_take_splits_it_between_the_layers_without_losing_notes
             .collect()
     };
     assert_eq!((keys(0), keys(1)), (vec![45], vec![52]));
+}
+
+fn tunes(calls: &[SinkCall]) -> Vec<(f32, bool)> {
+    calls
+        .iter()
+        .filter_map(|c| match c {
+            SinkCall::Tune { cents, glide } => Some((*cents, *glide)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_master_tune_edit_glides_the_engine_and_undo_glides_it_back() {
+    let mut c = core();
+    assert_eq!(
+        tunes(&apply(&mut c, Command::SetMasterTune(50.0))),
+        [(50.0, true)]
+    );
+    assert_eq!(c.doc().tune_cents, 50.0);
+    c.undo();
+    assert_eq!(tunes(&c.sink_mut().take()), [(0.0, true)]);
+    c.redo();
+    assert_eq!(tunes(&c.sink_mut().take()), [(50.0, true)]);
+}
+
+#[test]
+fn a_new_engine_starts_in_tune_only_when_the_project_is_not() {
+    let mut c = core();
+    c.rebuild_engine();
+    assert!(
+        tunes(&c.sink_mut().take()).is_empty(),
+        "an untuned project sends nothing"
+    );
+    apply(&mut c, Command::SetMasterTune(-25.0));
+    c.rebuild_engine();
+    assert_eq!(tunes(&c.sink_mut().take()), [(-25.0, false)]);
 }

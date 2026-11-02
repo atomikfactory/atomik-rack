@@ -1049,6 +1049,8 @@ struct Shared {
     lfo_to_pitch: f32,
     /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`).
+    tune_cents: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
     lfo_to_cutoff: f32,
@@ -1344,7 +1346,7 @@ impl Voice {
                     + extra
                     + drift
                     + own,
-                0.0,
+                p.tune_cents,
             );
             o.set_frequency(hz, p.sample_rate);
             if p.tables[i] > 0 {
@@ -1622,6 +1624,8 @@ pub(crate) struct BatchIn<'a> {
     pub resonance_on: bool,
     pub level_on: bool,
     pub pan_on: bool,
+    /// `TimeInfo::tune_cents`: the master tune.
+    pub tune_cents: f32,
 }
 
 /// What one batch makes.
@@ -1709,6 +1713,7 @@ impl PolySynth {
                 key_track: 0.0,
                 lfo_to_pitch: 0.0,
                 bend: 0.0,
+                tune_cents: 0.0,
                 wheel: 0.0,
                 lfo_to_cutoff: 0.0,
                 velocity_amount: 0.5,
@@ -2127,6 +2132,7 @@ impl PolySynth {
             }
         }
         self.shared.cv_resonance_on = inp.resonance_on;
+        self.shared.tune_cents = inp.tune_cents;
         let mut mix = [0.0f32; BATCH];
         let mut mix_r = [0.0f32; BATCH];
         let mut ctl_gain = [1.0f32; BATCH];
@@ -2329,6 +2335,7 @@ impl Device for PolySynth {
                 resonance_on: ctx.is_connected(RESONANCE_CV_IN),
                 level_on: ctx.is_connected(LEVEL_CV_IN),
                 pan_on: ctx.is_connected(PAN_CV_IN),
+                tune_cents: ctx.time.tune_cents,
             };
             self.render_batch(&inp, true, &mut out);
         }
@@ -3920,5 +3927,19 @@ mod tests {
                 .unwrap()
                 .default
         );
+    }
+
+    #[test]
+    fn master_tune_shifts_the_pitch_by_the_cents_ratio() {
+        for cents in [50.0f32, -100.0, 100.0] {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.time_mut().tune_cents = cents;
+            h.push_note("notes_in", on(0, 69, 1.0));
+            let o = h.render(seconds(1.0), &OUT);
+            let f = dominant_frequency(&o[0][..48_000], SR);
+            let want = 440.0 * 2f64.powf(f64::from(cents) / 1200.0);
+            assert!((f - want).abs() < 0.6, "{cents} cents: {f} vs {want}");
+        }
     }
 }

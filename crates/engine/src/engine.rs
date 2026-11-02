@@ -53,6 +53,7 @@ use crate::plan::{Node, RenderPlan, mix_seed};
 use crate::player::{AutomationHold, Player, TransportCell};
 use crate::record::{RecordTap, TapChannel, TapControls, TapRt};
 use crate::stream::{REQUEST_CAPACITY, StreamControl, StreamStats};
+use crate::tune::Glide;
 use crate::workers::Pool;
 use atomik_core::{BATCH, Batch, NoteKind, ParamId, Tempo, TimeInfo};
 use atomik_device_sdk::{DeviceDescriptor, PlayerDataRef, PrepareInfo, SampleMapRef, SocketId};
@@ -270,6 +271,9 @@ enum ControlOp {
     Param(ParamMessage),
     /// Tempo for `TimeInfo` from now on.
     Tempo(Tempo),
+    /// The master tune for `TimeInfo::tune_cents`: `glide` moves there over a few batches,
+    /// otherwise the value is in force from this boundary on.
+    Tune { cents: f32, glide: bool },
     /// Swap the song snapshot; the old one is handed back.
     Song(Box<crate::SongSnapshot>),
     /// A transport command.
@@ -372,6 +376,9 @@ pub struct Engine {
     config: EngineConfig,
     /// Tempo reported in `TimeInfo` (starts at `config.tempo`; changed by control messages).
     tempo: Tempo,
+    /// The master tune the devices are told this batch, and the one it glides to
+    /// ([`EngineHandle::set_master_tune`]).
+    tune: Glide,
     /// The persistent device arena.
     arena: Arena,
     routing: Option<Box<RoutingPlan>>,
@@ -529,6 +536,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let engine = Engine {
         config: cfg,
         tempo: cfg.tempo,
+        tune: Glide::new(cfg.sample_rate.hz()),
         arena: Arena::new(caps.arena),
         routing: None,
         spare: None,
@@ -721,6 +729,15 @@ impl EngineHandle {
     /// tempo (a playing song-less transport keeps its tick across the change).
     pub fn set_tempo(&mut self, tempo: atomik_core::Tempo) -> Result<(), EngineError> {
         self.push(0, ControlOp::Tempo(tempo))
+    }
+
+    /// Queues the master tune through the control queue: from the next batch boundary on,
+    /// `TimeInfo::tune_cents` reports it (every batch carries one value, so a bounce is the same
+    /// for any host block size). With `glide` the value moves there over about 20 ms, so held
+    /// notes do not step; without it the value is in force at once (a fresh engine, a render).
+    /// The engine starts at 0.
+    pub fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError> {
+        self.push(0, ControlOp::Tune { cents, glide })
     }
 
     /// Queues `edit` to be applied at the first batch boundary at or after timeline `frame`,
@@ -1335,6 +1352,7 @@ impl Engine {
             loop_wrap: bt.loop_wrap,
             loop_ticks: bt.loop_ticks,
             time_signature: bt.time_signature,
+            tune_cents: self.tune.next(),
         };
         match (&mut self.routing, &mut self.pool) {
             (Some(routing), None) => routing.process(
@@ -1457,6 +1475,7 @@ impl Engine {
                 self.player.engine_tempo_changed(self.tempo, tempo, sr);
                 self.tempo = tempo;
             }
+            ControlOp::Tune { cents, glide } => self.tune.set(cents, glide),
             ControlOp::Song(song) => {
                 let sr = self.config.sample_rate.hz();
                 if let Some(old) = self.player.swap_song(song, self.tempo, sr, &self.dropped) {

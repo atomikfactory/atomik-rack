@@ -151,7 +151,7 @@ pub fn channel_meters(
 ///   its stored params (a container: its whole inside) (the `ParamChanged`s that follow for it are folded into the insert),
 ///   `RoutingChanged` rebuilds the [`Topology`] from the document and submits its routing,
 ///   `DeviceRemoved` removes the instance (always after the routing that dropped it),
-///   `ParamChanged` and `TempoChanged` go to the sink, `ViewChanged` needs no engine work.
+///   `ParamChanged`, `TempoChanged` and `TuneChanged` go to the sink, `ViewChanged` needs no engine work.
 /// - **Song.** `SongChanged` and `TempoChanged` mark the song stale; it is
 ///   rebuilt ([`atomik_render::project::song_input`]: effective tracks, flattened notes and automation, the tempo
 ///   map), compiled ([`compile_song`]) and submitted before the next device or routing op of
@@ -282,6 +282,8 @@ pub struct AppCore<S: EngineSink> {
     playing: bool,
     metronome: bool,
     metronome_gain: f32,
+    /// The master tune new projects start with (cents, from the settings).
+    default_tune: f32,
     /// Bars of click counted in before a recording starts (0 = off).
     pre_count_bars: u8,
     /// The length the pre-count toggle returns to (1 to 4).
@@ -537,6 +539,7 @@ impl<S: EngineSink> AppCore<S> {
             playing: false,
             metronome: false,
             metronome_gain: DEFAULT_METRONOME_GAIN,
+            default_tune: 0.0,
             pre_count_bars: 0,
             pre_count_resume: 1,
             quantize: InputQuantize::OFF,
@@ -1203,10 +1206,24 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ files
 
+    /// The master tune a new project starts with ([`AppCore::new_document`],
+    /// [`AppCore::new_document_at`]); a value outside +/-100 cents is taken as 0.
+    pub fn set_default_tune(&mut self, cents: f32) {
+        let ok = cents.is_finite() && cents.abs() <= atomik_model::MASTER_TUNE_MAX_CENTS;
+        self.default_tune = if ok && cents != 0.0 { cents } else { 0.0 };
+    }
+
+    /// The master tune a new project starts with.
+    pub fn default_tune(&self) -> f32 {
+        self.default_tune
+    }
+
     /// Replaces the rack with the starter project (Audio I/O, the locked
     /// master and the two `main` cables; a fresh engine and an empty undo history).
     pub fn new_document(&mut self) {
-        self.replace(new_project_doc(), None);
+        let mut doc = new_project_doc();
+        doc.tune_cents = self.default_tune;
+        self.replace(doc, None);
     }
 
     /// Opens project or patch JSON as if read from `path`. On error nothing changes. What the
@@ -1367,6 +1384,11 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_before_reset();
         self.sink.reset(&config);
         self.plugins_after_reset();
+        // A fresh engine starts in tune; a project that is not has its tune in force at once.
+        if self.doc().tune_cents.to_bits() != 0 {
+            let result = self.sink.set_master_tune(self.doc().tune_cents, false);
+            self.engine_result(result);
+        }
         self.ids.clear();
         self.split_sent.clear();
         self.vca_sent.clear();
@@ -1591,6 +1613,11 @@ impl<S: EngineSink> AppCore<S> {
                     stale = (true, true);
                 }
                 SyncOp::ViewChanged => {}
+                // A change of the master tune: the engine glides to it at the next boundary.
+                SyncOp::TuneChanged(cents) => {
+                    let result = self.sink.set_master_tune(*cents, true);
+                    self.engine_result(result);
+                }
                 // Plugin pins, run mode, power or link: power and run mode reach the
                 // live instance, a relink makes the engine rebuild.
                 SyncOp::PluginChanged { .. } => self.plugins_sync_op(op),

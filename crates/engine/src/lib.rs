@@ -21,6 +21,7 @@ mod seq;
 mod stream;
 mod sync;
 pub mod timing;
+mod tune;
 mod workers;
 
 pub use arena::{RoutingPlan, Topology};

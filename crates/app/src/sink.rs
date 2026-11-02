@@ -54,6 +54,8 @@ pub trait EngineSink {
     ) -> Result<(), EngineError>;
     /// [`atomik_engine::EngineHandle::set_tempo`].
     fn set_tempo(&mut self, tempo: Tempo) -> Result<(), EngineError>;
+    /// [`atomik_engine::EngineHandle::set_master_tune`].
+    fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError>;
     /// [`atomik_engine::EngineHandle::collect_garbage`]; called once per UI frame.
     fn collect_garbage(&mut self) -> usize;
     /// [`atomik_engine::EngineHandle::submit_song`]. `input` is what `song` was
@@ -270,6 +272,13 @@ pub enum SinkCall {
     },
     /// [`EngineSink::set_tempo`] in BPM.
     Tempo(f64),
+    /// [`EngineSink::set_master_tune`]: cents and whether the engine glides.
+    Tune {
+        /// The master tune in cents.
+        cents: f32,
+        /// Glide to it (a live change) rather than start there.
+        glide: bool,
+    },
     /// [`EngineSink::submit_song`]: the input the snapshot was compiled from.
     Song(SongInput),
     /// [`EngineSink::transport`].
@@ -461,6 +470,10 @@ impl EngineSink for RecordingSink {
 
     fn set_tempo(&mut self, tempo: Tempo) -> Result<(), EngineError> {
         self.record(SinkCall::Tempo(tempo.bpm()))
+    }
+
+    fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError> {
+        self.record(SinkCall::Tune { cents, glide })
     }
 
     fn collect_garbage(&mut self) -> usize {

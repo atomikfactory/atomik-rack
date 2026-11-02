@@ -678,6 +678,9 @@ struct Shared {
     spread: f32,
     /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
+    /// The master tune in cents for this batch (`TimeInfo::tune_cents`); a fixed-frequency
+    /// operator keeps its own Hz.
+    tune_cents: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
     cv_pitch_amount: f32,
@@ -890,7 +893,7 @@ impl Voice {
             + c.lfo * p.lfo_to_pitch
             + p.cv_pitch_amount * clean(c.pitch);
         let max_hz = MAX_FREQ_RATIO * p.sample_rate;
-        let key_hz = note_to_hz(semis, 0.0).min(max_hz);
+        let key_hz = note_to_hz(semis, p.tune_cents).min(max_hz);
         let mut freq = [0.0f32; OPERATORS];
         let mut level = [0.0f32; OPERATORS];
         for (op, v) in p.ops.iter().enumerate() {
@@ -1071,6 +1074,7 @@ impl FmSynth {
                 glide_coef: 1.0,
                 spread: 0.0,
                 bend: 0.0,
+                tune_cents: 0.0,
                 wheel: 0.0,
                 cv_pitch_amount: CV_PITCH_RANGE,
                 cv_index_amount: 1.0,
@@ -1420,6 +1424,7 @@ impl Device for FmSynth {
             self.master.set_immediate(m);
             self.fresh = false;
         }
+        self.shared.tune_cents = ctx.time.tune_cents;
         let mut lfo = [0.0f32; BATCH];
         for s in &mut lfo {
             *s = self.lfo.next_sample();
