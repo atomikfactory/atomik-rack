@@ -48,6 +48,7 @@ pub fn synth_layout() -> PluginLayout {
         sidechain: false,
         notes_in: true,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             PluginParamInfo {
                 module: "Filter".into(),
@@ -74,6 +75,7 @@ pub fn fx_layout() -> PluginLayout {
         sidechain: true,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             param(1, "Gain", -60.0, 12.0, 0.0),
             stepped(2, "Mute", 0.0, 1.0, 0.0),
@@ -103,6 +105,7 @@ pub fn vst3_layout() -> PluginLayout {
         sidechain: false,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             param(5, "Drive", 0.0, 1.0, 0.25),
             PluginParamInfo {
@@ -126,6 +129,7 @@ pub fn notes_layout() -> PluginLayout {
         sidechain: false,
         notes_in: true,
         notes_out: true,
+        aux_out: 0,
         params: vec![stepped(1, "Semitones", -24.0, 24.0, 0.0)],
     }
 }

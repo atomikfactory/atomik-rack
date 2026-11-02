@@ -98,6 +98,7 @@ fn the_registry_does_not_hand_out_a_constructor_for_a_plugin_type() {
         sidechain: false,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         kind_hint: PluginKindHint::Effect,
         params: Vec::new(),
     };

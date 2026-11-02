@@ -27,6 +27,87 @@ pub const MAX_PLUGIN_PARAMS: usize = 2_048;
 /// Upper bound of distinct interned plugin descriptors per process.
 pub const MAX_INTERNED_DESCRIPTORS: usize = 4_096;
 
+/// CV inputs of every plugin device (`cv_in_1` to `cv_in_8`).
+pub const PLUGIN_CV_INPUTS: usize = 8;
+
+/// Most extra stereo output pairs of a plugin device (`out_aux_1_l/r` to `out_aux_7_l/r`), so
+/// a device has at most eight stereo output pairs with the main one.
+pub const MAX_AUX_OUTPUTS: usize = 7;
+
+/// Keys of the CV programmer's destination params, one per CV input: `cv.dest_1` to
+/// `cv.dest_8`. The plain value is 0 for none, else the descriptor index of the plugin param
+/// the CV drives (1 is the first plugin param; index 0 is `bypass`). The range is the same for
+/// every plugin, so a value saved with the full param table is still in range when the device is
+/// rebuilt from a compact saved layout; a value past the plugin's own params is no destination.
+pub const CV_DEST_KEYS: [&str; PLUGIN_CV_INPUTS] = [
+    "cv.dest_1",
+    "cv.dest_2",
+    "cv.dest_3",
+    "cv.dest_4",
+    "cv.dest_5",
+    "cv.dest_6",
+    "cv.dest_7",
+    "cv.dest_8",
+];
+
+/// Keys of the CV programmer's amount params, one per CV input: `cv.amount_1` to
+/// `cv.amount_8`, bipolar -1 to +1 of the destination's whole plain range per unit of CV.
+pub const CV_AMOUNT_KEYS: [&str; PLUGIN_CV_INPUTS] = [
+    "cv.amount_1",
+    "cv.amount_2",
+    "cv.amount_3",
+    "cv.amount_4",
+    "cv.amount_5",
+    "cv.amount_6",
+    "cv.amount_7",
+    "cv.amount_8",
+];
+
+const CV_DEST_NAMES: [&str; PLUGIN_CV_INPUTS] = [
+    "CV 1 dest",
+    "CV 2 dest",
+    "CV 3 dest",
+    "CV 4 dest",
+    "CV 5 dest",
+    "CV 6 dest",
+    "CV 7 dest",
+    "CV 8 dest",
+];
+
+const CV_AMOUNT_NAMES: [&str; PLUGIN_CV_INPUTS] = [
+    "CV 1", "CV 2", "CV 3", "CV 4", "CV 5", "CV 6", "CV 7", "CV 8",
+];
+
+/// Keys of the CV input sockets.
+pub const CV_IN_KEYS: [&str; PLUGIN_CV_INPUTS] = [
+    "cv_in_1", "cv_in_2", "cv_in_3", "cv_in_4", "cv_in_5", "cv_in_6", "cv_in_7", "cv_in_8",
+];
+
+const CV_IN_NAMES: [&str; PLUGIN_CV_INPUTS] = [
+    "CV in 1", "CV in 2", "CV in 3", "CV in 4", "CV in 5", "CV in 6", "CV in 7", "CV in 8",
+];
+
+/// Keys of the aux output sockets, left and right of each pair.
+pub const AUX_OUT_KEYS: [[&str; 2]; MAX_AUX_OUTPUTS] = [
+    ["out_aux_1_l", "out_aux_1_r"],
+    ["out_aux_2_l", "out_aux_2_r"],
+    ["out_aux_3_l", "out_aux_3_r"],
+    ["out_aux_4_l", "out_aux_4_r"],
+    ["out_aux_5_l", "out_aux_5_r"],
+    ["out_aux_6_l", "out_aux_6_r"],
+    ["out_aux_7_l", "out_aux_7_r"],
+];
+
+const AUX_OUT_NAMES: [[&str; 2]; MAX_AUX_OUTPUTS] = [
+    ["Out 2 L", "Out 2 R"],
+    ["Out 3 L", "Out 3 R"],
+    ["Out 4 L", "Out 4 R"],
+    ["Out 5 L", "Out 5 R"],
+    ["Out 6 L", "Out 6 R"],
+    ["Out 7 L", "Out 7 R"],
+    ["Out 8 L", "Out 8 R"],
+];
+
 /// Prefix of the type id of a CLAP plugin device.
 pub const CLAP_PREFIX: &str = "clap.";
 /// Prefix of the type id of a VST3 plugin device.
@@ -158,6 +239,9 @@ pub struct PluginLayout {
     pub notes_in: bool,
     /// The plugin emits notes.
     pub notes_out: bool,
+    /// Extra stereo output pairs after the main output (0 to [`MAX_AUX_OUTPUTS`]): each is a
+    /// pair of `out_aux_<k>_l/r` sockets on the device. A mono aux bus is mapped by the host.
+    pub aux_out: u8,
     /// The visible, writable params in the plugin's own order.
     pub params: Vec<PluginParamInfo>,
 }
@@ -230,6 +314,9 @@ impl PluginLayout {
         h.u64(u64::from(self.sidechain));
         h.u64(u64::from(self.notes_in));
         h.u64(u64::from(self.notes_out));
+        if self.aux_out > 0 {
+            h.u64(u64::from(self.aux_out));
+        }
         h.u64(self.params.len() as u64);
         for p in &self.params {
             h.u64(u64::from(p.id));
@@ -397,6 +484,35 @@ fn build_descriptor(
     if sockets.is_empty() {
         return Err(DescriptorError::NoSockets);
     }
+    // Appended after the sockets above, so the ids of a project's older cables never move: the
+    // CV inputs of the programmer (every plugin device has them), then the aux output pairs.
+    let mut push = |key: &'static str, name: &'static str, kind: SocketKind, direction| {
+        sockets.push(SocketDescriptor {
+            id: SocketId(sockets.len() as u16),
+            key,
+            name,
+            kind,
+            direction,
+        });
+    };
+    for k in 0..PLUGIN_CV_INPUTS {
+        push(
+            CV_IN_KEYS[k],
+            CV_IN_NAMES[k],
+            SocketKind::Cv,
+            Direction::Input,
+        );
+    }
+    for k in 0..usize::from(layout.aux_out).min(MAX_AUX_OUTPUTS) {
+        for side in 0..2 {
+            push(
+                AUX_OUT_KEYS[k][side],
+                AUX_OUT_NAMES[k][side],
+                SocketKind::Audio,
+                Direction::Output,
+            );
+        }
+    }
 
     let mut params = Vec::with_capacity(layout.params.len() + 1);
     params.push(BYPASS);
@@ -419,6 +535,31 @@ fn build_descriptor(
             discrete,
         });
     }
+    // The CV programmer: a destination and an amount per CV input, after the plugin params.
+    for k in 0..PLUGIN_CV_INPUTS {
+        params.push(ParamDescriptor {
+            id: ParamId(params.len() as u32),
+            key: CV_DEST_KEYS[k],
+            name: CV_DEST_NAMES[k],
+            min: 0.0,
+            max: MAX_PLUGIN_PARAMS as f32,
+            default: 0.0,
+            taper: Taper::Linear,
+            unit: Unit::None,
+            discrete: true,
+        });
+        params.push(ParamDescriptor {
+            id: ParamId(params.len() as u32),
+            key: CV_AMOUNT_KEYS[k],
+            name: CV_AMOUNT_NAMES[k],
+            min: -1.0,
+            max: 1.0,
+            default: 0.0,
+            taper: Taper::Linear,
+            unit: Unit::None,
+            discrete: false,
+        });
+    }
     // The tables are checked on the heap; only a valid descriptor has its tables leaked.
     validate_parts(&params, &sockets, &[])?;
 
@@ -438,7 +579,7 @@ fn build_descriptor(
         type_id: leak_str(&plugin.type_id()),
         name: leak_str(&layout.name),
         kind,
-        version: 1,
+        version: 2,
         params: leaked(params.into_boxed_slice()),
         sockets: leaked(sockets.into_boxed_slice()),
         stages: &[],
@@ -517,8 +658,10 @@ static INTERNER: Interner = Interner::with_limit(MAX_INTERNED_DESCRIPTORS);
 /// Builds (once per distinct plugin and layout) and interns the descriptor of a plugin device. Non-RT.
 ///
 /// Sockets, in this order, each only when the plugin has the matching port: `in_l`, `in_r`,
-/// `sc_in_l`, `sc_in_r`, `notes_in`, `out_l`, `out_r`, `notes_out`. Params: `bypass` (id 0)
-/// then `p<plugin id>` for every plugin param in the plugin's own order.
+/// `sc_in_l`, `sc_in_r`, `notes_in`, `out_l`, `out_r`, `notes_out`; then always the eight CV
+/// inputs `cv_in_1` to `cv_in_8`, then the aux output pairs `out_aux_<k>_l/r` the layout has.
+/// Params: `bypass` (id 0), `p<plugin id>` for every plugin param in the plugin's own order,
+/// then the CV programmer's `cv.dest_<k>` and `cv.amount_<k>` for k = 1 to 8.
 ///
 /// # Errors
 /// An invalid plugin id, more than [`MAX_PLUGIN_PARAMS`] params, a duplicate or non-finite

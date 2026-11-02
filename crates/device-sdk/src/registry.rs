@@ -459,6 +459,7 @@ mod tests {
                 sidechain: false,
                 notes_in: false,
                 notes_out: false,
+                aux_out: 0,
                 params: Vec::new(),
             },
         )

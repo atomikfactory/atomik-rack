@@ -950,3 +950,78 @@ fn two_stand_ins_of_one_plugin_with_different_used_params_share_a_union_descript
         [set_param("a", "p11", 0.1), set_param("b", "p10", 0.2)],
     );
 }
+
+// ---- the CV programmer and the aux outputs -------------------------------------------------------
+
+#[test]
+fn the_cv_programmer_is_stored_sparsely_and_a_cv_cable_round_trips() {
+    let r = plugin_registry();
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &r,
+        [
+            add(0, "atomik.mod-source", Some("lfo")),
+            add_plugin(1, &fx_ref(), &fx_layout(), Some("verb")),
+            set_param("verb", "cv.dest_1", 1.0),
+            set_param("verb", "cv.amount_1", -0.25),
+            connect("lfo:lfo1_cv_out", "verb:cv_in_1"),
+        ],
+    );
+    let doc = d.doc().compacted();
+    let dev = doc.devices.iter().find(|d| d.key.0 == "verb").unwrap();
+    assert_eq!(
+        dev.params.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["cv.amount_1", "cv.dest_1"],
+        "only what was set is stored"
+    );
+    let text = save_project(&doc);
+    assert!(text.contains("\"cv.dest_1\": 1"), "{text}");
+    assert!(!text.contains("cv.dest_2"));
+    assert!(!text.contains("aux_out"), "no aux bus, nothing written");
+    let back = load_project(&text, &r).expect("loads");
+    assert_eq!(back, doc);
+    assert_eq!(save_project(&back), text, "canonical");
+    // A missing plugin keeps the programmer: the stand-in has the same params and sockets.
+    let mut bare = registry();
+    register_stand_ins(&back, &mut bare).unwrap();
+    let again = load_project(&text, &bare).expect("loads with a stand-in");
+    assert_eq!(save_project(&again), text);
+}
+
+#[test]
+fn an_aux_output_layout_round_trips_and_older_layouts_have_none() {
+    let mut layout = synth_layout();
+    layout.aux_out = 3;
+    let mut r = registry();
+    let plugin = synth_ref();
+    register_plugin(&mut r, &plugin, &layout);
+    let mut d = Document::new(empty_doc());
+    run(&mut d, &r, [add_plugin(0, &plugin, &layout, Some("drums"))]);
+    let doc = d.doc().compacted();
+    let text = save_project(&doc);
+    assert!(text.contains("\"aux_out\": 3"), "{text}");
+    let back = load_project(&text, &r).expect("loads");
+    assert_eq!(back, doc);
+    assert_eq!(back.devices[0].plugin.as_ref().unwrap().layout.aux_out, 3);
+    // A stand-in has the aux sockets too, so a cable to one survives the missing plugin.
+    let mut bare = registry();
+    register_stand_ins(&back, &mut bare).unwrap();
+    let desc = bare.get(CLAP_SYNTH).expect("stand-in registered");
+    assert!(desc.descriptor.socket_by_key("out_aux_3_r").is_some());
+    assert!(desc.descriptor.socket_by_key("out_aux_4_l").is_none());
+    // More than seven is refused at its path.
+    let bad = edited(&text, |v| {
+        v["devices"][0]["plugin"]["layout"]["aux_out"] = json!(8);
+    });
+    rejects(&bad, &r, "devices[0].plugin.layout.aux_out", "outside");
+    // The file of a project made before aux outputs loads with none.
+    let old = edited(&text, |v| {
+        v["devices"][0]["plugin"]["layout"]
+            .as_object_mut()
+            .unwrap()
+            .remove("aux_out");
+    });
+    let old = load_project(&old, &r).expect("an older layout loads");
+    assert_eq!(old.devices[0].plugin.as_ref().unwrap().layout.aux_out, 0);
+}
