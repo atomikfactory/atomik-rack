@@ -431,7 +431,11 @@ pub(crate) fn item_kind_of(kind: FileKind) -> Option<ItemKind> {
         FileKind::Container => Some(ItemKind::Container),
         FileKind::Clip => Some(ItemKind::Clip),
         FileKind::Project => Some(ItemKind::Project),
-        FileKind::Folder | FileKind::Audio(_) | FileKind::Device | FileKind::Preset => None,
+        FileKind::Folder
+        | FileKind::Audio(_)
+        | FileKind::Midi
+        | FileKind::Device
+        | FileKind::Preset => None,
     }
 }
 

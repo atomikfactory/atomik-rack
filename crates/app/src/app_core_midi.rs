@@ -16,8 +16,12 @@
 //!   tempo map and meter map (they replace the song's) and its markers (added to the song's).
 //!
 //! A MIDI file dropped on the window always makes new tracks at the playhead (the selection does
-//! not matter). All three are one undo step and select the new clips. A file that cannot be read
-//! is reported by name; nothing changes then.
+//! not matter). Dropped on the arrangement ([`AppCore::import_midi_at`]) it goes where it lands:
+//! on a note lane it is one clip on that lane at the snapped drop position (a file of several
+//! tracks and channels is merged into the one clip, as *Import MIDI* does); below the tracks it
+//! makes new tracks starting at the drop position. Double-clicking a MIDI file in the file
+//! browser is *Import MIDI*. All of them are one undo step and select the new clips. A file
+//! that cannot be read is reported by name; nothing changes then.
 
 use super::*;
 use crate::midi_file::{self, MidiSong, MidiTrack};
@@ -69,6 +73,16 @@ enum ImportMode {
     Tracks,
     /// New tracks from the start, with the tempo map, meter map and markers.
     Song,
+}
+
+/// Where on the timeline an import goes, when the gesture said (a drop on the arrangement);
+/// the default is the snapped playhead and whatever the selection gives.
+#[derive(Debug, Clone, Default)]
+struct Place {
+    /// The snapped song tick of the first clip.
+    tick: Option<i64>,
+    /// The note lane (the track's instrument, an index into its lanes) of a drop on a lane.
+    lane: Option<(DeviceKey, usize)>,
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -219,30 +233,66 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             ImportMode::Auto
         };
-        self.import_midi_as(path, mode);
+        self.import_midi_as(path, mode, Place::default());
     }
 
     /// Reads the file at `path` and always makes new tracks from it, at the snapped playhead,
     /// whatever is selected (what a MIDI file dropped on the window does).
     pub fn import_midi_tracks(&mut self, path: &Path) {
-        self.import_midi_as(path, ImportMode::Tracks);
+        self.import_midi_as(path, ImportMode::Tracks, Place::default());
     }
 
-    fn import_midi_as(&mut self, path: &Path, mode: ImportMode) {
+    /// Imports the file at `path` where it was dropped on the arrangement, at the snapped song
+    /// tick `tick`: with `lane` (the track's instrument and an index into its lanes) the whole
+    /// file becomes one clip on that note lane, as File > Import MIDI makes it on a selected
+    /// track; with `None` (dropped below the tracks) it makes new tracks. A lane that is not a
+    /// note lane any more is reported and nothing changes.
+    pub fn import_midi_at(&mut self, path: &Path, lane: Option<(DeviceKey, usize)>, tick: i64) {
+        let mode = if lane.is_some() {
+            ImportMode::Auto
+        } else {
+            ImportMode::Tracks
+        };
+        let place = Place {
+            tick: Some(tick.max(0)),
+            lane,
+        };
+        self.import_midi_as(path, mode, place);
+    }
+
+    fn import_midi_as(&mut self, path: &Path, mode: ImportMode, place: Place) {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        let result = read_midi(path).and_then(|song| self.apply_midi(song, mode, &name));
+        let result = read_midi(path).and_then(|song| self.apply_midi(song, mode, place, &name));
         if let Err(e) = result {
             self.report(format!("{name}: {e}"));
         }
     }
 
-    fn apply_midi(&mut self, midi: MidiSong, mode: ImportMode, name: &str) -> Result<(), String> {
+    fn apply_midi(
+        &mut self,
+        midi: MidiSong,
+        mode: ImportMode,
+        place: Place,
+        name: &str,
+    ) -> Result<(), String> {
         let as_song = mode == ImportMode::Song;
-        let playhead = self.snapped_playhead();
-        let target = if mode == ImportMode::Auto {
+        let playhead = place.tick.unwrap_or_else(|| self.snapped_playhead());
+        let mut lane_pick = None;
+        let target = if let Some((device, lane)) = place.lane {
+            let note_lane = self
+                .doc()
+                .song
+                .track(&device)
+                .is_some_and(|t| t.is_note_lane(lane));
+            if !note_lane {
+                return Err("drop the MIDI file on a note lane of an instrument track".into());
+            }
+            lane_pick = Some(lane);
+            Some(device)
+        } else if mode == ImportMode::Auto {
             self.midi_track_source()
         } else {
             None
@@ -255,7 +305,7 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(device) = target {
             let clip = midi.merged().into_clip(playhead, &self.doc().song);
             // The note lane picked in the arrangement (the first one without a pick).
-            let lane = self.arrangement.record_lane(&device);
+            let lane = lane_pick.unwrap_or_else(|| self.arrangement.record_lane(&device));
             let add = SongCommand::AddClip { device, lane, clip };
             self.apply_command(Command::Song(add))
                 .map_err(|e| e.to_string())?;

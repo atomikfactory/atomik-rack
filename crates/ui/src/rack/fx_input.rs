@@ -58,7 +58,7 @@ impl RackView {
         if !fx::update_display(kind, values, &mut self.devices[i].meters) {
             return;
         }
-        self.devices[i].revision += 1;
+        self.devices[i].bump_live();
         if kind == FxKind::Character {
             // The screen's animation advances while the published values move, so an idle
             // device keeps its picture and requests no repaint.
@@ -91,7 +91,7 @@ impl RackView {
             return;
         }
         self.devices[i].analyser.clone_from(data);
-        self.devices[i].revision += 1;
+        self.devices[i].bump_live();
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, 0.0)).y,
             self.view_to_rack(Point::new(0.0, self.size.height)).y,
@@ -118,7 +118,7 @@ impl RackView {
         if !self.devices[i].scope.feed(values) {
             return;
         }
-        self.devices[i].revision += 1;
+        self.devices[i].bump_live();
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, 0.0)).y,
             self.view_to_rack(Point::new(0.0, self.size.height)).y,
@@ -140,7 +140,7 @@ impl RackView {
         }
         shown.clear();
         shown.extend_from_slice(&values[..n]);
-        self.devices[i].revision += 1;
+        self.devices[i].bump_live();
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, 0.0)).y,
             self.view_to_rack(Point::new(0.0, self.size.height)).y,

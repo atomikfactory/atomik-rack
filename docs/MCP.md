@@ -349,6 +349,7 @@ Bent segments and parameter lanes (`project_inspect` lists the lanes of a note l
 automation clip gone, and `edit.undo` brings both back in one step. `sequencer.clear_param_lanes` empties the
 lanes. A Shift-drag across an automation segment writes a `bend` point (`project_inspect` of the saved file
 shows `[tick, value, "bend", amount]`); `session_bounce` of the project twice gives the same file.
+6. Stretching by an edge: `session_pointer` `drag` from just inside the right edge of a selected note clip, with `alt` set, one bar to the right (Select tool, snap on a bar). The clip's `length` in `project_inspect` grows by that bar, its notes' `tick` and `length` scale by the same ratio, and `edit.undo` gives the clip back in one step. On an audio clip the same drag turns warping on (`warp` in `project_inspect`) and `session_bounce` keeps the pitch. A drag from the left edge keeps the end of the clip where it is. A drag with `alt` from the body of a clip does not stretch.
 
 The model rules are checked in `crates/model/tests/time_edit.rs` and `crates/model/tests/clip_transform.rs`; the playback checks above are hand checks.
 
