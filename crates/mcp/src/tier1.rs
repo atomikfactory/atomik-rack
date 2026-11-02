@@ -221,6 +221,37 @@ fn controller_summary(lane: &Lane) -> Vec<Value> {
         .collect()
 }
 
+/// The device-parameter lanes of a note lane: for each `(device, param)` in use its names and the
+/// number of points over all the lane's clips, and how many of those points ramp with a bend.
+/// Empty for a lane without parameter lanes.
+fn param_lane_summary(lane: &Lane) -> Vec<Value> {
+    let mut counts: std::collections::BTreeMap<(&str, &str), (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for c in &lane.clips {
+        for l in &c.param_lanes {
+            let e = counts
+                .entry((l.device.0.as_str(), l.param.as_str()))
+                .or_default();
+            e.0 += l.points.len();
+            e.1 += l
+                .points
+                .iter()
+                .filter(|p| matches!(p.curve, atomik_model::Curve::Bend(_)))
+                .count();
+        }
+    }
+    counts
+        .into_iter()
+        .map(|((device, param), (points, bent))| {
+            let mut v = json!({"device": device, "param": param, "points": points});
+            if bent > 0 {
+                v["bent"] = json!(bent);
+            }
+            v
+        })
+        .collect()
+}
+
 /// The clips of a lane that carry their own name, colour or loop, in lane order: id, `name` and
 /// `color` (`"#rrggbb"`) when set, and `loop_length` in ticks when the clip loops. Empty when no
 /// clip of the lane has any of them.
@@ -631,6 +662,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                     let controllers = controller_summary(l);
                     if !controllers.is_empty() {
                         lane["controllers"] = Value::Array(controllers);
+                    }
+                    let param_lanes = param_lane_summary(l);
+                    if !param_lanes.is_empty() {
+                        lane["param_lanes"] = Value::Array(param_lanes);
                     }
                     let audio = audio_summary(l);
                     if !audio.is_empty() {
