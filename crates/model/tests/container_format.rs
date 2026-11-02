@@ -815,3 +815,39 @@ fn an_old_project_without_the_effect_bypass_param_loads_with_bypass_off() {
     assert_eq!(doc.param_value(&comp, "bypass", &r), Some(0.0));
     assert_eq!(save_project(&doc), as_current(&t, 8));
 }
+
+#[test]
+fn bypassing_a_container_that_feeds_itself_is_refused_so_the_file_still_loads() {
+    // A container whose output is cabled back to its own input is no loop while the inside
+    // does not connect them. Bypassed it passes the signal straight through and would be one,
+    // which the loader refuses: the bypass has to be refused up front.
+    let r = registry();
+    let mut d = Document::new(empty_doc());
+    d.apply(add(0, CONTAINER, Some("container")), &r).unwrap();
+    d.apply(
+        Command::Container(atomik_model::ContainerCommand::AddInner {
+            container: key("container"),
+            index: 0,
+            type_id: SYNTH.to_owned(),
+            key: None,
+            auto_split: false,
+        }),
+        &r,
+    )
+    .unwrap();
+    d.apply(add(1, DELAY, Some("delay")), &r).unwrap();
+    d.apply(connect("container:out_r", "container:in_r"), &r)
+        .unwrap();
+    d.apply(connect("container:out_r", "delay:in_l"), &r)
+        .unwrap();
+    let bypass = Command::SetParam {
+        key: key("container"),
+        param: "bypass".to_owned(),
+        value: 1.0,
+        merge: None,
+    };
+    let err = d.apply(bypass, &r).unwrap_err();
+    assert!(err.to_string().contains("cycle"), "{err}");
+    let t = save_project(d.doc());
+    assert_eq!(load_project(&t, &r).unwrap(), *d.doc());
+}
