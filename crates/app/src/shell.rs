@@ -4939,11 +4939,15 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::DirectRecord
             | AppCommand::SendPlayersToTrack
             | AppCommand::FoldPlayers
-            | AppCommand::BypassPlayers => {
+            | AppCommand::BypassPlayers
+            | AppCommand::AddPatternLane
+            | AppCommand::PatternLaneToNotes => {
                 match command {
                     AppCommand::DirectRecord => self.core.toggle_direct_record(),
                     AppCommand::SendPlayersToTrack => self.core.send_players_to_track(),
                     AppCommand::FoldPlayers => self.core.fold_all_players(),
+                    AppCommand::AddPatternLane => self.core.create_pattern_lane(),
+                    AppCommand::PatternLaneToNotes => self.core.pattern_lane_to_notes(),
                     _ => self.core.bypass_all_players(),
                 }
                 self.menubar.as_mut().map(MenuBar::close);

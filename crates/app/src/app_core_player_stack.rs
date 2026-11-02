@@ -13,10 +13,16 @@
 //! * **Fold All Players** folds every player of the stack, or unfolds them when all are folded.
 //! * **Bypass All Players** bypasses every player of the stack, or releases them when all are
 //!   bypassed.
+//! * **Add Pattern Lane** adds the automation lane of the `pattern` param of the selected pattern
+//!   device (or of the players of the selected track) as one undo step; a lane that exists is
+//!   left alone.
+//! * **Pattern Lane to Notes** is Send Players to Track for the tracks that play a device with a
+//!   pattern lane: the lane's switches are part of what the render plays, so the clip holds the
+//!   notes of every pattern in the order the lane chose them, on a new note lane named "Pattern".
 
 use super::*;
 use atomik_model::{
-    Clip, ClipContent, ClipId, MAX_NOTE_LANES, Note, WorkflowCommand, player_stack,
+    Clip, ClipContent, ClipId, MAX_NOTE_LANES, Note, PATTERN_PARAM, WorkflowCommand, player_stack,
 };
 
 /// The lane name of what Send Players to Track writes.
@@ -160,11 +166,13 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         for (device, _) in stacks {
-            self.send_stack_to_track(&device);
+            self.send_stack_to_track(&device, SEND_LANE_NAME);
         }
     }
 
-    fn send_stack_to_track(&mut self, device: &DeviceKey) {
+    /// Renders the notes the stack of `device` generates into a clip on a new note lane named
+    /// `lane_name`.
+    fn send_stack_to_track(&mut self, device: &DeviceKey, lane_name: &str) {
         let at_limit = self
             .doc()
             .song
@@ -186,7 +194,7 @@ impl<S: EngineSink> AppCore<S> {
         ) {
             Ok(notes) => notes,
             Err(e) => {
-                self.reject(format!("Send Players to Track failed: {e}"));
+                self.reject(format!("rendering the players of {device} failed: {e}"));
                 return;
             }
         };
@@ -222,7 +230,7 @@ impl<S: EngineSink> AppCore<S> {
         let applied = self.apply_as_one_step(vec![
             Command::Song(SongCommand::AddNoteLane {
                 device: device.clone(),
-                name: Some(SEND_LANE_NAME.to_string()),
+                name: Some(lane_name.to_string()),
             }),
             Command::Song(SongCommand::AddClip {
                 device: device.clone(),
@@ -233,6 +241,125 @@ impl<S: EngineSink> AppCore<S> {
         self.after_view_change();
         if applied {
             self.arrangement.set_selected_lane(device, new_lane);
+        }
+    }
+}
+
+/// The lane name of what Pattern Lane to Notes writes.
+const PATTERN_NOTES_LANE_NAME: &str = "Pattern";
+
+impl<S: EngineSink> AppCore<S> {
+    /// True when `device` has a `pattern` param (a step or CV sequencer, a drum generator).
+    fn takes_patterns(&self, device: &DeviceKey) -> bool {
+        self.doc().resolve(device).is_some_and(|d| {
+            self.registry
+                .get(&d.type_id)
+                .is_some_and(|f| f.descriptor.param_by_key(PATTERN_PARAM).is_some())
+        })
+    }
+
+    /// The pattern devices the pattern commands act on: the device selected in the rack, else
+    /// the selected tracks' devices and the players of their stacks that take patterns.
+    fn pattern_candidates(&self) -> Vec<DeviceKey> {
+        let doc = self.doc();
+        let mut out: Vec<DeviceKey> = Vec::new();
+        let take = |d: DeviceKey, out: &mut Vec<DeviceKey>| {
+            if !out.contains(&d) && self.takes_patterns(&d) {
+                out.push(d);
+            }
+        };
+        if let Some(d) = self.view.selected() {
+            take(d.clone(), &mut out);
+        }
+        if out.is_empty() {
+            for d in self.arrangement.command_tracks() {
+                if let Some(t) = doc.song.track(&d) {
+                    for p in player_stack(doc, &self.registry, t) {
+                        take(p, &mut out);
+                    }
+                }
+                take(d, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Adds a pattern lane (the automation lane of the `pattern` param) for the selected pattern
+    /// device or track: its clips switch the device's pattern. One undo step.
+    pub fn create_pattern_lane(&mut self) {
+        let candidates = self.pattern_candidates();
+        if candidates.is_empty() {
+            self.reject(
+                "Add Pattern Lane needs a selected pattern device (step sequencer, CV sequencer or drum generator) or its track"
+                    .into(),
+            );
+            return;
+        }
+        let commands: Vec<Command> = candidates
+            .iter()
+            .filter(|d| {
+                self.doc()
+                    .song
+                    .track(d)
+                    .is_none_or(|t| t.pattern_lane().is_none())
+            })
+            .map(|d| {
+                Command::Song(SongCommand::AddAutomationLane {
+                    device: d.clone(),
+                    param: PATTERN_PARAM.to_owned(),
+                })
+            })
+            .collect();
+        if commands.is_empty() {
+            self.reject("the selection has a pattern lane already".into());
+            return;
+        }
+        self.apply_as_one_step(commands);
+        self.after_view_change();
+    }
+
+    /// Renders the notes the players of the selected pattern lanes generate (the pattern lane
+    /// switches included) into a clip on a new note lane of each track that plays them, as Send
+    /// Players to Track does for a whole stack.
+    pub fn pattern_lane_to_notes(&mut self) {
+        let with_lane: Vec<DeviceKey> = self
+            .pattern_candidates()
+            .into_iter()
+            .filter(|d| {
+                self.doc()
+                    .song
+                    .track(d)
+                    .is_some_and(|t| t.pattern_lane().is_some())
+            })
+            .collect();
+        if with_lane.is_empty() {
+            self.reject(
+                "Pattern Lane to Notes needs a selected pattern device or track with a pattern lane"
+                    .into(),
+            );
+            return;
+        }
+        let doc = self.doc();
+        let targets: Vec<DeviceKey> = doc
+            .song
+            .tracks
+            .iter()
+            .filter(|t| {
+                player_stack(doc, &self.registry, t)
+                    .iter()
+                    .any(|p| with_lane.contains(p))
+            })
+            .map(|t| t.device.clone())
+            .collect();
+        if targets.is_empty() {
+            self.reject(format!(
+                "no track plays {}: its notes go to no instrument",
+                with_lane[0]
+            ));
+            return;
+        }
+        for device in targets {
+            self.send_stack_to_track(&device, PATTERN_NOTES_LANE_NAME);
         }
     }
 }

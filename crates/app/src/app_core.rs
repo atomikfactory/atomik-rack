@@ -2956,6 +2956,8 @@ impl<S: EngineSink> AppCore<S> {
         let audio_started = !audio.is_empty() && self.start_audio_recording(&audio);
         let automation_started = self.start_automation_take();
         if tracks.is_empty() && !audio_started && !automation_started {
+            // A take that only listens for pattern changes goes with it.
+            self.cancel_automation_take();
             // Nothing can record: the reason was reported.
             return;
         }

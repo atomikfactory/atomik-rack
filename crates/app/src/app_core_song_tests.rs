@@ -2227,3 +2227,169 @@ fn a_new_engine_starts_in_tune_only_when_the_project_is_not() {
     c.rebuild_engine();
     assert_eq!(tunes(&c.sink_mut().take()), [(-25.0, false)]);
 }
+
+// ------------------------------------------------------------------ pattern lanes
+
+/// Track `a` with a step sequencer above it: pattern 1 plays key 60 on every bar, pattern 2 key
+/// 72, the song is four bars long and the sequencer switches patterns at once.
+fn with_pattern_stack() -> AppCore<RecordingSink> {
+    // The full registry: the sequencer takes pattern data.
+    let mut c = AppCore::new(RecordingSink::new());
+    apply(&mut c, add(SYNTH, "a"));
+    apply(&mut c, song(SongCommand::AddTrack { device: key("a") }));
+    apply(
+        &mut c,
+        Command::Workflow(atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: "atomik.step-sequencer".into(),
+            target: atomik_model::CreateTarget::Selected(key("a")),
+            options: atomik_model::CreateOptions::default(),
+        }),
+    );
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    c.sink_mut().take();
+    let seq = seq_key(&c);
+    let pattern = |name: &str, first: u8| {
+        let mut p = atomik_model::PatternDoc::new(name);
+        p.length = 8;
+        p.resolution = atomik_model::SeqResolution::Eighth;
+        p.steps[0] = atomik_model::StepDoc {
+            on: true,
+            key: first,
+            ..atomik_model::StepDoc::default()
+        };
+        p
+    };
+    apply(
+        &mut c,
+        Command::AddPattern {
+            device: seq.clone(),
+        },
+    );
+    for (index, p) in [(0, pattern("One", 60)), (1, pattern("Two", 72))] {
+        apply(
+            &mut c,
+            Command::SetPattern {
+                device: seq.clone(),
+                index,
+                pattern: p,
+                merge: None,
+            },
+        );
+    }
+    apply(
+        &mut c,
+        Command::SetParam {
+            key: seq,
+            param: "pattern.switch".into(),
+            value: 0.0,
+            merge: None,
+        },
+    );
+    apply(&mut c, song(SongCommand::SetSongEnd(4 * BAR)));
+    c
+}
+
+fn seq_key(c: &AppCore<RecordingSink>) -> DeviceKey {
+    c.doc()
+        .song
+        .track(&key("a"))
+        .unwrap()
+        .notes_to
+        .clone()
+        .unwrap()
+}
+
+#[test]
+fn add_pattern_lane_makes_the_lane_of_the_selected_stack_once_in_one_step() {
+    let mut c = with_pattern_stack();
+    let seq = seq_key(&c);
+    c.create_pattern_lane();
+    let t = c.doc().song.track(&seq).expect("a track for the sequencer");
+    assert_eq!(t.lane_label(t.pattern_lane().unwrap()), "Pattern");
+    c.create_pattern_lane();
+    assert!(c.last_rejection().is_some_and(|m| m.contains("already")));
+    c.undo();
+    assert!(c.doc().song.track(&seq).is_none(), "one undo removes it");
+}
+
+#[test]
+fn add_pattern_lane_needs_a_pattern_device() {
+    let mut c = with_track();
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    let before = c.doc().song.clone();
+    c.create_pattern_lane();
+    assert!(c.last_rejection().is_some_and(|m| m.contains("pattern")));
+    assert_eq!(*c.doc().song, *before);
+    c.pattern_lane_to_notes();
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("pattern lane"))
+    );
+}
+
+#[test]
+fn a_pattern_lane_converts_to_notes_that_follow_its_switches() {
+    let mut c = with_pattern_stack();
+    let seq = seq_key(&c);
+    c.create_pattern_lane();
+    let lane = c.doc().song.track(&seq).unwrap().pattern_lane().unwrap();
+    // Bars 2 and 3 play pattern 2, then the static value brings pattern 1 back.
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: seq.clone(),
+            lane,
+            clip: Clip {
+                id: ClipId(0),
+                start: BAR,
+                length: 2 * BAR,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                name: None,
+                color: None,
+                grid: None,
+                scale: None,
+                param_lanes: Vec::new(),
+                controllers: Vec::new(),
+                content: ClipContent::Automation(vec![AutomationPoint {
+                    tick: 0,
+                    value: 2.0,
+                    curve: Curve::Step,
+                }]),
+            },
+        }),
+    );
+    apply(
+        &mut c,
+        song(SongCommand::SetLaneStatic {
+            device: seq.clone(),
+            param: "pattern".into(),
+            value: Some(1.0),
+        }),
+    );
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    let before = c.doc().song.track(&key("a")).unwrap().lanes.len();
+    c.pattern_lane_to_notes();
+    assert!(
+        !c.last_rejection()
+            .is_some_and(|m| m.contains("failed") || m.contains("no track")),
+        "{:?}",
+        c.last_rejection()
+    );
+    let t = c.doc().song.track(&key("a")).unwrap();
+    assert_eq!(t.lanes.len(), before + 1);
+    assert_eq!(t.lanes.last().unwrap().name.as_deref(), Some("Pattern"));
+    let ClipContent::Notes(notes) = &t.lanes.last().unwrap().clips[0].content else {
+        panic!("a note clip");
+    };
+    // The render runs to the song end, so the bar line at the end plays one more.
+    let keys: Vec<(i64, u8)> = notes.iter().take(4).map(|n| (n.tick, n.key)).collect();
+    assert_eq!(
+        keys,
+        [(0, 60), (BAR, 72), (2 * BAR, 72), (3 * BAR, 60)],
+        "the notes of the pattern the lane chose, bar by bar"
+    );
+    c.undo();
+    assert_eq!(c.doc().song.track(&key("a")).unwrap().lanes.len(), before);
+}
