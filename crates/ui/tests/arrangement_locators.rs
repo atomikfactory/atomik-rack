@@ -143,8 +143,9 @@ fn playhead_flag_in_the_ruler_drags_and_hints_the_cursor() {
 }
 
 #[test]
-fn pressing_beside_the_playhead_line_still_draws_in_the_lane() {
+fn the_pencil_pressed_beside_the_playhead_line_still_draws_in_the_lane() {
     let (doc, reg, mut v) = setup(Snap::Beat);
+    v.set_tool(atomik_ui::Tool::Pencil);
     v.set_playhead(5 * BAR + PPQ);
     let y = v.lane_rect(&key("lead"), 0).unwrap().center().y;
     let x = v.tick_to_x(5 * BAR + PPQ) + 12.0;
