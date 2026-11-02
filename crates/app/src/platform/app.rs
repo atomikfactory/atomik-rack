@@ -980,7 +980,8 @@ impl App {
                 ShellRequest::PickLoadSamples => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Load samples")
-                        .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
+                        .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS)
+                        .add_filter("Instruments", &["sfz", "sf2"]);
                     if let Some(w) = self.parent_window() {
                         dialog = dialog.set_parent(w);
                     }

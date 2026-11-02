@@ -3176,6 +3176,9 @@ mod samples;
 #[path = "app_core_drums.rs"]
 mod drums;
 
+#[path = "app_core_instrument.rs"]
+mod instrument;
+
 #[path = "app_core_slicer.rs"]
 mod slicer;
 
@@ -3420,6 +3423,10 @@ mod samples_tests;
 #[cfg(test)]
 #[path = "app_core_drums_tests.rs"]
 mod drums_tests;
+
+#[cfg(test)]
+#[path = "app_core_instrument_tests.rs"]
+mod instrument_tests;
 
 #[cfg(test)]
 #[path = "app_core_slicer_tests.rs"]
