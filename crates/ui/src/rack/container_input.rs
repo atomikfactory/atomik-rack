@@ -165,6 +165,11 @@ impl RackView {
             }
             return base;
         }
+        // A scope shows one container's inside on its own: nothing is unfolded in it.
+        if self.inline {
+            self.inline = false;
+            self.synced = false;
+        }
         let mut keep = 0;
         let mut path: Option<DeviceKey> = None;
         for k in &self.scope {

@@ -1344,3 +1344,15 @@ fn tab_flips_the_unfolded_rack_and_keeps_the_selection() {
     v.sync(d.doc(), &reg);
     assert_eq!(v.selected(), Some(&key("layer/pad")));
 }
+
+#[test]
+fn opening_an_unfolded_container_in_its_own_view_shows_only_its_inside() {
+    let d = unfolded();
+    let mut v = inline_view(d.doc());
+    let p = centre(&v, "layer", ContainerButton::Open);
+    let _ = click(&mut v, d.doc(), p);
+    assert_eq!(v.scope(), [key("layer")]);
+    assert!(!v.is_inline());
+    assert!(keys_in_view(&v).contains(&"synth".to_string()));
+    assert!(v.frames().is_empty());
+}
