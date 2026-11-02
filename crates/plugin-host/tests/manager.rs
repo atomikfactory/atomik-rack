@@ -69,6 +69,41 @@ fn harness_of(handle: PluginHandle) -> (DeviceHarness, atomik_plugin_host::Insta
     (DeviceHarness::new(Box::new(handle.device), SR), id)
 }
 
+#[test]
+fn a_backend_that_cannot_start_in_the_background_creates_the_instance_when_first_polled() {
+    let (mut m, stats) = manager();
+    let a = m.begin_create(&request("null.fx")).unwrap();
+    let b = m.begin_create(&request("null.fx2")).unwrap();
+    assert_eq!(stats.created(), 0, "begin created nothing");
+    // The ids follow the order the creations are polled in, not the order they began.
+    let second = m
+        .poll_create(b)
+        .expect("created at the first poll")
+        .unwrap();
+    let first = m
+        .poll_create(a)
+        .expect("created at the first poll")
+        .unwrap();
+    assert!(second.id < first.id);
+    assert_eq!((stats.created(), stats.activated()), (2, 2));
+    assert_eq!(m.instance_count(), 2);
+    assert!(
+        m.poll_create(a).is_none(),
+        "a ticket is spent by its answer"
+    );
+}
+
+#[test]
+fn a_creation_that_is_cancelled_or_fails_leaves_no_instance() {
+    let (mut m, _stats) = manager();
+    let gone = m.begin_create(&request("null.fx")).unwrap();
+    m.cancel_create(gone);
+    assert!(m.poll_create(gone).is_none());
+    let unknown = m.begin_create(&request("no.such.plugin")).unwrap();
+    assert!(m.poll_create(unknown).expect("answered").is_err());
+    assert_eq!(m.instance_count(), 0);
+}
+
 // ----- instantiate -------------------------------------------------------------------------------
 
 #[test]

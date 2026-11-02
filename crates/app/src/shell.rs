@@ -725,7 +725,7 @@ impl<B: AudioBackend> Shell<B> {
             shell.notify(CONSOLE_DEVICES_NOTICE);
         }
         if console_notice.is_some() {
-            shell.save_ui_state();
+            shell.write_ui_state();
         }
         // The notice of the moved keys: a keymap problem found at start wins the status line.
         if shell.workflow_path.is_some()
@@ -1905,7 +1905,8 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Re-reads `keymap.json` when it changed on disk since it was last read or written (an
     /// edit by hand or by another run): the keymap follows without a restart. A deleted file
-    /// is the defaults. Returns whether it reloaded.
+    /// is the defaults. Returns whether it reloaded. It is looked at when a window gets the focus
+    /// and when a menu opens, not on a timer.
     pub fn reload_keymap_file(&mut self) -> bool {
         let Some(path) = self.keymap_path.clone() else {
             return false;
@@ -2855,7 +2856,7 @@ impl<B: AudioBackend> Shell<B> {
     fn browse_patches(&mut self, device: &DeviceKey) {
         self.set_file_browser_visible(true);
         self.core.begin_patch_browse(device);
-        self.save_ui_state();
+        self.ui_changed();
     }
 
     /// Return accepts and Escape cancels the patch audition while the patch browser is aimed at
@@ -2873,7 +2874,7 @@ impl<B: AudioBackend> Shell<B> {
             Key::Escape => self.core.cancel_patch_browse(),
             _ => return false,
         }
-        self.save_ui_state();
+        self.ui_changed();
         true
     }
 
@@ -3449,7 +3450,17 @@ impl<B: AudioBackend> Shell<B> {
         let model = self.menu_model();
         if let Some(bar) = &mut self.menubar {
             let before = bar.look();
-            match bar.handle(event, &model) {
+            let was_open = bar.is_open();
+            let outcome = bar.handle(event, &model);
+            // A menu that opens shows the keys as the file has them now.
+            let opened = !was_open && bar.is_open();
+            if opened {
+                self.reload_keymap_file();
+            }
+            let Some(bar) = &mut self.menubar else {
+                return Vec::new();
+            };
+            match outcome {
                 MenuBarOutcome::Ignored => {}
                 MenuBarOutcome::Consumed => {
                     // A move that leaves the bar as it was (the pointer inside one title)
@@ -3756,7 +3767,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         if changed {
             self.layout_view();
-            self.save_ui_state();
+            self.ui_changed();
         }
     }
 
@@ -3769,7 +3780,7 @@ impl<B: AudioBackend> Shell<B> {
         self.set_focus(self.live_pane(self.focus));
         self.layout_view();
         self.save_workflow();
-        self.save_ui_state();
+        self.ui_changed();
     }
 
     /// Whether the layout is the sequencer-only one: no rack, no console, the song area shown.
@@ -3803,7 +3814,7 @@ impl<B: AudioBackend> Shell<B> {
         self.set_focus(self.live_pane(self.focus));
         self.layout_view();
         self.save_workflow();
-        self.save_ui_state();
+        self.ui_changed();
     }
 
     /// Brings the arrangement into view and gives it the keys (a lane was just shown there).
@@ -4010,7 +4021,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.layout_view();
         if released {
-            self.save_ui_state();
+            self.ui_changed();
         }
     }
 
@@ -4025,7 +4036,7 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.layout_view();
-        self.save_ui_state();
+        self.ui_changed();
     }
 
     /// The vertical zooms (track heights, key height) and the piano roll's snap to scale and
@@ -4046,11 +4057,26 @@ impl<B: AudioBackend> Shell<B> {
             self.ui.piano_roll_snap_scale = snap_scale;
             self.ui.piano_roll_fold = fold;
             self.ui.audio_editor_mode = audio_mode;
-            self.save_ui_state();
+            self.ui_changed();
         }
     }
 
-    fn save_ui_state(&mut self) {
+    /// The saved interface state changed: written by the next [`Self::flush_geometry`] (at most
+    /// every two seconds, so a run of clicks writes once), at the latest on shutdown.
+    fn ui_changed(&mut self) {
+        self.geom_dirty = true;
+    }
+
+    /// Writes `ui-state.json` now when something is waiting for the next flush.
+    pub fn flush_ui_state(&mut self) {
+        if self.geom_dirty {
+            self.write_ui_state();
+        }
+    }
+
+    /// Writes `ui-state.json` now (atomically); anything waiting for the next flush is in it.
+    fn write_ui_state(&mut self) {
+        self.geom_dirty = false;
         let view = self.core.file_browser();
         self.ui.file_browser_width = view.width();
         self.ui.file_browser_tree_fraction = view.tree_fraction();
@@ -4464,7 +4490,7 @@ impl<B: AudioBackend> Shell<B> {
                     );
                     self.core.set_input_quantize(q);
                     self.ui.input_quantize = q;
-                    self.save_ui_state();
+                    self.ui_changed();
                 }
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
@@ -4519,15 +4545,15 @@ impl<B: AudioBackend> Shell<B> {
                     if let Some(fb) = self.layout().file_browser {
                         self.core.file_browser_mut().set_width(fb.width());
                     }
-                    self.save_ui_state();
+                    self.ui_changed();
                 }
-                UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.save_ui_state(),
+                UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.ui_changed(),
                 UiAction::Browse(BrowseAction::Reveal(path)) => {
                     self.pending.push(ShellRequest::Reveal(path.clone()));
                 }
                 // The audition ended in the file browser: the folder it used is remembered.
                 UiAction::Browse(BrowseAction::Load(_) | BrowseAction::Cancel) => {
-                    self.save_ui_state();
+                    self.ui_changed();
                 }
                 UiAction::Browse(BrowseAction::DragFiles(paths)) => {
                     self.file_drag = Some(FileDrag {
@@ -4539,7 +4565,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 UiAction::Browse(BrowseAction::Show(Place::Folder(folder))) => {
                     self.ui.file_browser_folder = Some(folder.clone());
-                    self.save_ui_state();
+                    self.ui_changed();
                 }
                 UiAction::RunCommand { id, arg } => {
                     if let Some(mut requests) = self.run_command(id, arg.as_deref()) {
@@ -4655,6 +4681,8 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens the project `path` now, or asks first when the rack has unsaved changes.
     fn open_project_request(&mut self, path: PathBuf) {
+        // A save that is still writing decides whether there is anything unsaved.
+        self.core.settle_save();
         if self.core.is_dirty() {
             self.pending.push(ShellRequest::ConfirmSave {
                 then: PendingAction::OpenFile(path),
@@ -4755,7 +4783,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.set_file_browser_visible(visible);
         self.set_focus(self.live_pane(self.focus));
         self.layout_view();
-        self.save_ui_state();
+        self.ui_changed();
     }
 
     fn console_changed(&mut self) {
@@ -4763,7 +4791,7 @@ impl<B: AudioBackend> Shell<B> {
             self.set_focus(self.live_pane(Pane::Arrangement));
         }
         self.layout_view();
-        self.save_ui_state();
+        self.ui_changed();
     }
 
     /// Runs a menu or shortcut command. The requests include any the shell raised on the side
@@ -4787,6 +4815,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::Quit
             | AppCommand::StressRack
             | AppCommand::StressSong => {
+                self.core.settle_save();
                 if self.core.is_dirty() {
                     vec![ShellRequest::ConfirmSave {
                         then: PendingAction::Command(command),
@@ -4845,7 +4874,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
-            AppCommand::Save => match self.core.save() {
+            AppCommand::Save => match self.core.save_interactive() {
                 Ok(()) => Vec::new(),
                 Err(AppError::NoPath) => vec![ShellRequest::PickSaveFile],
                 Err(e) => {
@@ -5074,7 +5103,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.set_focus(self.live_pane(self.focus));
                 }
                 self.layout_view();
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::TogglePianoRoll => {
@@ -5224,7 +5253,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::Quantize(q) => {
                 self.core.set_input_quantize(q);
                 self.ui.input_quantize = q;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleConsoleDevices => {
@@ -5232,7 +5261,7 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !view.show_console_devices();
                 view.set_show_console_devices(show);
                 self.ui.show_console_devices = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleConsoleLinks => {
@@ -5240,7 +5269,7 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !view.show_console_links();
                 view.set_show_console_links(show);
                 self.ui.show_console_links = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleBigMeter => {
@@ -5258,14 +5287,14 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !self.core.arrangement().tempo_lane_visible();
                 self.core.arrangement_mut().set_tempo_lane(show);
                 self.ui.show_tempo_lane = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleMarkerStrip => {
                 let show = !self.core.arrangement().marker_strip_visible();
                 self.core.arrangement_mut().set_marker_strip(show);
                 self.ui.show_marker_strip = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleInspector => {
@@ -5273,14 +5302,14 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.arrangement_mut().set_inspector(show);
                 self.core.piano_roll_mut().set_inspector(show);
                 self.ui.show_inspector = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleMarkerList => {
                 let show = !self.core.arrangement().marker_list_visible();
                 self.core.arrangement_mut().set_marker_list(show);
                 self.ui.show_marker_list = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             // The marker commands live in the arrangement view: the menu runs them there, so
@@ -5304,7 +5333,7 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !view.navigator_visible();
                 view.set_navigator_visible(show);
                 self.ui.show_rack_navigator = show;
-                self.save_ui_state();
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::ToggleConsole if self.console_detached() => {
@@ -5638,7 +5667,11 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::Open => vec![ShellRequest::PickOpenFile],
-            AppCommand::Quit => vec![ShellRequest::Quit],
+            AppCommand::Quit => {
+                // A save still writing must reach the disk before the process ends.
+                self.core.settle_save();
+                vec![ShellRequest::Quit]
+            }
             AppCommand::StressRack => {
                 let doc = stress_doc(self.core.registry(), STRESS_DEVICES, STRESS_CABLES);
                 self.core.open_doc(doc);
@@ -5831,7 +5864,7 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Saves the project to `path` (errors are shown in the view).
     pub fn save_to(&mut self, path: &Path) {
-        if let Err(e) = self.core.save_as(path) {
+        if let Err(e) = self.core.save_as_interactive(path) {
             self.notify(e.to_string());
         }
         self.repaint = true;
@@ -5902,7 +5935,7 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(folder) = self.core.file_browser_folder() {
             self.ui.file_browser_folder = Some(folder);
         }
-        self.save_ui_state();
+        self.write_ui_state();
         self.core.flush_library();
     }
 
@@ -5928,7 +5961,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.plugin_tick(now_seconds);
         // A plugin window closed somewhere new: the position is kept for next time.
         if self.core.take_plugin_geoms_changed() {
-            self.save_ui_state();
+            self.ui_changed();
         }
         self.core.piano_roll_tick(now_seconds);
         self.tick_tooltip(now_seconds);
@@ -6194,7 +6227,6 @@ impl<B: AudioBackend> Shell<B> {
 
     /// [`Self::poll_status`] with the time the stream liveness is judged at.
     pub fn poll_status_at(&mut self, at: std::time::Instant) -> bool {
-        self.reload_keymap_file();
         self.relist_ports(at);
         let target = self.core.notes_target_device().map(|d| d.name.clone());
         let mut status = self.core.sink_mut().poll_at(at).clone();
@@ -6239,6 +6271,9 @@ impl<B: AudioBackend> Shell<B> {
         let mut text = status_text(&status);
         if let Some(alert) = self.core.pdc_alert() {
             text = format!("{alert} \u{b7} {text}");
+        }
+        if let Some(saving) = self.core.save_progress() {
+            text = format!("{saving} \u{b7} {text}");
         }
         if let Some(progress) = self.core.import_progress() {
             text = format!("{progress} \u{b7} {text}");

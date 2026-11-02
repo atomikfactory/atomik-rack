@@ -612,8 +612,10 @@ fn toggling_saves_the_visibility() {
     let path = dir.join("ui-state.json");
     let mut s = shell_at(&path);
     s.execute(AppCommand::ToggleFileBrowser);
+    s.flush_ui_state();
     assert_eq!(saved(&path)["file_browser_visible"], true);
     s.execute(AppCommand::ToggleFileBrowser);
+    s.flush_ui_state();
     assert_eq!(saved(&path)["file_browser_visible"], false);
 }
 
@@ -628,6 +630,7 @@ fn ending_a_resize_drag_saves_width_and_split() {
     s.handle(&down(grip));
     s.handle(&moved(Point::new(420.0, grip.y)));
     s.handle(&up(Point::new(420.0, grip.y)));
+    s.flush_ui_state();
     let json = saved(&path);
     assert_eq!(json["file_browser_width"], 420.0);
     assert!(json["file_browser_tree_fraction"].is_number());
@@ -650,6 +653,7 @@ fn a_width_the_window_could_not_show_is_saved_as_shown() {
     s.handle(&down(grip));
     s.handle(&moved(Point::new(1190.0, grip.y)));
     s.handle(&up(Point::new(1190.0, grip.y)));
+    s.flush_ui_state();
     assert_eq!(saved(&path)["file_browser_width"], 800.0);
 }
 
@@ -662,6 +666,7 @@ fn the_auto_preview_switch_is_saved() {
     s.pane_actions(&[UiAction::Browse(atomik_ui::BrowseAction::SetAutoPreview(
         false,
     ))]);
+    s.flush_ui_state();
     assert_eq!(saved(&path)["file_browser_auto_preview"], false);
     assert!(!shell_at(&path).core().file_browser().auto_preview());
 }
@@ -675,6 +680,7 @@ fn showing_a_folder_saves_it_as_the_last_folder() {
     s.pane_actions(&[UiAction::Browse(atomik_ui::BrowseAction::Show(
         atomik_ui::Place::Folder(folder.clone()),
     ))]);
+    s.flush_ui_state();
     assert_eq!(
         saved(&path)["file_browser_folder"],
         folder.to_string_lossy().as_ref()
@@ -683,6 +689,7 @@ fn showing_a_folder_saves_it_as_the_last_folder() {
     s.pane_actions(&[UiAction::Browse(atomik_ui::BrowseAction::Show(
         atomik_ui::Place::Favorites,
     ))]);
+    s.flush_ui_state();
     assert_eq!(
         saved(&path)["file_browser_folder"],
         folder.to_string_lossy().as_ref()
@@ -1126,4 +1133,29 @@ fn a_device_plate_shows_the_open_hand_and_a_device_dragged_out_of_the_rack_is_no
     assert_eq!(s.cursor(), CursorHint::Dragging, "back over the rack");
     s.handle(&up(song));
     assert_ne!(s.cursor(), CursorHint::Dragging);
+}
+
+#[test]
+fn a_run_of_clicks_writes_the_window_state_once_and_the_rest_waits_for_the_flush() {
+    let dir = state_dir("debounce");
+    let path = dir.join("ui-state.json");
+    let mut s = shell_at(&path);
+    // The first change after a quiet time goes out with the first frame.
+    s.execute(AppCommand::ToggleFileBrowser);
+    s.frame_at(10.0);
+    assert_eq!(saved(&path)["file_browser_visible"], true);
+    let first = std::fs::read(&path).unwrap();
+    // The clicks that follow within two seconds write nothing.
+    for at in [10.2, 10.4, 10.6] {
+        s.execute(AppCommand::ToggleFileBrowser);
+        s.frame_at(at);
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), first, "no write per click");
+    // The next flush after the two seconds writes the last state, once.
+    s.frame_at(12.5);
+    assert_eq!(saved(&path)["file_browser_visible"], false);
+    // A shutdown writes whatever is waiting.
+    s.execute(AppCommand::ToggleFileBrowser);
+    s.shutdown();
+    assert_eq!(saved(&path)["file_browser_visible"], true);
 }

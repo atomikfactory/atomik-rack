@@ -216,3 +216,22 @@ EQ, analyser off (panel not shown)    2065 ns      369 ns
 The compressor and gate shortcuts (no `log10` under the knee, no `powf` for a steady gain) and the
 masked delay line change no bit (tests compare them with the plain formulas); no timing is
 recorded for them yet. A bypassed effect costs the wrapper's ring copy after two seconds.
+
+## App shell
+
+Same machine, release test profile. Save: `cargo test -p atomik-app --release --lib save_speed --
+--ignored --nocapture` (best of 5; a 200 000 note project, 100 tracks, 500 clips, a 9 MB project
+text, no plugins). "Blocking" is the whole save on the UI thread, which is what File > Save did
+before; "UI thread" is what File > Save blocks now (the document clone and the bundle plan), the
+rest runs on a worker. The plugin captures are one request per sandboxed plugin followed by the
+answers, so they cost the slowest plugin instead of the sum; that needs real children and is a hand
+check.
+
+```text
+case                                            before        after
+Save, 200 000 notes, UI thread blocked          52.9 ms       0.7 ms
+event-loop wakeups per second, a plugin loaded
+  and nothing playing                           60            10
+keymap.json stats per second                    4             0 (on focus and menu open)
+ui-state.json writes per navigation click       1             at most one per 2 s
+```
