@@ -6,6 +6,7 @@
 //! The model plans every one of these commands on a scratch copy of the document, so the
 //! reasons are the model's own messages: the view asks it instead of repeating its rules.
 
+use super::inline::{is_inner, parent_of};
 use super::{RackView, UiAction};
 use crate::breadcrumb::{self, CrumbHit};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
@@ -19,8 +20,8 @@ use vello::kurbo::{Point, Rect, RoundedRect, Stroke};
 const EDGE: f64 = 14.0;
 
 /// What a refused move says when a group is dragged.
-const ONE_AT_A_TIME: &str = "Move devices into or out of a container one at a time, or select \
-     them and use Combine";
+pub(super) const ONE_AT_A_TIME: &str = "Move devices into or out of a container one at a time, or \
+     select them and use Combine";
 
 impl RackView {
     // ------------------------------------------------------------------ reasons
@@ -68,8 +69,8 @@ impl RackView {
     /// Why Move Out of Container cannot work on the selection (`None`: it can): one device of
     /// an open container goes back to the rack, after the container.
     pub fn move_out_reason(&self, doc: &RackDoc, registry: &Registry) -> Option<String> {
-        if self.scope.is_empty() {
-            return Some("Open a container to move a device out of it".into());
+        if self.scope.is_empty() && !self.inline {
+            return Some("Open a container, or unfold one, to move a device out of it".into());
         }
         let keys = self.local_selection();
         let [key] = keys.as_slice() else {
@@ -79,12 +80,15 @@ impl RackView {
                 "Move devices out of a container one at a time".into()
             });
         };
+        if self.scope.is_empty() && !is_inner(key) {
+            return Some("Select a device inside an unfolded container".into());
+        }
         plan_reason(
             doc,
             registry,
             Command::Container(ContainerCommand::MoveOutOfContainer {
                 key: self.abs_key(key),
-                index: self.scope_rack_at,
+                index: self.move_out_index_for(key, doc),
             }),
         )
     }
@@ -93,6 +97,20 @@ impl RackView {
     /// after the container.
     pub fn move_out_index(&self) -> usize {
         self.scope_rack_at
+    }
+
+    /// [`Self::move_out_index`] for the inner device `key` (a path key) of the project `doc`:
+    /// right after its container, wherever the rack shows it (an unfolded container, or the
+    /// open one).
+    pub fn move_out_index_for(&self, key: &DeviceKey, doc: &RackDoc) -> usize {
+        if !self.scope.is_empty() {
+            return self.scope_rack_at;
+        }
+        let container = parent_of(key);
+        doc.devices
+            .iter()
+            .position(|d| Some(&d.key) == container.as_ref())
+            .map_or(usize::MAX, |i| i + 1)
     }
 
     // ------------------------------------------------------------------ the drag
@@ -110,9 +128,16 @@ impl RackView {
         }
         let key = self.devices[dev].key.clone();
         if self.scope.is_empty() {
+            // A device of an unfolded container moves out by being dropped outside its frame
+            // (decided at the release), so only the devices of the rack itself have targets.
+            if is_inner(&key) {
+                self.host_doc = host;
+                return;
+            }
             let targets: Vec<DeviceKey> = self
                 .inner_range()
                 .filter(|&i| i != dev)
+                .filter(|&i| !is_inner(&self.devices[i].key))
                 .filter(|&i| {
                     self.devices[i]
                         .desc
@@ -121,16 +146,18 @@ impl RackView {
                 })
                 .map(|i| self.devices[i].key.clone())
                 .collect();
+            let project = host.as_ref().unwrap_or(doc);
             for container in targets {
                 let command = Command::Container(ContainerCommand::MoveIntoContainer {
                     key: key.clone(),
                     container: container.clone(),
                     index: usize::MAX,
                 });
-                if plan_reason(doc, registry, command).is_none() {
+                if plan_reason(project, registry, command).is_none() {
                     self.move_in_ok.push(container);
                 }
             }
+            self.host_doc = host;
         } else if let Some(host) = host {
             let command = Command::Container(ContainerCommand::MoveOutOfContainer {
                 key: self.abs_key(&key),
@@ -269,7 +296,7 @@ impl RackView {
 }
 
 /// The model's refusal of `command` planned on a scratch copy of `doc`, `None` when it takes.
-fn plan_reason(doc: &RackDoc, registry: &Registry, command: Command) -> Option<String> {
+pub(super) fn plan_reason(doc: &RackDoc, registry: &Registry, command: Command) -> Option<String> {
     Document::new(doc.clone())
         .apply(command, registry)
         .err()
