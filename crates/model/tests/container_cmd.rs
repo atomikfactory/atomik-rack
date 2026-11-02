@@ -917,6 +917,7 @@ fn the_random_generator_reaches_the_interesting_commands() {
                 Op::Remove(..) => "remove",
                 Op::Move(..) => "move",
                 Op::Duplicate(..) => "duplicate",
+                Op::Open(..) => "open",
                 Op::Param(..) => "param",
                 Op::Undo => "undo",
                 Op::Redo => "redo",
@@ -947,6 +948,7 @@ fn the_random_generator_reaches_the_interesting_commands() {
         "macro",
         "remove",
         "duplicate",
+        "open",
         "param",
     ] {
         assert!(

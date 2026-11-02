@@ -65,6 +65,14 @@ pub(crate) fn plan(
             key,
             auto_split,
         } => add_inner(doc, registry, container, index, &type_id, key, auto_split),
+        ContainerCommand::SetOpen { container, open } => {
+            let c = container_of(doc, &container)?;
+            Ok(Edit::ContainerOpen {
+                old: c.open,
+                new: open,
+                container,
+            })
+        }
         ContainerCommand::SetSplits {
             container, splits, ..
         } => {

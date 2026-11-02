@@ -125,6 +125,8 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
 
 fn container_label(c: &ContainerCommand) -> &'static str {
     match c {
+        ContainerCommand::SetOpen { open: true, .. } => "Unfold Container",
+        ContainerCommand::SetOpen { open: false, .. } => "Fold Container",
         ContainerCommand::Combine { .. } => "Combine",
         ContainerCommand::Uncombine { .. } => "Uncombine",
         ContainerCommand::MoveIntoContainer { .. } => "Move Into Container",

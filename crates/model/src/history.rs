@@ -372,6 +372,12 @@ pub(crate) enum Edit {
         container: DeviceKey,
         cable: Cable,
     },
+    /// Whether a container's inside is unfolded in the rack.
+    ContainerOpen {
+        container: DeviceKey,
+        old: bool,
+        new: bool,
+    },
     /// A container's whole split list.
     Splits {
         container: DeviceKey,
@@ -813,6 +819,15 @@ impl Edit {
             },
             Edit::InnerConnect { container, cable } => Edit::InnerDisconnect { container, cable },
             Edit::InnerDisconnect { container, cable } => Edit::InnerConnect { container, cable },
+            Edit::ContainerOpen {
+                container,
+                old,
+                new,
+            } => Edit::ContainerOpen {
+                container,
+                old: new,
+                new: old,
+            },
             Edit::Splits {
                 container,
                 old,
@@ -1413,6 +1428,10 @@ impl Edit {
                 };
                 cables.remove(at);
                 vec![SyncOp::RoutingChanged]
+            }
+            Edit::ContainerOpen { container, new, .. } => {
+                container_mut(doc, container)?.open = *new;
+                vec![SyncOp::ViewChanged]
             }
             Edit::Splits {
                 container,

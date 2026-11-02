@@ -57,6 +57,10 @@ pub struct ContainerDoc {
     pub macros: [MacroDoc; MACRO_COUNT],
     /// Note splits, in slot order (the first is the split device's `out_1`).
     pub splits: Vec<NoteSplit>,
+    /// The inside is unfolded in the rack: the container's devices are drawn under its panel.
+    /// Presentation only (the engine never sees it); stored only when `true`, as the optional
+    /// `"open"` field of `"inner"` (still the same project format).
+    pub open: bool,
 }
 
 /// One macro: a name and the inner params it drives.
@@ -171,6 +175,14 @@ pub enum ContainerCommand {
         index: u8,
         /// The name.
         name: String,
+    },
+    /// Unfold (`open`) or fold the container `container` (a path key) in the rack view: whether
+    /// its devices are drawn under its panel. Presentation only; one undo step.
+    SetOpen {
+        /// The container (path key).
+        container: DeviceKey,
+        /// Whether the inside is unfolded.
+        open: bool,
     },
     /// Deep copy of a container, placed right after the original: a new key, the name
     /// `<name> copy`, no outer cables, no console channel, no song track.

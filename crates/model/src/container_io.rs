@@ -6,10 +6,13 @@
 //!            "macros":  [ {"name": "Tone", "targets": [ {"device": "fx/delay", "param": "mix",
 //!                                                         "min": 0, "max": 1} … ]} × 8 ],
 //!            "splits":  [ {"target": "lo", "key_lo", "key_hi", "vel_lo", "vel_hi",
-//!                          "transpose"} … ] }
+//!                          "transpose"} … ],
+//!            "open":    true }
 //! ```
 //!
-//! Inner devices and cables are in the same canonical form as at the top level (cable ends
+//! `"open"` is optional: it is written, as the last field, only when the container is unfolded
+//! in the rack (a presentation flag); a missing one means folded. Inner devices and cables are in
+//! the same canonical form as at the top level (cable ends
 //! are local keys; the container's inside edge is `boundary`), `macros` always has 8 entries.
 //! The reader checks shapes while it reads; the rules (limits, keys, cables, splits, macros)
 //! are those of [`crate::RackDoc::check_containers`], run once on the loaded project.
@@ -29,6 +32,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 const INNER_FIELDS: &[&str] = &["devices", "cables", "macros", "splits"];
+const INNER_ALLOWED: &[&str] = &["devices", "cables", "macros", "splits", "open"];
 const CABLE_FIELDS: &[&str] = &["from", "to"];
 const MACRO_FIELDS: &[&str] = &["name", "targets"];
 const TARGET_FIELDS: &[&str] = &["device", "param", "min", "max"];
@@ -69,7 +73,7 @@ pub(crate) fn load_inner(
     fmt: DeviceFormat,
     registry: &Registry,
 ) -> Result<ContainerDoc, ModelError> {
-    let o = object(v, path, INNER_FIELDS, INNER_FIELDS)?;
+    let o = object(v, path, INNER_ALLOWED, INNER_FIELDS)?;
 
     let devices_path = path.field("devices");
     let mut devices: Vec<RackDevice> = Vec::new();
@@ -144,11 +148,20 @@ pub(crate) fn load_inner(
         });
     }
 
+    let open = match o.get("open") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| {
+            path.field("open")
+                .error(format!("expected true or false, found {v}"))
+        })?,
+    };
+
     Ok(ContainerDoc {
         devices,
         cables,
         macros,
         splits,
+        open,
     })
 }
 
@@ -240,13 +253,17 @@ pub(crate) fn write_inner(
     }
     let _ = write!(
         w,
-        "{}]\n{p}}}",
+        "{}]",
         if inner.splits.is_empty() {
             String::new()
         } else {
             format!("\n{q}")
         }
     );
+    if inner.open {
+        let _ = write!(w, ",\n{q}\"open\": true");
+    }
+    let _ = write!(w, "\n{p}}}");
 }
 
 /// Puts the inner cables of every container into canonical (sorted) order. The reader checks
