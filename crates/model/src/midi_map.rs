@@ -14,6 +14,10 @@
 //! one channel or any, from one input port or any. A learned source takes the channel and any
 //! port.
 //!
+//! A source may also name the **control surface** it is on (`MidiSource::surface`): a generic
+//! controller surface of the settings. A source with a surface hears that surface only; one
+//! without hears every surface and every port, so older projects map as they did.
+//!
 //! # Options
 //!
 //! [`MapOptions`] holds the range (`min` and `max` as fractions of the target's own range, so a
@@ -32,7 +36,13 @@
 //! ([`PresetTarget`]): a device **type** with its position among the devices of that type in the
 //! rack (`nth`, from 0) and a param key, so a preset made for the first poly synth's cutoff
 //! applies to the first poly synth of any project, and a preset for `atomik.channel` number 3's
-//! fader to the third channel of any project. The input port is not part of a preset.
+//! fader to the third channel of any project. The input port and the surface are not part of a
+//! preset.
+//!
+//! Two more targets follow the user instead of naming a device: [`MidiTarget::Focused`] is a
+//! param of the **focused device** (the device a surface is locked to, else the device selected
+//! in the rack) and [`MidiTarget::Command`] runs a [`RemoteCommand`] (select the previous or next
+//! track, undo, redo, step through the presets of the selected device) when a button is pressed.
 
 use crate::console::{CHANNEL_TYPE, is_internal_param};
 use crate::history::Edit;
@@ -74,6 +84,10 @@ pub struct MidiSource {
     pub channel: Option<u8>,
     /// The kind of message.
     pub kind: SourceKind,
+    /// The control surface the control is on (a generic controller surface, by name), or any
+    /// origin: a source with no surface hears every surface and every port; one with a surface
+    /// hears that surface only.
+    pub surface: Option<String>,
 }
 
 impl MidiSource {
@@ -83,11 +97,22 @@ impl MidiSource {
             port: None,
             channel,
             kind,
+            surface: None,
         }
     }
 
-    /// True when `msg` from `port` is for this source.
+    /// True when `msg` from `port` is for this source (a message of a plain MIDI input: a
+    /// source tied to a surface does not hear it).
     pub fn matches(&self, port: &str, msg: &ChannelMessage) -> bool {
+        self.matches_from(port, None, msg)
+    }
+
+    /// True when `msg` from `port`, sent by the control surface `surface` (`None` for a plain
+    /// MIDI input), is for this source.
+    pub fn matches_from(&self, port: &str, surface: Option<&str>, msg: &ChannelMessage) -> bool {
+        if self.surface.as_deref().is_some_and(|s| surface != Some(s)) {
+            return false;
+        }
         if self.port.as_deref().is_some_and(|p| p != port) {
             return false;
         }
@@ -119,9 +144,10 @@ impl MidiSource {
         let channel = self
             .channel
             .map_or_else(|| "any ch".to_owned(), |c| format!("ch {}", c + 1));
-        match &self.port {
-            Some(p) => format!("{what} {channel} ({p})"),
-            None => format!("{what} {channel}"),
+        match (&self.surface, &self.port) {
+            (Some(s), _) => format!("{what} {channel} [{s}]"),
+            (None, Some(p)) => format!("{what} {channel} ({p})"),
+            (None, None) => format!("{what} {channel}"),
         }
     }
 
@@ -201,6 +227,109 @@ impl TransportTarget {
     }
 }
 
+/// A command a mapping can run: what a hardware button does besides moving a parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RemoteCommand {
+    /// Select another track: `delta` tracks down the arrangement (negative is up), clamped at the
+    /// ends.
+    SelectTrack {
+        /// How many tracks to move, never 0.
+        delta: i8,
+    },
+    /// Undo the last edit.
+    Undo,
+    /// Redo the last undone edit.
+    Redo,
+    /// Load another preset of the selected device: `delta` steps through its preset list
+    /// (negative is back), wrapping at the ends.
+    SelectPreset {
+        /// How many presets to move, never 0.
+        delta: i8,
+    },
+}
+
+impl RemoteCommand {
+    /// The most tracks or presets one press moves.
+    pub const MAX_DELTA: i8 = 16;
+
+    /// The commands the panel offers, in menu order.
+    pub const ALL: [RemoteCommand; 6] = [
+        RemoteCommand::SelectTrack { delta: -1 },
+        RemoteCommand::SelectTrack { delta: 1 },
+        RemoteCommand::Undo,
+        RemoteCommand::Redo,
+        RemoteCommand::SelectPreset { delta: -1 },
+        RemoteCommand::SelectPreset { delta: 1 },
+    ];
+
+    /// The name saved in files (the step comes separately, see [`Self::delta`]).
+    pub fn id(self) -> &'static str {
+        match self {
+            RemoteCommand::SelectTrack { .. } => "select_track",
+            RemoteCommand::Undo => "undo",
+            RemoteCommand::Redo => "redo",
+            RemoteCommand::SelectPreset { .. } => "select_preset",
+        }
+    }
+
+    /// The step of a stepping command.
+    pub fn delta(self) -> Option<i8> {
+        match self {
+            RemoteCommand::SelectTrack { delta } | RemoteCommand::SelectPreset { delta } => {
+                Some(delta)
+            }
+            _ => None,
+        }
+    }
+
+    /// The command saved under `id` with `delta` (a stepping command needs a non-zero delta of
+    /// at most [`Self::MAX_DELTA`]; the others take none).
+    pub fn from_id(id: &str, delta: Option<i64>) -> Result<Self, String> {
+        let step = || -> Result<i8, String> {
+            let d = delta.ok_or_else(|| format!("`{id}` needs a delta"))?;
+            if d == 0 || d.unsigned_abs() > RemoteCommand::MAX_DELTA as u64 {
+                return Err(format!(
+                    "the delta of `{id}` is 1 to {} either way, not {d}",
+                    RemoteCommand::MAX_DELTA
+                ));
+            }
+            Ok(d as i8)
+        };
+        let none = |c: RemoteCommand| -> Result<Self, String> {
+            match delta {
+                Some(_) => Err(format!("`{id}` has no delta")),
+                None => Ok(c),
+            }
+        };
+        match id {
+            "select_track" => Ok(RemoteCommand::SelectTrack { delta: step()? }),
+            "undo" => none(RemoteCommand::Undo),
+            "redo" => none(RemoteCommand::Redo),
+            "select_preset" => Ok(RemoteCommand::SelectPreset { delta: step()? }),
+            other => Err(format!("unknown command {other:?}")),
+        }
+    }
+
+    /// The label for lists: `Previous track`, `Undo`, `Next preset`, `Track +3`.
+    pub fn label(self) -> String {
+        let step = |delta: i8, one: &str, other: &str, noun: &str| match delta {
+            -1 => one.to_owned(),
+            1 => other.to_owned(),
+            d => format!("{noun} {d:+}"),
+        };
+        match self {
+            RemoteCommand::SelectTrack { delta } => {
+                step(delta, "Previous track", "Next track", "Track")
+            }
+            RemoteCommand::Undo => "Undo".to_owned(),
+            RemoteCommand::Redo => "Redo".to_owned(),
+            RemoteCommand::SelectPreset { delta } => {
+                step(delta, "Previous preset", "Next preset", "Preset")
+            }
+        }
+    }
+}
+
 /// What a mapping drives.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MidiTarget {
@@ -226,12 +355,21 @@ pub enum MidiTarget {
         /// The strip param key (`fader`, `pan`, `mute`, `solo`, `send1`, ...).
         param: String,
     },
+    /// A param of the **focused device**: the device the surface is locked to, else the device
+    /// selected in the rack (resolved by the app at each message, so one control follows the
+    /// selection). A device without the param is left alone.
+    Focused {
+        /// The param key.
+        param: String,
+    },
+    /// A command (a button).
+    Command(RemoteCommand),
 }
 
 impl MidiTarget {
     /// True for a target that is pressed rather than set (a transport key).
     pub fn is_trigger(&self) -> bool {
-        matches!(self, MidiTarget::Transport(_))
+        matches!(self, MidiTarget::Transport(_) | MidiTarget::Command(_))
     }
 
     /// A short text for lists: `synth1 filter.cutoff`, `VCA 2`, `Tempo`, `Play`, `Selected strip fader`.
@@ -242,6 +380,8 @@ impl MidiTarget {
             MidiTarget::Tempo => "Tempo".to_owned(),
             MidiTarget::Transport(t) => t.label().to_owned(),
             MidiTarget::SelectedStrip { param } => format!("Selected strip {param}"),
+            MidiTarget::Focused { param } => format!("Focused device {param}"),
+            MidiTarget::Command(c) => c.label(),
         }
     }
 }
@@ -737,6 +877,13 @@ pub enum PresetTarget {
         /// The strip param key.
         param: String,
     },
+    /// A param of the focused device.
+    Focused {
+        /// The param key.
+        param: String,
+    },
+    /// A command.
+    Command(RemoteCommand),
 }
 
 /// One mapping of a preset.
@@ -803,7 +950,9 @@ impl RackDoc {
                 .vca(*id)
                 .is_none()
                 .then(|| format!("no VCA group {id}")),
-            MidiTarget::Tempo | MidiTarget::Transport(_) => None,
+            MidiTarget::Tempo | MidiTarget::Transport(_) | MidiTarget::Command(_) => None,
+            MidiTarget::Focused { param } => (param.is_empty() || is_internal_param(param))
+                .then(|| format!("`{param}` is not a parameter you can map")),
             MidiTarget::SelectedStrip { param } => {
                 let desc = registry.get(CHANNEL_TYPE).map(|f| f.descriptor)?;
                 (desc.param_by_key(param).is_none() || is_internal_param(param))
@@ -857,9 +1006,14 @@ impl RackDoc {
                 MidiTarget::SelectedStrip { param } => PresetTarget::SelectedStrip {
                     param: param.clone(),
                 },
+                MidiTarget::Focused { param } => PresetTarget::Focused {
+                    param: param.clone(),
+                },
+                MidiTarget::Command(c) => PresetTarget::Command(*c),
             };
             let mut source = m.source.clone();
             source.port = None;
+            source.surface = None;
             preset.maps.push(PresetMap {
                 source,
                 target,
@@ -908,6 +1062,10 @@ impl RackDoc {
                 PresetTarget::SelectedStrip { param } => MidiTarget::SelectedStrip {
                     param: param.clone(),
                 },
+                PresetTarget::Focused { param } => MidiTarget::Focused {
+                    param: param.clone(),
+                },
+                PresetTarget::Command(c) => MidiTarget::Command(*c),
             };
             if let Some(problem) = self.midi_target_problem(registry, &target) {
                 notes.push(problem);
@@ -1128,6 +1286,7 @@ mod tests {
             port: Some("Pad".into()),
             channel: Some(2),
             kind: SourceKind::Cc(7),
+            surface: None,
         };
         assert!(s.matches("Pad", &cc(2, 7, 1)));
         assert!(!s.matches("Other", &cc(2, 7, 1)));
@@ -1542,7 +1701,8 @@ mod tests {
             MidiSource {
                 port: Some("Pad".into()),
                 channel: Some(9),
-                kind: SourceKind::Note(60)
+                kind: SourceKind::Note(60),
+                surface: None,
             }
             .describe(),
             "Note C3 ch 10 (Pad)"

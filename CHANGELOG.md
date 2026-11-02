@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Several control surfaces, generic controllers and command mappings.** Settings > Surfaces now
+  lists any number of surfaces (up to eight), each with its own driver, ports and an on/off
+  switch; an older settings file with one surface loads as a list of one. A new Generic
+  controller driver has no fixed layout: its controls are mapped with MIDI Learn, and a mapping
+  learnt from a surface hears that surface only, so two controllers can send the same controller
+  numbers to two devices at once. A mapping can address the focused device (the device selected
+  in the rack) and Mixer > Lock Surfaces to Selection pins each surface to that device while the
+  selection moves on. A control can also run a command: undo, redo, previous or next track,
+  previous or next preset of the focused device (Mixer > Map Command arms one for the next
+  control moved). Undo from a control takes back a whole mapped sweep as one step. The new
+  mapping fields are written only when used, so older projects load and bounce unchanged.
 - **Alt+drag a clip edge to stretch it.** With the Select tool, hold Alt (the alternate-tool role)
   over the start or end edge of a clip and drag: the clip gets longer or shorter by a ratio, the
   opposite edge stays where it is, and everything in the clip follows. Note starts and lengths

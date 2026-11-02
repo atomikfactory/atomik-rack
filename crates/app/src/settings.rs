@@ -27,7 +27,7 @@
 //!   "input_device": null,
 //!   "record_offset_frames": 0,
 //!   "pre_count_bars": 0,
-//!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" },
+//!   "surfaces": [{ "name": "Desk", "use": true, "driver": "mcu", "input": "Example Surface", "output": "Example Surface" }],
 //!   "midi_out_port": "Example Synth",
 //!   "sync": {
 //!     "clock_out": true,
@@ -54,8 +54,10 @@
 //! `record_offset_frames` places recordings earlier (see [`crate::audio_record`]).
 //! `pre_count_bars` (0 to 4, default 0 = off) is the count-in a recording starts with: the click
 //! counts that many bars before the song starts, and nothing is recorded during them.
-//! `surface` is the control surface (the Surfaces tab of the settings): a driver id (`"mcu"`, the
-//! eight-fader motor surface; `null` is none) and the MIDI input and output ports it talks through.
+//! `surfaces` are the control surfaces (the Surfaces tab of the settings), each with a unique `name`,
+//! `use` (default true), a driver id (`"mcu"`, the eight-fader motor surface; `"generic"`, a
+//! controller whose controls feed the MIDI mappings) and the MIDI input and output ports it talks
+//! through; an older file with one `surface` object loads as a list of that one.
 //! `midi_out_port` is the output port a MIDI Out device sends to while it has no port of its own
 //! (the Surfaces tab lists it under the surface ports); `null` is none.
 //! `sync` is MIDI clock (the Sync tab and Options > Sync): `clock_out` sends 24 clocks per quarter
@@ -216,17 +218,83 @@ impl HostChoice {
     }
 }
 
-/// The control surface: a driver and the MIDI ports it talks through.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// One control surface: a driver and the MIDI ports it talks through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SurfaceSettings {
-    /// The driver id (see [`atomik_midi_io::surface::DRIVERS`]); `None` = no surface.
+    /// The surface's name, unique among the surfaces (mappings and locks refer to it).
+    pub name: String,
+    /// The surface is in use (a surface that is switched off stays listed).
+    #[serde(rename = "use")]
+    pub enabled: bool,
+    /// The driver id (see [`atomik_midi_io::surface::DRIVERS`]); `None` = no driver yet.
     pub driver: Option<String>,
     /// The input port name (exact or unique substring); `None` = none.
     pub input: Option<String>,
     /// The output port name (exact or unique substring), for the motors, LEDs and displays;
     /// `None` = none.
     pub output: Option<String>,
+}
+
+impl Default for SurfaceSettings {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            enabled: true,
+            driver: None,
+            input: None,
+            output: None,
+        }
+    }
+}
+
+impl SurfaceSettings {
+    /// A surface in use named `name`, with no driver or ports yet.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
+    }
+
+    /// True when the surface can run: in use, with a driver and at least one port.
+    pub fn runs(&self) -> bool {
+        self.enabled && self.driver.is_some() && (self.input.is_some() || self.output.is_some())
+    }
+}
+
+/// The most control surfaces at once.
+pub const MAX_SURFACES: usize = 8;
+
+/// The surface list without more than [`MAX_SURFACES`] entries, with empty ports as `None` and
+/// every surface named, uniquely (an unnamed one takes its input port's name, else `Surface n`).
+fn clean_surfaces(surfaces: Vec<SurfaceSettings>) -> Vec<SurfaceSettings> {
+    let name = |n: Option<String>| n.filter(|s| !s.trim().is_empty());
+    let mut out: Vec<SurfaceSettings> = Vec::with_capacity(surfaces.len());
+    for s in surfaces.into_iter().take(MAX_SURFACES) {
+        let input = name(s.input);
+        let base = if s.name.trim().is_empty() {
+            input
+                .clone()
+                .unwrap_or_else(|| format!("Surface {}", out.len() + 1))
+        } else {
+            s.name.trim().to_owned()
+        };
+        let mut unique = base.clone();
+        let mut n = 2;
+        while out.iter().any(|o| o.name == unique) {
+            unique = format!("{base} {n}");
+            n += 1;
+        }
+        out.push(SurfaceSettings {
+            name: unique,
+            enabled: s.enabled,
+            driver: name(s.driver),
+            input,
+            output: name(s.output),
+        });
+    }
+    out
 }
 
 /// What a MIDI input is for.
@@ -463,8 +531,8 @@ pub struct AudioSettings {
     /// Third-party plugins: off by default, the search folders, the scan
     /// timeout and the plugins the user disabled.
     pub plugins: atomik_plugin_host::PluginSettings,
-    /// The control surface (the Surfaces tab).
-    pub surface: SurfaceSettings,
+    /// The control surfaces (the Surfaces tab): each runs its own driver on its own ports.
+    pub surfaces: Vec<SurfaceSettings>,
     /// The MIDI output port a MIDI Out device uses while it has none of its own (exact or unique
     /// substring of a port name); `None` = such a device sends nothing.
     pub midi_out_port: Option<String>,
@@ -490,7 +558,7 @@ impl Default for AudioSettings {
             pre_count_bars: 0,
             stream_threshold_bytes: None,
             plugins: atomik_plugin_host::PluginSettings::default(),
-            surface: SurfaceSettings::default(),
+            surfaces: Vec::new(),
             midi_out_port: None,
             sync: SyncSettings::default(),
             device_loss: DeviceLossSettings::default(),
@@ -541,11 +609,7 @@ impl AudioSettings {
             input_device: name(self.input_device),
             midi_out_port: name(self.midi_out_port),
             sync: self.sync.sanitized(),
-            surface: SurfaceSettings {
-                driver: name(self.surface.driver),
-                input: name(self.surface.input),
-                output: name(self.surface.output),
-            },
+            surfaces: clean_surfaces(self.surfaces),
             device_loss: DeviceLossSettings {
                 last_good: self.device_loss.last_good.map(|g| LastGood {
                     output_device: name(g.output_device),
@@ -612,9 +676,21 @@ impl AudioSettings {
         let keeps_count = value
             .as_object()
             .is_some_and(|o| o.contains_key("workers") && !o.contains_key("workers_auto"));
+        // A file from before several surfaces, with one `surface` object and no `surfaces`,
+        // loads as a list of that one.
+        let legacy_surface = match value.as_object() {
+            Some(o) if !o.contains_key("surfaces") => o
+                .get("surface")
+                .and_then(|s| serde_json::from_value::<SurfaceSettings>(s.clone()).ok())
+                .filter(|s| s.driver.is_some() || s.input.is_some() || s.output.is_some()),
+            _ => None,
+        };
         let mut settings = serde_json::from_value::<Self>(value).map_err(|e| e.to_string())?;
         if keeps_count {
             settings.workers_auto = false;
+        }
+        if let Some(surface) = legacy_surface {
+            settings.surfaces = vec![surface];
         }
         if let Some(name) = legacy {
             settings.midi_inputs = vec![MidiInputSetting::enabled(name)];
@@ -885,21 +961,66 @@ mod tests {
     }
 
     #[test]
-    fn the_surface_is_optional_and_sanitised() {
+    fn surfaces_are_optional_named_and_sanitised() {
         let none = AudioSettings::from_json("{}").unwrap();
-        assert_eq!(none.surface, SurfaceSettings::default());
-        assert_eq!(none.surface.driver, None);
+        assert!(none.surfaces.is_empty());
         let s = AudioSettings::from_json(
-            r#"{ "surface": { "driver": "mcu", "input": "  ", "output": "Example Desk" } }"#,
+            r#"{ "surfaces": [
+                { "driver": "mcu", "input": "  ", "output": "Example Desk" },
+                { "driver": "generic", "input": "Example Pads", "use": false },
+                { "name": "Example Pads", "driver": "generic", "input": "Other" },
+                { "name": "  ", "extra": 1 }
+            ] }"#,
         )
         .unwrap();
-        assert_eq!(s.surface.driver.as_deref(), Some("mcu"));
-        assert_eq!(s.surface.input, None, "an empty port is none");
-        assert_eq!(s.surface.output.as_deref(), Some("Example Desk"));
-        // Partial objects and unknown fields are fine.
-        let s =
-            AudioSettings::from_json(r#"{ "surface": { "driver": "mcu", "extra": 1 } }"#).unwrap();
-        assert_eq!(s.surface.output, None);
+        assert_eq!(s.surfaces.len(), 4);
+        assert_eq!(
+            s.surfaces[0].name, "Surface 1",
+            "an unnamed surface is numbered"
+        );
+        assert_eq!(s.surfaces[0].input, None, "an empty port is none");
+        assert_eq!(s.surfaces[0].output.as_deref(), Some("Example Desk"));
+        assert!(s.surfaces[0].enabled, "in use unless switched off");
+        assert_eq!(
+            s.surfaces[1].name, "Example Pads",
+            "named after its input port"
+        );
+        assert!(!s.surfaces[1].enabled);
+        assert_eq!(s.surfaces[2].name, "Example Pads 2", "names are unique");
+        assert_eq!(s.surfaces[3].name, "Surface 4");
+        assert!(s.surfaces[0].runs() && !s.surfaces[1].runs() && !s.surfaces[3].runs());
+        let many = format!(
+            r#"{{ "surfaces": [{}] }}"#,
+            [r#"{"driver": "mcu"}"#; MAX_SURFACES + 3].join(",")
+        );
+        let s = AudioSettings::from_json(&many).unwrap();
+        assert_eq!(s.surfaces.len(), MAX_SURFACES);
+        let back = AudioSettings::from_json(&s.to_json()).unwrap();
+        assert_eq!(back.surfaces, s.surfaces, "saved and read back");
+    }
+
+    #[test]
+    fn a_file_with_one_surface_loads_as_a_list_of_one() {
+        let s = AudioSettings::from_json(
+            r#"{ "surface": { "driver": "mcu", "input": "Example Desk", "output": "Example Desk" } }"#,
+        )
+        .unwrap();
+        assert_eq!(s.surfaces.len(), 1);
+        assert_eq!(s.surfaces[0].name, "Example Desk");
+        assert_eq!(s.surfaces[0].driver.as_deref(), Some("mcu"));
+        assert!(s.surfaces[0].enabled);
+        let saved = s.to_json();
+        assert!(
+            saved.contains("\"surfaces\"") && !saved.contains("\"surface\":"),
+            "{saved}"
+        );
+        let empty = AudioSettings::from_json(r#"{ "surface": {} }"#).unwrap();
+        assert!(empty.surfaces.is_empty(), "an empty surface is none");
+        let both = AudioSettings::from_json(
+            r#"{ "surface": { "driver": "mcu" }, "surfaces": [{ "driver": "generic" }] }"#,
+        )
+        .unwrap();
+        assert_eq!(both.surfaces.len(), 1, "the list wins over the old field");
     }
 
     #[test]
@@ -978,11 +1099,13 @@ mod tests {
                 .into(),
                 sandbox: false,
             },
-            surface: SurfaceSettings {
+            surfaces: vec![SurfaceSettings {
+                name: "Desk".into(),
+                enabled: true,
                 driver: Some("mcu".into()),
                 input: Some("Example Surface".into()),
                 output: Some("Example Surface Out".into()),
-            },
+            }],
             midi_out_port: Some("Example Synth".into()),
             sync: SyncSettings {
                 clock_out: true,

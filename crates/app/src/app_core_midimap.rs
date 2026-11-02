@@ -30,7 +30,8 @@ use crate::midi_control::{ControlHub, Inbound};
 use atomik_core::{ChannelMessage, VCA_MAX_DB, VCA_MIN_DB};
 use atomik_model::{
     Effect, Learner, MapMode, MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource,
-    MidiTarget, TEMPO_MAX, TEMPO_MIN, TransportTarget, load_midi_preset, save_midi_preset,
+    MidiTarget, RemoteCommand, TEMPO_MAX, TEMPO_MIN, TransportTarget, load_midi_preset,
+    save_midi_preset,
 };
 use atomik_ui::{MidiMapRow, MidiMarks};
 
@@ -80,6 +81,12 @@ pub(super) struct MidiControl {
     last: Option<(Arc<str>, ChannelMessage)>,
     /// The messages received in all.
     received: u64,
+    /// The device each control surface is locked to (runtime only, never saved), by surface name.
+    pub(super) locks: BTreeMap<String, DeviceKey>,
+    /// The surface whose message is being handled, for the mappings that follow a lock.
+    origin: Option<String>,
+    /// The surface of the last message the learner was fed, for the source it finds.
+    learn_surface: Option<String>,
 }
 
 impl MidiControl {
@@ -96,6 +103,9 @@ impl MidiControl {
             inbox: Vec::new(),
             last: None,
             received: 0,
+            locks: BTreeMap::new(),
+            origin: None,
+            learn_surface: None,
         }
     }
 
@@ -163,6 +173,8 @@ pub(super) enum Resolved {
     Tempo,
     /// A transport key.
     Transport(TransportTarget),
+    /// A command (undo, redo, select a track or a preset).
+    Command(RemoteCommand),
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -366,12 +378,28 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn midi_message(&mut self, port: &Arc<str>, msg: ChannelMessage) {
+        self.midi_message_from(port, None, msg);
+    }
+
+    /// Handles the message of a generic controller surface: counted and shown in the status line
+    /// like a message of a port, then run through the mappings tagged with the surface.
+    pub(super) fn surface_message(&mut self, port: &Arc<str>, surface: &str, msg: ChannelMessage) {
+        self.midi.received += 1;
+        self.midi.last = Some((Arc::clone(port), msg));
+        self.midi_message_from(port, Some(surface), msg);
+    }
+
+    /// Handles one message from `port`, sent by the control surface `surface` when it came from
+    /// one. Learning takes its source (tied to the surface when there is one); otherwise every
+    /// mapping that hears it runs.
+    fn midi_message_from(&mut self, port: &Arc<str>, surface: Option<&str>, msg: ChannelMessage) {
         if self.midi.learning() {
             // Learning: nothing runs; with a target armed the first control becomes its source.
-            if self.midi.armed.is_some()
-                && let Some(source) = self.midi.learner.feed(port, msg, self.midi.now)
-            {
-                self.finish_learn(source);
+            if self.midi.armed.is_some() {
+                self.midi.learn_surface = surface.map(str::to_owned);
+                if let Some(source) = self.midi.learner.feed(port, msg, self.midi.now) {
+                    self.finish_learn(source);
+                }
             }
             return;
         }
@@ -379,15 +407,18 @@ impl<S: EngineSink> AppCore<S> {
             .doc()
             .midi_maps
             .iter()
-            .filter(|m| m.matches(port, &msg))
+            .filter(|m| m.source.matches_from(port, surface, &msg))
             .cloned()
             .collect();
+        self.midi.origin = surface.map(str::to_owned);
         for mapping in hits {
             self.apply_mapping(&mapping, &msg);
         }
+        self.midi.origin = None;
     }
 
-    fn finish_learn(&mut self, source: MidiSource) {
+    fn finish_learn(&mut self, mut source: MidiSource) {
+        source.surface = self.midi.learn_surface.take();
         let Some(target) = self.midi.armed.take() else {
             return;
         };
@@ -414,6 +445,11 @@ impl<S: EngineSink> AppCore<S> {
                 let strip = self.strips_to_route(true).into_iter().next()?;
                 self.resolve_param(&strip, param)
             }
+            MidiTarget::Focused { param } => {
+                let device = self.focused_device(Some(param))?;
+                self.resolve_param(&device, param)
+            }
+            MidiTarget::Command(c) => Some(Resolved::Command(*c)),
         }
     }
 
@@ -445,7 +481,7 @@ impl<S: EngineSink> AppCore<S> {
                 ((self.doc().tempo_bpm - TEMPO_MIN) / (TEMPO_MAX - TEMPO_MIN)).clamp(0.0, 1.0)
                     as f32,
             ),
-            Resolved::Transport(_) => None,
+            Resolved::Transport(_) | Resolved::Command(_) => None,
         }
     }
 
@@ -464,18 +500,18 @@ impl<S: EngineSink> AppCore<S> {
         self.midi.states.insert(m.id, state);
         let continuous = matches!(m.options.mode, MapMode::Absolute | MapMode::Relative(_));
         match effect {
-            Some(Effect::Trigger) => {
-                if let Resolved::Transport(t) = resolved {
-                    self.transport_action(match t {
-                        TransportTarget::Play => TransportAction::Play,
-                        TransportTarget::Stop => TransportAction::Stop,
-                        TransportTarget::TogglePlay => TransportAction::TogglePlay,
-                        TransportTarget::Record => TransportAction::ToggleRecord,
-                        TransportTarget::Loop => TransportAction::ToggleLoop,
-                        TransportTarget::ReturnToZero => TransportAction::ReturnToZero,
-                    });
-                }
-            }
+            Some(Effect::Trigger) => match resolved {
+                Resolved::Transport(t) => self.transport_action(match t {
+                    TransportTarget::Play => TransportAction::Play,
+                    TransportTarget::Stop => TransportAction::Stop,
+                    TransportTarget::TogglePlay => TransportAction::TogglePlay,
+                    TransportTarget::Record => TransportAction::ToggleRecord,
+                    TransportTarget::Loop => TransportAction::ToggleLoop,
+                    TransportTarget::ReturnToZero => TransportAction::ReturnToZero,
+                }),
+                Resolved::Command(c) => self.run_remote(c),
+                _ => {}
+            },
             Some(Effect::Set(norm)) => {
                 let merge = continuous.then(|| self.midi.gesture(GestureKey::Map(m.id), false));
                 self.set_resolved(&resolved, norm, merge);
@@ -485,6 +521,76 @@ impl<S: EngineSink> AppCore<S> {
                 // keeps its gesture open while it keeps talking.
                 if continuous {
                     let _ = self.midi.gesture(GestureKey::Map(m.id), false);
+                }
+            }
+        }
+    }
+
+    /// The device the mappings that address "the focused device" act on: the device the surface
+    /// of the message being handled is locked to (whatever is selected), else the device selected
+    /// in the rack (the primary one first). With `param`, a device that has no such param does
+    /// not count (a locked surface then does nothing rather than act on another device).
+    pub fn focused_device(&self, param: Option<&str>) -> Option<DeviceKey> {
+        let fits = |key: &DeviceKey| match param {
+            Some(p) => self.resolve_param(key, p).is_some(),
+            None => self.doc().resolve(key).is_some(),
+        };
+        if let Some(lock) = self
+            .midi
+            .origin
+            .as_ref()
+            .and_then(|surface| self.midi.locks.get(surface))
+        {
+            return fits(lock).then(|| lock.clone());
+        }
+        self.view
+            .primary()
+            .into_iter()
+            .chain(self.view.selection())
+            .find(|k| fits(k))
+    }
+
+    /// Runs a command a mapping asked for. A mapped move that is still open ends first, so the
+    /// command is a step of its own (undo takes back the whole sweep, not part of it).
+    fn run_remote(&mut self, command: RemoteCommand) {
+        self.midi.gestures.clear();
+        self.document.end_merge();
+        self.release_automation();
+        match command {
+            RemoteCommand::Undo => {
+                if !self.undo() && self.rejection.is_none() {
+                    self.report("Nothing to undo");
+                }
+            }
+            RemoteCommand::Redo => {
+                if !self.redo() && self.rejection.is_none() {
+                    self.report("Nothing to redo");
+                }
+            }
+            RemoteCommand::SelectTrack { delta } => {
+                let id = if delta < 0 {
+                    "sequencer.select_prev_track"
+                } else {
+                    "sequencer.select_next_track"
+                };
+                for _ in 0..delta.unsigned_abs() {
+                    self.pane_command(Pane::Arrangement, id, None);
+                }
+                // The track's device is the focused one from now on.
+                if let Some(device) = self.arrangement.selected_track().cloned() {
+                    self.select(Some(device));
+                }
+            }
+            RemoteCommand::SelectPreset { delta } => {
+                let Some(device) = self.focused_device(None) else {
+                    self.report("Select a device to change its preset");
+                    return;
+                };
+                if self.plugins.instances.contains_key(&device) {
+                    self.step_plugin_preset(&device, i32::from(delta));
+                    self.feed_preset_bar();
+                } else {
+                    self.step_patch(&device, i32::from(delta));
                 }
             }
         }
@@ -532,7 +638,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 Command::SetTempo(bpm)
             }
-            Resolved::Transport(_) => return,
+            Resolved::Transport(_) | Resolved::Command(_) => return,
         };
         // A rejection (a param a macro drives, a frozen track) is shown like any other.
         let _ = self.apply_command(command);
@@ -570,6 +676,8 @@ impl<S: EngineSink> AppCore<S> {
         crate::commands::MidiMenu {
             learning: self.midi.learn_mode,
             has_maps: !self.doc().midi_maps.is_empty(),
+            surfaces: !self.surfaces.is_empty(),
+            locked: !self.midi.locks.is_empty(),
         }
     }
 

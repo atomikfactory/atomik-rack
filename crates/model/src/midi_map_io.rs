@@ -7,11 +7,14 @@
 //!     "source": { "kind": "cc" | "cc14" | "pitch_bend" | "note",
 //!                 "number": 0..=127 (cc, note) | 0..=31 (cc14; not on pitch_bend),
 //!                 "channel": 0..=15 (omitted: any channel),
-//!                 "port": "name" (omitted: any port) },
+//!                 "port": "name" (omitted: any port),
+//!                 "surface": "name" (a generic controller surface; omitted: any origin) },
 //!     "target": { "kind": "param", "device": "synth1", "param": "filter.cutoff" }
 //!              | { "kind": "vca", "id": 2 } | { "kind": "tempo" }
 //!              | { "kind": "transport", "action": "play" | "stop" | "toggle_play" | "record" | "loop" | "return_to_zero" }
-//!              | { "kind": "selected", "param": "fader" },
+//!              | { "kind": "selected", "param": "fader" } | { "kind": "focused", "param": "cutoff" }
+//!              | { "kind": "command", "command": "select_track" | "select_preset", "delta": -16..=16 }
+//!              | { "kind": "command", "command": "undo" | "redo" },
 //!     "min": 0..=1, "max": 0..=1, "invert": true,
 //!     "mode": "relative_twos" | "relative_offset" | "relative_sign" | "toggle" | "momentary",
 //!     "step": (0, 1], "pickup": false, "consume": false } …
@@ -31,7 +34,8 @@
 
 use crate::midi_map::{
     DEFAULT_SENSITIVITY, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions, MidiMapping,
-    MidiPreset, MidiSource, MidiTarget, PresetMap, PresetTarget, SourceKind, TransportTarget,
+    MidiPreset, MidiSource, MidiTarget, PresetMap, PresetTarget, RemoteCommand, SourceKind,
+    TransportTarget,
 };
 use crate::patch::{JsonPath, array, f32_text, json_str, number, object, string, uint};
 use crate::{DeviceKey, ModelError};
@@ -52,7 +56,7 @@ const PRESET_MAP_FIELDS: &[&str] = &[
     "source", "target", "min", "max", "invert", "mode", "step", "pickup", "consume",
 ];
 const PRESET_MAP_REQUIRED: &[&str] = &["source", "target"];
-const SOURCE_FIELDS: &[&str] = &["kind", "number", "channel", "port"];
+const SOURCE_FIELDS: &[&str] = &["kind", "number", "channel", "port", "surface"];
 const PRESET_FIELDS: &[&str] = &["format", "version", "name", "maps"];
 
 // ---------------------------------------------------------------------------- writing
@@ -75,6 +79,9 @@ fn source_json(s: &MidiSource) -> String {
     if let Some(p) = &s.port {
         let _ = write!(out, ", \"port\": {}", json_str(p));
     }
+    if let Some(surface) = &s.surface {
+        let _ = write!(out, ", \"surface\": {}", json_str(surface));
+    }
     out.push('}');
     out
 }
@@ -94,6 +101,16 @@ fn target_json(t: &MidiTarget) -> String {
         MidiTarget::SelectedStrip { param } => {
             format!("{{\"kind\": \"selected\", \"param\": {}}}", json_str(param))
         }
+        MidiTarget::Focused { param } => {
+            format!("{{\"kind\": \"focused\", \"param\": {}}}", json_str(param))
+        }
+        MidiTarget::Command(c) => match c.delta() {
+            Some(d) => format!(
+                "{{\"kind\": \"command\", \"command\": \"{}\", \"delta\": {d}}}",
+                c.id()
+            ),
+            None => format!("{{\"kind\": \"command\", \"command\": \"{}\"}}", c.id()),
+        },
     }
 }
 
@@ -114,6 +131,10 @@ fn preset_target_json(t: &PresetTarget) -> String {
         PresetTarget::SelectedStrip { param } => target_json(&MidiTarget::SelectedStrip {
             param: param.clone(),
         }),
+        PresetTarget::Focused { param } => target_json(&MidiTarget::Focused {
+            param: param.clone(),
+        }),
+        PresetTarget::Command(c) => target_json(&MidiTarget::Command(*c)),
     }
 }
 
@@ -246,10 +267,27 @@ fn source_from(v: &Value, path: &JsonPath, allow_port: bool) -> Result<MidiSourc
         }
         None => None,
     };
+    let surface = match o.get("surface") {
+        Some(s) => {
+            let sp = path.field("surface");
+            if !allow_port {
+                return Err(sp.error("a preset has no control surface"));
+            }
+            let name = string(s, &sp)?;
+            if name.is_empty() || name.chars().count() > MAX_PORT_NAME_CHARS {
+                return Err(sp.error(format!(
+                    "a surface name has 1 to {MAX_PORT_NAME_CHARS} characters"
+                )));
+            }
+            Some(name.to_owned())
+        }
+        None => None,
+    };
     Ok(MidiSource {
         port,
         channel,
         kind,
+        surface,
     })
 }
 
@@ -347,11 +385,38 @@ fn target_from(v: &Value, path: &JsonPath, preset: bool) -> Result<AnyTarget, Mo
                 AnyTarget::Concrete(MidiTarget::SelectedStrip { param })
             }
         }
+        "focused" => {
+            let o = object(v, path, &["kind", "param"], &["kind", "param"])?;
+            let param = param_of(o)?;
+            if preset {
+                AnyTarget::Role(PresetTarget::Focused { param })
+            } else {
+                AnyTarget::Concrete(MidiTarget::Focused { param })
+            }
+        }
+        "command" => {
+            let o = object(v, path, &["kind", "command", "delta"], &["kind", "command"])?;
+            let id = string(&o["command"], &path.field("command"))?;
+            let delta = match o.get("delta") {
+                Some(d) => Some(
+                    d.as_i64()
+                        .ok_or_else(|| path.field("delta").error("the delta is a whole number"))?,
+                ),
+                None => None,
+            };
+            let command =
+                RemoteCommand::from_id(id, delta).map_err(|e| path.field("command").error(e))?;
+            if preset {
+                AnyTarget::Role(PresetTarget::Command(command))
+            } else {
+                AnyTarget::Concrete(MidiTarget::Command(command))
+            }
+        }
         other => {
             let expected = if preset {
-                "device, vca, tempo, transport or selected"
+                "device, vca, tempo, transport, selected, focused or command"
             } else {
-                "param, vca, tempo, transport or selected"
+                "param, vca, tempo, transport, selected, focused or command"
             };
             return Err(kind_path.error(format!(
                 "unknown target kind {other:?}; expected {expected}"

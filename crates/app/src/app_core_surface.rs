@@ -39,19 +39,31 @@ pub(super) enum StripRef {
 }
 
 impl<S: EngineSink> AppCore<S> {
-    /// Sets up (or, with `None`, tears down) the control surface: the driver says hello and
-    /// shows the project on the first frame; removing it lets the surface go offline.
+    /// Sets up (or, with `None`, tears down) the one control surface: the driver says hello and
+    /// shows the project on the first frame; removing it lets the surface go offline. See
+    /// [`Self::set_surfaces`] for several.
     pub fn set_surface(&mut self, host: Option<SurfaceHost>) {
-        if let Some(mut old) = self.surface.take() {
+        self.set_surfaces(host.into_iter().collect());
+    }
+
+    /// Sets up the control surfaces `hosts` (each runs its own driver on its own ports) and lets
+    /// the ones that were set up before go offline. A lock stays only for a surface that is
+    /// still there.
+    pub fn set_surfaces(&mut self, hosts: Vec<SurfaceHost>) {
+        for mut old in std::mem::take(&mut self.surfaces) {
             let mut out = Vec::new();
             old.driver.disconnect(&mut out);
             old.send_all(&mut out);
         }
-        self.surface = host;
+        self.midi
+            .locks
+            .retain(|id, _| hosts.iter().any(|h| h.id == *id));
+        self.surfaces = hosts;
     }
 
     /// Sets up the driver `driver` on an in-memory surface and returns the surface's end of it
-    /// (what a test or the MCP server plays the hardware with).
+    /// (what a test or the MCP server plays the hardware with). It replaces every surface; the
+    /// surface is named after the driver.
     ///
     /// # Errors
     /// A message when no driver has that id.
@@ -59,16 +71,125 @@ impl<S: EngineSink> AppCore<S> {
         &mut self,
         driver: &str,
     ) -> Result<crate::surface::LoopbackSurface, String> {
+        self.set_surfaces(Vec::new());
+        self.add_loopback_surface(driver, driver)
+    }
+
+    /// Adds an in-memory surface named `name` with the driver `driver` beside the surfaces that
+    /// are set up (one with the same name is replaced) and returns the surface's end of it.
+    ///
+    /// # Errors
+    /// A message when no driver has that id.
+    pub fn add_loopback_surface(
+        &mut self,
+        name: &str,
+        driver: &str,
+    ) -> Result<crate::surface::LoopbackSurface, String> {
         let d = atomik_midi_io::surface::driver_by_id(driver)
             .ok_or_else(|| format!("no control surface driver {driver:?}"))?;
         let surface = crate::surface::LoopbackSurface::new();
-        self.set_surface(Some(SurfaceHost::new(d, Box::new(surface.clone()))));
+        let host = SurfaceHost::new(d, Box::new(surface.clone())).named(name, name);
+        let mut hosts = std::mem::take(&mut self.surfaces);
+        match hosts.iter().position(|h| h.id == name) {
+            Some(i) => {
+                let mut old = std::mem::replace(&mut hosts[i], host);
+                let mut out = Vec::new();
+                old.driver.disconnect(&mut out);
+                old.send_all(&mut out);
+            }
+            None => hosts.push(host),
+        }
+        self.surfaces = hosts;
         Ok(surface)
     }
 
-    /// The control surface in use, if any.
+    /// The first control surface, if any is set up.
     pub fn surface(&self) -> Option<&SurfaceHost> {
-        self.surface.as_ref()
+        self.surfaces.first()
+    }
+
+    /// Every control surface that is set up, in settings order.
+    pub fn surfaces(&self) -> &[SurfaceHost] {
+        &self.surfaces
+    }
+
+    /// The device the surface `name` is locked to, if it is.
+    pub fn surface_lock(&self, name: &str) -> Option<&DeviceKey> {
+        self.midi.locks.get(name)
+    }
+
+    /// Locks the surface `name` to `device` (`None` unlocks it): the surface's mappings that
+    /// address the focused device then address that device whatever is selected in the rack.
+    /// False, with a message, when no surface has that name or the device does not exist.
+    pub fn lock_surface(&mut self, name: &str, device: Option<DeviceKey>) -> bool {
+        if !self.surfaces.iter().any(|h| h.id == name) {
+            self.report(format!("There is no control surface named {name:?}"));
+            return false;
+        }
+        match device {
+            Some(device) => {
+                if self.doc().resolve(&device).is_none() {
+                    self.report(format!("There is no device {device}"));
+                    return false;
+                }
+                let label = self
+                    .doc()
+                    .device(&device)
+                    .map_or_else(|| device.0.clone(), |d| d.name.clone());
+                self.midi.locks.insert(name.to_owned(), device);
+                self.report(format!("{name} is locked to {label}"));
+            }
+            None => {
+                if self.midi.locks.remove(name).is_some() {
+                    self.report(format!("{name} follows the selected device"));
+                }
+            }
+        }
+        true
+    }
+
+    /// The Lock Surfaces to Selection item: every surface is unlocked when any is locked, else
+    /// every surface is locked to the device selected in the rack. False, with a message, when
+    /// nothing could change.
+    pub fn toggle_surface_locks(&mut self) -> bool {
+        if self.surfaces.is_empty() {
+            self.report("No control surface is set up (Settings > Surfaces)");
+            return false;
+        }
+        if !self.midi.locks.is_empty() {
+            self.midi.locks.clear();
+            self.report("The surfaces follow the selected device");
+            return true;
+        }
+        let Some(device) = self.view.primary() else {
+            self.report("Select a device to lock the surfaces to");
+            return false;
+        };
+        let names: Vec<String> = self.surfaces.iter().map(|h| h.id.clone()).collect();
+        for name in names {
+            self.midi.locks.insert(name, device.clone());
+        }
+        let label = self
+            .doc()
+            .device(&device)
+            .map_or_else(|| device.0.clone(), |d| d.name.clone());
+        self.report(format!("The surfaces are locked to {label}"));
+        true
+    }
+
+    /// Locks the surface `name` to the device selected in the rack, or unlocks it when it is
+    /// locked already. False, with a message, when it cannot.
+    pub fn toggle_surface_lock(&mut self, name: &str) -> bool {
+        if self.midi.locks.contains_key(name) {
+            return self.lock_surface(name, None);
+        }
+        match self.view.primary() {
+            Some(device) => self.lock_surface(name, Some(device)),
+            None => {
+                self.report("Select a device to lock the surface to");
+                false
+            }
+        }
     }
 
     /// The surface's view of the project, with what each strip stands for.
@@ -183,12 +304,24 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// One frame of the control surface (UI thread): the messages that arrived are handled, and
-    /// the feedback goes out when it is due. `now` is a monotonic time in seconds.
+    /// One frame of the control surfaces (UI thread): the messages that arrived are handled, and
+    /// the feedback goes out when it is due. `now` is a monotonic time in seconds. Each surface
+    /// is handled in settings order; the messages of a generic controller go to the mappings
+    /// tagged with the surface, the actions of a console surface are applied as commands.
     pub fn surface_frame(&mut self, now: f64) {
-        let Some(mut host) = self.surface.take() else {
+        if self.surfaces.is_empty() {
             return;
-        };
+        }
+        let mut hosts = std::mem::take(&mut self.surfaces);
+        self.midi.set_now(now);
+        for host in &mut hosts {
+            self.surface_host_frame(host, now);
+        }
+        self.surfaces = hosts;
+        self.end_expired_gestures();
+    }
+
+    fn surface_host_frame(&mut self, host: &mut SurfaceHost, now: f64) {
         let (state, refs) = self.surface_view();
         let mut out = Vec::new();
         if !host.connected {
@@ -201,15 +334,25 @@ impl<S: EngineSink> AppCore<S> {
         host.link.poll(&mut incoming);
         let mut actions = Vec::new();
         let mut replies = Vec::new();
+        let mut mapped = Vec::new();
+        let feeds_mappings = host.driver.feeds_mappings();
         for bytes in &incoming {
             host.received += 1;
-            host.driver
-                .on_message(bytes, &state, &mut actions, &mut replies);
+            if feeds_mappings {
+                // A controller of the mappings: what it sends is a note, a controller or a pitch
+                // bend (the rest, SysEx and the like, is not a control).
+                mapped.extend(atomik_midi_io::parse_message(bytes, &mut host.parser));
+            } else {
+                host.driver
+                    .on_message(bytes, &state, &mut actions, &mut replies);
+            }
         }
         host.send_all(&mut replies);
-        self.midi.set_now(now);
+        for message in mapped {
+            self.surface_message(&host.port, &host.id, message);
+        }
         for action in actions {
-            self.apply_surface_action(action, &refs);
+            self.apply_surface_action(action, &refs, &host.id);
         }
         if now >= host.next_feedback {
             // What the actions changed is what the surface shows next.
@@ -218,8 +361,6 @@ impl<S: EngineSink> AppCore<S> {
             host.send_all(&mut out);
             host.next_feedback = now + crate::surface::FEEDBACK_PERIOD;
         }
-        self.surface = Some(host);
-        self.end_expired_gestures();
     }
 
     fn strip_param(&self, r: &StripRef, param: &str) -> Option<Resolved> {
@@ -234,11 +375,11 @@ impl<S: EngineSink> AppCore<S> {
         self.set_resolved(r, norm, Some(merge));
     }
 
-    fn apply_surface_action(&mut self, action: SurfaceAction, refs: &[StripRef]) {
+    fn apply_surface_action(&mut self, action: SurfaceAction, refs: &[StripRef], id: &str) {
         match action {
             SurfaceAction::Fader { strip, value } => {
                 let Some(r) = refs.get(strip) else { return };
-                let key = GestureKey::Surface(format!("fader:{strip}"));
+                let key = GestureKey::Surface(format!("{id}:fader:{strip}"));
                 let held = self.midi.is_held(&key);
                 let resolved = match r {
                     StripRef::Strip(_) => self.strip_param(r, "fader"),
@@ -253,17 +394,17 @@ impl<S: EngineSink> AppCore<S> {
                     return;
                 };
                 if let Some(r) = self.resolve_param(&master, "fader") {
-                    let key = GestureKey::Surface("fader:master".to_owned());
+                    let key = GestureKey::Surface(format!("{id}:fader:master"));
                     let held = self.midi.is_held(&key);
                     self.surface_set(key, held, &r, value);
                 }
             }
             SurfaceAction::Touch { strip, touched } => {
-                let key = GestureKey::Surface(format!("fader:{strip}"));
+                let key = GestureKey::Surface(format!("{id}:fader:{strip}"));
                 self.surface_touch(key, touched);
             }
             SurfaceAction::MasterTouch(touched) => {
-                self.surface_touch(GestureKey::Surface("fader:master".to_owned()), touched);
+                self.surface_touch(GestureKey::Surface(format!("{id}:fader:master")), touched);
             }
             SurfaceAction::Pan { strip, delta } => {
                 let Some(r) = refs.get(strip) else { return };
@@ -271,7 +412,7 @@ impl<S: EngineSink> AppCore<S> {
                     return;
                 };
                 if let Some(now) = self.target_value(&resolved) {
-                    let key = GestureKey::Surface(format!("pan:{strip}"));
+                    let key = GestureKey::Surface(format!("{id}:pan:{strip}"));
                     self.surface_set(key, false, &resolved, (now + delta).clamp(0.0, 1.0));
                 }
             }
@@ -406,3 +547,7 @@ fn pan_text(pan: f32) -> String {
 #[cfg(test)]
 #[path = "app_core_surface_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_core_surfaces_tests.rs"]
+mod surfaces_tests;

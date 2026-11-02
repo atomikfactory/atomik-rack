@@ -268,7 +268,7 @@ fn settings() -> AudioSettings {
         pre_count_bars: 0,
         stream_threshold_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
-        surface: crate::settings::SurfaceSettings::default(),
+        surfaces: Vec::new(),
         midi_out_port: None,
         sync: crate::settings::SyncSettings::default(),
         device_loss: crate::settings::DeviceLossSettings::default(),

@@ -23,7 +23,8 @@ use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
     AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES, MAX_BUFFER,
-    MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES, RECORD_OFFSET_CHOICES, WORKER_CHOICES,
+    MAX_SURFACES, MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES, RECORD_OFFSET_CHOICES,
+    SurfaceSettings, WORKER_CHOICES,
 };
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
@@ -104,7 +105,15 @@ pub enum Choice {
     /// What an enabled MIDI input is for: a click switches it between playing notes (a keyboard)
     /// and feeding the mappings only.
     MidiMappingOnly(String),
-    /// The control surface driver (`None` = no surface).
+    /// Makes the surface at this index the one the Surfaces tab edits.
+    SurfaceSelect(usize),
+    /// Adds a surface (an empty one, edited next).
+    SurfaceAdd,
+    /// Removes the surface the tab edits.
+    SurfaceRemove,
+    /// Switches the surface the tab edits on or off.
+    SurfaceUse(bool),
+    /// The control surface driver (`None` = none yet).
     SurfaceDriver(Option<String>),
     /// The control surface's input port (`None` = none).
     SurfaceInput(Option<String>),
@@ -265,6 +274,8 @@ pub struct SettingsDialog {
     prefs: Option<Prefs>,
     /// The digits typed into the buffer field, while it has the focus.
     buffer_edit: Option<String>,
+    /// The surface the Surfaces tab edits (an index into the draft's list).
+    surface_sel: usize,
 }
 
 impl SettingsDialog {
@@ -278,7 +289,28 @@ impl SettingsDialog {
             tab: Tab::Audio,
             prefs: None,
             buffer_edit: None,
+            surface_sel: 0,
         }
+    }
+
+    /// The surface the Surfaces tab edits (an empty one while there is none).
+    fn surface(&self) -> SurfaceSettings {
+        self.draft
+            .surfaces
+            .get(self.surface_sel)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The surface the Surfaces tab edits, added first when the list is empty.
+    fn surface_mut(&mut self) -> &mut SurfaceSettings {
+        if self.draft.surfaces.is_empty() {
+            self.draft
+                .surfaces
+                .push(SurfaceSettings::named("Surface 1"));
+        }
+        self.surface_sel = self.surface_sel.min(self.draft.surfaces.len() - 1);
+        &mut self.draft.surfaces[self.surface_sel]
     }
 
     /// Ends the typing in the buffer field: a size typed so far becomes the draft's (clamped).
@@ -818,7 +850,7 @@ impl SettingsDialog {
     /// The Surfaces tab: the driver and the two ports. A saved port that is not plugged in is
     /// still listed (marked) so it stays selectable.
     fn surface_sections(&self) -> Vec<Section> {
-        let s = &self.draft.surface;
+        let s = &self.surface();
         let known = |id: &str| {
             atomik_midi_io::surface::DRIVERS
                 .iter()
@@ -871,7 +903,63 @@ impl SettingsDialog {
                 ),
                 chips: false,
             },
+            Section {
+                title: "Surfaces",
+                options: self.surface_list_options(),
+                chips: true,
+            },
         ]
+    }
+
+    /// The chips of the surface list: one per surface (the one being edited is checked), then
+    /// what can be done to it.
+    fn surface_list_options(&self) -> Vec<(String, Choice)> {
+        let mut v: Vec<(String, Choice)> = self
+            .draft
+            .surfaces
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.clone(), Choice::SurfaceSelect(i)))
+            .collect();
+        if self.draft.surfaces.len() < MAX_SURFACES {
+            v.push(("Add".to_string(), Choice::SurfaceAdd));
+        }
+        if !self.draft.surfaces.is_empty() {
+            v.push(("In use".to_string(), Choice::SurfaceUse(true)));
+            v.push(("Off".to_string(), Choice::SurfaceUse(false)));
+            v.push(("Remove".to_string(), Choice::SurfaceRemove));
+        }
+        v
+    }
+
+    /// Adds an empty surface named `Surface n` and edits it next.
+    fn add_surface(&mut self) {
+        if self.draft.surfaces.len() >= MAX_SURFACES {
+            return;
+        }
+        let mut n = self.draft.surfaces.len() + 1;
+        while self
+            .draft
+            .surfaces
+            .iter()
+            .any(|s| s.name == format!("Surface {n}"))
+        {
+            n += 1;
+        }
+        self.draft
+            .surfaces
+            .push(SurfaceSettings::named(format!("Surface {n}")));
+        self.surface_sel = self.draft.surfaces.len() - 1;
+    }
+
+    /// Removes the surface being edited.
+    fn remove_surface(&mut self) {
+        if self.surface_sel < self.draft.surfaces.len() {
+            self.draft.surfaces.remove(self.surface_sel);
+        }
+        self.surface_sel = self
+            .surface_sel
+            .min(self.draft.surfaces.len().saturating_sub(1));
     }
 
     fn output_devices(&self, host: HostChoice) -> Vec<String> {
@@ -913,9 +1001,12 @@ impl SettingsDialog {
                 .midi_inputs
                 .iter()
                 .any(|i| i.name == *p && i.role == MidiInputRole::Mapping),
-            Choice::SurfaceDriver(n) => d.surface.driver == *n,
-            Choice::SurfaceInput(n) => d.surface.input == *n,
-            Choice::SurfaceOutput(n) => d.surface.output == *n,
+            Choice::SurfaceSelect(i) => self.surface_sel == *i,
+            Choice::SurfaceAdd | Choice::SurfaceRemove => false,
+            Choice::SurfaceUse(on) => self.surface().enabled == *on,
+            Choice::SurfaceDriver(n) => self.surface().driver == *n,
+            Choice::SurfaceInput(n) => self.surface().input == *n,
+            Choice::SurfaceOutput(n) => self.surface().output == *n,
             Choice::MidiOutPort(n) => d.midi_out_port == *n,
             Choice::Workers(w) => !d.workers_auto && d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
@@ -968,9 +1059,13 @@ impl SettingsDialog {
                 };
                 self.draft.set_midi_input_role(&p, role);
             }
-            Choice::SurfaceDriver(n) => self.draft.surface.driver = n,
-            Choice::SurfaceInput(n) => self.draft.surface.input = n,
-            Choice::SurfaceOutput(n) => self.draft.surface.output = n,
+            Choice::SurfaceSelect(i) => self.surface_sel = i,
+            Choice::SurfaceAdd => self.add_surface(),
+            Choice::SurfaceRemove => self.remove_surface(),
+            Choice::SurfaceUse(on) => self.surface_mut().enabled = on,
+            Choice::SurfaceDriver(n) => self.surface_mut().driver = n,
+            Choice::SurfaceInput(n) => self.surface_mut().input = n,
+            Choice::SurfaceOutput(n) => self.surface_mut().output = n,
             Choice::MidiOutPort(n) => self.draft.midi_out_port = n,
             Choice::Workers(w) => {
                 self.draft.workers = w;
@@ -1016,6 +1111,10 @@ impl SettingsDialog {
                 "A surface shows the console: its faders, V-pots, keys and displays follow it."
                     .to_string(),
                 "Pick the ports of the surface itself, not the port the keyboard plays through."
+                    .to_string(),
+                "Surfaces: pick one to edit it; each runs its own driver on its own ports."
+                    .to_string(),
+                "A generic controller has no fixed layout: map its controls with MIDI Learn."
                     .to_string(),
                 "A MIDI Out device without a port of its own sends to the MIDI Out device port."
                     .to_string(),
