@@ -166,6 +166,7 @@ fn pdc_clicks_doc() -> RackDoc {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

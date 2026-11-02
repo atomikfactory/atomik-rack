@@ -13,7 +13,7 @@
 //! The overlay is a copy for the views ([`RackDoc::view_with_shown`]); the document, its undo
 //! history and its dirty state never see it.
 
-use crate::song::{effective_tracks, flatten_automation};
+use crate::song::{effective_tracks, flatten_automation, flatten_param_lanes};
 use crate::{Curve, DeviceKey, LaneKind, RackDoc};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,17 +24,17 @@ pub type ShownValues = BTreeMap<(DeviceKey, String), f32>;
 
 /// The value of flattened automation `points` (`(song tick, value, curve)`, strictly increasing
 /// ticks, see [`flatten_automation`]) at the fractional song tick `tick`: held before the first
-/// and after the last point, linear or step in between. This is the rule the song player applies
-/// to a lane at every batch; no points give 0.
+/// and after the last point, linear, bent or step in between. This is the rule the song player
+/// applies to a lane at every batch; no points give 0.
 pub fn automation_value_at(points: &[(i64, f32, Curve)], tick: f64) -> f32 {
     let k = points.partition_point(|p| p.0 as f64 <= tick);
     let Some(&(t0, v0, curve)) = k.checked_sub(1).and_then(|i| points.get(i)) else {
         return points.first().map_or(0.0, |p| p.1);
     };
     match (curve, points.get(k)) {
-        (Curve::Linear, Some(&(t1, v1, _))) => {
+        (Curve::Linear | Curve::Bend(_), Some(&(t1, v1, _))) => {
             let x = (tick - t0 as f64) / (t1 - t0) as f64;
-            (f64::from(v0) + (f64::from(v1) - f64::from(v0)) * x) as f32
+            curve.blend(f64::from(v0), f64::from(v1), x) as f32
         }
         _ => v0,
     }
@@ -76,6 +76,15 @@ impl RackDoc {
                 }
             }
         }
+        for track in &self.song.tracks {
+            for lane in track.note_lanes() {
+                for clip in &lane.clips {
+                    for p in &clip.param_lanes {
+                        out.insert((p.device.clone(), p.param.clone()));
+                    }
+                }
+            }
+        }
         out
     }
 
@@ -109,6 +118,30 @@ impl RackDoc {
                     continue;
                 }
                 out.push(((track.device.clone(), key.clone()), points));
+            }
+        }
+        // The parameter lanes of note clips play where no track lane owns the param (a track
+        // lane wins, whether or not it has clips).
+        for track in effective_tracks(&self.song) {
+            if track.frozen.is_some() {
+                continue;
+            }
+            for (device, param, points) in flatten_param_lanes(track) {
+                let key = (device, param);
+                let owned = effective_tracks(&self.song).into_iter().any(|t| {
+                    t.frozen.is_none()
+                        && t.device == key.0
+                        && t.lanes
+                            .iter()
+                            .any(|l| matches!(&l.kind, LaneKind::Automation(k) if *k == key.1))
+                });
+                if owned || self.bank_driver(&key.0, &key.1).is_some() {
+                    continue;
+                }
+                // Of two tracks driving one param, the first plays (as in the engine input).
+                if !out.iter().any(|(k, _)| *k == key) {
+                    out.push((key, points));
+                }
             }
         }
         AutomationCurves(out)

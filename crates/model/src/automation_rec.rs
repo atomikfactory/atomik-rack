@@ -248,8 +248,9 @@ pub fn segment_clips(
 /// 1972, Douglas and Peucker 1973) with the vertical distance in value, since an automation
 /// lane is a function of time.
 ///
-/// The first and the last point are always kept; so is every point with a `Step` curve (it
-/// ends a run, the points between two such anchors are thinned on their own). The points must
+/// The first and the last point are always kept; so is every point that is not `Linear` and the
+/// point a bent segment leads to (a bend is not a line, so nothing on it can go). Each such anchor
+/// ends a run, the points between two anchors are thinned on their own. The points must
 /// be sorted by tick. A `tolerance` that is not above zero keeps every point. Iterative, so the
 /// depth of the input does not matter.
 pub fn thin_points(points: &[AutomationPoint], tolerance: f32) -> Vec<AutomationPoint> {
@@ -260,7 +261,8 @@ pub fn thin_points(points: &[AutomationPoint], tolerance: f32) -> Vec<Automation
     keep[0] = true;
     let mut run_start = 0;
     for i in 1..points.len() {
-        if points[i].curve == Curve::Step || i == points.len() - 1 {
+        let bent = matches!(points[i - 1].curve, Curve::Bend(_));
+        if points[i].curve != Curve::Linear || bent || i == points.len() - 1 {
             keep[i] = true;
             thin_run(points, run_start, i, tolerance, &mut keep);
             run_start = i;

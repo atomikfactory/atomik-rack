@@ -82,6 +82,47 @@ impl ArrangementView {
                     WorkflowCommand::CleanupAutomation { ids, level },
                 )]))
             }
+            "sequencer.automation_into_clip" => {
+                let selected = self.selected_in_order();
+                let notes: Vec<ClipId> = selected
+                    .iter()
+                    .filter(|c| c.content.is_notes())
+                    .map(|c| c.id)
+                    .collect();
+                let autos: Vec<ClipId> = selected
+                    .iter()
+                    .filter(|c| matches!(c.content, ClipContent::Automation(_)))
+                    .map(|c| c.id)
+                    .collect();
+                let (&[into], &[automation]) = (notes.as_slice(), autos.as_slice()) else {
+                    return Some(CommandOutcome::NotApplicable(
+                        "Select one note clip and one automation clip".into(),
+                    ));
+                };
+                Some(CommandOutcome::Handled(vec![workflow_cmd(
+                    WorkflowCommand::AutomationIntoClip { automation, into },
+                )]))
+            }
+            "sequencer.clear_param_lanes" => {
+                let actions: Vec<UiAction> = self
+                    .selected_in_order()
+                    .iter()
+                    .filter(|c| !c.param_lanes.is_empty())
+                    .map(|c| {
+                        UiAction::Command(Command::Song(SongCommand::SetClipParamLanes {
+                            clip: c.id,
+                            lanes: Vec::new(),
+                            merge: None,
+                        }))
+                    })
+                    .collect();
+                if actions.is_empty() {
+                    return Some(CommandOutcome::NotApplicable(
+                        "The selected clips have no parameter lanes".into(),
+                    ));
+                }
+                Some(CommandOutcome::Handled(actions))
+            }
             "sequencer.note_tool" => {
                 let Some(tool) = crate::note_tool_args::parse_note_tool(arg?, self.tool_seed)
                 else {

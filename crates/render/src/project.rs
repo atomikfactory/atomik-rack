@@ -50,6 +50,7 @@ use atomik_engine::{
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::song::{
     effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_notes_with,
+    flatten_param_lanes,
 };
 use atomik_model::{
     AutomationPoint, ControllerKind, Curve, DeviceKey, ExpandedRack, FadeCurve, LaneKind,
@@ -129,6 +130,7 @@ fn song_point(tick: i64, value: f32, curve: Curve) -> SongPoint {
         curve: match curve {
             Curve::Linear => SongCurve::Linear,
             Curve::Step => SongCurve::Step,
+            Curve::Bend(n) => SongCurve::Bend(n),
         },
     }
 }
@@ -175,6 +177,49 @@ fn push_macro_lane(
             automation: vec![lane],
             controllers: Vec::new(),
         }),
+    }
+}
+
+/// Adds the device-parameter lanes of the note clips of `song` to the engine tracks (see
+/// [`atomik_model::param_lane`]). A param that a track's own automation lane already drives, that
+/// a macro bank drives, or whose device or param is gone gets nothing, so the track lane wins.
+fn push_clip_param_lanes(
+    doc: &RackDoc,
+    registry: &Registry,
+    id_of: &impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    tracks: &mut Vec<SongTrack>,
+) {
+    for track in effective_tracks(&doc.song) {
+        if track.frozen.is_some() {
+            continue;
+        }
+        for (target, param, flat) in flatten_param_lanes(track) {
+            if doc.bank_driver(&target, &param).is_some() {
+                continue;
+            }
+            let (Some(device), Some(desc)) = (
+                id_of(&target),
+                doc.resolve(&target)
+                    .and_then(|d| registry.get(&d.type_id))
+                    .map(|f| f.descriptor),
+            ) else {
+                continue;
+            };
+            let Some(pid) = desc.param_by_key(&param).map(|p| p.id) else {
+                continue;
+            };
+            if tracks
+                .iter()
+                .any(|t| t.device == device && t.automation.iter().any(|a| a.param == pid))
+            {
+                continue;
+            }
+            let points: Vec<AutomationPoint> = flat
+                .into_iter()
+                .map(|(tick, value, curve)| AutomationPoint { tick, value, curve })
+                .collect();
+            push_macro_lane(doc, registry, id_of, tracks, &target, &param, &points);
+        }
     }
 }
 
@@ -437,6 +482,7 @@ pub fn song_input_with_warps(
         }
         push_macro_lane(doc, registry, &id_of, &mut tracks, &target, &param, &mapped);
     }
+    push_clip_param_lanes(doc, registry, &id_of, &mut tracks);
     tracks.extend(macro_tracks);
     let tempo = song
         .tempo
@@ -1263,6 +1309,7 @@ mod tests {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,
@@ -1285,6 +1332,7 @@ mod tests {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

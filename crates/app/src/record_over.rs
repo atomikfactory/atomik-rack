@@ -249,6 +249,7 @@ pub fn keep_events_follow_up(doc: &RackDoc, id: ClipId, policy: KeepEvents) -> V
                         muted: false,
                         grid: clip.grid,
                         scale: clip.scale,
+                        param_lanes: Vec::new(),
                         controllers: Vec::new(),
                         name: None,
                         color: None,

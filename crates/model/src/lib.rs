@@ -13,6 +13,7 @@ mod audition;
 pub mod automation_rec;
 mod automation_view;
 mod clip_io;
+mod clip_lanes;
 mod clip_transform;
 mod console_bus;
 mod console_cmd;
@@ -52,6 +53,7 @@ mod mod_matrix;
 pub mod note_tools;
 pub mod organise;
 mod organise_cmd;
+pub mod param_lane;
 mod param_search;
 mod patch;
 mod plugin;
@@ -206,6 +208,7 @@ pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
     OutlineKind, TrackGroup, TrackPlace,
 };
+pub use param_lane::{MAX_PARAM_LANES, ParamLane};
 use rack_columns::Placement;
 pub use slice_edit::SliceError;
 pub use song::envelope_gain;
@@ -1323,6 +1326,7 @@ impl Document {
                 SongCommand::SetClipGeometry { merge: Some(m), .. }
                 | SongCommand::SetClipContent { merge: Some(m), .. }
                 | SongCommand::SetClipControllers { merge: Some(m), .. }
+                | SongCommand::SetClipParamLanes { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
                 | SongCommand::SetWarpMarkers { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },

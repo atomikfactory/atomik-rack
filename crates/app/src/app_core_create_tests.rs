@@ -449,6 +449,7 @@ mod live {
             loop_length: None,
             muted: false,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: Vec::new(),
             name: None,
             color: None,

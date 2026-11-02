@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Bent automation segments.** Shift-drag on an automation segment bends it so the curve passes through the
+  pointer at the middle of the segment (one undo step); a click without a drag, or a Shift-click on a point,
+  straightens it again. The bend is a power curve evaluated with plain arithmetic only, so a bounce is
+  bit-identical for every block size, worker count and platform, and the value a control shows is the value the
+  engine applies. Points added on a choice, a switch or another whole-valued parameter now hold their value
+  instead of ramping.
+- **Parameter lanes in note clips.** A note clip can carry device-parameter lanes (a cutoff sweep, a send
+  level) that move, duplicate, split and loop with the clip; a track's own automation lane of the same
+  parameter overrides them. Edit > Move Automation into Note Clip turns a selected automation clip into a
+  lane of the selected note clip, and Edit > Clear Clip Parameter Lanes removes them. Recording into a note
+  clip and drawing a lane inside the piano roll are not there yet. Both additions are written to the project
+  only when used (format 41), and the MCP `project_inspect` lists the lanes.
 - **Modulation matrix framework.** A device can declare modulation sources and targets and sum up to eight
   slots (a source routed to a target with an amount, and optionally a second source that scales it) at its
   control rate, with no allocation and only `+ - * /`, so the result is bit-identical for every block size and

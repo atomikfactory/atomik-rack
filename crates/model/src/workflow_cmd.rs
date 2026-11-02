@@ -16,9 +16,12 @@ use crate::controller::{ControllerKind, ControllerLane, canonical, window_points
 use crate::history::{Edit, Swap};
 use crate::lane_cmd::ExtractMode;
 use crate::loop_convert::{LoopConvert, content_pieces};
+use crate::param_lane::{ParamLane, canonical_params};
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
 use crate::rack_columns::{self, Placement};
-use crate::song::{AUDIO_TRACK_TYPE, AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note};
+use crate::song::{
+    AUDIO_TRACK_TYPE, AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note, automation_piece,
+};
 use crate::song_cmd::{
     check_audio, check_content, check_geometry, has_notes_input, is_audio_track_type,
 };
@@ -309,6 +312,20 @@ pub enum WorkflowCommand {
         id: ClipId,
         /// The repetition.
         index: usize,
+    },
+    /// Moves what an automation clip plays under a note clip into that note clip as a
+    /// device-parameter lane (see [`crate::param_lane`]) and removes the automation clip. The
+    /// lane drives the param of the automation clip's lane, on the track's device, from the note
+    /// clip's own start: the clip's offset, the automation clip's offset and loop, and where the
+    /// two overlap are honoured, and a segment cut by the note clip's edges follows the same
+    /// rules as flattening. Rejected for an automation clip that is not under the note clip, a
+    /// looped note clip, a note clip that already has a lane for the param, and a clip of the
+    /// wrong kind. One undo step.
+    AutomationIntoClip {
+        /// The automation clip.
+        automation: ClipId,
+        /// The note clip that takes the lane.
+        into: ClipId,
     },
     /// Joins note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
@@ -865,6 +882,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
+        WorkflowCommand::AutomationIntoClip { automation, into } => {
+            crate::clip_lanes::automation_into_clip(doc, registry, automation, into)
+        }
         WorkflowCommand::ConvertLoop { ids, mode } => {
             crate::loop_convert::convert_loop(doc, registry, &ids, mode)
         }
@@ -1894,6 +1914,36 @@ fn joined_controllers(clips: &[(DeviceKey, usize, &Clip)], start: i64) -> Vec<Co
     )
 }
 
+/// The parameter lanes of the clips of a join: each clip's pieces of every lane (a looped clip
+/// unrolled), later clips hiding the earlier points they overlap, relative to the joined clip's
+/// `start`. A lane flattens like automation, so before its first point it holds the first value.
+fn joined_param_lanes(clips: &[(DeviceKey, usize, &Clip)], start: i64) -> Vec<ParamLane> {
+    let mut by_param: BTreeMap<(DeviceKey, String), Vec<AutomationPoint>> = BTreeMap::new();
+    for (_, _, c) in clips {
+        for (from, to, cs) in content_pieces(c) {
+            let shift = from - start;
+            for lane in c.param_lanes.iter().filter(|l| !l.points.is_empty()) {
+                let pts = automation_piece(&lane.points, (shift, shift + (to - from)), cs);
+                let all = by_param
+                    .entry((lane.device.clone(), lane.param.clone()))
+                    .or_default();
+                all.retain(|p| p.tick < shift);
+                all.extend(pts.into_iter().map(|(tick, value, curve)| AutomationPoint {
+                    tick,
+                    value,
+                    curve,
+                }));
+            }
+        }
+    }
+    canonical_params(
+        by_param
+            .into_iter()
+            .map(|((device, param), points)| ParamLane::new(device, param, points))
+            .collect(),
+    )
+}
+
 fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), ModelError> {
     let wanted: BTreeSet<ClipId> = ids.iter().copied().collect();
     let mut clips = Vec::new();
@@ -1969,6 +2019,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
     };
     check_geometry(start, end - start, 0, None).map_err(ModelError::OutOfRange)?;
     let controllers = joined_controllers(&clips, start);
+    let param_lanes = joined_param_lanes(&clips, start);
     let first = clips[0].2;
     let joined = Clip {
         id: first.id,
@@ -1982,6 +2033,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         grid: first.grid,
         scale: first.scale,
         controllers,
+        param_lanes,
         content,
     };
     let mut edits: Vec<Edit> = clips[1..]

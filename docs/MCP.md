@@ -342,6 +342,13 @@ The restructuring commands are Edit menu items, so `session_commands` lists them
 
 5. Cleanup Automation is an Edit menu submenu (`sequencer.cleanup_automation` with `normal`, `heavy` or `maximum`). `session_pointer` `click` an automation clip, then run it: `project_inspect` shows fewer points in the clip, a ramp drawn point by point is its two ends, and `edit.undo` brings all of them back in one step. Pick the pencil (`session_key` with the tool key, or the corner button) and `session_pointer` `drag` across an automation clip to draw: `project_inspect` shows about one point per snap step before thinning and fewer after, and the whole stroke is one undo step.
 
+Bent segments and parameter lanes (`project_inspect` lists the lanes of a note lane as `param_lanes`, each with its
+`device`, `param`, `points` and `bent`): open a project with an automation clip and a note clip on one track.
+`session_pointer` `click` the note clip, then the automation clip with Shift held (or select both), and run
+`sequencer.automation_into_clip`: `project_inspect` shows a `param_lanes` entry on the note lane and the
+automation clip gone, and `edit.undo` brings both back in one step. `sequencer.clear_param_lanes` empties the
+lanes. A Shift-drag across an automation segment writes a `bend` point (`project_inspect` of the saved file
+shows `[tick, value, "bend", amount]`); `session_bounce` of the project twice gives the same file.
 6. Stretching by an edge: `session_pointer` `drag` from just inside the right edge of a selected note clip, with `alt` set, one bar to the right (Select tool, snap on a bar). The clip's `length` in `project_inspect` grows by that bar, its notes' `tick` and `length` scale by the same ratio, and `edit.undo` gives the clip back in one step. On an audio clip the same drag turns warping on (`warp` in `project_inspect`) and `session_bounce` keeps the pitch. A drag from the left edge keeps the end of the clip where it is. A drag with `alt` from the body of a clip does not stretch.
 
 The model rules are checked in `crates/model/tests/time_edit.rs` and `crates/model/tests/clip_transform.rs`; the playback checks above are hand checks.

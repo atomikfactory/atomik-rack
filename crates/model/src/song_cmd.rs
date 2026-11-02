@@ -5,6 +5,7 @@ use crate::audio_edit::{slice_envelope, split_envelope};
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::controller::{canonical, check_lanes};
 use crate::history::{Edit, Swap};
+use crate::param_lane::{canonical_params, check_param_shape, check_param_targets};
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR,
@@ -697,8 +698,15 @@ pub(crate) fn check_new_clip(
     if !clip.controllers.is_empty() && !kind.is_notes() {
         return Err(bad("only a note clip can have controller lanes"));
     }
+    if !clip.param_lanes.is_empty() && !kind.is_notes() {
+        return Err(bad("only a note clip can have parameter lanes"));
+    }
     let controllers = canonical(clip.controllers.clone());
     check_lanes(&controllers, MAX_TICK).map_err(range)?;
+    // Targets are not checked here: a clip pasted from another project keeps lanes whose device
+    // is missing, and they play nothing (see the module docs of `param_lane`).
+    let param_lanes = canonical_params(clip.param_lanes.clone());
+    check_param_shape(&param_lanes, MAX_TICK).map_err(range)?;
     if let ClipContent::Audio(a) = &clip.content
         && kind.is_audio()
     {
@@ -710,6 +718,7 @@ pub(crate) fn check_new_clip(
         content,
         scale,
         controllers,
+        param_lanes,
         ..clip
     })
 }
@@ -1367,6 +1376,26 @@ pub(crate) fn plan(
                 }),
             }
         }
+        SongCommand::SetClipParamLanes { clip, lanes, .. } => {
+            let (device, lane, c) = find_clip(doc, clip)?;
+            if !c.content.is_notes() && !lanes.is_empty() {
+                return Err(bad(format!(
+                    "clip {} is not a note clip, so it has no parameter lanes",
+                    clip.0
+                )));
+            }
+            let param_lanes = check_param_targets(doc, registry, lanes)?;
+            check_param_shape(&param_lanes, MAX_TICK).map_err(range)?;
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    param_lanes,
+                    ..c.clone()
+                }),
+            }
+        }
         SongCommand::SetClipScale { clip, scale } => {
             let (device, lane, c) = find_clip(doc, clip)?;
             if !c.content.is_notes() {
@@ -1491,6 +1520,7 @@ pub(crate) fn plan(
                 muted: false,
                 grid: None,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

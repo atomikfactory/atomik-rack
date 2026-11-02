@@ -607,6 +607,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::MoveDevices { .. }
             | WorkflowCommand::MoveDevicesToSlot { .. }
             | WorkflowCommand::RemoveClips { .. }
+            | WorkflowCommand::AutomationIntoClip { .. }
             | WorkflowCommand::SetClipsMuted { .. }
             | WorkflowCommand::TrimClips { .. }
             | WorkflowCommand::DeleteOutsideEvents { .. }

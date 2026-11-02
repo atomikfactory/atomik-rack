@@ -617,6 +617,7 @@ impl<S: EngineSink> AppCore<S> {
                 muted: false,
                 grid: None,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

@@ -3,6 +3,7 @@
 //!
 //! This crate is a stable contract: public changes need review.
 
+pub mod bend;
 mod meter_map;
 mod midi;
 mod note;

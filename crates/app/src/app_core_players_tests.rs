@@ -855,6 +855,7 @@ fn the_song_sent_to_the_engine_enters_at_the_player() {
             loop_length: None,
             muted: false,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: Vec::new(),
             name: None,
             color: None,

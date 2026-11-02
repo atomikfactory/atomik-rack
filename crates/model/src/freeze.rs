@@ -88,6 +88,7 @@ impl Frozen {
             muted: false,
             grid: None,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: Vec::new(),
             name: None,
             color: None,
@@ -418,6 +419,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::StripSilence { id, .. } => clip_frozen(id),
                 SongCommand::SetClipGrid { clip, .. }
                 | SongCommand::SetClipControllers { clip, .. }
+                | SongCommand::SetClipParamLanes { clip, .. }
                 | SongCommand::SetClipScale { clip, .. }
                 | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),
                 SongCommand::ApplyQuantize { clips, .. }
@@ -446,6 +448,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | WorkflowCommand::CleanupAutomation { ids, .. }
                 | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
                 WorkflowCommand::DuplicateLoopInstance { id, .. } => clip_frozen(id),
+                WorkflowCommand::AutomationIntoClip { automation, into } => {
+                    clip_frozen(automation).or_else(|| clip_frozen(into))
+                }
                 WorkflowCommand::ExtractNotes { clip, .. }
                 | WorkflowCommand::ExplodeNotes { clip } => clip_frozen(clip),
                 WorkflowCommand::MoveClips { moves, .. } => moves
@@ -631,6 +636,7 @@ pub(crate) fn plan_rendered_track(
         muted: false,
         grid: None,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

@@ -1406,6 +1406,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.automation_into_clip",
+        "Move Automation into Note Clip",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.bounce_clip_dry",
         "Bounce Clips to New Track (Dry)",
         G::Sequencer,
@@ -1467,6 +1475,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
+    .decline(),
+    cmd(
+        "sequencer.clear_param_lanes",
+        "Clear Clip Parameter Lanes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
     .decline(),
     cmd(
         "sequencer.clear_solos",

@@ -51,6 +51,8 @@ pub enum SongCurve {
     Linear,
     /// Hold until the next point.
     Step,
+    /// A power-curve ramp to the next point: bend `-64..=64` (see `atomik_core::bend`).
+    Bend(i8),
 }
 
 /// One automation point in song ticks.

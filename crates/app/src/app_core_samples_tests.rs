@@ -854,6 +854,7 @@ fn opening_the_editor_replaces_the_piano_roll_and_a_new_document_closes_it() {
             loop_length: None,
             muted: false,
             scale: None,
+            param_lanes: Vec::new(),
             controllers: Vec::new(),
             name: None,
             color: None,

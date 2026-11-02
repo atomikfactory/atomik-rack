@@ -480,7 +480,7 @@ fn emit_notes(
 }
 
 /// The lane's value at a fractional tick: held before the first and after the last point,
-/// linear or step in between (equal ticks: the last point wins, a jump).
+/// linear, bent or step in between (equal ticks: the last point wins, a jump).
 pub fn lane_value(points: &[SongPoint], tick: f64) -> f32 {
     let k = points.partition_point(|p| p.tick.0 as f64 <= tick);
     let Some(p) = k.checked_sub(1).and_then(|i| points.get(i)) else {
@@ -491,6 +491,14 @@ pub fn lane_value(points: &[SongPoint], tick: f64) -> f32 {
             let span = (q.tick.0 - p.tick.0) as f64;
             let x = (tick - p.tick.0 as f64) / span;
             (f64::from(p.value) + (f64::from(q.value) - f64::from(p.value)) * x) as f32
+        }
+        (SongCurve::Bend(n), Some(q)) => {
+            // Table-free and libm-free (`atomik_core::bend`), so every platform and every block
+            // size gives the same bits; no allocation and no lock.
+            let span = (q.tick.0 - p.tick.0) as f64;
+            let x = (tick - p.tick.0 as f64) / span;
+            let v0 = f64::from(p.value);
+            (v0 + (f64::from(q.value) - v0) * atomik_core::bend::bend_shape(x, n)) as f32
         }
         _ => p.value,
     }

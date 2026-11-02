@@ -115,6 +115,51 @@ fn project_inspect_lists_the_controller_lanes_of_a_note_lane() {
 }
 
 #[test]
+fn project_inspect_lists_the_parameter_lanes_of_a_note_lane() {
+    let mut s = server();
+    // The demo project with a bent cutoff lane in its first note clip.
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let device = v["song"]["tracks"][0]["device"].clone();
+    let clip = &mut v["song"]["tracks"][0]["lanes"][0]["clips"][0];
+    clip["param_lanes"] = json!([
+        {"device": device, "param": "filter.cutoff",
+         "points": [[0, 300.0, "bend", 24], [100, 2000.0, "step"]]},
+    ]);
+    let path = tmp("param-lanes.atomik");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let lane = &r.parsed()["song"]["tracks"][0]["lanes"][0];
+    assert_eq!(
+        lane["param_lanes"],
+        json!([{"device": device, "param": "filter.cutoff", "points": 2, "bent": 1}])
+    );
+    // A project without lanes has no such field, and a bad bend names its path.
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    assert!(
+        plain["song"]["tracks"][0]["lanes"][0]
+            .get("param_lanes")
+            .is_none()
+    );
+    v["song"]["tracks"][0]["lanes"][0]["clips"][0]["param_lanes"][0]["points"][0][3] = json!(900);
+    let bad = tmp("param-lanes-bad.atomik");
+    std::fs::write(&bad, v.to_string()).unwrap();
+    let e = call(&mut s, "project_inspect", json!({"path": bad}));
+    assert!(e.is_error);
+    assert!(
+        e.first_text().contains("param_lanes[0].points[0][3]"),
+        "{}",
+        e.first_text()
+    );
+}
+
+#[test]
 fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
     use atomik_model::{Clip, ClipContent, ClipId, Command, Document, Note, SongCommand};
     let mut s = server();
@@ -132,6 +177,7 @@ fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
         muted: false,
         grid: None,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

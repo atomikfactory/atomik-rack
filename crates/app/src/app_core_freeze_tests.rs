@@ -26,6 +26,7 @@ fn notes(start: i64, length: i64) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        param_lanes: Vec::new(),
         controllers: Vec::new(),
         name: None,
         color: None,

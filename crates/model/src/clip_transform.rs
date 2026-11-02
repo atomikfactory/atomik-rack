@@ -13,7 +13,8 @@
 use crate::automation_rec::{ThinLevel, thin_points};
 use crate::controller::ControllerLane;
 use crate::history::Edit;
-use crate::song::{AudioClipContent, AutomationPoint, Clip, ClipContent, GainPoint, Note};
+use crate::param_lane::ParamLane;
+use crate::song::{AudioClipContent, AutomationPoint, Clip, ClipContent, Curve, GainPoint, Note};
 use crate::song_cmd::{bad, check_geometry, find_clip, range, split_pair};
 use crate::warp::{WARP_BPM_MAX, WARP_BPM_MIN, WarpMarker};
 use crate::{ClipId, DeviceKey, ModelError, RackDoc};
@@ -59,6 +60,15 @@ fn window(c: &Clip) -> (i64, i64) {
     }
 }
 
+/// The curve of a segment played backwards: a bend becomes the opposite bend (the mirror image of
+/// `x^k` is `1 - (1 - x)^k`, which `x^(1/k)` follows closely, and two reverses give the original).
+fn mirrored_curve(curve: Curve) -> Curve {
+    match curve {
+        Curve::Bend(n) => Curve::Bend(n.saturating_neg()),
+        other => other,
+    }
+}
+
 /// Mirrors the points inside `[ws, we)` about the middle of the window and leaves the others.
 /// The curve that leaves a point belongs to the segment after it, so the curves move with the
 /// segments: the first mirrored point takes the curve of the last segment, and the last takes
@@ -72,7 +82,7 @@ pub(crate) fn mirror_points(points: &[AutomationPoint], ws: i64, we: i64) -> Vec
     for j in 0..n {
         let src = inside[n - 1 - j];
         let curve = if j + 1 < n {
-            inside[n - 2 - j].curve
+            mirrored_curve(inside[n - 2 - j].curve)
         } else {
             inside[n - 1].curve
         };
@@ -137,6 +147,17 @@ pub(crate) fn reverse_clips(
                     .controllers
                     .iter()
                     .map(|l| reverse_lane(l, ws, we))
+                    .collect();
+                new.param_lanes = c
+                    .param_lanes
+                    .iter()
+                    .map(|l| {
+                        ParamLane::new(
+                            l.device.clone(),
+                            l.param.clone(),
+                            mirror_points(&l.points, ws, we),
+                        )
+                    })
                     .collect();
             }
             ClipContent::Automation(points) => {
@@ -300,6 +321,17 @@ fn scaled_clip(doc: &RackDoc, c: &Clip, percent: f64, anchor: i64) -> Result<Cli
                 .controllers
                 .iter()
                 .map(|l| ControllerLane::new(l.kind, scale_points(&l.points, percent)))
+                .collect();
+            new.param_lanes = c
+                .param_lanes
+                .iter()
+                .map(|l| {
+                    ParamLane::new(
+                        l.device.clone(),
+                        l.param.clone(),
+                        scale_points(&l.points, percent),
+                    )
+                })
                 .collect();
         }
         ClipContent::Automation(points) => {

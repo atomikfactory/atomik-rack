@@ -15,9 +15,10 @@
 mod common;
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    ClipId, ClipSnapshot, Command, CreateOptions, CreateTarget, DeviceKey, DeviceSnapshot,
-    Document, ModSlot, ModelError, NoteSnapshot, NoteTool, QuantizeParams, RackDoc, SongCommand,
-    WorkflowCommand, empty_doc, load_project, save_project, save_project_checked,
+    AutomationPoint, ClipId, ClipSnapshot, Command, CreateOptions, CreateTarget, Curve, DeviceKey,
+    DeviceSnapshot, Document, ModSlot, ModelError, NoteSnapshot, NoteTool, ParamLane,
+    QuantizeParams, RackDoc, SongCommand, WorkflowCommand, empty_doc, load_project, save_project,
+    save_project_checked,
 };
 use common::audio::*;
 use common::console_ops::*;
@@ -58,6 +59,9 @@ enum WfOp {
     PasteClips(Vec<usize>, i64, Option<usize>),
     DuplicateClips(Vec<usize>),
     Join(Vec<usize>),
+    /// Parameter lanes of note clips: an automation clip moved into a note clip (the kind 0), or
+    /// a clip given a bent lane on a device of the rack (1) or cleared of its lanes (2).
+    ClipLanes(u8, usize, usize),
     /// Trim (0), delete outside (1), split (2) or cut out (3, 4: copy) of the clips at a tick,
     /// insert (5) or remove (6) a bar of time there, reverse (7), scale to 200 % (8) or chop to
     /// half bars (9).
@@ -251,6 +255,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )),
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
+        (0u8..3, 0usize..12, 0usize..12).prop_map(|(k, a, b)| WfOp::ClipLanes(k, a, b)),
         (0u8..12, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
@@ -498,6 +503,40 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 }),
             }
         }
+        WfOp::ClipLanes(kind, a, b) => match (*kind, pick(&ids, *a), pick(&ids, *b)) {
+            (0, Some(automation), Some(into)) => {
+                wf(WorkflowCommand::AutomationIntoClip { automation, into })
+            }
+            (1, Some(clip), _) => {
+                let device = pick(&top, *b)?;
+                Command::Song(SongCommand::SetClipParamLanes {
+                    clip,
+                    lanes: vec![ParamLane::new(
+                        device,
+                        "filter.cutoff",
+                        vec![
+                            AutomationPoint {
+                                tick: 0,
+                                value: 300.0,
+                                curve: Curve::Bend(24),
+                            },
+                            AutomationPoint {
+                                tick: PPQ,
+                                value: 2000.0,
+                                curve: Curve::Step,
+                            },
+                        ],
+                    )],
+                    merge: None,
+                })
+            }
+            (2, Some(clip), _) => Command::Song(SongCommand::SetClipParamLanes {
+                clip,
+                lanes: Vec::new(),
+                merge: None,
+            }),
+            _ => return None,
+        },
         WfOp::Join(s) => wf(WorkflowCommand::JoinClips {
             ids: s.iter().filter_map(|i| pick(&ids, *i)).collect(),
         }),

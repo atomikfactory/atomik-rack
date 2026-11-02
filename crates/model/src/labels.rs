@@ -82,6 +82,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::RemoveClip { .. } => "Delete Clip",
         SongCommand::SetClipGeometry { .. } => "Move Clip",
         SongCommand::SetClipContent { .. } => "Edit Clip",
+        SongCommand::SetClipParamLanes { .. } => "Edit Parameter Lane",
         SongCommand::SplitClip { .. } => "Split Clip",
         SongCommand::DuplicateClip { .. } => "Duplicate Clip",
         SongCommand::SetClipMeta {
@@ -180,6 +181,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::RemoveClips { .. } => "Delete Clips",
         WorkflowCommand::SplitClips { .. } => "Split Clips",
         WorkflowCommand::JoinClips { .. } => "Join Clips",
+        WorkflowCommand::AutomationIntoClip { .. } => "Move Automation into Clip",
         WorkflowCommand::ConvertLoop { .. } => "Convert Loop",
         WorkflowCommand::ExtractNotes { .. } => "Extract Notes",
         WorkflowCommand::ExplodeNotes { .. } => "Explode Notes",

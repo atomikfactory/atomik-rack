@@ -910,6 +910,7 @@ fn a_detached_rack_repaints_when_the_automation_moves_a_control() {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

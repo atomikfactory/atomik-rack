@@ -159,6 +159,7 @@ fn the_starter_bounces_silently_and_one_synth_sounds_on_outputs_one_and_two() {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                param_lanes: Vec::new(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

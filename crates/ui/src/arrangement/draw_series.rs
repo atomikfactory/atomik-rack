@@ -11,6 +11,7 @@
 //! The series replaces the points of the clip inside the range it covers; points outside stay.
 //! Everything here is pure, the gesture plumbing is in [`super`].
 
+use crate::seq_edit;
 use crate::timeline::{PPQ, Quant, SnapGrid};
 use atomik_core::ParamDescriptor;
 use atomik_model::automation_rec::thin_points;
@@ -86,22 +87,20 @@ pub fn stroke(path: &[(i64, f32)], mode: SeriesMode, grid: &SnapGrid) -> Vec<(i6
 }
 
 /// `base` with the stroke laid over it: the points of `base` inside the stroke's range go, the
-/// stroke's points (thinned with `tolerance`, in value units) take their place.
+/// stroke's points (thinned with `tolerance`, in value units, each leaving with `curve`) take
+/// their place.
 pub fn lay_over(
     base: &[AutomationPoint],
     drawn: &[(i64, f32)],
     tolerance: f32,
+    curve: Curve,
 ) -> Vec<AutomationPoint> {
     let (Some(lo), Some(hi)) = (drawn.first().map(|p| p.0), drawn.last().map(|p| p.0)) else {
         return base.to_vec();
     };
     let points: Vec<AutomationPoint> = drawn
         .iter()
-        .map(|&(tick, value)| AutomationPoint {
-            tick,
-            value,
-            curve: Curve::Linear,
-        })
+        .map(|&(tick, value)| AutomationPoint { tick, value, curve })
         .collect();
     let mut out: Vec<AutomationPoint> = base
         .iter()
@@ -156,7 +155,12 @@ impl SeriesDrag {
             Some(last) if last.0 == tick && several => last.1 = value,
             _ => self.path.push((tick, value)),
         }
-        let points = lay_over(&self.base, &stroke(&self.path, mode, grid), self.tolerance);
+        let points = lay_over(
+            &self.base,
+            &stroke(&self.path, mode, grid),
+            self.tolerance,
+            seq_edit::new_point_curve(&self.param),
+        );
         (points != self.last).then(|| {
             self.last.clone_from(&points);
             points
@@ -234,21 +238,21 @@ mod tests {
     fn a_stroke_replaces_what_it_covers_and_keeps_the_rest_sorted() {
         let base = [p(0, 0.5), p(PPQ, 0.5), p(2 * PPQ, 0.5), p(8 * PPQ, 0.5)];
         let drawn = [(PPQ, 0.1), (2 * PPQ, 0.2), (3 * PPQ, 0.3)];
-        let out = lay_over(&base, &drawn, 0.0);
+        let out = lay_over(&base, &drawn, 0.0, Curve::Linear);
         let ticks: Vec<i64> = out.iter().map(|p| p.tick).collect();
         assert_eq!(ticks, [0, PPQ, 2 * PPQ, 3 * PPQ, 8 * PPQ]);
         assert!(
             (out[1].value - 0.1).abs() < 1e-6,
             "the old point at the start is replaced"
         );
-        assert_eq!(lay_over(&base, &[], 0.1), base);
+        assert_eq!(lay_over(&base, &[], 0.1, Curve::Linear), base);
     }
 
     #[test]
     fn thinning_drops_the_points_a_line_reproduces() {
         let drawn: Vec<(i64, f32)> = (0..=64).map(|i| (i * PPQ / 4, i as f32 / 64.0)).collect();
-        assert_eq!(lay_over(&[], &drawn, 0.0).len(), 65);
-        assert_eq!(lay_over(&[], &drawn, 0.005).len(), 2);
+        assert_eq!(lay_over(&[], &drawn, 0.0, Curve::Linear).len(), 65);
+        assert_eq!(lay_over(&[], &drawn, 0.005, Curve::Linear).len(), 2);
     }
 
     #[test]
