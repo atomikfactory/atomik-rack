@@ -120,6 +120,9 @@ pub const RECOVERY_KEEP: usize = 3;
 pub const STATE_QUIET_SECS: f64 = 1.0;
 /// Lines of the bounded plugin log shown in Settings.
 pub const LOG_CAPACITY: usize = 200;
+
+/// How long [`AppCore::wait_plugins`] waits for pending instances.
+const WAIT_PLUGINS_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Merge ids of the undo steps that capture a patch change made in a plugin window.
 const STATE_MERGE_BASE: u64 = PLUGIN_GESTURE_MERGE_BASE + (1 << 38);
 /// Captures further apart than this are separate undo steps.
@@ -479,8 +482,10 @@ fn entry_infos(catalog: &PluginCatalog) -> Vec<PluginEntryInfo> {
 }
 
 /// Unix seconds, the sequence of recovery snapshot names (never used by the engine).
-#[allow(clippy::disallowed_methods)]
-// Justification: the wall clock only orders recovery file names; it never reaches audio.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the wall clock only orders recovery file names; it never reaches audio"
+)]
 fn unix_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -988,10 +993,24 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins.pending.is_empty()
     }
 
-    /// Runs frames until every pending instance is created (tests and scripts).
+    /// Runs frames until every pending instance is created (tests and scripts), for at most
+    /// [`WAIT_PLUGINS_LIMIT`]: instances still pending after that are logged once and left to
+    /// the normal frames.
     pub fn wait_plugins(&mut self) {
-        for _ in 0..10_000 {
-            if self.plugins.pending.is_empty() {
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "a wall-clock bound for tests and scripts; it never reaches the engine"
+        )]
+        let started = std::time::Instant::now();
+        while !self.plugins.pending.is_empty() {
+            if started.elapsed() >= WAIT_PLUGINS_LIMIT {
+                let left = self.plugins.pending.len();
+                log::warn!(
+                    "{left} plugin(s) were not created within {} s; loading goes on in the background",
+                    WAIT_PLUGINS_LIMIT.as_secs()
+                );
+                self.plugins
+                    .log(format!("{left} plugin(s) still loading after waiting"));
                 break;
             }
             self.frame();
@@ -1195,8 +1214,10 @@ impl<S: EngineSink> AppCore<S> {
                 self.plugins.pending.retain(|k| k != &key);
                 continue;
             };
-            #[allow(clippy::disallowed_methods)]
-            // Justification: UI-thread load time for the log, not engine behaviour.
+            #[allow(
+                clippy::disallowed_methods,
+                reason = "UI-thread load time for the log, not engine behaviour"
+            )]
             let began = std::time::Instant::now();
             match self.plugins.host.manager().begin_create(&request) {
                 Ok(ticket) => {
@@ -2140,6 +2161,31 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ settings and scanning
 
+    /// Where plugins run now: `Some("sandbox")` (child processes) or `Some("in-process")`,
+    /// `None` while plugins are off. Shown in the status line and the Plugins settings.
+    pub fn plugin_mode(&self) -> Option<&'static str> {
+        self.plugins.settings.enabled.then(|| {
+            if self.plugin_sandboxed() {
+                "sandbox"
+            } else {
+                "in-process"
+            }
+        })
+    }
+
+    /// True when plugins run in child processes (the host was built with the sandbox).
+    pub fn plugin_sandboxed(&self) -> bool {
+        self.plugins.host.is_sandboxed()
+    }
+
+    /// Says once that the sandbox the user asked for is not available and plugins run inside
+    /// the app instead: in the log and as a message.
+    pub fn warn_plugin_isolation(&mut self, warning: &str) {
+        log::warn!("{warning}");
+        self.plugins.log(format!("[sandbox] {warning}"));
+        self.reject(warning.to_string());
+    }
+
     /// What the Plugins section of the settings dialog shows now.
     pub fn plugin_settings_data(&self) -> PluginSettingsData {
         let catalog = self.plugins.host.catalog();
@@ -2188,6 +2234,7 @@ impl<S: EngineSink> AppCore<S> {
             last_scan: self.plugins.scan_note.clone(),
             log: self.plugins.log.iter().cloned().collect(),
             sandbox: self.plugins.settings.sandbox,
+            running_sandboxed: self.plugin_sandboxed(),
         }
     }
 

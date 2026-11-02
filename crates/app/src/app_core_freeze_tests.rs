@@ -700,3 +700,40 @@ fn unfreeze_and_keep_the_audio_connects_the_new_track_to_the_engine() {
     assert_eq!(order[0], key("lead"));
     assert!(c.doc().song.track(&order[1]).unwrap().is_audio());
 }
+
+#[test]
+fn a_freeze_that_finishes_during_playback_waits_for_the_stop() {
+    let mut c = core_with(1);
+    select_track(&mut c, "lead");
+    c.freeze_tracks(FreezeThrough::Track);
+    c.handle_action(atomik_ui::UiAction::Transport(
+        atomik_ui::TransportAction::Play,
+    ));
+    assert!(c.is_playing());
+    c.sink_mut().take();
+    c.wait_background();
+    assert!(frozen(&c, "lead").is_some(), "the track is frozen");
+    assert!(c.is_playing(), "playback was not stopped");
+    let calls = c.sink_mut().take();
+    assert!(
+        !calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })),
+        "no engine restart under a running transport: {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| matches!(c, SinkCall::Song(_))),
+        "the song is held back with the engine"
+    );
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("when playback stops")),
+        "{:?}",
+        c.last_rejection()
+    );
+    // The stop applies it.
+    c.handle_action(atomik_ui::UiAction::Transport(
+        atomik_ui::TransportAction::Stop,
+    ));
+    let calls = c.sink_mut().take();
+    assert!(calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
+    assert!(!c.is_playing());
+}

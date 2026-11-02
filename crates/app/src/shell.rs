@@ -6313,6 +6313,7 @@ impl<B: AudioBackend> Shell<B> {
             status = self.core.sink().status().clone();
         }
         status.notes_target = target;
+        status.plugin_mode = self.core.plugin_mode();
         status.streaming = self.core.song_assets().values().any(|a| a.is_stream());
         status.faulted_name = status
             .faulted_device

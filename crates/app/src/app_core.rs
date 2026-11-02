@@ -356,6 +356,9 @@ pub struct AppCore<S: EngineSink> {
     pending_play: Option<u32>,
     /// The count-in the waiting Play starts with, if any.
     pending_pre_roll: Option<PreRoll>,
+    /// A freeze or unfreeze changed the engine graph while the transport ran: the engine is
+    /// rebuilt at the next stop instead of cutting the sound (the song is held back too).
+    restart_deferred: bool,
     /// Effect meter feed: the last publish sequence applied per device.
     fx_meter_seq: BTreeMap<DeviceKey, u64>,
     /// Effect meter feed: the reused read buffer (never reallocated after construction).
@@ -519,6 +522,7 @@ impl<S: EngineSink> AppCore<S> {
             engine_shape: (0, 0, 0),
             pending_play: None,
             pending_pre_roll: None,
+            restart_deferred: false,
             fx_meter_seq: BTreeMap::new(),
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
             plugin_params: PluginParamsView::new(theme),
@@ -1364,6 +1368,7 @@ impl<S: EngineSink> AppCore<S> {
     /// engine loop and the metronome. The transport starts stopped; a take in progress ends
     /// without a clip.
     pub fn rebuild_engine(&mut self) {
+        self.restart_deferred = false;
         let mut clock = StageClock::start();
         let mut stages = Stages::new();
         if self.take.take().is_some() {
@@ -1543,6 +1548,7 @@ impl<S: EngineSink> AppCore<S> {
         // (song stale, tempo changed): flushed before device and routing ops, and at the end.
         let mut stale = (false, false);
         let mut restart = false;
+        let mut defer = false;
         for op in ops {
             if matches!(
                 op,
@@ -1626,8 +1632,15 @@ impl<S: EngineSink> AppCore<S> {
                 // A patch (or its undo) replaced a plugin's state: the live instance takes it.
                 SyncOp::PluginStateChanged { device } => self.plugin_state_changed(device),
                 SyncOp::SongChanged => stale.0 = true,
-                // The graph changes (devices leave, a player comes): a new engine.
-                SyncOp::FrozenChanged => restart = true,
+                // The graph changes (devices leave, a player comes): a new engine, but never
+                // under a running transport: that waits for the next stop.
+                SyncOp::FrozenChanged => {
+                    if self.playing {
+                        defer = true;
+                    } else {
+                        restart = true;
+                    }
+                }
                 // A sampler inserted by this edit already got its map after the insert.
                 SyncOp::ZonesChanged(key) => {
                     if !inserted.contains(key) {
@@ -1685,6 +1698,16 @@ impl<S: EngineSink> AppCore<S> {
             self.plugin_devices = plugins::plugin_keys(exp);
             self.analysers.set_devices(analysers::analyser_keys(exp));
         }
+        if defer && !self.restart_deferred {
+            self.restart_deferred = true;
+            log::info!(
+                "a freeze changed the engine graph during playback: the engine is rebuilt at the next stop"
+            );
+            self.reject(
+                "The freeze takes effect when playback stops: until then the track plays as it was"
+                    .to_string(),
+            );
+        }
         self.flush_song(&mut stale);
         self.push_midi_out_ports();
         if restart || self.engine_shape_changed() {
@@ -1703,7 +1726,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn flush_song(&mut self, stale: &mut (bool, bool)) {
-        if stale.0 {
+        if stale.0 && !self.restart_deferred {
             self.submit_song(stale.1);
         }
         *stale = (false, false);
@@ -2910,6 +2933,10 @@ impl<S: EngineSink> AppCore<S> {
             if let Some(tick) = target {
                 self.locate(tick);
             }
+        }
+        if self.restart_deferred {
+            // The freeze that came during playback takes effect now.
+            self.rebuild_engine_in_place();
         }
     }
 

@@ -562,7 +562,16 @@ impl<S: EngineSink> AppCore<S> {
                     },
                 }));
                 if applied.is_ok() {
-                    self.reject(format!("Froze {}{}", job.name, tail.unwrap_or_default()));
+                    let later = if self.restart_deferred {
+                        ": it plays when playback stops"
+                    } else {
+                        ""
+                    };
+                    self.reject(format!(
+                        "Froze {}{}{later}",
+                        job.name,
+                        tail.unwrap_or_default()
+                    ));
                 }
             }
             Kind::Bounce { mute, dry } => {
