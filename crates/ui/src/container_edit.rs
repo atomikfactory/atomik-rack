@@ -196,6 +196,7 @@ mod tests {
             vel_lo: 20,
             vel_hi: 100,
             transpose: 0,
+            pass: atomik_model::SplitPass::ALL,
         }
     }
 

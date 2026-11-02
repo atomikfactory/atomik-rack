@@ -474,10 +474,7 @@ impl<S: EngineSink> AppCore<S> {
         self.container_editor.open(container);
         self.container_open = true;
         match macros {
-            Some(i) => {
-                self.container_editor.set_tab(ContainerTab::Macros);
-                self.container_editor.select_macro(usize::from(i));
-            }
+            Some(i) => self.container_editor.show_macro(usize::from(i)),
             None => self.container_editor.set_tab(ContainerTab::Splits),
         }
         self.container_editor

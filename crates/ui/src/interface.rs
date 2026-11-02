@@ -95,9 +95,23 @@ const fn boundary_socket(
     }
 }
 
-static BOUNDARY_IN_SOCKETS: [SocketDescriptor; 2] = [
+const fn boundary_cv(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
+    SocketDescriptor {
+        id: SocketId(id),
+        key,
+        name,
+        kind: SocketKind::Cv,
+        direction: Direction::Output,
+    }
+}
+
+static BOUNDARY_IN_SOCKETS: [SocketDescriptor; 6] = [
     boundary_socket(0, "in_l", "Input L", Direction::Output),
     boundary_socket(1, "in_r", "Input R", Direction::Output),
+    boundary_cv(2, "cv1", "CV 1"),
+    boundary_cv(3, "cv2", "CV 2"),
+    boundary_cv(4, "cv3", "CV 3"),
+    boundary_cv(5, "cv4", "CV 4"),
 ];
 static BOUNDARY_OUT_SOCKETS: [SocketDescriptor; 2] = [
     boundary_socket(0, "out_l", "Output L", Direction::Input),
@@ -105,8 +119,8 @@ static BOUNDARY_OUT_SOCKETS: [SocketDescriptor; 2] = [
 ];
 
 /// The INPUT pseudo-panel of a container's inside: what arrives at the container (`in_l`,
-/// `in_r`), audio *outputs* seen from the inner graph, like the interface's host inputs. Cables
-/// use the pseudo-device key [`atomik_model::BOUNDARY_KEY`].
+/// `in_r` and the CV inputs `cv1` to `cv4`), *outputs* seen from the inner graph, like the
+/// interface's host inputs. Cables use the pseudo-device key [`atomik_model::BOUNDARY_KEY`].
 pub fn boundary_in_descriptor() -> DeviceDescriptor {
     DeviceDescriptor {
         stages: &[],

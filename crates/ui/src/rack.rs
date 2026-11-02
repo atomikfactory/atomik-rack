@@ -658,7 +658,7 @@ pub struct RackView {
     /// The open RELINK menu of a plugin panel.
     plugin_menu: Option<plugin_input::PluginMenu>,
     /// The stored names of the macros of the container in view (menu labels).
-    scope_macros: [String; 8],
+    scope_macros: [String; atomik_model::CONTAINER_MACROS],
     /// Levels the scope was left because its container disappeared, not yet reported.
     popped: usize,
     /// First revision of a new panel view (bumped when the scope changes, so the scene cache

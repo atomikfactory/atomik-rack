@@ -953,7 +953,7 @@ impl RackView {
             self.notify_driven(i, &param);
             return;
         } else {
-            (0..MACRO_COUNT as u8)
+            (0..atomik_model::CONTAINER_MACROS as u8)
                 .map(|m| {
                     let name = &self.macro_names(i)[usize::from(m)];
                     let label = if name.is_empty() {
@@ -1014,7 +1014,7 @@ impl RackView {
     }
 
     /// The names of the macros of the container device view `i` maps to (empty: unnamed).
-    fn macro_names(&self, i: usize) -> [String; 8] {
+    fn macro_names(&self, i: usize) -> [String; atomik_model::CONTAINER_MACROS] {
         if !self.scope.is_empty() {
             return self.scope_macros.clone();
         }

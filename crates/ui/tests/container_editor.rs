@@ -1035,3 +1035,174 @@ fn a_command_chord_is_never_typed_into_the_macro_name() {
     }
     assert_eq!(v.renaming(), Some(""));
 }
+
+// ------------------------------------------------------------------ switches, macros 9-16, pass
+
+#[test]
+fn the_kind_button_toggles_the_selected_macro_between_knob_and_switch() {
+    let mut d = macros_doc();
+    let mut v = editor(d.doc());
+    v.set_tab(ContainerTab::Macros);
+    let r = v.kind_rect();
+    assert_eq!(v.hit(r.center()), Hit::Kind);
+    let a = click_at(&mut v, d.doc(), r.center());
+    let cmds = commands(&a);
+    assert_eq!(
+        cmds,
+        vec![Command::Container(ContainerCommand::SetMacroKind {
+            container: key("layer"),
+            index: 0,
+            kind: atomik_model::MacroKind::Switch,
+        })]
+    );
+    apply_all(&mut d, &a);
+    v.sync(d.doc(), &registry());
+    // Now a switch: the button offers the way back, and the row shows a button, not a knob.
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    let texts = dl.texts();
+    assert!(
+        texts.contains(&"SWITCH") && texts.contains(&"ON"),
+        "{texts:?}"
+    );
+    let a = click_at(&mut v, d.doc(), r.center());
+    assert!(matches!(
+        commands(&a)[..],
+        [Command::Container(ContainerCommand::SetMacroKind {
+            kind: atomik_model::MacroKind::Knob,
+            ..
+        })]
+    ));
+}
+
+#[test]
+fn clicking_a_switch_macro_flips_its_value_without_a_drag() {
+    let mut d = macros_doc();
+    apply(
+        &mut d,
+        Command::Container(ContainerCommand::SetMacroKind {
+            container: key("layer"),
+            index: 2,
+            kind: atomik_model::MacroKind::Switch,
+        }),
+    );
+    let mut v = editor(d.doc());
+    v.set_tab(ContainerTab::Macros);
+    let c = v.macro_knob_rect(2).center();
+    let a = click_at(&mut v, d.doc(), c);
+    assert!(!v.is_dragging());
+    let cmds = commands(&a);
+    assert_eq!(cmds.len(), 1, "{cmds:?}");
+    let Command::SetParam {
+        key: k,
+        param,
+        value,
+        merge,
+    } = &cmds[0]
+    else {
+        panic!("{cmds:?}");
+    };
+    assert_eq!(
+        (k, param.as_str(), *value, *merge),
+        (&key("layer"), "macro3", 1.0, None)
+    );
+    apply_all(&mut d, &a);
+    let a = click_at(&mut v, d.doc(), c);
+    assert!(matches!(&commands(&a)[..], [Command::SetParam { value, .. }] if *value == 0.0));
+}
+
+#[test]
+fn the_second_macros_tab_lists_macros_nine_to_sixteen() {
+    let mut d = layered();
+    apply(
+        &mut d,
+        Command::Container(ContainerCommand::RenameMacro {
+            container: key("layer"),
+            index: 10,
+            name: "Drive".into(),
+        }),
+    );
+    let mut v = editor(d.doc());
+    // Selecting macro 11 shows the tab that lists it.
+    v.show_macro(10);
+    assert_eq!(
+        (v.tab(), v.selected_macro()),
+        (ContainerTab::MoreMacros, 10)
+    );
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    let texts = dl.texts();
+    for t in ["Drive", "Macro 9", "Macro 16", "MACRO 11  ·  Drive"] {
+        assert!(texts.contains(&t), "missing {t:?}: {texts:?}");
+    }
+    assert!(!texts.contains(&"Macro 1"), "{texts:?}");
+    // A click on its row selects it; a double-click on a name renames macro 12, not macro 4.
+    let n = v.macro_name_rect(11).center();
+    click_with(&mut v, d.doc(), n, 2, Modifiers::NONE);
+    assert_eq!(v.selected_macro(), 11);
+    assert_eq!(v.renaming(), Some(""));
+    for ch in "Fx".chars() {
+        press(&mut v, d.doc(), Key::Char(ch));
+    }
+    let a = press(&mut v, d.doc(), Key::Enter);
+    assert_eq!(
+        commands(&a),
+        vec![Command::Container(ContainerCommand::RenameMacro {
+            container: key("layer"),
+            index: 11,
+            name: "Fx".into(),
+        })]
+    );
+    // The knob of macro 12 drives macro12's param.
+    let k = v.macro_knob_rect(11).center();
+    let a = drag(&mut v, d.doc(), k, Point::new(k.x, k.y - 30.0));
+    assert!(
+        commands(&a)
+            .iter()
+            .any(|c| matches!(c, Command::SetParam { param, .. } if param == "macro12"))
+    );
+    // The first tab is back one click away.
+    let t = v.tab_rect(ContainerTab::Macros).center();
+    click_at(&mut v, d.doc(), t);
+    assert_eq!(v.tab(), ContainerTab::Macros);
+}
+
+#[test]
+fn pass_chips_toggle_one_flag_of_one_split() {
+    let mut d = layered();
+    let mut v = editor(d.doc());
+    for (n, check) in [
+        (0u8, (false, true, true)),
+        (1, (true, false, true)),
+        (2, (true, true, false)),
+    ] {
+        let c = v.pass_rect(1, n).center();
+        assert_eq!(v.hit(c), Hit::Pass(1, n));
+        let a = click_at(&mut v, d.doc(), c);
+        let lists = set_splits_of(&a);
+        assert_eq!(lists.len(), 1);
+        let s = &lists[0].0[1];
+        assert_eq!((s.pass.bend, s.pass.cc, s.pass.pressure), check);
+        // The other split keeps passing everything.
+        assert!(lists[0].0[0].pass.is_all());
+        apply_all(&mut d, &a);
+        v.sync(d.doc(), &registry());
+        // Click again to turn it back on.
+        let a = click_at(&mut v, d.doc(), c);
+        apply_all(&mut d, &a);
+        v.sync(d.doc(), &registry());
+        assert!(splits_of(d.doc())[1].pass.is_all());
+    }
+}
+
+#[test]
+fn the_new_controls_have_tooltips() {
+    let d = layered();
+    let mut v = editor(d.doc());
+    let help = v.help_at(v.pass_rect(0, 1).center()).unwrap();
+    assert!(help.text.contains("controller"), "{}", help.text);
+    v.set_tab(ContainerTab::Macros);
+    assert!(v.help_at(v.kind_rect().center()).is_some());
+    let t = v.tab_rect(ContainerTab::MoreMacros).center();
+    assert!(v.help_at(t).unwrap().text.contains("9 to 16"));
+}

@@ -125,6 +125,10 @@
 {"text":"0 %","at":[256.00,310.50],"size":9.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"0","at":[344.00,309.00],"size":10.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"MACRO 1  ·  Cutoff","at":[378.00,78.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[912.00,64.00,986.00,84.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[914.00,64.50,984.00,64.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[912.50,64.50,985.50,83.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"KNOB","at":[949.00,77.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
 {"text":"MIN","at":[822.00,90.00],"size":8.00,"weight":400,"align":"center","color":"#8f96a0ff"},
 {"text":"MAX","at":[898.00,90.00],"size":8.00,"weight":400,"align":"center","color":"#8f96a0ff"},
 {"clip":{"rect":[378.00,94.00,986.00,560.00]}},
@@ -181,6 +185,10 @@
 {"stroke":{"line":[102.00,31.50,178.00,31.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
 {"stroke":{"rrect":[100.50,31.50,179.50,52.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"text":"MACROS","at":[140.00,45.50],"size":9.50,"weight":700,"align":"center","color":"#17191cff"},
+{"fill":{"rrect":[186.00,31.00,266.00,53.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[188.00,31.50,264.00,31.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[186.50,31.50,265.50,52.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"MACROS 9-16","at":[226.00,45.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
 {"pop_clip":true},
 {"pop_transform":true}
 ]}
