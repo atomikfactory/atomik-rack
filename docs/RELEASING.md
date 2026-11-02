@@ -32,7 +32,7 @@ The `Release` workflow (`.github/workflows/release.yml`) runs on a `vX.Y.Z` tag 
 
 Jobs of `release.yml`:
 
-1. `version` resolves the version label: the tag name on a tag, `dev-<shortsha>` otherwise. On a tag it fails unless the tag is `v` plus the `[workspace.package]` version in `Cargo.toml` (`scripts/release/version.sh`).
+1. `version` resolves the version label: the tag name on a tag, `dev-<shortsha>` otherwise. On a tag it fails unless the tag is `v` plus the `[workspace.package]` version in `Cargo.toml` (`scripts/release/version.sh`). It also fails, tag or not, when the saved-file corpus has no file for the current project format (`scripts/release/check-corpus.sh`; a format bump adds `crates/model/tests/fixtures/corpus/atomik-vN.atomik` with `scripts/format-corpus.sh N N`).
 2. `build` calls `build.yml` (below).
 3. `draft-release` (tags only, after `build`) checks `SHA256SUMS` and runs `gh release create --draft --verify-tag` with every artifact, its `.sha256`, `SHA256SUMS` and `SHA256SUMS.asc` when it exists. A tag with a `-` in it becomes a pre-release. The release notes say which platforms are signed. Only this job has `contents: write`, and it holds no signing secret.
 

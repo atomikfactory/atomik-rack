@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check the format corpus has a file for the current project format
+        run: sh scripts/release/check-corpus.sh
       - name: Resolve the version (tag must match Cargo.toml)
         id: v
         run: echo "version=$(sh scripts/release/version.sh)" >> "$GITHUB_OUTPUT"

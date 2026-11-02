@@ -5254,8 +5254,12 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   insert and return loops use stages instead.
 - **Platform-dependent last bits.** Output is bit-identical across host block sizes and worker
   counts on one platform. Across operating systems, math-library differences can change the last
-  bits, which is why the SHA-256 golden is checked on Windows x86-64 only (see
-  [TESTING.md](TESTING.md#golden-files)).
+  bits, so the SHA-256 goldens are checked on Windows x86-64 only (see
+  [TESTING.md](TESTING.md#golden-files)). Only the pinned stage blocks and the deterministic helpers of
+  the DSP crate claim bit identity on every platform; no cross-platform bit-identity goal is set
+  for the older primitives, whose sound is kept by fingerprints (0.5 dB) on every platform, and
+  the sound of every released saved-file format by the corpus (see
+  [Bit-identity claims](TESTING.md#bit-identity-claims)).
 - **Analysers.** A plugin device has no scope tap, so no spectrum or goniometer (its own meters
   stay); the analysers read the audio of the device they sit on, so they are meters of a chain, not
   of a console channel or bus (no console panel yet); the fine spectrum has no reference curve or

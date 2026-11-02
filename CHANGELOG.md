@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
+  every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
+  canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
+  bounced and its per-second level (all platforms) and exact hash (Windows x86-64) pinned. The release workflow fails
+  when the current format has no corpus file. A list of which sound is claimed bit-identical on every platform
+  (`claims.toml`) is checked against the pinned stage blocks, every example project is checked to bounce to the same
+  bits at several block sizes and worker counts, and the CI runs the release profile on Windows too.
 - **CLAP presets, knobs that follow a preset, and a browser info pane.** A CLAP plugin's presets (those inside the
   plugin and the files in the folders it declares) are listed and loaded in PARAMS like VST3 presets, also from a
   sandboxed plugin. After a preset is loaded, or a patch is changed inside the plugin's window, the rack's knobs show
