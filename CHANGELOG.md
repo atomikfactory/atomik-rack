@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-11-02
+
 ### Added
 - **Release and dependency hygiene.** A freeze or an unfreeze that finishes while the transport runs no longer
   rebuilds the engine under it: the sound goes on, the message says the freeze plays when playback stops, and the
