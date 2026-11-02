@@ -914,6 +914,16 @@ may break APIs and the patch and project formats.
 - **`settings.json` and `ui-state.json` can no longer be left truncated.** They are written to a
   temporary file and renamed. A file that cannot be read is kept as `.bad` and Atomik starts with
   the defaults and says so.
+- **Play and Stop no longer wait on a parked retirement.** Transport commands travel on a lane of
+  their own that applies even while the engine holds its control queue for the UI to collect
+  retired plans, the retirement queue is four times larger, and the status line counts the batches
+  the control path stood still.
+- **A note off is never the note that is dropped.** The last slots of a device's note input and of
+  the live MIDI queue are kept for note offs and All Off, so a dense controller lane or a pile of
+  chords that overflows a batch cannot leave a note hanging. Nothing changes below the overflow line,
+  so existing bounces are bit-identical.
+- **A record tap whose stop was refused is stopped on the next frame** instead of recording on
+  behind the finished take.
 
 ### Changed
 - **Saving no longer freezes the window.** File > Save and the file picked for Save As write the
@@ -1043,6 +1053,9 @@ may break APIs and the patch and project formats.
   files, that every function the guides cite exists, and the command count the architecture guide
   quotes. The long documents are hard-wrapped at 100 columns, and the continuous integration job
   checks the wrapping and the links of the Markdown files.
+- Test builds now catch a device that takes a lock or makes a blocking call inside `process`
+  (`docs/EXTENDING.md`); release builds contain none of it. `docs/TESTING.md` has a recipe for a
+  scheduled hardware run.
 
 ## [0.2.0-rc.2] - 2026-10-28
 

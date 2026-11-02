@@ -1363,6 +1363,20 @@ in CI. Run them by hand, one binary at a time, on a machine where playing sound 
 
 A normal `cargo test --workspace` reports these as ignored.
 
+### A scheduled hardware run (recipe)
+
+Nothing in CI runs the hardware tests; a machine that has a virtual audio cable and a virtual MIDI
+loopback port can run them on a schedule of its own. Register the machine as a runner (never a shared
+one) and give it a nightly job that runs, in this order:
+
+1. `cargo test -p atomik-audio-io --test hw_loopback -- --ignored --nocapture`
+2. `cargo test -p atomik-play --test hw_cable -- --ignored --nocapture`
+3. `cargo test -p atomik-midi-io --test hw_midi -- --ignored --nocapture`
+
+The tests refuse any device that is not the cable, so a machine with real speakers is safe. Keep the
+job out of the pull-request workflows. Until a machine is set up, run the same three commands by hand
+before a release and record the result with the release checks.
+
 The audio tests use the same guard as the engine tests: every engine render in `audio_stream.rs`,
 `record_tap.rs` and `audio_bounce_alloc.rs` runs under `assert_no_alloc`, and the tests with workers
 also install `forbid_on_this_thread` so that an allocation on a worker thread is counted. The worker
