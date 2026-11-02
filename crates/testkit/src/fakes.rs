@@ -147,6 +147,72 @@ impl Device for Panicker {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Locker
+// ---------------------------------------------------------------------------------------------
+
+/// Descriptor of [`Locker`]: `audio_out` (Audio out).
+pub static LOCKER: DeviceDescriptor = DeviceDescriptor {
+    stages: &[],
+    type_id: "testkit.locker",
+    name: "Locker",
+    kind: DeviceKind::Utility,
+    version: 1,
+    params: &[],
+    sockets: &[socket(0, "audio_out", SocketKind::Audio, Direction::Output)],
+};
+
+/// What a [`Locker`] breaks the audio-thread rules with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Misbehaviour {
+    /// Takes a lock in `process`.
+    Lock,
+    /// Makes a blocking host call in `process`.
+    Block,
+    /// Nothing: the control.
+    None,
+}
+
+/// A device that breaks an audio-thread rule in `process`: for tests of the rule guard.
+#[derive(Debug)]
+pub struct Locker {
+    mode: Misbehaviour,
+    lock: atomik_core::rt_guard::RtMutex<u32>,
+}
+
+impl Locker {
+    /// Audio output socket.
+    pub const AUDIO_OUT: SocketId = SocketId(0);
+
+    /// Boxed instance.
+    pub fn boxed(mode: Misbehaviour) -> Box<dyn Device> {
+        Box::new(Self {
+            mode,
+            lock: atomik_core::rt_guard::RtMutex::new(0),
+        })
+    }
+}
+
+impl Device for Locker {
+    fn descriptor(&self) -> &'static DeviceDescriptor {
+        &LOCKER
+    }
+    fn prepare(&mut self, _: &PrepareInfo) {}
+    fn reset(&mut self) {}
+    fn set_param(&mut self, _: ParamId, _: f32) {}
+    fn process(&mut self, _: &mut ProcessContext<'_>) {
+        match self.mode {
+            Misbehaviour::Lock => {
+                if let Ok(mut n) = self.lock.lock() {
+                    *n += 1;
+                }
+            }
+            Misbehaviour::Block => atomik_core::rt_guard::forbid("a blocking host call"),
+            Misbehaviour::None => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // ImpulseOnNote
 // ---------------------------------------------------------------------------------------------
 

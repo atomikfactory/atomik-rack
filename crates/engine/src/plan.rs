@@ -231,7 +231,7 @@ impl Node {
         let buf = &mut self.notes[i];
         let floor = buf.as_slice().last().map_or(0, |last| last.offset);
         let offset = offset.clamp(floor, BATCH as u16 - 1);
-        buf.push(NoteEvent { offset, kind }).is_ok()
+        push_with_headroom(buf, NoteEvent { offset, kind }).is_ok()
     }
 
     /// Stage of socket `i` (0 for single-stage devices).
@@ -349,7 +349,11 @@ impl Node {
         let mut ctx =
             ProcessContext::new(time, &mut self.signals, &mut self.notes, &self.connected)
                 .with_playback(playback);
+        // Test builds panic (a contained device fault) when a device breaks the audio-thread
+        // rules in here; the guard is compiled out of release builds.
+        let _rt = atomik_core::rt_guard::audio_thread();
         self.device.process_stage(stage, &mut ctx);
+        drop(_rt);
         if last {
             self.playback_on = false;
             for (i, s) in self.sockets.iter().enumerate() {
@@ -530,6 +534,24 @@ pub(crate) fn count_overflow(dropped: &AtomicU64, overflow: u64) {
     }
 }
 
+/// Event slots of a Notes input scratch kept for releases (`Off`, `AllOff`): every other event
+/// is dropped (and counted) once the buffer is this close to full, so a dense controller lane
+/// or a pile of chords cannot swallow the release of a note that is already sounding.
+pub const RELEASE_HEADROOM: usize = 128;
+
+/// Pushes `event`, keeping [`RELEASE_HEADROOM`] slots for releases. Below the headroom line the
+/// behaviour is plain [`NoteBuffer::push`], so nothing changes unless a batch nearly overflows.
+fn push_with_headroom(
+    buf: &mut NoteBuffer,
+    event: NoteEvent,
+) -> Result<(), atomik_core::BufferFull> {
+    let release = matches!(event.kind, NoteKind::Off { .. } | NoteKind::AllOff);
+    if !release && buf.len() + RELEASE_HEADROOM >= buf.capacity() {
+        return Err(atomik_core::BufferFull);
+    }
+    buf.push(event)
+}
+
 /// Merges cable notes into a Notes input that may already hold scheduled notes, keeping
 /// offsets non-decreasing (scheduled first on ties). Uses `spare` as the merge target and swaps
 /// it in, so nothing allocates. Returns the number of events dropped for lack of capacity.
@@ -540,7 +562,7 @@ fn merge_notes(scheduled: &mut NoteBuffer, cable: &NoteBuffer, spare: &mut NoteB
     }
     if scheduled.is_empty() {
         for event in cable.as_slice() {
-            overflow += u64::from(scheduled.push(*event).is_err());
+            overflow += u64::from(push_with_headroom(scheduled, *event).is_err());
         }
         return overflow;
     }
@@ -557,7 +579,7 @@ fn merge_notes(scheduled: &mut NoteBuffer, cable: &NoteBuffer, spare: &mut NoteB
             (None, None) => break,
         };
         if let Some(event) = next {
-            overflow += u64::from(spare.push(*event).is_err());
+            overflow += u64::from(push_with_headroom(spare, *event).is_err());
         }
     }
     std::mem::swap(scheduled, spare);

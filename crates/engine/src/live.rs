@@ -3,6 +3,7 @@
 //! Public signatures are a stable contract: changes need review.
 
 use crate::engine::{EngineError, ScheduledNote};
+use atomik_core::NoteKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
 use std::time::{Duration, Instant};
@@ -30,6 +31,9 @@ pub struct EngineOptions {
     pub worker_linger_spins: u64,
 }
 
+/// Slots of the live note queue kept for releases (see [`LiveNoteSender::push`]).
+pub const LIVE_RELEASE_HEADROOM: usize = 64;
+
 /// Producer half of the live note queue. `Send`; owned by exactly one thread
 /// (typically the MIDI input thread). Obtain it once from `EngineHandle::live_notes`.
 pub struct LiveNoteSender {
@@ -49,8 +53,16 @@ impl LiveNoteSender {
     /// delivered at offset 0 of the next batch. Never blocks or allocates.
     ///
     /// When the queue ([`crate::NOTE_QUEUE_CAPACITY`]) is full the note is dropped, counted in
-    /// `EngineHandle::dropped_events`, and `Err(QueueFull)` is returned.
+    /// `EngineHandle::dropped_events`, and `Err(QueueFull)` is returned. The last
+    /// [`LIVE_RELEASE_HEADROOM`] slots are kept for releases (`Off`, `AllOff`): any other note
+    /// is refused once the queue is that close to full, so a flood of notes or controllers
+    /// cannot swallow the release of a key that is already sounding.
     pub fn push(&mut self, note: ScheduledNote) -> Result<(), EngineError> {
+        let release = matches!(note.kind, NoteKind::Off { .. } | NoteKind::AllOff);
+        if !release && self.tx.slots() <= LIVE_RELEASE_HEADROOM {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return Err(EngineError::QueueFull);
+        }
         self.tx.push(note).map_err(|_| {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             EngineError::QueueFull

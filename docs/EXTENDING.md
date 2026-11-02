@@ -84,6 +84,23 @@ In particular:
 
 A device instance is constructed by its factory (`create: fn() -> Box<dyn Device>`) on the non-RT side. Construction may allocate, but `prepare` must still be correct when it is called again.
 
+#### The audio-thread rule guard
+
+Test builds check the "lock or block" rule as well as the allocation rule. The engine marks every
+`process` call with `atomik_core::rt_guard::audio_thread()`; inside it:
+
+- `atomik_core::rt_guard::RtMutex` panics when locked (use it for any mutex a device owns that
+  other threads also take, so a device that locks in `process` fails its test);
+- `atomik_core::rt_guard::forbid("what")` panics, and goes in front of every blocking host call
+  (file or socket I/O, sleeping, joining a thread) that a helper may make.
+
+The panic is a contained device fault, so a test asserts `EngineHandle::fault()`; see
+[crates/engine/tests/rt_rules.rs](../crates/engine/tests/rt_rules.rs). The guard exists only with the
+`rt-guard` feature, which only the test kit enables: release builds carry no detector code and
+`RtMutex` is a plain `std::sync::Mutex` there. A guarded render test must call `Engine::render`
+directly, because a violation's panic message allocates and `render_block` runs under the allocation
+guard.
+
 ### Showing more than 32 numbers: the scope tap
 
 `Device::meter_values` publishes up to 32 floats per batch, enough for a level, a gain reduction or a correlation. A device that wants the UI to draw something from the samples themselves (a spectrum, a goniometer) returns a [`ScopeTap`](../crates/device-sdk/src/scope.rs) from `scope_tap`: create it in the constructor (`Arc::new(ScopeTap::new())`, which allocates), keep a clone, and in `process` call `tap.push(&left, &right)` with the 64 frames of the batch. The push is relaxed atomic stores and one release store, so it is real-time safe; the engine registers the tap when the device is inserted, and the app reads the newest frames each UI frame and does the analysis (FFT, decimation, drawing) on its own thread. `atomik.spectrum` and `atomik.phase-meter` are the examples; see [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
