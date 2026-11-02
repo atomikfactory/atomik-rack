@@ -292,18 +292,19 @@ fn the_strip_never_starts_a_device_drag_or_a_drop() {
 // ---------------------------------------------------------------- cost
 
 #[test]
-fn painting_the_strip_does_not_repaint_a_panel() {
+fn the_strip_replays_the_panels_and_a_second_paint_changes_nothing() {
     let (doc, reg) = three_columns();
     let mut v = nav_view(&doc, &reg, WINDOW);
     let with = paint(&mut v, &doc, &reg);
+    let again = paint(&mut v, &doc, &reg);
+    assert_eq!(with.to_json(), again.to_json());
     v.set_navigator_visible(false);
     let without = paint(&mut v, &doc, &reg);
-    // The strip is a handful of rectangles on top of the same panels.
-    assert!(with.len() > without.len());
+    // The strip is a miniature of every panel: far more than a handful of rectangles.
     assert!(
-        with.len() - without.len() < 40,
+        with.len() > without.len() + 100,
         "{} extra ops",
-        with.len() - without.len()
+        with.len().saturating_sub(without.len())
     );
 }
 

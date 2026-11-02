@@ -39,6 +39,7 @@ pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
     match hint {
         CursorHint::Default => CursorIcon::Default,
         CursorHint::ResizeHorizontal => CursorIcon::EwResize,
+        CursorHint::Stretch => CursorIcon::ColResize,
         CursorHint::Move => CursorIcon::Move,
         CursorHint::Magnifier => CursorIcon::ZoomIn,
         CursorHint::Hand => CursorIcon::Grab,
@@ -390,6 +391,7 @@ mod tests {
             CursorIcon::EwResize
         );
         assert_eq!(cursor_icon(CursorHint::Move), CursorIcon::Move);
+        assert_eq!(cursor_icon(CursorHint::Stretch), CursorIcon::ColResize);
         assert_eq!(cursor_icon(CursorHint::Crosshair), CursorIcon::Crosshair);
         assert_eq!(cursor_icon(CursorHint::Hand), CursorIcon::Grab);
         assert_eq!(cursor_icon(CursorHint::Dragging), CursorIcon::Grabbing);

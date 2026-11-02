@@ -5,9 +5,8 @@
 use super::{Drag, MOVE_THRESHOLD, RACK_MARGIN, RackView, UiAction};
 use crate::keymap::CommandOutcome;
 use atomik_device_sdk::RACK_WIDTH;
-use atomik_model::{Command, DeviceKey, MAX_RACK_COLUMNS, RackDoc, RackSlot};
+use atomik_model::{Command, MAX_RACK_COLUMNS, RackDoc, RackSlot};
 use vello::kurbo::{Point, Rect, Size, Vec2};
-use vello::peniko::Color;
 
 /// Space between two columns, rack units of length (logical pixels at zoom 1).
 pub const COLUMN_GAP: f64 = 32.0;
@@ -217,7 +216,11 @@ impl RackView {
 
     /// The panels of a column, top to bottom, as (key, rack-space rectangle, accent colour):
     /// column 0 starts with the Audio I/O strip (or the container's input strip).
-    pub(crate) fn column_device_rects(&self, column: u16) -> Vec<(DeviceKey, Rect, Color)> {
+    #[cfg(test)]
+    pub(crate) fn column_device_rects(
+        &self,
+        column: u16,
+    ) -> Vec<(atomik_model::DeviceKey, Rect, vello::peniko::Color)> {
         self.devices
             .iter()
             .filter(|d| d.column == column)
@@ -256,6 +259,7 @@ mod tests {
     use super::*;
     use crate::{Theme, UiEvent};
     use atomik_device_sdk::Registry;
+    use atomik_model::DeviceKey;
     use atomik_model::RackDevice;
     use std::collections::BTreeMap;
 

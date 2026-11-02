@@ -527,3 +527,143 @@ proptest! {
         }
     }
 }
+
+fn stretch(ids: Vec<ClipId>, percent: f64, from_start: bool) -> Command {
+    wf(WorkflowCommand::StretchClips {
+        ids,
+        percent,
+        from_start,
+    })
+}
+
+#[test]
+fn stretching_the_end_scales_the_notes_and_keeps_the_start_and_undo_gives_it_back() {
+    let r = registry();
+    let mut d = synth_doc(
+        &r,
+        notes_clip(
+            BAR,
+            BAR,
+            vec![note(0, PPQ, 60, 0.8), note(PPQ * 2, PPQ, 64, 0.8)],
+        ),
+    );
+    let id = the_clip(&d, 0).id;
+    let was = text(&d);
+    one_step(&mut d, &r, stretch(vec![id], 50.0, false));
+    let c = the_clip(&d, 0);
+    assert_eq!((c.start, c.length), (BAR, 2 * BAR));
+    assert_eq!(notes_of(&c), [(0, 2 * PPQ, 60), (4 * PPQ, 2 * PPQ, 64)]);
+    d.undo(&r).unwrap();
+    assert_eq!(text(&d), was);
+}
+
+#[test]
+fn stretching_the_start_keeps_the_end_fixed() {
+    let r = registry();
+    let mut d = synth_doc(&r, notes_clip(2 * BAR, BAR, vec![note(0, PPQ, 60, 0.8)]));
+    let id = the_clip(&d, 0).id;
+    one_step(&mut d, &r, stretch(vec![id], 50.0, true));
+    let c = the_clip(&d, 0);
+    assert_eq!((c.start, c.end()), (BAR, 3 * BAR));
+    assert_eq!(notes_of(&c), [(0, 2 * PPQ, 60)]);
+    // A stretch that would put the start before the song is refused.
+    let e = rejected(&mut d, &r, stretch(vec![id], 20.0, true));
+    assert!(matches!(e, ModelError::OutOfRange(_)), "{e:?}");
+}
+
+#[test]
+fn stretching_scales_automation_points_and_every_selected_clip_by_the_same_ratio() {
+    let r = registry();
+    let mut d = synth_doc(&r, notes_clip(0, BAR, vec![note(0, PPQ, 60, 0.8)]));
+    run(
+        &mut d,
+        &r,
+        [
+            sc(SongCommand::AddAutomationLane {
+                device: key("synth"),
+                param: "filter.cutoff".into(),
+            }),
+            add_clip(
+                "synth",
+                1,
+                auto_clip(
+                    2 * BAR,
+                    2 * BAR,
+                    vec![
+                        point(0, 500.0, Curve::Linear),
+                        point(BAR, 900.0, Curve::Linear),
+                    ],
+                ),
+            ),
+        ],
+    );
+    let track = d.doc().song.track(&key("synth")).unwrap().clone();
+    let ids = vec![track.lanes[0].clips[0].id, track.lanes[1].clips[0].id];
+    one_step(&mut d, &r, stretch(ids, 200.0, false));
+    let t = d.doc().song.track(&key("synth")).unwrap().clone();
+    let (n, a) = (&t.lanes[0].clips[0], &t.lanes[1].clips[0]);
+    // Half as long, each about its own start.
+    assert_eq!((n.start, n.length), (0, BAR / 2));
+    assert_eq!((a.start, a.length), (2 * BAR, BAR));
+    let ClipContent::Automation(p) = &a.content else {
+        panic!("automation")
+    };
+    assert_eq!(p.iter().map(|x| x.tick).collect::<Vec<_>>(), [0, BAR / 2]);
+    assert_eq!(p[1].value, 900.0);
+}
+
+#[test]
+fn stretching_audio_warps_it_and_keeps_its_engine() {
+    let r = audio_registry();
+    let mut d = with_audio_track(&r);
+    run(&mut d, &r, [add_audio_clip("audio-track", BAR, 2 * BAR, 1)]);
+    let id = d.doc().song.track(&key("audio-track")).unwrap().lanes[0].clips[0].id;
+    // Twice as long: the source is played at half speed, so the source tempo doubles.
+    one_step(&mut d, &r, stretch(vec![id], 50.0, false));
+    let c = doc_clip(d.doc(), id);
+    assert_eq!((c.start, c.length), (BAR, 4 * BAR));
+    let ClipContent::Audio(a) = &c.content else {
+        panic!("audio")
+    };
+    assert!(a.warp.enabled);
+    assert!(
+        (a.warp.source_bpm - 240.0).abs() < 1e-9,
+        "{}",
+        a.warp.source_bpm
+    );
+    assert_eq!(a.warp.mode, atomik_model::WarpMode::Beats);
+    d.undo(&r).unwrap();
+    // A clip already in Repitch mode stays there.
+    let before = doc_clip(d.doc(), id).clone();
+    let ClipContent::Audio(mut content) = before.content.clone() else {
+        panic!("audio")
+    };
+    content.warp.mode = atomik_model::WarpMode::Repitch;
+    run(
+        &mut d,
+        &r,
+        [sc(SongCommand::SetAudioClip {
+            id,
+            start: before.start,
+            length: before.length,
+            muted: false,
+            content,
+            merge: None,
+        })],
+    );
+    one_step(&mut d, &r, stretch(vec![id], 200.0, true));
+    let c = doc_clip(d.doc(), id);
+    assert_eq!((c.start, c.end()), (2 * BAR, 3 * BAR));
+    let ClipContent::Audio(a) = &c.content else {
+        panic!("audio")
+    };
+    assert_eq!(a.warp.mode, atomik_model::WarpMode::Repitch);
+    // A range or a no-op ratio is refused.
+    for p in [100.0, 5.0, 5000.0] {
+        let e = rejected(&mut d, &r, stretch(vec![id], p, false));
+        assert!(
+            matches!(e, ModelError::BadSong(_) | ModelError::OutOfRange(_)),
+            "{e:?}"
+        );
+    }
+}

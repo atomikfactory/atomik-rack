@@ -458,3 +458,115 @@ fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
     .unwrap();
     assert_eq!(keys(&c), vec![60], "the muted lane is left out");
 }
+
+fn song_file(tmp: &Tmp) -> PathBuf {
+    let mut source = song_core();
+    source.export_midi(MidiExport::Song, &tmp.path("song.mid"));
+    tmp.path("song.mid")
+}
+
+#[test]
+fn a_midi_file_dropped_on_a_note_lane_is_one_clip_there_at_the_drop_tick() {
+    let tmp = Tmp::new("drop-lane");
+    let file = song_file(&tmp);
+    let mut c = core();
+    add_synth(&mut c, "pad", "Pad");
+    c.apply_command(Command::Song(SongCommand::AddNoteLane {
+        device: key("pad"),
+        name: None,
+    }))
+    .unwrap();
+    // The playhead and the selection are elsewhere: only the drop counts.
+    c.locate_bars(5);
+    c.arrangement_mut().set_selected_track(None);
+    let before = c.doc().clone();
+    c.handle_action(UiAction::ImportMidi {
+        paths: vec![file],
+        lane: Some((key("pad"), 1)),
+        tick: 2 * BAR,
+    });
+    let pad = c.doc().song.track(&key("pad")).unwrap();
+    assert!(pad.lanes[0].clips.is_empty());
+    assert_eq!(pad.lanes[1].clips.len(), 1);
+    assert_eq!(pad.lanes[1].clips[0].start, 2 * BAR);
+    assert_eq!(c.doc().song.tracks.len(), 1, "no new track");
+    assert_eq!(
+        notes_in(&c, pad.lanes[1].clips[0].id).len(),
+        3,
+        "both MIDI tracks merge into the one clip, as File > Import MIDI does"
+    );
+    assert_eq!(
+        c.arrangement.selected_clips(),
+        vec![pad.lanes[1].clips[0].id]
+    );
+    c.undo();
+    assert_eq!(c.doc(), &before, "one undo step");
+}
+
+#[test]
+fn a_midi_file_dropped_below_the_tracks_makes_new_tracks_at_the_drop_tick() {
+    let tmp = Tmp::new("drop-new");
+    let file = song_file(&tmp);
+    let mut c = core();
+    add_synth(&mut c, "pad", "Pad");
+    // A selected track does not matter: new tracks, not a clip on it.
+    c.arrangement_mut().set_selected_track(Some(key("pad")));
+    c.locate_bars(7);
+    c.sink_mut().take();
+    c.handle_action(UiAction::ImportMidi {
+        paths: vec![file],
+        lane: None,
+        tick: BAR,
+    });
+    crate::sink::assert_new_devices_routed(&c.sink_mut().take());
+    let song = &c.doc().song;
+    assert_eq!(song.tracks.len(), 3, "the pad and two imported tracks");
+    assert!(song.track(&key("pad")).unwrap().lanes[0].clips.is_empty());
+    for t in &song.tracks[1..] {
+        assert_eq!(t.lanes[0].clips[0].start, BAR);
+    }
+}
+
+#[test]
+fn a_midi_drop_on_a_lane_that_is_gone_or_not_notes_changes_nothing_and_says_so() {
+    let tmp = Tmp::new("drop-bad");
+    let file = song_file(&tmp);
+    let mut c = core();
+    add_synth(&mut c, "pad", "Pad");
+    let before = c.doc().clone();
+    for lane in [Some((key("pad"), 5)), Some((key("ghost"), 0))] {
+        c.handle_action(UiAction::ImportMidi {
+            paths: vec![file.clone()],
+            lane,
+            tick: 0,
+        });
+        assert_eq!(c.doc(), &before);
+        assert!(c.last_rejection().unwrap().contains("note lane"));
+    }
+    // An unreadable file is reported by name and also changes nothing.
+    c.import_midi_at(&tmp.path("missing.mid"), None, 0);
+    assert_eq!(c.doc(), &before);
+    assert!(c.last_rejection().unwrap().contains("missing.mid"));
+}
+
+#[test]
+fn loading_a_midi_file_from_the_browser_is_the_file_menu_import() {
+    let tmp = Tmp::new("browser");
+    let file = song_file(&tmp);
+    let (mut browser, mut menu) = (core(), core());
+    for c in [&mut browser, &mut menu] {
+        add_synth(c, "pad", "Pad");
+        c.arrangement_mut().set_selected_track(Some(key("pad")));
+        c.locate_bars(1);
+    }
+    browser.browse(atomik_ui::BrowseAction::Load(file.clone()));
+    menu.import_midi(&file, false);
+    assert_eq!(browser.doc(), menu.doc());
+    let clips = &browser.doc().song.track(&key("pad")).unwrap().lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].start, BAR);
+    // A broken file is reported like the menu does.
+    std::fs::write(tmp.path("junk.mid"), b"nope").unwrap();
+    browser.browse(atomik_ui::BrowseAction::Load(tmp.path("junk.mid")));
+    assert!(browser.last_rejection().unwrap().contains("junk.mid"));
+}
