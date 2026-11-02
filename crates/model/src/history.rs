@@ -1421,6 +1421,7 @@ impl CompoundOps {
             | SyncOp::PatternsChanged { .. }
             | SyncOp::SplitsChanged { .. }
             | SyncOp::MacrosChanged { .. }
+            | SyncOp::ModSlotsChanged { .. }
             | SyncOp::PluginChanged { .. })
                 if self.other.contains(&op) => {}
             op => self.other.push(op),
@@ -1642,6 +1643,7 @@ mod tests {
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            mods: Vec::new(),
         }
     }
 

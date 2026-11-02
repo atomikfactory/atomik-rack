@@ -620,6 +620,19 @@ pub enum WorkflowCommand {
         /// characters.
         port: Option<String>,
     },
+    /// Sets slot `slot` of a device's modulation matrix, or clears it (`None`, which also puts the
+    /// slot's amount back to 0). The ids must be inside the device's source and target tables; a
+    /// device without a matrix, a slot outside `0..MOD_SLOTS` or a slot that already holds the
+    /// value is rejected. One undo step. Reports `ModSlotsChanged` (and `ParamChanged` for the
+    /// cleared amount).
+    SetModSlot {
+        /// The device (path key).
+        device: DeviceKey,
+        /// The slot, `0..MOD_SLOTS`.
+        slot: u8,
+        /// The new structure of the slot, or `None` to clear it.
+        value: Option<crate::ModSlot>,
+    },
     /// Adds the tracks of a MIDI file, and optionally its tempo map, meter map and markers, as
     /// one undo step (see [`crate::MidiImport`]): per track a new instrument with its console
     /// channel, an unarmed song track and a note clip. Reports the compound sync ops of the
@@ -799,6 +812,13 @@ pub(crate) fn plan(
             doc,
             &device,
             port.as_deref(),
+        )),
+        WorkflowCommand::SetModSlot {
+            device,
+            slot,
+            value,
+        } => plain(crate::mod_matrix::plan_set_slot(
+            doc, registry, &device, slot, value,
         )),
         WorkflowCommand::ImportMidi(import) => {
             plain(crate::midi_import::plan(doc, registry, import))

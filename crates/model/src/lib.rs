@@ -48,6 +48,7 @@ mod midi_import;
 mod midi_map;
 mod midi_map_io;
 mod midi_out;
+mod mod_matrix;
 pub mod note_tools;
 pub mod organise;
 mod organise_cmd;
@@ -126,6 +127,7 @@ pub use midi_map::{
 };
 pub use midi_map_io::{MIDI_PRESET_FORMAT, load_midi_preset, save_midi_preset};
 pub use midi_out::{MAX_MIDI_OUT_PORT_CHARS, MIDI_OUT_TYPE, MidiOutDoc};
+pub use mod_matrix::{ModSlot, amount_param, engine_params};
 pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
@@ -328,6 +330,11 @@ pub struct RackDevice {
     /// device uses the fallback port of the app settings; always `None` on every other device
     /// type. Stored only when `Some` (project format 37). See [`MidiOutDoc`].
     pub midi_out: Option<MidiOutDoc>,
+    /// The device's modulation matrix: position `n` is slot `n`, `None` an empty slot, and the
+    /// list never ends in one (empty for a device with no slot in use, which is every device
+    /// whose type declares no matrix). The amount of a slot is the param `mod<n>_amount`. Stored
+    /// only when not empty (project format 41). See [`ModSlot`].
+    pub mods: Vec<Option<ModSlot>>,
 }
 
 /// The rack document.
@@ -810,6 +817,7 @@ pub enum Command {
 /// | `ApplyPatch`, `ResetDevice` (also undo/redo) | `ParamChanged` per changed param, `ZonesChanged`, `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the patch name); a container's inside: `DeviceRemoved` and `DeviceAdded` for the container |
 /// | `SetPatchName` (also undo/redo) | `ViewChanged` |
 /// | `SetMidiOutPort` (also undo/redo) | `ViewChanged` (the app re-routes the device's output) |
+/// | `SetModSlot` (also undo/redo) | `ModSlotsChanged` (the slot clear also `ParamChanged` for the amount) |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
 ///
 /// A step with several parts (e.g. `AddDevice` of an instrument with its channel and
@@ -906,6 +914,14 @@ pub enum SyncOp {
     SplitsChanged {
         /// The container (path key).
         container: DeviceKey,
+    },
+    /// A device's modulation slots changed (`SetModSlot`, a patch, their undo and redo; not
+    /// reported when a whole device comes back or goes away: the app starts it from
+    /// [`ExpandedRack`]). The app re-sends the three structure params of every slot
+    /// ([`engine_params`]); the amounts travel as ordinary `ParamChanged`.
+    ModSlotsChanged {
+        /// The device (path key).
+        device: DeviceKey,
     },
 }
 

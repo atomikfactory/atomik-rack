@@ -344,6 +344,7 @@ mod tests {
                 column: i % columns,
                 patch_name: String::new(),
                 midi_out: None,
+                mods: Vec::new(),
             })
             .collect::<Vec<_>>();
         let mut devices = devices;

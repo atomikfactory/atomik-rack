@@ -235,6 +235,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Device, "inner", 8),
     field(Device, "plugin", 9),
     field(Device, "midi_out", 37),
+    field(Device, "mods", 41),
     // A sampler zone.
     field(Zone, "asset", 1).req(),
     field(Zone, "key_lo", 1).req(),

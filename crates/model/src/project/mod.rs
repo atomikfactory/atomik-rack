@@ -2,13 +2,14 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 37,
+//! { "format": "atomik-project", "version": 41,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
 //!       "plugin", v9, a plugin device's document, see below, and "patch", v36, the name of
 //!       the patch the device took its sound from, written only when non-empty, and
-//!       "midi_out", v37, a MIDI Out device's port: { "port": string }, written only when set)
+//!       "midi_out", v37, a MIDI Out device's port: { "port": string }, written only when set, and
+//!       "mods", v41, the modulation slots in use: [{ "slot", "source", "target", "via"? }…])
 //!   "input_channels": 0..=32,                                   (v3; optional, default 0)
 //!   "console": { "channels": [{ "channel": key, "source": key | null }…],
 //!                "buses"?: [{ "bus": key, "name": string }…]     (v12; written only when non-empty),
@@ -362,7 +363,13 @@
 //! Version 40 adds the root `"tune_cents"` after `"info"` (see [`crate::master_tune`]): the master
 //! tune, a number of cents within -100..=100 (a value outside is refused), written only when it is
 //! not 0, so a project at 0 differs from the same file without the field in nothing, and plays and
-//! bounces bit for bit as it did. Saving always writes version 40.
+//! bounces bit for bit as it did.
+//! Version 41 adds the device field `"mods"` after `"midi_out"` (see [`crate::ModSlot`]): the
+//! modulation slots of a device whose type has a matrix, one `{ "slot", "source", "target", "via"? }`
+//! object per used slot in ascending slot order (ids are indices into the device's source and
+//! target tables), written only when a slot is in use. The amount of a slot is the ordinary param
+//! `mod<n>_amount`. A project without slots differs from its version 40 file in the version line
+//! alone and plays and bounces bit for bit as it did. Saving always writes version 41.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -456,8 +463,9 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// snapshots) and 27 (no MIDI mappings) and 28 (no macros) and 29 (one note lane per track) and
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
 /// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
-/// information) and 39 (no send follow, no parallel channels).
-pub const PROJECT_VERSION: u32 = 40;
+/// information) and 39 (no send follow, no parallel channels) and 40 (no master tune) and 41 (no
+/// modulation slots).
+pub const PROJECT_VERSION: u32 = 41;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

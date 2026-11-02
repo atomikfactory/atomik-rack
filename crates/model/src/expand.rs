@@ -336,6 +336,7 @@ impl<'a> Builder<'a> {
             let path = format!("{prefix}{}", d.key.0);
             let Some(inner) = &d.inner else {
                 let mut params = d.params.clone();
+                crate::mod_matrix::extend_params(&mut params, &d.mods);
                 if let Some(o) = self.overrides.get(&path) {
                     params.extend(o.iter().map(|(k, v)| (k.clone(), *v)));
                 }

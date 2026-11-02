@@ -451,6 +451,7 @@ pub(crate) fn add_audio_track(
             column: 0,
             patch_name: String::new(),
             midi_out: None,
+            mods: Vec::new(),
         },
         cables: Vec::new(),
     };

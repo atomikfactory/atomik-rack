@@ -92,6 +92,7 @@ impl Mirror {
                 | SyncOp::PluginChanged { .. }
                 | SyncOp::PluginStateChanged { .. }
                 | SyncOp::SplitsChanged { .. }
+                | SyncOp::ModSlotsChanged { .. }
                 | SyncOp::TuneChanged(_)
                 | SyncOp::FrozenChanged => {}
                 // The song mirror is checked by the song property tests.

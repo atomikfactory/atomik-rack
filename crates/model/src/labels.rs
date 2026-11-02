@@ -156,6 +156,10 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::CreatePlayer { .. } => "Create Player",
         WorkflowCommand::ReplaceDevice { .. } => "Replace Device",
         WorkflowCommand::SetFoldedMany { .. } => "Fold Devices",
+        WorkflowCommand::SetModSlot { value, .. } => match value {
+            Some(_) => "Set Modulation",
+            None => "Clear Modulation",
+        },
         WorkflowCommand::AutoRoute { .. } => "Auto-route",
         WorkflowCommand::DisconnectDevice { .. } | WorkflowCommand::DisconnectDevices { .. } => {
             "Disconnect"
