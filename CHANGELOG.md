@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
+  every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
+  canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
+  bounced and its per-second level (all platforms) and exact hash (Windows x86-64) pinned. The release workflow fails
+  when the current format has no corpus file. A list of which sound is claimed bit-identical on every platform
+  (`claims.toml`) is checked against the pinned stage blocks, every example project is checked to bounce to the same
+  bits at several block sizes and worker counts, and the CI runs the release profile on Windows too.
 - **CLAP presets, knobs that follow a preset, and a browser info pane.** A CLAP plugin's presets (those inside the
   plugin and the files in the folders it declares) are listed and loaded in PARAMS like VST3 presets, also from a
   sandboxed plugin. After a preset is loaded, or a patch is changed inside the plugin's window, the rack's knobs show
@@ -1131,6 +1138,13 @@ may break APIs and the patch and project formats.
 ## [0.2.0-rc.2] - 2026-10-28
 
 ### Added
+- **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
+  every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
+  canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
+  bounced and its per-second level (all platforms) and exact hash (Windows x86-64) pinned. The release workflow fails
+  when the current format has no corpus file. A list of which sound is claimed bit-identical on every platform
+  (`claims.toml`) is checked against the pinned stage blocks, every example project is checked to bounce to the same
+  bits at several block sizes and worker counts, and the CI runs the release profile on Windows too.
 - **Automate a mixer channel, the master or an effect.** Any parameter that can have a lane now can:
   right-click a knob or fader of a console strip, the master, an insert or send effect or any effect
   in the rack, in the mixer or in the rack, choose **Edit Automation**, and the lane is added on an
@@ -1677,6 +1691,13 @@ may break APIs and the patch and project formats.
   parameter pane.
 
 ### Added
+- **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
+  every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
+  canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
+  bounced and its per-second level (all platforms) and exact hash (Windows x86-64) pinned. The release workflow fails
+  when the current format has no corpus file. A list of which sound is claimed bit-identical on every platform
+  (`claims.toml`) is checked against the pinned stage blocks, every example project is checked to bounce to the same
+  bits at several block sizes and worker counts, and the CI runs the release profile on Windows too.
 - **Installers, a nightly build and signing in the release pipeline.** A release now publishes a
   Windows installer (`atomik-rack-<version>-windows-x86_64-setup.exe`, built with Inno Setup:
   Program Files or per-user, Start menu shortcut, optional desktop icon, uninstaller, `.atomik` file
@@ -2138,6 +2159,13 @@ runs in CI on Windows, macOS and Linux, Linux has been tried on Ubuntu 26.04, an
 run on real hardware yet. Project files are format version 10 (versions 1 to 9 load).
 
 ### Added
+- **Saved-file corpus and sound pins.** `crates/model/tests/fixtures/corpus/` now holds one real saved project for
+  every released format version with a surviving writer (1, 6 to 41), each checked to load without a warning, resave
+  canonically and hold the same tracks, clips and notes as pinned; every file that has no audio bundle is also
+  bounced and its per-second level (all platforms) and exact hash (Windows x86-64) pinned. The release workflow fails
+  when the current format has no corpus file. A list of which sound is claimed bit-identical on every platform
+  (`claims.toml`) is checked against the pinned stage blocks, every example project is checked to bounce to the same
+  bits at several block sizes and worker counts, and the CI runs the release profile on Windows too.
 - **Engine.** A real-time engine with fixed 64-frame batches that is allocation-free and lock-free
   on the render path, hot edits of the rack while audio plays, multicore rendering with
   bit-identical output for any worker count and host block size, plugin delay compensation across

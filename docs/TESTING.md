@@ -20,8 +20,9 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
 - Lints are set in the root `Cargo.toml` (`unsafe_code = "deny"`, clippy `all = deny`,
   `float_cmp = deny`) and in [clippy.toml](../clippy.toml) (bans `HashMap`, `HashSet`,
   `Instant::now` and `SystemTime::now`).
-- CI also runs `cargo test --workspace --release` once on Linux, because optimisation can change
-  floating-point behaviour. It also runs `cargo llvm-cov` and fails below 90 % of lines (binary
+- CI also runs `cargo test --workspace --release` on Linux and on Windows (the Windows leg includes the
+  exact-hash goldens), because optimisation can change floating-point behaviour. It also runs
+  `cargo llvm-cov` and fails below 90 % of lines (binary
   entry points and GPU or audio-device glue are excluded; the exact filter is in the workflow).
 
 Optional coverage report (needs `cargo install cargo-llvm-cov`):
@@ -149,6 +150,7 @@ A few tests keep the documents honest; each one names what to update when it fai
 | `clips_start_and_end_at_the_closed_form_frames_across_ramps`, `a_ramped_bounce_is_the_same_at_any_host_block` | [crates/render/tests/tempo_ramp.rs](../crates/render/tests/tempo_ramp.rs) | The same oracle for the audio clips of a bounce, and byte-identical bounces at several host blocks |
 | `the_live_path_plays_a_ramped_project_exactly_like_the_bounce` | [crates/app/src/app_core_tempo_tests.rs](../crates/app/src/app_core_tempo_tests.rs) | The drum demo under a ramping tempo map and a changing meter, played live through the app, is the bounce bit for bit at host blocks 64, 480 and 512 |
 | `cli_block_size_does_not_change_output` | [crates/render/tests/e2e.rs](../crates/render/tests/e2e.rs) | `--block 1` and `--block 4096` produce byte-identical WAV files (f32), and `--block 100` and `--block 63` do too (24-bit) |
+| `every_example_project_is_bit_identical_across_blocks_and_workers` | [crates/render/tests/determinism_examples.rs](../crates/render/tests/determinism_examples.rs) | Every example project (plugin demos excluded) bounces to the same bits at host blocks 64, 333 and 512 with 0 and 2 workers |
 | `process_is_deterministic_for_a_seed` | [crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs) | The synth's noise and sample & hold are reproducible for a seed |
 
 `crates/model/tests/doc_sequences.rs` is the whole-document property test: random runs of the song,
@@ -167,10 +169,12 @@ files next to the tests. Commit them.
 
 ## Golden files
 
-[crates/render/tests/golden/](../crates/render/tests/golden) holds five golden files: two of
+[crates/render/tests/golden/](../crates/render/tests/golden) holds seven golden files and the
+[claims list](../crates/render/tests/golden/claims.toml): two of
 [examples/patches/slice-demo.json](../examples/patches/slice-demo.json) (rendered as 32-bit float
 with the default block size, 512), two of the demo project
-([examples/projects/demo.atomik](../examples/projects/demo.atomik)) and one of the guitar amp demo:
+([examples/projects/demo.atomik](../examples/projects/demo.atomik)), one of the guitar amp demo and
+two of the saved-file corpus (below):
 
 | File | Checked by | Platforms | Tolerance |
 |---|---|---|---|
@@ -179,6 +183,8 @@ with the default block size, 512), two of the demo project
 | `demo-project.f32.sha256` | `golden_hash_matches` ([project.rs](../crates/render/tests/project.rs)) | **Windows x86-64 only** | exact bytes |
 | `demo-project.fingerprint.json` | `golden_fingerprint_matches` ([project.rs](../crates/render/tests/project.rs)) | all | ±0.5 dB per window |
 | `guitar-amp.fingerprint.json` | `fingerprint_matches_the_golden_within_half_a_decibel` ([guitar_amp_demo.rs](../crates/render/tests/guitar_amp_demo.rs)) | all | ±0.5 dB per window |
+| `corpus.fingerprint.json` | `every_corpus_file_sounds_as_pinned` ([format_corpus_bounce.rs](../crates/render/tests/format_corpus_bounce.rs)) | all | ±0.5 dB per second |
+| `corpus.f32.sha256.json` | `every_corpus_file_hashes_as_pinned_on_windows` (same file) | **Windows x86-64 only** | exact bytes |
 
 **Why there is a fingerprint.** The devices use transcendental functions (`sin`, `tan`, `tanh`,
 `powf`, …) from the platform's math library. Those can differ in the last bit between operating
@@ -197,6 +203,51 @@ ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test e2e golden
 
 This rewrites both files. Use Windows x86-64 because that is the only platform that checks the hash.
 Review the diff of the fingerprint: large changes in level should be explainable by your change.
+The corpus goldens regenerate the same way with
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test format_corpus_bounce` (run the test file
+alone, then run it again without the variable). A corpus file whose fingerprint moves although no
+sound was meant to change points at a reader bug, not at a golden to regenerate.
+
+### Bit-identity claims
+
+[claims.toml](../crates/render/tests/golden/claims.toml) says what is claimed to be bit-identical on
+Windows x86-64, Linux x86-64 and macOS arm64, and what enforces the claim. The rest of the sound
+uses the platform's math library and is covered by the Windows hash and the fingerprints.
+
+| Family | Claim | Enforced by |
+|---|---|---|
+| The 25 pinned stage blocks of `atomik-dsp` (shapers, leveller, phaser, chorus, echo, comb, rooms, ring modulator, bit crusher, noise, spectral blocks, modal, wobble, smoother) | bit-identical on all three | FNV pins in [stage_blocks.rs](../crates/dsp/tests/stage_blocks.rs), run on every platform in CI |
+| The scalar helpers `exp2_det`, `log2_det`, `sin_cycles`, `hadamard8`, `flush_denormal` | bit-identical on all three (IEEE `+ - *` only) | the pins above, which use them |
+| Crossover and every filter built from the biquad, state-variable or ladder design code | not claimed (coefficients call `tan`, `cos`, `sin`) | Windows hash and fingerprints |
+| Oscillators, envelopes, resampling, convolver, plugin devices | not claimed | Windows hash and fingerprints |
+| Whole example projects | not claimed yet: every example reaches a device that calls the math library | Windows hash (`demo-project`, `slice-demo`, the corpus) and fingerprints (all) |
+
+A project joins `[projects] bit_identical` in the claims file, with a hash golden per platform, when
+its bounce is the same on all three. Block-size and worker independence does not depend on any of
+this: it holds for every device on every platform ([Determinism tests](#determinism-tests-hi-2)).
+
+### The saved-file corpus
+
+`crates/model/tests/fixtures/corpus/atomik-vN.atomik` holds one real saved file for each released
+project-format version: the files kept when the version was current, and for the others the demo
+project as the writer of the commit that introduced the version saved it. Versions 2 to 5 have no
+file (their writers predate the public history; the reader is covered by synthetic edits in the
+format tests). `scripts/format-corpus.sh` fills a missing file and never
+rewrites one.
+
+- `corpus_loads_and_resaves_canonically` ([format_corpus.rs](../crates/model/tests/format_corpus.rs))
+  loads every file, accepts no load warning that is not on its allow-list, requires the resave to
+  be canonical, and compares what the file holds (tracks, lanes, clips, notes, note values, rate,
+  tempo; `corpus/summary.json`) with the pin. `a_broken_reader_path_fails_the_corpus_check` shows
+  that a reader that drops notes, a file that does not load and an unexpected warning all fail it.
+- `every_corpus_file_sounds_as_pinned` bounces every file that has no audio bundle and compares its
+  fingerprint (all platforms) and its hash (Windows x86-64). The demo files of versions 6 and 9 to 41
+  bounce to the same bytes, which is the proof that old files sound as they did.
+- A format bump adds the file for its version: `scripts/release/check-corpus.sh` (run by the
+  `release.yml` version job, tested by `the_release_check_needs_a_corpus_file_for_the_format_version`)
+  fails when `atomik-v<PROJECT_VERSION>.atomik` is missing. Run
+  `sh scripts/format-corpus.sh 42 42` after the example project is saved at the new version, then
+  regenerate the two summary goldens above.
 
 ## Real-time factor test (ignored by default)
 
