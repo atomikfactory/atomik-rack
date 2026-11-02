@@ -49,6 +49,7 @@ enum KindTerm {
     Clip,
     Project,
     Device,
+    Preset,
     /// Any library item (everything but folders and audio).
     Item,
     /// A word that names no kind: nothing matches.
@@ -82,6 +83,8 @@ impl KindTerm {
             Self::Project
         } else if is("device") {
             Self::Device
+        } else if is("preset") {
+            Self::Preset
         } else if is("item") {
             Self::Item
         } else {
@@ -99,6 +102,7 @@ impl KindTerm {
             Self::Clip => kind == FileKind::Clip,
             Self::Project => kind == FileKind::Project,
             Self::Device => kind == FileKind::Device,
+            Self::Preset => kind == FileKind::Preset,
             Self::Item => kind.is_item(),
             Self::Unknown => false,
         }
@@ -418,6 +422,8 @@ mod tests {
         assert!(m("kind:flac", &flac));
         assert!(m("kind:patch", &patch) && m("kind:item", &patch) && !m("kind:item", &wav));
         assert!(m("kind:folder", &dir) && !m("kind:folder", &wav));
+        let preset = rich("atomik-preset:amp", FileKind::Preset);
+        assert!(m("kind:preset", &preset) && m("kind:item", &preset) && !m("kind:preset", &patch));
         assert!(!m("kind:nonsense", &wav), "an unknown kind matches nothing");
         assert!(m("kind:", &wav), "no value is ignored");
         assert!(Query::parse("kind:").is_empty());

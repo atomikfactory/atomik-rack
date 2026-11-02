@@ -36,6 +36,8 @@ pub enum FileKind {
     Project,
     /// A built-in device: a virtual row whose path is a device URI, never a file.
     Device,
+    /// A preset a plugin offers: a virtual row whose path is a preset URI, never a file.
+    Preset,
 }
 
 impl FileKind {
@@ -47,7 +49,7 @@ impl FileKind {
 
 /// Classifies a directory entry: folders are always rows, files only when their extension
 /// (case-insensitive) is a supported audio format or a library item. Returns `None` for
-/// everything else. Never returns [`FileKind::Device`].
+/// everything else. Never returns [`FileKind::Device`] or [`FileKind::Preset`].
 pub fn classify(path: &Path, is_dir: bool) -> Option<FileKind> {
     if is_dir {
         return Some(FileKind::Folder);
