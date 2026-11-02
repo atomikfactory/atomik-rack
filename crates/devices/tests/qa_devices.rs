@@ -360,3 +360,103 @@ proptest! {
         }
     }
 }
+
+/// One input stream: a clean ramp with, in batch 3, a NaN, an infinity and a negative infinity.
+fn poisoned(batch: usize, clean: bool) -> [f32; BATCH] {
+    let mut x = [0.0f32; BATCH];
+    for (i, s) in x.iter_mut().enumerate() {
+        *s = 0.3 * ((batch * BATCH + i) as f32 * 0.07).sin();
+    }
+    if batch == 3 {
+        let bad = if clean {
+            [0.0; 3]
+        } else {
+            [f32::NAN, f32::INFINITY, f32::NEG_INFINITY]
+        };
+        x[5..8].copy_from_slice(&bad);
+    }
+    x
+}
+
+/// Renders 12 batches of `device`, feeding `inputs` (poisoned or the zero-replaced twin), and
+/// returns every output sample.
+fn run_poisoned(
+    make: fn() -> Box<dyn atomik_device_sdk::Device>,
+    inputs: &[&str],
+    outputs: &[&str],
+    clean: bool,
+) -> Vec<f32> {
+    let mut h = DeviceHarness::new(make(), SR);
+    if h.device().descriptor().param_by_key("monitor").is_some() {
+        h.set_param("monitor", 2.0); // input monitoring on
+    }
+    let mut all = Vec::new();
+    for b in 0..12 {
+        for (i, key) in inputs.iter().enumerate() {
+            let mut x = poisoned(b, clean);
+            if i == 1 {
+                x.reverse();
+            }
+            *h.input_mut(key) = x;
+        }
+        h.process();
+        for key in outputs {
+            all.extend_from_slice(h.output(key));
+        }
+    }
+    all
+}
+
+/// A NaN or infinite sample on an audio input is read as silence: the outputs stay finite and
+/// every later sample is bit-identical to a run whose bad samples were zero.
+#[test]
+fn qa_non_finite_audio_inputs_read_as_silence() {
+    use atomik_devices::{audio_track::AudioTrack, channel::Channel, master::Master};
+    type Make = fn() -> Box<dyn atomik_device_sdk::Device>;
+    let cases: [(&str, Make, &[&str], &[&str]); 5] = [
+        (
+            "channel",
+            || Box::new(Channel::new()),
+            &["in_l", "in_r"],
+            &["out_l", "out_r"],
+        ),
+        (
+            "master",
+            || Box::new(Master::new()),
+            &["bus_l", "bus_r"],
+            &["main_l", "main_r"],
+        ),
+        (
+            "line mixer",
+            || Box::new(LineMixer::new()),
+            &["ch1_in_l", "ch1_in_r", "ch2_in_l"],
+            &["master_l", "master_r"],
+        ),
+        (
+            "audio track",
+            || Box::new(AudioTrack::new()),
+            &["in_l", "in_r"],
+            &["out_l", "out_r"],
+        ),
+        (
+            "stereo delay",
+            || Box::new(StereoDelay::new()),
+            &["in_l", "in_r"],
+            &["out_l", "out_r"],
+        ),
+    ];
+    for (name, make, inputs, outputs) in cases {
+        let bad = run_poisoned(make, inputs, outputs, false);
+        assert!(
+            bad.iter().all(|s| s.is_finite()),
+            "{name}: non-finite output"
+        );
+        assert!(bad.iter().any(|s| s.abs() > 1e-4), "{name}: silent run");
+        let clean = run_poisoned(make, inputs, outputs, true);
+        let same = bad
+            .iter()
+            .zip(&clean)
+            .all(|(a, b)| a.to_bits() == b.to_bits());
+        assert!(same, "{name}: a bad sample was not read as silence");
+    }
+}

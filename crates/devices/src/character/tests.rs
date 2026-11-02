@@ -1555,3 +1555,8 @@ fn the_latency_is_known_before_the_first_batch() {
 
 mod qa6;
 mod row34;
+
+#[test]
+fn the_embedded_voicing_loads_so_the_device_does_not_pass_through() {
+    assert!(!Character::new().voicing_failed());
+}

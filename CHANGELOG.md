@@ -859,6 +859,14 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Device robustness.** A NaN or infinite sample on an audio input of the channel strip, the master,
+  the line mixer, the audio track or the stereo delay now reads as silence, so one bad source can no
+  longer silence the mix (finite audio is unchanged bit for bit). Two sample map swaps of one device
+  are spaced by 5 ms, so a quick third map no longer cuts the voices that are fading out. The built-in
+  grain source is kept for the standard sample rates only. A device that cannot be wrapped in a bypass
+  is an error instead of a panic, and Character reports a rejected voicing. Every registered device
+  passes the parameter min/max sweep, and the instruments, reverb, mastering and Character have
+  bounded-output property tests. DEVICES.md lists the overflow and restart policies.
 - **A fade or a gain envelope point can no longer run past its audio clip.** Adding or changing an
   audio clip, or stripping silence, refuses a fade or an envelope point longer than the clip. A
   project saved by an earlier version that has one loads with it clamped to the clip and a warning

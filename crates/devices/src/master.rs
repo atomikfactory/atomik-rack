@@ -41,8 +41,8 @@
 //!   analyse; off, nothing is written and the output is bit-identical.
 
 use crate::channel::{
-    SMOOTH_MS, Section, Step, fader, is_silent, pan, send_gain, send_level, smoother, snap, socket,
-    stereo_in,
+    SMOOTH_MS, Section, Step, fader, finite, is_silent, pan, send_gain, send_level, smoother, snap,
+    socket, stereo_in,
 };
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
 use atomik_device_sdk::{
@@ -669,8 +669,8 @@ impl Master {
         }
         for k in 0..RETURNS {
             let base = 2 * k as u16;
-            let mut l = *ctx.input(SocketId(S_SEND_BUS_FIRST + base));
-            let mut r = *ctx.input(SocketId(S_SEND_BUS_FIRST + base + 1));
+            let mut l = finite(*ctx.input(SocketId(S_SEND_BUS_FIRST + base)));
+            let mut r = finite(*ctx.input(SocketId(S_SEND_BUS_FIRST + base + 1)));
             let g = &mut self.send[k];
             // Exactly 0 dB (the default) is a plain copy: bit-exact, as before the level existed.
             if !(g.is_settled() && g.value().to_bits() == 1.0f32.to_bits()) {
@@ -688,8 +688,8 @@ impl Master {
 
     /// Stage 1: bus + returns (→ compressor unless `insert.pre_comp`) → `insert_send_*`.
     fn stage1(&mut self, ctx: &mut ProcessContext<'_>) {
-        let mut l = *ctx.input(SocketId(S_BUS_L));
-        let mut r = *ctx.input(SocketId(S_BUS_R));
+        let mut l = finite(*ctx.input(SocketId(S_BUS_L)));
+        let mut r = finite(*ctx.input(SocketId(S_BUS_R)));
         let mut rets_l = [0.0f32; BATCH];
         let mut rets_r = [0.0f32; BATCH];
         for k in 0..RETURNS {
@@ -715,7 +715,7 @@ impl Master {
             r[n] += rets_r[n];
         }
         self.rets = (rets_l, rets_r);
-        self.key = *ctx.input(SocketId(S_KEY));
+        self.key = finite(*ctx.input(SocketId(S_KEY)));
         self.key_active = self.on(P_COMP_KEY) && ctx.is_connected(SocketId(S_KEY));
         self.gr = [0.0; BATCH];
         self.pre_comp = self.on(P_INSERT_PRE_COMP);

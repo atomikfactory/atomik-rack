@@ -189,6 +189,7 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         midi_maps: doc.midi_maps.clone(),
         macros: doc.macros.clone(),
         info: doc.info.clone(),
+        tune_cents: doc.tune_cents,
     })
 }
 

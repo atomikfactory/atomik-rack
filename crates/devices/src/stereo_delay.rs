@@ -20,6 +20,7 @@
 //! * Denormals: the delay lines flush values below 1e-20 on write.
 
 use crate::bypass::{Bypassable, bypass_param};
+use crate::channel::finite;
 use crate::cv_in::add_norm;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -364,8 +365,8 @@ impl Device for StereoDelay {
         let fixed_target = to_samples(base_ms);
         let cv_connected = ctx.is_connected(TIME_CV);
         let cv = *ctx.input(TIME_CV);
-        let in_l = *ctx.input(IN_L);
-        let in_r = *ctx.input(IN_R);
+        let in_l = finite(*ctx.input(IN_L));
+        let in_r = finite(*ctx.input(IN_R));
         let mix_conn = ctx.is_connected(MIX_CV);
         let fb_conn = ctx.is_connected(FB_CV);
         let mix_cv = *ctx.input(MIX_CV);

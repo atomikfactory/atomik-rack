@@ -77,6 +77,8 @@ use atomik_device_sdk::{Registry, RegistryError};
 atomik_testkit::install_alloc_guard!();
 
 #[cfg(test)]
+mod bounded_tests;
+#[cfg(test)]
 mod midi_chart;
 #[cfg(test)]
 mod test_support;
@@ -454,6 +456,40 @@ mod tests {
                 h.device_mut().reset();
                 h.process();
             }
+        }
+    }
+
+    /// Every registered device, with every audio and CV input fed and a loaded sample or player
+    /// map where it takes one, stays finite while each parameter visits its min, max and default.
+    #[test]
+    fn every_registered_device_passes_the_min_max_sweep() {
+        let mut r = Registry::new();
+        register_all(&mut r).unwrap();
+        for id in TYPE_IDS {
+            let mut h = DeviceHarness::with_options(r.create(id).unwrap(), 48_000.0, 133.0, 9);
+            if r.takes_samples(id) {
+                let map = match id {
+                    "atomik.drum-machine" => crate::test_support::drum_sample_map(),
+                    "atomik.loop-slicer" => crate::test_support::slicer_sample_map(),
+                    _ => crate::test_support::demo_sample_map(),
+                };
+                let _ = h.device_mut().swap_samples(Some(map));
+            }
+            if r.takes_player_data(id) {
+                let data = if r.takes_drums(id) {
+                    crate::test_support::drum_player_data(1)
+                } else {
+                    crate::test_support::seq_player_data(1)
+                };
+                let _ = h.device_mut().swap_player_data(Some(data));
+            }
+            let d = h.device().descriptor();
+            for s in d.sockets {
+                if s.kind != atomik_device_sdk::SocketKind::Notes && s.direction.is_input() {
+                    *h.input_mut(s.key) = [0.25; atomik_core::BATCH];
+                }
+            }
+            crate::test_support::sweep_params_min_max(&mut h, d);
         }
     }
 }

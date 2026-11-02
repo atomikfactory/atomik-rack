@@ -380,6 +380,12 @@ impl Mirror {
     }
 }
 
+/// Minimum spacing of two sample-map swaps of one device, in seconds. A device drains the voices
+/// of the map it just left over a few milliseconds and cuts them if another swap arrives first.
+const SAMPLE_SWAP_SPACING_S: f64 = 0.005;
+/// Devices whose latest sample swap the engine remembers (the oldest entry is replaced).
+const SWAP_MEMORY: usize = 16;
+
 /// The real-time half. Owned by the audio thread; [`Engine::render`] never allocates, frees,
 /// locks or blocks.
 pub struct Engine {
@@ -401,6 +407,11 @@ pub struct Engine {
     /// The transport lane and the number of control messages applied so far (its ordering).
     transport_rx: Consumer<TransportMsg>,
     control_applied: u64,
+    /// The frame of the latest sample swap per device, and the next entry to replace.
+    swap_frames: [(DeviceInstanceId, u64); SWAP_MEMORY],
+    swap_next: usize,
+    /// A swap held back for the spacing: the device and its map (the newest one wins).
+    held_samples: Option<(DeviceInstanceId, Option<SampleMapRef>)>,
     /// Batches that began with a retirement parked (shared with the handle).
     stalled: Arc<AtomicU64>,
     retire_tx: Producer<Retired>,
@@ -565,6 +576,9 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         control_rx,
         transport_rx,
         control_applied: 0,
+        swap_frames: [(DeviceInstanceId(u32::MAX), 0); SWAP_MEMORY],
+        swap_next: 0,
+        held_samples: None,
         stalled: Arc::clone(&stalled),
         retire_tx,
         removed_tx,
@@ -1444,6 +1458,27 @@ impl Engine {
     /// Applies the due control messages at a batch boundary, in FIFO order. Each message
     /// produces at most one item to hand back; while one is parked (its return queue was full)
     /// no further message is applied, so nothing is ever dropped on this thread.
+    /// Whether device `id` swapped its samples less than [`SAMPLE_SWAP_SPACING_S`] ago.
+    fn swap_too_soon(&self, id: DeviceInstanceId) -> bool {
+        let spacing = (self.config.sample_rate.hz() * SAMPLE_SWAP_SPACING_S).ceil() as u64;
+        self.swap_frames
+            .iter()
+            .any(|&(d, f)| d == id && self.frame < f.saturating_add(spacing))
+    }
+
+    /// Remembers that `id` swapped its samples at this batch.
+    fn note_swap(&mut self, id: DeviceInstanceId) {
+        let slot = match self.swap_frames.iter().position(|&(d, _)| d == id) {
+            Some(i) => i,
+            None => {
+                let i = self.swap_next;
+                self.swap_next = (i + 1) % SWAP_MEMORY;
+                i
+            }
+        };
+        self.swap_frames[slot] = (id, self.frame);
+    }
+
     fn apply_control(&mut self) {
         if let Some(old) = self.pending_retire.take() {
             self.retire(old);
@@ -1457,15 +1492,40 @@ impl Engine {
             if self.pending_retire.is_some() {
                 break;
             }
-            match self.control_rx.peek() {
-                Ok(c) if c.frame <= self.frame => {}
-                _ => break,
+            // A held swap goes in once its device's previous drain has run.
+            if let Some((id, _)) = &self.held_samples
+                && !self.swap_too_soon(*id)
+                && let Some((id, map)) = self.held_samples.take()
+            {
+                self.apply(ControlOp::Samples { id, map });
+                continue;
             }
+            // A second swap of one device's samples inside the spacing is held back (the
+            // newest wins) until the first one's drain fade has run, so no voice is cut.
+            let held_id = match self.control_rx.peek() {
+                Ok(c) if c.frame <= self.frame => match &c.op {
+                    ControlOp::Samples { id, .. } if self.swap_too_soon(*id) => {
+                        if self.held_samples.as_ref().is_some_and(|(h, _)| h != id) {
+                            break;
+                        }
+                        Some(*id)
+                    }
+                    _ => None,
+                },
+                _ => break,
+            };
             let Ok(Control { op, .. }) = self.control_rx.pop() else {
                 break;
             };
-            self.apply(op);
             self.control_applied += 1;
+            match (held_id, op) {
+                (Some(id), ControlOp::Samples { map, .. }) => {
+                    if let Some((_, Some(superseded))) = self.held_samples.replace((id, map)) {
+                        self.retire(Garbage::Retired(Retired::Samples(superseded)));
+                    }
+                }
+                (_, op) => self.apply(op),
+            }
         }
         // The rest of the lane: in order behind the control queue, or at once while a parked
         // retirement holds the queue, so Play and Stop never wait for the UI to collect garbage.
@@ -1560,6 +1620,7 @@ impl Engine {
                 // every node is then home in its arena slot (workers borrow nodes only inside
                 // `process_parallel` and hand them back before it returns), so the device is
                 // always reachable here.
+                self.note_swap(id);
                 if let Some(old) = self.arena.swap_samples(id, map) {
                     self.retire(Garbage::Retired(Retired::Samples(old)));
                 }

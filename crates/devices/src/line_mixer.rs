@@ -8,6 +8,7 @@
 //! Aux: `chN.aux` sends each channel to `aux_send_l/r` (post-fader, or pre-fader with `aux.pre`);
 //! `aux_return_l/r` join the master sum at `aux.return.level`. An unconnected return adds nothing.
 
+use crate::channel::finite;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -397,11 +398,15 @@ impl Device for LineMixer {
             let (has_l, has_r) = (ctx.is_connected(sl), ctx.is_connected(sr));
             // Mono fallback: a single connected side feeds both sides before panning.
             let in_l = if has_l || !has_r {
-                *ctx.input(sl)
+                finite(*ctx.input(sl))
             } else {
-                *ctx.input(sr)
+                finite(*ctx.input(sr))
             };
-            let in_r = if has_r && has_l { *ctx.input(sr) } else { in_l };
+            let in_r = if has_r && has_l {
+                finite(*ctx.input(sr))
+            } else {
+                in_l
+            };
             let cv_connected = ctx.is_connected(scv);
             let cv = ctx.input(scv);
             let (gl, gr) = (&mut self.gain_l[c], &mut self.gain_r[c]);
@@ -430,10 +435,10 @@ impl Device for LineMixer {
         let mut ret_l = [0.0f32; BATCH];
         let mut ret_r = [0.0f32; BATCH];
         if ctx.is_connected(SocketId(AUX_SEND_L + 2)) {
-            ret_l = *ctx.input(SocketId(AUX_SEND_L + 2));
+            ret_l = finite(*ctx.input(SocketId(AUX_SEND_L + 2)));
         }
         if ctx.is_connected(SocketId(AUX_SEND_L + 3)) {
-            ret_r = *ctx.input(SocketId(AUX_SEND_L + 3));
+            ret_r = finite(*ctx.input(SocketId(AUX_SEND_L + 3)));
         }
         for n in 0..BATCH {
             let r = self.aux_return.next_value();

@@ -40,6 +40,7 @@
 //! and no latency. `process` never allocates, locks or blocks and is a pure function
 //! of its inputs and params.
 
+use crate::channel::finite;
 use atomik_core::{
     BATCH, ParamDescriptor, ParamId, REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB,
     REC_GAIN_PARAM, REC_SOURCE_MAX, REC_SOURCE_PARAM, Taper, Unit,
@@ -296,8 +297,11 @@ impl Device for AudioTrack {
             self.mute.set_immediate(m);
             self.fresh = false;
         }
-        let (in_l, in_r) = (*ctx.input(IN_L), *ctx.input(IN_R));
-        let (pb_l, pb_r) = (ctx.playback(0).copied(), ctx.playback(1).copied());
+        let (in_l, in_r) = (finite(*ctx.input(IN_L)), finite(*ctx.input(IN_R)));
+        let (pb_l, pb_r) = (
+            ctx.playback(0).copied().map(finite),
+            ctx.playback(1).copied().map(finite),
+        );
         let mut gains = [0.0f32; BATCH];
         for g in &mut gains {
             *g = self.gain.next_value();

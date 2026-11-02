@@ -2450,6 +2450,21 @@ fn the_built_in_source_is_shared_between_devices_of_one_sample_rate() {
 }
 
 #[test]
+fn only_the_standard_rates_are_kept_in_the_built_in_source_cache() {
+    for rate in [44_100.0, 88_200.0, 96_000.0, 192_000.0] {
+        assert!(
+            Arc::ptr_eq(&builtin_buffer(rate), &builtin_buffer(rate)),
+            "{rate}"
+        );
+    }
+    // An odd rate gets its own buffer each time: nothing accumulates in the cache.
+    let (a, b) = (builtin_buffer(50_000.0), builtin_buffer(50_000.0));
+    assert!(!Arc::ptr_eq(&a, &b));
+    assert_eq!(a.frames, b.frames);
+    assert_eq!(a.frames, 150_000);
+}
+
+#[test]
 fn master_tune_shifts_the_grains_by_the_cents_ratio() {
     for cents in [50.0f32, -100.0] {
         let got = heard_hz(480.0, |h| h.time_mut().tune_cents = cents, 60);

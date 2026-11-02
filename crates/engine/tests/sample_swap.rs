@@ -397,3 +397,41 @@ fn swaps_while_voices_sound_are_bit_identical_and_allocation_free() {
         }
     }
 }
+
+/// Three swaps of one device queued for the same frame: the engine spaces them out by at least
+/// 5 ms so the voices of each map it leaves fade out rather than being cut, and the output has no
+/// step beyond what the playing waves have on their own.
+#[test]
+fn a_third_swap_inside_five_milliseconds_does_not_click() {
+    let id = DeviceInstanceId(1);
+    let maps: Vec<SampleMapRef> = (0..3)
+        .map(|i| map_of(&buffers(i as f32 * 17.0), 0.0))
+        .collect();
+    let steps = |swaps: bool| {
+        let mut rig = single_rig(Some(maps[0].clone()));
+        if swaps {
+            rig.edits
+                .push(samples_edit(3000, id, Some(maps[1].clone())));
+            rig.edits
+                .push(samples_edit(3000, id, Some(maps[2].clone())));
+            rig.edits
+                .push(samples_edit(3000, id, Some(maps[0].clone())));
+        }
+        let out = run(rig, &[note(0, id, true, 60), note(0, id, true, 64)], 0, 64);
+        let l = &out[0];
+        let after = &l[2900..6000];
+        let worst = after
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        (worst, after.iter().fold(0.0f32, |a, s| a.max(s.abs())))
+    };
+    let (steady, _) = steps(false);
+    let (swapped, peak) = steps(true);
+    assert!(peak > 0.1, "the voices sound: {peak}");
+    // -60 dBFS of headroom over the steepest step the steady waves make.
+    assert!(
+        swapped <= steady.max(0.05) + 0.001,
+        "click: step {swapped} against {steady} without swaps"
+    );
+}

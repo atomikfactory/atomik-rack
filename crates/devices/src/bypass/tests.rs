@@ -497,3 +497,30 @@ fn stopping_and_restarting_every_effect_never_allocates_or_goes_wrong() {
         }
     }
 }
+
+#[test]
+fn a_malformed_descriptor_is_an_error_not_a_panic() {
+    use crate::{channel::Channel, line_mixer::LineMixer, poly_synth::PolySynth};
+    // No `bypass` param.
+    assert!(matches!(
+        Bypassable::try_new(PolySynth::new()),
+        Err(BypassError::MissingParam { .. })
+    ));
+    // Has a bypass param but no `in_l` socket.
+    assert!(matches!(
+        Bypassable::try_new(LineMixer::new()),
+        Err(BypassError::MissingParam { .. } | BypassError::MissingSocket { .. })
+    ));
+    // A multi-stage device is refused (or lacks the param first).
+    assert!(Bypassable::try_new(Channel::new()).is_err());
+    let msg = Bypassable::try_new(PolySynth::new())
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(msg.contains("bypass"), "{msg}");
+    // Every built-in effect wraps cleanly.
+    let r = registry();
+    for id in effect_ids() {
+        assert!(r.create(id).is_some(), "{id}");
+    }
+}

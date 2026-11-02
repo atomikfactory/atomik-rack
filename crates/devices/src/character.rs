@@ -293,14 +293,16 @@ pub(crate) fn load_voicing(voicing_csv: &str, routes_csv: &str) -> Result<Voicin
     Voicing::load(voicing_csv, routes_csv, &specs)
 }
 
-/// The embedded tables. If they are rejected (the unit tests make that impossible) the device
-/// falls back to an empty voicing, whose chains pass the signal through.
-fn embedded_voicing() -> Voicing {
-    let ok = |v: &Voicing| (0..16).all(|i| build_chain(i).check(v.preset(i), 48_000.0).is_ok());
-    load_voicing(VOICING_CSV, ROUTES_CSV)
-        .ok()
-        .filter(ok)
-        .unwrap_or_else(Voicing::empty)
+/// The embedded tables, or the first reason they are rejected (the unit tests make that
+/// impossible).
+fn embedded_voicing() -> Result<Voicing, String> {
+    let v = load_voicing(VOICING_CSV, ROUTES_CSV).map_err(|e| format!("{e:?}"))?;
+    for i in 0..16 {
+        build_chain(i)
+            .check(v.preset(i), 48_000.0)
+            .map_err(|e| format!("preset {i}: {e}"))?;
+    }
+    Ok(v)
 }
 
 /// Length of the dry ring (a power of two above the largest latency a chain may declare).
@@ -365,6 +367,8 @@ pub struct Character {
     morph_active: Morph,
     morph_in: Morph,
     meters: [f32; 4],
+    /// The embedded voicing was rejected (see [`Character::new`]).
+    voicing_failed: bool,
 }
 
 impl Default for Character {
@@ -375,8 +379,23 @@ impl Default for Character {
 
 impl Character {
     /// A Character with the embedded tables (48 kHz until `prepare`).
+    ///
+    /// If the embedded tables are rejected (a build defect the unit tests rule out) the device
+    /// falls back to an empty voicing, whose chains pass the signal through, and
+    /// [`Character::voicing_failed`] reports it; debug builds panic instead.
     pub fn new() -> Self {
-        Self::assemble(build_chain, embedded_voicing())
+        let voicing = embedded_voicing();
+        debug_assert!(voicing.is_ok(), "embedded voicing rejected: {voicing:?}");
+        let failed = voicing.is_err();
+        let mut c = Self::assemble(build_chain, voicing.unwrap_or_else(|_| Voicing::empty()));
+        c.voicing_failed = failed;
+        c
+    }
+
+    /// Whether the embedded voicing tables were rejected, so the device passes audio through
+    /// unchanged. Always `false` in a correct build; a start-up check can read it.
+    pub fn voicing_failed(&self) -> bool {
+        self.voicing_failed
     }
 
     /// A Character whose chains come from `build` and which has no voicing rows (tests of the
@@ -424,6 +443,7 @@ impl Character {
             morph_active: Morph::default(),
             morph_in: Morph::default(),
             meters: [0.0; 4],
+            voicing_failed: false,
         };
         c.setup(sr, 0);
         c
