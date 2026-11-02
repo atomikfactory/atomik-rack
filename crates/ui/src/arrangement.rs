@@ -15,7 +15,8 @@
 //! on top, mono at full height), fade-in / fade-out / gain handles
 //! ([`ArrangementView::audio_handle_center`]) and trim edges. Audio track headers carry the
 //! arm button, an input selector (cable commands) and a monitor button. File drops
-//! ([`UiEvent::FileDrop`]) become [`UiAction::ImportAudio`].
+//! ([`UiEvent::FileDrop`]) become [`UiAction::ImportAudio`], or [`UiAction::ImportMidi`] for
+//! MIDI files.
 //!
 //! Track organisation (folders, track colours and comments, folded automation lanes, the
 //! height presets) is in the `organise` submodule.
@@ -68,6 +69,7 @@ mod meters;
 mod organise;
 mod paint_cache;
 mod restructure;
+mod stretch;
 mod takes;
 mod tempo;
 mod track_move;
@@ -577,6 +579,22 @@ enum Drag {
         emitted: bool,
         /// How far the starts have moved so far.
         applied: i64,
+    },
+    /// A clip edge dragged with the stretch role (`stretch.rs`): every selected clip changes
+    /// length by one ratio about its own fixed edge, the content with it.
+    Stretch {
+        start: Point,
+        /// The grabbed clip as it was at the press.
+        clip: Clip,
+        /// The grabbed clip and the other selected clips as they were at the press.
+        originals: Vec<Clip>,
+        /// The start edge is grabbed (the end stays), else the end edge.
+        from_start: bool,
+        moved: bool,
+        /// The host holds a preview that the release accepts.
+        open: bool,
+        /// The tempo percentage of the last step sent.
+        last: Option<f64>,
     },
     /// The speaker tool is held on an audio clip: the audition stops on the release.
     Audition,
@@ -2633,9 +2651,22 @@ impl ArrangementView {
             UiEvent::FileDrop { pos, paths } => {
                 self.set_drop_hover(None);
                 self.set_clip_hover(None);
+                // MIDI files land on the note lane under the pointer, else make new tracks.
                 // Library items are never imported as audio: a clip lands on a note lane,
                 // every other item (and a clip anywhere else) is refused.
-                if paths.iter().any(|p| library_drop::is_library(p)) {
+                let midi = library_drop::midi_files(paths);
+                if !midi.is_empty() {
+                    if let Some(tick) = self.drop_tick_at(*pos) {
+                        let lane = self
+                            .clip_drop_target_at(*pos)
+                            .map(|(track, lane, _)| (track, lane));
+                        out.push(UiAction::ImportMidi {
+                            paths: midi,
+                            lane,
+                            tick,
+                        });
+                    }
+                } else if paths.iter().any(|p| library_drop::is_library(p)) {
                     if let Some(path) = library_drop::clip_item(paths)
                         && let Some((track, lane, tick)) = self.clip_drop_target_at(*pos)
                     {
@@ -2668,6 +2699,21 @@ impl ArrangementView {
     }
 
     fn file_hover(&mut self, pos: Point, paths: &[std::path::PathBuf]) {
+        if !library_drop::midi_files(paths).is_empty() {
+            // The marker of a lane drop over a note lane, the new-tracks indicator elsewhere.
+            let lane = self.clip_drop_target_at(pos);
+            self.set_clip_hover(lane.clone());
+            let hover = match lane {
+                Some(_) => None,
+                None => self.drop_tick_at(pos).map(|tick| DropHover {
+                    target: ImportTarget::NewTracks,
+                    tick,
+                    count: paths.len(),
+                }),
+            };
+            self.set_drop_hover(hover);
+            return;
+        }
         if paths.iter().any(|p| library_drop::is_library(p)) {
             self.set_drop_hover(None);
             let target = library_drop::clip_item(paths).and_then(|_| self.clip_drop_target_at(pos));
@@ -3354,6 +3400,21 @@ impl ArrangementView {
             return;
         }
         self.pick_note_lane(track, lane);
+        // The stretch role on a clip's start or end edge: the clip's length changes by a ratio
+        // and everything in it follows (the body keeps the alternate tool).
+        if primary
+            && matches!(part, ClipPart::Edge | ClipPart::EdgeStart)
+            && id != FROZEN_CLIP
+            && self.stretch_role(modifiers)
+        {
+            self.selection.click(id, modifiers.command(), false);
+            if self.selection.contains(&id) {
+                self.point_sel = None;
+                self.selected_track = None;
+                self.begin_stretch(clip, part == ClipPart::EdgeStart, pos);
+            }
+            return;
+        }
         if primary {
             match self.vp.effective_tool(modifiers) {
                 Tool::Speaker => {
@@ -3988,6 +4049,10 @@ impl ArrangementView {
             self.comp_move(pos, modifiers);
             return;
         }
+        if matches!(self.drag, Drag::Stretch { .. }) {
+            self.stretch_move(pos, modifiers, out);
+            return;
+        }
         let step = self.step(modifiers);
         let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
@@ -4015,6 +4080,7 @@ impl ArrangementView {
             | Drag::Meter { .. }
             | Drag::Audition
             | Drag::Comp { .. }
+            | Drag::Stretch { .. }
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
             | Drag::End { .. }
@@ -4382,6 +4448,7 @@ impl ArrangementView {
             | Drag::End { .. }
             | Drag::Resize { .. }
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
+            Drag::Stretch { .. } => CursorHint::Stretch,
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
             Drag::Pan { .. } => CursorHint::Grabbing,
@@ -4405,6 +4472,12 @@ impl ArrangementView {
                 Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::EndMark | Hit::MarkerLine(_)) => {
                     CursorHint::ResizeHorizontal
                 }
+                // The stretch role over an edge: the edge stretches the clip instead.
+                Some(Hit::Clip {
+                    part: ClipPart::Edge | ClipPart::EdgeStart,
+                    id,
+                    ..
+                }) if id != FROZEN_CLIP && self.stretch_hover() => CursorHint::Stretch,
                 Some(Hit::Clip {
                     part: ClipPart::Edge | ClipPart::EdgeStart | ClipPart::LoopHandle,
                     ..
@@ -4455,6 +4528,7 @@ impl ArrangementView {
                 }
             }
             Drag::Mark => self.marker_drag_up(out),
+            Drag::Stretch { open: false, .. } => {}
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
             Drag::TrackMove => self.track_move_up(out),
@@ -4585,6 +4659,7 @@ impl ArrangementView {
                 }
             }
             Drag::Series(_) => out.push(UiAction::EndMerge),
+            Drag::Stretch { open: true, .. } => out.push(UiAction::StretchEnd { commit: true }),
             Drag::Resize { emitted, .. }
             | Drag::Trim { emitted, .. }
             | Drag::Point { emitted, .. }
@@ -5321,6 +5396,7 @@ impl ArrangementView {
                 }
                 out.push(UiAction::EndMerge);
             }
+            Drag::Stretch { open: true, .. } => out.push(UiAction::StretchEnd { commit: false }),
             Drag::Marquee { base, .. } => self.selection.set(base),
             Drag::Resize {
                 clip,
