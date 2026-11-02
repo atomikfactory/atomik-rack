@@ -4,7 +4,7 @@
 //! # Signal flow (per sample)
 //!
 //! ```text
-//! in -> polarity (invert L / R) -> width -> balance -> mono -> M/S mode -> out
+//! in -> polarity (invert L / R) -> width -> balance -> M/S mode -> mono -> out
 //! ```
 //!
 //! * **Polarity.** `invert_l` / `invert_r` multiply a channel by -1 (a smoothed -1..+1 ramp, so
@@ -17,10 +17,11 @@
 //!   as it was, so the bass stays centred when the width grows. At `width` 1 the whole stage is
 //!   skipped, so **width 1 (with everything else at rest) is the input bit for bit**.
 //! * **Balance** (-1..+1): unity at the centre, the far side falls linearly to silence at the end.
-//! * **Mono** (switch, smoothed over 10 ms): both channels become `(L + R) / 2`.
 //! * **M/S mode.** `stereo` leaves the signal as it is. `encode` writes the mid `(L + R) / 2` to
 //!   `out_l` and the side `(L - R) / 2` to `out_r`; `decode` reads `in_l` as the mid and `in_r`
 //!   as the side and writes `L = M + S`, `R = M - S`. The mode switches at once (a hard cut).
+//! * **Mono** (switch, smoothed over 10 ms), the last stage: both output channels become
+//!   `(L + R) / 2` of what the mode produced, so the output is mono in every mode.
 //! * **Smoothing.** Width, balance, polarity and mono are smoothed per batch (10 ms,
 //!   `BlockSmoother`) and ramped linearly across it.
 //! * No latency. Non-finite input samples count as 0. Allocation-free after construction.
@@ -257,12 +258,6 @@ impl Device for StereoTool {
                 l *= g_l;
                 r *= g_r;
             }
-            let mn = mo.at(n);
-            if mn != 0.0 {
-                let m = 0.5 * (l + r);
-                l += (m - l) * mn;
-                r += (m - r) * mn;
-            }
             match self.mode {
                 1 => {
                     let (m, s) = (0.5 * (l + r), 0.5 * (l - r));
@@ -275,6 +270,18 @@ impl Device for StereoTool {
                     r = m - s;
                 }
                 _ => {}
+            }
+            // Mono is the last stage, so the output is mono whatever the mode.
+            let mn = mo.at(n);
+            if mn >= 1.0 {
+                // Exactly equal channels once the ramp has settled.
+                let m = 0.5 * (l + r);
+                l = m;
+                r = m;
+            } else if mn != 0.0 {
+                let m = 0.5 * (l + r);
+                l += (m - l) * mn;
+                r += (m - r) * mn;
             }
             out_l[n] = l;
             out_r[n] = r;

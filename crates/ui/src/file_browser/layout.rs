@@ -417,6 +417,12 @@ pub(super) fn pane_facts(row: &FileRow, tempo: Option<f64>) -> String {
         FileKind::Container => parts.push("CONTAINER".to_string()),
         FileKind::Clip => parts.push("CLIP".to_string()),
         FileKind::Project => parts.push("PROJECT".to_string()),
+        FileKind::Midi => {
+            parts.push("MIDI".to_string());
+            if row.size > 0 {
+                parts.push(format_size(row.size));
+            }
+        }
         FileKind::Folder | FileKind::Device | FileKind::Preset => {}
     }
     if let Some(item) = &row.item
