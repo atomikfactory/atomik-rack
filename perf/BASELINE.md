@@ -201,3 +201,18 @@ reads per 256-frame chunk, sequential stream   1             1/16
 
 The write figure before is hound's sample-at-a-time loop into memory, so it leaves the disk out of
 the old side only.
+
+## Device CPU
+
+`cargo test -p atomik-devices --release --lib eq::tests::cost -- --ignored --nocapture`, one
+64-frame batch of noise through the EQ at default settings.
+
+```text
+case                                  before       after
+EQ, analyser on (always on before)    2065 ns      2065 ns
+EQ, analyser off (panel not shown)    2065 ns      369 ns
+```
+
+The compressor and gate shortcuts (no `log10` under the knee, no `powf` for a steady gain) and the
+masked delay line change no bit (tests compare them with the plain formulas); no timing is
+recorded for them yet. A bypassed effect costs the wrapper's ring copy after two seconds.

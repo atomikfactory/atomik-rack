@@ -16,6 +16,13 @@ fn eq() -> DeviceHarness {
     harness(Box::new(Equalizer::new()))
 }
 
+/// An EQ with its analyser on (a panel with the display is on screen).
+fn eq_live() -> DeviceHarness {
+    let mut h = eq();
+    h.set_param("internal.analyser_live", 1.0);
+    h
+}
+
 fn eq_at(sr: f64) -> DeviceHarness {
     DeviceHarness::with_options(Box::new(Equalizer::new()), sr, 120.0, 0)
 }
@@ -82,6 +89,7 @@ fn descriptor_validates() {
             "band4.gain_cv_trim",
             "band5.gain_cv_trim",
             "bypass",
+            "internal.analyser_live",
         ],
         &[
             "in_l",
@@ -382,7 +390,7 @@ fn analyser_reports_the_band_energies() {
     let centres = analyser_centres(SR);
     assert!(centres.windows(2).all(|w| w[1] > w[0]));
     assert!((centres[0] - 40.0).abs() < 1e-6 && (centres[15] - 16_000.0).abs() < 1e-3);
-    let mut h = eq();
+    let mut h = eq_live();
     assert!(h.device().has_meter_values());
     // Silence reads zero.
     h.process();
@@ -390,7 +398,7 @@ fn analyser_reports_the_band_energies() {
     assert_eq!(h.device().meter_values(&mut out), METER_COUNT);
     assert!(out[..METER_COUNT].iter().all(|v| v.to_bits() == 0));
     for k in [2usize, 7, 12] {
-        let mut h = eq();
+        let mut h = eq_live();
         let f = centres[k];
         let y = run_signal(
             &mut h,
@@ -433,7 +441,7 @@ fn analyser_reports_the_band_energies() {
 fn analyser_follows_the_output_of_the_eq() {
     // A +24 dB peak on the tone lifts its band energy by about 24 dB.
     let measure = |gain: f32| {
-        let mut h = eq();
+        let mut h = eq_live();
         let f = analyser_centres(SR)[7];
         set(&mut h, &[("band3.freq", f as f32), ("band3.gain", gain)]);
         run_signal(
@@ -504,8 +512,8 @@ fn is_deterministic_across_instances_and_resets() {
         all.extend_from_slice(&m);
         all
     };
-    let mut a = eq();
-    let mut b = eq();
+    let mut a = eq_live();
+    let mut b = eq_live();
     let ya = run(&mut a);
     let yb = run(&mut b);
     assert!(ya.iter().zip(&yb).all(|(p, q)| p.to_bits() == q.to_bits()));
@@ -668,4 +676,81 @@ fn gain_cv_is_allocation_free_and_finite() {
         h.process();
         assert!(h.output("out_l").iter().all(|v| v.is_finite()));
     }
+}
+
+/// Noise through an EQ with a few bands moving, returning both outputs and the meter values.
+fn noise_run(h: &mut DeviceHarness) -> (Vec<f32>, [f32; METER_COUNT]) {
+    set(h, &[("band3.gain", 7.0), ("band1.on", 1.0)]);
+    let mut rng = Rng::new(21);
+    let mut all = Vec::new();
+    for _ in 0..80 {
+        let mut x = [0.0f32; BATCH];
+        for v in &mut x {
+            *v = rng.next_bipolar() * 0.5;
+        }
+        *h.input_mut("in_l") = x;
+        *h.input_mut("in_r") = x;
+        h.process();
+        all.extend_from_slice(h.output("out_l"));
+        all.extend_from_slice(h.output("out_r"));
+    }
+    let mut m = [0.0f32; METER_COUNT];
+    h.device().meter_values(&mut m);
+    (all, m)
+}
+
+#[test]
+fn the_analyser_is_off_by_default_and_the_audio_never_depends_on_it() {
+    let (off, off_meters) = noise_run(&mut eq());
+    let (on, on_meters) = noise_run(&mut eq_live());
+    assert!(off.iter().zip(&on).all(|(a, b)| a.to_bits() == b.to_bits()));
+    // Off: the band energies read zero, the output peaks still move.
+    assert!(off_meters[..ANALYSER_BANDS].iter().all(|v| *v == 0.0));
+    assert!(off_meters[ANALYSER_BANDS] > 0.0 && off_meters[ANALYSER_BANDS + 1] > 0.0);
+    // On: the same peaks and live band energies.
+    assert_eq!(off_meters[ANALYSER_BANDS..], on_meters[ANALYSER_BANDS..]);
+    assert!(on_meters[..ANALYSER_BANDS].iter().any(|v| *v > 0.0));
+}
+
+#[test]
+fn switching_the_analyser_off_and_on_starts_the_bands_from_silence() {
+    let mut h = eq_live();
+    let (_, live) = noise_run(&mut h);
+    assert!(live[..ANALYSER_BANDS].iter().any(|v| *v > 0.0));
+    h.set_param("internal.analyser_live", 0.0);
+    h.process();
+    // The last values stay until the bank is switched on again, then restart from zero.
+    h.set_param("internal.analyser_live", 1.0);
+    let mut m = [1.0f32; METER_COUNT];
+    h.device().meter_values(&mut m);
+    assert!(m[..ANALYSER_BANDS].iter().all(|v| *v == 0.0));
+}
+
+/// Cost of the analyser: `cargo test -p atomik-devices --release --lib eq::tests::cost -- --ignored
+/// --nocapture`. Not an assertion on speed (CI timing is noisy), a measurement for the baseline.
+#[test]
+#[ignore = "timing measurement"]
+#[allow(clippy::disallowed_methods)] // Justification: wall-clock measurement.
+fn cost_of_the_analyser_off_and_on() {
+    let time = |live: bool| {
+        let mut h = if live { eq_live() } else { eq() };
+        let mut rng = Rng::new(5);
+        let mut x = [0.0f32; BATCH];
+        for v in &mut x {
+            *v = rng.next_bipolar() * 0.3;
+        }
+        *h.input_mut("in_l") = x;
+        *h.input_mut("in_r") = x;
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            for _ in 0..20_000 {
+                h.process();
+            }
+            best = best.min(t.elapsed().as_secs_f64() / 20_000.0);
+        }
+        best * 1e9
+    };
+    let (off, on) = (time(false), time(true));
+    println!("eq per batch: analyser off {off:.0} ns, on {on:.0} ns");
 }
