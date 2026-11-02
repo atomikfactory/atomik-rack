@@ -39,9 +39,9 @@ mod wire;
 
 pub use backend::{
     ActivateConfig, BackendError, EditorKind, EventList, HostHandle, NULL_PRESETS, NativeParent,
-    NullBackend, NullBehavior, NullPlugin, NullStats, PluginBackend, PluginEvent, PluginEventKind,
-    PluginInstance, PluginIo, PluginProcessor, PluginTransport, PresetInfo, ProcessStatus,
-    ScannedPlugin, SleepRule, TailLength,
+    NullBackend, NullBehavior, NullPlugin, NullStats, PendingInstance, PluginBackend, PluginEvent,
+    PluginEventKind, PluginInstance, PluginIo, PluginProcessor, PluginTransport, PresetInfo,
+    ProcessStatus, ScannedPlugin, SleepRule, TailLength,
 };
 pub use cache::{
     BlacklistEntry, CACHE_VERSION, CachedFile, FileStamp, LoadStatus, PluginCache, SCANNER_VERSION,
@@ -52,12 +52,12 @@ pub use device::{METER_VALUES, PluginDevice};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
-    HUNG, InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle, PluginManager,
-    PluginProvider,
+    CreateTicket, HUNG, InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle,
+    PluginManager, PluginProvider,
 };
 pub use scan::{
     ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,
-    ScanJob, ScanProgress, ScanReport, ScanRequest, ScanResult, ScanRunner, rescan,
+    ScanJob, ScanProgress, ScanReport, ScanRequest, ScanResult, ScanRunner, parallel_scans, rescan,
 };
 pub use settings::{DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings};
 pub use slot::{

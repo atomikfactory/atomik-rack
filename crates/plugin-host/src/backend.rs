@@ -390,6 +390,11 @@ pub trait PluginInstance {
     fn deactivate(&mut self, processor: Box<dyn PluginProcessor>);
     /// The latency the plugin reports now, in frames.
     fn latency_frames(&self) -> u32;
+    /// Starts saving the plugin state without waiting for it: the next
+    /// [`PluginInstance::capture_state`] collects it. A remote plugin gets its request out so a
+    /// burst over many plugins waits for the slowest one, not for the sum; the default does
+    /// nothing and `capture_state` does the whole job.
+    fn begin_capture_state(&mut self) {}
     /// Saves the plugin state.
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError>;
     /// Restores a saved state.
@@ -475,6 +480,14 @@ pub struct ScannedPlugin {
     pub params_truncated: bool,
 }
 
+/// An instance that is still starting (see [`PluginBackend::begin_instantiate`]). Dropping it
+/// abandons the start and ends the plugin's process.
+pub trait PendingInstance {
+    /// Moves the start on without blocking: `None` while the plugin is not ready, then the
+    /// instance or why it could not be made.
+    fn poll(&mut self) -> Option<Result<Box<dyn PluginInstance>, BackendError>>;
+}
+
 /// A plugin format. The sandbox (`atomik-plugin-sandbox`) implements the same traits.
 pub trait PluginBackend {
     /// The format this backend loads.
@@ -487,6 +500,17 @@ pub trait PluginBackend {
         plugin: &PluginRef,
         host: HostHandle,
     ) -> Result<Box<dyn PluginInstance>, BackendError>;
+    /// Starts creating an instance without waiting for it: a backend whose plugins load in
+    /// another process returns the instance while it starts, so many of them load at the same
+    /// time. `None` (the default) means the backend creates instances only with
+    /// [`PluginBackend::instantiate`], which blocks.
+    fn begin_instantiate(
+        &self,
+        _plugin: &PluginRef,
+        _host: HostHandle,
+    ) -> Result<Option<Box<dyn PendingInstance>>, BackendError> {
+        Ok(None)
+    }
 }
 
 // ----- the null backend ---------------------------------------------------------------------------
