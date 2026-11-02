@@ -124,6 +124,7 @@ fn strip_entry(container: &str, out: bool, column: u16) -> RackDevice {
         column,
         patch_name: String::new(),
         midi_out: None,
+        mods: Vec::new(),
     }
 }
 
