@@ -12,6 +12,10 @@ publish = false
 [dependencies]
 thiserror.workspace = true
 
+[features]
+# Test-only audio-thread rule guard (see `rt_guard`); the test kit enables it.
+rt-guard = []
+
 [dev-dependencies]
 proptest.workspace = true
 

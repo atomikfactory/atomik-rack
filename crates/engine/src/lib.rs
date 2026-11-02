@@ -35,18 +35,18 @@ pub use controllers::{RAMP_STEP, SongController, SongControllerKind};
 pub use engine::{
     CONTROL_QUEUE_CAPACITY, DEFAULT_ARENA_CAPACITY, Engine, EngineError, EngineHandle, HotEdit,
     NOTE_QUEUE_CAPACITY, PARAM_QUEUE_CAPACITY, PLAN_QUEUE_CAPACITY, RETIRE_QUEUE_CAPACITY,
-    SONG_EVENT_CAPACITY, ScheduledNote, TimedEdit, new_engine, new_engine_with_arena,
-    new_engine_with_options,
+    SONG_EVENT_CAPACITY, ScheduledNote, TRANSPORT_QUEUE_CAPACITY, TimedEdit, new_engine,
+    new_engine_with_arena, new_engine_with_options,
 };
 pub use graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError};
 pub use interface::{INTERFACE_TYPE_ID, MAX_INTERFACE_CHANNELS, interface_descriptor};
-pub use live::{EngineOptions, FrameClock, LiveNoteSender, WorkerConfig};
+pub use live::{EngineOptions, FrameClock, LIVE_RELEASE_HEADROOM, LiveNoteSender, WorkerConfig};
 pub use offline::{
     OfflineError, OfflineJob, render_offline, render_offline_scripted, render_offline_song,
     render_offline_with, try_render_offline, try_render_offline_scripted, try_render_offline_song,
     try_render_offline_with,
 };
-pub use plan::RenderPlan;
+pub use plan::{RELEASE_HEADROOM, RenderPlan};
 pub use player::{HOLD_CAPACITY, lane_value};
 pub use preview::{
     PREVIEW_RING_FRAMES, PreviewFeed, PreviewMonitor, PreviewStream, preview_channel,
