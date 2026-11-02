@@ -313,7 +313,9 @@ impl RackView {
             socket: jack.socket.clone(),
         };
         let end = self.sockets.get(&local)?.end.clone();
-        let top = self.scope.is_empty();
+        // The rules of `Command::Connect` on the project are judged for the rack's own jacks;
+        // inside a container (open, or unfolded in the rack) the model has the last word.
+        let top = self.scope.is_empty() && !super::inline::is_inner(&local.device);
         let cables = self.view_cables();
         let occupant = |input: &SocketRef| cables.iter().find(|c| &c.to == input);
         let plain_input = |e: &SocketEnd| e.direction == Direction::Input;
@@ -336,7 +338,7 @@ impl RackView {
                     kind: s.kind,
                     direction: s.direction,
                 };
-                if !cables::compatible(&end, &other) {
+                if !self.can_cable(&end, &other) {
                     continue;
                 }
                 let cable = cables::orient(&end, &other);
