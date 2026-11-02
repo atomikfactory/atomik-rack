@@ -76,6 +76,40 @@ fn mix(wet: f32, dry: f32, m: f32) -> f32 {
     }
 }
 
+/// Why a device cannot be wrapped in a [`Bypassable`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BypassError {
+    /// The descriptor has no `bypass` param.
+    MissingParam {
+        /// The device type.
+        type_id: &'static str,
+    },
+    /// The descriptor lacks one of the main stereo sockets.
+    MissingSocket {
+        /// The device type.
+        type_id: &'static str,
+        /// The socket key that is missing.
+        key: &'static str,
+    },
+    /// The device has more than one stage.
+    MultiStage {
+        /// The device type.
+        type_id: &'static str,
+    },
+}
+
+impl std::fmt::Display for BypassError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingParam { type_id } => write!(f, "{type_id}: no `bypass` param"),
+            Self::MissingSocket { type_id, key } => write!(f, "{type_id}: no `{key}` socket"),
+            Self::MultiStage { type_id } => write!(f, "{type_id}: multi-stage device"),
+        }
+    }
+}
+
+impl std::error::Error for BypassError {}
+
 /// An effect with a bypass (see the module docs).
 pub struct Bypassable<D: Device> {
     inner: D,
@@ -107,25 +141,38 @@ impl<D: Device> Bypassable<D> {
     /// Wraps `inner`.
     ///
     /// # Panics
-    /// If its descriptor lacks the `bypass` param or one of the `in_l`, `in_r`, `out_l`, `out_r`
-    /// sockets, or is a multi-stage device (a programming error caught by the registry test).
+    /// If its descriptor is malformed (see [`Bypassable::try_new`]): the factories only wrap
+    /// built-in effects whose static descriptors the registry tests check.
     pub fn new(inner: D) -> Self {
+        match Self::try_new(inner) {
+            Ok(wrapped) => wrapped,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// Wraps `inner`, or says why its descriptor cannot be bypassed: it lacks the `bypass`
+    /// param or one of the `in_l`, `in_r`, `out_l`, `out_r` sockets, or it is a multi-stage
+    /// device.
+    pub fn try_new(inner: D) -> Result<Self, BypassError> {
         let d = inner.descriptor();
-        let socket = |key: &str| {
+        let type_id = d.type_id;
+        let socket = |key: &'static str| {
             d.socket_by_key(key)
-                .unwrap_or_else(|| panic!("{}: no `{key}` socket", d.type_id))
-                .id
+                .map(|s| s.id)
+                .ok_or(BypassError::MissingSocket { type_id, key })
         };
         let bypass_id = d
             .param_by_key("bypass")
-            .unwrap_or_else(|| panic!("{}: no `bypass` param", d.type_id))
+            .ok_or(BypassError::MissingParam { type_id })?
             .id;
-        assert!(d.stages.is_empty(), "{}: multi-stage device", d.type_id);
+        if !d.stages.is_empty() {
+            return Err(BypassError::MultiStage { type_id });
+        }
         let (in_l, in_r, out_l, out_r) = (
-            socket("in_l"),
-            socket("in_r"),
-            socket("out_l"),
-            socket("out_r"),
+            socket("in_l")?,
+            socket("in_r")?,
+            socket("out_l")?,
+            socket("out_r")?,
         );
         let side_outs: Vec<SocketId> = d
             .sockets
@@ -138,7 +185,7 @@ impl<D: Device> Bypassable<D> {
             })
             .map(|s| s.id)
             .collect();
-        Self {
+        Ok(Self {
             inner,
             bypass_id,
             in_l,
@@ -156,7 +203,7 @@ impl<D: Device> Bypassable<D> {
             settled: 0,
             stop_after: 0,
             stopped: false,
-        }
+        })
     }
 
     fn target(&self) -> f32 {

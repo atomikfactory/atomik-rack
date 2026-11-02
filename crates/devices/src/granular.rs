@@ -1468,16 +1468,17 @@ fn source_of<'a>(data: &'a [Vec<f32>], zone: &Zone) -> GrainSource<'a> {
     }
 }
 
-/// The built-in source at `sample_rate`, made once per rate (non-real-time).
+/// The sample rates whose built-in source is kept for the life of the process.
+const CACHED_RATES: [u32; 5] = [44_100, 48_000, 88_200, 96_000, 192_000];
+
+/// The built-in source at `sample_rate`. The standard rates are made once and shared; any other
+/// rate gets its own buffer (made here, non-real-time, and freed with the device), so the cache
+/// stays at most [`CACHED_RATES`] long however many rates a session visits.
 fn builtin_buffer(sample_rate: f32) -> Arc<SampleBuffer> {
     static CACHE: OnceLock<Mutex<BTreeMap<u32, Arc<SampleBuffer>>>> = OnceLock::new();
-    let key = sample_rate.round().max(8_000.0) as u32;
-    let mut cache = CACHE
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    Arc::clone(cache.entry(key).or_insert_with(|| {
-        let mono = grain::default_source(key as f32);
+    let rate = sample_rate.round().max(8_000.0) as u32;
+    let make = || {
+        let mono = grain::default_source(rate as f32);
         let data: Arc<[Vec<f32>]> = Arc::from(vec![mono]);
         // A single channel is never ragged or empty.
         Arc::new(SampleBuffer {
@@ -1485,7 +1486,15 @@ fn builtin_buffer(sample_rate: f32) -> Arc<SampleBuffer> {
             channels: 1,
             data,
         })
-    }))
+    };
+    if !CACHED_RATES.contains(&rate) {
+        return make();
+    }
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(cache.entry(rate).or_insert_with(make))
 }
 
 /// The granular sampler device.

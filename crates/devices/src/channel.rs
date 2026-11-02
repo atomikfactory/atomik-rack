@@ -1303,7 +1303,7 @@ impl Channel {
             self.fresh = false;
         }
         let (mut l, mut r, _) = stereo_in(ctx, S_IN_L, S_IN_R);
-        self.key = *ctx.input(SocketId(S_KEY));
+        self.key = finite(*ctx.input(SocketId(S_KEY)));
         self.key_active = self.on(P_KEY_ON) && ctx.is_connected(SocketId(S_KEY));
         self.gr = [0.0; BATCH];
         for (a, b) in l.iter_mut().zip(r.iter_mut()) {
@@ -1430,16 +1430,26 @@ impl Channel {
 pub(crate) fn stereo_in(ctx: &ProcessContext<'_>, l: u16, r: u16) -> (Block, Block, bool) {
     let (has_l, has_r) = (ctx.is_connected(SocketId(l)), ctx.is_connected(SocketId(r)));
     let a = if has_l || !has_r {
-        *ctx.input(SocketId(l))
+        finite(*ctx.input(SocketId(l)))
     } else {
-        *ctx.input(SocketId(r))
+        finite(*ctx.input(SocketId(r)))
     };
     let b = if has_l && has_r {
-        *ctx.input(SocketId(r))
+        finite(*ctx.input(SocketId(r)))
     } else {
         a
     };
     (a, b, has_l || has_r)
+}
+
+/// Replaces NaN and infinite samples with silence so one bad source cannot poison the mix.
+/// Branch-free (a select per sample, no allocation); finite samples pass bit-for-bit.
+#[inline]
+pub(crate) fn finite<const N: usize>(mut block: [f32; N]) -> [f32; N] {
+    for x in &mut block {
+        *x = if x.is_finite() { *x } else { 0.0 };
+    }
+    block
 }
 
 impl Device for Channel {
