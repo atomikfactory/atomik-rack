@@ -2132,10 +2132,7 @@ impl RackView {
             return None;
         }
         let g = d.spec.drum?.pads;
-        let p = Point::new(
-            g.x0 + autolayout::DRUM_PAD_CELL.0,
-            g.y1 - autolayout::DRUM_PAD_CELL.1 / 2.0,
-        );
+        let p = Point::new(g.x0 + g.width() / 4.0, g.y1 - g.height() / 8.0);
         Some(self.rack_to_view(p + d.offset()))
     }
 

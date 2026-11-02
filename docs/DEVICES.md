@@ -2322,6 +2322,13 @@ the order):
   `reset` lower every gate; a source that never sends a note-off keeps the gate high until then. The
   step sequencer's own `gate_cv_out` is 1.0/0.0 with the velocity on a separate CV; the drum machine
   has no separate velocity CV, hence the combined encoding.
+- **Front panel.** Seven rack units. The 4x4 pad grid takes the whole width and height the knob
+  columns leave it (pad 1 bottom left, 16 top right). A pad with samples is lit in the accent
+  colour and shows its sample's file name (without the extension) on up to two lines, with the pad
+  number small in a corner; an empty pad is dark and says "empty". The selected pad has an accent
+  outline, and a file dragged over a pad lights that pad. Under the grid a readout shows the
+  selected pad, its note and its file name, beside the EDIT, SAMPLE and TO CH buttons. The 14 knobs
+  of the selected pad and the master level run down two columns at the right.
 - **Back panel.** Seven rack units: the notes input and main outputs, a CV section with the two
   global jacks each next to its trim knob, and one section per pad with its four jacks (out L, out
   R, gate in, gate out).
@@ -3047,12 +3054,23 @@ of the step, so a locate or a different block size plays the same hits.
 
 `style` is only used by the panel's **GENERATE** button (the device itself ignores it): it writes
 the steps of the edited pattern from the role templates of the style (kick, snare or clap, hats and
-open hats on a bar of sixteenths; only the first lane of each role gets the template), thinned or
-thickened by `density` and jittered by `random.seed`
-(`atomik_devices::drum_generator::generate_pattern`, a pure function, so a seed always writes the
-same pattern). **RANDOMISE** is GENERATE with `random.seed` moved up by one (999 wraps to 0). Both
-are one undo step, and the lanes, length, resolution, swing and name of the pattern stay. The live
-`density` also applies on top of what is written.
+open hats on a bar of sixteenths; only the first lane of each role gets the template). The seed
+then varies the rhythm at any density, inside the style: ghost notes on the snare and clap, extra
+kicks on weak sixteenths (not in four on the floor), hat, open hat and percussion embellishments,
+an odd weak hit dropped, accented hats, and on some seeds a short fill of snare and toms on the
+last sixteenths of the pattern. The kick on the one, the strong kicks of the style and the
+backbeats always stay. `density` then thins or thickens the result and `random.seed` jitters the
+velocities (`atomik_devices::drum_generator::generate_pattern`, a pure function: the same style,
+density and seed write the same pattern).
+
+Every press of GENERATE picks a new seed (never the one the device holds), writes it to
+`random.seed` and writes the pattern, so each press gives another rhythm. **RANDOMISE** also draws
+the character first: `style`, `density` (-0.3 to 0.5), `variation` (0 to 0.6), `accent` (0 to 0.5)
+and the swing of the edited pattern (0 to 28 percent), then a new seed. The params, the seed and
+the pattern are one undo step, and the lanes, length, resolution and name of the pattern stay. The
+draws start from the clock when the app starts, so every launch differs; a project stores the
+written steps and the params, never the draws, so a saved project loads and plays exactly as it
+was saved. The live `density` also applies on top of what is written.
 
 ### Panel
 
@@ -3068,8 +3086,8 @@ control yet.
 
 ### Starting points
 
-Press GENERATE after choosing them (a pattern is written from the style, so the same settings always
-give the same pattern):
+Press GENERATE after choosing them (a pattern is written from the style and a new seed each press, so
+every press gives another take of the same style):
 
 - **Four on the floor.** `style` four on the floor (the default).
 - **Broken beat.** `style` broken beat, `density` 0.2, `variation` 0.4.
