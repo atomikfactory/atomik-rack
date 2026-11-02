@@ -338,3 +338,57 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 }
+
+// ------------------------------------------------------------------ stretching a clip edge
+
+impl<S: EngineSink> AppCore<S> {
+    /// One step of an edge dragged with the stretch role: the document is put back to what it
+    /// was before the drag and the clips are stretched by `percent` from there, so the preview
+    /// is exact however the pointer wandered. Nothing is recorded in the undo history until
+    /// [`AppCore::end_stretch`] accepts the drag (one step), and the engine follows each step.
+    pub(super) fn stretch_step(&mut self, ids: Vec<ClipId>, percent: f64, from_start: bool) {
+        self.rewind_stretch();
+        self.trial_next = true;
+        let _ = self.apply_command(Command::Workflow(WorkflowCommand::StretchClips {
+            ids,
+            percent,
+            from_start,
+        }));
+        self.trial_next = false;
+        self.stretch_open = self.document.in_trial();
+    }
+
+    /// The stretch drag ended: `commit` keeps what the last step made as one undo step, else the
+    /// document goes back to before the drag (Esc, or the pointer back at the start).
+    pub(super) fn end_stretch(&mut self, commit: bool) {
+        if commit {
+            self.commit_stretch();
+        } else {
+            self.rewind_stretch();
+        }
+    }
+
+    /// Accepts an open stretch as one undo step (every other command does this first).
+    pub(super) fn commit_stretch(&mut self) {
+        if std::mem::take(&mut self.stretch_open) {
+            self.document.commit_trial();
+        }
+    }
+
+    /// Puts the document back to before the open stretch, if there is one.
+    fn rewind_stretch(&mut self) {
+        if !std::mem::take(&mut self.stretch_open) {
+            return;
+        }
+        match catch_unwind(AssertUnwindSafe(|| self.document.cancel_trial())) {
+            Ok(Ok(ops)) => self.sync_ops(&ops),
+            Ok(Err(e)) => {
+                log::error!("cancelling a stretch failed: {e}");
+                self.reject(format!("Cannot put the clips back: {e}"));
+            }
+            Err(_) => {
+                self.after_internal_error("a stretch");
+            }
+        }
+    }
+}

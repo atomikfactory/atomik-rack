@@ -187,6 +187,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::TrimClips { .. } => "Trim Clips",
         WorkflowCommand::ReverseClips { .. } => "Reverse Clips",
         WorkflowCommand::ScaleTempo { .. } => "Scale Tempo",
+        WorkflowCommand::StretchClips { .. } => "Stretch Clips",
         WorkflowCommand::ChopClips { .. } => "Chop Clips",
         WorkflowCommand::CleanupAutomation { .. } => "Cleanup Automation",
         WorkflowCommand::InsertTime { .. } => "Insert Bars",
