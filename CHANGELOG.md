@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Semi-Modular synthesizer.** A new instrument, `atomik.semi-modular`, built from slots: three oscillator
+  slots (saw, pulse, triangle, sine, one of the 32 additive waves, one of the 12 wavetables with a morph position,
+  a band-limited two-operator FM and noise), three filter slots (12 dB low-, band-, high-pass and notch, the 24 dB
+  ladder and a comb; series, parallel or split routing), a shaper (soft, asymmetric, hard and fold), three
+  envelopes and two LFOs. The eight-slot modulation matrix joins eleven sources (envelopes, LFOs, velocity, key,
+  mod wheel, pressure, the sequencer step and a random value per note) to fifteen targets (pitch, each oscillator's
+  level and shape, each filter's cutoff and resonance, the drive and the level). A sixteen-step sequencer on the
+  device's own tempo-synced clock plays the voices from the keys: the last key pressed is the root the pattern is
+  transposed to, with step length (1/4 to 1/32 and triplets), length, swing, gate and ties, and the gate and pitch
+  of the sounding step go out on CV jacks. Poly, mono and legato play with glide and at most eight voices; a
+  render is the same bit for bit at every host block size. The panel is the generated one (13 U) and the
+  matrix opens with the same command as the poly synth's. No existing sound changes and the project format is
+  still 42.
 - **Real-time stretch preview.** A warped clip is heard stretched at once: while its high-quality buffer is still
   rendering, the clip plays through an interim voice that reads the audio through the clip's time map (tempo
   changes and ramps, warp markers, trims) with Hermite resampling, so a tempo change or a marker drag is never
