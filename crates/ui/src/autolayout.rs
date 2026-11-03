@@ -640,7 +640,7 @@ const DRUM_CV: [(&str, &str); 2] = [
 const DRUM_TRIM_W: f64 = 40.0;
 /// Width of one knob column of the selected pad's section.
 const DRUM_COL_W: f64 = 64.0;
-/// Knob columns of the selected pad's section (the pad's 14 knobs and the master level run down
+/// Knob columns of the selected pad's section (the pad's 18 knobs and the master level run down
 /// two columns beside the pad grid).
 const DRUM_KNOB_COLS: usize = 2;
 /// Gap between the pad grid and the knob columns.
@@ -649,7 +649,7 @@ const DRUM_GAP: f64 = 16.0;
 const DRUM_KNOBS_X: f64 = CONTENT_X.1 - DRUM_KNOB_COLS as f64 * DRUM_COL_W;
 /// Width of the pad grid: what the content area leaves left of the knob columns.
 const DRUM_PADS_W: f64 = DRUM_KNOBS_X - DRUM_GAP - CONTENT_X.0;
-/// Knob rows of the section: the 14 pad params and the master level.
+/// Knob rows of the section: the 18 pad params and the master level.
 const DRUM_KNOB_ROWS: usize = (DRUM_PAD_PARAMS.len() + 1).div_ceil(DRUM_KNOB_COLS);
 /// Height of the readout and button band along the bottom of the pad grid.
 const DRUM_BAND_H: f64 = 46.0;
@@ -660,11 +660,14 @@ const DRUM_BUTTON_H: f64 = 22.0;
 /// Gap between the pad grid and the band, and between the readout and the buttons.
 const DRUM_BAND_GAP: f64 = 6.0;
 /// The per-pad params of the drum panel, in layout order (knobs left to right, two per row: the
-/// pad, then its tone, cuts, drive and sends).
-pub const DRUM_PAD_PARAMS: [&str; 14] = [
+/// pad, then its tone, cuts, drive and sends, then the synthesised module and its three knobs).
+pub const DRUM_PAD_PARAMS: [&str; 18] = [
     "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity", "tone", "lowcut",
-    "highcut", "drive", "send1", "send2",
+    "highcut", "drive", "send1", "send2", "module", "body", "snap", "sweep",
 ];
+
+/// The synthesised modules a pad can play, in the order of `padN.module` (index 0 is a sample).
+pub const DRUM_MODULES: [&str; 7] = ["sample", "kick", "snare", "hat", "tom", "tone", "noise"];
 
 /// Geometry of the drum panel's extras (front, panel coordinates).
 #[derive(Debug, Clone, Copy, PartialEq)]
