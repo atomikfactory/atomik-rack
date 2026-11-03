@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Refinements.** Edit, Quantize Audio now honours the Quantize panel's swing, groove and humanize time: the
+  groove shapes the grid lines, and the timing amount randomises each moved transient by an offset that depends
+  only on the seed, the clip and the transient's number, so the same seed gives the same take and the markers stay
+  strictly in order. A clip that already has warp markers of its own quantizes those markers instead of detecting
+  transients. Edit, Normalise To brings the selected audio clips to a peak of -1 dBFS, an RMS of -18 dBFS or an
+  integrated loudness of -23 or -14 LUFS through the clip gain, as one undo step; Normalise Audio still aims at
+  0 dBFS. Help, Export Device Parameter List writes a text table (`device | key | name | unit | min | max |
+  default | discrete`) of every built-in device parameter in a stable order. View, Detach Browser puts the file
+  browser in a window of its own; its position and size are remembered, closing it docks the browser again, and
+  the command `view.detach_browser` and the `--detach browser` option do the same. Shift+Up and Shift+Down in the
+  arrangement extend the track selection. An armed audio track is monitored live only while the transport is
+  stopped or recording, so plain playback no longer doubles the input over the clips. No saved field changes
+  (the project format is still 42) and no bounce changes. The tuner button in the track header, the device icon
+  double-click, creating a track from a console strip, reversed warped clips, the Recording Meter window and the
+  per-track default stretch type are not part of this change.
 - **Rack sorting, Track Panel and folder clips.** View, Rack Sorting keeps the rack arranged by track: Rack per
   Track gives every track (its instrument, players, channel, inserts and effects) a column of its own and never
   leaves one empty, Auto-Group keeps the devices of a track together, and No Grouping leaves the columns manual as
