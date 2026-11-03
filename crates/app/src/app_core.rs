@@ -1759,6 +1759,7 @@ impl<S: EngineSink> AppCore<S> {
     fn submit_song(&mut self, tempo_changed: bool) {
         // Warped clips play their rendered buffers: start what is missing, drop what is stale.
         self.sync_warps();
+        self.show_warp_calc();
         let ids = &self.ids;
         let input = song_input_live(
             self.document.doc(),

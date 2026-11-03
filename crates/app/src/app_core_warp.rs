@@ -37,9 +37,10 @@ use super::audio_edit_ops::{Selected, for_each_chunk};
 use super::*;
 use crate::audio_import::spawn_warp;
 use atomik_engine::SongAsset;
+use atomik_model::song::effective_tracks;
 use atomik_model::{
-    AudioClipContent, AudioQuantize, ClipContent, WarpJob, bpm_for_beats, estimate_bpm,
-    quantize_audio, warp_jobs,
+    AudioClipContent, AudioQuantize, ClipContent, ClipId, WarpJob, bpm_for_beats, estimate_bpm,
+    quantize_audio, warp_job, warp_jobs,
 };
 use atomik_render::warp::job_bytes;
 use atomik_ui::WarpValues;
@@ -194,6 +195,45 @@ impl<S: EngineSink> AppCore<S> {
     /// True while warp buffers are rendering or queued.
     pub fn warp_busy(&self) -> bool {
         self.audio.warp_work.busy() > 0
+    }
+
+    /// The audio clips whose finished buffer is rendering or queued (they play the interim
+    /// warp meanwhile): the clips that show the CALC chip. A looped clip counts by its first
+    /// repetition.
+    pub fn calculating_clips(&self) -> Vec<ClipId> {
+        let work = &self.audio.warp_work;
+        if work.busy() == 0 {
+            return Vec::new();
+        }
+        let doc = self.doc();
+        let pending = |key: u64| {
+            work.inflight.contains_key(&key) || work.queue.iter().any(|(k, _)| *k == key)
+        };
+        let mut out = Vec::new();
+        for track in effective_tracks(&doc.song) {
+            if track.frozen.is_some() {
+                continue;
+            }
+            for lane in track.lanes.iter().filter(|l| l.kind.is_audio()) {
+                for clip in &lane.clips {
+                    let ClipContent::Audio(a) = &clip.content else {
+                        continue;
+                    };
+                    let length = clip.loop_length.map_or(clip.length, |n| n.min(clip.length));
+                    let job = warp_job(&doc.song, doc.sample_rate, clip.start, length, a);
+                    if !a.reverse && job.is_some_and(|j| pending(j.key())) {
+                        out.push(clip.id);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Tells the arrangement which clips are still calculating their warp buffer.
+    pub(super) fn show_warp_calc(&mut self) {
+        let clips = self.calculating_clips();
+        self.arrangement.set_calculating(&clips);
     }
 
     // ------------------------------------------------------------------ the commands

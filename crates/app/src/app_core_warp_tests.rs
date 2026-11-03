@@ -258,9 +258,13 @@ fn a_warped_clip_plays_its_buffer_once_the_worker_is_done() {
     // ...read through the clip's time map, so it is stretched from the first batch on...
     assert_eq!(dry.audio[0].regions[0].warp, Some(0));
     assert!(dry.audio[0].warp_maps[0].len() >= 2);
+    // ...and the clip says it is still calculating (the CALC chip) until the buffer is in.
+    assert!(c.warp_busy());
+    assert_eq!(c.calculating_clips(), ids);
     // ...and again with the rendered buffer when the worker is done.
     c.wait_background();
     assert!(!c.warp_busy());
+    assert!(c.calculating_clips().is_empty());
     let warped = last_song(&mut c).expect("the song was submitted again");
     let clip = c.doc().song.clip(ids[0]).unwrap().2.clone();
     let frames =

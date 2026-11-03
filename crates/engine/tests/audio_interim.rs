@@ -105,7 +105,9 @@ fn half_of(a: &SongAsset) -> SongAsset {
 
 /// The interim song (asset 0 read through an identity map), the finished song (plain region of
 /// the half-scale asset 1), and a bounce that swaps from the first to the second at `SWAP`.
-fn swap_runs() -> (Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+type Planes = Vec<Vec<f32>>;
+
+fn swap_runs() -> (Planes, Planes, Planes) {
     const N: usize = 8_192;
     let raw = asset(2, 10_000);
     let assets = vec![raw.clone(), half_of(&raw)];
@@ -175,4 +177,30 @@ fn a_swap_between_plain_songs_does_not_crossfade() {
     let n = SWAP as usize;
     assert_eq!(out[0][n].to_bits(), value(0, 3_000 + n).to_bits());
     assert_eq!(out[0][n - 1].to_bits(), value(0, n - 1).to_bits());
+}
+
+/// Hand check (`cargo test -p atomik-engine --release --test audio_interim -- --ignored
+/// --nocapture`): the cost of 16 stereo tracks (the test rig has 32 outputs) each playing an interim warp at 1.3x speed.
+#[test]
+#[ignore = "timing only"]
+fn sixteen_interim_warps_cost() {
+    const SECONDS: usize = 10;
+    let frames = 48_000 * SECONDS;
+    let map = [(0.0, 0.0), (frames as f64, frames as f64 * 1.3)];
+    let tracks: Vec<SongAudioTrack> = (1..=16u32)
+        .map(|id| SongAudioTrack {
+            device: atomik_engine::DeviceInstanceId(id),
+            ..interim(0, frames as u64, 0, &map)
+        })
+        .collect();
+    let input = audio_input(tracks, vec![asset(2, frames * 2)]);
+    #[allow(clippy::disallowed_methods)] // Justification: a timing hand check, ignored by default.
+    let started = std::time::Instant::now();
+    let out = Bounce::new(input, frames).run();
+    let took = started.elapsed();
+    println!(
+        "16 interim warps, {SECONDS} s: {took:?} ({:.1}% of real time)",
+        100.0 * took.as_secs_f64() / SECONDS as f64
+    );
+    assert_eq!(out.len(), 32);
 }

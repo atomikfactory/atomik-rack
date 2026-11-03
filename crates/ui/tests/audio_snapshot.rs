@@ -344,3 +344,18 @@ fn track_meters_match_golden() {
         &record_track_meters().to_json(),
     );
 }
+
+#[test]
+fn a_clip_whose_warp_is_rendering_shows_the_calc_chip_until_it_is_done() {
+    let (doc, reg) = (audio_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    let chips = |dl: &DisplayList| dl.texts().iter().filter(|t| **t == "CALC").count();
+    assert_eq!(chips(&paint(&mut v, &doc)), 0);
+    v.set_calculating(&[ClipId(10)]);
+    assert_eq!(chips(&paint(&mut v, &doc)), 1, "only the flagged clip");
+    // The same set again changes nothing; clearing it removes the chip.
+    v.set_calculating(&[ClipId(10)]);
+    assert_eq!(chips(&paint(&mut v, &doc)), 1);
+    v.set_calculating(&[]);
+    assert_eq!(chips(&paint(&mut v, &doc)), 0);
+}
