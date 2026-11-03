@@ -56,6 +56,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "render/plugin_sandbox_bounce.rs",
     "render/project.rs",
     "render/qa_audio_workers.rs",
+    "render/rack_sorting.rs",
     "render/sampler_demo.rs",
     "render/slicer_demo.rs",
     "render/slicer_roundtrip.rs",
