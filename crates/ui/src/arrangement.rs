@@ -5172,6 +5172,8 @@ impl ArrangementView {
             },
             "sequencer.select_next_track" => self.select_track(1),
             "sequencer.select_prev_track" => self.select_track(-1),
+            "sequencer.extend_track_selection_down" => self.extend_track_selection(1),
+            "sequencer.extend_track_selection_up" => self.extend_track_selection(-1),
             "sequencer.split_at_playhead" => {
                 let at = self.playhead;
                 let only: Option<Vec<ClipId>> = (!self.selection.is_empty())
@@ -5348,6 +5350,39 @@ impl ArrangementView {
         };
         let device = self.song.tracks[visible[to]].device.clone();
         self.set_selected_track(Some(device));
+        CommandOutcome::Handled(Vec::new())
+    }
+
+    /// Shift+Down and Shift+Up: the visible track below the lowest (or above the highest)
+    /// selected track joins the selection. With no track selected this selects the first (or
+    /// last) one, as plain Down and Up do.
+    fn extend_track_selection(&mut self, delta: i64) -> CommandOutcome {
+        let selected = self.selected_tracks();
+        let visible: Vec<usize> = (0..self.song.tracks.len())
+            .filter(|i| !self.og.shape.get(*i).is_some_and(|s| s.1))
+            .collect();
+        let edge = if delta > 0 {
+            selected.last()
+        } else {
+            selected.first()
+        };
+        let Some(edge) = edge.and_then(|d| self.song.tracks.iter().position(|t| &t.device == d))
+        else {
+            return self.select_track(delta);
+        };
+        if self.og.group.is_some() {
+            return CommandOutcome::Declined;
+        }
+        let Some(p) = visible.iter().position(|v| *v == edge) else {
+            return CommandOutcome::Declined;
+        };
+        let to = p as i64 + delta;
+        if to < 0 || to >= visible.len() as i64 {
+            return CommandOutcome::Handled(Vec::new());
+        }
+        let device = self.song.tracks[visible[to as usize]].device.clone();
+        self.og.extra.insert(device);
+        self.repaint = true;
         CommandOutcome::Handled(Vec::new())
     }
 

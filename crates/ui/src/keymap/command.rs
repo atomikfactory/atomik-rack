@@ -1596,6 +1596,20 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.extend_track_selection_down",
+        "Extend Track Selection Down",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
+        "sequencer.extend_track_selection_up",
+        "Extend Track Selection Up",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",
         G::Sequencer,
