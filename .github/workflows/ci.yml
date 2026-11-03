@@ -95,7 +95,8 @@ jobs:
     name: test (${{ matrix.os }}, ${{ matrix.profile }})
     needs: changes
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # The release leg compiles the whole workspace optimised with debug info; it needs longer.
+    timeout-minutes: ${{ matrix.profile == 'release' && 90 || 60 }}
     strategy:
       fail-fast: false
       matrix:
