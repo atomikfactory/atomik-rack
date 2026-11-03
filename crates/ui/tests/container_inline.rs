@@ -885,7 +885,7 @@ fn a_right_click_on_a_free_inner_knob_offers_the_macros_of_its_container() {
         .unwrap();
     assert!(right_click(&mut v, d.doc(), p).is_empty());
     let r = rows(&v);
-    assert_eq!(r.len(), 8);
+    assert_eq!(r.len(), 16);
     assert_eq!(r[0], "Map to macro 1 (Cutoff)");
     assert_eq!(r[1], "Map to macro 2");
     // A row maps the param with the descriptor range; the target names the device relative

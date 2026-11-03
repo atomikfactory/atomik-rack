@@ -8,6 +8,20 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Container CV, sixteen macros, switches and split pass flags.** A container has four CV inputs (`cv1` to `cv4`
+  on its back panel); inside, the INPUT strip has the matching CV jacks, so a modulation source cabled to the
+  container drives any inner CV input (one jack fans out to several), and the bounce is bit for bit the one of
+  the same patch built without a container. A container has sixteen macros instead of eight: macros 9 to 16 are
+  on a new MACROS 9-16 tab of the container editor, and "Map to macro" in a control's menu lists all sixteen. Any
+  macro can be made a switch with the KNOB / SWITCH button (its targets get their minimum below one half and their
+  maximum from one half up); a switch shows an ON / OFF button in its row. Each note split has B, C and P chips
+  that stop it passing pitch bend, controller changes or pressure to its device (it always plays its notes). A
+  project that uses none of it saves as before apart from the version line: the new fields are written only when set,
+  and the project format is now 42, so a reader of 41 refuses a file that uses them instead of failing on an unknown
+  field. Deferred: macro sources (wheel, bend, pressure, velocity, key) driving inner parameters at
+  engine rate and a custom panel designer.
+
 ## [0.3.0-rc.1] - 2026-11-02
 
 ### Added

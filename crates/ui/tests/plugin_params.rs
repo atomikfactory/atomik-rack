@@ -666,7 +666,7 @@ fn map_to_macro_exists_only_inside_a_container_and_maps_through_a_menu() {
     };
     assert!(commands(&acts).is_empty());
     let rows = v.menu_rows();
-    assert_eq!(rows.len(), 8);
+    assert_eq!(rows.len(), 16);
     assert_eq!(rows[0].0, "Map to macro 1");
     let acts = click_at(&mut v, d.doc(), rows[2].1);
     match commands(&acts).as_slice() {

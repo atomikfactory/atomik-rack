@@ -1,12 +1,13 @@
 //! The container: a device whose inside is another rack.
 //!
-//! A [`ContainerDoc`] holds inner devices, inner cables (with **local** keys), eight macros
+//! A [`ContainerDoc`] holds inner devices, inner cables (with **local** keys), sixteen macros
 //! and up to eight note splits. Inner devices are addressed from outside by **path keys**
 //! (`layer/synth`, `layer/fx/comp`; `/` and `~` are not valid in a device key). The reserved
 //! pseudo-device key [`BOUNDARY_KEY`] names the container's inside edge in an inner cable: its
 //! Audio outputs `in_l`, `in_r` carry what arrives at the container, its Audio inputs `out_l`,
-//! `out_r` leave through the container. The boundary has no notes socket (notes enter through
-//! the splits).
+//! `out_r` leave through the container, and its CV outputs `cv1` to `cv4` carry what is cabled to
+//! the container's CV inputs of the same name. The boundary has no notes socket (notes enter
+//! through the splits).
 //!
 //! Containers vanish before the engine sees them: [`RackDoc::expand`] compiles the tree into a
 //! flat device and cable list (see [`crate::expand`]). Everything here is about the document:
@@ -27,8 +28,13 @@ pub const MAX_INNER_DEVICES: usize = 32;
 pub const MAX_PROJECT_INNER: usize = 256;
 /// Most note splits in one container.
 pub const MAX_SPLITS: usize = 8;
-/// Macros per container.
+/// Macro knobs on the front of a container panel and on a macro bank (the first macros of a
+/// container; the others are reached from the container editor).
 pub const MACRO_COUNT: usize = 8;
+/// Macros per container: [`MACRO_COUNT`] knobs and as many again, each of which may be a switch.
+pub const CONTAINER_MACROS: usize = 16;
+/// CV inputs on a container's boundary (`cv1` to `cv4`).
+pub const BOUNDARY_CV: usize = 4;
 /// Most targets of one macro.
 pub const MAX_MACRO_TARGETS: usize = 32;
 /// Most macro targets in one container.
@@ -53,8 +59,8 @@ pub struct ContainerDoc {
     /// Inner cables, in canonical order (sorted), with local keys; an end may be
     /// [`BOUNDARY_KEY`].
     pub cables: Vec<Cable>,
-    /// The eight macros.
-    pub macros: [MacroDoc; MACRO_COUNT],
+    /// The sixteen macros (the first [`MACRO_COUNT`] have a knob on the container's panel).
+    pub macros: [MacroDoc; CONTAINER_MACROS],
     /// Note splits, in slot order (the first is the split device's `out_1`).
     pub splits: Vec<NoteSplit>,
     /// The inside is unfolded in the rack: the container's devices are drawn under its panel.
@@ -63,11 +69,36 @@ pub struct ContainerDoc {
     pub open: bool,
 }
 
-/// One macro: a name and the inner params it drives.
+/// What a macro is: a continuous knob or an on/off switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MacroKind {
+    /// A knob: the value runs 0 to 1 and maps linearly to every target.
+    #[default]
+    Knob,
+    /// A switch: the value is 0 below one half and 1 from one half up, so every target gets its
+    /// `min` or its `max`.
+    Switch,
+}
+
+impl MacroKind {
+    /// The macro value a target is mapped from: the knob's own value, or 0 or 1 for a switch.
+    /// Only a comparison, so every platform agrees.
+    pub fn effective(self, value: f32) -> f32 {
+        match self {
+            MacroKind::Knob => value,
+            MacroKind::Switch if value >= 0.5 => 1.0,
+            MacroKind::Switch => 0.0,
+        }
+    }
+}
+
+/// One macro: a name, a kind and the inner params it drives.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MacroDoc {
     /// User name, at most [`MAX_MACRO_NAME_CHARS`] characters; empty means "Macro N".
     pub name: String,
+    /// Knob or switch.
+    pub kind: MacroKind,
     /// The driven params, at most [`MAX_MACRO_TARGETS`].
     pub targets: Vec<MacroTarget>,
 }
@@ -100,6 +131,40 @@ pub struct NoteSplit {
     pub vel_hi: u8,
     /// Transpose in semitones, -48..=48.
     pub transpose: i8,
+    /// Which channel messages the split passes to its target.
+    pub pass: SplitPass,
+}
+
+/// The channel messages (not notes) a split passes on to its target while it is on. A split
+/// that passes none of them still plays its notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitPass {
+    /// Pitch bend.
+    pub bend: bool,
+    /// Controller changes.
+    pub cc: bool,
+    /// Channel and key pressure.
+    pub pressure: bool,
+}
+
+impl SplitPass {
+    /// Everything passes (what a split has always done).
+    pub const ALL: SplitPass = SplitPass {
+        bend: true,
+        cc: true,
+        pressure: true,
+    };
+
+    /// True when every message passes.
+    pub fn is_all(self) -> bool {
+        self == Self::ALL
+    }
+}
+
+impl Default for SplitPass {
+    fn default() -> Self {
+        Self::ALL
+    }
 }
 
 impl NoteSplit {
@@ -112,6 +177,7 @@ impl NoteSplit {
             vel_lo: 1,
             vel_hi: 127,
             transpose: 0,
+            pass: SplitPass::ALL,
         }
     }
 }
@@ -149,7 +215,7 @@ pub enum ContainerCommand {
     SetMacro {
         /// The container (path key).
         container: DeviceKey,
-        /// Macro index, 0..8.
+        /// Macro index, 0..16.
         index: u8,
         /// The target.
         target: MacroTarget,
@@ -160,7 +226,7 @@ pub enum ContainerCommand {
     RemoveMacroTarget {
         /// The container (path key).
         container: DeviceKey,
-        /// Macro index, 0..8.
+        /// Macro index, 0..16.
         index: u8,
         /// Target device (relative path).
         device: DeviceKey,
@@ -171,10 +237,19 @@ pub enum ContainerCommand {
     RenameMacro {
         /// The container (path key).
         container: DeviceKey,
-        /// Macro index, 0..8.
+        /// Macro index, 0..16.
         index: u8,
         /// The name.
         name: String,
+    },
+    /// Make macro `index` a knob or a switch (see [`MacroKind`]).
+    SetMacroKind {
+        /// The container (path key).
+        container: DeviceKey,
+        /// Macro index, 0..16.
+        index: u8,
+        /// The new kind.
+        kind: MacroKind,
     },
     /// Unfold (`open`) or fold the container `container` (a path key) in the rack view: whether
     /// its devices are drawn under its panel. Presentation only; one undo step.
@@ -560,7 +635,8 @@ pub(crate) fn notes_input(desc: &DeviceDescriptor) -> Option<&'static str> {
 }
 
 /// Kind and direction of a socket of the container scope `devices`, local keys. The boundary
-/// has Audio outputs `in_l`, `in_r` and Audio inputs `out_l`, `out_r`.
+/// has Audio outputs `in_l`, `in_r`, Cv outputs `cv1` to `cv4` and Audio inputs `out_l`,
+/// `out_r`.
 pub(crate) fn scope_socket(
     devices: &[RackDevice],
     registry: &Registry,
@@ -569,6 +645,7 @@ pub(crate) fn scope_socket(
     if at.device.0 == BOUNDARY_KEY {
         return match at.socket.as_str() {
             "in_l" | "in_r" => Ok((SocketKind::Audio, Direction::Output)),
+            "cv1" | "cv2" | "cv3" | "cv4" => Ok((SocketKind::Cv, Direction::Output)),
             "out_l" | "out_r" => Ok((SocketKind::Audio, Direction::Input)),
             other => Err(ModelError::UnknownKey(other.to_owned())),
         };
@@ -950,12 +1027,17 @@ pub(crate) fn collect_device_assets(
 }
 
 /// The sockets of the boundary pseudo-device as an inner cable sees them: the Audio outputs
-/// `in_l`, `in_r` (what arrives at the container) and the Audio inputs `out_l`, `out_r` (what
-/// leaves through it), as `(key, kind, direction)`. The boundary has no notes socket.
-pub fn boundary_sockets() -> [(&'static str, SocketKind, Direction); 4] {
+/// `in_l`, `in_r` (what arrives at the container), the Cv outputs `cv1` to `cv4` (what is cabled
+/// to the container's CV inputs) and the Audio inputs `out_l`, `out_r` (what leaves through it),
+/// as `(key, kind, direction)`. The boundary has no notes socket.
+pub fn boundary_sockets() -> [(&'static str, SocketKind, Direction); 4 + BOUNDARY_CV] {
     [
         ("in_l", SocketKind::Audio, Direction::Output),
         ("in_r", SocketKind::Audio, Direction::Output),
+        ("cv1", SocketKind::Cv, Direction::Output),
+        ("cv2", SocketKind::Cv, Direction::Output),
+        ("cv3", SocketKind::Cv, Direction::Output),
+        ("cv4", SocketKind::Cv, Direction::Output),
         ("out_l", SocketKind::Audio, Direction::Input),
         ("out_r", SocketKind::Audio, Direction::Input),
     ]

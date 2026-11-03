@@ -23,6 +23,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "render/combine.rs",
     "render/console.rs",
     "render/container_demo.rs",
+    "render/container_modulation.rs",
     "render/controller_lanes.rs",
     "render/determinism_examples.rs",
     "render/device_patch_bounce.rs",

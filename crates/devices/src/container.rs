@@ -5,11 +5,13 @@
 //! factory below builds a harmless pass-through only so that a descriptor-only user (patch files,
 //! registry tests) never crashes. The render patch builder rejects the type with a clear message.
 //!
-//! Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `out_l`, `out_r` (Audio out).
-//! Params: `macro1` to `macro8` (ids 0 to 7, 0..1, default 0) and `bypass` (id 8, a 0/1
-//! toggle). The macro values are applied to inner params outside the engine, and the model's
-//! expansion consumes `bypass`: while it is on the inside is left out and `in_l`, `in_r` go
-//! straight to `out_l`, `out_r`, so the engine never sees the switch.
+//! Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `out_l`, `out_r` (Audio out) and
+//! `cv1` to `cv4` (CV in; the inside sees them as the boundary's CV outputs of the same name).
+//! Params: `macro1` to `macro8` (ids 0 to 7, 0..1, default 0), `bypass` (id 8, a 0/1 toggle) and
+//! `macro9` to `macro16` (ids 9 to 16, appended so older ids keep their place). The macro values
+//! are applied to inner params outside the engine (a switch macro is on from one half up), and
+//! the model's expansion consumes `bypass`: while it is on the inside is left out and `in_l`,
+//! `in_r` go straight to `out_l`, `out_r`, so the engine never sees the switch.
 
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -36,7 +38,7 @@ const fn sock(
     }
 }
 
-static SOCKETS: [SocketDescriptor; 5] = [
+static SOCKETS: [SocketDescriptor; 9] = [
     sock(0, "in_l", "In L", SocketKind::Audio, Direction::Input),
     sock(1, "in_r", "In R", SocketKind::Audio, Direction::Input),
     sock(
@@ -48,6 +50,10 @@ static SOCKETS: [SocketDescriptor; 5] = [
     ),
     sock(3, "out_l", "Out L", SocketKind::Audio, Direction::Output),
     sock(4, "out_r", "Out R", SocketKind::Audio, Direction::Output),
+    sock(5, "cv1", "CV 1", SocketKind::Cv, Direction::Input),
+    sock(6, "cv2", "CV 2", SocketKind::Cv, Direction::Input),
+    sock(7, "cv3", "CV 3", SocketKind::Cv, Direction::Input),
+    sock(8, "cv4", "CV 4", SocketKind::Cv, Direction::Input),
 ];
 
 const fn macro_param(id: u32, key: &'static str, name: &'static str) -> ParamDescriptor {
@@ -67,7 +73,7 @@ const fn macro_param(id: u32, key: &'static str, name: &'static str) -> ParamDes
 /// Key of the bypass param (the model's expansion reads it by this name).
 pub const BYPASS_KEY: &str = "bypass";
 
-static PARAMS: [ParamDescriptor; 9] = [
+static PARAMS: [ParamDescriptor; 17] = [
     macro_param(0, "macro1", "Macro 1"),
     macro_param(1, "macro2", "Macro 2"),
     macro_param(2, "macro3", "Macro 3"),
@@ -87,6 +93,14 @@ static PARAMS: [ParamDescriptor; 9] = [
         unit: Unit::Toggle,
         discrete: true,
     },
+    macro_param(9, "macro9", "Macro 9"),
+    macro_param(10, "macro10", "Macro 10"),
+    macro_param(11, "macro11", "Macro 11"),
+    macro_param(12, "macro12", "Macro 12"),
+    macro_param(13, "macro13", "Macro 13"),
+    macro_param(14, "macro14", "Macro 14"),
+    macro_param(15, "macro15", "Macro 15"),
+    macro_param(16, "macro16", "Macro 16"),
 ];
 
 /// Static description of the container.
@@ -155,9 +169,13 @@ mod tests {
                 ("notes_in", SocketKind::Notes, Direction::Input),
                 ("out_l", SocketKind::Audio, Direction::Output),
                 ("out_r", SocketKind::Audio, Direction::Output),
+                ("cv1", SocketKind::Cv, Direction::Input),
+                ("cv2", SocketKind::Cv, Direction::Input),
+                ("cv3", SocketKind::Cv, Direction::Input),
+                ("cv4", SocketKind::Cv, Direction::Input),
             ]
         );
-        assert_eq!(DESCRIPTOR.params.len(), 9);
+        assert_eq!(DESCRIPTOR.params.len(), 17);
         for (i, p) in DESCRIPTOR.params[..8].iter().enumerate() {
             assert_eq!(p.id, ParamId(i as u32));
             assert_eq!(p.key, format!("macro{}", i + 1));
@@ -170,6 +188,12 @@ mod tests {
         assert_eq!((bypass.min, bypass.max, bypass.default), (0.0, 1.0, 0.0));
         assert_eq!(bypass.unit, Unit::Toggle);
         assert!(bypass.discrete);
+        for (i, p) in DESCRIPTOR.params[9..].iter().enumerate() {
+            assert_eq!(p.id, ParamId(9 + i as u32));
+            assert_eq!(p.key, format!("macro{}", i + 9));
+            assert_eq!((p.min, p.max, p.default), (0.0, 1.0, 0.0));
+            assert!(!p.discrete);
+        }
     }
 
     #[test]

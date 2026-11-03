@@ -459,17 +459,18 @@ fn rows(v: &RackView) -> Vec<String> {
 }
 
 #[test]
-fn a_right_click_on_a_free_knob_offers_the_eight_macros_and_maps_with_the_descriptor_range() {
+fn a_right_click_on_a_free_knob_offers_the_sixteen_macros_and_maps_with_the_descriptor_range() {
     let d = layered();
     let reg = registry();
     let mut v = scoped_view(d.doc(), &["layer"]);
     let p = v.control_center(&key("pad"), "filter.resonance").unwrap();
     assert!(right_click(&mut v, d.doc(), p).is_empty());
     let r = rows(&v);
-    assert_eq!(r.len(), 8);
+    assert_eq!(r.len(), 16);
     assert_eq!(r[0], "Map to macro 1 (Cutoff)");
     assert_eq!(r[1], "Map to macro 2");
     assert_eq!(r[7], "Map to macro 8");
+    assert_eq!(r[15], "Map to macro 16");
     let (_, at) = v.macro_menu_rows().remove(2);
     let a = click(&mut v, d.doc(), at);
     let desc = reg.get(SYNTH).unwrap().descriptor;

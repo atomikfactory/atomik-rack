@@ -276,7 +276,7 @@ fn the_slots_are_saved_only_when_used_and_round_trip() {
 fn a_project_without_slots_differs_from_its_version_40_file_in_the_version_line_alone() {
     let (d, r) = with_device();
     let current = text(&d);
-    let old = current.replacen("\"version\": 41", "\"version\": 40", 1);
+    let old = current.replacen("\"version\": 42", "\"version\": 40", 1);
     let loaded = load_project(&old, &r).expect("a version 40 file loads");
     assert_eq!(save_project(&loaded), current);
 }
@@ -286,7 +286,7 @@ fn the_field_is_refused_in_a_version_40_file_and_on_other_devices_and_when_malfo
     let (mut d, r) = with_device();
     run(&mut d, &r, [set("m", 0, Some(ModSlot::new(0, 0)))]);
     let saved = text(&d);
-    let old = saved.replacen("\"version\": 41", "\"version\": 40", 1);
+    let old = saved.replacen("\"version\": 42", "\"version\": 40", 1);
     let e = load_project(&old, &r).unwrap_err().to_string();
     assert!(e.contains("mods") && e.contains("unknown field"), "{e}");
     // On a device type without a matrix.

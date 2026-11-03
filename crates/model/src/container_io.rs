@@ -4,7 +4,7 @@
 //! "inner": { "devices": [ <device objects, local keys> ],
 //!            "cables":  [ {"from": "lo:out_l", "to": "boundary:out_l"} … ],
 //!            "macros":  [ {"name": "Tone", "targets": [ {"device": "fx/delay", "param": "mix",
-//!                                                         "min": 0, "max": 1} … ]} × 8 ],
+//!                                                         "min": 0, "max": 1} … ]} × 8 or 16 ],
 //!            "splits":  [ {"target": "lo", "key_lo", "key_hi", "vel_lo", "vel_hi",
 //!                          "transpose"} … ],
 //!            "open":    true }
@@ -13,13 +13,18 @@
 //! `"open"` is optional: it is written, as the last field, only when the container is unfolded
 //! in the rack (a presentation flag); a missing one means folded. Inner devices and cables are in
 //! the same canonical form as at the top level (cable ends
-//! are local keys; the container's inside edge is `boundary`), `macros` always has 8 entries.
+//! are local keys; the container's inside edge is `boundary`), `macros` has 8 entries, or 16
+//! when any of the last eight is named, a switch or has a target.
+//!
+//! Three more fields are optional and written only when they differ from the default: a macro's
+//! `"kind": "switch"` (after its name), and a split's `"pass_bend"`, `"pass_cc"` and
+//! `"pass_pressure"` set to `false` (after `"transpose"`; a missing one passes).
 //! The reader checks shapes while it reads; the rules (limits, keys, cables, splits, macros)
 //! are those of [`crate::RackDoc::check_containers`], run once on the loaded project.
 
 use crate::container::{
-    ContainerDoc, MACRO_COUNT, MAX_CONTAINER_DEPTH, MacroDoc, MacroTarget, NoteSplit, Seg,
-    Violation,
+    CONTAINER_MACROS, ContainerDoc, MACRO_COUNT, MAX_CONTAINER_DEPTH, MacroDoc, MacroKind,
+    MacroTarget, NoteSplit, Seg, SplitPass, Violation,
 };
 use crate::patch::{
     DeviceFormat, JsonPath, PluginUse, array, endpoint, f32_text, json_str, load_device, number,
@@ -35,6 +40,7 @@ const INNER_FIELDS: &[&str] = &["devices", "cables", "macros", "splits"];
 const INNER_ALLOWED: &[&str] = &["devices", "cables", "macros", "splits", "open"];
 const CABLE_FIELDS: &[&str] = &["from", "to"];
 const MACRO_FIELDS: &[&str] = &["name", "targets"];
+const MACRO_ALLOWED: &[&str] = &["name", "kind", "targets"];
 const TARGET_FIELDS: &[&str] = &["device", "param", "min", "max"];
 const SPLIT_FIELDS: &[&str] = &[
     "target",
@@ -43,6 +49,17 @@ const SPLIT_FIELDS: &[&str] = &[
     "vel_lo",
     "vel_hi",
     "transpose",
+];
+const SPLIT_ALLOWED: &[&str] = &[
+    "target",
+    "key_lo",
+    "key_hi",
+    "vel_lo",
+    "vel_hi",
+    "transpose",
+    "pass_bend",
+    "pass_cc",
+    "pass_pressure",
 ];
 
 /// The JSON path of a violation found by the container check, below `root`.
@@ -98,16 +115,28 @@ pub(crate) fn load_inner(
 
     let macros_path = path.field("macros");
     let list = array(&o["macros"], &macros_path)?;
-    if list.len() != MACRO_COUNT {
+    if list.len() != MACRO_COUNT && list.len() != CONTAINER_MACROS {
         return Err(macros_path.error(format!(
-            "expected {MACRO_COUNT} macros, found {}",
+            "expected {MACRO_COUNT} or {CONTAINER_MACROS} macros, found {}",
             list.len()
         )));
     }
-    let mut macros: [MacroDoc; MACRO_COUNT] = Default::default();
+    let mut macros: [MacroDoc; CONTAINER_MACROS] = Default::default();
     for (i, item) in list.iter().enumerate() {
         let p = macros_path.index(i);
-        let m = object(item, &p, MACRO_FIELDS, MACRO_FIELDS)?;
+        let m = object(item, &p, MACRO_ALLOWED, MACRO_FIELDS)?;
+        let kind = match m.get("kind") {
+            None => MacroKind::Knob,
+            Some(k) => match k.as_str() {
+                Some("knob") => MacroKind::Knob,
+                Some("switch") => MacroKind::Switch,
+                _ => {
+                    return Err(p
+                        .field("kind")
+                        .error(format!("expected \"knob\" or \"switch\", found {k}")));
+                }
+            },
+        };
         let targets_path = p.field("targets");
         let mut targets = Vec::new();
         for (j, t) in array(&m["targets"], &targets_path)?.iter().enumerate() {
@@ -122,6 +151,7 @@ pub(crate) fn load_inner(
         }
         macros[i] = MacroDoc {
             name: string(&m["name"], &p.field("name"))?.to_owned(),
+            kind,
             targets,
         };
     }
@@ -130,7 +160,14 @@ pub(crate) fn load_inner(
     let mut splits = Vec::new();
     for (i, item) in array(&o["splits"], &splits_path)?.iter().enumerate() {
         let p = splits_path.index(i);
-        let s = object(item, &p, SPLIT_FIELDS, SPLIT_FIELDS)?;
+        let s = object(item, &p, SPLIT_ALLOWED, SPLIT_FIELDS)?;
+        let flag = |name: &str| match s.get(name) {
+            None => Ok(true),
+            Some(v) => v.as_bool().ok_or_else(|| {
+                p.field(name)
+                    .error(format!("expected true or false, found {v}"))
+            }),
+        };
         let byte = |name: &str| uint(&s[name], &p.field(name), 255).map(|n| n as u8);
         let transpose_path = p.field("transpose");
         let transpose = s["transpose"].as_i64().ok_or_else(|| {
@@ -145,6 +182,11 @@ pub(crate) fn load_inner(
             vel_lo: byte("vel_lo")?,
             vel_hi: byte("vel_hi")?,
             transpose,
+            pass: SplitPass {
+                bend: flag("pass_bend")?,
+                cc: flag("pass_cc")?,
+                pressure: flag("pass_pressure")?,
+            },
         });
     }
 
@@ -209,11 +251,24 @@ pub(crate) fn write_inner(
             format!("\n{q}")
         }
     );
-    for (i, m) in inner.macros.iter().enumerate() {
+    // The last eight macros are written only when one of them is in use.
+    let written = if inner.macros[MACRO_COUNT..]
+        .iter()
+        .all(|m| *m == MacroDoc::default())
+    {
+        MACRO_COUNT
+    } else {
+        CONTAINER_MACROS
+    };
+    for (i, m) in inner.macros[..written].iter().enumerate() {
         let sep = if i == 0 { "" } else { "," };
+        let kind = match m.kind {
+            MacroKind::Knob => "",
+            MacroKind::Switch => ", \"kind\": \"switch\"",
+        };
         let _ = write!(
             w,
-            "{sep}\n{r}{{\"name\": {}, \"targets\": [",
+            "{sep}\n{r}{{\"name\": {}{kind}, \"targets\": [",
             json_str(&m.name)
         );
         for (j, t) in m.targets.iter().enumerate() {
@@ -242,7 +297,7 @@ pub(crate) fn write_inner(
         let sep = if i == 0 { "" } else { "," };
         let _ = write!(
             w,
-            "{sep}\n{r}{{\"target\": {}, \"key_lo\": {}, \"key_hi\": {}, \"vel_lo\": {}, \"vel_hi\": {}, \"transpose\": {}}}",
+            "{sep}\n{r}{{\"target\": {}, \"key_lo\": {}, \"key_hi\": {}, \"vel_lo\": {}, \"vel_hi\": {}, \"transpose\": {}",
             json_str(&s.target.0),
             s.key_lo,
             s.key_hi,
@@ -250,6 +305,16 @@ pub(crate) fn write_inner(
             s.vel_hi,
             s.transpose
         );
+        for (name, on) in [
+            ("pass_bend", s.pass.bend),
+            ("pass_cc", s.pass.cc),
+            ("pass_pressure", s.pass.pressure),
+        ] {
+            if !on {
+                let _ = write!(w, ", \"{name}\": false");
+            }
+        }
+        w.push('}');
     }
     let _ = write!(
         w,

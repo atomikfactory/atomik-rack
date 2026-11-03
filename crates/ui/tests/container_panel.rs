@@ -64,8 +64,8 @@ fn the_panel_is_two_units_with_eight_macro_knobs_and_names_below_them() {
         panel.open.x1 <= panel.edit.x0,
         "OPEN and EDIT do not overlap"
     );
-    // Five sockets on the back.
-    assert_eq!(s.back.len(), 5);
+    // Nine sockets on the back: audio, notes, four CV inputs.
+    assert_eq!(s.back.len(), 9);
 }
 
 // ------------------------------------------------------------------ goldens

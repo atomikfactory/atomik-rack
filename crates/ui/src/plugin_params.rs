@@ -65,8 +65,8 @@ use crate::tooltip::Help;
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    Command, ContainerCommand, DeviceKey, MACRO_COUNT, MacroTarget, PLUGIN_GESTURE_MERGE_BASE,
-    PluginCommand, PluginDoc, RackDoc,
+    Command, ContainerCommand, DeviceKey, MacroTarget, PLUGIN_GESTURE_MERGE_BASE, PluginCommand,
+    PluginDoc, RackDoc,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use vello::kurbo::{Point, Rect};
@@ -246,7 +246,7 @@ pub struct PluginParamsView {
     /// Params a macro drives: param id to (container path key, macro 0-based), outermost first.
     drivers: BTreeMap<u32, (DeviceKey, u8)>,
     /// Name of each macro of the immediate container (menu labels).
-    macro_names: [String; MACRO_COUNT],
+    macro_names: [String; atomik_model::CONTAINER_MACROS],
     /// Display texts: param id to (bits of the value it was asked for, text).
     texts: BTreeMap<u32, (u32, String)>,
     requested: BTreeSet<(u32, u32)>,
@@ -970,7 +970,7 @@ impl PluginParamsView {
     fn sync_drivers(&mut self, doc: &RackDoc, key: &DeviceKey) {
         let segs: Vec<&str> = key.0.split('/').collect();
         let mut drivers = BTreeMap::new();
-        let mut names: [String; MACRO_COUNT] = Default::default();
+        let mut names: [String; atomik_model::CONTAINER_MACROS] = Default::default();
         for depth in 1..segs.len() {
             let container = DeviceKey(segs[..depth].join("/"));
             let relative = segs[depth..].join("/");
@@ -1305,7 +1305,7 @@ impl PluginParamsView {
                 self.locked(id);
                 return;
             }
-            None => (0..MACRO_COUNT as u8)
+            None => (0..atomik_model::CONTAINER_MACROS as u8)
                 .map(|m| {
                     let name = &self.macro_names[usize::from(m)];
                     let label = if name.is_empty() {

@@ -99,10 +99,10 @@ pub mod song;
 
 pub use clip_transform::{SCALE_PERCENT_MAX, SCALE_PERCENT_MIN};
 pub use container::{
-    BOUNDARY_KEY, CONTAINER_TYPE, ContainerCommand, ContainerDoc, FORBIDDEN_INSIDE, MACRO_COUNT,
-    MAX_CONTAINER_DEPTH, MAX_CONTAINER_TARGETS, MAX_INNER_DEVICES, MAX_MACRO_NAME_CHARS,
-    MAX_MACRO_TARGETS, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, MacroTarget, NoteSplit, SPLIT_TYPE,
-    boundary_sockets, scoped_cable, split_path,
+    BOUNDARY_CV, BOUNDARY_KEY, CONTAINER_MACROS, CONTAINER_TYPE, ContainerCommand, ContainerDoc,
+    FORBIDDEN_INSIDE, MACRO_COUNT, MAX_CONTAINER_DEPTH, MAX_CONTAINER_TARGETS, MAX_INNER_DEVICES,
+    MAX_MACRO_NAME_CHARS, MAX_MACRO_TARGETS, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, MacroKind,
+    MacroTarget, NoteSplit, SPLIT_TYPE, SplitPass, boundary_sockets, scoped_cable, split_path,
 };
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
 pub use device_patch::MAX_PATCH_NAME_CHARS;
@@ -814,7 +814,7 @@ pub enum Command {
 /// | container removed, added back (undo), duplicated, or added with `AddDevice` | `DeviceRemoved(container)` or `DeviceAdded(container)` for the **whole inside** (the app expands it; no per-inner ops) |
 /// | `SetSplits` | `SplitsChanged`, plus `RoutingChanged` only when the list of targets changed |
 /// | `SetOpen` (also undo/redo) | `ViewChanged` |
-/// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
+/// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro`, `SetMacroKind` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
 /// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
 /// | `SetState` (also undo/redo) | `PluginStateChanged` |

@@ -42,6 +42,7 @@ pub fn split(target: &str, lo: u8, hi: u8, transpose: i8) -> NoteSplit {
         vel_lo: 1,
         vel_hi: 127,
         transpose,
+        pass: atomik_model::SplitPass::ALL,
     }
 }
 

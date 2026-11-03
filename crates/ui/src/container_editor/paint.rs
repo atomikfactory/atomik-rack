@@ -9,7 +9,7 @@ use crate::seq_paint as sp;
 use crate::theme::mix;
 use crate::widget::format_value;
 use crate::zone_edit::note_name;
-use atomik_model::MACRO_COUNT;
+use atomik_model::{MACRO_COUNT, MacroKind};
 use vello::kurbo::{Affine, Line, Rect, RoundedRect};
 
 pub(super) fn paint(v: &ContainerEditorView, c: &mut dyn Canvas) {
@@ -20,7 +20,7 @@ pub(super) fn paint(v: &ContainerEditorView, c: &mut dyn Canvas) {
     if v.container.is_some() && v.present {
         match v.tab {
             ContainerTab::Splits => splits(v, c),
-            ContainerTab::Macros => macros(v, c),
+            ContainerTab::Macros | ContainerTab::MoreMacros => macros(v, c),
         }
     } else {
         sp::label(
@@ -273,6 +273,15 @@ fn list(v: &ContainerEditorView, c: &mut dyn Canvas) {
         t.text_muted,
         Align::Center,
     );
+    sp::label(
+        c,
+        "PASS",
+        v.pass_rect(0, 1).center().x,
+        top + 10.0,
+        8.0,
+        t.text_muted,
+        Align::Center,
+    );
     let can_add = !v.eligible.is_empty() && v.inner.splits.len() < atomik_model::MAX_SPLITS;
     sp::button(
         c,
@@ -341,6 +350,20 @@ fn list(v: &ContainerEditorView, c: &mut dyn Canvas) {
             t.text_muted,
             Align::Start,
         );
+        for (n, (text, on)) in [("B", s.pass.bend), ("C", s.pass.cc), ("P", s.pass.pressure)]
+            .into_iter()
+            .enumerate()
+        {
+            let n = n as u8;
+            sp::button(
+                c,
+                st,
+                v.pass_rect(i, n),
+                text,
+                on.then_some(v.accent),
+                v.hover == Hit::Pass(i, n),
+            );
+        }
         sp::button(
             c,
             st,
@@ -396,7 +419,8 @@ fn list(v: &ContainerEditorView, c: &mut dyn Canvas) {
 fn macros(v: &ContainerEditorView, c: &mut dyn Canvas) {
     let st = &v.st;
     let t = &st.base;
-    for i in 0..MACRO_COUNT {
+    let first = v.tab.first_macro();
+    for i in first..first + MACRO_COUNT {
         let r = v.macro_row_rect(i);
         let selected = v.selected_macro == i;
         if selected {
@@ -433,7 +457,19 @@ fn macros(v: &ContainerEditorView, c: &mut dyn Canvas) {
         let kr = v.macro_knob_rect(i);
         let value =
             f64::from(v.macro_params[i].map_or(0.0, |p| p.to_normalized(v.macro_values[i])));
-        knob(c, t, kr.center(), value, false, v.accent);
+        if v.inner.macros[i].kind == MacroKind::Switch {
+            let on = value >= 0.5;
+            sp::button(
+                c,
+                st,
+                kr.inflate(-2.0, -5.0),
+                if on { "ON" } else { "OFF" },
+                on.then_some(v.accent),
+                v.hover == Hit::MacroKnob(i),
+            );
+        } else {
+            knob(c, t, kr.center(), value, false, v.accent);
+        }
         sp::label(
             c,
             &format!("{:.0} %", value * 100.0),
@@ -474,6 +510,19 @@ fn targets(v: &ContainerEditorView, c: &mut dyn Canvas) {
         Align::Start,
     );
     let hdr = v.target_row_rect(0);
+    let kind = v.inner.macros[m].kind;
+    sp::button(
+        c,
+        st,
+        v.kind_rect(),
+        if kind == MacroKind::Switch {
+            "SWITCH"
+        } else {
+            "KNOB"
+        },
+        (kind == MacroKind::Switch).then_some(v.accent),
+        v.hover == Hit::Kind,
+    );
     for (text, x) in [
         ("MIN", v.field_rect(0, Bound::Min).center().x),
         ("MAX", v.field_rect(0, Bound::Max).center().x),

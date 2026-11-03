@@ -966,12 +966,16 @@ fn every_split_list_maps_to_its_slots() {
 #[test]
 fn boundary_sockets_and_macro_names() {
     let s = atomik_model::boundary_sockets();
-    assert_eq!(s.map(|x| x.0), ["in_l", "in_r", "out_l", "out_r"]);
+    assert_eq!(
+        s.map(|x| x.0),
+        ["in_l", "in_r", "cv1", "cv2", "cv3", "cv4", "out_l", "out_r"]
+    );
     let m = atomik_model::MacroDoc::default();
     assert_eq!(m.display_name(2), "Macro 3");
     let m = atomik_model::MacroDoc {
         name: "Tone".into(),
         targets: vec![],
+        ..Default::default()
     };
     assert_eq!(m.display_name(0), "Tone");
 }

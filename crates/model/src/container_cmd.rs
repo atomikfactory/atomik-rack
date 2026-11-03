@@ -9,7 +9,7 @@
 //! rule of has one home.
 
 use crate::container::{
-    ContainerCommand, ContainerDoc, FORBIDDEN_INSIDE, MACRO_COUNT, MAX_CONTAINER_DEPTH,
+    CONTAINER_MACROS, ContainerCommand, ContainerDoc, FORBIDDEN_INSIDE, MAX_CONTAINER_DEPTH,
     MAX_INNER_DEVICES, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, NoteSplit, SPLIT_TYPE, new_device,
     notes_input, scope_socket, split_path,
 };
@@ -102,7 +102,7 @@ pub(crate) fn plan(
                     desc.type_id, target.param
                 )));
             }
-            if let Some(k) = (0..MACRO_COUNT).find(|&k| {
+            if let Some(k) = (0..CONTAINER_MACROS).find(|&k| {
                 k != i
                     && c.macros[k]
                         .targets
@@ -173,7 +173,27 @@ pub(crate) fn plan(
             let old = c.macros[i].clone();
             let new = MacroDoc {
                 name,
-                targets: old.targets.clone(),
+                ..old.clone()
+            };
+            let edit = Edit::Macro {
+                container,
+                index,
+                old,
+                new,
+            };
+            validated(doc, registry, edit)
+        }
+        ContainerCommand::SetMacroKind {
+            container,
+            index,
+            kind,
+        } => {
+            let c = container_of(doc, &container)?;
+            let i = macro_index(index)?;
+            let old = c.macros[i].clone();
+            let new = MacroDoc {
+                kind,
+                ..old.clone()
             };
             let edit = Edit::Macro {
                 container,
@@ -203,11 +223,11 @@ pub(crate) fn plan(
 }
 
 fn macro_index(index: u8) -> Result<usize, ModelError> {
-    if usize::from(index) < MACRO_COUNT {
+    if usize::from(index) < CONTAINER_MACROS {
         Ok(usize::from(index))
     } else {
         Err(bad_macro(format!(
-            "macro index {index} is outside 0..{MACRO_COUNT}"
+            "macro index {index} is outside 0..{CONTAINER_MACROS}"
         )))
     }
 }
@@ -397,8 +417,8 @@ pub(crate) fn remove_inner(doc: &RackDoc, key: &DeviceKey) -> Result<Edit, Model
                     index: i as u8,
                     old: m.clone(),
                     new: MacroDoc {
-                        name: m.name.clone(),
                         targets: kept,
+                        ..m.clone()
                     },
                 });
             }

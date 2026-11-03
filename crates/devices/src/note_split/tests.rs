@@ -83,7 +83,7 @@ fn descriptor_matches_the_contract() {
         assert_eq!(s.kind, SocketKind::Notes);
         assert_eq!(s.direction, Direction::Output);
     }
-    assert_eq!(DESCRIPTOR.params.len(), 48);
+    assert_eq!(DESCRIPTOR.params.len(), 72);
     let tail = [
         ("on", 0.0, 1.0, 0.0),
         ("key_lo", 0.0, 127.0, 0.0),
@@ -98,6 +98,17 @@ fn descriptor_matches_the_contract() {
             assert_eq!(p.id, ParamId((6 * (k - 1) + j) as u32));
             assert_eq!(p.key, format!("s{k}.{name}"));
             assert_eq!((p.min, p.max, p.default), (*lo, *hi, *def), "{}", p.key);
+            assert!(p.discrete, "{}", p.key);
+        }
+    }
+    // The pass flags follow the slot params, three per slot, all defaulting to on.
+    for k in 1..=8usize {
+        for (j, name) in ["pass_bend", "pass_cc", "pass_pressure"].iter().enumerate() {
+            let at = 48 + 3 * (k - 1) + j;
+            let p = &DESCRIPTOR.params[at];
+            assert_eq!(p.id, ParamId(at as u32));
+            assert_eq!(p.key, format!("s{k}.{name}"));
+            assert_eq!((p.min, p.max, p.default), (0.0, 1.0, 1.0), "{}", p.key);
             assert!(p.discrete, "{}", p.key);
         }
     }
@@ -348,6 +359,69 @@ fn channel_messages_go_to_every_enabled_slot_and_only_to_those() {
         "a disabled slot gets nothing"
     );
     assert!(kinds(&h, "out_4").is_empty());
+}
+
+#[test]
+fn a_slot_passes_only_the_channel_messages_whose_flag_is_on() {
+    let mut h = rig();
+    slot(&mut h, 1, true, (0, 127), (1, 127), 0);
+    slot(&mut h, 2, true, (0, 127), (1, 127), 0);
+    slot(&mut h, 3, true, (0, 127), (1, 127), 0);
+    h.set_param("s1.pass_bend", 0.0);
+    h.set_param("s2.pass_cc", 0.0);
+    h.set_param("s3.pass_pressure", 0.0);
+    let bend = NoteKind::PitchBend { value: 0.5 };
+    let cc = NoteKind::Cc {
+        controller: 74,
+        value: 0.25,
+    };
+    let press = NoteKind::ChannelPressure { value: 0.5 };
+    let poly = NoteKind::PolyPressure {
+        key: 60,
+        value: 0.5,
+    };
+    feed(
+        &mut h,
+        &[
+            on(0, 60, 0.5),
+            ev(1, bend),
+            ev(2, cc),
+            ev(3, press),
+            ev(4, poly),
+        ],
+    );
+    let other = |kind| (0u16, K::Other(kind)).1;
+    let sent = |out: &str| -> Vec<K> { kinds(&h, out).into_iter().map(|(_, k)| k).collect() };
+    assert_eq!(
+        sent("out_1"),
+        vec![K::On(60, 64), other(cc), other(press), other(poly)],
+        "no bend"
+    );
+    assert_eq!(
+        sent("out_2"),
+        vec![K::On(60, 64), other(bend), other(press), other(poly)],
+        "no CC"
+    );
+    assert_eq!(
+        sent("out_3"),
+        vec![K::On(60, 64), other(bend), other(cc)],
+        "no pressure, channel or key"
+    );
+}
+
+#[test]
+fn a_slot_that_passes_nothing_still_plays_and_releases_its_notes() {
+    let mut h = rig();
+    slot(&mut h, 1, true, (0, 127), (1, 127), 0);
+    for p in ["pass_bend", "pass_cc", "pass_pressure"] {
+        h.set_param(&format!("s1.{p}"), 0.0);
+    }
+    let bend = NoteKind::PitchBend { value: 0.5 };
+    feed(&mut h, &[on(0, 60, 0.5), ev(1, bend), off(5, 60)]);
+    assert_eq!(
+        kinds(&h, "out_1"),
+        vec![(0, K::On(60, 64)), (5, K::Off(60))]
+    );
 }
 
 #[test]

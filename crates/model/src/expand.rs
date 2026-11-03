@@ -30,7 +30,7 @@
 //! must walk the expansion instead.
 
 use crate::container::{
-    BOUNDARY_KEY, ContainerDoc, MACRO_COUNT, NoteSplit, SPLIT_TYPE, find_relative, notes_input,
+    BOUNDARY_KEY, CONTAINER_MACROS, ContainerDoc, NoteSplit, SPLIT_TYPE, find_relative, notes_input,
 };
 use crate::{
     AutomationPoint, Cable, CurveDoc, DeviceKey, DrumDoc, INTERFACE_KEY, PluginDoc, RackDevice,
@@ -167,7 +167,7 @@ pub fn expand_macro_lane(
 
 fn macro_index(param: &str) -> Option<usize> {
     let n: usize = param.strip_prefix("macro")?.parse().ok()?;
-    (1..=MACRO_COUNT)
+    (1..=CONTAINER_MACROS)
         .contains(&n)
         .then_some(n - 1)
         .filter(|_| param == format!("macro{n}"))
@@ -181,6 +181,7 @@ fn lanes(
     points: &[AutomationPoint],
     out: &mut Vec<(DeviceKey, String, Vec<AutomationPoint>)>,
 ) {
+    let kind = inner.macros[index].kind;
     for t in &inner.macros[index].targets {
         let Some(dev) = find_relative(&inner.devices, &t.device.0) else {
             continue;
@@ -194,7 +195,7 @@ fn lanes(
         let mapped: Vec<AutomationPoint> = points
             .iter()
             .map(|p| AutomationPoint {
-                value: macro_value(t.min, t.max, p.value, pd),
+                value: macro_value(t.min, t.max, kind.effective(p.value), pd),
                 ..*p
             })
             .collect();
@@ -361,7 +362,7 @@ impl<'a> Builder<'a> {
             if bypassed {
                 self.bypassed.insert(path.clone());
             } else {
-                for k in 0..MACRO_COUNT {
+                for k in 0..CONTAINER_MACROS {
                     self.apply_macro(&path, d, inner, k);
                 }
             }
@@ -400,7 +401,7 @@ impl<'a> Builder<'a> {
         if m.targets.is_empty() {
             return;
         }
-        let value = self.effective_macro(path, d, k);
+        let value = m.kind.effective(self.effective_macro(path, d, k));
         let mut resolved = Vec::new();
         for t in &m.targets {
             let Some(dev) = find_relative(&inner.devices, &t.device.0) else {
@@ -605,6 +606,16 @@ fn split_params(splits: &[NoteSplit]) -> BTreeMap<String, f32> {
         p.insert(format!("s{k}.vel_lo"), f32::from(s.vel_lo));
         p.insert(format!("s{k}.vel_hi"), f32::from(s.vel_hi));
         p.insert(format!("s{k}.transpose"), f32::from(s.transpose));
+        // A pass flag is written only when it is off: the device's default passes everything.
+        for (name, on) in [
+            ("pass_bend", s.pass.bend),
+            ("pass_cc", s.pass.cc),
+            ("pass_pressure", s.pass.pressure),
+        ] {
+            if !on {
+                p.insert(format!("s{k}.{name}"), 0.0);
+            }
+        }
     }
     p
 }

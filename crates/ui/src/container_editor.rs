@@ -36,11 +36,17 @@
 //!
 //! # MACROS tab
 //!
-//! The eight macros as rows (name, value knob, target count) and, for the selected one, its
+//! Eight macros as rows (name, value knob, target count) and, for the selected one, its
 //! target list: device and param, `min` and `max` fields (drag, wheel, double-click resets to
 //! the param's range) and a delete button. A double-click on a name renames it in place (Enter
-//! commits, Esc cancels). Mapping a param is done from the container's inside (the right-click
-//! menu of a control, see [`crate::RackView`]).
+//! commits, Esc cancels). Macros 1 to 8 are on the MACROS tab and 9 to 16 on the MACROS 9-16
+//! tab. The KNOB / SWITCH button of the selected macro changes its kind: a switch shows a button
+//! in its row instead of a knob and gives its targets `min` below one half and `max` from one
+//! half up. Mapping a param is done from the container's inside (the right-click menu of a
+//! control, see [`crate::RackView`]).
+//!
+//! The SPLITS list has a PASS group per split: B, C and P toggle whether the split passes pitch
+//! bend, controller changes and pressure to its device (it always plays its notes).
 //!
 //! # Gestures
 //!
@@ -60,8 +66,8 @@ use crate::widget::{self, ValueDrag};
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    Command, ContainerCommand, ContainerDoc, DeviceKey, MACRO_COUNT, MAX_MACRO_NAME_CHARS,
-    MacroTarget, NoteSplit, RackDoc,
+    CONTAINER_MACROS, Command, ContainerCommand, ContainerDoc, DeviceKey, MACRO_COUNT,
+    MAX_MACRO_NAME_CHARS, MacroKind, MacroTarget, NoteSplit, RackDoc,
 };
 use vello::kurbo::{Point, Rect};
 use vello::peniko::Color;
@@ -97,17 +103,37 @@ const KNOB_PIXELS: f64 = 150.0;
 pub enum ContainerTab {
     /// The note splits.
     Splits,
-    /// The macros.
+    /// Macros 1 to 8.
     Macros,
+    /// Macros 9 to 16.
+    MoreMacros,
 }
 
 impl ContainerTab {
-    const ALL: [Self; 2] = [Self::Splits, Self::Macros];
+    const ALL: [Self; 3] = [Self::Splits, Self::Macros, Self::MoreMacros];
 
     fn label(self) -> &'static str {
         match self {
             Self::Splits => "SPLITS",
             Self::Macros => "MACROS",
+            Self::MoreMacros => "MACROS 9-16",
+        }
+    }
+
+    /// The first macro the tab lists (0 for the SPLITS tab, which lists none).
+    fn first_macro(self) -> usize {
+        match self {
+            Self::MoreMacros => MACRO_COUNT,
+            Self::Splits | Self::Macros => 0,
+        }
+    }
+
+    /// The tab that lists macro `index`.
+    fn of_macro(index: usize) -> Self {
+        if index >= MACRO_COUNT {
+            Self::MoreMacros
+        } else {
+            Self::Macros
         }
     }
 }
@@ -143,8 +169,12 @@ pub enum Hit {
     MacroRow(usize),
     /// A macro's name.
     MacroName(usize),
-    /// A macro's value knob.
+    /// A macro's value knob (a button for a switch).
     MacroKnob(usize),
+    /// The KNOB / SWITCH button of the selected macro.
+    Kind,
+    /// A split row's pass chip (row, 0 bend, 1 controllers, 2 pressure).
+    Pass(usize, u8),
     /// The `min` or `max` field of a target row (row, end).
     Field(usize, Bound),
     /// A target row's delete button.
@@ -223,8 +253,8 @@ pub struct ContainerEditorView {
     inner: ContainerDoc,
     devices: Vec<DevInfo>,
     /// The container's own `macroN` values.
-    macro_values: [f32; MACRO_COUNT],
-    macro_params: [Option<ParamDescriptor>; MACRO_COUNT],
+    macro_values: [f32; CONTAINER_MACROS],
+    macro_params: [Option<ParamDescriptor>; CONTAINER_MACROS],
     targets: Vec<Vec<TargetInfo>>,
     /// The inner devices a new split may target (see [`ce::eligible_targets`]).
     eligible: Vec<DeviceKey>,
@@ -270,9 +300,9 @@ impl ContainerEditorView {
             tab: ContainerTab::Splits,
             inner: ContainerDoc::default(),
             devices: Vec::new(),
-            macro_values: [0.0; MACRO_COUNT],
-            macro_params: [None; MACRO_COUNT],
-            targets: vec![Vec::new(); MACRO_COUNT],
+            macro_values: [0.0; CONTAINER_MACROS],
+            macro_params: [None; CONTAINER_MACROS],
+            targets: vec![Vec::new(); CONTAINER_MACROS],
             eligible: Vec::new(),
             selected_split: None,
             selected_macro: 0,
@@ -373,15 +403,25 @@ impl ContainerEditorView {
         self.selected_macro
     }
 
-    /// Selects a macro of the MACROS tab (0-based, clamped).
+    /// Selects a macro (0-based, clamped). On a macros tab the tab that lists it is shown.
     pub fn select_macro(&mut self, index: usize) {
-        let index = index.min(MACRO_COUNT - 1);
+        let index = index.min(CONTAINER_MACROS - 1);
         if index != self.selected_macro {
             self.selected_macro = index;
             self.scroll = 0.0;
             self.rename = None;
             self.repaint = true;
         }
+        if self.tab != ContainerTab::Splits && self.tab != ContainerTab::of_macro(index) {
+            self.set_tab(ContainerTab::of_macro(index));
+        }
+    }
+
+    /// Shows the macros tab that lists macro `index` and selects it.
+    pub fn show_macro(&mut self, index: usize) {
+        let index = index.min(CONTAINER_MACROS - 1);
+        self.set_tab(ContainerTab::of_macro(index));
+        self.select_macro(index);
     }
 
     /// The selected split (0-based).
@@ -550,10 +590,10 @@ impl ContainerEditorView {
         )
     }
 
-    /// Row `i` of the macro list.
+    /// Row of macro `i` in the macro list (macros 9 to 16 take the rows of 1 to 8 on their tab).
     pub fn macro_row_rect(&self, i: usize) -> Rect {
         let body = self.body();
-        let y = body.y0 + 12.0 + i as f64 * MACRO_ROW_HEIGHT;
+        let y = body.y0 + 12.0 + (i % MACRO_COUNT) as f64 * MACRO_ROW_HEIGHT;
         Rect::new(
             body.x0 + PAD,
             y,
@@ -598,6 +638,24 @@ impl ContainerEditorView {
             Bound::Max => r.x1 - 124.0,
         };
         Rect::new(x, r.y0 + 2.0, x + 72.0, r.y1 - 2.0)
+    }
+
+    /// The KNOB / SWITCH button of the selected macro.
+    pub fn kind_rect(&self) -> Rect {
+        let body = self.body();
+        Rect::new(
+            self.bounds.x1 - PAD - 74.0,
+            body.y0 + 8.0,
+            self.bounds.x1 - PAD,
+            body.y0 + 28.0,
+        )
+    }
+
+    /// The pass chip `n` (0 bend, 1 controllers, 2 pressure) of split row `i`.
+    pub fn pass_rect(&self, i: usize, n: u8) -> Rect {
+        let r = self.row_rect(i);
+        let x = r.x0 + 412.0 + f64::from(n) * 18.0;
+        Rect::new(x, r.y0 + 3.0, x + 16.0, r.y1 - 3.0)
     }
 
     /// The delete button of target row `j`.
@@ -648,7 +706,7 @@ impl ContainerEditorView {
         if let Some(d) = dev {
             self.accent = self.st.base.accent_for(d);
             let desc = registry.get(&d.type_id).map(|f| f.descriptor);
-            for i in 0..MACRO_COUNT {
+            for i in 0..CONTAINER_MACROS {
                 let p = desc.and_then(|x| x.param_by_key(&format!("macro{}", i + 1)).copied());
                 let v = p.map_or(0.0, |p| widget::current_value(d, &p));
                 if p != self.macro_params[i] || v.to_bits() != self.macro_values[i].to_bits() {
@@ -754,7 +812,7 @@ impl ContainerEditorView {
         }
         match self.tab {
             ContainerTab::Splits => self.hit_splits(p),
-            ContainerTab::Macros => self.hit_macros(p),
+            ContainerTab::Macros | ContainerTab::MoreMacros => self.hit_macros(p),
         }
     }
 
@@ -774,6 +832,9 @@ impl ContainerEditorView {
                     ContainerTab::Macros => {
                         "Macros: knobs that drive parameters of the devices inside"
                     }
+                    ContainerTab::MoreMacros => {
+                        "Macros 9 to 16: more knobs and switches for the devices inside"
+                    }
                 },
             ),
             Hit::Add => help(self.add_rect(), "Add a note split"),
@@ -787,6 +848,18 @@ impl ContainerEditorView {
                 "Transpose this split up a semitone (Shift: an octave)",
             ),
             Hit::Delete(i) => help(self.delete_rect(i), "Delete this split"),
+            Hit::Pass(i, n) => help(
+                self.pass_rect(i, n),
+                match n {
+                    0 => "Pass pitch bend to this split's device",
+                    1 => "Pass controller changes to this split's device",
+                    _ => "Pass channel and key pressure to this split's device",
+                },
+            ),
+            Hit::Kind => help(
+                self.kind_rect(),
+                "Make this macro a knob or an on/off switch for its parameters",
+            ),
             Hit::TargetDelete(j) => help(
                 self.target_delete_rect(j),
                 "Stop this macro driving the parameter",
@@ -826,6 +899,9 @@ impl ContainerEditorView {
             if !self.row_rect(i).contains(p) {
                 continue;
             }
+            if let Some(n) = (0..3u8).find(|n| self.pass_rect(i, *n).contains(p)) {
+                return Hit::Pass(i, n);
+            }
             return if self.delete_rect(i).contains(p) {
                 Hit::Delete(i)
             } else if self.target_rect(i).contains(p) {
@@ -842,7 +918,11 @@ impl ContainerEditorView {
     }
 
     fn hit_macros(&self, p: Point) -> Hit {
-        for i in 0..MACRO_COUNT {
+        if self.kind_rect().contains(p) {
+            return Hit::Kind;
+        }
+        let first = self.tab.first_macro();
+        for i in first..first + MACRO_COUNT {
             if !self.macro_row_rect(i).contains(p) {
                 continue;
             }
@@ -1035,6 +1115,32 @@ impl ContainerEditorView {
             Hit::Delete(i) => {
                 out.push(self.set_splits(ce::without_split(&self.inner.splits, i), None));
             }
+            Hit::Pass(i, n) => {
+                self.selected_split = Some(i);
+                if let Some(s) = self.inner.splits.get(i) {
+                    let mut s = s.clone();
+                    match n {
+                        0 => s.pass.bend = !s.pass.bend,
+                        1 => s.pass.cc = !s.pass.cc,
+                        _ => s.pass.pressure = !s.pass.pressure,
+                    }
+                    out.push(self.set_splits(ce::with_split(&self.inner.splits, i, s), None));
+                }
+            }
+            Hit::Kind => {
+                let m = self.selected_macro;
+                let kind = match self.inner.macros[m].kind {
+                    MacroKind::Knob => MacroKind::Switch,
+                    MacroKind::Switch => MacroKind::Knob,
+                };
+                out.push(UiAction::Command(Command::Container(
+                    ContainerCommand::SetMacroKind {
+                        container: self.container_key(),
+                        index: m as u8,
+                        kind,
+                    },
+                )));
+            }
             Hit::MacroRow(i) => self.select_macro(i),
             Hit::MacroName(i) => {
                 self.select_macro(i);
@@ -1047,7 +1153,10 @@ impl ContainerEditorView {
                 let Some(p) = self.macro_params[i] else {
                     return;
                 };
-                if clicks >= 2 {
+                if self.inner.macros[i].kind == MacroKind::Switch {
+                    let on = self.macro_values[i] >= 0.5;
+                    out.push(self.macro_param(i, if on { 0.0 } else { 1.0 }, None));
+                } else if clicks >= 2 {
                     out.push(self.macro_param(i, p.clamp(p.default), None));
                 } else {
                     let merge = self.merge_id();
@@ -1238,7 +1347,7 @@ impl ContainerEditorView {
                     self.step_transpose(i, (notch * step) as i32, out);
                 }
             }
-            (ContainerTab::Macros, Hit::Field(j, bound)) => {
+            (ContainerTab::Macros | ContainerTab::MoreMacros, Hit::Field(j, bound)) => {
                 let m = self.selected_macro;
                 if let Some(info) = self.targets.get(m).and_then(|t| t.get(j)).cloned() {
                     let start = match bound {
@@ -1258,15 +1367,21 @@ impl ContainerEditorView {
                     }
                 }
             }
-            (ContainerTab::Macros, Hit::MacroKnob(i)) => {
+            (ContainerTab::Macros | ContainerTab::MoreMacros, Hit::MacroKnob(i)) => {
                 if let Some(p) = self.macro_params[i] {
-                    let v = widget::wheel_value(&p, self.macro_values[i], notch, modifiers.shift);
+                    let v = if self.inner.macros[i].kind == MacroKind::Switch {
+                        if notch > 0.0 { 1.0 } else { 0.0 }
+                    } else {
+                        widget::wheel_value(&p, self.macro_values[i], notch, modifiers.shift)
+                    };
                     if v.to_bits() != self.macro_values[i].to_bits() {
                         out.push(self.macro_param(i, v, None));
                     }
                 }
             }
-            (ContainerTab::Macros, _) if self.targets_view().contains(pos) => {
+            (ContainerTab::Macros | ContainerTab::MoreMacros, _)
+                if self.targets_view().contains(pos) =>
+            {
                 self.scroll = (self.scroll - notch * 36.0).clamp(0.0, self.max_scroll());
             }
             _ => {}

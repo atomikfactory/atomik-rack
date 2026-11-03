@@ -171,6 +171,7 @@ pub fn split(target: &str, key_lo: u8, key_hi: u8, transpose: i8) -> atomik_mode
         vel_lo: 1,
         vel_hi: 127,
         transpose,
+        pass: atomik_model::SplitPass::ALL,
     }
 }
 

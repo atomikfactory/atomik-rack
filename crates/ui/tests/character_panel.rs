@@ -1212,7 +1212,7 @@ fn inside_a_container_a_right_click_on_a_knob_offers_the_macros() {
     );
     assert!(commands(&a).is_empty());
     let rows = v.macro_menu_rows();
-    assert_eq!(rows.len(), 8, "{rows:?}");
+    assert_eq!(rows.len(), 16, "{rows:?}");
     // The matrix still selects presets there.
     let c = v
         .preset_cell_center(&key("chr"), 7)

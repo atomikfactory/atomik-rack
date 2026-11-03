@@ -396,6 +396,91 @@ fn a_nested_macro_chain_reaches_the_inner_device() {
     assert!(sent.contains(&(rev, param_id("atomik.reverb", "mix").0, 0.35)));
 }
 
+#[test]
+fn a_split_pass_flag_reaches_the_split_device_and_comes_back_on_undo() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, CONTAINER, "c");
+    add_inner(&mut c, "c", SYNTH, "a", true);
+    c.sink_mut().take();
+    let split = c.device_id(&key("c/~split")).unwrap().0;
+    let mut splits = c.doc().inner(&key("c")).unwrap().splits.clone();
+    splits[0].pass.bend = false;
+    splits[0].pass.pressure = false;
+    apply(
+        &mut c,
+        Command::Container(ContainerCommand::SetSplits {
+            container: key("c"),
+            splits,
+            merge: None,
+        }),
+    );
+    let mut sent = params_of(&c.sink_mut().take());
+    sent.sort_by_key(|(_, p, _)| *p);
+    let mut expect = vec![
+        (split, param_id(SPLIT_TYPE, "s1.pass_bend").0, 0.0),
+        (split, param_id(SPLIT_TYPE, "s1.pass_pressure").0, 0.0),
+    ];
+    expect.sort_by_key(|(_, p, _)| *p);
+    assert_eq!(sent, expect);
+    assert!(c.undo());
+    let mut sent = params_of(&c.sink_mut().take());
+    sent.sort_by_key(|(_, p, _)| *p);
+    let mut expect = vec![
+        (split, param_id(SPLIT_TYPE, "s1.pass_bend").0, 1.0),
+        (split, param_id(SPLIT_TYPE, "s1.pass_pressure").0, 1.0),
+    ];
+    expect.sort_by_key(|(_, p, _)| *p);
+    assert_eq!(sent, expect);
+}
+
+#[test]
+fn a_switch_macro_among_the_last_eight_sets_min_or_max_on_its_target() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, CONTAINER, "c");
+    add_inner(&mut c, "c", SYNTH, "a", false);
+    apply(
+        &mut c,
+        Command::Container(ContainerCommand::SetMacro {
+            container: key("c"),
+            index: 12,
+            target: MacroTarget {
+                device: key("a"),
+                param: "master.level".into(),
+                min: -24.0,
+                max: -6.0,
+            },
+            merge: None,
+        }),
+    );
+    apply(
+        &mut c,
+        Command::Container(ContainerCommand::SetMacroKind {
+            container: key("c"),
+            index: 12,
+            kind: atomik_model::MacroKind::Switch,
+        }),
+    );
+    let a = c.device_id(&key("c/a")).unwrap().0;
+    let level = param_id(SYNTH, "master.level").0;
+    for (macro_value, want) in [(1.0, -6.0), (0.3, -24.0), (0.5, -6.0), (0.0, -24.0)] {
+        c.sink_mut().take();
+        apply(
+            &mut c,
+            Command::SetParam {
+                key: key("c"),
+                param: "macro13".into(),
+                value: macro_value,
+                merge: None,
+            },
+        );
+        let sent = params_of(&c.sink_mut().take());
+        assert!(
+            sent.contains(&(a, level, want)),
+            "macro13 {macro_value}: {sent:?}"
+        );
+    }
+}
+
 // ------------------------------------------------------------------ removing and restoring
 
 #[test]
