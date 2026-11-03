@@ -1,8 +1,8 @@
 # Device reference
 
-Atomik Rack ships fifty original devices: the poly synth (with its mono bass and dual layer
-variants), the wavetable synth, the FM synth, the grain sampler, line mixer and stereo delay, the Mod
-Source (LFOs and envelope as CV), the Macro
+Atomik Rack ships fifty-one original devices: the poly synth (with its mono bass and dual layer
+variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
+and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
@@ -304,6 +304,84 @@ with the poly synth and mono bass.
   hold LFOs and drift differ and are reproducible.
 - **Cost.** Both layers always run (a gain of 0 does not stop one hearing the notes), so the device costs
   about two poly synths.
+
+---
+
+## Semi-Modular: `atomik.semi-modular` (Instrument)
+
+A synthesizer built from slots: three oscillator slots, three filter slots and a shaper per voice, the
+eight-slot modulation bus and a sixteen-step sequencer that plays the voices from the keys. Source:
+[crates/devices/src/semi_modular.rs](../crates/devices/src/semi_modular.rs).
+
+### Sockets
+
+`notes_in`, `pitch_cv_in`, `cutoff_cv_in`, `level_cv_in` (CV in), `out_l`, `out_r` (audio out),
+`lfo_cv_out` (LFO 1), `seq_gate_cv_out` and `seq_pitch_cv_out` (the sounding step: gate, and
+`(key - 60) / 24`).
+
+### Params
+
+| Key | Range | Default | Notes |
+|---|---|---|---|
+| `voices` | 1 to 8 | 4 | Poly voices; the other play modes use one |
+| `play.mode`, `play.glide` | poly, mono, legato; 0 to 2000 ms | poly, 0 | See "Play" below |
+| `bend.range` | 0 to 24 st | 2 | Pitch-bend range each way (RPN 0 too) |
+| `master.level`, `master.spread` | -60 to 6 dB, 0 to 1 | -6 dB, 25 % | Spread pans low keys left, high right |
+| `wheel.to_cutoff` | 0 to 4 oct | 1.5 | What a full mod wheel (CC 1) opens every filter slot |
+| `osc1.*` to `osc3.*` | | | `type`, `wave`, `octave`, `coarse`, `fine`, `level`, `shape` of each slot |
+| `filter1.*` to `filter3.*` | | | `mode`, `cutoff`, `resonance`, `env`, `track`, `mix` of each slot |
+| `filter.routing` | series, parallel, split | series | |
+| `shaper.type`, `shaper.drive`, `shaper.mix` | off, soft, asymmetric, hard, fold; 0 to 36 dB; 0 to 1 | off, 6 dB, 1 | |
+| `env.amp.*`, `env.filter.*`, `env.mod.*` | ADSR | | The filter envelope drives each slot's `env` octaves |
+| `lfo1.wave`, `lfo1.rate`, `lfo2.wave`, `lfo2.rate` | 0.05 to 30 Hz | sine 2 Hz, triangle 0.5 Hz | |
+| `seq.run`, `seq.rate`, `seq.length`, `seq.swing`, `seq.gate` | | off, 1/16, 16, 0, 60 % | |
+| `seq.on.1` to `seq.on.16`, `seq.pitch.n`, `seq.vel.n` | on/off; -24 to 24 st; 0 to 1 | on, a bass line, accents | |
+| `cv.pitch_amount`, `cv.cutoff_amount`, `cv.level_amount` | | 24 st, 2 oct, 24 dB | Scale of the three CV inputs |
+| `mod1_amount` to `mod8_amount` | -1 to 1 | 0 | The matrix; its source, target and via are set from the matrix panel |
+
+Oscillator `type` is one of saw, pulse, triangle, sine, wave, table, fm and noise.
+
+### Behaviour (as built)
+
+- **Oscillators.** Saw, pulse and triangle are PolyBLEP/PolyBLAMP (the pulse is the difference of two saws, so
+  it has no DC; `shape` narrows it from a square to 5 %). `wave` reads one of the 32 additive waves of the
+  wavetable bank, `table` one of the 12 factory tables (`wave` picks it, `shape` moves through its 16 frames);
+  both read the mip level that keeps every harmonic under Nyquist. `fm` is a sine phase-modulated by a sine at
+  the ratio `0.5 + wave / 4`, up to 6 radians at `shape` 1, and the index is scaled down on a high key so the
+  highest sideband stays under 0.4 of the sample rate (a test measures the energy off the harmonics for each
+  type at 2.9 kHz). Noise is white and ignores the key. A voice that starts restarts the phases at 0.
+- **Filters.** A slot is off, a 12 dB state-variable filter (low-pass, band-pass, high-pass or notch), the 24 dB
+  ladder or a comb (resonance is its feedback up to 0.9, the cutoff is the reciprocal of the delay, gain 1 at
+  the peaks). The cutoff moves by `env` times the filter envelope, `track` octaves per octave of key, the wheel,
+  the cutoff CV and the matrix (6 octaves at full amount), and is held between 20 Hz and 0.45 of the sample
+  rate. `mix` blends the slot with its input (0 is the dry signal bit for bit). Series runs 1, 2, 3; parallel
+  averages the slots that are on; split runs 1, then averages 2 and 3. Changing a slot's mode clears its state.
+- **Shaper.** After the filters, anti-aliased (first-order antiderivative); `mix` 0 is the dry signal bit
+  for bit.
+- **Modulation bus.** Eleven sources (the three envelopes, both LFOs, velocity, key, mod wheel, pressure, the
+  sounding step as its pitch over 24 semitones and a random value drawn for every note) and fifteen targets
+  (pitch, the level and shape of each oscillator, the cutoff and resonance of each filter, the shaper drive
+  and the voice level). Pitch moves by 24 semitones at full amount, drive by 24 dB, level scales the voice by
+  `1 + sum`. Slots are summed every 16 samples with `+ - * /` only, in slot order. With no slot in use the
+  voices do not run any of it, and a device with every slot idle renders the same bits as without them.
+- **Play.** `poly` allocates a free voice, else steals the oldest with a 2 ms fade. `mono` is one voice that
+  retriggers its envelopes on every key and returns to the key still held; `legato` changes the pitch only when
+  a key is played over a held one. `glide` slides the pitch in the mono modes. The cost is one voice's in the
+  mono modes and `voices` times that in poly; no voice runs while it is idle.
+- **Sequencer.** With `seq.run` on, a key does not play itself: the first key down starts the pattern at
+  step 1 at that frame, the last key pressed is the root the pattern is transposed to, and the pattern stops
+  when the last key is released (or on `AllOff`; switching `seq.run` off ends the notes). The clock is the
+  device's own, at the transport tempo: the step is the `seq.rate` grid of the note players (1/4 to 1/32 and
+  triplets) and `seq.swing` delays odd steps, so the starts are the same frames whatever the batch boundaries.
+  A step plays when its `seq.on.n` is set, `seq.pitch.n` semitones above the root with `seq.vel.n`, for
+  `seq.gate` percent of the step; 100 % ties it to the next, which the mono modes glide into. The sustain pedal
+  does not hold sequencer notes.
+- **Controllers.** The helper `ControllerState` gives it pitch bend and its range, sustain, volume,
+  expression and pressure as in the MIDI chart below.
+- **Realtime.** Eight voices are built in `prepare` (the comb lines depend on the sample rate), nothing
+  allocates on the audio thread, the noise, the random source and the sample and hold LFO are seeded from the
+  patch seed, every output is bounded by 4 (the poly synth's soft limiter) and a render is the same bit for bit
+  however it is cut into batches.
 
 ---
 
@@ -3663,6 +3741,7 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.poly-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.mono-bass` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.dual-layer` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.semi-modular` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
@@ -3671,8 +3750,8 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.drum-machine` | no | no | no | no | no | no | no |
 | `atomik.loop-slicer` | no | no | no | no | no | no | no |
 
-The seven melodic instruments (poly synth, mono bass, dual layer, wavetable synth, FM synth, grain
-sampler and sampler) share one helper, `ControllerState`
+The eight melodic instruments (poly synth, mono bass, dual layer, semi-modular, wavetable synth, FM synth,
+grain sampler and sampler) share one helper, `ControllerState`
 ([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)). What it does,
 identically in each:
 
