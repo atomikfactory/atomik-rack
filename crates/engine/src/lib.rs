@@ -26,7 +26,8 @@ mod workers;
 
 pub use arena::{RoutingPlan, Topology};
 pub use audio::{
-    AssetId, SongAsset, SongAudioRegion, SongAudioTrack, SongFadeCurve, StreamSource, sin_quarter,
+    AssetId, Knot, SongAsset, SongAudioRegion, SongAudioTrack, SongFadeCurve, StreamSource,
+    sin_quarter,
 };
 pub use console::{
     MAX_COMPENSATION_SECONDS, MAX_METER_VALUES, METER_CAPACITY, MeterReading, Meters, PdcReport,

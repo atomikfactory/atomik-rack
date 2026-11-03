@@ -52,6 +52,20 @@
 //! later clip) or `x_out == frames` of `curve((x_out - i) / x_out)` (the tail of the earlier
 //! clip); the pair is constant power with EqualPower.
 //!
+//! # Interim warps
+//!
+//! A warped clip normally plays a finished buffer rendered off the audio thread (a plain
+//! region of that buffer). Until the buffer exists its region can carry an interim warp
+//! (`SongAudioRegion::warp`): the engine reads the clip's *memory* asset through the clip's time
+//! map (`(clip frame, asset frame)` knots, `SongAudioTrack::warp_maps`) with four-point Hermite
+//! interpolation, so the timing follows the tempo and the markers at once. It is a resampling:
+//! the pitch moves with the stretch ratio and a transposition is not heard. The read allocates
+//! nothing (stack blocks) and streamed assets never take it. Offline renders are given the
+//! finished buffer instead (the render crate builds interim regions only for the live song).
+//!
+//! When a song swap replaces a track that played an interim warp, the new track fades in over
+//! 5 ms while the old one fades out (`Handoff`), so the finished buffer arrives without a click.
+//!
 //! # Streamed assets
 //!
 //! The streamer thread applies the same gains while it reads (see `stream.rs`): the ring
@@ -247,6 +261,9 @@ pub struct SongAudioRegion {
     pub x_out: u64,
     /// Crossfade shape.
     pub x_curve: SongFadeCurve,
+    /// An interim warp: an index into [`SongAudioTrack::warp_maps`], or `None`. The region then
+    /// plays its (memory) asset through that time map (see the module docs, *Interim warps*).
+    pub warp: Option<u32>,
 }
 
 impl SongAudioRegion {
@@ -269,6 +286,7 @@ impl SongAudioRegion {
             x_in: 0,
             x_out: 0,
             x_curve: SongFadeCurve::EqualPower,
+            warp: None,
         }
     }
 
@@ -371,13 +389,21 @@ pub struct SongAudioTrack {
     /// Gain envelopes as `(clip frame, linear gain)` points, strictly increasing in frame
     /// (`SongAudioRegion::env` indexes the list).
     pub envelopes: Vec<Vec<(u64, f32)>>,
+    /// Time maps of the interim warps (`SongAudioRegion::warp` indexes the list): each is
+    /// `(frame from the clip start, asset frame)` knots, at least two, finite and strictly
+    /// increasing in the first value.
+    pub warp_maps: Vec<Arc<[Knot]>>,
 }
+
+/// One knot of an interim warp's time map: `(frame from the clip start, asset frame)`.
+pub type Knot = (f64, f64);
 
 /// The immutable, shared part of a compiled audio track (also read by the streamer).
 pub(crate) struct LaneData {
     /// Sorted by start with non-decreasing ends; at most two overlap at a frame.
     pub(crate) regions: Vec<SongAudioRegion>,
     pub(crate) envelopes: Vec<Vec<(u64, f32)>>,
+    pub(crate) warp_maps: Vec<Arc<[Knot]>>,
     pub(crate) assets: Arc<[SongAsset]>,
 }
 
@@ -395,20 +421,57 @@ pub(crate) struct CompiledAudio {
     pub(crate) data: Arc<LaneData>,
     /// True if any of its regions reads a streamed asset.
     pub(crate) streams: bool,
+    /// True if any of its regions plays an interim warp.
+    pub(crate) interim: bool,
 }
 
-/// Per-track RT scratch: the playback pair and the stream lane (attached on submit).
+/// Length of the crossfade from an interim warp to the buffer that replaces it, in seconds.
+const HANDOFF_SECONDS: f64 = 0.005;
+
+/// A crossfade in progress from the previous snapshot's version of a track: the old lane is
+/// rendered next to the new one for `left` more frames and the two are mixed. The old lane data
+/// is shared (an `Arc` clone taken at the swap), and it is dropped with the snapshot that
+/// carries it, never on the audio thread.
+pub(crate) struct Handoff {
+    data: Arc<LaneData>,
+    total: u32,
+    left: u32,
+}
+
+impl Handoff {
+    /// Mixes the old lane into song frames `[a, b)` (at batch offset `off`) of `pb`: the new
+    /// output weighs `i / total` and the old one the rest, `i` counting frames since the swap.
+    fn cross(&mut self, pb: &mut [Batch; 2], a: u64, b: u64, off: usize) {
+        let n = (b - a) as usize;
+        let mut old = [[0.0f32; BATCH]; 2];
+        memory_regions(&self.data, &mut old, a, b, off, a);
+        let done = (self.total - self.left) as usize;
+        for k in 0..n.min(self.left as usize) {
+            let t = (done + k) as f32 / self.total as f32;
+            for (p, o) in pb.iter_mut().zip(&old) {
+                p[off + k] = p[off + k] * t + o[off + k] * (1.0 - t);
+            }
+        }
+        self.left = self.left.saturating_sub(n as u32);
+    }
+}
+
+/// Per-track RT scratch: the playback pair, the stream lane (attached on submit) and the
+/// crossfade from the previous snapshot, if one is running.
 pub(crate) struct AudioRt {
     pub(crate) pb: [Batch; 2],
     pub(crate) stream: Option<StreamLaneRt>,
+    pub(crate) handoff: Option<Handoff>,
 }
 
 impl Clone for AudioRt {
-    /// A clone carries no stream lane (the lane belongs to the submitted snapshot).
+    /// A clone carries no stream lane (the lane belongs to the submitted snapshot) and no
+    /// crossfade.
     fn clone(&self) -> Self {
         Self {
             pb: self.pb,
             stream: None,
+            handoff: None,
         }
     }
 }
@@ -418,6 +481,36 @@ impl AudioRt {
         Self {
             pb: [[0.0; BATCH]; 2],
             stream: None,
+            handoff: None,
+        }
+    }
+}
+
+/// At a snapshot swap: every track of `new` that replaces a track of `old` playing an interim
+/// warp starts a [`HANDOFF_SECONDS`] crossfade from it (a click-free swap to the finished
+/// buffer). Tracks that read streamed assets are left out: the streamed output is not
+/// rendered here. Allocation-free.
+pub(crate) fn start_handoffs(
+    old: &[CompiledAudio],
+    new: &[CompiledAudio],
+    rts: &mut [AudioRt],
+    sr: f64,
+) {
+    let total = (sr * HANDOFF_SECONDS).round().max(1.0) as u32;
+    for (n, rt) in new.iter().zip(rts.iter_mut()) {
+        if n.streams || rt.handoff.is_some() {
+            continue;
+        }
+        if let Some(o) = old
+            .iter()
+            .find(|o| o.device == n.device && o.interim && !o.streams)
+            && !Arc::ptr_eq(&o.data, &n.data)
+        {
+            rt.handoff = Some(Handoff {
+                data: Arc::clone(&o.data),
+                total,
+                left: total,
+            });
         }
     }
 }
@@ -462,12 +555,22 @@ pub(crate) fn compile_audio(
                 return Err(SongError::BadEvent(format!("audio envelope {e:?}")));
             }
         }
+        for m in &track.warp_maps {
+            let ordered = m.windows(2).all(|w| w[0].0 < w[1].0);
+            let finite = m.iter().all(|k| k.0.is_finite() && k.1.is_finite());
+            if m.len() < 2 || !ordered || !finite {
+                return Err(SongError::BadEvent(format!("audio warp map {m:?}")));
+            }
+        }
         for r in &regions {
             let asset = assets
                 .get(r.asset.0 as usize)
                 .ok_or(SongError::UnknownAsset(r.asset))?;
-            let _ = asset;
-            let valid = r.frames >= 1
+            let warp_ok = r.warp.is_none_or(|w| {
+                (w as usize) < track.warp_maps.len() && !r.reverse && !asset.is_stream()
+            });
+            let valid = warp_ok
+                && r.frames >= 1
                 && r.gain.is_finite()
                 && r.song_start_frame.checked_add(r.frames).is_some()
                 && r.source_offset.checked_add(r.frames).is_some()
@@ -504,14 +607,17 @@ pub(crate) fn compile_audio(
         let streams = regions
             .iter()
             .any(|r| assets[r.asset.0 as usize].is_stream());
+        let interim = regions.iter().any(|r| r.warp.is_some());
         out.push(CompiledAudio {
             device: track.device,
             data: Arc::new(LaneData {
                 regions,
                 envelopes: track.envelopes.clone(),
+                warp_maps: track.warp_maps.clone(),
                 assets: Arc::clone(&shared),
             }),
             streams,
+            interim,
         });
     }
     Ok(out)
@@ -533,10 +639,13 @@ impl Renderer<'_> {
         off: usize,
     ) {
         let data = &*track.data;
-        let AudioRt { pb, stream } = rt;
+        let AudioRt {
+            pb,
+            stream,
+            handoff,
+        } = rt;
         let n_seg = (b - a) as usize;
-        let first = data.regions.partition_point(|r| r.end() <= a);
-        let live = data.regions[first..]
+        let live = data.regions[data.regions.partition_point(|r| r.end() <= a)..]
             .iter()
             .take_while(|r| r.song_start_frame < b);
         // Song frames below `written` already hold a region's output in `pb`: a later region
@@ -562,60 +671,147 @@ impl Renderer<'_> {
                 lane.skip(n_seg);
             }
         }
-        for r in live {
-            let SongAsset::Memory {
-                data: planes,
-                frames: asset_frames,
-                ..
-            } = &data.assets[r.asset.0 as usize]
-            else {
-                continue;
-            };
-            let lo = a.max(r.song_start_frame);
-            let hi = b.min(r.end());
-            let n = (hi - lo) as usize;
-            let i0 = lo - r.song_start_frame;
-            let l = &planes[0];
-            let rr = &planes[planes.len().min(2) - 1];
-            // The region frames `k0..k1` that read inside the asset, and their source index.
-            let (k0, k1, s0) = if r.reverse {
-                let s0 = r.source_offset - i0;
-                let lead = if *asset_frames == 0 {
-                    n as u64
+        memory_regions(data, pb, a, b, off, written);
+        if let Some(h) = handoff.as_mut()
+            && h.left > 0
+        {
+            h.cross(pb, a, b, off);
+        }
+    }
+}
+
+/// Renders the memory regions of `data` over song frames `[a, b)` into `pb` at batch offset
+/// `off`. Song frames below `written` already hold output: a region adds to them and assigns
+/// to the rest.
+fn memory_regions(
+    data: &LaneData,
+    pb: &mut [Batch; 2],
+    a: u64,
+    b: u64,
+    off: usize,
+    mut written: u64,
+) {
+    let first = data.regions.partition_point(|r| r.end() <= a);
+    for r in data.regions[first..]
+        .iter()
+        .take_while(|r| r.song_start_frame < b)
+    {
+        let SongAsset::Memory {
+            data: planes,
+            frames: asset_frames,
+            ..
+        } = &data.assets[r.asset.0 as usize]
+        else {
+            continue;
+        };
+        let lo = a.max(r.song_start_frame);
+        let hi = b.min(r.end());
+        let n = (hi - lo) as usize;
+        let i0 = lo - r.song_start_frame;
+        let l = &planes[0];
+        let rr = &planes[planes.len().min(2) - 1];
+        let at = off + (lo - a) as usize;
+        let added = (written.saturating_sub(lo)).min(n as u64) as usize;
+        if let Some(w) = r.warp {
+            // An interim warp reads the asset through its time map for every region frame
+            // (frames outside the asset are silent).
+            let mut g = [0.0f32; BATCH];
+            r.gains(data.envelope(r), i0, &mut g[..n]);
+            let map = &data.warp_maps[w as usize];
+            let mut seg = 0usize;
+            for k in 0..n {
+                let clip_frame = (r.clip_pos + i0 + k as u64) as f64;
+                let s = map_source(map, clip_frame, &mut seg);
+                let (vl, vr) = (hermite_at(l, s) * g[k], hermite_at(rr, s) * g[k]);
+                if k < added {
+                    pb[0][at + k] += vl;
+                    pb[1][at + k] += vr;
                 } else {
-                    s0.saturating_sub(asset_frames - 1).min(n as u64)
-                };
-                (lead as usize, n, s0)
-            } else {
-                let s0 = r.source_offset + i0;
-                let valid = (n as u64).min(asset_frames.saturating_sub(s0)) as usize;
-                (0, valid, s0)
-            };
-            if k1 > k0 {
-                let mut g = [0.0f32; BATCH];
-                r.gains(data.envelope(r), i0 + k0 as u64, &mut g[..k1 - k0]);
-                let at = off + (lo - a) as usize;
-                let added = (written.saturating_sub(lo)).min(n as u64) as usize;
-                for k in k0..k1 {
-                    let s = if r.reverse {
-                        (s0 - k as u64) as usize
-                    } else {
-                        s0 as usize + k
-                    };
-                    let gk = g[k - k0];
-                    let (vl, vr) = (l[s] * gk, rr[s] * gk);
-                    if k < added {
-                        pb[0][at + k] += vl;
-                        pb[1][at + k] += vr;
-                    } else {
-                        pb[0][at + k] = vl;
-                        pb[1][at + k] = vr;
-                    }
+                    pb[0][at + k] = vl;
+                    pb[1][at + k] = vr;
                 }
             }
             written = written.max(hi);
+            continue;
         }
+        // The region frames `k0..k1` that read inside the asset, and their source index.
+        let (k0, k1, s0) = if r.reverse {
+            let s0 = r.source_offset - i0;
+            let lead = if *asset_frames == 0 {
+                n as u64
+            } else {
+                s0.saturating_sub(asset_frames - 1).min(n as u64)
+            };
+            (lead as usize, n, s0)
+        } else {
+            let s0 = r.source_offset + i0;
+            let valid = (n as u64).min(asset_frames.saturating_sub(s0)) as usize;
+            (0, valid, s0)
+        };
+        if k1 > k0 {
+            let mut g = [0.0f32; BATCH];
+            r.gains(data.envelope(r), i0 + k0 as u64, &mut g[..k1 - k0]);
+            for k in k0..k1 {
+                let s = if r.reverse {
+                    (s0 - k as u64) as usize
+                } else {
+                    s0 as usize + k
+                };
+                let gk = g[k - k0];
+                let (vl, vr) = (l[s] * gk, rr[s] * gk);
+                if k < added {
+                    pb[0][at + k] += vl;
+                    pb[1][at + k] += vr;
+                } else {
+                    pb[0][at + k] = vl;
+                    pb[1][at + k] = vr;
+                }
+            }
+        }
+        written = written.max(hi);
     }
+}
+
+/// The asset frame a warp map reads at clip frame `c`: linear between knots, continuing the
+/// first or last segment outside them. `seg` is a cursor (the segment of the previous call:
+/// start at 0 and call with ascending `c`; it is re-found when `c` moves backwards).
+fn map_source(map: &[Knot], c: f64, seg: &mut usize) -> f64 {
+    let last = map.len() - 2;
+    *seg = (*seg).min(last);
+    while *seg > 0 && c < map[*seg].0 {
+        *seg -= 1;
+    }
+    while *seg < last && c >= map[*seg + 1].0 {
+        *seg += 1;
+    }
+    let (k0, k1) = (map[*seg], map[*seg + 1]);
+    k0.1 + (c - k0.0) * (k1.1 - k0.1) / (k1.0 - k0.0)
+}
+
+/// `plane` at the fractional frame `s` by four-point Hermite interpolation; frames outside the
+/// plane read 0.
+fn hermite_at(plane: &[f32], s: f64) -> f32 {
+    let i = s.floor();
+    let frames = plane.len() as f64;
+    if i < -2.0 || i >= frames + 1.0 {
+        return 0.0;
+    }
+    let at = |j: f64| {
+        if j >= 0.0 && j < frames {
+            plane[j as usize]
+        } else {
+            0.0
+        }
+    };
+    let (y0, y1, y2, y3) = (at(i - 1.0), at(i), at(i + 1.0), at(i + 2.0));
+    let t = (s - i) as f32;
+    if t == 0.0 {
+        return y1;
+    }
+    let c1 = 0.5 * (y2 - y0);
+    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    ((c3 * t + c2) * t + c1) * t + y1
 }
 
 #[cfg(test)]
@@ -736,6 +932,7 @@ mod tests {
             device: DeviceInstanceId(1),
             regions,
             envelopes: vec![vec![(0, 1.0), (10, 0.5)]],
+            warp_maps: Vec::new(),
         };
         assert!(compile_audio(&[track(vec![good])], &assets).is_ok());
         let bad = |f: &dyn Fn(&mut SongAudioRegion)| {

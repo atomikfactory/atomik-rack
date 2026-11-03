@@ -255,6 +255,9 @@ fn a_warped_clip_plays_its_buffer_once_the_worker_is_done() {
     let dry = last_song(&mut c).expect("a song was submitted");
     assert_eq!(dry.audio[0].regions[0].source_offset, 0);
     assert_eq!(dry.assets[0].frames(), 115_200);
+    // ...read through the clip's time map, so it is stretched from the first batch on...
+    assert_eq!(dry.audio[0].regions[0].warp, Some(0));
+    assert!(dry.audio[0].warp_maps[0].len() >= 2);
     // ...and again with the rendered buffer when the worker is done.
     c.wait_background();
     assert!(!c.warp_busy());
@@ -263,6 +266,7 @@ fn a_warped_clip_plays_its_buffer_once_the_worker_is_done() {
     let frames =
         c.doc().song.frame_at(clip.end(), 48_000) - c.doc().song.frame_at(clip.start, 48_000);
     assert_eq!(warped.assets[0].frames(), frames);
+    assert_eq!(warped.audio[0].regions[0].warp, None);
     assert_eq!(c.audio.warps.len(), 1);
     // Editing the tempo makes the buffer stale: a new one is rendered and the old one dropped.
     c.apply_command(Command::Song(SongCommand::SetTempoMap(vec![

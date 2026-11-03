@@ -10,7 +10,7 @@ use atomik_model::{
     WarpSettings, load_project, save_project,
 };
 use atomik_render::project::{
-    ProjectOptions, render_doc_in, song_input_with_assets, song_input_with_warps,
+    ProjectOptions, render_doc_in, song_input_live, song_input_with_assets, song_input_with_warps,
 };
 use atomik_render::warp::{pool_key, render_warps};
 use atomik_render::{Rendered, default_registry};
@@ -465,4 +465,79 @@ fn an_edited_marker_moves_its_hit_and_leaves_the_rest_of_the_clip_where_it_was()
     // And the end: the audio after the clip is silent in both.
     let end = frame_of(clip);
     assert!(rms(&e[end + 2000..end + 8000]) < 0.01);
+}
+
+#[test]
+fn the_live_song_plays_an_unready_warp_through_its_time_map_and_the_bounce_does_not() {
+    let registry = default_registry();
+    // A repitched clip across a tempo ramp, a markerless 120 BPM loop of a sine.
+    let s = song("interim", &sine(440.0, 200_000), |d, a| {
+        d.apply(
+            Command::Song(SongCommand::SetTempoMap(vec![
+                TempoEvent {
+                    tick: 0,
+                    bpm: 120.0,
+                    ramp: true,
+                },
+                TempoEvent::step(4 * PPQ, 90.0),
+            ])),
+            &registry,
+        )
+        .unwrap();
+        put(d, a, 0, 4 * PPQ, on(120.0, WarpMode::Repitch));
+    });
+    let assets = atomik_render::bundle::load_song_assets(&s.doc, Some(&s.bundle)).unwrap();
+    let ids = std::collections::BTreeMap::from([(
+        DeviceKey("audio-track".into()),
+        atomik_engine::DeviceInstanceId(1),
+    )]);
+    let id_of = |k: &DeviceKey| ids.get(k).copied();
+    let empty = Default::default();
+
+    // The bounce path and the plain builder never use an interim warp.
+    let dry = song_input_with_warps(&s.doc, &registry, id_of, &assets, &empty);
+    assert_eq!(dry.audio[0].regions[0].warp, None);
+    assert!(dry.audio[0].warp_maps.is_empty());
+
+    // The live path does, with the job's knots, and plays the original asset.
+    let live = song_input_live(&s.doc, &registry, id_of, &assets, &empty);
+    let region = live.audio[0].regions[0];
+    assert_eq!(region.warp, Some(0));
+    assert_eq!(live.assets, vec![assets[&s.asset].clone()]);
+    let knots = &live.audio[0].warp_maps[0];
+    assert!(knots.len() > 2, "the ramp adds knots: {}", knots.len());
+
+    // Timing: reading the asset through the knots lands where the finished buffer does.
+    let warps = render_warps(&s.doc, &assets);
+    let finished = match warps.values().next().unwrap() {
+        atomik_engine::SongAsset::Memory { data, .. } => data[0].clone(),
+        other => panic!("{other:?}"),
+    };
+    let atomik_engine::SongAsset::Memory { data: source, .. } = &assets[&s.asset] else {
+        panic!("memory asset")
+    };
+    let read = |c: f64| -> f32 {
+        let at = knots
+            .partition_point(|k| k.0 <= c)
+            .clamp(1, knots.len() - 1);
+        let (a, b) = (knots[at - 1], knots[at]);
+        let pos = a.1 + (c - a.0) * (b.1 - a.1) / (b.0 - a.0);
+        let i = pos.floor() as usize;
+        let t = (pos - i as f64) as f32;
+        source[0][i] * (1.0 - t) + source[0][i + 1] * t
+    };
+    let frames = region.frames as usize;
+    assert_eq!(finished.len(), frames);
+    let diff: Vec<f32> = (0..frames).map(|i| read(i as f64) - finished[i]).collect();
+    assert!(
+        rms(&diff) < 0.02 * rms(&finished),
+        "interim and finished differ by {} of {}",
+        rms(&diff),
+        rms(&finished)
+    );
+
+    // With the finished buffer the live path plays it, like the bounce.
+    let done = song_input_live(&s.doc, &registry, id_of, &assets, &warps);
+    assert_eq!(done.audio[0].regions[0].warp, None);
+    assert!(done.audio[0].warp_maps.is_empty());
 }

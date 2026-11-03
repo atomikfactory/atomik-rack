@@ -42,9 +42,9 @@ use atomik_device_sdk::{
     DeviceDescriptor, Direction, Registry, RunMode, SampleMapRef, SocketId, SocketKind,
 };
 use atomik_engine::{
-    AssetId, DeviceInstanceId, EngineOptions, HotEdit, OfflineJob, SongAsset, SongAudioRegion,
-    SongAudioTrack, SongAutomation, SongController, SongControllerKind, SongCurve, SongFadeCurve,
-    SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
+    AssetId, DeviceInstanceId, EngineOptions, HotEdit, Knot, OfflineJob, SongAsset,
+    SongAudioRegion, SongAudioTrack, SongAutomation, SongController, SongControllerKind, SongCurve,
+    SongFadeCurve, SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
     TransportCommand, WorkerConfig, compile_song, new_engine_with_options,
 };
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
@@ -60,6 +60,7 @@ use atomik_plugin_host::InstantiateRequest;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Ticks of release tail rendered after the song end (two quarter-note beats).
 pub const TAIL_TICKS: i64 = 2 * PPQ;
@@ -317,6 +318,31 @@ pub fn song_input_with_warps(
     assets: &BTreeMap<String, SongAsset>,
     warps: &WarpStore,
 ) -> SongInput {
+    song_input_inner(doc, registry, id_of, assets, warps, false)
+}
+
+/// [`song_input_with_warps`] for the live song: a warped clip of a memory asset whose buffer is
+/// not in `warps` yet plays through an interim warp (the engine reads the asset through the
+/// clip's time map, see `atomik_engine::SongAudioRegion::warp`) instead of unwarped. Offline
+/// renders never use this: they render every buffer first and play only the finished ones.
+pub fn song_input_live(
+    doc: &RackDoc,
+    registry: &Registry,
+    id_of: impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    assets: &BTreeMap<String, SongAsset>,
+    warps: &WarpStore,
+) -> SongInput {
+    song_input_inner(doc, registry, id_of, assets, warps, true)
+}
+
+fn song_input_inner(
+    doc: &RackDoc,
+    registry: &Registry,
+    id_of: impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    assets: &BTreeMap<String, SongAsset>,
+    warps: &WarpStore,
+    interim: bool,
+) -> SongInput {
     let song = &doc.song;
     // Containers: a track on a container plays through its `~split` device, and a
     // lane on one of its `macroN` params expands into one engine lane per macro target.
@@ -517,6 +543,9 @@ pub fn song_input_with_warps(
             let device = id_of(flat)?;
             // Gain envelopes are shared between the regions of one clip (they carry equal lists).
             let mut envelopes: Vec<Vec<(u64, f32)>> = Vec::new();
+            // The time maps of the interim warps, one per warp job.
+            let mut warp_keys: Vec<u64> = Vec::new();
+            let mut warp_maps: Vec<Arc<[Knot]>> = Vec::new();
             let regions: Vec<SongAudioRegion> = flatten_audio(track, song, doc.sample_rate)
                 .into_iter()
                 .filter_map(|r| {
@@ -525,10 +554,23 @@ pub fn song_input_with_warps(
                         .warp
                         .as_ref()
                         .and_then(|job| warps.get(&job.key()).map(|b| (job.key(), b)));
+                    let mut warp = None;
                     let (key, asset, source_offset, reverse) = match rendered {
                         Some((k, buffer)) => (crate::warp::pool_key(k), buffer, r.clip_pos, false),
                         None => {
                             let (key, asset) = assets.get_key_value(r.asset.as_str())?;
+                            // Streamed assets keep playing unwarped until the buffer is ready.
+                            if let (true, Some(job), false) = (interim, &r.warp, asset.is_stream())
+                            {
+                                let k = job.key();
+                                let at =
+                                    warp_keys.iter().position(|w| *w == k).unwrap_or_else(|| {
+                                        warp_keys.push(k);
+                                        warp_maps.push(job.knots.as_slice().into());
+                                        warp_keys.len() - 1
+                                    });
+                                warp = Some(u32::try_from(at).unwrap_or(u32::MAX));
+                            }
                             (key.clone(), asset, r.source_offset, r.reverse)
                         }
                     };
@@ -564,6 +606,7 @@ pub fn song_input_with_warps(
                         x_in: r.x_in,
                         x_out: r.x_out,
                         x_curve: song_fade_curve(r.x_curve),
+                        warp,
                     })
                 })
                 .collect();
@@ -571,6 +614,7 @@ pub fn song_input_with_warps(
                 device,
                 regions,
                 envelopes,
+                warp_maps,
             })
         })
         .collect();
