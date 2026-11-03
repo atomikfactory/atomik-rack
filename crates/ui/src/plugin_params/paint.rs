@@ -395,17 +395,10 @@ fn param_row(v: &PluginParamsView, c: &mut dyn Canvas, row: &Row, r: Rect, ri: u
 fn menu(v: &PluginParamsView, c: &mut dyn Canvas) {
     let Some(m) = &v.menu else { return };
     let t = &v.st.base;
-    c.fill_with(RoundedRect::from_rect(m.rect, 4.0), t.tooltip_bg);
-    c.stroke_with(
-        RoundedRect::from_rect(m.rect, 4.0),
-        1.0,
-        t.ink.with_alpha(0.14),
-    );
+    m.list.paint_frame(c, t);
     for (k, (_, label)) in m.entries.iter().enumerate() {
-        let r = PluginParamsView::menu_row(m.rect, k);
-        if m.hover == Some(k) {
-            c.fill_with(RoundedRect::from_rect(r.inset(-1.0), 3.0), t.browser_row);
-        }
+        let r = m.list.row_rect(k);
+        m.list.paint_hover(c, t, k);
         c.text(
             &TextRun::new(
                 fit_label(label, r.width() - 14.0, 9.5),

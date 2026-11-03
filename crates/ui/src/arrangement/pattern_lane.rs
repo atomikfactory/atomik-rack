@@ -144,16 +144,9 @@ impl ArrangementView {
             .unwrap_or(0)
             .saturating_sub(MENU_ROWS / 2)
             .min(items.len().saturating_sub(MENU_ROWS));
-        self.open_menu(Menu {
-            device,
-            kind: MenuKind::Takes(commands),
-            items,
-            origin: pos,
-            scroll,
-            hover: None,
-            current,
-            checked: Vec::new(),
-        });
+        let mut menu = Menu::new(device, MenuKind::Takes(commands), items, pos, scroll);
+        menu.current = current;
+        self.open_menu(menu);
     }
 
     /// A clip drawn on a lane, as the `AddClip` of [`new_clip_cmd`]; a clip of a pattern lane

@@ -15,9 +15,10 @@
 
 use super::{Drag, RackView, Rename, RenameKind, UiAction};
 use crate::breadcrumb::{self, CrumbHit};
-use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::canvas::{Align, Canvas, TextRun, pt};
 use crate::container_panel::ContainerButton;
 use crate::event::{Modifiers, PointerButton};
+use crate::pick_list::CompactList;
 use crate::seq_panel::{self, RenameKey};
 use atomik_device_sdk::{ControlKind, DeviceKind, PluginKindHint, RACK_WIDTH, Registry};
 use atomik_model::{
@@ -25,7 +26,7 @@ use atomik_model::{
     MAX_MACRO_NAME_CHARS, MacroTarget, PluginCommand, RackDoc, SocketRef,
 };
 use std::borrow::Cow;
-use vello::kurbo::{Point, Rect, RoundedRect, Vec2};
+use vello::kurbo::{Point, Rect, Vec2};
 
 /// Height of one row of the macro menu.
 const MENU_ROW_H: f64 = 18.0;
@@ -49,9 +50,8 @@ pub(super) struct MacroMenu {
     dev: usize,
     param: String,
     entries: Vec<(MenuEntry, String)>,
-    /// Rectangle in rack coordinates.
-    rect: Rect,
-    hover: Option<usize>,
+    /// The panel, in rack coordinates.
+    list: CompactList,
 }
 
 fn join(parent: Option<&DeviceKey>, local: &DeviceKey) -> DeviceKey {
@@ -966,7 +966,7 @@ impl RackView {
                 })
                 .collect()
         };
-        let h = entries.len() as f64 * MENU_ROW_H + 4.0;
+        let h = CompactList::height(entries.len(), MENU_ROW_H);
         let x0 =
             rp.x.min(self.devices[i].x + f64::from(RACK_WIDTH) - 16.0 - MENU_W);
         let bottom = self.view_to_rack(Point::new(0.0, self.size.height)).y;
@@ -975,18 +975,8 @@ impl RackView {
             dev: i,
             param,
             entries,
-            rect: Rect::new(x0, y0, x0 + MENU_W, y0 + h),
-            hover: None,
+            list: CompactList::new(Rect::new(x0, y0, x0 + MENU_W, y0 + h), MENU_ROW_H),
         });
-    }
-
-    fn menu_row(menu: Rect, i: usize) -> Rect {
-        let y = menu.y0 + 2.0 + i as f64 * MENU_ROW_H;
-        Rect::new(menu.x0 + 2.0, y, menu.x1 - 2.0, y + MENU_ROW_H)
-    }
-
-    fn menu_row_at(menu: &MacroMenu, rp: Point) -> Option<usize> {
-        (0..menu.entries.len()).find(|&i| Self::menu_row(menu.rect, i).contains(rp))
     }
 
     /// A press while the menu is open: a row applies its entry; any press closes the menu and
@@ -997,7 +987,7 @@ impl RackView {
         };
         self.repaint = true;
         let rp = self.view_to_rack(pos);
-        if let Some(row) = Self::menu_row_at(&menu, rp) {
+        if let Some(row) = menu.list.row_at(menu.entries.len(), rp) {
             self.apply_entry(&menu, menu.entries[row].0);
         }
         true
@@ -1078,9 +1068,9 @@ impl RackView {
     pub(super) fn macro_hover(&mut self, pos: Point) {
         let rp = self.view_to_rack(pos);
         if let Some(menu) = &mut self.macro_menu {
-            let hover = Self::menu_row_at(menu, rp);
-            if hover != menu.hover {
-                menu.hover = hover;
+            let hover = menu.list.row_at(menu.entries.len(), rp);
+            if hover != menu.list.hover {
+                menu.list.hover = hover;
                 self.repaint = true;
             }
         }
@@ -1097,7 +1087,7 @@ impl RackView {
             .map(|(i, (_, label))| {
                 (
                     label.clone(),
-                    self.rack_to_view(Self::menu_row(m.rect, i).center()),
+                    self.rack_to_view(m.list.row_rect(i).center()),
                 )
             })
             .collect()
@@ -1107,20 +1097,10 @@ impl RackView {
     pub(super) fn paint_macro_menu(&self, c: &mut dyn Canvas) {
         let Some(m) = &self.macro_menu else { return };
         let theme = &self.theme;
-        c.fill_with(RoundedRect::from_rect(m.rect, 4.0), theme.tooltip_bg);
-        c.stroke_with(
-            RoundedRect::from_rect(m.rect, 4.0),
-            1.0,
-            theme.ink.with_alpha(0.14),
-        );
+        m.list.paint_frame(c, theme);
         for (k, (_, label)) in m.entries.iter().enumerate() {
-            let r = Self::menu_row(m.rect, k);
-            if m.hover == Some(k) {
-                c.fill_with(
-                    RoundedRect::from_rect(r.inset(-1.0), 3.0),
-                    theme.browser_row,
-                );
-            }
+            let r = m.list.row_rect(k);
+            m.list.paint_hover(c, theme, k);
             c.text(
                 &TextRun::new(
                     crate::paint::fit_label(label, r.width() - 14.0, 9.5),

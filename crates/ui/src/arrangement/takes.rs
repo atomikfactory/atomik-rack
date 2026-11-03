@@ -609,16 +609,7 @@ impl ArrangementView {
             .map(|(i, (label, _))| (i.to_string(), label.clone()))
             .collect();
         let commands = rows.into_iter().map(|(_, c)| c).collect();
-        let menu = super::Menu {
-            device,
-            kind: super::MenuKind::Takes(commands),
-            items,
-            origin: pos,
-            scroll: 0,
-            hover: None,
-            current: None,
-            checked: Vec::new(),
-        };
+        let menu = super::Menu::new(device, super::MenuKind::Takes(commands), items, pos, 0);
         self.open_menu(menu);
     }
 
