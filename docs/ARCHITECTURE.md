@@ -4958,7 +4958,7 @@ arrangement and edits one note clip of an `atomik.drum-machine` as a grid of 16 
 and `SetClipGeometry` (the clip length follows the grid) and swing as merged `SetClipGrid` drags;
 notes the grid cannot show are kept untouched. The drum machine has its own rack panel
 (`autolayout::drum_layout`): a 4×4 pad grid (click selects and auditions, drops load the pad), the
-fourteen knobs of the selected pad (view state, remapped onto `padN.*`), master level and an Edit
+eighteen knobs of the selected pad (view state, remapped onto `padN.*`), master level and an Edit
 button, and a back panel that groups the sockets per pad (outputs and gates) with the two global CV
 jacks and trims in a CV section.
 

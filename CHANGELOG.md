@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Drum designer pads.** Every pad of the drum machine can play a synthesised voice instead of a sample: a
+  kick, snare, hat, tom, tone or noise module, chosen with the new pad Module knob and shaped by Body, Snap and
+  Sweep (what each does depends on the module). A module pad needs no samples and behaves like any other pad:
+  choke groups, retrigger, the 32 shared voices, level, pan, velocity, tune and the pitch CV, the individual
+  outputs and the pad's tone, cuts, drive and two sends all apply, and the pad label shows the module name. The
+  drum machine panel is one rack unit taller for the four new knobs. Pads left on Sample sound exactly as before
+  and the project format is still 42. The creative sampler with live stretch is not part of this change.
 - **Semi-Modular synthesizer.** A new instrument, `atomik.semi-modular`, built from slots: three oscillator
   slots (saw, pulse, triangle, sine, one of the 32 additive waves, one of the 12 wavetables with a morph position,
   a band-limited two-operator FM and noise), three filter slots (12 dB low-, band-, high-pass and notch, the 24 dB

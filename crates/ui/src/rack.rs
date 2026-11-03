@@ -4695,18 +4695,35 @@ fn pad_cabled_of(key: &DeviceKey, cables: &[Cable]) -> [bool; 16] {
     out
 }
 
-/// The 16 pad labels of a drum machine panel: the file name (no extension) of the first zone
-/// of the pad, `missing` if its asset is not in the pool, and empty for a pad without zones.
+/// The 16 pad labels of a drum machine panel: the module name of a synthesised pad, else the
+/// file name (no extension) of the first zone of the pad, `missing` if its asset is not in the
+/// pool, and empty for a pad without zones.
 fn drum_pad_names(d: &RackDevice, doc: &RackDoc) -> Vec<String> {
     (1..=atomik_model::PAD_COUNT)
-        .map(|pad| match atomik_model::pad_zones(&d.zones, pad).next() {
-            None => String::new(),
-            Some(zi) => doc
-                .assets
-                .get(&d.zones[zi].asset)
-                .map_or_else(|| "missing".to_string(), |m| file_stem(&m.original_name)),
+        .map(|pad| {
+            if let Some(module) = drum_module(d, pad) {
+                return module.to_string();
+            }
+            match atomik_model::pad_zones(&d.zones, pad).next() {
+                None => String::new(),
+                Some(zi) => doc
+                    .assets
+                    .get(&d.zones[zi].asset)
+                    .map_or_else(|| "missing".to_string(), |m| file_stem(&m.original_name)),
+            }
         })
         .collect()
+}
+
+/// The name of the module pad `pad` (1..=16) of drum machine `d` plays, `None` for a sample pad.
+fn drum_module(d: &RackDevice, pad: u8) -> Option<&'static str> {
+    let v = *d.params.get(&format!("pad{pad}.module"))?;
+    let i = if v.is_nan() {
+        0
+    } else {
+        v.round().clamp(0.0, 6.0) as usize
+    };
+    (i > 0).then(|| autolayout::DRUM_MODULES[i])
 }
 
 /// The 16 pad names of the drum machine a drum generator's `notes_out` reaches, directly or

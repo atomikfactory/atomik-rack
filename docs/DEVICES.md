@@ -2537,8 +2537,8 @@ zone for its velocity does nothing (no choke, no retrigger). Source:
 ### Params
 
 `master.level` first, then eight params per pad *N* = 1 to 16 in this order, then
-`master.level_cv_trim` and `pitch_cv_trim`, then six effect params per pad (227 params; ids follow
-the order):
+`master.level_cv_trim` and `pitch_cv_trim`, then six effect params per pad, then four module
+params per pad (291 params; ids follow the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -2559,8 +2559,35 @@ the order):
 | `padN.drive` | 0 to 1 | 0 | percent | Linear | no |
 | `padN.send1` | 0 to 1 | 0 | percent | Linear | no |
 | `padN.send2` | 0 to 1 | 0 | percent | Linear | no |
+| `padN.module` | 0–6: sample, kick, snare, hat, tom, tone, noise | 0 (sample) | choice | Linear | yes |
+| `padN.body` | 0 to 1 | 0.5 | percent | Linear | no |
+| `padN.snap` | 0 to 1 | 0.5 | percent | Linear | no |
+| `padN.sweep` | 0 to 1 | 0.5 | percent | Linear | no |
 
 ### Behaviour (as built)
+
+- **Synthesised pads.** With `padN.module` on anything but *sample* a pad plays a small synthesis
+  voice instead of its zones; it needs no sample map. The voice shares the 32 voices, the envelope
+  (`padN.decay`, `padN.mode`), choke groups, retrigger, stealing, level, pan, velocity, the CV
+  inputs, the individual outputs and the effect chain with the sample pads, and `padN.tune`,
+  `padN.fine` and the master tune move its pitch. The base pitches are fixed: kick 52 Hz, tom 110 Hz,
+  tone middle C; the snare and hat are banks of resonant modes (three around 190 Hz, six from
+  2.4 kHz) excited by a short noise burst, and the snare and hat add band-passed and high-passed
+  noise. The three knobs mean, per module:
+
+  | Module | `padN.body` | `padN.snap` | `padN.sweep` |
+  |---|---|---|---|
+  | kick | saturation of the sine | click | depth of the pitch fall |
+  | snare | level of the shell | level of the noise | unused |
+  | hat | level of the metallic modes | level of the high noise | unused |
+  | tom | level of the second partial | click | depth of the pitch fall |
+  | tone | upper partials | click | depth of the pitch fall |
+  | noise | filter cutoff | filter resonance | depth of the cutoff fall |
+
+  The sines and the noise filter follow tune and the pitch CV live; the resonant modes take the
+  tune at the hit. The noise of a hit is seeded from the voice start counter, so a render is the
+  same bit for bit every time. A pad left on *sample* renders exactly as it did before the modules
+  existed. The pad label on the rack panel shows the module name in place of the sample file name.
 
 - **Pad zones.** `swap_samples` scans the map once and keeps, per pad, the indices of its first 8
   zones in map order in fixed arrays (no allocation). Zones past the eighth of a pad are never
@@ -2620,9 +2647,10 @@ the order):
   colour and shows its sample's file name (without the extension) on up to two lines, with the pad
   number small in a corner; an empty pad is dark and says "empty". The selected pad has an accent
   outline, and a file dragged over a pad lights that pad. Under the grid a readout shows the
-  selected pad, its note and its file name, beside the EDIT, SAMPLE and TO CH buttons. The 14 knobs
-  of the selected pad and the master level run down two columns at the right.
-- **Back panel.** Seven rack units: the notes input and main outputs, a CV section with the two
+  selected pad, its note and its file name, beside the EDIT, SAMPLE and TO CH buttons. The 18 knobs
+  of the selected pad and the master level run down two columns at the right. A pad on a synthesised
+  module shows the module name in place of the file name.
+- **Back panel.** The panel is eight rack units tall: the notes input and main outputs, a CV section with the two
   global jacks each next to its trim knob, and one section per pad with its four jacks (out L, out
   R, gate in, gate out).
 - **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of

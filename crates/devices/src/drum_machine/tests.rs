@@ -207,6 +207,11 @@ fn descriptor_validates_with_the_contract_order() {
             params.push(format!("pad{n}.{k}"));
         }
     }
+    for n in 1..=16 {
+        for k in ["module", "body", "snap", "sweep"] {
+            params.push(format!("pad{n}.{k}"));
+        }
+    }
     for k in ["send1_l", "send1_r", "send2_l", "send2_r"] {
         sockets.push(k.to_string());
     }
@@ -215,7 +220,7 @@ fn descriptor_validates_with_the_contract_order() {
     assert_keys(&DESCRIPTOR, &p, &s);
     assert_eq!(DESCRIPTOR.type_id, "atomik.drum-machine");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
-    assert_eq!(DESCRIPTOR.params.len(), 131 + 96);
+    assert_eq!(DESCRIPTOR.params.len(), 131 + 96 + 64);
     assert_eq!(DESCRIPTOR.sockets.len(), 73);
     let d = |k: &str| {
         let d = DESCRIPTOR.param_by_key(k).unwrap();
@@ -1596,6 +1601,8 @@ fn a_reversed_pad_zone_ends_with_a_fade_at_its_start() {
 
 #[path = "fx_tests.rs"]
 mod fx_tests;
+#[path = "module_tests.rs"]
+mod module_tests;
 
 #[test]
 fn master_tune_shifts_every_pad_like_the_tune_params() {

@@ -161,10 +161,10 @@ fn the_panel_shows_pad_labels_the_selected_pad_and_the_edit_button() {
     );
     assert_eq!(v.selected_pad(&key("drums")), Some(1));
     assert_eq!(v.selected_pad(&key("synth")), None);
-    // Seven rack units: the back holds the four sockets of each of the 16 pads (outputs and gate
-    // jacks); the front is still the compact pad panel, not a 161-knob sprawl.
+    // Eight rack units: the front holds the selected pad's 18 knobs, the back the four sockets of
+    // each of the 16 pads (outputs and gate jacks); not a 290-knob sprawl.
     let r = v.device_rect(&key("drums")).unwrap();
-    assert!((r.height() - 7.0 * 76.0).abs() < 1e-9, "{r:?}");
+    assert!((r.height() - 8.0 * 76.0).abs() < 1e-9, "{r:?}");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn the_knobs_follow_the_selected_pad() {
     let d = key("drums");
     for suffix in [
         "level", "pan", "tune", "fine", "decay", "mode", "choke", "velocity", "tone", "lowcut",
-        "highcut", "drive", "send1", "send2",
+        "highcut", "drive", "send1", "send2", "module", "body", "snap", "sweep",
     ] {
         assert!(
             v.control_center(&d, &format!("pad1.{suffix}")).is_some(),
@@ -191,7 +191,7 @@ fn the_knobs_follow_the_selected_pad() {
         Some(at_pad1),
         "same place, other pad"
     );
-    // Only the selected pad's 14 knobs and the master are on the panel.
+    // Only the selected pad's 18 knobs and the master are on the panel.
     let t = texts_of(&mut v, &doc);
     assert!(t.iter().any(|x| x == "PAD 2"), "{t:?}");
     assert!(t.iter().any(|x| x == "PAD 2  ·  C#2"), "{t:?}");
@@ -574,8 +574,29 @@ fn the_pad_grid_and_knob_columns_use_the_whole_panel() {
         seen.insert(r.x0.to_bits() ^ r.y0.to_bits().rotate_left(7));
     }
     assert_eq!(seen.len(), 16);
-    // All 14 knobs and the master level are on the front.
-    assert_eq!(front.len(), 15);
+    // All 18 knobs and the master level are on the front.
+    assert_eq!(front.len(), 19);
+}
+
+#[test]
+fn a_synthesised_pad_shows_its_module_name_and_the_names_match_the_device() {
+    let mut doc = drum_only();
+    let reg = registry();
+    let d = reg.get("atomik.drum-machine").unwrap();
+    let p = d.descriptor.param_by_key("pad1.module").unwrap();
+    let atomik_core::Unit::Choice(names) = p.unit else {
+        panic!("pad module is a choice");
+    };
+    assert_eq!(names, atomik_ui::autolayout::DRUM_MODULES);
+    // Pad 1 holds a sample; as a snare module the label is the module, the sample is kept.
+    let id = key("drums");
+    let dev = doc.devices.iter_mut().find(|d| d.key == id).unwrap();
+    dev.params.insert("pad1.module".into(), 2.0);
+    let mut v = view(&doc, &reg);
+    let t = texts_of(&mut v, &doc);
+    assert!(t.iter().any(|x| x == "snare"), "{t:?}");
+    assert!(!t.iter().any(|x| x == "kick_808"), "{t:?}");
+    assert!(t.iter().any(|x| x == "snare_soft"), "{t:?}");
 }
 
 #[test]
