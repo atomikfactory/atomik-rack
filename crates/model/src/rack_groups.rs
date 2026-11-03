@@ -100,7 +100,7 @@ impl RackDoc {
         let mut claims: BTreeMap<DeviceKey, Vec<usize>> = BTreeMap::new();
         for (n, anchor) in anchors.iter().enumerate() {
             for key in self.claimed_by(registry, anchor, &is_anchor) {
-                if index.contains_key(&key) && &key != anchor {
+                if index.contains_key(&key) && !is_anchor.contains(&key) {
                     claims.entry(key).or_default().push(n);
                 }
             }
