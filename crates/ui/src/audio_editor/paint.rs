@@ -242,7 +242,7 @@ fn ruler(v: &AudioEditorView, c: &mut dyn Canvas) {
             let Some(tick) = v.tick_of_source(*f as f64 - offset) else {
                 continue;
             };
-            let x = v.x_of(tick).round() + 0.5;
+            let x = crate::paint::snap_hairline(v.x_of(tick), v.scale);
             if x >= l.ruler.x0 && x <= l.ruler.x1 {
                 sp::line(
                     c,
@@ -385,7 +385,7 @@ fn markers(v: &AudioEditorView, c: &mut dyn Canvas) {
         Drag::None | Drag::Audition => None,
     };
     for (i, m) in v.framed.iter().enumerate() {
-        let x = v.x_of(m.tick as f64).round() + 0.5;
+        let x = crate::paint::snap_hairline(v.x_of(m.tick as f64), v.scale);
         if x < w.x0 - 1.0 || x > w.x1 + 1.0 {
             continue;
         }

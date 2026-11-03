@@ -5777,7 +5777,7 @@ impl ArrangementView {
         };
         let x = self.axis.tick_to_x(self.playhead);
         if x >= tl.x0 - 1.0 && x <= tl.x1 + 1.0 {
-            let x = x.round() + 0.5;
+            let x = crate::paint::snap_hairline(x, self.scale);
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, tl.y0), pt(x, tl.y1)),
                 1.5,
@@ -5836,7 +5836,7 @@ impl ArrangementView {
                 Rect::new(end_x.max(tl.x0), tl.y0, tl.x1, tl.y1),
                 st.end_shade,
             );
-            let x = end_x.round() + 0.5;
+            let x = crate::paint::snap_hairline(end_x, self.scale);
             sp::line(c, x, tl.y0, x, tl.y1, st.end_mark.with_alpha(0.55));
         }
         for (row, rr) in self.visible_rows() {
@@ -6025,7 +6025,7 @@ impl ArrangementView {
             &Stroke::new(1.0).with_dashes(0.0, [4.0, 3.0]),
             &accent.into(),
         );
-        let x = self.axis.tick_to_x(hover.tick).round() + 0.5;
+        let x = crate::paint::snap_hairline(self.axis.tick_to_x(hover.tick), self.scale);
         if x >= tl.x0 && x <= tl.x1 {
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, area.y0), pt(x, area.y1)),
@@ -6052,7 +6052,7 @@ impl ArrangementView {
             &Stroke::new(1.0).with_dashes(0.0, [4.0, 3.0]),
             &accent.into(),
         );
-        let x = self.axis.tick_to_x(*tick).round() + 0.5;
+        let x = crate::paint::snap_hairline(self.axis.tick_to_x(*tick), self.scale);
         if x >= tl.x0 && x <= tl.x1 {
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, area.y0), pt(x, area.y1)),
@@ -6184,7 +6184,7 @@ impl ArrangementView {
                 st.handle.with_alpha(0.85)
             }
         };
-        let gy = g.gain_y.round() + 0.5;
+        let gy = crate::paint::snap_hairline(g.gain_y, self.scale);
         sp::line(c, vis.x0, gy, vis.x1, gy, st.gain_line.with_alpha(0.55));
         if let Some(h) = g.gain {
             let shape = RoundedRect::from_rect(h, 2.0);
@@ -6475,7 +6475,7 @@ impl ArrangementView {
             ClipContent::Notes(_) => {}
         }
         for w in windows.iter().skip(1) {
-            let x = self.axis.tick_to_x(w.song_start).round() + 0.5;
+            let x = crate::paint::snap_hairline(self.axis.tick_to_x(w.song_start), self.scale);
             if x > tl.x0 && x < tl.x1 {
                 // A bevelled seam: a dark line with a light one beside it.
                 sp::line(c, x, vis.y0, x, vis.y1, st.base.plate.with_alpha(0.7));
@@ -6723,12 +6723,12 @@ impl ArrangementView {
         // The lines first, so a flag's body covers the line of another.
         for f in &flags {
             let col = self.flag_colour(f, on);
-            let x = f.x.round() + 0.5;
+            let x = crate::paint::snap_hairline(f.x, self.scale);
             sp::line(c, x, band.y0 + 1.0, x, band.y1, col);
         }
         for f in flags.iter().rev() {
             let col = self.flag_colour(f, on);
-            let x = f.x.round() + 0.5;
+            let x = crate::paint::snap_hairline(f.x, self.scale);
             let body = Flag { x, ..*f }.body(self.flag_top(f.row));
             c.fill_with(RoundedRect::from_rect(body, 2.0), col.with_alpha(0.85));
             sp::label(

@@ -356,7 +356,7 @@ impl ArrangementView {
         }
         let t = &self.st.base;
         for m in &self.song.markers {
-            let x = self.axis.tick_to_x(m.tick).round() + 0.5;
+            let x = crate::paint::snap_hairline(self.axis.tick_to_x(m.tick), self.scale);
             if x < tl.x0 || x > tl.x1 {
                 continue;
             }
@@ -1314,9 +1314,9 @@ impl ArrangementView {
         };
         sp::line(
             c,
-            x.round() + 0.5,
+            crate::paint::snap_hairline(x, self.scale),
             strip.y0,
-            x.round() + 0.5,
+            crate::paint::snap_hairline(x, self.scale),
             strip.y1,
             color,
         );
@@ -1483,14 +1483,9 @@ pub(super) fn name_field(c: &mut dyn Canvas, st: &sp::SeqTheme, r: Rect, text: &
     c.fill_with(RoundedRect::from_rect(r, 2.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 2.0), 1.2, t.focus);
     let room = r.width() - 10.0;
-    let mut shown: &str = text;
-    while estimate_width(shown, 9.5) > room {
-        let mut chars = shown.chars();
-        chars.next();
-        shown = chars.as_str();
-    }
+    let shown = crate::paint::tail_fit(c, text, room, 9.5, 600);
     let baseline = r.center().y + 3.5;
     c.text(&TextRun::new(shown, pt(r.x0 + 5.0, baseline), 9.5, t.text).weight(600));
-    let cx = r.x0 + 5.0 + estimate_width(shown, 9.5);
+    let cx = r.x0 + 5.0 + crate::paint::measure(c, shown, 9.5, 600);
     sp::line(c, cx + 1.0, r.y0 + 3.0, cx + 1.0, r.y1 - 3.0, t.focus);
 }
