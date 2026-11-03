@@ -44,6 +44,7 @@ mod container_input;
 mod container_move;
 mod cpu_readout;
 mod device_drag;
+mod device_maps;
 mod drum_input;
 mod fx_input;
 mod help;
@@ -1035,6 +1036,7 @@ impl RackView {
     /// [`Self::set_scope`]) the views show that container's inside; a scope whose container no
     /// longer exists is left for the nearest one that does.
     pub fn sync(&mut self, doc: &RackDoc, registry: &Registry) {
+        self.prune_device_maps(doc);
         let view = self.prepare(doc, registry);
         self.sync_in(&view, registry);
     }
