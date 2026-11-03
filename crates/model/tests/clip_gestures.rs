@@ -159,6 +159,8 @@ proptest! {
         offset in 0i64..PPQ,
         delta in -(BAR / 2)..BAR,
     ) {
+        // A trim that does not move the start is refused, so it is not a trim to check here.
+        prop_assume!(delta != 0);
         let notes: Vec<_> = ticks
             .iter()
             .map(|t| note(*t, PPQ / 8, 60, 0.8))

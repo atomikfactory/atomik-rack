@@ -564,6 +564,8 @@ pub struct RackView {
     nav_revision: u64,
     nav_cache: Option<navigator::NavCache>,
     show_console: bool,
+    /// Lay every column out as one: the devices stack in rack order (view state, never saved).
+    single_column: bool,
     /// Draw the channel-to-master console links as cables (default off).
     show_links: bool,
     /// The console links of the document in view (hidden unless `show_links`).
@@ -824,6 +826,7 @@ impl RackView {
             nav_revision: 0,
             nav_cache: None,
             show_console: true,
+            single_column: false,
             show_links: false,
             links: BTreeSet::new(),
             outputs: BTreeMap::new(),
@@ -897,6 +900,31 @@ impl RackView {
         }
         self.nav_cache = None;
         self.repaint = true;
+    }
+
+    /// Lays the columns out as one column (the devices stack in rack order), or as they are.
+    /// View state: the document keeps its columns.
+    pub fn set_single_column(&mut self, single: bool) {
+        if single != self.single_column {
+            self.single_column = single;
+            self.synced = false;
+            self.repaint = true;
+        }
+    }
+
+    /// Whether the columns are laid out as one.
+    pub fn single_column(&self) -> bool {
+        self.single_column
+    }
+
+    /// How many columns the view lays out for `doc`: one inside a container or in the single
+    /// column view, else the document's.
+    fn laid_columns(&self, doc: &RackDoc, scoped: bool) -> u16 {
+        if scoped || self.single_column {
+            1
+        } else {
+            doc.columns.max(1)
+        }
     }
 
     /// Shows or hides the console's channel-strip and master devices. Since
@@ -1019,7 +1047,7 @@ impl RackView {
         let same_structure = self.synced
             && self.input_channels == doc.input_channels
             && self.output_channels == doc.output_channels
-            && self.columns == if trailing == 1 { 1 } else { doc.columns.max(1) }
+            && self.columns == self.laid_columns(doc, trailing == 1)
             && self.devices.len() == shown.len() + 1 + trailing
             && self.devices[1..=shown.len()]
                 .iter()
@@ -1366,12 +1394,12 @@ impl RackView {
             lists,
         });
         // Each column stacks from its own top; the Audio I/O strip heads column 0.
-        let columns = if scoped { 1 } else { doc.columns.max(1) };
+        let columns = self.laid_columns(doc, scoped);
         let mut ys = vec![0.0; usize::from(columns)];
         ys[0] = height;
 
         for d in self.shown(doc, registry) {
-            let column = if scoped { 0 } else { d.column.min(columns - 1) };
+            let column = d.column.min(columns - 1);
             let (x, y) = (columns::column_left(column), ys[usize::from(column)]);
             // The strips of an unfolded container have no device behind them.
             if let Some(out) = inline::strip_of(d) {

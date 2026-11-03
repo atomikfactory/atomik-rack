@@ -102,6 +102,11 @@ swaps! {
         doc.tune_cents = *new;
         Ok(vec![SyncOp::TuneChanged(*new)])
     };
+    /// How the rack arranges its devices.
+    RackSort {}: crate::RackSort => |doc, new| {
+        doc.sort_mode = *new;
+        Ok(vec![SyncOp::ViewChanged])
+    };
     /// Track chase flag.
     TrackChase { device: DeviceKey }: bool => |doc, new| {
         track_mut(doc, device)?.chase = *new;

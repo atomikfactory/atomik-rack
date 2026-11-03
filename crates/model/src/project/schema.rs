@@ -223,6 +223,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Root, "macros", 29),
     field(Root, "info", 38),
     field(Root, "tune_cents", 40),
+    field(Root, "rack_sort", 42).ignorable(),
     field(Root, "assets", 3),
     field(Root, "song", 1).req(),
     // A device (the fields shared with the patch format come first).

@@ -45,6 +45,7 @@ impl Command {
             Command::SetInputChannels(_) | Command::SetOutputChannels(_) => "Set Channels",
             Command::SetSongInfo(_) => "Edit Song Information",
             Command::SetMasterTune(_) => "Change Master Tune",
+            Command::SetRackSort(_) => "Sort Rack",
             Command::ConvertSampleRate { .. } => "Convert Sample Rate",
             Command::Console(c) => console_label(c),
             Command::Container(c) => container_label(c),

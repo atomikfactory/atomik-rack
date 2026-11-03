@@ -191,6 +191,7 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         macros: doc.macros.clone(),
         info: doc.info.clone(),
         tune_cents: doc.tune_cents,
+        sort_mode: doc.sort_mode,
     })
 }
 

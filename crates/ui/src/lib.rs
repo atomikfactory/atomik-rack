@@ -381,6 +381,7 @@ pub mod text_field;
 pub mod theme;
 pub mod timeline;
 pub mod tooltip;
+pub mod track_panel;
 pub mod transport;
 pub mod tree;
 pub mod tuner_panel;
@@ -447,6 +448,7 @@ pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use text_field::{FieldColors, FieldKey, TextField};
 pub use theme::{Theme, ThemeChoice};
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
+pub use track_panel::{TRACK_PANEL_WIDTH, TrackPanelView};
 pub use transport::{
     ClusterPart, InspClip, InspectorField, InspectorSource, REPEAT_DELAY, REPEAT_EVERY, RecInput,
     RecInputPart, TransportBar, TransportButton, TransportState, transport_shortcut,

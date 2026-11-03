@@ -100,6 +100,7 @@ pub fn reference_doc() -> RackDoc {
         macros: Default::default(),
         info: Default::default(),
         tune_cents: 0.0,
+        sort_mode: atomik_model::RackSort::Free,
     }
 }
 

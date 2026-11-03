@@ -56,7 +56,7 @@ impl RackView {
     }
 
     fn can_add_column(&self) -> bool {
-        self.scope.is_empty() && self.columns < MAX_RACK_COLUMNS
+        self.scope.is_empty() && !self.single_column && self.columns < MAX_RACK_COLUMNS
     }
 
     /// Whether a drag that can drop a device is in progress (a device moved past the
@@ -303,6 +303,7 @@ mod tests {
             macros: Default::default(),
             info: Default::default(),
             tune_cents: 0.0,
+            sort_mode: atomik_model::RackSort::Free,
         };
         let mut v = RackView::new(Theme::dark());
         let _ = v.handle(&UiEvent::Resize(Size::new(1200.0, 200.0)), &doc, &reg);

@@ -9,7 +9,7 @@
 //!   buttons that act on every track of the folder in one batch: a button is lit when all of
 //!   them have the flag, a press sets the flag on all of them unless all have it already, and
 //!   the audio is the tracks' own mute and solo, nothing more. Its timeline part shows the
-//!   clips of the folder's tracks as thin bars, whether it is collapsed or not.
+//!   folder clips (see `folder_clips`), whether it is collapsed or not.
 //! * The header of a track in a folder is **indented**: its content moves right by
 //!   [`TRACK_INDENT`] per level of nesting (three at most), the clips stay where they are. The
 //!   folder guides stay at the left edge.
@@ -186,6 +186,8 @@ pub(super) struct OrgUi {
     pub lane_mv: Option<super::lane_move::LaneMoveDrag>,
     /// The nesting depth of each folder.
     pub folder_depth: std::collections::BTreeMap<u32, usize>,
+    /// The bars of each folder row (see `folder_clips`), rebuilt with the layout.
+    pub folder_clips: std::collections::BTreeMap<u32, Vec<super::folder_clips::FolderClip>>,
 }
 
 fn rgb([r, g, b]: [u8; 3]) -> Color {
@@ -374,6 +376,7 @@ impl ArrangementView {
         let outline = self.song.outline();
         self.og.shape = vec![(0, false); self.song.tracks.len()];
         self.og.folder_depth.clear();
+        self.sync_folder_clips();
         for e in outline {
             match e.kind {
                 OutlineKind::Track(i) => self.og.shape[i] = (e.depth, e.hidden),
@@ -1307,37 +1310,33 @@ impl ArrangementView {
         }
     }
 
-    /// The timeline part of a folder row: the clips of its tracks as thin bars.
+    /// The timeline part of a folder row: its folder clips, one bar per run of overlapping clips.
     pub(super) fn paint_folder_lane(
         &self,
         c: &mut dyn Canvas,
-        doc: &RackDoc,
+        _doc: &RackDoc,
         lr: Rect,
         group: u32,
     ) {
         let st = &self.st;
         sp::rect(c, lr, mix(st.lane_alt, self.folder_accent(group), 0.12));
         sp::grid(c, st, &self.axis, lr, &self.bars);
-        for i in self.song.group_tracks(group) {
-            let accent = self.track_accent(doc, i);
-            let track = &self.song.tracks[i];
-            // Every note lane (or the audio lane) counts; the automation lanes do not.
-            let lanes = track.lanes.iter().take(track.note_lane_count().max(1));
-            for lane in lanes {
-                for clip in &lane.clips {
-                    let (x0, x1) = (
-                        self.axis.tick_to_x(clip.start),
-                        self.axis.tick_to_x(clip.start + clip.length),
-                    );
-                    if x1 < lr.x0 - 2.0 || x0 > lr.x1 + 2.0 {
-                        continue;
-                    }
-                    let r = Rect::new(x0, lr.y0 + 7.0, x1.max(x0 + 1.0), lr.y1 - 7.0);
-                    c.fill_with(
-                        RoundedRect::from_rect(r, 2.0),
-                        accent.with_alpha(if clip.muted || lane.muted { 0.25 } else { 0.7 }),
-                    );
-                }
+        let accent = self.folder_accent(group);
+        for f in self.og.folder_clips.get(&group).into_iter().flatten() {
+            let (x0, x1) = (self.axis.tick_to_x(f.start), self.axis.tick_to_x(f.end));
+            if x1 < lr.x0 - 2.0 || x0 > lr.x1 + 2.0 {
+                continue;
+            }
+            let selected = f.ids.iter().all(|id| self.selection.contains(id));
+            let muted = self
+                .song_clips()
+                .filter(|c| f.ids.contains(&c.id))
+                .all(|c| c.muted);
+            let r = Rect::new(x0, lr.y0 + 5.0, x1.max(x0 + 1.0), lr.y1 - 5.0);
+            let shape = RoundedRect::from_rect(r, 2.0);
+            c.fill_with(shape, accent.with_alpha(if muted { 0.25 } else { 0.7 }));
+            if selected {
+                c.stroke_with(shape, 1.5, st.selection);
             }
         }
     }

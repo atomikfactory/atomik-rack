@@ -225,6 +225,7 @@ impl RackView {
             macros: Default::default(),
             info: Default::default(),
             tune_cents: doc.tune_cents,
+            sort_mode: doc.sort_mode,
         })
     }
 

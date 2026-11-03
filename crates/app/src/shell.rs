@@ -61,6 +61,14 @@
 //! [`ShellRequest::PickLoadSamples`] too. Esc, its close button and the slicer's removal show
 //! the arrangement again.
 //!
+//! # Track Panel hosting
+//!
+//! View ▸ Track Panel (`view.toggle_track_panel`) docks the Track Panel ([`Pane::TrackPanel`]) as
+//! a column on the right of the window, between the menu bar and the Piano Keys strip or the
+//! status bar ([`Layout::track_panel`]); the rack, divider, transport bar and lower pane end at
+//! its left edge. A window too narrow to leave the rest [`MIN_REST_WIDTH`] hides it. It follows
+//! the track selected in the arrangement and its choice is not saved.
+//!
 //! # File browser hosting
 //!
 //! View ▸ File Browser (`view.toggle_file_browser`, F4) docks the file browser panel
@@ -159,8 +167,8 @@ use atomik_ui::{
     Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT,
     ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView, PointerButton,
     QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
-    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TextRun, UiAction,
-    UiEvent, WarpAction, WarpValues, WarpView,
+    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
+    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -187,6 +195,8 @@ pub const DIVIDER_HEIGHT: f64 = 6.0;
 pub const MIN_REST_WIDTH: f64 = 400.0;
 /// Smallest height the divider leaves to the rack and to the song area.
 pub const MIN_PANE_HEIGHT: f64 = 80.0;
+/// The narrowest the Track Panel column is drawn; a window with less room hides it.
+pub const MIN_TRACK_PANEL_WIDTH: f64 = 160.0;
 
 /// Something only the platform layer can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,6 +360,9 @@ pub struct Layout {
     /// The Piano Keys strip (only while it shows): the full width right of the file browser,
     /// above the status bar.
     pub piano_keys: Option<Rect>,
+    /// The Track Panel column (only while it shows): on the right of the window, between the
+    /// menu bar and the Piano Keys strip or the status bar.
+    pub track_panel: Option<Rect>,
 }
 
 /// A drag of files that left the file browser: the shell owns it until the release.
@@ -2146,7 +2159,9 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Keys])
             }
             Pane::PianoKeys => ContextStack::global(),
-            Pane::Transport | Pane::PluginParams | Pane::SpectrumEq => ContextStack::global(),
+            Pane::Transport | Pane::PluginParams | Pane::SpectrumEq | Pane::TrackPanel => {
+                ContextStack::global()
+            }
         }
     }
 
@@ -2161,6 +2176,9 @@ impl<B: AudioBackend> Shell<B> {
             browser: view.browser_visible(),
             file_browser: self.ui.file_browser_visible,
             piano_keys: self.piano_keys_visible,
+            track_panel: self.core.track_panel_visible(),
+            rack_sort: self.core.doc().sort_mode,
+            single_column: view.single_column(),
             can_undo: self.core.document().can_undo(),
             can_redo: self.core.document().can_redo(),
             undo_label: self.core.document().undo_label(),
@@ -2287,6 +2305,21 @@ impl<B: AudioBackend> Shell<B> {
         ))
     }
 
+    /// The Track Panel column, when it shows: on the right of the window, above the Piano Keys
+    /// strip, narrower when the window leaves the rest less than [`MIN_REST_WIDTH`].
+    fn track_panel_rect(&self) -> Option<Rect> {
+        if !self.core.track_panel_visible() {
+            return None;
+        }
+        let left = self.file_browser_rect().map_or(0.0, |r| r.x1);
+        let top = self.top();
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
+        let room = (self.size().width - left - MIN_REST_WIDTH).max(0.0);
+        let width = TRACK_PANEL_WIDTH.min(room);
+        (width >= MIN_TRACK_PANEL_WIDTH)
+            .then(|| Rect::new(self.size().width - width, top, self.size().width, bottom))
+    }
+
     /// The file browser column, when it shows: the full height below the menu bar. Its width is
     /// the panel's own (it resizes by drag), kept so the rest of the window keeps
     /// [`MIN_REST_WIDTH`].
@@ -2305,8 +2338,9 @@ impl<B: AudioBackend> Shell<B> {
     /// Where the rack, divider, transport bar and song area are (module docs).
     pub fn layout(&self) -> Layout {
         let fb = self.file_browser_rect();
+        let tp = self.track_panel_rect();
         let x0 = fb.map_or(0.0, |r| r.x1);
-        let w = (self.size().width - x0).max(1.0);
+        let w = (tp.map_or(self.size().width, |r| r.x0) - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
         let keys = self.piano_keys_rect();
@@ -2320,6 +2354,7 @@ impl<B: AudioBackend> Shell<B> {
                 song: Some(Rect::new(x0, top, x1, transport_top)),
                 file_browser: fb,
                 piano_keys: keys,
+                track_panel: tp,
             };
         }
         if !self.ui.show_song {
@@ -2331,6 +2366,7 @@ impl<B: AudioBackend> Shell<B> {
                 song: None,
                 file_browser: fb,
                 piano_keys: keys,
+                track_panel: tp,
             };
         }
         if !self.rack_in_main() {
@@ -2347,6 +2383,7 @@ impl<B: AudioBackend> Shell<B> {
                 )),
                 file_browser: fb,
                 piano_keys: keys,
+                track_panel: tp,
             };
         }
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
@@ -2366,6 +2403,7 @@ impl<B: AudioBackend> Shell<B> {
             )),
             file_browser: fb,
             piano_keys: keys,
+            track_panel: tp,
         }
     }
 
@@ -2396,6 +2434,9 @@ impl<B: AudioBackend> Shell<B> {
         }
         if let Some(keys) = l.piano_keys {
             self.core.piano_keys_mut().set_bounds(keys);
+        }
+        if let Some(panel) = l.track_panel {
+            self.core.track_panel_mut().set_bounds(panel);
         }
         self.browser_edge = l.file_browser.map_or(0.0, |r| r.x1);
         if let Some(song) = l.song {
@@ -2570,6 +2611,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PluginParams => self.song_pane(),
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::PianoKeys if !self.piano_keys_visible => self.live_pane(Pane::Rack),
+            Pane::TrackPanel if !self.core.track_panel_visible() => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
             Pane::Rack if !self.rack_in_main() => self.song_pane(),
             other => other,
@@ -2642,6 +2684,8 @@ impl<B: AudioBackend> Shell<B> {
         let l = self.layout();
         if l.piano_keys.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::PianoKeys))
+        } else if l.track_panel.is_some_and(|r| r.contains(pos)) {
+            Some(Ok(Pane::TrackPanel))
         } else if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
         } else if l.rack.contains(pos) {
@@ -5192,6 +5236,26 @@ impl<B: AudioBackend> Shell<B> {
                 self.set_piano_keys_visible(!self.piano_keys_visible);
                 Vec::new()
             }
+            AppCommand::ToggleTrackPanel => {
+                let visible = !self.core.track_panel_visible();
+                self.core.set_track_panel_visible(visible);
+                if !visible && self.focus == Pane::TrackPanel {
+                    self.set_focus(Pane::Rack);
+                }
+                self.repaint = true;
+                Vec::new()
+            }
+            AppCommand::SetRackSort(mode) => {
+                // A rejection (the rack is sorted that way already) is reported in the view.
+                let _ = self.core.apply_command(Command::SetRackSort(mode));
+                Vec::new()
+            }
+            AppCommand::ToggleSingleColumn => {
+                let view = self.core.view_mut();
+                let single = !view.single_column();
+                view.set_single_column(single);
+                Vec::new()
+            }
             AppCommand::ToggleFileBrowser => {
                 self.set_file_browser_visible(!self.ui.file_browser_visible);
                 Vec::new()
@@ -6514,6 +6578,7 @@ impl<B: AudioBackend> Shell<B> {
             || (!self.rack_detached() && self.core.view().needs_repaint())
             || self.core.transport_bar().needs_repaint()
             || (self.ui.file_browser_visible && self.core.file_browser().needs_repaint())
+            || (self.core.track_panel_visible() && self.core.track_panel().needs_repaint())
             || (self.ui.show_song
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
@@ -6578,6 +6643,10 @@ impl<B: AudioBackend> Shell<B> {
         }
         if l.piano_keys.is_some() {
             self.core.paint_pane(Pane::PianoKeys, canvas);
+        }
+        if l.track_panel.is_some() {
+            self.core.sync_track_panel();
+            self.core.paint_pane(Pane::TrackPanel, canvas);
         }
         if l.song.is_some() {
             let pane = self.song_pane();

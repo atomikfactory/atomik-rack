@@ -53,6 +53,7 @@ use vello::peniko::Color;
 
 mod audio_edit;
 mod draw_series;
+mod folder_clips;
 mod ghost;
 mod heights;
 mod help;
@@ -345,6 +346,8 @@ enum Hit {
     FolderButton(u32, FolderButton),
     /// A folder row away from its controls (the name; the timeline part).
     Folder(u32),
+    /// A folder clip of a folder row: the folder and the index of the bar.
+    FolderClip(u32, usize),
     /// The note mark of the header of a track with a comment.
     Comment(usize),
     Button(usize, TrackButton),
@@ -539,6 +542,9 @@ enum Drag {
         /// over a row that is no lane).
         grab: (usize, usize),
         over: Option<(usize, usize)>,
+        /// A folder clip is dragged: the clips move in time only and keep their tracks and
+        /// lanes whatever row the pointer is over.
+        horizontal: bool,
     },
     /// A rubber band over the lanes: the clips it touches are the selection (plus `base`).
     Marquee {
@@ -2459,6 +2465,8 @@ impl ArrangementView {
             RowKind::Folder { group } => {
                 if pos.x < tl.x0 {
                     self.folder_hit(*group, rr, pos)
+                } else if let Some(i) = self.folder_clip_at(*group, pos) {
+                    Hit::FolderClip(*group, i)
                 } else {
                     Hit::Folder(*group)
                 }
@@ -3025,6 +3033,9 @@ impl ArrangementView {
             | Hit::TrackName(_)
             | Hit::Comment(_) => {
                 self.folder_down(&hit, pos, button, modifiers, clicks, out);
+            }
+            Hit::FolderClip(..) => {
+                self.folder_clip_down(&hit, pos, button, modifiers, clicks, out);
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
             Hit::TrackMeter(track) if primary => self.meter_click(track),
@@ -3810,6 +3821,7 @@ impl ArrangementView {
                     copy,
                     grab: (track, lane),
                     over: Some((track, lane)),
+                    horizontal: false,
                 };
             }
             _ => {}
@@ -4196,13 +4208,16 @@ impl ArrangementView {
                 last_dt,
                 copy,
                 over,
+                horizontal,
                 ..
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
                 if !*moved {
                     return;
                 }
-                *over = over_row;
+                if !*horizontal {
+                    *over = over_row;
+                }
                 let delta = axis.dx_to_ticks(pos.x - start.x);
                 let new = seq_edit::drag_start_by(snap_mode, *grabbed_start, delta, step);
                 let min_start = originals.iter().map(|c| c.start).min().unwrap_or(0);
@@ -4680,9 +4695,33 @@ impl ArrangementView {
                 copy,
                 grab,
                 over,
+                horizontal,
                 ..
             } => {
-                if moved && let Some(plan) = self.drop_plan(&originals, last_dt, grab, over, copy) {
+                if moved && horizontal {
+                    // A folder clip: one move of exactly the contained clips, in time only.
+                    let moves: Vec<ClipMove> = originals
+                        .iter()
+                        .filter_map(|c| {
+                            let (track, lane, _) = self.find_clip(c.id)?;
+                            Some(ClipMove {
+                                id: c.id,
+                                track: self.song.tracks[track].device.clone(),
+                                lane: Some(lane),
+                                start: c.start + last_dt,
+                            })
+                        })
+                        .collect();
+                    if last_dt != 0 && !moves.is_empty() {
+                        out.push(workflow_cmd(WorkflowCommand::MoveClips {
+                            moves,
+                            copy: false,
+                            merge: Some(merge),
+                        }));
+                    }
+                } else if moved
+                    && let Some(plan) = self.drop_plan(&originals, last_dt, grab, over, copy)
+                {
                     // One undo step with the live moves of the gesture.
                     out.push(workflow_cmd(WorkflowCommand::MoveClips {
                         moves: plan

@@ -95,6 +95,8 @@ pub enum Pane {
     FileBrowser,
     /// The Piano Keys strip, docked above the status bar.
     PianoKeys,
+    /// The Track Panel, docked on the right of the window.
+    TrackPanel,
     /// The Spectrum EQ window: it fills a window of its own.
     SpectrumEq,
 }
@@ -376,6 +378,10 @@ pub struct AppCore<S: EngineSink> {
     file_browser: atomik_ui::FileBrowserView,
     /// The Piano Keys strip and the router that keeps its note offs with their note ons.
     piano_keys: atomik_ui::PianoKeysView,
+    /// The Track Panel, whether it shows, and the revision and track it was built for.
+    track_panel: atomik_ui::TrackPanelView,
+    track_panel_on: bool,
+    track_panel_stamp: Option<(u64, Option<DeviceKey>)>,
     /// The Spectrum EQ window: its view and what the analyser feed remembers.
     spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView,
     speq: spectrum_eq::SpectrumEqState,
@@ -537,6 +543,9 @@ impl<S: EngineSink> AppCore<S> {
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
             piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
+            track_panel: atomik_ui::TrackPanelView::new(Theme::dark()),
+            track_panel_on: false,
+            track_panel_stamp: None,
             spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView::new(Theme::dark()),
             speq: spectrum_eq::SpectrumEqState::default(),
             keys_router: crate::target::NoteRouter::new(),
@@ -1011,6 +1020,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PluginParams => self.plugin_params.help_at(pos),
             Pane::FileBrowser => self.file_browser.help_at(pos),
             Pane::PianoKeys => self.piano_keys.help_at(pos),
+            Pane::TrackPanel => self.track_panel.help_at(pos),
             Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
         }
     }
@@ -1045,6 +1055,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.handle(event),
             Pane::PianoKeys => self.piano_keys.handle(event),
+            Pane::TrackPanel => self.track_panel.handle(event),
             Pane::SpectrumEq => self.spectrum_eq.handle(event),
         };
         for action in &actions {
@@ -1180,6 +1191,7 @@ impl<S: EngineSink> AppCore<S> {
             .set_inspector(self.arrangement.audio_inspector());
         self.transport_bar.sync(doc, &self.registry);
         self.console.sync(doc, &self.registry);
+        self.sync_track_panel();
         // The sampler was removed: the arrangement shows again.
         if self.sample_editor.device().is_some() && !self.sample_editor.is_present() {
             self.close_sample_editor();
@@ -2559,6 +2571,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.paint(canvas),
             Pane::PianoKeys => self.piano_keys.paint(canvas),
+            Pane::TrackPanel => self.track_panel.paint(canvas),
             Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
         }
     }
@@ -3273,6 +3286,9 @@ mod tuner;
 
 #[path = "app_core_keys.rs"]
 mod keys;
+
+#[path = "app_core_track_panel.rs"]
+mod track_panel_core;
 
 #[path = "app_core_containers.rs"]
 mod containers;

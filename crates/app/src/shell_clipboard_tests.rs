@@ -373,6 +373,7 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.assign_send",
             "rack.disconnect",
             "rack.go_to_track",
+            "rack.select_group",
             "rack.save_to_library",
             "rack.combine",
             "rack.uncombine",

@@ -135,6 +135,12 @@ pub enum AppCommand {
     ToggleFileBrowser,
     /// View ▸ Piano Keys (the on-screen keyboard strip above the status bar).
     TogglePianoKeys,
+    /// Show or hide the Track Panel.
+    ToggleTrackPanel,
+    /// Sort the rack (free, per track, auto group).
+    SetRackSort(atomik_model::RackSort),
+    /// Lay the rack columns out as one column (view only).
+    ToggleSingleColumn,
     /// View ▸ Rack Navigator (the overview strip at the right of the rack).
     ToggleRackNavigator,
     /// View ▸ Arrangement (show or hide the song area below the transport bar).
@@ -649,6 +655,9 @@ impl AppCommand {
             AppCommand::ToggleBrowser => ("view.toggle_browser", None),
             AppCommand::ToggleFileBrowser => ("view.toggle_file_browser", None),
             AppCommand::TogglePianoKeys => ("view.toggle_piano_keys", None),
+            AppCommand::ToggleTrackPanel => ("view.toggle_track_panel", None),
+            AppCommand::SetRackSort(m) => ("view.rack_sort", Some(m.word())),
+            AppCommand::ToggleSingleColumn => ("view.toggle_single_column", None),
             AppCommand::ToggleSong => ("view.toggle_song", None),
             AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
@@ -920,6 +929,11 @@ impl AppCommand {
             ("view.toggle_browser", None) => AppCommand::ToggleBrowser,
             ("view.toggle_file_browser", None) => AppCommand::ToggleFileBrowser,
             ("view.toggle_piano_keys", None) => AppCommand::TogglePianoKeys,
+            ("view.toggle_track_panel", None) => AppCommand::ToggleTrackPanel,
+            ("view.rack_sort", Some(a)) => {
+                AppCommand::SetRackSort(atomik_model::RackSort::from_word(a)?)
+            }
+            ("view.toggle_single_column", None) => AppCommand::ToggleSingleColumn,
             ("view.toggle_song", None) => AppCommand::ToggleSong,
             ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
@@ -1362,6 +1376,12 @@ pub struct MenuState {
     pub file_browser: bool,
     /// Piano Keys strip shown.
     pub piano_keys: bool,
+    /// The Track Panel is shown.
+    pub track_panel: bool,
+    /// How the rack is sorted.
+    pub rack_sort: atomik_model::RackSort,
+    /// The rack lays its columns out as one.
+    pub single_column: bool,
     /// Undo possible.
     pub can_undo: bool,
     /// Redo possible.
@@ -2043,6 +2063,11 @@ pub fn menus_with_lists(
                     state.file_browser,
                 ),
                 check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
+                check(
+                    "Track Panel",
+                    AppCommand::ToggleTrackPanel,
+                    state.track_panel,
+                ),
                 check("Rack", AppCommand::ToggleRack, state.rack),
                 check("Detach Rack", AppCommand::DetachRack, state.rack_detached),
                 check(
@@ -2059,6 +2084,29 @@ pub fn menus_with_lists(
                     "Rack Navigator",
                     AppCommand::ToggleRackNavigator,
                     state.rack_navigator,
+                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Rack Sorting",
+                    entries: [
+                        ("No Grouping", atomik_model::RackSort::Free),
+                        ("Rack per Track", atomik_model::RackSort::PerTrack),
+                        ("Auto-Group", atomik_model::RackSort::AutoGroup),
+                    ]
+                    .into_iter()
+                    .map(|(label, mode)| {
+                        make(
+                            label,
+                            AppCommand::SetRackSort(mode),
+                            Some(state.rack_sort == mode),
+                            true,
+                        )
+                    })
+                    .collect(),
+                }),
+                check(
+                    "Single Column",
+                    AppCommand::ToggleSingleColumn,
+                    state.single_column,
                 ),
                 check(
                     "Sequencer Only",
@@ -2818,6 +2866,9 @@ mod tests {
             browser: false,
             file_browser: false,
             piano_keys: false,
+            track_panel: false,
+            rack_sort: atomik_model::RackSort::Free,
+            single_column: false,
             can_undo: true,
             can_redo: false,
             undo_label: None,
@@ -2941,6 +2992,8 @@ mod tests {
             AppCommand::ToggleBrowser,
             AppCommand::ToggleFileBrowser,
             AppCommand::TogglePianoKeys,
+            AppCommand::ToggleTrackPanel,
+            AppCommand::ToggleSingleColumn,
             AppCommand::ToggleSong,
             AppCommand::TogglePianoRoll,
             AppCommand::ToggleSampleEditor,
@@ -3082,6 +3135,13 @@ mod tests {
         ];
         for t in ThemeChoice::ALL {
             v.push(AppCommand::SetTheme(t));
+        }
+        for mode in [
+            atomik_model::RackSort::Free,
+            atomik_model::RackSort::PerTrack,
+            atomik_model::RackSort::AutoGroup,
+        ] {
+            v.push(AppCommand::SetRackSort(mode));
         }
         for p in crate::keymap_store::ZOOM_STEPS {
             v.push(AppCommand::AppZoom(ZoomChange::To(p)));
@@ -3603,11 +3663,16 @@ mod tests {
                 "Device Browser",
                 "File Browser",
                 "Piano Keys",
+                "Track Panel",
                 "Rack",
                 "Detach Rack",
                 "Detach Mixer",
                 "Spectrum EQ",
                 "Rack Navigator",
+                "No Grouping",
+                "Rack per Track",
+                "Auto-Group",
+                "Single Column",
                 "Sequencer Only",
                 "Clip Editor",
                 "Arrangement",
@@ -3973,6 +4038,9 @@ mod tests {
                 browser: true,
                 file_browser: false,
                 piano_keys: false,
+                track_panel: false,
+                rack_sort: atomik_model::RackSort::Free,
+                single_column: false,
                 can_undo: false,
                 can_redo: true,
                 undo_label: None,

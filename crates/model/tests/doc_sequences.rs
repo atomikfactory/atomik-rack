@@ -17,8 +17,8 @@ use atomik_device_sdk::Registry;
 use atomik_model::{
     AutomationPoint, ClipId, ClipSnapshot, Command, CreateOptions, CreateTarget, Curve, DeviceKey,
     DeviceSnapshot, Document, ModSlot, ModelError, NoteSnapshot, NoteTool, ParamLane,
-    QuantizeParams, RackDoc, SongCommand, WorkflowCommand, empty_doc, load_project, save_project,
-    save_project_checked,
+    QuantizeParams, RackDoc, RackSort, SongCommand, WorkflowCommand, empty_doc, load_project,
+    save_project, save_project_checked,
 };
 use common::audio::*;
 use common::console_ops::*;
@@ -87,6 +87,7 @@ enum WfOp {
     /// The song information: which of its texts changes and to which of three values.
     SongInfo(u8, u8),
     Tune(u8),
+    Sort(u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -264,6 +265,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..12, 0u8..8, 0u8..40).prop_map(|(d, s, v)| WfOp::ModSlot(d, s, v)),
         (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
         (0u8..5).prop_map(WfOp::Tune),
+        (0u8..3).prop_map(WfOp::Sort),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
@@ -661,6 +663,9 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
         WfOp::Tune(step) => {
             Command::SetMasterTune([0.0, -50.0, 12.5, 100.0, -100.0][usize::from(*step)])
         }
+        WfOp::Sort(mode) => Command::SetRackSort(
+            [RackSort::Free, RackSort::PerTrack, RackSort::AutoGroup][usize::from(*mode)],
+        ),
         WfOp::Connect(a, b) => {
             let (from, to) = (pick(&top, *a)?, pick(&top, *b)?);
             Command::Connect(cable(&format!("{from}:out_l"), &format!("{to}:in_l")))
