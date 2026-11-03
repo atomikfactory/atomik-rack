@@ -1347,3 +1347,22 @@ fn a_strip_with_latency_is_placed_by_its_path_latency() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn an_armed_track_is_heard_when_stopped_but_not_in_plain_playback() {
+    let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    let key = add_audio_track(&mut core, "A");
+    let id = core.device_id(&key).unwrap();
+    arm(&mut core, &key, true);
+    assert_eq!(monitor_params(&mut core), vec![(id, 0.0), (id, 1.0)]);
+    // Plain playback silences the live input.
+    core.transport_action(TransportAction::Play);
+    assert_eq!(monitor_params(&mut core), vec![(id, 0.0)]);
+    core.frame();
+    assert!(
+        monitor_params(&mut core).is_empty(),
+        "only changes are sent"
+    );
+    core.transport_action(TransportAction::Stop);
+    assert_eq!(monitor_params(&mut core), vec![(id, 1.0)]);
+}

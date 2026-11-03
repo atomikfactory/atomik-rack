@@ -1489,6 +1489,8 @@ impl<S: EngineSink> AppCore<S> {
             self.submit_routing();
         }
         self.drive_pending_play();
+        // Auto monitoring follows the transport (stopped or recording).
+        self.push_monitor_live();
         let state = self.sink.transport_state();
         if state.playing || state.engine_frame > 0 {
             self.position = state.tick;
@@ -2905,6 +2907,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             TransportAction::ClearOverride => self.clear_override(),
         }
+        self.push_monitor_live();
         self.show_transport();
     }
 
