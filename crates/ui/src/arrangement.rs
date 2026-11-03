@@ -111,6 +111,8 @@ pub const LANE_HEIGHT: f64 = 52.0;
 /// Height of an "add track" row.
 pub const ADD_ROW_HEIGHT: f64 = 28.0;
 const CLIP_HEADER: f64 = 12.0;
+/// Width of the CALC chip in a clip header.
+const CALC_CHIP_WIDTH: f64 = 26.0;
 /// Side of the mute button at the right end of a clip header.
 const MUTE_BUTTON: f64 = 10.0;
 /// Space the fade-out handle of an audio clip takes at the right end of the header.
@@ -821,6 +823,9 @@ pub struct ArrangementView {
     thinning: f32,
     /// The tempo lane is armed for recording (fed by the app).
     tempo_armed: bool,
+    /// The warped audio clips whose finished buffer is still rendering (fed by the app): their
+    /// header shows the CALC chip.
+    calculating: BTreeSet<ClipId>,
     focused: bool,
     /// Something the cached layers draw changed: they are recorded again.
     repaint: bool,
@@ -947,6 +952,7 @@ impl ArrangementView {
             armed_lanes: BTreeSet::new(),
             thinning: 0.005,
             tempo_armed: false,
+            calculating: BTreeSet::new(),
             focused: false,
             repaint: true,
             playhead_dirty: false,
@@ -1077,6 +1083,16 @@ impl ArrangementView {
     pub fn set_tempo_armed(&mut self, armed: bool) {
         if self.tempo_armed != armed {
             self.tempo_armed = armed;
+            self.repaint = true;
+        }
+    }
+
+    /// Sets the warped clips that are still calculating their buffer (the app owns the state).
+    pub fn set_calculating(&mut self, clips: &[ClipId]) {
+        if self.calculating.len() != clips.len()
+            || !clips.iter().all(|c| self.calculating.contains(c))
+        {
+            self.calculating = clips.iter().copied().collect();
             self.repaint = true;
         }
     }
@@ -6445,7 +6461,27 @@ impl ArrangementView {
                 }
                 ClipContent::Notes(_) | ClipContent::Audio(_) => name,
             };
-            let right = button.map_or(vis.x1, |b| b.x0);
+            let mut right = button.map_or(vis.x1, |b| b.x0);
+            // The CALC chip: the finished warp is rendering, the clip plays an interim read.
+            if self.calculating.contains(&clip.id) && right - x > CALC_CHIP_WIDTH * 2.5 {
+                let chip = Rect::new(
+                    right - 3.0 - CALC_CHIP_WIDTH,
+                    vis.y0 + 2.0,
+                    right - 3.0,
+                    vis.y0 + CLIP_HEADER - 2.0,
+                );
+                c.fill_with(RoundedRect::from_rect(chip, 2.0), st.base.plate);
+                sp::label(
+                    c,
+                    "CALC",
+                    chip.center().x,
+                    chip.y1 - 1.5,
+                    6.5,
+                    st.base.on_accent,
+                    Align::Center,
+                );
+                right = chip.x0;
+            }
             let text = fit_label(label, right - x - 4.0, 8.0);
             c.text(&TextRun::new(text, pt(x, vis.y0 + 9.0), 8.0, st.base.on_accent).weight(700));
         }

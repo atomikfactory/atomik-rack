@@ -510,6 +510,7 @@ impl<S: EngineSink> AppCore<S> {
                     if self.apply_warped(key, result) {
                         resubmit = true;
                     }
+                    self.show_warp_calc();
                 }
                 Msg::Frozen {
                     generation,

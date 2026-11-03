@@ -756,6 +756,13 @@ impl Player {
                 em.release_track(t.device, t.socket, &mut held, 0);
             }
         }
+        if let Some(old) = old.as_deref() {
+            // An audio track that played an interim warp crossfades to its replacement.
+            let SongSnapshot {
+                audio, audio_rt, ..
+            } = &mut *new;
+            crate::audio::start_handoffs(&old.audio, audio, audio_rt, sr);
+        }
         let SongSnapshot {
             tempo,
             tracks,

@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Real-time stretch preview.** A warped clip is heard stretched at once: while its high-quality buffer is still
+  rendering, the clip plays through an interim voice that reads the audio through the clip's time map (tempo
+  changes and ramps, warp markers, trims) with Hermite resampling, so a tempo change or a marker drag is never
+  silent and never plays the clip unwarped. The interim voice resamples, so the pitch follows the stretch and a
+  transposition is only heard once the finished buffer arrives; streamed (very long) files keep playing unwarped
+  until then. A CALC chip on the clip header shows which clips are still rendering, and the finished buffer takes
+  over with a 5 ms crossfade, so the swap does not click. Bounces and exports never use the interim voice: they
+  render every buffer first, so their bytes are unchanged.
 - **Plugin CV programmer and aux outputs.** Every plugin device has eight CV inputs (`cv_in_1` to `cv_in_8` on its
   back panel), so a Mod Source LFO, an envelope or a sequencer curve can move a plugin's parameters. Each input has
   a destination (any parameter of the plugin) and a bipolar amount; the device panel is now 3 U with a CV

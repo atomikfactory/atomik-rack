@@ -25,6 +25,7 @@ fn track(regions: Vec<SongAudioRegion>, envelopes: Vec<Vec<(u64, f32)>>) -> Song
         device: atomik_engine::DeviceInstanceId(1),
         regions,
         envelopes,
+        warp_maps: Vec::new(),
     }
 }
 

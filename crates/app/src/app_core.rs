@@ -22,7 +22,7 @@ use atomik_model::{
     ModelError, RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, WorkflowCommand, empty_doc,
     load_project_with_warnings, new_project_doc, register_stand_ins, save_patch,
 };
-use atomik_render::project::song_input_with_warps;
+use atomik_render::project::song_input_live;
 use atomik_ui::kurbo::Point;
 use atomik_ui::{
     ArrangementView, AudioEditorView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView,
@@ -1759,8 +1759,9 @@ impl<S: EngineSink> AppCore<S> {
     fn submit_song(&mut self, tempo_changed: bool) {
         // Warped clips play their rendered buffers: start what is missing, drop what is stale.
         self.sync_warps();
+        self.show_warp_calc();
         let ids = &self.ids;
-        let input = song_input_with_warps(
+        let input = song_input_live(
             self.document.doc(),
             &self.registry,
             |k| ids.get(k).copied(),

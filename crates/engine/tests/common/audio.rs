@@ -123,6 +123,7 @@ pub fn audio_track_of(id: u32, regions: Vec<SongAudioRegion>) -> SongAudioTrack 
         device: DeviceInstanceId(id),
         regions,
         envelopes: Vec::new(),
+        warp_maps: Vec::new(),
     }
 }
 
