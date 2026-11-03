@@ -1183,7 +1183,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Quantize Audio with the grid and strength of the quantize options.
     fn quantize_audio(&mut self) {
         let params = self.quantize_values().params();
-        self.core.quantize_audio_clips(params.grid, params.strength);
+        self.core.quantize_audio_with(&params);
         self.repaint = true;
     }
 
