@@ -1,8 +1,8 @@
 # Device reference
 
 Atomik Rack ships fifty-one original devices: the poly synth (with its mono bass and dual layer
-variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer and stereo delay, the Mod
-Source (LFOs and envelope as CV), the Macro
+variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
+and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
