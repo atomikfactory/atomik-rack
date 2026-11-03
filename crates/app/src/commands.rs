@@ -87,6 +87,8 @@ pub enum AppCommand {
     ExportLoopAudio,
     /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
     ExportStems,
+    /// Help ▸ Export Device Parameter List…: a text table of every built-in device parameter.
+    ExportDeviceInfo,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
     StressRack,
     /// File ▸ Stress Song: 8 tracks × 64 bars with automation.
@@ -325,6 +327,8 @@ pub enum AppCommand {
     /// View ▸ Detach Mixer (Cmd+Shift+F5): the console in a window of its own, or back in the
     /// lower pane.
     DetachConsole,
+    /// View ▸ Detach Browser: the file browser in a window of its own, or docked again.
+    DetachBrowser,
     /// View ▸ Spectrum EQ (F2): the floating analyser of the selected strip with its EQ points,
     /// in a window of its own; again closes it.
     ToggleSpectrumEq,
@@ -428,6 +432,9 @@ pub enum AppCommand {
     /// Edit ▸ Normalise Audio: the clip gain that brings the peak of each selected audio clip to
     /// 0 dBFS.
     AudioNormalise,
+    /// Edit ▸ Normalise To: the clip gain that brings the peak, RMS or loudness of each selected
+    /// audio clip to the target.
+    AudioNormaliseTo(NormaliseTarget),
     /// Edit ▸ Strip Silence…: the panel that cuts the quiet parts out of the selected audio clips.
     AudioStripSilence,
     /// Edit ▸ Quantize Audio: the transients of the selected audio clips move to the grid (warp
@@ -547,6 +554,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::Rack => "rack",
         WindowKind::Console => "mixer",
         WindowKind::SpectrumEq => "spectrum-eq",
+        WindowKind::Browser => "browser",
     }
 }
 
@@ -628,6 +636,7 @@ impl AppCommand {
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::ExportStems => ("file.export_stems", None),
+            AppCommand::ExportDeviceInfo => ("file.export_device_info", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
             AppCommand::Quit => ("file.quit", None),
@@ -769,6 +778,7 @@ impl AppCommand {
             AppCommand::SequencerOnly => ("view.sequencer_only", None),
             AppCommand::DetachRack => ("view.detach_rack", None),
             AppCommand::DetachConsole => ("view.detach_console", None),
+            AppCommand::DetachBrowser => ("view.detach_browser", None),
             AppCommand::ToggleSpectrumEq => ("view.toggle_spectrum_eq", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
             AppCommand::GroupTracks => ("sequencer.group_tracks", None),
@@ -817,6 +827,7 @@ impl AppCommand {
             AppCommand::AutomationIntoClip => ("sequencer.automation_into_clip", None),
             AppCommand::ClearParamLanes => ("sequencer.clear_param_lanes", None),
             AppCommand::AudioNormalise => ("sequencer.audio_normalise", None),
+            AppCommand::AudioNormaliseTo(t) => ("sequencer.audio_normalise_to", Some(t.arg())),
             AppCommand::AudioStripSilence => ("sequencer.audio_strip_silence", None),
             AppCommand::AudioQuantize => ("sequencer.audio_quantize", None),
             AppCommand::AudioWarp => ("sequencer.audio_warp", None),
@@ -902,6 +913,7 @@ impl AppCommand {
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.export_stems", None) => AppCommand::ExportStems,
+            ("file.export_device_info", None) => AppCommand::ExportDeviceInfo,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
             ("file.quit", None) => AppCommand::Quit,
@@ -1065,6 +1077,7 @@ impl AppCommand {
             ("view.sequencer_only", None) => AppCommand::SequencerOnly,
             ("view.detach_rack", None) => AppCommand::DetachRack,
             ("view.detach_console", None) => AppCommand::DetachConsole,
+            ("view.detach_browser", None) => AppCommand::DetachBrowser,
             ("view.toggle_spectrum_eq", None) => AppCommand::ToggleSpectrumEq,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
             ("sequencer.group_tracks", None) => AppCommand::GroupTracks,
@@ -1119,6 +1132,9 @@ impl AppCommand {
             ("sequencer.automation_into_clip", None) => AppCommand::AutomationIntoClip,
             ("sequencer.clear_param_lanes", None) => AppCommand::ClearParamLanes,
             ("sequencer.audio_normalise", None) => AppCommand::AudioNormalise,
+            ("sequencer.audio_normalise_to", Some(arg)) => {
+                return NormaliseTarget::from_arg(arg).map(AppCommand::AudioNormaliseTo);
+            }
             ("sequencer.audio_strip_silence", None) => AppCommand::AudioStripSilence,
             ("sequencer.audio_quantize", None) => AppCommand::AudioQuantize,
             ("sequencer.audio_warp", None) => AppCommand::AudioWarp,
@@ -1234,6 +1250,66 @@ impl ScaleStep {
             ScaleStep::FiveQuarters => "125 %",
             ScaleStep::ThreeQuarters => "75 %",
         }
+    }
+}
+
+/// The level Edit ▸ Normalise To brings the selected audio clips to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NormaliseTarget {
+    /// Peak at -1 dBFS.
+    Peak,
+    /// RMS at -18 dBFS.
+    Rms,
+    /// Integrated loudness at -23 LUFS (broadcast).
+    Broadcast,
+    /// Integrated loudness at -14 LUFS (streaming).
+    Streaming,
+}
+
+impl NormaliseTarget {
+    /// Every target, in menu order.
+    pub const ALL: [NormaliseTarget; 4] = [
+        NormaliseTarget::Peak,
+        NormaliseTarget::Rms,
+        NormaliseTarget::Broadcast,
+        NormaliseTarget::Streaming,
+    ];
+
+    /// The registry argument of `sequencer.audio_normalise`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            NormaliseTarget::Peak => "peak-1",
+            NormaliseTarget::Rms => "rms-18",
+            NormaliseTarget::Broadcast => "lufs-23",
+            NormaliseTarget::Streaming => "lufs-14",
+        }
+    }
+
+    /// The target of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            NormaliseTarget::Peak => "Peak -1 dBFS",
+            NormaliseTarget::Rms => "RMS -18 dBFS",
+            NormaliseTarget::Broadcast => "Loudness -23 LUFS",
+            NormaliseTarget::Streaming => "Loudness -14 LUFS",
+        }
+    }
+
+    /// What to measure and where to put it.
+    pub fn params(self) -> atomik_model::NormaliseParams {
+        use atomik_model::{NormaliseMode, NormaliseParams};
+        let (mode, target_db) = match self {
+            NormaliseTarget::Peak => (NormaliseMode::Peak, -1.0),
+            NormaliseTarget::Rms => (NormaliseMode::Rms, -18.0),
+            NormaliseTarget::Broadcast => (NormaliseMode::Loudness, -23.0),
+            NormaliseTarget::Streaming => (NormaliseMode::Loudness, -14.0),
+        };
+        NormaliseParams { target_db, mode }
     }
 }
 
@@ -1468,6 +1544,8 @@ pub struct MenuState {
     pub rack_detached: bool,
     /// The console is in a window of its own.
     pub console_detached: bool,
+    /// The file browser is in a window of its own.
+    pub browser_detached: bool,
     /// The Spectrum EQ window is open.
     pub spectrum_eq: bool,
     /// The sequencer-only layout (F7) is active.
@@ -1958,6 +2036,19 @@ pub fn menus_with_lists(
                     AppCommand::AudioNormalise,
                     state.audio.can_edit,
                 ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Normalise To",
+                    entries: NormaliseTarget::ALL
+                        .into_iter()
+                        .map(|t| {
+                            enabled(
+                                t.label(),
+                                AppCommand::AudioNormaliseTo(t),
+                                state.audio.can_edit,
+                            )
+                        })
+                        .collect(),
+                }),
                 enabled(
                     "Strip Silence\u{2026}",
                     AppCommand::AudioStripSilence,
@@ -2061,6 +2152,11 @@ pub fn menus_with_lists(
                     "File Browser",
                     AppCommand::ToggleFileBrowser,
                     state.file_browser,
+                ),
+                check(
+                    "Detach Browser",
+                    AppCommand::DetachBrowser,
+                    state.browser_detached,
                 ),
                 check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
                 check(
@@ -2843,6 +2939,10 @@ pub fn menus_with_lists(
                 item("Report an Issue", AppCommand::ReportIssue),
                 MenuEntry::Separator,
                 item("Export Diagnostics\u{2026}", AppCommand::ExportDiagnostics),
+                item(
+                    "Export Device Parameter List\u{2026}",
+                    AppCommand::ExportDeviceInfo,
+                ),
                 MenuEntry::Separator,
                 item("About Atomik Rack", AppCommand::About),
             ],
@@ -2912,6 +3012,7 @@ mod tests {
             rack: true,
             rack_detached: false,
             console_detached: false,
+            browser_detached: false,
             spectrum_eq: false,
             sequencer_only: false,
             editor: false,
@@ -3066,6 +3167,7 @@ mod tests {
             AppCommand::SequencerOnly,
             AppCommand::DetachRack,
             AppCommand::DetachConsole,
+            AppCommand::DetachBrowser,
             AppCommand::ToggleSpectrumEq,
             AppCommand::ToggleEditor,
             AppCommand::GroupTracks,
@@ -3122,6 +3224,7 @@ mod tests {
             AppCommand::RescanMidi,
             AppCommand::RestartAudio,
             AppCommand::ExportDiagnostics,
+            AppCommand::ExportDeviceInfo,
             AppCommand::KeyboardShortcuts,
             AppCommand::Documentation,
             AppCommand::ReportIssue,
@@ -3170,6 +3273,9 @@ mod tests {
         }
         for step in ScaleStep::ALL {
             v.push(AppCommand::ScaleTempo(step));
+        }
+        for target in NormaliseTarget::ALL {
+            v.push(AppCommand::AudioNormaliseTo(target));
         }
         for step in ChopStep::ALL {
             v.push(AppCommand::ChopClips(step));
@@ -3615,6 +3721,10 @@ mod tests {
                 "Quantize Options\u{2026}",
                 "Reverse Audio",
                 "Normalise Audio",
+                "Peak -1 dBFS",
+                "RMS -18 dBFS",
+                "Loudness -23 LUFS",
+                "Loudness -14 LUFS",
                 "Strip Silence\u{2026}",
                 "Quantize Audio",
                 "Insert Bars at Locators",
@@ -3662,6 +3772,7 @@ mod tests {
                 "Same as System",
                 "Device Browser",
                 "File Browser",
+                "Detach Browser",
                 "Piano Keys",
                 "Track Panel",
                 "Rack",
@@ -3874,6 +3985,7 @@ mod tests {
                 "Documentation",
                 "Report an Issue",
                 "Export Diagnostics\u{2026}",
+                "Export Device Parameter List\u{2026}",
                 "About Atomik Rack"
             ]
         );
@@ -4084,6 +4196,7 @@ mod tests {
                 rack: true,
                 rack_detached: false,
                 console_detached: false,
+                browser_detached: false,
                 spectrum_eq: false,
                 sequencer_only: false,
                 editor: false,

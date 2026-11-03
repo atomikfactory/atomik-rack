@@ -479,3 +479,39 @@ fn scale_and_reset_are_one_undo_step_each_and_reset_keeps_the_audio_span() {
     c.reset_warp();
     assert!(c.last_rejection().is_some());
 }
+
+#[test]
+fn quantize_audio_takes_randomise_and_requantizes_its_own_markers() {
+    let t = Tmp::new("quantize_rand");
+    let a = wav(&t, "late.wav", 96_000, clicks(12_000, 700));
+    let mut c = core();
+    let ids = import(&mut c, &[a]);
+    select(&mut c, &ids);
+    let params = atomik_model::QuantizeParams {
+        grid: PPQ / 2,
+        humanize_time: 0.3,
+        seed: 5,
+        ..atomik_model::QuantizeParams::default()
+    };
+    c.quantize_audio_with(&params);
+    c.wait_background();
+    assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    let first = audio(&c, ids[0]);
+    c.undo();
+    c.quantize_audio_with(&params);
+    assert_eq!(
+        first,
+        audio(&c, ids[0]),
+        "the same seed gives the same markers"
+    );
+    // The clip now has markers of its own; quantizing again works from those.
+    c.quantize_audio_with(&atomik_model::QuantizeParams {
+        grid: PPQ / 2,
+        ..atomik_model::QuantizeParams::default()
+    });
+    assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    let clip = c.doc().song.clip(ids[0]).unwrap().2.clone();
+    let a = audio(&c, ids[0]);
+    let tick = atomik_model::tick_at_source(&c.doc().song, 48_000, clip.start, &a, 12_700.0);
+    assert!((tick - (PPQ / 2) as f64).abs() < 60.0, "{tick}");
+}

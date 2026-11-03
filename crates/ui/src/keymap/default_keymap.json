@@ -111,6 +111,8 @@
         { "command": "sequencer.select_next_clip", "context": "sequencer", "chords": ["Right"] },
         { "command": "sequencer.select_prev_track", "context": "sequencer", "chords": ["Up"] },
         { "command": "sequencer.select_next_track", "context": "sequencer", "chords": ["Down"] },
+        { "command": "sequencer.extend_track_selection_up", "context": "sequencer", "chords": ["Shift+Up"] },
+        { "command": "sequencer.extend_track_selection_down", "context": "sequencer", "chords": ["Shift+Down"] },
         { "command": "sequencer.group_tracks", "context": "sequencer", "chords": ["Cmd+Shift+T"] },
         { "command": "sequencer.move_track_up", "context": "sequencer", "chords": ["Cmd+Shift+Alt+Up"] },
         { "command": "sequencer.move_track_down", "context": "sequencer", "chords": ["Cmd+Shift+Alt+Down"] },

@@ -21,6 +21,8 @@ pub(super) const MAIN_SIZE: Size = Size::new(1280.0, 800.0);
 const RACK_SIZE: Size = Size::new(1280.0, 720.0);
 /// The size a detached console window opens with when no geometry was saved.
 const CONSOLE_SIZE: Size = Size::new(1280.0, 520.0);
+/// The size a detached browser window opens with when no geometry was saved.
+const BROWSER_SIZE: Size = Size::new(420.0, 720.0);
 /// The size the Spectrum EQ window opens with when no geometry was saved.
 const SPECTRUM_EQ_SIZE: (f64, f64) = atomik_ui::spectrum_eq::DEFAULT_SIZE;
 
@@ -59,6 +61,7 @@ fn pane_of(kind: WindowKind) -> Pane {
     match kind {
         WindowKind::Console => Pane::Console,
         WindowKind::SpectrumEq => Pane::SpectrumEq,
+        WindowKind::Browser => Pane::FileBrowser,
         WindowKind::Main | WindowKind::Rack => Pane::Rack,
     }
 }
@@ -150,12 +153,17 @@ impl<B: AudioBackend> Shell<B> {
         self.detached(WindowKind::Console)
     }
 
+    pub(super) fn browser_detached(&self) -> bool {
+        self.detached(WindowKind::Browser)
+    }
+
     /// The window that shows `pane`: its own while detached, else the main window.
     pub fn window_of(&self, pane: Pane) -> WindowKind {
         match pane {
             Pane::Rack if self.rack_detached() => WindowKind::Rack,
             Pane::Console if self.console_detached() => WindowKind::Console,
             Pane::SpectrumEq => WindowKind::SpectrumEq,
+            Pane::FileBrowser if self.browser_detached() => WindowKind::Browser,
             _ => WindowKind::Main,
         }
     }
@@ -211,6 +219,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Rack,
             WindowKind::Console,
             WindowKind::SpectrumEq,
+            WindowKind::Browser,
         ] {
             if self.detached(kind) {
                 self.open_window(kind);
@@ -241,6 +250,7 @@ impl<B: AudioBackend> Shell<B> {
         let size = saved.unwrap_or(match kind {
             WindowKind::Console => CONSOLE_SIZE,
             WindowKind::SpectrumEq => Size::new(SPECTRUM_EQ_SIZE.0, SPECTRUM_EQ_SIZE.1),
+            WindowKind::Browser => BROWSER_SIZE,
             WindowKind::Main | WindowKind::Rack => RACK_SIZE,
         });
         let scale = self.scale();
@@ -260,6 +270,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             WindowKind::Console => self.core.console_mut().set_scale(scale),
             WindowKind::SpectrumEq => self.core.spectrum_eq_mut().set_scale(scale),
+            WindowKind::Browser => self.core.file_browser_mut().set_scale(scale),
             WindowKind::Main => {
                 self.core.arrangement_mut().set_scale(scale);
                 self.core.piano_roll_mut().set_scale(scale);
@@ -308,7 +319,9 @@ impl<B: AudioBackend> Shell<B> {
                     v.set_scale(scale);
                 }
                 self.core.transport_bar_mut().set_scale(scale);
-                self.core.file_browser_mut().set_scale(scale);
+                if !self.browser_detached() {
+                    self.core.file_browser_mut().set_scale(scale);
+                }
                 self.core.piano_keys_mut().set_scale(scale);
                 self.core.track_panel_mut().set_scale(scale);
                 // The panes that sit in the main window while attached.
@@ -334,6 +347,24 @@ impl<B: AudioBackend> Shell<B> {
         self.capture = None;
         self.leave_all_hover();
         self.ui.windows.set_detached(kind, detached);
+        if kind == WindowKind::Browser {
+            // The browser shows wherever it is: detaching keeps it visible, in its own window;
+            // closing that window docks it again.
+            self.ui.file_browser_visible = true;
+            self.core.set_file_browser_visible(true);
+            if detached {
+                self.open_window(kind);
+            } else {
+                self.wins.remove(&kind);
+                self.apply_scale(WindowKind::Main);
+            }
+            self.set_focus(if detached { pane } else { self.live_pane(pane) });
+            self.focused = self.window_of(self.focus);
+            self.layout_view();
+            self.write_ui_state();
+            self.repaint = true;
+            return;
+        }
         if kind == WindowKind::SpectrumEq {
             // A floating window with no place in the main layout: it opens and closes on its own.
             if detached {
@@ -363,7 +394,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui.show_song = true;
                     self.ui.show_console = true;
                 }
-                WindowKind::Main | WindowKind::SpectrumEq => {}
+                WindowKind::Main | WindowKind::SpectrumEq | WindowKind::Browser => {}
             }
             self.seq_only_prev = None;
             self.apply_scale(WindowKind::Main);
@@ -424,6 +455,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Rack => Pane::Rack,
                 WindowKind::Console => Pane::Console,
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
+                WindowKind::Browser => Pane::FileBrowser,
             }
         };
         self.set_focus(pane);

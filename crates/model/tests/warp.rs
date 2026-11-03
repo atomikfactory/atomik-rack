@@ -671,6 +671,7 @@ fn quantize_moves_transients_to_the_grid_and_pins_the_ends() {
         &AudioQuantize {
             grid,
             strength: 1.0,
+            ..AudioQuantize::default()
         },
     )
     .unwrap();
@@ -712,6 +713,7 @@ fn quantize_moves_transients_to_the_grid_and_pins_the_ends() {
         &AudioQuantize {
             grid,
             strength: 0.5,
+            ..AudioQuantize::default()
         },
     )
     .unwrap();
@@ -733,6 +735,7 @@ fn quantize_moves_transients_to_the_grid_and_pins_the_ends() {
         &AudioQuantize {
             grid,
             strength: 0.0,
+            ..AudioQuantize::default()
         },
     )
     .unwrap();
@@ -755,6 +758,7 @@ fn quantize_reports_what_it_cannot_do() {
     let q = AudioQuantize {
         grid: PPQ / 4,
         strength: 1.0,
+        ..AudioQuantize::default()
     };
     assert!(quantize_audio(song, SR, c.start, c.length, &a, &[], &q).is_err());
     assert!(quantize_audio(song, SR, c.start, c.length, &a, &[0, 10_000_000], &q).is_err());
@@ -766,6 +770,7 @@ fn quantize_reports_what_it_cannot_do() {
     let bad = AudioQuantize {
         grid: 0,
         strength: 1.0,
+        ..AudioQuantize::default()
     };
     assert!(quantize_audio(song, SR, c.start, c.length, &a, &[6_300], &bad).is_err());
     // A clip that is already warped keeps its mode and tempo and re-pins from its own map.
@@ -810,6 +815,7 @@ fn quantize_follows_the_tempo_map() {
         &AudioQuantize {
             grid: PPQ / 4,
             strength: 1.0,
+            ..AudioQuantize::default()
         },
     )
     .unwrap();
@@ -824,5 +830,102 @@ fn quantize_follows_the_tempo_map() {
                 || near(t % (PPQ / 4) as f64, (PPQ / 4) as f64, 1.0),
             "{t}"
         );
+    }
+}
+
+fn quantized_with(q: &AudioQuantize, hits: &[u64]) -> Result<AudioClipContent, String> {
+    let (reg, mut d) = setup();
+    let id = put(&mut d, &reg, 0, 4 * PPQ, audio(1));
+    let c = doc_clip(d.doc(), id).clone();
+    let a = audio_of(&d, id);
+    quantize_audio(&d.doc().song, SR, c.start, c.length, &a, hits, q)
+}
+
+#[test]
+fn randomised_quantize_is_deterministic_per_seed_and_clip() {
+    let hits: Vec<u64> = vec![0, 6_300, 11_500, 18_000, 24_400, 36_200, 47_700, 60_000];
+    let q = AudioQuantize {
+        randomize: 0.5,
+        seed: 7,
+        clip_seed: 3,
+        ..AudioQuantize::default()
+    };
+    let a = quantized_with(&q, &hits).unwrap();
+    assert_eq!(a, quantized_with(&q, &hits).unwrap());
+    let other_seed = AudioQuantize {
+        seed: 8,
+        ..q.clone()
+    };
+    assert_ne!(
+        a.warp.markers,
+        quantized_with(&other_seed, &hits).unwrap().warp.markers
+    );
+    let other_clip = AudioQuantize {
+        clip_seed: 4,
+        ..q.clone()
+    };
+    assert_ne!(
+        a.warp.markers,
+        quantized_with(&other_clip, &hits).unwrap().warp.markers
+    );
+    // Zero randomise is the plain quantize.
+    let plain = quantized_with(&AudioQuantize::default(), &hits).unwrap();
+    let zero = AudioQuantize {
+        randomize: 0.0,
+        seed: 9,
+        ..AudioQuantize::default()
+    };
+    assert_eq!(plain, quantized_with(&zero, &hits).unwrap());
+}
+
+#[test]
+fn a_groove_shapes_the_quantize_targets() {
+    use atomik_model::{Groove, GrooveSlot, song::StepResolution};
+    let hits: Vec<u64> = vec![0, 6_300, 24_400];
+    let straight = quantized_with(&AudioQuantize::default(), &hits).unwrap();
+    let late = Groove {
+        name: "Late".into(),
+        step: StepResolution::Sixteenth,
+        slots: vec![GrooveSlot {
+            offset: 0.25,
+            velocity: 1.0,
+        }],
+    };
+    let q = AudioQuantize {
+        groove: Some(late),
+        ..AudioQuantize::default()
+    };
+    let grooved = quantized_with(&q, &hits).unwrap();
+    let t = |a: &AudioClipContent| a.warp.markers[1].tick;
+    // Every line sits a quarter step (240 ticks of a 960 step) after the straight one.
+    assert_eq!(t(&grooved) - t(&straight), PPQ / 16);
+    let swung = AudioQuantize {
+        swing: 66,
+        ..AudioQuantize::default()
+    };
+    assert!(quantized_with(&swung, &hits).is_ok());
+    let bad = AudioQuantize {
+        swing: 10,
+        ..AudioQuantize::default()
+    };
+    assert!(quantized_with(&bad, &hits).is_err());
+}
+
+proptest::proptest! {
+    #[test]
+    fn randomised_quantize_keeps_markers_strictly_ordered(
+        mut hits in proptest::collection::vec(1u64..150_000, 1..40),
+        randomize in 0.0f64..=1.0,
+        seed in 0u32..1000,
+        strength in 0.0f64..=1.0,
+    ) {
+        hits.push(6_300);
+        let q = AudioQuantize { randomize, seed, strength, ..AudioQuantize::default() };
+        if let Ok(a) = quantized_with(&q, &hits) {
+            a.warp.validate().unwrap();
+            for w in a.warp.markers.windows(2) {
+                proptest::prop_assert!(w[0].tick < w[1].tick && w[0].source < w[1].source);
+            }
+        }
     }
 }

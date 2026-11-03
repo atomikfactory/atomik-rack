@@ -291,6 +291,11 @@ impl FileBrowserView {
         v
     }
 
+    /// Where the panel is (logical pixels, window coordinates).
+    pub fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
     /// Places the panel (logical pixels, window coordinates).
     pub fn set_bounds(&mut self, bounds: Rect) {
         if bounds != self.bounds {

@@ -287,6 +287,9 @@ pub enum ShellRequest {
     /// Show a save dialog for the diagnostics report (Help > Export Diagnostics), named by
     /// [`crate::diagnostics::default_file_name`], then call [`Shell::export_diagnostics_to`].
     PickExportDiagnostics,
+    /// Show a save dialog for the device parameter list, named by
+    /// [`crate::device_info::default_file_name`], then call [`Shell::export_device_info_to`].
+    PickExportDeviceInfo,
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
@@ -1183,7 +1186,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Quantize Audio with the grid and strength of the quantize options.
     fn quantize_audio(&mut self) {
         let params = self.quantize_values().params();
-        self.core.quantize_audio_clips(params.grid, params.strength);
+        self.core.quantize_audio_with(&params);
         self.repaint = true;
     }
 
@@ -1582,6 +1585,21 @@ impl<B: AudioBackend> Shell<B> {
             Err(e) => {
                 log::error!("cannot write the diagnostics to {}: {e}", path.display());
                 self.notify(format!("Could not write the diagnostics: {e}"));
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Writes the parameter list of every built-in device to the picked file.
+    pub fn export_device_info_to(&mut self, path: &Path) {
+        match crate::device_info::export(self.core.registry(), path) {
+            Ok(()) => self.notify(format!("Device parameters written to {}", path.display())),
+            Err(e) => {
+                log::error!(
+                    "cannot write the device parameters to {}: {e}",
+                    path.display()
+                );
+                self.notify(format!("Could not write the device parameters: {e}"));
             }
         }
         self.repaint = true;
@@ -2223,6 +2241,7 @@ impl<B: AudioBackend> Shell<B> {
             rack_detached: self.rack_detached(),
             console_detached: self.console_detached(),
             spectrum_eq: self.detached(WindowKind::SpectrumEq),
+            browser_detached: self.browser_detached(),
             sequencer_only: self.in_sequencer_only(),
             editor: !self.lower_is_console()
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
@@ -2324,7 +2343,7 @@ impl<B: AudioBackend> Shell<B> {
     /// the panel's own (it resizes by drag), kept so the rest of the window keeps
     /// [`MIN_REST_WIDTH`].
     fn file_browser_rect(&self) -> Option<Rect> {
-        if !self.ui.file_browser_visible {
+        if !self.ui.file_browser_visible || self.browser_detached() {
             return None;
         }
         let top = self.bar_height();
@@ -2431,6 +2450,10 @@ impl<B: AudioBackend> Shell<B> {
         self.core.transport_bar_mut().set_bounds(l.transport);
         if let Some(fb) = l.file_browser {
             self.core.file_browser_mut().set_bounds(fb);
+        } else if self.browser_detached()
+            && let Some((_, rect)) = self.pane_rect(Pane::FileBrowser)
+        {
+            self.core.file_browser_mut().set_bounds(rect);
         }
         if let Some(keys) = l.piano_keys {
             self.core.piano_keys_mut().set_bounds(keys);
@@ -2585,6 +2608,7 @@ impl<B: AudioBackend> Shell<B> {
             // A detached pane lives in its window whatever the main layout is.
             Pane::Rack if self.rack_detached() => Pane::Rack,
             Pane::Console if self.console_detached() => Pane::Console,
+            Pane::FileBrowser if self.browser_detached() => Pane::FileBrowser,
             Pane::Arrangement
             | Pane::PianoRoll
             | Pane::Console
@@ -2676,6 +2700,7 @@ impl<B: AudioBackend> Shell<B> {
             let pane = match window {
                 WindowKind::Console => Pane::Console,
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
+                WindowKind::Browser => Pane::FileBrowser,
                 _ => Pane::Rack,
             };
             let (_, rect) = self.pane_rect(pane)?;
@@ -5135,6 +5160,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::AudioNormaliseTo(target) => {
+                self.core.normalise_audio_with(target.params());
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::AudioStripSilence => {
                 self.open_silence();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -5257,7 +5287,17 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::ToggleFileBrowser => {
-                self.set_file_browser_visible(!self.ui.file_browser_visible);
+                if self.browser_detached() {
+                    // Hiding the browser closes its window.
+                    self.set_detached(WindowKind::Browser, false);
+                    self.set_file_browser_visible(false);
+                } else {
+                    self.set_file_browser_visible(!self.ui.file_browser_visible);
+                }
+                Vec::new()
+            }
+            AppCommand::DetachBrowser => {
+                self.set_detached(WindowKind::Browser, !self.browser_detached());
                 Vec::new()
             }
             AppCommand::ToggleSong => {
@@ -5726,6 +5766,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ImportMidiPreset => vec![ShellRequest::PickImportMidiPreset],
             AppCommand::ExportDiagnostics => vec![ShellRequest::PickExportDiagnostics],
+            AppCommand::ExportDeviceInfo => vec![ShellRequest::PickExportDeviceInfo],
             AppCommand::ClearMidiMaps => {
                 if !self.core.clear_midi_maps() {
                     self.notify("There are no MIDI mappings to clear");
@@ -6571,13 +6612,18 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::SpectrumEq => {
                 return self.repaint || win.dirty || self.core.spectrum_eq().needs_repaint();
             }
+            WindowKind::Browser => {
+                return self.repaint || win.dirty || self.core.file_browser().needs_repaint();
+            }
             WindowKind::Main => {}
         }
         self.repaint
             || win.dirty
             || (!self.rack_detached() && self.core.view().needs_repaint())
             || self.core.transport_bar().needs_repaint()
-            || (self.ui.file_browser_visible && self.core.file_browser().needs_repaint())
+            || (self.ui.file_browser_visible
+                && !self.browser_detached()
+                && self.core.file_browser().needs_repaint())
             || (self.core.track_panel_visible() && self.core.track_panel().needs_repaint())
             || (self.ui.show_song
                 && match self.song_pane() {
@@ -6608,7 +6654,10 @@ impl<B: AudioBackend> Shell<B> {
         }
         match window {
             WindowKind::Main => self.paint_main(canvas),
-            WindowKind::Rack | WindowKind::Console | WindowKind::SpectrumEq => {
+            WindowKind::Rack
+            | WindowKind::Console
+            | WindowKind::SpectrumEq
+            | WindowKind::Browser => {
                 self.paint_detached(window, canvas);
             }
         }

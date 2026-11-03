@@ -13,9 +13,11 @@
 //! that stream from disk a read through the stream source, in chunks.
 
 use super::*;
+use atomik_devices::mastering::loudness::{FLOOR_DB, LoudnessMeter};
 use atomik_engine::SongAsset;
 use atomik_model::{
-    AudioClipContent, ClipContent, StripParams, normalise_gain_db, peak, strip_silence,
+    AudioClipContent, ClipContent, NormaliseMode, NormaliseParams, StripParams, gain_to_level_db,
+    normalise_gain_db, peak, strip_silence,
 };
 use atomik_ui::SilenceValues;
 
@@ -132,6 +134,15 @@ impl<S: EngineSink> AppCore<S> {
     /// Normalise: the gain of every selected audio clip that brings its peak to
     /// [`NORMALISE_TARGET_DB`], as one undo step. A rejection says why nothing changed.
     pub fn normalise_audio(&mut self) {
+        self.normalise_audio_with(NormaliseParams {
+            target_db: NORMALISE_TARGET_DB,
+            ..NormaliseParams::default()
+        });
+    }
+
+    /// Normalise to `params`: the peak (dBFS), the RMS (dBFS) or the integrated loudness (LUFS)
+    /// of the audio each selected clip plays, set through its clip gain (one undo step).
+    pub fn normalise_audio_with(&mut self, params: NormaliseParams) {
         let clips = self.selected_audio();
         if clips.is_empty() {
             return self.reject("Select an audio clip to normalise".to_owned());
@@ -145,16 +156,43 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             };
             let from = s.content.source_offset;
-            let mut top = 0.0f32;
-            for_each_chunk(
-                asset,
-                from,
-                s.source_end(self.doc().sample_rate),
-                |planes| {
-                    top = top.max(peak(planes, 0, u64::MAX));
-                },
-            );
-            let Some(db) = normalise_gain_db(top, NORMALISE_TARGET_DB) else {
+            let to = s.source_end(self.doc().sample_rate);
+            let gain = match params.mode {
+                NormaliseMode::Peak => {
+                    let mut top = 0.0f32;
+                    for_each_chunk(asset, from, to, |planes| {
+                        top = top.max(peak(planes, 0, u64::MAX));
+                    });
+                    normalise_gain_db(top, params.target_db)
+                }
+                NormaliseMode::Rms => {
+                    let (mut sum, mut n) = (0.0f64, 0u64);
+                    for_each_chunk(asset, from, to, |planes| {
+                        for p in planes {
+                            sum += p.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>();
+                            n += p.len() as u64;
+                        }
+                    });
+                    (n > 0 && sum > 0.0)
+                        .then(|| (10.0 * (sum / n as f64).log10()) as f32)
+                        .and_then(|level| gain_to_level_db(level, params.target_db))
+                }
+                NormaliseMode::Loudness => {
+                    let mut meter = LoudnessMeter::new(f64::from(self.doc().sample_rate));
+                    let mut heard = false;
+                    for_each_chunk(asset, from, to, |planes| {
+                        let Some(l) = planes.first() else { return };
+                        let r = planes.get(1).unwrap_or(l);
+                        heard |= l.iter().chain(r.iter()).any(|&x| x != 0.0);
+                        meter.process(l, r);
+                    });
+                    let level = meter.integrated();
+                    (heard && level > FLOOR_DB)
+                        .then_some(level)
+                        .and_then(|level| gain_to_level_db(level, params.target_db))
+                }
+            };
+            let Some(db) = gain else {
                 silent += 1;
                 continue;
             };

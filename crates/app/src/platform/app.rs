@@ -265,6 +265,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         let command = match kind {
             WindowKind::Console => AppCommand::DetachConsole,
             WindowKind::SpectrumEq => AppCommand::ToggleSpectrumEq,
+            WindowKind::Browser => AppCommand::DetachBrowser,
             WindowKind::Main | WindowKind::Rack => AppCommand::DetachRack,
         };
         if *kind != WindowKind::Main && !shell.detached(*kind) {
@@ -1095,6 +1096,21 @@ impl App {
                             path.set_extension("txt");
                         }
                         self.shell.export_diagnostics_to(&path);
+                    }
+                }
+                ShellRequest::PickExportDeviceInfo => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export device parameter list")
+                        .add_filter("Text table", &["txt"])
+                        .set_file_name(crate::device_info::default_file_name());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("txt");
+                        }
+                        self.shell.export_device_info_to(&path);
                     }
                 }
                 ShellRequest::PickExportMidiPreset => {

@@ -128,6 +128,26 @@ fn up_and_down_move_the_track_selection() {
 }
 
 #[test]
+fn shift_up_and_down_extend_the_track_selection() {
+    let (mut v, doc, reg) = setup();
+    let names = |v: &ArrangementView| -> Vec<String> {
+        v.selected_tracks().into_iter().map(|d| d.0).collect()
+    };
+    // Nothing selected: it selects like plain Down.
+    v.command("sequencer.extend_track_selection_down", None, &doc, &reg);
+    assert_eq!(names(&v), ["bass"]);
+    v.command("sequencer.extend_track_selection_down", None, &doc, &reg);
+    assert_eq!(names(&v), ["bass", "lead"]);
+    v.command("sequencer.extend_track_selection_down", None, &doc, &reg);
+    v.command("sequencer.extend_track_selection_down", None, &doc, &reg);
+    assert_eq!(names(&v), ["bass", "lead", "keys"], "stops at the end");
+    // Up extends from the top of the selection.
+    v.set_selected_track(Some(atomik_model::DeviceKey("lead".into())));
+    v.command("sequencer.extend_track_selection_up", None, &doc, &reg);
+    assert_eq!(names(&v), ["bass", "lead"]);
+}
+
+#[test]
 fn the_track_keys_start_from_the_track_of_the_selected_clip() {
     let (mut v, doc, reg) = setup();
     select(&mut v, &[2]);

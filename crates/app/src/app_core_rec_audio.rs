@@ -62,11 +62,12 @@
 //!
 //! # Monitoring
 //!
-//! `internal.monitor_live` of every audio track device is 1 while the track is armed and 0
-//! otherwise ([`AppCore::push_monitor_live`]); the device decides with its `monitor` choice.
+//! `internal.monitor_live` of every audio track device is 1 while the track is armed and the
+//! transport is stopped or recording, and 0 otherwise, so an armed track is silent in plain
+//! playback ([`AppCore::push_monitor_live`]); the device decides with its `monitor` choice.
 //! It goes through the engine only (like `internal.solo_silence`): never a model command, so it
-//! is not stored or undoable. It is sent on arm changes, after every engine restart (load,
-//! audio restart) and when a device is (re)inserted; only changes are sent.
+//! is not stored or undoable. It is sent on arm and transport changes, after every engine restart
+//! (load, audio restart) and when a device is (re)inserted; only changes are sent.
 //!
 //! # Playing streamed audio
 //!
@@ -692,8 +693,8 @@ impl<S: EngineSink> AppCore<S> {
         self.document.end_merge();
     }
 
-    /// Sends `internal.monitor_live` (1 while armed) to the audio tracks whose value the engine
-    /// does not have yet (module docs).
+    /// Sends `internal.monitor_live` (1 while armed and the transport is stopped or recording) to
+    /// the audio tracks whose value the engine does not have yet (module docs).
     pub(super) fn push_monitor_live(&mut self) {
         let Some(pid) = self
             .registry
@@ -703,13 +704,15 @@ impl<S: EngineSink> AppCore<S> {
         else {
             return;
         };
+        // An armed track is heard live when stopped or recording, not in plain playback.
+        let listening = self.take.is_some() || !self.playing;
         let want: Vec<(DeviceKey, bool)> = self
             .doc()
             .song
             .tracks
             .iter()
             .filter(|t| self.doc().is_audio_track(&t.device, &self.registry))
-            .map(|t| (t.device.clone(), t.armed))
+            .map(|t| (t.device.clone(), t.armed && listening))
             .collect();
         self.audio
             .monitor_sent

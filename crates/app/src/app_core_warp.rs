@@ -39,8 +39,8 @@ use crate::audio_import::spawn_warp;
 use atomik_engine::SongAsset;
 use atomik_model::song::effective_tracks;
 use atomik_model::{
-    AudioClipContent, AudioQuantize, ClipContent, ClipId, WarpJob, bpm_for_beats, estimate_bpm,
-    quantize_audio, warp_job, warp_jobs,
+    AudioClipContent, AudioQuantize, ClipContent, ClipId, QuantizeParams, WarpJob, bpm_for_beats,
+    estimate_bpm, quantize_audio, warp_job, warp_jobs,
 };
 use atomik_render::warp::job_bytes;
 use atomik_ui::WarpValues;
@@ -471,6 +471,18 @@ impl<S: EngineSink> AppCore<S> {
     /// Moves the transients of every selected audio clip to the grid with warp markers, as one
     /// undo step. `grid` is in ticks and `strength` in `0..=1`.
     pub fn quantize_audio_clips(&mut self, grid: i64, strength: f32) {
+        self.quantize_audio_with(&QuantizeParams {
+            grid,
+            strength,
+            ..QuantizeParams::default()
+        });
+    }
+
+    /// [`Self::quantize_audio_clips`] with the swing, groove and humanize time of `params`: the
+    /// timing amount randomises each moved transient (same seed, same result). A clip that
+    /// already has warp markers of its own quantizes those markers instead of detected
+    /// transients.
+    pub fn quantize_audio_with(&mut self, params: &QuantizeParams) {
         let clips = self.selected_audio();
         if clips.is_empty() {
             return self.reject("Select an audio clip to quantize".to_owned());
@@ -490,10 +502,19 @@ impl<S: EngineSink> AppCore<S> {
                 why = Some("The audio file is missing".to_owned());
                 continue;
             };
-            let onsets: Vec<u64> = atomik_dsp::detect_onsets(&[&mono], rate, SENSITIVITY)
-                .into_iter()
-                .map(|o| from + o)
-                .collect();
+            let own = Some(&s.content).filter(|a| a.warp.enabled && a.warp.markers.len() > 1);
+            let onsets: Vec<u64> = match own {
+                Some(a) => a
+                    .warp
+                    .markers
+                    .iter()
+                    .map(|m| a.source_offset + m.source)
+                    .collect(),
+                None => atomik_dsp::detect_onsets(&[&mono], rate, SENSITIVITY)
+                    .into_iter()
+                    .map(|o| from + o)
+                    .collect(),
+            };
             match quantize_audio(
                 song,
                 rate,
@@ -502,8 +523,13 @@ impl<S: EngineSink> AppCore<S> {
                 &s.content,
                 &onsets,
                 &AudioQuantize {
-                    grid,
-                    strength: f64::from(strength),
+                    grid: params.grid,
+                    strength: f64::from(params.strength),
+                    swing: params.swing,
+                    groove: params.groove.as_deref().and_then(|n| song.groove(n)),
+                    randomize: f64::from(params.humanize_time),
+                    seed: params.seed,
+                    clip_seed: s.id.0,
                 },
             ) {
                 Ok(content) => changes.push((s, content, None)),

@@ -324,6 +324,9 @@ pub const REVERSE_ARGS: &[&str] = &["bars", "starts"];
 /// The values of `sequencer.scale_tempo`: `double` and `halve` change the tempo of the selection
 /// by 200 % and 50 %; a number is the new tempo in percent of the old one.
 pub const SCALE_TEMPO_ARGS: &[&str] = &["double", "halve", "150", "125", "75"];
+/// The values of `sequencer.audio_normalise_to`: peak -1 dBFS, RMS -18 dBFS, integrated loudness
+/// -23 or -14 LUFS.
+pub const AUDIO_NORMALISE_ARGS: &[&str] = &["peak-1", "rms-18", "lufs-23", "lufs-14"];
 /// The values of `sequencer.audio_gain`.
 pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
 /// The values of `sequencer.audio_transpose`.
@@ -755,6 +758,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "file.export_archive",
         "Export Project Archive",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_device_info",
+        "Export Device Parameter List",
         G::Global,
         C::Global,
     )
@@ -1339,6 +1349,15 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.audio_normalise_to",
+        "Normalise Audio To",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(AUDIO_NORMALISE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.audio_quantize",
         "Quantize Audio",
         G::Sequencer,
@@ -1576,6 +1595,20 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu()
     .decline(),
+    cmd(
+        "sequencer.extend_track_selection_down",
+        "Extend Track Selection Down",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
+        "sequencer.extend_track_selection_up",
+        "Extend Track Selection Up",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
     cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",
@@ -2314,6 +2347,7 @@ const COMMANDS: &[CommandDef] = &[
         G::View,
         C::Global,
     ),
+    cmd("view.detach_browser", "Detach Browser", G::View, C::Global).menu(),
     cmd("view.detach_console", "Detach Mixer", G::View, C::Global).menu(),
     cmd("view.detach_rack", "Detach Rack", G::View, C::Global).menu(),
     cmd(

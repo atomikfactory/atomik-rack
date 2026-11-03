@@ -125,6 +125,8 @@ rack.select_prev | rack | Up
 rack.uncombine | rack | Cmd+Shift+U
 sequencer.audio_crossfade toggle | sequencer | X
 sequencer.close_clip | sequencer | Esc
+sequencer.extend_track_selection_down | sequencer | Shift+Down
+sequencer.extend_track_selection_up | sequencer | Shift+Up
 sequencer.follow | global | F
 sequencer.group_tracks | sequencer | Cmd+Shift+T
 sequencer.join | sequencer | Cmd+J

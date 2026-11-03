@@ -314,6 +314,7 @@ fn window_name(kind: WindowKind) -> &'static str {
         WindowKind::Rack => "rack",
         WindowKind::Console => "console",
         WindowKind::SpectrumEq => "spectrum-eq",
+        WindowKind::Browser => "browser",
     }
 }
 
@@ -330,8 +331,9 @@ fn parse_window(name: Option<&str>) -> Result<WindowKind, String> {
         Some("rack") => Ok(WindowKind::Rack),
         Some("console") => Ok(WindowKind::Console),
         Some("spectrum-eq") => Ok(WindowKind::SpectrumEq),
+        Some("browser") => Ok(WindowKind::Browser),
         Some(other) => Err(format!(
-            "window must be main, rack, console or spectrum-eq, not `{other}`"
+            "window must be main, rack, console, spectrum-eq or browser, not `{other}`"
         )),
     }
 }
@@ -993,6 +995,7 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             let pane = match window {
                 WindowKind::Rack => Pane::Rack,
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
+                WindowKind::Browser => Pane::FileBrowser,
                 _ => Pane::Console,
             };
             let (_, rect) = session.shell().pane_rect(pane)?;
