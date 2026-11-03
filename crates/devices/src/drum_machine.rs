@@ -48,6 +48,14 @@
 //!   (`poly_synth::soft_limit`) apply to the main mix only; individual outputs are unlimited and
 //!   unscaled but non-finite values are replaced by 0. All-notes-off fades every voice over 2 ms.
 //!
+//! * **Modules.** `padN.module` (default `sample`) makes a pad play a synthesised voice instead of
+//!   its zones: `kick`, `snare`, `hat`, `tom`, `tone` or `noise` (see `module.rs` for what
+//!   `padN.body`, `padN.snap` and `padN.sweep` do for each). A module pad needs no sample map,
+//!   shares the 32 voices, the envelope, mode, choke group, retrigger, stealing, level, pan, CV,
+//!   outputs and the effect chain with the sample pads, and `padN.tune`/`padN.fine`/the master
+//!   tune move its pitch. A pad left on `sample` renders bit-identically to before modules
+//!   existed. The module params sit after the effect params, so older ids do not move.
+//!
 //! **Swapping maps** follow `atomik.sampler` exactly: voices on the draining
 //! map are cut; a voice on the old map whose zone index exists in the new map with a
 //! pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's
@@ -66,10 +74,12 @@ use std::sync::Arc;
 use crate::cv_in::{batch_mean, clean, db_gain};
 use crate::poly_synth::soft_limit;
 
+mod module;
 mod pad_fx;
 mod voice;
+use module::Module;
 use pad_fx::{HIGHCUT_MAX, LOWCUT_MIN, PadFx};
-use voice::{Pending, Slot, Voice, VoiceCv};
+use voice::{Pending, SYNTH_ZONE, Slot, Voice, VoiceCv};
 
 /// Number of pads.
 pub const PAD_COUNT: usize = 16;
@@ -98,7 +108,10 @@ const P_PITCH_CV_TRIM: u32 = CV_PARAM_BASE as u32 + 1;
 /// Per-pad effect params (tone, low cut, high cut, drive, two sends), appended after the CV trims.
 const EXT_PER_PAD: usize = 6;
 const EXT_BASE: usize = CV_PARAM_BASE + 2;
-const PARAM_COUNT: usize = EXT_BASE + PAD_COUNT * EXT_PER_PAD;
+/// Per-pad module params (module, body, snap, sweep), appended after the effect params.
+const MOD_PER_PAD: usize = 4;
+const MOD_BASE: usize = EXT_BASE + PAD_COUNT * EXT_PER_PAD;
+const PARAM_COUNT: usize = MOD_BASE + PAD_COUNT * MOD_PER_PAD;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
 /// Fixed range of the pitch CV in semitones (times `pitch_cv_trim`).
@@ -127,6 +140,12 @@ const X_DRIVE: u32 = 3;
 const X_SEND1: u32 = 4;
 const X_SEND2: u32 = 5;
 
+// Offsets inside a pad's block of module params.
+const M_MODULE: u32 = 0;
+const M_BODY: u32 = 1;
+const M_SNAP: u32 = 2;
+const M_SWEEP: u32 = 3;
+
 const fn param(
     id: u32,
     key: &'static str,
@@ -150,6 +169,7 @@ const fn param(
 }
 
 const MODES: Unit = Unit::Choice(&["gate", "one-shot"]);
+const MODULES: Unit = Unit::Choice(&module::NAMES);
 
 /// The eight params of pad `$n`, ids following `master.level`.
 macro_rules! pad_params {
@@ -312,6 +332,44 @@ macro_rules! pad_params {
                     false,
                 ),
             )*
+            $(
+                param(
+                    MOD_BASE as u32 + ($n - 1) * MOD_PER_PAD as u32 + M_MODULE,
+                    concat!("pad", $n, ".module"),
+                    concat!("Pad ", $n, " module"),
+                    (0.0, 6.0, 0.0),
+                    Taper::Linear,
+                    MODULES,
+                    true,
+                ),
+                param(
+                    MOD_BASE as u32 + ($n - 1) * MOD_PER_PAD as u32 + M_BODY,
+                    concat!("pad", $n, ".body"),
+                    concat!("Pad ", $n, " body"),
+                    (0.0, 1.0, 0.5),
+                    Taper::Linear,
+                    Unit::Percent,
+                    false,
+                ),
+                param(
+                    MOD_BASE as u32 + ($n - 1) * MOD_PER_PAD as u32 + M_SNAP,
+                    concat!("pad", $n, ".snap"),
+                    concat!("Pad ", $n, " snap"),
+                    (0.0, 1.0, 0.5),
+                    Taper::Linear,
+                    Unit::Percent,
+                    false,
+                ),
+                param(
+                    MOD_BASE as u32 + ($n - 1) * MOD_PER_PAD as u32 + M_SWEEP,
+                    concat!("pad", $n, ".sweep"),
+                    concat!("Pad ", $n, " sweep"),
+                    (0.0, 1.0, 0.5),
+                    Taper::Linear,
+                    Unit::Percent,
+                    false,
+                ),
+            )*
         ]
     };
 }
@@ -466,6 +524,12 @@ pub(crate) struct Pad {
     pub gate: bool,
     pub choke: u8,
     pub velocity: f32,
+    /// What the pad plays (`padN.module`).
+    pub module: Module,
+    /// Module knobs (`padN.body`, `padN.snap`, `padN.sweep`).
+    pub body: f32,
+    pub snap: f32,
+    pub sweep: f32,
 }
 
 impl Pad {
@@ -480,6 +544,10 @@ impl Pad {
             gate: false,
             choke: 0,
             velocity: 0.7,
+            module: Module::Sample,
+            body: 0.5,
+            snap: 0.5,
+            sweep: 0.5,
         }
     }
 
@@ -535,6 +603,11 @@ fn scan_pads(map: Option<&SampleMap>) -> [PadZones; PAD_COUNT] {
     out
 }
 
+/// A module knob value clamped to `0..=1` (NaN reads as 0).
+fn unit(v: f32) -> f32 {
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
+}
+
 /// The gate-out level of a hit at `velocity`: `0.5 + velocity / 2`, never below one MIDI step
 /// above 0.5, so a held pad always reads as high.
 fn gate_level(velocity: f32) -> f32 {
@@ -549,6 +622,33 @@ fn gate_level(velocity: f32) -> f32 {
 /// The velocity a gate-in level stands for: the inverse of [`gate_level`]; 1.0 is full velocity.
 fn gate_velocity(gate: f32) -> f32 {
     ((gate - GATE_THRESHOLD) * 2.0).clamp(0.0, 1.0)
+}
+
+/// Choke the other pads of the hit pad's group and retrigger the pad itself.
+fn choke_and_retrigger(voices: &mut [Voice], pads: &[Pad; PAD_COUNT], pad: u8, fade: u32) {
+    let group = pads[usize::from(pad)].choke;
+    let hit = |p: u8| p == pad || (group != 0 && pads[usize::from(p)].choke == group);
+    for v in voices.iter_mut().filter(|v| v.active) {
+        if let Some(pe) = v.pending {
+            if hit(pe.pad) {
+                v.pending = None;
+            }
+        } else if hit(v.pad) {
+            v.start_fade(fade);
+        }
+    }
+}
+
+/// The voice to steal: one that is already fading out first, else the oldest.
+fn steal(voices: &mut [Voice]) -> Option<&mut Voice> {
+    let victim = voices
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.is_fading() && v.pending.is_none())
+        .min_by_key(|(_, v)| v.order)
+        .or_else(|| voices.iter().enumerate().min_by_key(|(_, v)| v.order))
+        .map(|(i, _)| i);
+    victim.map(|i| &mut voices[i])
 }
 
 /// The drum machine device.
@@ -641,6 +741,18 @@ impl DrumMachine {
                 .set_target(PARAMS[P_MASTER as usize].db_param_gain(v));
             return;
         }
+        if id as usize >= MOD_BASE {
+            let rel = id - MOD_BASE as u32;
+            let p = &mut self.pads[(rel / MOD_PER_PAD as u32) as usize];
+            match rel % MOD_PER_PAD as u32 {
+                M_MODULE => p.module = Module::from_value(v),
+                M_BODY => p.body = unit(v),
+                M_SNAP => p.snap = unit(v),
+                M_SWEEP => p.sweep = unit(v),
+                _ => {}
+            }
+            return;
+        }
         if id as usize >= EXT_BASE {
             let rel = id - EXT_BASE as u32;
             let pad = (rel / EXT_PER_PAD as u32) as usize;
@@ -706,6 +818,10 @@ impl DrumMachine {
 
     /// A hit on `pad` (zero-based) at `velocity`.
     fn note_on(&mut self, pad: u8, velocity: f32) {
+        if self.pads[usize::from(pad)].module.is_synth() {
+            self.synth_hit(pad, velocity);
+            return;
+        }
         let Some(map) = self.current.as_deref() else {
             return;
         };
@@ -721,20 +837,9 @@ impl DrumMachine {
         if !(0..usize::from(list.n)).any(matches) {
             return;
         }
-        // Choke the other pads of the group and retrigger this pad.
         let fade = self.samples(FADE_MS);
-        let group = self.pads[usize::from(pad)].choke;
         let pads = self.pads;
-        let hit = |p: u8| p == pad || (group != 0 && pads[usize::from(p)].choke == group);
-        for v in self.voices.iter_mut().filter(|v| v.active) {
-            if let Some(pe) = v.pending {
-                if hit(pe.pad) {
-                    v.pending = None;
-                }
-            } else if hit(v.pad) {
-                v.start_fade(fade);
-            }
-        }
+        choke_and_retrigger(&mut self.voices, &pads, pad, fade);
         for i in 0..usize::from(list.n) {
             if !matches(i) {
                 continue;
@@ -747,24 +852,40 @@ impl DrumMachine {
                 v.start(map, zi, pad, velocity, &pads);
                 continue;
             }
-            // Steal: a voice that is already fading out first, else the oldest.
-            let victim = self
-                .voices
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| v.is_fading() && v.pending.is_none())
-                .min_by_key(|(_, v)| v.order)
-                .or_else(|| self.voices.iter().enumerate().min_by_key(|(_, v)| v.order))
-                .map(|(i, _)| i);
-            if let Some(v) = victim.map(|i| &mut self.voices[i]) {
+            if let Some(v) = steal(&mut self.voices) {
                 v.order = order;
                 v.pending = Some(Pending {
                     pad,
                     velocity,
                     zone: zi as u32,
+                    seed: 0,
                 });
                 v.start_fade(fade);
             }
+        }
+    }
+
+    /// A hit on a pad that plays a synthesised module: one voice, no sample map needed.
+    fn synth_hit(&mut self, pad: u8, velocity: f32) {
+        let fade = self.samples(FADE_MS);
+        let pads = self.pads;
+        choke_and_retrigger(&mut self.voices, &pads, pad, fade);
+        let sh = self.shared;
+        let order = self.next_order;
+        self.next_order += 1;
+        let seed = order.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(pad);
+        if let Some(v) = self.voices.iter_mut().find(|v| !v.active) {
+            v.order = order;
+            v.start_synth(pad, velocity, &pads, &sh, seed);
+        } else if let Some(v) = steal(&mut self.voices) {
+            v.order = order;
+            v.pending = Some(Pending {
+                pad,
+                velocity,
+                zone: SYNTH_ZONE,
+                seed,
+            });
+            v.start_fade(fade);
         }
     }
 
@@ -894,7 +1015,7 @@ impl Device for DrumMachine {
         let mut drains = false;
         if let Some(old_map) = old.as_deref() {
             for v in self.voices.iter_mut().filter(|v| v.active) {
-                if v.slot != Slot::Current {
+                if v.slot != Slot::Current || v.synthetic {
                     continue;
                 }
                 let target = map.as_deref().and_then(|new_map| {
@@ -914,6 +1035,9 @@ impl Device for DrumMachine {
         // Pending hits survive only if the new map has a matching zone of their pad there.
         for v in self.voices.iter_mut().filter(|v| v.active) {
             if let Some(pe) = v.pending {
+                if pe.zone == SYNTH_ZONE {
+                    continue;
+                }
                 let key = pad_key(pe.pad);
                 let ok = map
                     .as_deref()
@@ -1042,10 +1166,6 @@ impl Device for DrumMachine {
                 let own = match v.slot {
                     Slot::Current => current.as_deref(),
                     Slot::Draining => draining.as_deref(),
-                };
-                let Some(own) = own else {
-                    v.kill();
-                    continue;
                 };
                 let [l, r] = if routed[usize::from(v.pad)] || fx_on[usize::from(v.pad)] {
                     &mut pad_mix[usize::from(v.pad)]

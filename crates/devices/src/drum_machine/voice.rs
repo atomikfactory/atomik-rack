@@ -1,5 +1,6 @@
 //! One drum-machine voice: one zone of one pad hit (see the module docs of `drum_machine`).
 
+use super::module::SynthVoice;
 use super::{PAD_COUNT, Pad, Shared};
 use crate::sampler::{tail_gain, zone_region};
 use atomik_core::BATCH;
@@ -23,7 +24,12 @@ pub(super) struct Pending {
     pub pad: u8,
     pub velocity: f32,
     pub zone: u32,
+    /// Seed of the noise of a synthesised hit (unused for a sample hit).
+    pub seed: u64,
 }
+
+/// The `zone` of a pending hit of a synthesised pad (there is no zone to start).
+pub(super) const SYNTH_ZONE: u32 = u32::MAX;
 
 /// Placeholder zone of an idle voice.
 const IDLE_ZONE: Zone = Zone {
@@ -111,6 +117,9 @@ pub(super) struct Voice {
     /// Exponential decay level (1 until the decay starts).
     decay: f32,
     pub pending: Option<Pending>,
+    /// Whether the voice plays a synthesised module (it reads no sample map).
+    pub synthetic: bool,
+    synth: SynthVoice,
     /// Samples left of a fade-out (0: not fading) and its length.
     pub fade_left: u32,
     fade_len: f32,
@@ -134,6 +143,8 @@ impl Voice {
             att_pos: 0,
             decay: 1.0,
             pending: None,
+            synthetic: false,
+            synth: SynthVoice::new(),
             fade_left: 0,
             fade_len: 1.0,
         }
@@ -183,6 +194,7 @@ impl Voice {
         let p = &pads[usize::from(pad)];
         self.pad = pad;
         self.slot = Slot::Current;
+        self.synthetic = false;
         self.pending = None;
         self.vel_gain = 1.0 - p.velocity * (1.0 - velocity);
         self.gate = p.gate;
@@ -191,6 +203,38 @@ impl Voice {
         self.decay = 1.0;
         self.head = Playhead::new(self.region(map));
         self.fade_left = 0;
+        self.active = true;
+    }
+
+    /// Starts a hit of the synthesised `module` of `pad` from silence (`seed` seeds its noise).
+    pub fn start_synth(
+        &mut self,
+        pad: u8,
+        velocity: f32,
+        pads: &[Pad; PAD_COUNT],
+        sh: &Shared,
+        seed: u64,
+    ) {
+        let velocity = if velocity.is_nan() {
+            0.0
+        } else {
+            velocity.clamp(0.0, 1.0)
+        };
+        let p = &pads[usize::from(pad)];
+        self.pad = pad;
+        self.slot = Slot::Current;
+        self.synthetic = true;
+        self.zone_gain = 1.0;
+        self.stereo = false;
+        self.pending = None;
+        self.vel_gain = 1.0 - p.velocity * (1.0 - velocity);
+        self.gate = p.gate;
+        self.held = true;
+        self.att_pos = 0;
+        self.decay = 1.0;
+        self.fade_left = 0;
+        let ratio = self.segment(pads, sh).ratio;
+        self.synth.start(p.module, p, ratio, seed, sh.sample_rate);
         self.active = true;
     }
 
@@ -235,6 +279,16 @@ impl Voice {
 
     fn segment(&self, pads: &[Pad; PAD_COUNT], sh: &Shared) -> Segment {
         let p = &pads[usize::from(self.pad)];
+        if self.synthetic {
+            let (pan_l, pan_r) = pan_gains_mono(p.pan);
+            let exponent = (p.tune + (p.fine + sh.master_cents) / 100.0) / 12.0;
+            return Segment {
+                ratio: f64::from(atomik_dsp::exp2_det(exponent)),
+                level: p.level,
+                pan_l,
+                pan_r,
+            };
+        }
         let z = &self.zone;
         let key = i32::from(super::pad_key(self.pad));
         let offset = (key - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
@@ -253,11 +307,12 @@ impl Voice {
         }
     }
 
-    /// Adds this voice into `out` (aligned slices). `own` is the map the voice plays from,
-    /// `current` the device's current map (where a pending hit starts).
+    /// Adds this voice into `out` (aligned slices). `own` is the map the voice plays from (none
+    /// for a synthesised voice), `current` the device's current map (where a pending hit
+    /// starts).
     pub fn render(
         &mut self,
-        own: &SampleMap,
+        own: Option<&SampleMap>,
         current: Option<&SampleMap>,
         out: [&mut [f32]; 2],
         pads: &[Pad; PAD_COUNT],
@@ -268,12 +323,28 @@ impl Voice {
         let mut map = own;
         let mut seg = self.segment(pads, sh);
         for n in 0..out_l.len() {
-            let data = &map.buffer_of(&self.zone).data;
-            let xl = self.head.read(&data[0]);
-            let xr = if self.stereo {
-                self.head.read(&data[1])
+            let at = cv.start + n;
+            let pitch = if cv.cv.pitch_on { cv.cv.pitch[at] } else { 1.0 };
+            let (xl, xr, tail) = if self.synthetic {
+                let x = self.synth.next(
+                    &pads[usize::from(self.pad)],
+                    seg.ratio * pitch,
+                    sh.sample_rate,
+                );
+                (x, x, 1.0)
             } else {
-                xl
+                let Some(m) = map else {
+                    self.kill();
+                    return;
+                };
+                let data = &m.buffer_of(&self.zone).data;
+                let xl = self.head.read(&data[0]);
+                let xr = if self.stereo {
+                    self.head.read(&data[1])
+                } else {
+                    xl
+                };
+                (xl, xr, tail_gain(&self.head, &self.zone, sh.sample_rate))
             };
             let att = if self.att_pos < sh.attack {
                 self.att_pos += 1;
@@ -287,20 +358,17 @@ impl Voice {
             } else {
                 1.0
             };
-            let tail = tail_gain(&self.head, &self.zone, sh.sample_rate);
             let mut g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
-            let at = cv.start + n;
             if cv.cv.level_on {
                 g *= cv.cv.level[at];
             }
             out_l[n] += xl * seg.pan_l * g;
             out_r[n] += xr * seg.pan_r * g;
-            self.head.advance(if cv.cv.pitch_on {
-                seg.ratio * cv.cv.pitch[at]
-            } else {
-                seg.ratio
-            });
-            let mut ended = self.head.finished();
+            let mut ended = false;
+            if !self.synthetic {
+                self.head.advance(seg.ratio * pitch);
+                ended = self.head.finished();
+            }
             if !(self.gate && self.held) {
                 self.decay *= pads[usize::from(self.pad)].decay_coef;
                 ended |= self.decay < DECAY_FLOOR;
@@ -312,17 +380,28 @@ impl Voice {
             if ended {
                 self.active = false;
                 self.fade_left = 0;
-                let started = self.pending.take().and_then(|pe| {
-                    let m = current?;
+                let Some(pe) = self.pending.take() else {
+                    return;
+                };
+                if pe.zone == SYNTH_ZONE {
+                    // The pad must still be a synthesised one.
+                    if !pads[usize::from(pe.pad)].module.is_synth() {
+                        return;
+                    }
+                    self.start_synth(pe.pad, pe.velocity, pads, sh, pe.seed);
+                    seg = self.segment(pads, sh);
+                    continue;
+                }
+                let started = current.and_then(|m| {
                     let z = m.zones().get(pe.zone as usize)?;
                     let key = super::pad_key(pe.pad);
                     (super::is_pad_zone(z, key) && z.contains(key, velocity_to_7bit(pe.velocity)))
-                        .then_some((m, pe))
+                        .then_some(m)
                 });
                 match started {
-                    Some((m, pe)) => {
+                    Some(m) => {
                         self.start(m, pe.zone as usize, pe.pad, pe.velocity, pads);
-                        map = m;
+                        map = Some(m);
                         seg = self.segment(pads, sh);
                     }
                     None => return,
