@@ -155,6 +155,33 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   routes as if the device above the slot (the previous device of that column) were selected, and
   does not route at the top of a column. A device added or moved by a flat index takes the column of
   the device before it. Container insides are always one column (column 0).
+- **Rack sorting** ([model/src/rack_groups.rs](../crates/model/src/rack_groups.rs)). A device group
+  is what belongs to one track: the instrument (or audio track device), its note players, its
+  console channel with the channel's inserts, and the effects cabled after the instrument;
+  `RackDoc::device_groups` derives it from the document and stores nothing. An effect two
+  instruments both reach, and an effect on a send/return slot, is in no group, so instruments that
+  share a return stay separate. `RackDoc.sort_mode` (`RackSort`) is `Free` (manual columns, the
+  default), `PerTrack` (loose devices such as the master stay in column 0, each group has a
+  column of its own and no column is empty) or `AutoGroup` (the members of a group are gathered
+  into one run). `Command::SetRackSort` changes the mode and arranges the rack in one undo step;
+  while the mode is not `Free`, every edit that adds, removes or moves a top-level device ends with
+  the arranging `Layout` (and `Columns`) edit inside the same compound, and a move of one device
+  moves its whole group. It reports `ViewChanged` only and never changes a sound. It is saved as
+  the root `"rack_sort"` (`"per_track"` or `"auto_group"`, written only then, ignorable), so an
+  older project loads as `Free`. View, Rack Sorting picks the mode; View, Single Column
+  (`RackView::set_single_column`, view state, never saved) lays the columns out as one without
+  touching the document; `rack.select_group` selects the group of the selected device.
+- **Track Panel** ([ui/src/track_panel.rs](../crates/ui/src/track_panel.rs)). View, Track Panel
+  docks a column on the right of the window (`Pane::TrackPanel`, `Layout::track_panel`; the choice
+  is not saved) that lists the track selected in the arrangement: its note players, its
+  instrument, the four insert slots of its console channel, the sends and the fader with its mute.
+  It stores nothing and edits through the commands the rack and the console use: a bypass is a
+  `SetParam`, a move is `MoveDevices` (players, routed) or `MoveInsert`, a removal is
+  `RemoveDevices` or `SetInsert` with no effect, a send switch and the fader (one undo step per
+  drag) are `SetParam`. Each move and removal is planned on a scratch document when the panel
+  syncs and its button shows only when the model accepts it. The panel is rebuilt only when the
+  document revision or the selected track changes (`AppCore::sync_track_panel`). Adding and
+  replacing a device from the panel is not built; the rack and the console do it.
 - **Rack columns in the view** ([ui/src/rack/columns.rs](../crates/ui/src/rack/columns.rs),
   [device_drag.rs](../crates/ui/src/rack/device_drag.rs)). `RackView` lays the top-level rack out as
   `doc.columns` columns side by side, column `c` at x = `c x (RACK_WIDTH + COLUMN_GAP)`
@@ -229,7 +256,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 42 (older versions still load; version 42
-  adds, to a container's `"inner"`, a macro's `"kind": "switch"`, macros 9 to 16 (the list has 16
+  adds the root's `"rack_sort"` after `"tune_cents"` (written only when the rack is sorted, ignorable;
+  see "Rack sorting") and, to a container's `"inner"`, a macro's `"kind": "switch"`, macros 9 to 16
+  (the list has 16
   entries instead of 8 when one of them is used) and a split's `"pass_bend"`, `"pass_cc"` and
   `"pass_pressure"` (each written only when set; a reader of 41 refuses them; see 6e); version 41
   adds the device field `"mods"` (the modulation slots in use, written only when one is; see 3,
@@ -1627,7 +1656,12 @@ bounce.
   tracks of a collapsed folder, so `lane_rect`, `track_header_center` and the like answer `None` for
   them; a folded lane is `FOLDED_LANE_HEIGHT` (16) tall. The folder row has a chevron, the name
   (double-click types a new one), M, S and R buttons (lit when every track has the flag) and, over
-  the timeline, the clips of its tracks as thin bars; right-click opens the folder menu. The content
+  the timeline, its folder clips; right-click opens the folder menu. A folder clip
+  ([folder_clips.rs](../crates/ui/src/arrangement/folder_clips.rs)) is a bar standing for the clips
+  of the folder's tracks whose spans overlap, computed when the view lays out. Pressing one
+  selects exactly those clips (Shift or Ctrl adds or toggles them), so mute, delete, duplicate,
+  split, reverse and quantise act on all of them; dragging it moves them in time only (one
+  `MoveClips`, no clip changes track or lane), and the razor, eraser and mute tools act on them. The content
   of a track header and of its lanes' headers is moved right by `TRACK_INDENT` (10 px, scaled with
   the UI) per level of folder, at most three (`track_indent`; the buttons at the right end keep
   their place and the input selector gets narrower, a one-line header moves M, S and R by at most 24
@@ -3969,7 +4003,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (415) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (419) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

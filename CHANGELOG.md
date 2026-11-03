@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rack sorting, Track Panel and folder clips.** View, Rack Sorting keeps the rack arranged by track: Rack per
+  Track gives every track (its instrument, players, channel, inserts and effects) a column of its own and never
+  leaves one empty, Auto-Group keeps the devices of a track together, and No Grouping leaves the columns manual as
+  before. The arranging happens in the same undo step as the edit that needed it, and moving one device moves its
+  whole track. Right-click, Select All in Device Group selects a track's devices, and View, Single Column lays
+  the columns out as one without changing the project. A project saves the mode as the optional `rack_sort` field
+  only when it is not No Grouping, so older projects load as before and the project format is still 42; no sound
+  changes. View, Track Panel docks a column on the right that shows the selected track's players, instrument,
+  four insert slots, sends and fader, with bypass, move up and down and remove on the players and inserts, send
+  switches and a fader drag, each one undo step. Folder rows now draw folder clips: a bar for each run of
+  overlapping clips in the folder, which selects those clips when pressed, so moving (in time only, never to
+  another track), muting, deleting, duplicating, splitting and the razor, eraser and mute tools act on all of
+  them. Adding or replacing a device from the Track Panel is not part of this change.
 - **Drum designer pads.** Every pad of the drum machine can play a synthesised voice instead of a sample: a
   kick, snare, hat, tom, tone or noise module, chosen with the new pad Module knob and shaped by Body, Snap and
   Sweep (what each does depends on the module). A module pad needs no samples and behaves like any other pad:

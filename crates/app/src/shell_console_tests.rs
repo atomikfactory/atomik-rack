@@ -1439,3 +1439,71 @@ fn sends_follow_bus_is_a_mixer_menu_check_and_one_undo_step() {
     s.execute(AppCommand::Undo);
     assert!(!s.core().doc().console.send_follow);
 }
+
+#[test]
+fn the_track_panel_docks_on_the_right_and_follows_the_view_menu() {
+    let mut s = shell_at(None);
+    assert!(!s.menu_state().track_panel);
+    assert!(s.layout().track_panel.is_none());
+    let before = s.layout();
+    let item = s
+        .menu_model()
+        .iter()
+        .flat_map(|m| m.items())
+        .find(|i| i.label == "Track Panel")
+        .map(|i| (i.command, i.checked));
+    assert_eq!(item, Some((AppCommand::ToggleTrackPanel, Some(false))));
+    assert_eq!(
+        AppCommand::ToggleTrackPanel.command_id(),
+        Some(("view.toggle_track_panel", None))
+    );
+    s.execute(AppCommand::ToggleTrackPanel);
+    assert!(s.menu_state().track_panel);
+    let l = s.layout();
+    let panel = l.track_panel.expect("the panel shows");
+    assert!((panel.x1 - s.size().width).abs() < 1.0, "on the right");
+    assert!(
+        l.rack.x1 <= panel.x0 + 0.5 && l.transport.x1 <= panel.x0 + 0.5,
+        "the rack and the transport bar stop at the panel"
+    );
+    assert!(l.rack.width() < before.rack.width());
+    assert_eq!(s.hit_pane(panel.center()), Some(Pane::TrackPanel));
+    assert_eq!(
+        s.pane_rect(Pane::TrackPanel).map(|(_, r)| r),
+        Some(panel),
+        "the pane is where the layout says"
+    );
+    s.execute(AppCommand::ToggleTrackPanel);
+    assert!(s.layout().track_panel.is_none());
+    assert_eq!(s.layout().rack, before.rack);
+}
+
+#[test]
+fn sorting_the_rack_from_the_view_menu_is_one_undo_step_and_the_menu_follows() {
+    let mut s = shell_at(None);
+    assert_eq!(s.menu_state().rack_sort, atomik_model::RackSort::Free);
+    let checked = |s: &Shell<NullBackend>, label: &str| {
+        s.menu_model()
+            .iter()
+            .flat_map(|m| m.items())
+            .find(|i| i.label == label)
+            .and_then(|i| i.checked)
+    };
+    assert_eq!(checked(&s, "No Grouping"), Some(true));
+    assert_eq!(
+        AppCommand::SetRackSort(atomik_model::RackSort::AutoGroup).command_id(),
+        Some(("view.rack_sort", Some("auto_group")))
+    );
+    let steps = s.core().document().undo_depth();
+    s.execute(AppCommand::SetRackSort(atomik_model::RackSort::PerTrack));
+    assert_eq!(s.core().doc().sort_mode, atomik_model::RackSort::PerTrack);
+    assert_eq!(s.core().document().undo_depth(), steps + 1);
+    assert_eq!(checked(&s, "Rack per Track"), Some(true));
+    assert_eq!(checked(&s, "No Grouping"), Some(false));
+    // The single column view is view state: the document does not change.
+    let rev = s.core().document().revision();
+    s.execute(AppCommand::ToggleSingleColumn);
+    assert!(s.core().view().single_column());
+    assert_eq!(s.core().document().revision(), rev);
+    assert_eq!(checked(&s, "Single Column"), Some(true));
+}
