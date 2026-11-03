@@ -123,6 +123,11 @@ fn check_bounded(id: &str, s: &Scene) -> Result<(), TestCaseError> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(12))]
 
+    #[test]
+    fn qa_semi_modular_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.semi-modular", &s)?;
+    }
+
     /// The sampler: any params and notes over a loaded map.
     #[test]
     fn qa_sampler_any_params_bounded_at_every_sample_rate(s in scene()) {
