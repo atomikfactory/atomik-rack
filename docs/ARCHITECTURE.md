@@ -1806,11 +1806,23 @@ learns nothing new.
   reads only the span of the asset the map uses (plus 8192 frames each side; a streamed asset
   through its source) and returns a `SongAsset::Memory` of the clip's whole span.
   `song_input_with_warps` gives the engine that buffer, read from the clip's own frame (`clip_pos`),
-  instead of the asset when the `WarpStore` has it, and the asset in real time when it has not;
-  without warped clips it is exactly `song_input_with_assets`. A bounce calls `render_warps` before
-  it builds the song, so it never plays dry and its bits do not depend on timing. The engine is
-  unchanged: the buffer is an ordinary memory asset, so fades, envelopes and crossfades apply to it
-  like to any clip.
+  instead of the asset when the `WarpStore` has it; without warped clips it is exactly
+  `song_input_with_assets`. A bounce calls `render_warps` before it builds the song, so it never
+  plays dry and its bits do not depend on timing. The buffer is an ordinary memory asset, so
+  fades, envelopes and crossfades apply to it like to any clip.
+- **Interim warp** ([engine/src/audio.rs](../crates/engine/src/audio.rs)). `song_input_live` (the
+  app's builder; a bounce never calls it) gives a warped clip of a memory asset whose buffer is not
+  ready a region with `SongAudioRegion::warp`, an index into `SongAudioTrack::warp_maps` (the job's
+  `(clip frame, asset frame)` knots, one map per job). The engine reads the asset through the
+  piecewise-linear map with four-point Hermite interpolation, on stack blocks, so a tempo ramp,
+  markers and trims are right from the next batch; it is a resampling (the pitch follows the ratio,
+  a transposition is not heard) and a streamed asset keeps playing unwarped. When a song swap
+  replaces a track that played an interim warp, `start_handoffs` keeps the old lane's data in the
+  new track's scratch (an `Arc` clone, dropped with the snapshot, never on the audio thread) and
+  `Handoff` mixes the two over 5 ms, so the finished buffer arrives without a click; a track that
+  reads streamed assets is left out. The clips still rendering are listed by `calculating_clips`
+  and drawn with a CALC chip. A cheaper stretcher than resampling (WSOLA) could replace the Hermite
+  read behind the same region field.
 - **App** ([app_core_warp.rs](../crates/app/src/app_core_warp.rs)). The cache lives in `AudioState`.
   Each `submit_song` calls `sync_warps`: it lists the jobs the document needs, drops buffers nobody
   needs and cancels their workers, queues the missing jobs whose asset is loaded and starts at most
@@ -5232,7 +5244,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   960 yet. The file browser does not list `.mid` files, so a file can only be dropped from the
   operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or
-  clip waits for a worker (the clip plays unwarped meanwhile); reverse and warp exclude each other;
+  clip waits for a worker (the clip plays an interim resampled read meanwhile, at the right timing
+  but the wrong pitch for a transposed clip; a streamed asset plays unwarped); reverse and warp
+  exclude each other;
   the stretch engines are offline only and the Tonal mode does not keep formants when transposing
   (2.18).
 - **Tempo and meter.** Tempo ramps are linear in BPM only (no other curve shapes), meter changes
