@@ -265,6 +265,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         let command = match kind {
             WindowKind::Console => AppCommand::DetachConsole,
             WindowKind::SpectrumEq => AppCommand::ToggleSpectrumEq,
+            WindowKind::Browser => AppCommand::DetachBrowser,
             WindowKind::Main | WindowKind::Rack => AppCommand::DetachRack,
         };
         if *kind != WindowKind::Main && !shell.detached(*kind) {

@@ -1065,3 +1065,64 @@ fn the_spectrum_eq_window_opens_and_closes_without_touching_the_layout() {
     s.execute(AppCommand::ToggleSpectrumEq);
     assert!(!s.menu_state().spectrum_eq);
 }
+
+#[test]
+fn the_file_browser_detaches_to_a_window_and_docks_again_on_close() {
+    let mut s = shell();
+    s.execute(AppCommand::ToggleFileBrowser);
+    assert!(s.layout().file_browser.is_some());
+    let docked_song = s.layout().song.unwrap();
+    s.execute(AppCommand::DetachBrowser);
+    assert!(s.menu_state().browser_detached);
+    assert_eq!(s.windows_wanted(), [WindowKind::Main, WindowKind::Browser]);
+    assert_eq!(s.window_of(Pane::FileBrowser), WindowKind::Browser);
+    assert!(
+        s.layout().file_browser.is_none(),
+        "the main layout leaves it out"
+    );
+    assert!(s.layout().song.unwrap().width() > docked_song.width());
+    let size = s.window_size(WindowKind::Browser).unwrap();
+    assert_eq!(
+        s.core().file_browser().bounds(),
+        Rect::new(0.0, 0.0, size.width, size.height)
+    );
+    // The OS closing the window docks the browser again, still visible.
+    s.window_closed(WindowKind::Browser);
+    assert_eq!(s.windows_wanted(), [WindowKind::Main]);
+    assert!(s.menu_state().file_browser && !s.menu_state().browser_detached);
+    assert_eq!(s.layout().song.unwrap(), docked_song);
+    assert_eq!(
+        Some(s.core().file_browser().bounds()),
+        s.layout().file_browser
+    );
+    // Hiding the browser while it is detached closes its window.
+    s.execute(AppCommand::DetachBrowser);
+    s.execute(AppCommand::ToggleFileBrowser);
+    assert_eq!(s.windows_wanted(), [WindowKind::Main]);
+    assert!(!s.menu_state().file_browser);
+}
+
+#[test]
+fn the_browser_window_geometry_is_saved_and_restored() {
+    let path = temp("browser-ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let geom = WindowGeom {
+        x: 40,
+        y: 50,
+        width: 380.0,
+        height: 600.0,
+        ..WindowGeom::default()
+    };
+    {
+        let mut s = shell_at(Some(path.clone()));
+        s.execute(AppCommand::DetachBrowser);
+        s.window_moved(WindowKind::Browser, geom.clone());
+        s.shutdown();
+    }
+    let s = shell_at(Some(path.clone()));
+    assert!(s.detached(WindowKind::Browser));
+    assert_eq!(s.saved_geom(WindowKind::Browser), Some(geom));
+    let size = s.window_size(WindowKind::Browser).unwrap();
+    assert_eq!((size.width, size.height), (380.0, 600.0));
+    let _ = std::fs::remove_file(&path);
+}

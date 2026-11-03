@@ -666,6 +666,7 @@ mod tests {
             rack: true,
             rack_detached: false,
             console_detached: false,
+            browser_detached: false,
             spectrum_eq: false,
             sequencer_only: false,
             editor: false,

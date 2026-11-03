@@ -151,6 +151,7 @@ pub(super) fn screenshot_path(base: &Path, kind: WindowKind) -> PathBuf {
         WindowKind::Rack => "rack",
         WindowKind::Console => "console",
         WindowKind::SpectrumEq => "spectrum-eq",
+        WindowKind::Browser => "browser",
     };
     let stem = base
         .file_stem()

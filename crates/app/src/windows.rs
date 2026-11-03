@@ -36,6 +36,8 @@ pub enum WindowKind {
     Console,
     /// The Spectrum EQ window: a floating window of its own while open.
     SpectrumEq,
+    /// The file browser, while detached.
+    Browser,
 }
 
 impl WindowKind {
@@ -48,6 +50,7 @@ impl WindowKind {
             Self::Rack => format!("Rack \u{2014} {project}"),
             Self::Console => format!("Mixer \u{2014} {project}"),
             Self::SpectrumEq => format!("Spectrum EQ \u{2014} {project}"),
+            Self::Browser => format!("Browser \u{2014} {project}"),
         }
     }
 }
@@ -115,6 +118,8 @@ pub struct WindowsState {
     pub console: DetachState,
     /// The Spectrum EQ window (`detached` means open).
     pub spectrum_eq: DetachState,
+    /// The file browser window.
+    pub browser: DetachState,
 }
 
 impl WindowsState {
@@ -125,6 +130,7 @@ impl WindowsState {
             WindowKind::Rack => self.rack.detached,
             WindowKind::Console => self.console.detached,
             WindowKind::SpectrumEq => self.spectrum_eq.detached,
+            WindowKind::Browser => self.browser.detached,
         }
     }
 
@@ -135,6 +141,7 @@ impl WindowsState {
             WindowKind::Rack => self.rack.detached = detached,
             WindowKind::Console => self.console.detached = detached,
             WindowKind::SpectrumEq => self.spectrum_eq.detached = detached,
+            WindowKind::Browser => self.browser.detached = detached,
         }
     }
 
@@ -145,6 +152,7 @@ impl WindowsState {
             WindowKind::Rack => self.rack.geom.as_ref(),
             WindowKind::Console => self.console.geom.as_ref(),
             WindowKind::SpectrumEq => self.spectrum_eq.geom.as_ref(),
+            WindowKind::Browser => self.browser.geom.as_ref(),
         }
     }
 
@@ -155,6 +163,7 @@ impl WindowsState {
             WindowKind::Rack => self.rack.geom = Some(geom),
             WindowKind::Console => self.console.geom = Some(geom),
             WindowKind::SpectrumEq => self.spectrum_eq.geom = Some(geom),
+            WindowKind::Browser => self.browser.geom = Some(geom),
         }
     }
 
@@ -165,6 +174,7 @@ impl WindowsState {
             WindowKind::Rack,
             WindowKind::Console,
             WindowKind::SpectrumEq,
+            WindowKind::Browser,
         ]
         .into_iter()
         .filter(|&k| k == WindowKind::Main || self.detached(k))
@@ -179,6 +189,7 @@ impl WindowsState {
         self.rack.geom = keep(self.rack.geom);
         self.console.geom = keep(self.console.geom);
         self.spectrum_eq.geom = keep(self.spectrum_eq.geom);
+        self.browser.geom = keep(self.browser.geom);
         self
     }
 }

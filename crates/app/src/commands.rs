@@ -327,6 +327,8 @@ pub enum AppCommand {
     /// View ▸ Detach Mixer (Cmd+Shift+F5): the console in a window of its own, or back in the
     /// lower pane.
     DetachConsole,
+    /// View ▸ Detach Browser: the file browser in a window of its own, or docked again.
+    DetachBrowser,
     /// View ▸ Spectrum EQ (F2): the floating analyser of the selected strip with its EQ points,
     /// in a window of its own; again closes it.
     ToggleSpectrumEq,
@@ -552,6 +554,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::Rack => "rack",
         WindowKind::Console => "mixer",
         WindowKind::SpectrumEq => "spectrum-eq",
+        WindowKind::Browser => "browser",
     }
 }
 
@@ -775,6 +778,7 @@ impl AppCommand {
             AppCommand::SequencerOnly => ("view.sequencer_only", None),
             AppCommand::DetachRack => ("view.detach_rack", None),
             AppCommand::DetachConsole => ("view.detach_console", None),
+            AppCommand::DetachBrowser => ("view.detach_browser", None),
             AppCommand::ToggleSpectrumEq => ("view.toggle_spectrum_eq", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
             AppCommand::GroupTracks => ("sequencer.group_tracks", None),
@@ -1073,6 +1077,7 @@ impl AppCommand {
             ("view.sequencer_only", None) => AppCommand::SequencerOnly,
             ("view.detach_rack", None) => AppCommand::DetachRack,
             ("view.detach_console", None) => AppCommand::DetachConsole,
+            ("view.detach_browser", None) => AppCommand::DetachBrowser,
             ("view.toggle_spectrum_eq", None) => AppCommand::ToggleSpectrumEq,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
             ("sequencer.group_tracks", None) => AppCommand::GroupTracks,
@@ -1539,6 +1544,8 @@ pub struct MenuState {
     pub rack_detached: bool,
     /// The console is in a window of its own.
     pub console_detached: bool,
+    /// The file browser is in a window of its own.
+    pub browser_detached: bool,
     /// The Spectrum EQ window is open.
     pub spectrum_eq: bool,
     /// The sequencer-only layout (F7) is active.
@@ -2145,6 +2152,11 @@ pub fn menus_with_lists(
                     "File Browser",
                     AppCommand::ToggleFileBrowser,
                     state.file_browser,
+                ),
+                check(
+                    "Detach Browser",
+                    AppCommand::DetachBrowser,
+                    state.browser_detached,
                 ),
                 check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
                 check(
@@ -3000,6 +3012,7 @@ mod tests {
             rack: true,
             rack_detached: false,
             console_detached: false,
+            browser_detached: false,
             spectrum_eq: false,
             sequencer_only: false,
             editor: false,
@@ -3154,6 +3167,7 @@ mod tests {
             AppCommand::SequencerOnly,
             AppCommand::DetachRack,
             AppCommand::DetachConsole,
+            AppCommand::DetachBrowser,
             AppCommand::ToggleSpectrumEq,
             AppCommand::ToggleEditor,
             AppCommand::GroupTracks,
@@ -3758,6 +3772,7 @@ mod tests {
                 "Same as System",
                 "Device Browser",
                 "File Browser",
+                "Detach Browser",
                 "Piano Keys",
                 "Track Panel",
                 "Rack",
@@ -4181,6 +4196,7 @@ mod tests {
                 rack: true,
                 rack_detached: false,
                 console_detached: false,
+                browser_detached: false,
                 spectrum_eq: false,
                 sequencer_only: false,
                 editor: false,
