@@ -335,3 +335,56 @@ fn the_panel_target_counts_the_selected_audio_clips() {
     assert_eq!(c.strip_silence_target(), ("2 audio clips".to_owned(), true));
     let _ = PPQ;
 }
+
+/// A 1 kHz sine at `amp`, five seconds long.
+fn sine(t: &Tmp, name: &str, amp: f32) -> PathBuf {
+    wav(t, name, 240_000, |i| {
+        amp * (std::f32::consts::TAU * 1000.0 * i as f32 / 48_000.0).sin()
+    })
+}
+
+#[test]
+fn normalise_to_a_peak_rms_or_loudness_target() {
+    use atomik_devices::mastering::loudness::LoudnessMeter;
+    use atomik_model::{NormaliseMode, NormaliseParams};
+    let t = Tmp::new("normalise_modes");
+    let file = sine(&t, "tone.wav", 0.1);
+    let mut c = core();
+    let ids = import(&mut c, &[file]);
+    select(&mut c, &ids);
+    let gain_for = |c: &mut AppCore<RecordingSink>, mode, target_db| {
+        c.normalise_audio_with(NormaliseParams { target_db, mode });
+        assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+        audio(c, ids[0]).gain_db
+    };
+    // Peak: 0.1 is -20 dBFS, so -1 dBFS needs +19 dB.
+    let peak = gain_for(&mut c, NormaliseMode::Peak, -1.0);
+    assert!((peak - 19.0).abs() < 0.01, "{peak}");
+    // RMS of a sine is 3 dB under its peak: -23 dBFS now, so -18 needs +5 dB.
+    let rms = gain_for(&mut c, NormaliseMode::Rms, -18.0);
+    assert!((rms - 5.0).abs() < 0.05, "{rms}");
+    // Loudness: apply the gain to the samples and measure again.
+    let lufs = gain_for(&mut c, NormaliseMode::Loudness, -23.0);
+    let amp = 0.1 * atomik_core::db_to_gain(lufs);
+    let tone: Vec<f32> = (0..240_000)
+        .map(|i| amp * (std::f32::consts::TAU * 1000.0 * i as f32 / 48_000.0).sin())
+        .collect();
+    let mut meter = LoudnessMeter::new(48_000.0);
+    meter.process(&tone, &tone);
+    assert!(
+        (meter.integrated() + 23.0).abs() < 0.2,
+        "{}",
+        meter.integrated()
+    );
+}
+
+#[test]
+fn normalise_to_a_loudness_says_when_the_clip_is_silent() {
+    let t = Tmp::new("normalise_silent");
+    let s = wav(&t, "silent.wav", 48_000, |_| 0.0);
+    let mut c = core();
+    let ids = import(&mut c, &[s]);
+    select(&mut c, &ids);
+    c.normalise_audio_with(crate::commands::NormaliseTarget::Broadcast.params());
+    assert!(c.last_rejection().unwrap().contains("silent"));
+}

@@ -5135,6 +5135,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::AudioNormaliseTo(target) => {
+                self.core.normalise_audio_with(target.params());
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::AudioStripSilence => {
                 self.open_silence();
                 self.menubar.as_mut().map(MenuBar::close);

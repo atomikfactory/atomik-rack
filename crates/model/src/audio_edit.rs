@@ -96,6 +96,59 @@ pub fn normalise_gain_db(peak: f32, target_db: f32) -> Option<f32> {
     Some((target_db - 20.0 * peak.log10()).clamp(AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX))
 }
 
+/// What a normalise measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NormaliseMode {
+    /// The largest sample, in dBFS.
+    Peak,
+    /// The root mean square of all channels over the span, in dBFS.
+    Rms,
+    /// Integrated loudness (BS.1770 K-weighted, gated), in LUFS.
+    Loudness,
+}
+
+/// A normalise target: the level the clip should reach, in the unit of `mode`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormaliseParams {
+    /// dBFS for peak and RMS, LUFS for loudness.
+    pub target_db: f32,
+    /// What is measured.
+    pub mode: NormaliseMode,
+}
+
+impl Default for NormaliseParams {
+    /// Peak to 0 dBFS, what Normalise Audio always did.
+    fn default() -> Self {
+        Self {
+            target_db: 0.0,
+            mode: NormaliseMode::Peak,
+        }
+    }
+}
+
+/// The root mean square level in dBFS of the frames `[from, to)` of every channel, or `None`
+/// for silence (no frames, or all zero). Frames past a channel's end count as silence.
+pub fn rms_db<C: AsRef<[f32]>>(channels: &[C], from: u64, to: u64) -> Option<f32> {
+    let (mut sum, mut n) = (0.0f64, 0u64);
+    for c in channels {
+        let c = c.as_ref();
+        let lo = usize::try_from(from).unwrap_or(usize::MAX).min(c.len());
+        let hi = usize::try_from(to).unwrap_or(usize::MAX).min(c.len());
+        for &x in &c[lo..hi.max(lo)] {
+            sum += f64::from(x) * f64::from(x);
+        }
+        n += (hi.max(lo) - lo) as u64;
+    }
+    (n > 0 && sum > 0.0 && sum.is_finite()).then(|| (10.0 * (sum / n as f64).log10()) as f32)
+}
+
+/// The clip gain in dB that moves a measured `level_db` to `target_db`, clamped to the clip gain
+/// range; `None` for a non-finite level or target.
+pub fn gain_to_level_db(level_db: f32, target_db: f32) -> Option<f32> {
+    (level_db.is_finite() && target_db.is_finite())
+        .then(|| (target_db - level_db).clamp(AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX))
+}
+
 /// What counts as silence to strip, and what to keep around the rest. Lengths are in frames.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StripParams {
