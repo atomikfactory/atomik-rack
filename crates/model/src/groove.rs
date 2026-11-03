@@ -292,10 +292,10 @@ pub struct Quantized {
 }
 
 /// The target positions: the grid with its swing and groove.
-struct Targets<'a> {
-    grid: i64,
-    delay: f64,
-    groove: Option<&'a Groove>,
+pub(crate) struct Targets<'a> {
+    pub(crate) grid: i64,
+    pub(crate) delay: f64,
+    pub(crate) groove: Option<&'a Groove>,
 }
 
 impl Targets<'_> {
@@ -307,7 +307,7 @@ impl Targets<'_> {
     }
 
     /// Where grid position `i` is, in ticks.
-    fn position(&self, i: i64) -> f64 {
+    pub(crate) fn position(&self, i: i64) -> f64 {
         let grid = self.grid as f64;
         let swing = if i.rem_euclid(2) == 1 {
             self.delay * grid
@@ -318,7 +318,7 @@ impl Targets<'_> {
     }
 
     /// The position index nearest to tick `t` (the earlier one when two are as near).
-    fn nearest(&self, t: i64) -> i64 {
+    pub(crate) fn nearest(&self, t: i64) -> i64 {
         let k = (t + self.grid / 2).div_euclid(self.grid);
         let mut best = k - 1;
         let mut best_d = (self.position(best) - t as f64).abs();

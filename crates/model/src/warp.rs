@@ -14,6 +14,9 @@
 //! the map and its inverse for the editing commands, and [`quantize_audio`] places markers so
 //! detected transients land on a grid.
 
+use crate::groove::{
+    Groove, HUMANIZE_TIME_TICKS, SWING_MAX, SWING_MIN, Targets, hash64, signed_unit, swing_delay,
+};
 use crate::song::{AudioClipContent, MAX_AUDIO_FRAMES, Song};
 use atomik_core::PPQ;
 use std::collections::BTreeMap;
@@ -517,12 +520,39 @@ pub fn estimate_bpm(onsets: &[u64], sample_rate: u32) -> Option<f64> {
 }
 
 /// What [`quantize_audio`] aims for.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AudioQuantize {
-    /// Grid length in ticks (`>= 1`); the grid starts at tick 0 of the song.
+    /// Grid length in ticks (`>= 1`); the grid starts at tick 0 of the song. A groove sets its
+    /// own step instead.
     pub grid: i64,
     /// How far each transient moves towards the grid, `0..=1`.
     pub strength: f64,
+    /// Swing in percent (50 is straight), for the odd grid lines.
+    pub swing: u8,
+    /// A groove whose slot offsets shape the grid lines (its velocities do not apply to audio).
+    pub groove: Option<Groove>,
+    /// Random timing added to each moved transient, `0..=1` of [`HUMANIZE_TIME_TICKS`], either
+    /// way. The offset is a pure function of `seed`, `clip_seed` and the transient's index.
+    pub randomize: f64,
+    /// Another seed is another take of the same randomise amount.
+    pub seed: u32,
+    /// The clip's id, so two clips do not jitter alike.
+    pub clip_seed: u64,
+}
+
+impl Default for AudioQuantize {
+    /// Quantize to 1/16 notes, fully, with nothing else.
+    fn default() -> Self {
+        Self {
+            grid: PPQ / 4,
+            strength: 1.0,
+            swing: SWING_MIN,
+            groove: None,
+            randomize: 0.0,
+            seed: 0,
+            clip_seed: 0,
+        }
+    }
 }
 
 /// `a` ready for marker editing: a clip without warp is switched on at the song tempo at its
@@ -562,10 +592,20 @@ pub fn quantize_audio(
     if a.reverse {
         return Err("a reversed clip cannot be warped".into());
     }
-    if q.grid < 1 || !q.strength.is_finite() {
-        return Err("the quantize grid and strength must be valid".into());
+    if q.grid < 1
+        || !q.strength.is_finite()
+        || !q.randomize.is_finite()
+        || !(SWING_MIN..=SWING_MAX).contains(&q.swing)
+    {
+        return Err("the quantize grid, strength, swing and randomise must be valid".into());
     }
     let strength = q.strength.clamp(0.0, 1.0);
+    let randomize = q.randomize.clamp(0.0, 1.0);
+    let targets = Targets {
+        grid: q.groove.as_ref().map_or(q.grid, |g| g.step.ticks()).max(1),
+        delay: swing_delay(q.swing),
+        groove: q.groove.as_ref(),
+    };
     let base = warped_at_song_tempo(song, start, a);
     let offset = base.source_offset;
     let lo = base.source_offset as f64;
@@ -576,15 +616,18 @@ pub fn quantize_audio(
     sorted.sort_unstable();
     sorted.dedup();
     let mut moved = 0usize;
-    for o in sorted {
+    for (index, o) in sorted.into_iter().enumerate() {
         let of = o as f64;
         if of <= lo + 1.0 || of >= hi - 1.0 {
             continue;
         }
         let t_cur = tick_at_source(song, sample_rate, start, &base, of);
-        let grid = q.grid as f64;
-        let target = (t_cur / grid).round() * grid;
-        let t_new = (t_cur + strength * (target - t_cur)).round() as i64 - start;
+        let target = targets.position(targets.nearest(t_cur.round() as i64));
+        let mut t_new = (t_cur + strength * (target - t_cur)).round() as i64 - start;
+        if randomize > 0.0 {
+            let u = signed_unit(hash64(u64::from(q.seed), q.clip_seed, index as u64));
+            t_new += (u * randomize * HUMANIZE_TIME_TICKS as f64).round() as i64;
+        }
         let src = o - offset;
         let last = markers[markers.len() - 1];
         if t_new > last.tick
