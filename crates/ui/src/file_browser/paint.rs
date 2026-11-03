@@ -6,7 +6,7 @@ use super::menu::{self, Menu};
 use super::{FileBrowserView, Gesture, Hover, Pane, tree};
 use crate::action::Place;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
-use crate::paint::fit_label;
+use crate::paint::{fit_label_in, fit_label_weight, measure};
 use crate::text_field::FieldColors;
 use atomik_library::{FileKind, FileRow, LibrarySection, SortKey};
 use vello::kurbo::{Affine, BezPath, Rect, RoundedRect, Stroke};
@@ -22,10 +22,6 @@ const EMPTY_SECTION_HINT: &str =
 
 fn baseline(r: Rect, size: f32) -> f64 {
     r.center().y + f64::from(size) * 0.35
-}
-
-fn est_width(text: &str, size: f32) -> f64 {
-    text.chars().count() as f64 * f64::from(size) * lay::CHAR_EM
 }
 
 fn polygon(points: &[(f64, f64)]) -> BezPath {
@@ -112,12 +108,14 @@ impl FileBrowserView {
         };
         c.fill_with(lay.banner, crate::theme::PATCH_TARGET);
         c.push_clip(&lay.banner.into());
+        let title = fit_label_in(
+            c,
+            &format!("PATCHES FOR {}", target.label.to_uppercase()),
+            lay.banner.width() - 2.0 * lay::PAD,
+            SMALL_FONT,
+        );
         c.text(&TextRun::new(
-            fit_label(
-                &format!("PATCHES FOR {}", target.label.to_uppercase()),
-                lay.banner.width() - 2.0 * lay::PAD,
-                SMALL_FONT,
-            ),
+            title,
             pt(lay.banner.x0 + lay::PAD, baseline(lay.banner, SMALL_FONT)),
             SMALL_FONT,
             Color::from_rgba8(0x20, 0x12, 0x04, 255),
@@ -300,8 +298,8 @@ impl FileBrowserView {
         let count = item.count.map(|n| n.to_string());
         let reserve = count
             .as_ref()
-            .map_or(0.0, |s| est_width(s, SMALL_FONT) + 10.0);
-        let mut label = fit_label(&item.label, row.x1 - lx - reserve - lay::SB_W, TREE_FONT);
+            .map_or(0.0, |s| measure(c, s, SMALL_FONT, 400) + 10.0);
+        let mut label = fit_label_in(c, &item.label, row.x1 - lx - reserve - lay::SB_W, TREE_FONT);
         if item.loading {
             label.push_str(" ...");
         }
@@ -472,7 +470,7 @@ impl FileBrowserView {
                     .weight(600),
             );
             if active {
-                let w = est_width(text, SMALL_FONT);
+                let w = measure(c, text, SMALL_FONT, 600);
                 let ax = match align {
                     Align::End => x - w - 10.0,
                     _ => x + w + 10.0,
@@ -530,8 +528,9 @@ impl FileBrowserView {
         ] {
             if !text.is_empty() {
                 let at = line(y);
+                let shown = fit_label_in(c, &text, width, size);
                 c.text(&TextRun::new(
-                    fit_label(&text, width, size),
+                    shown,
                     pt(at.x0, baseline(at, size)),
                     size,
                     color,
@@ -708,8 +707,9 @@ impl FileBrowserView {
         } else {
             cols.name.1 - name_x - 4.0
         };
-        let name = fit_label(&r.name, name_w, ROW_FONT);
-        let text_w = est_width(&name, ROW_FONT);
+        let weight = if is_folder { 600 } else { 400 };
+        let name = fit_label_weight(c, &r.name, name_w, ROW_FONT, weight);
+        let text_w = measure(c, &name, ROW_FONT, weight);
         let mut run = TextRun::new(name, pt(name_x, baseline(rect, ROW_FONT)), ROW_FONT, t.text);
         if is_folder {
             run = run.weight(600);
@@ -717,7 +717,7 @@ impl FileBrowserView {
         c.text(&run);
         let mut cx = name_x + text_w + 8.0;
         for tag in &r.tags {
-            let w = est_width(tag, 8.0) + 8.0;
+            let w = measure(c, tag, 8.0, 400) + 8.0;
             if cx + w > name_x + name_w {
                 break;
             }
@@ -738,9 +738,10 @@ impl FileBrowserView {
         if item {
             let detail = r.item.as_ref().map_or("", |i| i.detail.as_str());
             let w = right - name_x - name_w - 12.0;
+            let shown = fit_label_in(c, detail, w, SMALL_FONT);
             c.text(
                 &TextRun::new(
-                    fit_label(detail, w, SMALL_FONT),
+                    shown,
                     pt(right, baseline(rect, SMALL_FONT)),
                     SMALL_FONT,
                     t.text_muted,

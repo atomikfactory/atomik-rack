@@ -4927,14 +4927,9 @@ fn rename_field(c: &mut dyn Canvas, st: &SeqTheme, plate: Rect, text: &str) {
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
     let room = r.width() - 12.0;
-    let mut shown: &str = text;
-    while paint::estimate_width(shown, 10.0) > room {
-        let mut chars = shown.chars();
-        chars.next();
-        shown = chars.as_str();
-    }
+    let shown = paint::tail_fit(c, text, room, 10.0, 700);
     c.text(&TextRun::new(shown, pt(r.x0 + 5.0, r.y0 + 17.0), 10.0, t.text).weight(700));
-    let cx = r.x0 + 5.0 + paint::estimate_width(shown, 10.0);
+    let cx = r.x0 + 5.0 + paint::measure(c, shown, 10.0, 700);
     c.stroke_with(
         Line::new(pt(cx + 1.0, r.y0 + 7.0), pt(cx + 1.0, r.y0 + 20.0)),
         1.2,

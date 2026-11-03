@@ -39,7 +39,7 @@
 {"fill":{"rect":[0.00,288.40,295.00,308.40]},"brush":"#262a3099"},
 {"fill":{"rect":[0.00,307.40,295.00,308.40]},"brush":"#ffffff1c"},
 {"text":"Name","at":[26.00,301.55],"size":9.00,"weight":600,"align":"start","color":"#ece8e1ff"},
-{"fill":{"path":"M53.16 300.40 L59.16 300.40 L56.16 295.90 Z"},"brush":"#ece8e1ff"},
+{"fill":{"path":"M53.88 300.40 L59.88 300.40 L56.88 295.90 Z"},"brush":"#ece8e1ff"},
 {"text":"Duration","at":[284.00,301.55],"size":9.00,"weight":600,"align":"end","color":"#8f96a0ff"},
 {"clip":{"rect":[0.00,308.40,295.00,600.00]}},
 {"pop_clip":true},
