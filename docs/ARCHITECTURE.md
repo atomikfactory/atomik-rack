@@ -3834,8 +3834,9 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     takes a private handle to its real stdout for frames and
     points its stdout at stderr (`take_frame_stdout`), so a plugin that prints cannot corrupt the
     stream.
-  - *Audio.* One shared block per instance (a mapped file of 50 944 bytes: header, one request area,
-    one response area, raw `f32` bits and fixed-capacity events), exchanged by sequence numbers.
+  - *Audio.* One shared block per instance (a mapped file of 54 528 bytes: header, one request area,
+    one response area with the main and the aux output channels, raw `f32` bits and fixed-capacity
+    events), exchanged by sequence numbers.
     `RemoteProcessor::process` copies the block in, rings the doorbell (Windows named event, Linux
     shared futex, macOS shared ulock; one atomic swap and no system call while the child is awake)
     and spins until the answer, the death flag or the deadline. Live, the deadline is one batch

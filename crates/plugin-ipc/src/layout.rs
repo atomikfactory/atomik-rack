@@ -8,9 +8,9 @@
 //!                             wake flag, processor info
 //!     64    33 920   Request  ticket, op, channel counts, silent flags, transport, main_in,
 //!                             sidechain, events (parent writes, child reads)
-//! 33 984    16 960   Response ticket, status, ok, dropped, main_out, events
+//! 33 984    20 544   Response ticket, status, ok, dropped, main_out, aux_out, events
 //!                             (child writes, parent reads)
-//! 50 944             end
+//! 54 528             end
 //! ```
 //!
 //! Who may touch what: the parent writes the request only while no request is outstanding
@@ -24,17 +24,20 @@
 //! wire structs, so no copy can quiet a NaN payload and every bit pattern is a valid value.
 
 use atomik_core::{BATCH, Batch, ExprKind};
+use atomik_device_sdk::MAX_AUX_OUTPUTS;
 use atomik_plugin_host::{PluginEvent, PluginEventKind, PluginTransport};
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 
 /// Version of the block layout and of the control protocol. The child refuses a block whose
 /// version differs.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 /// First word of a block: `ATSB`.
 pub const MAGIC: u32 = u32::from_le_bytes(*b"ATSB");
 /// Channels of each audio area (main in, sidechain, main out): 0 to 2.
 pub const MAX_CHANNELS: usize = 2;
+/// Channels of the aux output area: two per pair of the most pairs a device has.
+pub const MAX_AUX_CHANNELS: usize = 2 * MAX_AUX_OUTPUTS;
 /// Events one request carries; the parent drops the rest and counts them.
 pub const MAX_EVENTS_IN: usize = 1024;
 /// Events one response carries; the child drops the rest and counts them.
@@ -171,8 +174,8 @@ pub struct Request {
     pub main_out_ch: u32,
     /// Events in `events`.
     pub n_events: u32,
-    /// Padding, always zero.
-    pub pad: u32,
+    /// Aux output channels the parent wants back (0 to [`MAX_AUX_CHANNELS`]).
+    pub aux_out_ch: u32,
     /// Transport for the batch.
     pub transport: WireTransport,
     /// Main input samples.
@@ -198,6 +201,8 @@ pub struct Response {
     pub n_events: u32,
     /// Main output samples.
     pub main_out: [Batch; MAX_CHANNELS],
+    /// Aux output samples, two channels per pair.
+    pub aux_out: [Batch; MAX_AUX_CHANNELS],
     /// Output events.
     pub events: [WireEvent; MAX_EVENTS_OUT],
 }
@@ -389,9 +394,10 @@ mod tests {
 
     #[test]
     fn the_constants_are_the_ones_of_the_contract() {
-        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(PROTOCOL_VERSION, 2);
         assert_eq!(MAGIC.to_le_bytes(), *b"ATSB");
         assert_eq!(MAX_CHANNELS, 2);
+        assert_eq!(MAX_AUX_CHANNELS, 14);
         assert_eq!(MAX_EVENTS_IN, 1024);
         assert_eq!(MAX_EVENTS_OUT, 512);
         assert_eq!(MAX_FRAME_BYTES, 64 << 20);
@@ -440,6 +446,7 @@ mod tests {
         assert_eq!(offset_of!(Request, sc_silent), 24);
         assert_eq!(offset_of!(Request, main_out_ch), 28);
         assert_eq!(offset_of!(Request, n_events), 32);
+        assert_eq!(offset_of!(Request, aux_out_ch), 36);
         assert_eq!(offset_of!(Request, transport), 40);
         assert_eq!(offset_of!(Request, main_in), 104);
         assert_eq!(offset_of!(Request, sc), 616);
@@ -455,8 +462,9 @@ mod tests {
         assert_eq!(offset_of!(Response, dropped), 16);
         assert_eq!(offset_of!(Response, n_events), 20);
         assert_eq!(offset_of!(Response, main_out), 24);
-        assert_eq!(offset_of!(Response, events), 536);
-        assert_eq!(size_of::<Response>(), 16_960);
+        assert_eq!(offset_of!(Response, aux_out), 536);
+        assert_eq!(offset_of!(Response, events), 4_120);
+        assert_eq!(size_of::<Response>(), 20_544);
     }
 
     #[test]
@@ -464,7 +472,7 @@ mod tests {
         assert_eq!(offset_of!(Block, header), 0);
         assert_eq!(offset_of!(Block, request), 64);
         assert_eq!(offset_of!(Block, response), 64 + 33_920);
-        assert_eq!(BLOCK_SIZE, 50_944);
+        assert_eq!(BLOCK_SIZE, 54_528);
         assert_eq!(BLOCK_SIZE, size_of::<Block>());
         assert_eq!(align_of::<Block>(), 64);
     }

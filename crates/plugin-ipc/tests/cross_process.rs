@@ -177,6 +177,7 @@ fn requests_and_responses_cross_between_two_processes() {
             sidechain: &[],
             sidechain_silent: true,
             main_out: &mut main_out,
+            aux_out: &mut [],
             events_in: &events,
             events_out: &mut events_out,
             transport: PluginTransport::default(),

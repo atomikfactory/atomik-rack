@@ -34,6 +34,8 @@ pub(crate) struct PluginDto {
     sidechain: bool,
     notes_in: bool,
     notes_out: bool,
+    #[serde(default)]
+    aux_out: u8,
     params: Vec<ParamDto>,
     #[serde(default)]
     unsupported: Option<String>,
@@ -92,6 +94,7 @@ impl PluginDto {
             sidechain: l.sidechain,
             notes_in: l.notes_in,
             notes_out: l.notes_out,
+            aux_out: l.aux_out,
             params: l
                 .params
                 .iter()
@@ -139,6 +142,7 @@ impl PluginDto {
                 sidechain: self.sidechain,
                 notes_in: self.notes_in,
                 notes_out: self.notes_out,
+                aux_out: self.aux_out,
                 params: self
                     .params
                     .into_iter()

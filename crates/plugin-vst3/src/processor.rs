@@ -168,7 +168,7 @@ impl Vst3Processor {
             let (source, silent): (&[Batch], bool) = match slot.role {
                 Role::Main => (io.main_in, io.main_in_silent),
                 Role::Sidechain => (io.sidechain, io.sidechain_silent),
-                Role::Unused => (&[], true),
+                Role::Unused | Role::Aux => (&[], true),
             };
             for c in 0..slot.channels {
                 self.in_data[slot.first + c] = source
@@ -348,6 +348,21 @@ impl Vst3Processor {
                 if c < slot.channels {
                     *out = self.out_data[slot.first + c];
                 }
+            }
+        }
+        // The aux outputs, in bus order, two channels per pair (a mono bus fills both).
+        let mut pair = 0usize;
+        for slot in self.out_slots.iter().filter(|s| s.role == Role::Aux) {
+            if 2 * pair + 1 < io.aux_out.len() && slot.channels > 0 {
+                let left = self.out_data[slot.first];
+                let right = if slot.channels >= 2 {
+                    self.out_data[slot.first + 1]
+                } else {
+                    left
+                };
+                io.aux_out[2 * pair] = left;
+                io.aux_out[2 * pair + 1] = right;
+                pair += 1;
             }
         }
         // Notes out.

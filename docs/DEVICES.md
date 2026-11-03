@@ -3720,10 +3720,15 @@ the app); a project never stores a path, it finds its plugins by id in your scan
 ### Sockets
 
 Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main input), `sc_in_l`,
-`sc_in_r` (a sidechain input), `notes_in`, `out_l`, `out_r` (a main output), `notes_out`. The kind
-is Instrument (notes in and audio out, and the plugin says so), Utility (a note effect: notes out,
-no audio) or Effect. A mono main bus is mapped (input = (L + R) / 2, the output copied to both
-sides). Further buses are disabled.
+`sc_in_r` (a sidechain input), `notes_in`, `out_l`, `out_r` (a main output), `notes_out`; then, on
+every plugin device, the eight CV inputs `cv_in_1` to `cv_in_8`; then, when the plugin has more
+stereo output buses than the main one, a pair of `out_aux_<k>_l/r` sockets for each (up to seven,
+so eight stereo pairs with the main output). The kind is Instrument (notes in and audio out, and the
+plugin says so), Utility (a note effect: notes out, no audio) or Effect. A mono main bus is mapped
+(input = (L + R) / 2, the output copied to both sides); a mono aux output is copied to both sides of
+its pair. Surround buses, a second aux input and aux outputs past the seventh are disabled. The CV
+and aux sockets come last, so the cables of a project saved before they existed still find their
+sockets (the descriptor version is 2).
 
 ### Params
 
@@ -3733,7 +3738,35 @@ sides). Further buses are disabled.
 0 to 1, or the step index of a stepped param); a stepped param is rounded. Params are saved sparsely
 (only the ones you set) next to the plugin's opaque **state** blob, and edits reach the plugin as
 events at the start of each 64-frame batch. The panel pins up to 16 params as knobs; PARAMS opens
-the searchable list with every param (also the editor for a plugin without a window).
+the searchable list with every param (also the editor for a plugin without a window). After the
+plugin's params come the 16 params of the CV programmer, see below.
+
+### CV programmer and aux outputs
+
+Every plugin device has eight CV inputs, so a cable from an LFO, an envelope or a sequencer curve
+can move a plugin's parameters. Each input has two params after the plugin's own: `cv.dest_<k>`
+(discrete, 0 for none, else the position of the destination in the plugin's param list, 1 for the
+first) and `cv.amount_<k>` (-1 to +1, default 0). Once per 64-frame batch the device reads the
+mean of each cabled CV input (cleaned and clamped to -1..+1, as the built-in devices do) and sends
+the destination `value + amount x cv x range` as an ordinary param event at the start of that
+same batch, where `value` is the one set in the rack and `range` the destination's whole plain
+range. Several inputs on one destination add; the sum is clamped to the range and rounded for a
+stepped param. When an input loses its cable, its amount is set to 0 or its destination changes, the
+old destination goes back to the value set in the rack. The result is the same in process and in the
+sandbox, and for every host block size.
+
+The panel (3 U) has a **CV programmer** under the pinned knobs: a chip for each input naming its
+destination (click it to open PARAMS) and a knob for the amount. In the PARAMS pane the **CV**
+button of a row offers `Drive from CV 1..8` (and `Clear`), so the same search finds the
+destination. The destination is a position in the plugin's param list: a plugin update that
+reorders its params moves the assignment with the position, not with the param.
+
+A plugin with several stereo output buses (a multi-output sampler or drum machine) gets one aux
+socket pair per extra bus, in the bus order of the plugin. The pairs are wet only: a bypassed
+device fades them out like the main output, and a batch with no wet signal leaves them silent.
+CLAP and VST3 plugins are both mapped, in process and in the sandbox (the shared block carries the
+aux channels). In a project the layout of a plugin saves `aux_out` (the number of pairs) only when
+it is not 0, so a project saved before aux outputs loads with none.
 
 ### Behaviour (as built)
 

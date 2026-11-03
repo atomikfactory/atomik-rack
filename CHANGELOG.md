@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Plugin CV programmer and aux outputs.** Every plugin device has eight CV inputs (`cv_in_1` to `cv_in_8` on its
+  back panel), so a Mod Source LFO, an envelope or a sequencer curve can move a plugin's parameters. Each input has
+  a destination (any parameter of the plugin) and a bipolar amount; the device panel is now 3 U with a CV
+  PROGRAMMER row under the pinned knobs (a chip naming each destination and an amount knob), and the CV button of a
+  row in the PARAMS pane assigns that parameter to a CV input through the same search. The device reads each CV
+  once per 64-frame batch, so the result is the same in process, in the sandbox and for every block size. A plugin
+  with several stereo output buses gets a pair of `out_aux_<k>_l/r` sockets for each extra bus (up to seven), so
+  each part of a multi-output instrument can go to its own mixer channel; CLAP and VST3, in process and in the
+  sandbox (the shared audio block grew and its protocol version is 2). The new sockets come after the old ones, the
+  assignments are ordinary device params saved only when set, and a project that uses none of it saves and loads as
+  before (the project format is still 42). The plugin scan cache is rebuilt once to learn the extra buses.
 - **Container CV, sixteen macros, switches and split pass flags.** A container has four CV inputs (`cv1` to `cv4`
   on its back panel); inside, the INPUT strip has the matching CV jacks, so a modulation source cabled to the
   container drives any inner CV input (one jack fans out to several), and the bounce is bit for bit the one of

@@ -22,7 +22,7 @@ fn the_hello_exchange_and_instantiate_give_the_layout_and_the_facts() {
     assert_eq!(r.live.load(Ordering::SeqCst), 1);
     let requests = r.fake.ctl.requests();
     assert!(
-        matches!(requests[0], ToChild::Hello { protocol: 1 }),
+        matches!(requests[0], ToChild::Hello { protocol: 2 }),
         "{requests:?}"
     );
     assert!(matches!(requests[1], ToChild::Instantiate { .. }));

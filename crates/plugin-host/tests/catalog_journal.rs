@@ -31,6 +31,7 @@ fn layout(name: &str, kind: PluginKindHint) -> PluginLayout {
         sidechain: kind == PluginKindHint::Effect,
         notes_in: instrument || note_fx,
         notes_out: note_fx,
+        aux_out: 0,
         params: vec![PluginParamInfo {
             id: 1,
             name: "Gain".to_string(),

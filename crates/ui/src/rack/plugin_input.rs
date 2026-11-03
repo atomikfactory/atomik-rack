@@ -193,7 +193,9 @@ impl RackView {
                 },
             ))),
             PluginButton::OpenGui => self.direct.push(UiAction::OpenPluginGui { device: abs }),
-            PluginButton::Params => self.direct.push(UiAction::OpenPluginParams { device: abs }),
+            PluginButton::Params | PluginButton::Cv(_) => {
+                self.direct.push(UiAction::OpenPluginParams { device: abs });
+            }
             PluginButton::ToChannel => {
                 if !self.scope.is_empty() {
                     self.toast =
@@ -349,6 +351,7 @@ impl RackView {
         };
         PluginButton::ALL
             .into_iter()
+            .chain(PluginButton::cv_chips())
             .filter(|b| d.plugin_button_visible(*b))
             .map(|b| (panel.button(b), Hit::Plugin(i, b)))
             .collect()

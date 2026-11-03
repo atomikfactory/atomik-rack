@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const CACHE_VERSION: u32 = 1;
 
 /// The version of the scanner's output. Entries scanned by another version are rescanned.
-pub const SCANNER_VERSION: u32 = 1;
+pub const SCANNER_VERSION: u32 = 2;
 
 /// Size and modification time of a file: what decides whether a cached scan is still valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

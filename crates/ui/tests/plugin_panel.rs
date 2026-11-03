@@ -58,15 +58,20 @@ fn spec_of(type_id: &str, d: &Document, device: &str) -> PanelSpec {
 // ------------------------------------------------------------------ layout and pins
 
 #[test]
-fn the_panel_is_two_units_with_the_first_eight_params_when_nothing_is_pinned() {
+fn the_panel_is_three_units_with_the_first_eight_params_when_nothing_is_pinned() {
     let d = plugin_rack();
     let s = spec_of(SYNTH_TYPE, &d, "synth");
     assert_eq!(s.height_units, PLUGIN_UNITS);
-    assert_eq!(s.height_units, 2);
+    assert_eq!(s.height_units, 3);
     let panel = s.plugin.expect("plugin panel");
     let reg = registry();
     let desc = reg.get(SYNTH_TYPE).unwrap().descriptor;
-    let keys: Vec<&str> = s.front.iter().map(|pc| desc.params[pc.param].key).collect();
+    let keys: Vec<&str> = s
+        .front
+        .iter()
+        .map(|pc| desc.params[pc.param].key)
+        .filter(|k| !k.starts_with("cv."))
+        .collect();
     assert_eq!(
         keys,
         ["p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17"],
@@ -109,19 +114,125 @@ fn the_panel_is_two_units_with_the_first_eight_params_when_nothing_is_pinned() {
 }
 
 #[test]
+fn the_cv_programmer_has_eight_chips_and_eight_amount_knobs_that_fit_the_panel() {
+    let d = plugin_rack();
+    let s = spec_of(SYNTH_TYPE, &d, "synth");
+    let panel = s.plugin.expect("plugin panel");
+    let reg = registry();
+    let desc = reg.get(SYNTH_TYPE).unwrap().descriptor;
+    let amounts: Vec<_> = s
+        .front
+        .iter()
+        .filter(|pc| desc.params[pc.param].key.starts_with("cv.amount_"))
+        .collect();
+    assert_eq!(amounts.len(), 8);
+    let pins: Vec<_> = s
+        .front
+        .iter()
+        .filter(|pc| !desc.params[pc.param].key.starts_with("cv."))
+        .collect();
+    for (k, a) in amounts.iter().enumerate() {
+        assert_eq!(desc.params[a.param].key, format!("cv.amount_{}", k + 1));
+        assert!(a.rect.y1 <= s.height(), "amount {k} is inside the panel");
+        let chip = panel.button(PluginButton::Cv(k as u8));
+        assert!(chip.y1 <= a.rect.y0 + 12.0, "the chip is above its knob");
+        assert!(chip.y1 <= s.height());
+        assert!(!chip.overlaps(panel.info) && !chip.overlaps(panel.button(PluginButton::Relink)));
+        for pin in &pins {
+            assert!(
+                !chip.overlaps(pin.rect),
+                "chip {k} clear of the pinned knobs"
+            );
+            assert!(
+                a.rect.y0 >= pin.rect.y1 - 1.0,
+                "the amounts sit under the pinned rows"
+            );
+        }
+        for (j, other) in amounts.iter().enumerate().skip(k + 1) {
+            assert!(!a.rect.overlaps(other.rect), "amounts {k} and {j}");
+            assert!(
+                !chip.overlaps(panel.button(PluginButton::Cv(j as u8))),
+                "chips {k} and {j}"
+            );
+        }
+    }
+    assert!(
+        s.front_sections
+            .iter()
+            .any(|sec| sec.label == "CV PROGRAMMER"),
+        "the section has a title"
+    );
+}
+
+#[test]
+fn a_chip_names_the_destination_and_a_click_opens_the_parameter_pane() {
+    let (mut d, mut v) = setup();
+    let doc = d
+        .doc()
+        .device(&key("synth"))
+        .unwrap()
+        .plugin
+        .clone()
+        .unwrap();
+    let params = d.doc().device(&key("synth")).unwrap().params.clone();
+    assert_eq!(
+        atomik_ui::plugin_panel::cv_chip_label(&doc, &params, 0),
+        "-"
+    );
+    // Destination 2 is the second param of the layout.
+    d.apply(
+        Command::SetParam {
+            key: key("synth"),
+            param: "cv.dest_1".into(),
+            value: 2.0,
+            merge: None,
+        },
+        &registry(),
+    )
+    .expect("set the destination");
+    let params = d.doc().device(&key("synth")).unwrap().params.clone();
+    let name = doc.layout.params[1].name.clone();
+    assert_eq!(
+        atomik_ui::plugin_panel::cv_chip_label(&doc, &params, 0),
+        name
+    );
+    // A destination beyond a shorter saved layout still has a label.
+    let mut shorter = doc.clone();
+    shorter.layout.params.truncate(1);
+    assert_eq!(
+        atomik_ui::plugin_panel::cv_chip_label(&shorter, &params, 0),
+        "#2"
+    );
+    let acts = press_button(&mut v, &d, "synth", PluginButton::Cv(0));
+    assert!(acts.contains(&UiAction::OpenPluginParams {
+        device: key("synth")
+    }));
+}
+
+#[test]
 fn pins_choose_and_order_the_knobs_up_to_sixteen_in_two_rows() {
     let mut d = plugin_rack();
     set_pins(&mut d, "synth", &[21, 10, 18]);
     let s = spec_of(SYNTH_TYPE, &d, "synth");
     let reg = registry();
     let desc = reg.get(SYNTH_TYPE).unwrap().descriptor;
-    let keys: Vec<&str> = s.front.iter().map(|pc| desc.params[pc.param].key).collect();
+    let keys: Vec<&str> = s
+        .front
+        .iter()
+        .map(|pc| desc.params[pc.param].key)
+        .filter(|k| !k.starts_with("cv."))
+        .collect();
     assert_eq!(keys, ["p21", "p10", "p18"]);
     // Sixteen pins fill two rows of eight; a toggle (p18) is a toggle.
     let all: Vec<u32> = (10..=21).collect();
     set_pins(&mut d, "synth", &all);
     let s = spec_of(SYNTH_TYPE, &d, "synth");
-    assert_eq!(s.front.len(), 12);
+    let pinned: Vec<_> = s
+        .front
+        .iter()
+        .filter(|pc| !desc.params[pc.param].key.starts_with("cv."))
+        .collect();
+    assert_eq!(pinned.len(), 12);
     assert_eq!(s.front[0].rect.y0, s.front[1].rect.y0);
     assert!(
         s.front[8].rect.y0 > s.front[0].rect.y0,

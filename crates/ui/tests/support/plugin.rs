@@ -104,6 +104,7 @@ pub fn synth_layout() -> PluginLayout {
         sidechain: false,
         notes_in: true,
         notes_out: false,
+        aux_out: 0,
         params,
     }
 }
@@ -120,6 +121,7 @@ pub fn fx_layout() -> PluginLayout {
         sidechain: true,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             param(1, "Gain", "", -24.0, 24.0, false),
             param(2, "Mute", "", 0.0, 1.0, true),
@@ -140,6 +142,7 @@ pub fn big_layout(n: u32) -> PluginLayout {
         sidechain: false,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: (0..n)
             .map(|i| {
                 param(

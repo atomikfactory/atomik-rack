@@ -131,10 +131,11 @@
 //! A plugin device's `"plugin"` (v9, only on devices whose type id is `clap.<id>` or
 //! `vst3.<hex>`, always written for them, after `"inner"`) is `{"format": "clap" | "vst3", "id",
 //! "name", "vendor", "version", "path_hint"?, "layout": {"main_in", "main_out", "sidechain",
-//! "notes_in", "notes_out", "kind", "params": [rows]}, "state"?: base64, "pinned", "run_on_audio_thread",
+//! "notes_in", "notes_out", "aux_out"? (v42, extra stereo output pairs, written when not 0), "kind",
+//! "params": [rows]}, "state"?: base64, "pinned", "run_on_audio_thread",
 //! "powered"}`; see [`crate::plugin_io`]. Its params are in the device's `"params"` under the keys
-//! `p<plugin param id>` and `bypass`, stored sparsely; the layout rows written are those the project
-//! uses. A plugin the registry does not know loads as a **stand-in** built from the saved layout; a
+//! `p<plugin param id>`, `bypass` and the CV programmer's `cv.dest_<k>` and `cv.amount_<k>`, stored
+//! sparsely; the layout rows written are those the project uses. A plugin the registry does not know loads as a **stand-in** built from the saved layout; a
 //! `p<id>` key the descriptor lacks is kept as a dead key (never a load error). A project file
 //! before version 9 has no `"plugin"` (unknown field).
 //!

@@ -7,7 +7,7 @@ use crate::block::SharedBlock;
 use crate::codec::{AudioOp, sleep_rule_code, status_code, tail_code};
 use crate::deadline::now;
 use crate::doorbell::Doorbell;
-use crate::layout::{MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, WireEvent};
+use crate::layout::{MAX_AUX_CHANNELS, MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, WireEvent};
 use crate::parent::ProcessorInfo;
 use atomik_core::{BATCH, Batch};
 use atomik_plugin_host::{EventList, PluginEvent, PluginIo, ProcessStatus};
@@ -154,6 +154,7 @@ impl Request<'_> {
             let main_in_ch = (addr_of!((*req).main_in_ch).read() as usize).min(MAX_CHANNELS);
             let sc_ch = (addr_of!((*req).sc_ch).read() as usize).min(MAX_CHANNELS);
             let main_out_ch = (addr_of!((*req).main_out_ch).read() as usize).min(MAX_CHANNELS);
+            let aux_out_ch = (addr_of!((*req).aux_out_ch).read() as usize).min(MAX_AUX_CHANNELS);
             let n_in = (addr_of!((*req).n_events).read() as usize).min(MAX_EVENTS_IN);
 
             port.events_in.clear();
@@ -170,6 +171,8 @@ impl Request<'_> {
 
             let out = addr_of_mut!((*resp).main_out).cast::<Batch>();
             std::ptr::write_bytes(out, 0, MAX_CHANNELS);
+            let aux = addr_of_mut!((*resp).aux_out).cast::<Batch>();
+            std::ptr::write_bytes(aux, 0, aux_out_ch);
 
             let mut io = PluginIo {
                 frames: BATCH,
@@ -181,6 +184,7 @@ impl Request<'_> {
                 sidechain: std::slice::from_raw_parts(addr_of!((*req).sc).cast::<Batch>(), sc_ch),
                 sidechain_silent: addr_of!((*req).sc_silent).read() != 0,
                 main_out: std::slice::from_raw_parts_mut(out, main_out_ch),
+                aux_out: std::slice::from_raw_parts_mut(aux, aux_out_ch),
                 events_in: &port.events_in,
                 events_out: &mut port.events_out,
                 transport: addr_of!((*req).transport).read().decode(),

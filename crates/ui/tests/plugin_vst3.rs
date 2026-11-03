@@ -39,6 +39,7 @@ fn vst3_layout() -> PluginLayout {
         sidechain: true,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             PluginParamInfo {
                 id: 7,

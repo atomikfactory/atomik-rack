@@ -30,6 +30,7 @@ fn layout(kind_hint: PluginKindHint) -> PluginLayout {
         sidechain: false,
         notes_in: false,
         notes_out: false,
+        aux_out: 0,
         params: vec![param(42, "Gain"), param(7, "Mix")],
     }
 }
@@ -50,7 +51,16 @@ fn vst3() -> PluginRef {
     }
 }
 
+/// The socket keys of the plugin's own ports (without the CV inputs and aux outputs).
 fn keys(d: &DeviceDescriptor) -> Vec<&'static str> {
+    d.sockets
+        .iter()
+        .map(|s| s.key)
+        .filter(|k| !k.starts_with("cv_in_") && !k.starts_with("out_aux_"))
+        .collect()
+}
+
+fn all_keys(d: &DeviceDescriptor) -> Vec<&'static str> {
     d.sockets.iter().map(|s| s.key).collect()
 }
 
@@ -92,7 +102,7 @@ fn an_instrument_descriptor_has_the_sockets_of_the_rule_in_order() {
     assert_eq!(d.type_id, "clap.x.synth");
     assert_eq!(d.name, "Test");
     assert_eq!(d.kind, DeviceKind::Instrument);
-    assert_eq!(d.version, 1);
+    assert_eq!(d.version, 2);
     assert!(d.stages.is_empty());
     assert_eq!(keys(d), ["notes_in", "out_l", "out_r"]);
     assert_eq!(d.sockets[0].kind, SocketKind::Notes);
@@ -188,7 +198,12 @@ fn a_note_effect_is_a_utility_and_an_instrument_without_notes_is_an_effect() {
 #[test]
 fn bypass_comes_first_then_the_plugin_params_in_the_plugins_own_order() {
     let d = descriptor_for(&clap("x.order"), &layout(PluginKindHint::Effect)).unwrap();
-    let k: Vec<_> = d.params.iter().map(|p| p.key).collect();
+    let k: Vec<_> = d
+        .params
+        .iter()
+        .map(|p| p.key)
+        .filter(|k| !k.starts_with("cv."))
+        .collect();
     assert_eq!(k, ["bypass", "p42", "p7"]);
     for (i, p) in d.params.iter().enumerate() {
         assert_eq!(p.id.0 as usize, i, "ParamId is the index");
@@ -373,8 +388,8 @@ fn the_param_cap_refuses_a_longer_table() {
     let ok = descriptor_for(&clap("x.cap-ok"), &l).unwrap();
     assert_eq!(
         ok.params.len(),
-        MAX_PLUGIN_PARAMS + 1,
-        "bypass plus the cap"
+        MAX_PLUGIN_PARAMS + 1 + 2 * PLUGIN_CV_INPUTS,
+        "bypass, the cap and the CV programmer"
     );
     l.params.push(param(99_999, "One too many"));
     assert_eq!(
@@ -556,7 +571,7 @@ fn the_stand_in_of_a_note_effect_emits_nothing() {
     let d = descriptor_for(&clap("x.standin-notes"), &l).unwrap();
     let mut dev = PluginStandIn::new(d);
     let (out, notes) = run(&mut dev, 0.0);
-    assert_eq!(out.len(), 2);
+    assert_eq!(out.len(), d.sockets.len());
     assert!(notes[idx(d, "notes_out")].is_empty());
 }
 
@@ -617,4 +632,88 @@ fn a_refused_layout_leaks_nothing_and_an_accepted_one_leaks_only_its_descriptor(
 
     build_descriptor(&clap("x.leak"), &layout(PluginKindHint::Effect)).unwrap();
     assert!(leaks() > before, "an accepted layout is leaked on purpose");
+}
+
+// ----- the CV programmer and the aux outputs ------------------------------------------------
+
+#[test]
+fn every_plugin_descriptor_ends_its_sockets_with_the_cv_inputs() {
+    let d = descriptor_for(&clap("x.cv-sockets"), &layout(PluginKindHint::Effect)).unwrap();
+    let k = all_keys(d);
+    assert_eq!(
+        k,
+        [
+            "in_l", "in_r", "out_l", "out_r", "cv_in_1", "cv_in_2", "cv_in_3", "cv_in_4",
+            "cv_in_5", "cv_in_6", "cv_in_7", "cv_in_8"
+        ],
+        "CV inputs come after every port a project's older cables may use"
+    );
+    for s in &d.sockets[4..] {
+        assert_eq!(s.kind, SocketKind::Cv);
+        assert_eq!(s.direction, Direction::Input);
+    }
+    assert_eq!(d.validate(), Ok(()));
+}
+
+#[test]
+fn the_cv_programmer_params_follow_the_plugin_params() {
+    let d = descriptor_for(&clap("x.cv-params"), &layout(PluginKindHint::Effect)).unwrap();
+    let tail: Vec<_> = d.params[3..].iter().map(|p| p.key).collect();
+    assert_eq!(tail.len(), 16);
+    assert_eq!(
+        &tail[..4],
+        ["cv.dest_1", "cv.amount_1", "cv.dest_2", "cv.amount_2"]
+    );
+    assert_eq!(tail[15], "cv.amount_8");
+    let dest = &d.params[3];
+    assert!(dest.discrete);
+    assert_eq!(
+        (dest.min, dest.max, dest.default),
+        (0.0, MAX_PLUGIN_PARAMS as f32, 0.0),
+        "the range does not depend on the plugin"
+    );
+    let amount = &d.params[4];
+    assert!(!amount.discrete);
+    assert_eq!((amount.min, amount.max, amount.default), (-1.0, 1.0, 0.0));
+    assert_eq!(d.validate(), Ok(()));
+}
+
+#[test]
+fn aux_outputs_become_sockets_after_the_cv_inputs() {
+    let l = PluginLayout {
+        aux_out: 3,
+        ..synth_layout()
+    };
+    let d = descriptor_for(&clap("x.aux3"), &l).unwrap();
+    let k = all_keys(d);
+    assert_eq!(&k[..3], ["notes_in", "out_l", "out_r"]);
+    assert_eq!(k[3], "cv_in_1");
+    assert_eq!(
+        &k[11..],
+        [
+            "out_aux_1_l",
+            "out_aux_1_r",
+            "out_aux_2_l",
+            "out_aux_2_r",
+            "out_aux_3_l",
+            "out_aux_3_r"
+        ]
+    );
+    assert!(
+        d.sockets[11..]
+            .iter()
+            .all(|s| s.kind == SocketKind::Audio && s.direction == Direction::Output)
+    );
+    // The layout with no aux bus is another descriptor.
+    let plain = descriptor_for(&clap("x.aux3"), &synth_layout()).unwrap();
+    assert!(!std::ptr::eq(d, plain));
+    assert!(plain.socket_by_key("out_aux_1_l").is_none());
+    // More than the cap is cut to the cap.
+    let many = PluginLayout {
+        aux_out: 200,
+        ..synth_layout()
+    };
+    let d = descriptor_for(&clap("x.aux-many"), &many).unwrap();
+    assert_eq!(d.sockets.len(), 3 + PLUGIN_CV_INPUTS + 2 * MAX_AUX_OUTPUTS);
+    assert_eq!(d.validate(), Ok(()));
 }

@@ -653,6 +653,47 @@ fn the_automate_shortcut_names_the_device_and_the_param_id() {
 // ------------------------------------------------------------------ macros in a scope
 
 #[test]
+fn the_cv_button_assigns_a_param_to_a_cv_input_of_the_programmer() {
+    let mut d = plugin_rack();
+    let mut v = pane_on(d.doc(), "fx");
+    // Every row has a CV button, inside a container or not; none drives anything yet.
+    assert_eq!(v.cv_driver_of(2), None);
+    let acts = {
+        let p = center(v.cv_rect(2).unwrap());
+        click_at(&mut v, d.doc(), p)
+    };
+    assert!(commands(&acts).is_empty());
+    let rows = v.menu_rows();
+    assert_eq!(rows.len(), 8, "one row per CV input, no Clear yet");
+    assert_eq!(rows[0].0, "Drive from CV 1");
+    assert_eq!(rows[7].0, "Drive from CV 8");
+    // The second row of the layout (Mute) is the destination 2.
+    let acts = click_at(&mut v, d.doc(), rows[2].1);
+    assert_eq!(set_params(&acts), [("cv.dest_3".to_string(), 2.0, None)]);
+    assert!(v.menu_rows().is_empty(), "the menu closed");
+    apply_all(&mut d, &acts);
+    v.sync(d.doc(), &registry());
+    assert_eq!(v.cv_driver_of(2), Some(2), "the button now reads C3");
+    assert_eq!(v.cv_driver_of(1), None);
+    // The menu of a driven param offers Clear.
+    let acts = {
+        let p = center(v.cv_rect(2).unwrap());
+        click_at(&mut v, d.doc(), p)
+    };
+    assert!(commands(&acts).is_empty());
+    let rows = v.menu_rows();
+    assert_eq!(rows.len(), 9);
+    assert_eq!(rows[8].0, "Clear CV 3");
+    let acts = click_at(&mut v, d.doc(), rows[8].1);
+    assert_eq!(set_params(&acts), [("cv.dest_3".to_string(), 0.0, None)]);
+    apply_all(&mut d, &acts);
+    v.sync(d.doc(), &registry());
+    assert_eq!(v.cv_driver_of(2), None);
+    // The CV button is a button of its own: pressing it never edits the param.
+    assert_eq!(value_of(&d, "fx", "p2"), None);
+}
+
+#[test]
 fn map_to_macro_exists_only_inside_a_container_and_maps_through_a_menu() {
     let mut d = plugin_in_container();
     // At the top level there is no MAP button.

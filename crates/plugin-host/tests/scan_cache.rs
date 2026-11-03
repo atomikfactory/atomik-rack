@@ -34,6 +34,7 @@ fn layout(name: &str) -> PluginLayout {
         sidechain: true,
         notes_in: true,
         notes_out: false,
+        aux_out: 0,
         params: vec![
             PluginParamInfo {
                 id: 7,

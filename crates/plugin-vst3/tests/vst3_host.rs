@@ -52,6 +52,7 @@ impl Bufs {
             sidechain: &[],
             sidechain_silent: true,
             main_out: &mut self.main_out[..n_out],
+            aux_out: &mut [],
             events_in: events,
             events_out: &mut self.out_events,
             transport: PluginTransport::default(),

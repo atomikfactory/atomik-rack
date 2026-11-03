@@ -1,4 +1,4 @@
-//! The plugin device's rack panel: a hand-made 2 U panel for every
+//! The plugin device's rack panel: a hand-made 3 U panel for every
 //! third-party plugin device.
 //!
 //! ```text
@@ -6,9 +6,9 @@
 //! +--------------+     (knob) (knob) (knob) (knob) (knob) (knob) (knob) (knob)
 //! | Name    CLAP |     (knob) (knob) ...        (the pins, up to 16 in two rows)
 //! | vendor v1.2  |
-//! | RUNNING 128fr|
-//! | detail       |
-//! +--------------+
+//! | RUNNING 128fr|     CV PROGRAMMER
+//! | detail       |     [dest 1] [dest 2] ... [dest 8]   (the parameter each CV input drives)
+//! +--------------+     (amt 1)  (amt 2)  ... (amt 8)    (bipolar amount of each)
 //! [POWER] [BYPASS]
 //! [OPEN GUI][PARAMS]
 //! [TO CH] [AUDIO THR]
@@ -19,6 +19,12 @@
 //!   first eight params of the plugin), so a drag, a double-click (reset) and the wheel are
 //!   ordinary `SetParam`s on the key `p<id>`; a stepped 0/1 param is a toggle. Shift +
 //!   right-click on a knob unpins it (`PluginCommand::SetPinned`).
+//! * The CV PROGRAMMER is the device's eight CV inputs (the jacks are on the back): each
+//!   destination chip names the plugin param the input drives (a dash for none; a click opens the
+//!   parameter pane, where the CV button of a row assigns it) and the knob under it is the
+//!   bipolar amount, a whole range of the param per unit of CV. These are the device's
+//!   `cv.dest_<k>` and `cv.amount_<k>` params, so a drag, a double-click and the wheel are
+//!   ordinary `SetParam`s.
 //! * POWER, BYPASS and AUDIO THR (RUN ON AUDIO THREAD) are the document's `powered`, the
 //!   host `bypass` param and `run_on_audio_thread`. OPEN GUI shows only when the app said the
 //!   plugin has an editor ([`crate::RackView::set_plugin_status`]); PARAMS opens the parameter
@@ -39,13 +45,15 @@ use crate::plugin_data::{
 };
 use crate::seq_panel::{back_layout, place_controls};
 use crate::theme::{Theme, mix};
-use atomik_device_sdk::{ControlKind, DeviceDescriptor, PluginKindHint};
+use atomik_device_sdk::{
+    CV_AMOUNT_KEYS, CV_DEST_KEYS, ControlKind, DeviceDescriptor, PLUGIN_CV_INPUTS, PluginKindHint,
+};
 use atomik_model::{PluginDoc, RackDevice};
 use vello::kurbo::{Circle, Rect, RoundedRect};
 use vello::peniko::Color;
 
 /// Height of the plugin panel in rack units.
-pub const PLUGIN_UNITS: u8 = 2;
+pub const PLUGIN_UNITS: u8 = 3;
 /// Most knobs a panel shows (two rows of eight).
 pub const MAX_FEATURED: usize = 16;
 /// Knobs a plugin gets when nothing is pinned.
@@ -78,6 +86,8 @@ pub enum PluginButton {
     Reload,
     /// Point a stand-in at another installed plugin.
     Relink,
+    /// The destination chip of CV input `k` (0-based): opens the parameter pane.
+    Cv(u8),
 }
 
 impl PluginButton {
@@ -103,7 +113,13 @@ impl PluginButton {
             Self::ToChannel => "TO CH",
             Self::Reload => "RELOAD",
             Self::Relink => "RELINK",
+            Self::Cv(_) => "CV",
         }
+    }
+
+    /// The destination chips of the CV programmer, in order.
+    pub fn cv_chips() -> impl Iterator<Item = Self> {
+        (0..PLUGIN_CV_INPUTS as u8).map(Self::Cv)
     }
 }
 
@@ -130,6 +146,8 @@ pub struct PluginPanel {
     pub reload: Rect,
     /// RELINK.
     pub relink: Rect,
+    /// The destination chip of each CV input.
+    pub cv: [Rect; PLUGIN_CV_INPUTS],
 }
 
 impl PluginPanel {
@@ -144,9 +162,13 @@ impl PluginPanel {
             PluginButton::ToChannel => self.to_channel,
             PluginButton::Reload => self.reload,
             PluginButton::Relink => self.relink,
+            PluginButton::Cv(k) => self.cv[usize::from(k).min(PLUGIN_CV_INPUTS - 1)],
         }
     }
 }
+
+/// Height of a destination chip of the CV programmer.
+const CHIP_H: f64 = 14.0;
 
 /// The param ids shown as knobs: the saved pins that the plugin still has (in order, at most
 /// [`MAX_FEATURED`]), or, when nothing is pinned, the first [`DEFAULT_FEATURED`] params of its
@@ -193,6 +215,11 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         .collect();
     let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
     let mut front = place_controls(desc, &key_refs, KNOBS_X, COL_W, COLS, top);
+    // The CV programmer under the two rows of pins: a title, the destination chips, the amounts.
+    let cv_title_y = top + 2.0 * crate::autolayout::ROW_H + 2.0;
+    let chips_y = cv_title_y + TITLE_H + 2.0;
+    let amounts_y = chips_y + CHIP_H + 1.0;
+    let mut amounts = place_controls(desc, &CV_AMOUNT_KEYS, KNOBS_X, COL_W, COLS, amounts_y);
     for pc in &mut front {
         let p = &desc.params[pc.param];
         pc.kind = if p.discrete && (p.max - p.min - 1.0).abs() < 1e-6 {
@@ -201,6 +228,7 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
             ControlKind::Knob
         };
     }
+    front.append(&mut amounts);
     let right = KNOBS_X + COLS as f64 * COL_W;
     let info = Rect::new(x0, top + 2.0, x0 + LEFT_W, top + 2.0 + INFO_H);
     let btn = |row: usize, col: usize| {
@@ -219,6 +247,10 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         audio_thread: btn(2, 1),
         reload: btn(3, 0),
         relink: btn(3, 1),
+        cv: std::array::from_fn(|k| {
+            let x = KNOBS_X + k as f64 * COL_W + 3.0;
+            Rect::new(x, chips_y, x + COL_W - 6.0, chips_y + CHIP_H)
+        }),
     };
     let front_sections = vec![
         Section {
@@ -228,6 +260,10 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         Section {
             label: "PINNED".to_string(),
             rect: Rect::new(KNOBS_X, MARGIN_TOP, right, MARGIN_TOP + TITLE_H),
+        },
+        Section {
+            label: "CV PROGRAMMER".to_string(),
+            rect: Rect::new(KNOBS_X, cv_title_y, right, cv_title_y + TITLE_H),
         },
     ];
     let (units, back, back_sections) = back_layout(desc, PLUGIN_UNITS);
@@ -255,6 +291,29 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
 }
 
 // ------------------------------------------------------------------ pure helpers
+
+/// The label of the destination chip of CV input `k` (0-based) for a device whose params are
+/// `params`: the name of the plugin param the input drives, or a dash.
+pub fn cv_chip_label(
+    doc: &PluginDoc,
+    params: &std::collections::BTreeMap<String, f32>,
+    k: u8,
+) -> String {
+    let ordinal = params
+        .get(CV_DEST_KEYS[usize::from(k).min(PLUGIN_CV_INPUTS - 1)])
+        .copied()
+        .unwrap_or(0.0)
+        .round();
+    if ordinal < 1.0 {
+        return "-".to_string();
+    }
+    match doc.layout.params.get(ordinal as usize - 1) {
+        Some(p) if !p.name.is_empty() => p.name.clone(),
+        Some(p) => param_key(p.id),
+        // A destination of a longer table than this saved layout holds.
+        None => format!("#{}", ordinal as u32),
+    }
+}
 
 /// Which buttons the panel shows (and answers) for a device in this state.
 pub fn button_visible(b: PluginButton, doc: &PluginDoc, status: &PluginDeviceStatus) -> bool {
@@ -534,7 +593,24 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
             PluginButton::OpenGui | PluginButton::Params | PluginButton::Relink => {
                 panel_button(c, theme, r, b.label(), true);
             }
+            PluginButton::Cv(_) => {}
         }
+    }
+    // The destination chips of the CV programmer.
+    for b in PluginButton::cv_chips() {
+        let PluginButton::Cv(k) = b else { continue };
+        let r = panel.button(b);
+        let label = cv_chip_label(doc, &device.params, k);
+        let driven = label != "-";
+        led_button(
+            c,
+            theme,
+            r,
+            &fit_label(&label, r.width() - 12.0, 7.2),
+            Some(driven),
+            true,
+            accent,
+        );
     }
 }
 
@@ -554,6 +630,7 @@ mod tests {
             sidechain: false,
             notes_in: false,
             notes_out: false,
+            aux_out: 0,
             params: ids
                 .iter()
                 .map(|id| PluginParamInfo {

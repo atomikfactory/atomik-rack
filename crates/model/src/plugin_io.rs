@@ -4,7 +4,7 @@
 //! "plugin": { "format": "clap" | "vst3", "id": "…", "name": "…", "vendor": "…", "version": "…",
 //!             "path_hint": "…"?,
 //!             "layout": { "main_in": null | "mono" | "stereo", "main_out": …, "sidechain": bool,
-//!                         "notes_in": bool, "notes_out": bool,
+//!                         "notes_in": bool, "notes_out": bool, "aux_out": 1..=7?,
 //!                         "kind": "instrument" | "effect" | "note_effect",
 //!                         "params": [ { "id": 42, "name": "…", "module": "…"?, "min", "max",
 //!                                       "default", "stepped": bool, "steps": 0 } … ] },
@@ -26,8 +26,8 @@ use crate::plugin::{
 use crate::{ModelError, RackDevice};
 use atomik_device_sdk::Registry;
 use atomik_device_sdk::{
-    Channels, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
-    PluginStateBlob, descriptor_for, is_plugin_type_id,
+    Channels, MAX_AUX_OUTPUTS, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo,
+    PluginRef, PluginStateBlob, descriptor_for, is_plugin_type_id,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -49,6 +49,18 @@ const PLUGIN_FIELDS: &[&str] = &[
 ];
 const PLUGIN_REQUIRED: &[&str] = &["format", "id", "name", "vendor", "version", "layout"];
 const LAYOUT_FIELDS: &[&str] = &[
+    "main_in",
+    "main_out",
+    "sidechain",
+    "notes_in",
+    "notes_out",
+    "aux_out",
+    "kind",
+    "params",
+];
+/// The layout fields every layout writes; `aux_out` is written only when the plugin has aux
+/// output buses.
+const LAYOUT_REQUIRED: &[&str] = &[
     "main_in",
     "main_out",
     "sidechain",
@@ -193,12 +205,16 @@ fn load_layout(
     plugin: &PluginRef,
     (name, vendor, version): (String, String, String),
 ) -> Result<PluginLayout, ModelError> {
-    let o = object(v, path, LAYOUT_FIELDS, LAYOUT_FIELDS)?;
+    let o = object(v, path, LAYOUT_FIELDS, LAYOUT_REQUIRED)?;
     let main_in = channels(&o["main_in"], &path.field("main_in"))?;
     let main_out = channels(&o["main_out"], &path.field("main_out"))?;
     let sidechain = flag(&o["sidechain"], &path.field("sidechain"))?;
     let notes_in = flag(&o["notes_in"], &path.field("notes_in"))?;
     let notes_out = flag(&o["notes_out"], &path.field("notes_out"))?;
+    let aux_out = match o.get("aux_out") {
+        Some(n) => uint(n, &path.field("aux_out"), MAX_AUX_OUTPUTS as u64)? as u8,
+        None => 0,
+    };
     let kind_hint = kind(&o["kind"], &path.field("kind"))?;
     let params_path = path.field("params");
     let mut params = Vec::new();
@@ -230,6 +246,7 @@ fn load_layout(
         sidechain,
         notes_in,
         notes_out,
+        aux_out,
         params,
     };
     validate_layout(plugin, &layout).map_err(|f| layout_error(path, &params_path, &f))?;
@@ -507,9 +524,14 @@ pub(crate) fn write_plugin(
         Some(n) => json_str(n),
         None => "null".to_owned(),
     };
+    let aux = if l.aux_out > 0 {
+        format!(", \"aux_out\": {}", l.aux_out)
+    } else {
+        String::new()
+    };
     let _ = write!(
         w,
-        ",\n{q}\"layout\": {{\n{r}\"main_in\": {}, \"main_out\": {}, \"sidechain\": {}, \"notes_in\": {}, \"notes_out\": {}, \"kind\": {},\n{r}\"params\": [",
+        ",\n{q}\"layout\": {{\n{r}\"main_in\": {}, \"main_out\": {}, \"sidechain\": {}, \"notes_in\": {}, \"notes_out\": {}{aux}, \"kind\": {},\n{r}\"params\": [",
         channel(l.main_in),
         channel(l.main_out),
         l.sidechain,

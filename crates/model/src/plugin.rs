@@ -28,8 +28,8 @@
 
 use crate::{DeviceKey, ModelError, RackDevice, RackDoc, RackSlot};
 use atomik_device_sdk::{
-    Channels, PluginFormat, PluginKindHint, PluginLayout, PluginRef, PluginStateBlob,
-    descriptor_for, is_plugin_type_id,
+    AUX_OUT_KEYS, CV_IN_KEYS, Channels, MAX_AUX_OUTPUTS, PluginFormat, PluginKindHint,
+    PluginLayout, PluginRef, PluginStateBlob, descriptor_for, is_plugin_type_id,
 };
 use atomik_device_sdk::{DeviceDescriptor, Registry};
 use std::collections::{BTreeMap, BTreeSet};
@@ -288,6 +288,12 @@ pub(crate) fn validate_layout(
     if !id_ok {
         return Err(fault(format!("{:?} is not a valid plugin id", plugin.id)));
     }
+    if usize::from(layout.aux_out) > MAX_AUX_OUTPUTS {
+        return Err(fault(format!(
+            "a layout holds at most {MAX_AUX_OUTPUTS} aux output pairs, found {}",
+            layout.aux_out
+        )));
+    }
     if layout.params.len() > MAX_LAYOUT_PARAMS {
         return Err(fault(format!(
             "a layout holds at most {MAX_LAYOUT_PARAMS} params, found {}",
@@ -322,7 +328,12 @@ pub(crate) fn validate_layout(
             _ => {}
         }
     }
-    if socket_keys(layout).is_empty() {
+    let has_port = layout.main_in.is_some()
+        || layout.main_out.is_some()
+        || layout.sidechain
+        || layout.notes_in
+        || layout.notes_out;
+    if !has_port {
         return Err(fault(
             "a plugin needs at least one audio or notes port (socket)",
         ));
@@ -347,6 +358,10 @@ pub(crate) fn socket_keys(layout: &PluginLayout) -> Vec<&'static str> {
     }
     if layout.notes_out {
         keys.push("notes_out");
+    }
+    keys.extend(CV_IN_KEYS);
+    for pair in AUX_OUT_KEYS.iter().take(usize::from(layout.aux_out)) {
+        keys.extend(pair);
     }
     keys
 }

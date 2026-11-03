@@ -113,8 +113,8 @@ fn instantiating_gives_a_device_a_layout_and_a_live_slot() {
     assert_eq!(handle.layout, fx_layout());
     assert_eq!(
         handle.descriptor.sockets.len(),
-        6,
-        "in, sidechain and out sockets of an effect"
+        6 + 8,
+        "in, sidechain and out sockets of an effect, and the eight CV inputs"
     );
     assert_eq!((stats.created(), stats.activated()), (1, 1));
     assert_eq!(m.instance_count(), 1);

@@ -105,6 +105,7 @@ impl PluginBackend for Vst3Backend {
                 sidechain: false,
                 notes_in: false,
                 notes_out: false,
+                aux_out: 0,
                 params: Vec::new(),
             };
             let (unsupported, truncated) = match Vst3Instance::create(&module, &class, hub) {

@@ -240,6 +240,7 @@ mod tests {
             sidechain: &[],
             sidechain_silent: true,
             main_out: &mut out,
+            aux_out: &mut [],
             events_in: &[],
             events_out: &mut events,
             transport: PluginTransport::default(),
