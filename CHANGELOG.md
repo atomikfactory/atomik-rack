@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **UI widgets.** The arrangement, console, plugin parameter and container lists that offer rows to pick from
+  (input and parameter lists, bus and source lists, take commands, plugin presets, macro and CV lists) now share one
+  pick-list widget for geometry, scrolling, hover and frame, so a new list costs its rows only. The file browser's
+  search and path fields use the same text field as the Song Information panel: a caret, a selection, the clipboard
+  and input-method composition. Names in the file browser and the rename fields are cut and positioned by measured
+  text, so Cyrillic and CJK names are no longer clipped or shortened early. The arrangement and the audio editor
+  place their hairlines in the middle of a physical pixel, so lines stay one pixel wide at 125, 150 and 175 percent
+  display scaling. The rack forgets the view state of devices that were removed. No saved field changes (the project
+  format is still 42). Still to do: the remaining menus and label fits that estimate their width, the split of the
+  large view files, a view table indexed by pane, screen-reader support, and the dependency of the UI crate on the
+  DSP crate (the tuner, FM, strip EQ, shaper, grain and wavetable displays still read it).
 - **Refinements.** Edit, Quantize Audio now honours the Quantize panel's swing, groove and humanize time: the
   groove shapes the grid lines, and the timing amount randomises each moved transient by an offset that depends
   only on the seed, the clip and the transient's number, so the same seed gives the same take and the markers stay
