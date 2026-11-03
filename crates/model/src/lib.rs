@@ -61,6 +61,7 @@ mod plugin_cmd;
 mod plugin_io;
 mod project;
 mod rack_columns;
+mod rack_groups;
 mod rate_convert;
 mod read_limit;
 mod rec_source;
@@ -138,6 +139,7 @@ pub use plugin::{
 };
 pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
 pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
+pub use rack_groups::{DeviceGroup, RackSort};
 pub use read_limit::{
     MAX_DOCUMENT_BYTES, MAX_DOCUMENT_ENV, document_size_limit, read_document_text,
     read_text_limited,
@@ -388,6 +390,9 @@ pub struct RackDoc {
     /// new project and when the file has none). Shifts every pitched device: see
     /// [`crate::master_tune`].
     pub tune_cents: f32,
+    /// How the rack arranges its devices (see [`RackSort`]); view data, [`RackSort::Free`] for a
+    /// new document and for a project saved without the field.
+    pub sort_mode: RackSort,
 }
 
 /// An edit. Every command is undoable.
@@ -554,6 +559,10 @@ pub enum Command {
     /// step; the current value is rejected. Reports [`SyncOp::TuneChanged`]. Not accepted by
     /// [`Command::Batch`].
     SetMasterTune(f32),
+    /// Sets how the rack arranges its devices (see [`RackSort`]) and arranges it that way, in
+    /// one undo step; the current mode is rejected. Reports [`SyncOp::ViewChanged`] only. Not
+    /// accepted by [`Command::Batch`].
+    SetRackSort(RackSort),
     /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
     /// in one undo step. The app has already resampled the assets the song uses and registered
     /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
@@ -1413,7 +1422,12 @@ impl Document {
             _ => None,
         };
         let label = command.label();
+        // In a sorted rack a move takes the whole group along, and an edit of the devices ends
+        // with the arrangement the mode asks for (one undo step).
+        let mut command = command;
+        rack_groups::expand_moves(&self.doc, registry, &mut command);
         let (edit, new_clip) = Self::plan(&self.doc, command, registry)?;
+        let edit = rack_groups::finish(&self.doc, registry, edit);
         let mut ops = edit.perform(&mut self.doc)?;
         let edit = match song_end_growth(&self.doc, &edit) {
             Some(grow) => {
@@ -2129,6 +2143,7 @@ impl Document {
             Command::SetOutputChannels(n) => rules::plan_output_channels(doc, n)?,
             Command::SetSongInfo(info) => song_info::plan_set(doc, &info)?,
             Command::SetMasterTune(cents) => master_tune::plan_set(doc, cents)?,
+            Command::SetRackSort(mode) => rack_groups::plan_set(doc, registry, mode)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
@@ -2305,6 +2320,7 @@ pub fn empty_doc() -> RackDoc {
         macros: MacroSet::default(),
         info: SongInfo::default(),
         tune_cents: 0.0,
+        sort_mode: RackSort::Free,
     }
 }
 

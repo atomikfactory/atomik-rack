@@ -321,6 +321,7 @@ pub(crate) fn load_rack(
         macros: crate::macros::MacroSet::default(),
         info: crate::SongInfo::default(),
         tune_cents: 0.0,
+        sort_mode: crate::RackSort::Free,
     };
     let (v, p) = field("devices");
     let mut first_use: BTreeMap<String, JsonPath> = BTreeMap::new();

@@ -25,6 +25,7 @@
 //!                                                               (v29; written only when non-empty),
 //!   "info"?: { "title"?, "author"?, "email"?, "url"?, "notes"? }  (v38; written only when set),
 //!   "tune_cents"?: number                  (v40, -100..=100 around A = 440 Hz; written only when not 0),
+//!   "rack_sort"?: "per_track" | "auto_group"  (v42, ignorable; written only when not free),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
@@ -669,6 +670,9 @@ fn load_value(
     }
     if let Some(tune) = obj.get("tune_cents") {
         doc.tune_cents = crate::master_tune::load_tune(tune, &root.field("tune_cents"))?;
+    }
+    if let Some(sort) = obj.get("rack_sort") {
+        doc.sort_mode = crate::rack_groups::load_sort(sort, &root.field("rack_sort"))?;
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)
