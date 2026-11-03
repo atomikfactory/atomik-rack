@@ -1097,6 +1097,21 @@ impl App {
                         self.shell.export_diagnostics_to(&path);
                     }
                 }
+                ShellRequest::PickExportDeviceInfo => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export device parameter list")
+                        .add_filter("Text table", &["txt"])
+                        .set_file_name(crate::device_info::default_file_name());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("txt");
+                        }
+                        self.shell.export_device_info_to(&path);
+                    }
+                }
                 ShellRequest::PickExportMidiPreset => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Export MIDI mapping preset")

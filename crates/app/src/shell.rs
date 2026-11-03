@@ -287,6 +287,9 @@ pub enum ShellRequest {
     /// Show a save dialog for the diagnostics report (Help > Export Diagnostics), named by
     /// [`crate::diagnostics::default_file_name`], then call [`Shell::export_diagnostics_to`].
     PickExportDiagnostics,
+    /// Show a save dialog for the device parameter list, named by
+    /// [`crate::device_info::default_file_name`], then call [`Shell::export_device_info_to`].
+    PickExportDeviceInfo,
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
@@ -1582,6 +1585,21 @@ impl<B: AudioBackend> Shell<B> {
             Err(e) => {
                 log::error!("cannot write the diagnostics to {}: {e}", path.display());
                 self.notify(format!("Could not write the diagnostics: {e}"));
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Writes the parameter list of every built-in device to the picked file.
+    pub fn export_device_info_to(&mut self, path: &Path) {
+        match crate::device_info::export(self.core.registry(), path) {
+            Ok(()) => self.notify(format!("Device parameters written to {}", path.display())),
+            Err(e) => {
+                log::error!(
+                    "cannot write the device parameters to {}: {e}",
+                    path.display()
+                );
+                self.notify(format!("Could not write the device parameters: {e}"));
             }
         }
         self.repaint = true;
@@ -5731,6 +5749,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ImportMidiPreset => vec![ShellRequest::PickImportMidiPreset],
             AppCommand::ExportDiagnostics => vec![ShellRequest::PickExportDiagnostics],
+            AppCommand::ExportDeviceInfo => vec![ShellRequest::PickExportDeviceInfo],
             AppCommand::ClearMidiMaps => {
                 if !self.core.clear_midi_maps() {
                     self.notify("There are no MIDI mappings to clear");

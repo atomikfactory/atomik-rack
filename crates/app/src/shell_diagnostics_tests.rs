@@ -111,3 +111,28 @@ fn growing_counters_are_logged_at_once_and_then_at_most_every_twenty_polls() {
     s.log_overload();
     assert!(s.overload_logged.is_clear());
 }
+
+#[test]
+fn the_device_parameter_list_is_asked_for_and_written() {
+    let mut s = shell(None);
+    let requests = s.execute(AppCommand::ExportDeviceInfo);
+    assert!(matches!(
+        requests.as_slice(),
+        [ShellRequest::PickExportDeviceInfo]
+    ));
+    let dir = scratch("device-info");
+    let out = dir.join("devices.txt");
+    s.export_device_info_to(&out);
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.starts_with(crate::device_info::HEADER), "{text}");
+    assert!(text.contains("atomik.poly-synth | "), "{text}");
+    s.export_device_info_to(&dir.join("missing").join("devices.txt"));
+    assert!(
+        s.core()
+            .last_rejection()
+            .unwrap()
+            .contains("Could not write"),
+        "{:?}",
+        s.core().last_rejection()
+    );
+}

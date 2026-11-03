@@ -87,6 +87,8 @@ pub enum AppCommand {
     ExportLoopAudio,
     /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
     ExportStems,
+    /// Help ▸ Export Device Parameter List…: a text table of every built-in device parameter.
+    ExportDeviceInfo,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
     StressRack,
     /// File ▸ Stress Song: 8 tracks × 64 bars with automation.
@@ -631,6 +633,7 @@ impl AppCommand {
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::ExportStems => ("file.export_stems", None),
+            AppCommand::ExportDeviceInfo => ("file.export_device_info", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
             AppCommand::Quit => ("file.quit", None),
@@ -906,6 +909,7 @@ impl AppCommand {
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.export_stems", None) => AppCommand::ExportStems,
+            ("file.export_device_info", None) => AppCommand::ExportDeviceInfo,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
             ("file.quit", None) => AppCommand::Quit,
@@ -2923,6 +2927,10 @@ pub fn menus_with_lists(
                 item("Report an Issue", AppCommand::ReportIssue),
                 MenuEntry::Separator,
                 item("Export Diagnostics\u{2026}", AppCommand::ExportDiagnostics),
+                item(
+                    "Export Device Parameter List\u{2026}",
+                    AppCommand::ExportDeviceInfo,
+                ),
                 MenuEntry::Separator,
                 item("About Atomik Rack", AppCommand::About),
             ],
@@ -3202,6 +3210,7 @@ mod tests {
             AppCommand::RescanMidi,
             AppCommand::RestartAudio,
             AppCommand::ExportDiagnostics,
+            AppCommand::ExportDeviceInfo,
             AppCommand::KeyboardShortcuts,
             AppCommand::Documentation,
             AppCommand::ReportIssue,
@@ -3961,6 +3970,7 @@ mod tests {
                 "Documentation",
                 "Report an Issue",
                 "Export Diagnostics\u{2026}",
+                "Export Device Parameter List\u{2026}",
                 "About Atomik Rack"
             ]
         );

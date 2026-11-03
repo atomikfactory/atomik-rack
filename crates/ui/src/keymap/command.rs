@@ -763,6 +763,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.export_device_info",
+        "Export Device Parameter List",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_loop_audio",
         "Export Loop as Audio File",
         G::Global,
