@@ -710,11 +710,11 @@ fn ctrl_backspace_deletes_a_word_and_ctrl_a_replaces() {
     typed(&mut v, "snare kick");
     run(&mut v, &[key_with(Key::Backspace, Modifiers::CTRL)]);
     let t = paint(&mut v);
-    assert!(t.texts().contains(&"snare |"), "{:?}", t.texts());
+    assert!(t.texts().contains(&"snare "), "{:?}", t.texts());
     run(&mut v, &[key_with(Key::Char('a'), Modifiers::CTRL)]);
     typed(&mut v, "hat");
     let t = paint(&mut v);
-    assert!(t.texts().contains(&"hat|"));
+    assert!(t.texts().contains(&"hat"));
 }
 
 #[test]

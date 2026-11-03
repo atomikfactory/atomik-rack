@@ -1,11 +1,13 @@
 //! Painting of the file browser: everything is O(visible rows).
 
+use super::field::TextField;
 use super::layout::{self as lay, Layout};
 use super::menu::{self, Menu};
 use super::{FileBrowserView, Gesture, Hover, Pane, tree};
 use crate::action::Place;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::paint::fit_label;
+use crate::text_field::FieldColors;
 use atomik_library::{FileKind, FileRow, LibrarySection, SortKey};
 use vello::kurbo::{Affine, BezPath, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
@@ -127,45 +129,31 @@ impl FileBrowserView {
         &self,
         c: &mut dyn Canvas,
         rect: Rect,
-        text: &str,
+        field: &TextField,
         placeholder: &str,
         focused: bool,
-        all: bool,
     ) {
         let t = &self.theme;
         let shape = RoundedRect::from_rect(rect, 5.0);
         c.fill_with(shape, t.lcd);
         c.stroke_with(shape, 1.0, if focused { t.focus } else { t.section_line });
-        let room = ((rect.width() - 16.0) / (f64::from(ROW_FONT) * lay::CHAR_EM)).floor() as usize;
-        let room = room.max(1);
-        let count = text.chars().count();
-        let shown: String = text.chars().skip(count.saturating_sub(room)).collect();
-        c.push_clip(&rect.into());
-        let x = rect.x0 + 9.0;
-        if text.is_empty() && !focused {
+        if field.text().is_empty() && !focused && !field.composing() {
+            c.push_clip(&rect.into());
             c.text(&TextRun::new(
                 placeholder,
-                pt(x, baseline(rect, ROW_FONT)),
+                pt(rect.x0 + 9.0, baseline(rect, ROW_FONT)),
                 ROW_FONT,
                 t.text_muted,
             ));
+            c.pop_clip();
         } else {
-            if all && focused && !shown.is_empty() {
-                let w = est_width(&shown, ROW_FONT);
-                c.fill_with(
-                    Rect::new(x - 1.0, rect.y0 + 4.0, x + w + 1.0, rect.y1 - 4.0),
-                    t.focus.with_alpha(0.35),
-                );
-            }
-            let caret = if focused && !all { "|" } else { "" };
-            c.text(&TextRun::new(
-                format!("{shown}{caret}"),
-                pt(x, baseline(rect, ROW_FONT)),
-                ROW_FONT,
-                t.text,
-            ));
+            let colors = FieldColors {
+                text: t.text,
+                caret: t.text,
+                selection: t.focus.with_alpha(0.35),
+            };
+            field.paint(c, rect, ROW_FONT, colors, focused);
         }
-        c.pop_clip();
     }
 
     fn paint_toggle(&self, c: &mut dyn Canvas, rect: Rect, on: bool, label: Option<&str>) {
@@ -216,10 +204,9 @@ impl FileBrowserView {
         self.paint_field(
             c,
             lay.search,
-            self.search.text(),
+            &self.search,
             "Search  (#tag, fav)",
             self.search_focused && self.focused,
-            self.search.is_all_selected(),
         );
         self.paint_toggle(c, lay.recursive_btn, self.recursive, Some("Sub"));
         self.paint_toggle(c, lay.preview_btn, self.auto_preview, None);
@@ -387,14 +374,7 @@ impl FileBrowserView {
                 bar.x1 - lay::PAD,
                 bar.y1 - 2.0,
             );
-            self.paint_field(
-                c,
-                field,
-                e.field.text(),
-                "",
-                true,
-                e.field.is_all_selected(),
-            );
+            self.paint_field(c, field, &e.field, "", true);
         } else {
             match &self.location {
                 Some(Place::Folder(p)) => {
