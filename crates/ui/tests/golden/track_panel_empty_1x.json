@@ -1,0 +1,8 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"fill":{"rect":[0.00,0.00,236.00,700.00]},"brush":"#1c1e23ff"},
+{"fill":{"rect":[0.00,0.00,1.00,700.00]},"brush":"#0000008c"},
+{"text":"TRACK PANEL","at":[12.00,17.00],"size":10.50,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"Select a track","at":[12.00,44.00],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"pop_transform":true}
+]}

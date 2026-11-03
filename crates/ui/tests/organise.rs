@@ -1194,3 +1194,138 @@ fn preview_png() {
 fn device_keys_compare_by_name() {
     assert_eq!(key("a"), DeviceKey("a".into()));
 }
+
+// ------------------------------------------------------------------ folder clips
+
+/// The ids of the clips the folder row stands for at `tick`: every clip of the folder's tracks
+/// whose run of overlapping clips holds the tick.
+fn folder_ids(d: &Document, tick: i64) -> Vec<ClipId> {
+    let song = &d.doc().song;
+    let mut spans: Vec<(i64, i64, ClipId)> = Vec::new();
+    for i in song.group_tracks(1) {
+        let track = &song.tracks[i];
+        for lane in track.lanes.iter().take(track.note_lane_count().max(1)) {
+            spans.extend(
+                lane.clips
+                    .iter()
+                    .map(|c| (c.start, c.start + c.length, c.id)),
+            );
+        }
+    }
+    spans.sort();
+    let mut runs: Vec<(i64, i64, Vec<ClipId>)> = Vec::new();
+    for (s, e, id) in spans {
+        match runs.last_mut() {
+            Some(r) if s < r.1 => {
+                r.1 = r.1.max(e);
+                r.2.push(id);
+            }
+            _ => runs.push((s, e, vec![id])),
+        }
+    }
+    let mut ids = runs
+        .into_iter()
+        .find(|r| (r.0..r.1).contains(&tick))
+        .map(|r| r.2)
+        .unwrap_or_default();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn pressing_a_folder_clip_selects_the_clips_it_stands_for() {
+    let (d, reg, mut v) = grouped();
+    let ids = folder_ids(&d, 3 * BAR);
+    assert!(ids.len() >= 2, "the bass and the lead overlap there");
+    let at = v.folder_point(1, 3 * BAR).unwrap();
+    click(&d, &reg, &mut v, at);
+    let mut selected = v.selected_clips();
+    selected.sort();
+    assert_eq!(selected, ids);
+    assert_eq!(v.selected_group(), None);
+}
+
+#[test]
+fn dragging_a_folder_clip_moves_exactly_its_clips_in_time_and_keeps_tracks_and_lanes() {
+    let (mut d, reg, mut v) = grouped();
+    let ids = folder_ids(&d, 3 * BAR);
+    let before: Vec<(ClipId, String, usize)> = {
+        let song = &d.doc().song;
+        song.tracks
+            .iter()
+            .flat_map(|t| {
+                t.lanes.iter().enumerate().flat_map(move |(l, lane)| {
+                    lane.clips
+                        .iter()
+                        .map(move |c| (c.id, t.device.0.clone(), l))
+                })
+            })
+            .collect()
+    };
+    let from = v.folder_point(1, 3 * BAR).unwrap();
+    // Down past the lanes of other tracks: the pointer leaves the folder row altogether.
+    let to = Point::new(from.x + v.tick_to_x(BAR) - v.tick_to_x(0), from.y + 160.0);
+    let actions = run(
+        &d,
+        &reg,
+        &mut v,
+        &[
+            down(from, Modifiers::NONE, 1),
+            UiEvent::PointerMove {
+                pos: to,
+                modifiers: Modifiers::NONE,
+            },
+            up(to),
+        ],
+    );
+    let moves: Vec<_> = actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Command(Command::Workflow(atomik_model::WorkflowCommand::MoveClips {
+                moves,
+                ..
+            })) => Some(moves.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(moves.len(), 1, "one MoveClips at the release");
+    let mut moved: Vec<ClipId> = moves[0].iter().map(|m| m.id).collect();
+    moved.sort();
+    assert_eq!(moved, ids);
+    apply(&mut d, &reg, &mut v, &actions);
+    let song = &d.doc().song;
+    for (id, device, lane) in before {
+        let (t, l, _) = song
+            .tracks
+            .iter()
+            .flat_map(|t| {
+                t.lanes
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(l, lane)| lane.clips.iter().map(move |c| (t, l, c)))
+            })
+            .find(|(_, _, c)| c.id == id)
+            .unwrap();
+        assert_eq!((t.device.0.as_str(), l), (device.as_str(), lane));
+    }
+}
+
+#[test]
+fn a_folder_clip_is_one_undo_step_when_muted_through_the_selection() {
+    let (mut d, reg, mut v) = grouped();
+    let ids = folder_ids(&d, 3 * BAR);
+    let at = v.folder_point(1, 3 * BAR).unwrap();
+    click(&d, &reg, &mut v, at);
+    let steps = d.undo_depth();
+    do_command(&mut d, &reg, &mut v, "sequencer.toggle_mute", None);
+    assert_eq!(d.undo_depth(), steps + 1);
+    let song = &d.doc().song;
+    let muted = song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| l.clips.iter()))
+        .filter(|c| c.muted)
+        .map(|c| c.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(muted, ids.into_iter().collect());
+}

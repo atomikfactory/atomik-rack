@@ -1,0 +1,255 @@
+//! The Track Panel mirrors the chain of a track: players, instrument, inserts, sends and the
+//! fader, and every edit it offers is one undo step the model accepts.
+
+mod support;
+
+use atomik_device_sdk::Registry;
+use atomik_model::{
+    Command, CreateOptions, CreateSource, CreateTarget, Document, WorkflowCommand, empty_doc,
+    insert_chain, player_stack,
+};
+use atomik_ui::kurbo::{Point, Rect};
+use atomik_ui::track_panel::{Item, TrackPanelView};
+use atomik_ui::{Modifiers, PointerButton, Theme, UiAction, UiEvent};
+use support::*;
+
+fn wf(c: WorkflowCommand) -> Command {
+    Command::Workflow(c)
+}
+
+fn typed(t: &str) -> CreateSource {
+    CreateSource::Type(t.into())
+}
+
+/// A synth `s1` (channel and track) with two players and two inserts.
+fn chain_doc(reg: &Registry) -> Document {
+    let mut d = Document::new(empty_doc());
+    let steps = [
+        wf(WorkflowCommand::CreateInstrument {
+            index: usize::MAX,
+            source: typed("atomik.poly-synth"),
+            key: Some(key("s1")),
+            options: CreateOptions::default(),
+        }),
+        wf(WorkflowCommand::CreatePlayer {
+            type_id: "atomik.arpeggiator".into(),
+            target: CreateTarget::Selected(key("s1")),
+            options: CreateOptions::default(),
+        }),
+        wf(WorkflowCommand::CreatePlayer {
+            type_id: "atomik.note-repeater".into(),
+            target: CreateTarget::Selected(key("s1")),
+            options: CreateOptions::default(),
+        }),
+    ];
+    for c in steps {
+        d.apply(c, reg).unwrap();
+    }
+    for t in ["atomik.stereo-delay", "atomik.reverb"] {
+        d.apply(
+            wf(WorkflowCommand::CreateEffect {
+                source: typed(t),
+                target: CreateTarget::Selected(key("s1")),
+                key: None,
+                options: CreateOptions::default(),
+            }),
+            reg,
+        )
+        .unwrap();
+    }
+    d
+}
+
+fn panel(d: &Document, reg: &Registry) -> TrackPanelView {
+    let mut v = TrackPanelView::new(Theme::dark());
+    v.set_bounds(Rect::new(0.0, 0.0, 236.0, 700.0));
+    v.sync(d.doc(), reg, Some(&key("s1")));
+    v
+}
+
+fn count(v: &TrackPanelView, f: impl Fn(&Item) -> bool) -> usize {
+    v.items().iter().filter(|i| f(i)).count()
+}
+
+#[test]
+fn the_panel_lists_players_instrument_inserts_sends_and_fader() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let v = panel(&d, &reg);
+    assert_eq!(count(&v, |i| matches!(i, Item::Player { .. })), 2);
+    assert_eq!(count(&v, |i| matches!(i, Item::Instrument { .. })), 1);
+    let filled = count(&v, |i| matches!(i, Item::Insert { .. }));
+    let channel = d
+        .doc()
+        .console
+        .channel_of(&key("s1"))
+        .unwrap()
+        .channel
+        .clone();
+    assert_eq!(filled, insert_chain(d.doc(), &reg, &channel).len());
+    assert!(filled >= 1);
+    assert_eq!(count(&v, |i| matches!(i, Item::EmptyInsert)), 4 - filled);
+    assert!(count(&v, |i| matches!(i, Item::Send { .. })) >= 1);
+    assert_eq!(count(&v, |i| matches!(i, Item::Fader { .. })), 1);
+}
+
+#[test]
+fn a_track_that_does_not_exist_shows_nothing() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let mut v = panel(&d, &reg);
+    v.sync(d.doc(), &reg, Some(&key("nope")));
+    assert!(v.items().is_empty());
+    v.sync(d.doc(), &reg, None);
+    assert!(v.items().is_empty());
+}
+
+#[test]
+fn every_offered_edit_is_accepted_by_the_model_and_is_one_undo_step() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let v = panel(&d, &reg);
+    let mut offered = 0;
+    for item in v.items() {
+        let (Item::Player { controls, .. } | Item::Insert { controls, .. }) = item else {
+            continue;
+        };
+        for c in [&controls.up, &controls.down, &controls.remove]
+            .into_iter()
+            .flatten()
+        {
+            offered += 1;
+            let mut scratch = Document::new(d.doc().clone());
+            let steps = scratch.undo_depth();
+            scratch.apply(c.clone(), &reg).unwrap();
+            assert_eq!(scratch.undo_depth(), steps + 1, "{c:?}");
+        }
+    }
+    assert!(offered >= 3, "the stack and the chain can be edited");
+}
+
+#[test]
+fn moving_a_player_down_swaps_it_with_the_one_below() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let v = panel(&d, &reg);
+    let track = d.doc().song.track(&key("s1")).unwrap();
+    let before = player_stack(d.doc(), &reg, track);
+    assert_eq!(before.len(), 2);
+    let Some(Item::Player { controls, .. }) =
+        v.items().iter().find(|i| matches!(i, Item::Player { .. }))
+    else {
+        panic!("a player row");
+    };
+    let down = controls.down.clone().expect("the top player can move down");
+    let mut d = d;
+    d.apply(down, &reg).unwrap();
+    let track = d.doc().song.track(&key("s1")).unwrap();
+    let after = player_stack(d.doc(), &reg, track);
+    assert_eq!(after, vec![before[1].clone(), before[0].clone()]);
+}
+
+#[test]
+fn bypass_and_send_buttons_emit_param_commands_and_the_fader_drag_is_one_merge() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let mut v = panel(&d, &reg);
+    // Find the controls by painting-independent geometry: press every row's right edge buttons.
+    let rows: Vec<Vec<UiAction>> = (0..700)
+        .step_by(4)
+        .map(|y| {
+            v.handle(&UiEvent::PointerDown {
+                pos: Point::new(236.0 - 15.0, f64::from(y)),
+                button: PointerButton::Primary,
+                modifiers: Modifiers::NONE,
+                clicks: 1,
+            })
+        })
+        .collect();
+    let params: Vec<String> = rows
+        .iter()
+        .flatten()
+        .filter_map(|a| match a {
+            UiAction::Command(Command::SetParam { param, .. }) => Some(param.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(params.iter().any(|p| p.starts_with("send")), "{params:?}");
+    assert!(params.iter().any(|p| p == "mute"), "{params:?}");
+    // The fader: press on its track, drag, release.
+    let mut v = panel(&d, &reg);
+    let mut merge = None;
+    let mut ended = false;
+    for y in (0..700).step_by(2) {
+        let down = v.handle(&UiEvent::PointerDown {
+            pos: Point::new(120.0, f64::from(y)),
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        });
+        if let Some(UiAction::Command(Command::SetParam {
+            param, merge: m, ..
+        })) = down.first()
+            && param == "fader"
+        {
+            merge = *m;
+            let moved = v.handle(&UiEvent::PointerMove {
+                pos: Point::new(80.0, f64::from(y)),
+                modifiers: Modifiers::NONE,
+            });
+            assert!(matches!(
+                moved.first(),
+                Some(UiAction::Command(Command::SetParam { merge: m2, .. })) if *m2 == merge
+            ));
+            let up = v.handle(&UiEvent::PointerUp {
+                pos: Point::new(80.0, f64::from(y)),
+                button: PointerButton::Primary,
+                modifiers: Modifiers::NONE,
+            });
+            ended = up.contains(&UiAction::EndMerge);
+            break;
+        }
+    }
+    assert!(merge.is_some() && ended);
+}
+
+const UPDATE_ENV: &str = "ATOMIK_UPDATE_GOLDEN";
+
+fn check(name: &str, actual: &str) {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join(name);
+    if std::env::var_os(UPDATE_ENV).is_some_and(|v| v == "1") {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, actual).unwrap();
+        return;
+    }
+    let expected = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("missing golden {}; run with {UPDATE_ENV}=1", path.display()))
+        .replace("\r\n", "\n");
+    assert!(
+        expected == actual,
+        "{name} differs from its golden (regenerate with {UPDATE_ENV}=1)"
+    );
+}
+
+#[test]
+fn the_track_panel_matches_its_golden() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let v = panel(&d, &reg);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl);
+    check("track_panel_1x.json", &dl.to_json());
+}
+
+#[test]
+fn an_empty_track_panel_matches_its_golden() {
+    let reg = registry();
+    let d = chain_doc(&reg);
+    let mut v = panel(&d, &reg);
+    v.sync(d.doc(), &reg, None);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl);
+    check("track_panel_empty_1x.json", &dl.to_json());
+}

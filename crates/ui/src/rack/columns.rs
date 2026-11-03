@@ -56,7 +56,7 @@ impl RackView {
     }
 
     fn can_add_column(&self) -> bool {
-        self.scope.is_empty() && self.columns < MAX_RACK_COLUMNS
+        self.scope.is_empty() && !self.single_column && self.columns < MAX_RACK_COLUMNS
     }
 
     /// Whether a drag that can drop a device is in progress (a device moved past the

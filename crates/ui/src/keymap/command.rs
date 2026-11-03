@@ -166,6 +166,8 @@ pub const KEYS_NOTE_ARGS: &[&str] = &[
 pub const KEYS_VELOCITY_ARGS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 /// The values of `view.cables`.
 pub const CABLE_ARGS: &[&str] = &["show", "hover", "selected", "auto", "hide"];
+/// The values of `view.rack_sort`.
+pub const RACK_SORT_ARGS: &[&str] = &["free", "per_track", "auto_group"];
 /// The values of `view.theme`.
 pub const THEME_ARGS: &[&str] = &["dark", "light", "system"];
 /// The values of `view.app_zoom`: the zoom of every window in percent, or a step.
@@ -1253,6 +1255,12 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
     cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),
     cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),
+    cmd(
+        "rack.select_group",
+        "Select All in Device Group",
+        G::Rack,
+        C::Rack,
+    ),
     cmd("rack.select_next", "Select Next Device", G::Rack, C::Rack).rep(),
     cmd(
         "rack.select_prev",
@@ -2338,6 +2346,9 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("view.rack_sort", "Rack Sorting", G::View, C::Global)
+        .arg(RACK_SORT_ARGS)
+        .menu(),
     cmd("view.sequencer_only", "Sequencer Only", G::View, C::Global).menu(),
     cmd(
         "view.show_param_lane",
@@ -2403,6 +2414,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "view.toggle_single_column",
+        "Single Column",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "view.toggle_slice_editor",
         "Slice Editor",
         G::View,
@@ -2413,6 +2431,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_spectrum_eq", "Spectrum EQ", G::View, C::Global).menu(),
     cmd("view.toggle_step_editor", "Step Editor", G::View, C::Global).menu(),
     cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
+    cmd("view.toggle_track_panel", "Track Panel", G::View, C::Global).menu(),
     cmd("view.zoom_in", "Zoom In", G::View, C::Global)
         .rep()
         .menu(),

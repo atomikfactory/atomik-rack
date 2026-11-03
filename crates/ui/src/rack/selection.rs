@@ -276,6 +276,31 @@ impl RackView {
                 self.anchor = Some(first);
                 self.report_selection(&mut out);
             }
+            // Everything of the primary device's track: its players, instrument, channel and
+            // inserts (the top level only).
+            "rack.select_group" => {
+                let group = self
+                    .selected
+                    .clone()
+                    .filter(|k| parent_of(k).is_none())
+                    .and_then(|k| view.device_group(registry, &k));
+                let shown = self.shown_keys();
+                let members: BTreeSet<DeviceKey> = group
+                    .into_iter()
+                    .flat_map(|g| g.members)
+                    .filter(|k| shown.contains(k))
+                    .collect();
+                let (Some(first), Some(last)) = (
+                    shown.iter().find(|k| members.contains(*k)).cloned(),
+                    shown.iter().rev().find(|k| members.contains(*k)).cloned(),
+                ) else {
+                    return Some(CommandOutcome::Declined);
+                };
+                self.selection = members;
+                self.selected = Some(last);
+                self.anchor = Some(first);
+                self.report_selection(&mut out);
+            }
             "rack.select_next" | "rack.select_prev" => {
                 if self.control_has_focus() {
                     return Some(CommandOutcome::Declined);
