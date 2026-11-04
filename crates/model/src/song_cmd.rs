@@ -1496,6 +1496,26 @@ pub(crate) fn plan(
                 }),
             }
         }
+        SongCommand::SetClipMidi { clip, midi, .. } => {
+            let (device, lane, c) = find_clip(doc, clip)?;
+            if !c.content.is_notes() && !midi.is_empty() {
+                return Err(bad(format!(
+                    "clip {} is not a note clip, so it carries no program changes or SysEx",
+                    clip.0
+                )));
+            }
+            let midi = midi.clone().canonical();
+            midi.check(MAX_TICK).map_err(range)?;
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    midi: std::sync::Arc::new(midi),
+                    ..c.clone()
+                }),
+            }
+        }
         SongCommand::SetClipParamLanes { clip, lanes, .. } => {
             let (device, lane, c) = find_clip(doc, clip)?;
             if !c.content.is_notes() && !lanes.is_empty() {

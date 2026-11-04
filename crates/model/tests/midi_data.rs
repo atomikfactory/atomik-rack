@@ -16,7 +16,11 @@ use common::*;
 use serde_json::Value;
 
 fn prog(tick: i64, program: u8) -> ProgramChange {
-    ProgramChange { tick, program }
+    ProgramChange::new(tick, program)
+}
+
+fn pairs(programs: &[ProgramChange]) -> Vec<(i64, u8)> {
+    programs.iter().map(|p| (p.tick, p.program)).collect()
 }
 
 fn sysex(tick: i64, data: &[u8]) -> SysexEvent {
@@ -133,7 +137,7 @@ fn flattening_follows_offset_loop_and_hiding() {
     let reg = registry();
     let mut d = with_data(&reg, 4 * PPQ, data());
     let flat = flatten_midi_data(&d.doc().song.tracks[0]);
-    assert_eq!(flat.programs, [(0, 5), (PPQ, 9)]);
+    assert_eq!(pairs(&flat.programs), [(0, 5), (PPQ, 9)]);
     assert_eq!(flat.sysex, [(PPQ / 2, vec![0x7E, 0x7F, 0x09, 0x01])]);
     // An offset past the first program: the program in force starts the clip.
     d.apply(
@@ -150,7 +154,7 @@ fn flattening_follows_offset_loop_and_hiding() {
     )
     .unwrap();
     let flat = flatten_midi_data(&d.doc().song.tracks[0]);
-    assert_eq!(flat.programs, [(0, 5), (PPQ - PPQ / 2 - 10, 9)]);
+    assert_eq!(pairs(&flat.programs), [(0, 5), (PPQ - PPQ / 2 - 10, 9)]);
     assert!(flat.sysex.is_empty(), "the message is before the window");
     // A loop repeats the window, with the program in force at each start.
     d.apply(
@@ -168,7 +172,7 @@ fn flattening_follows_offset_loop_and_hiding() {
     .unwrap();
     let flat = flatten_midi_data(&d.doc().song.tracks[0]);
     assert_eq!(
-        flat.programs,
+        pairs(&flat.programs),
         [(0, 5), (PPQ, 9), (2 * PPQ, 5), (3 * PPQ, 9)]
     );
     assert_eq!(
@@ -183,7 +187,7 @@ fn flattening_follows_offset_loop_and_hiding() {
     .unwrap();
     let flat = flatten_midi_data(&d.doc().song.tracks[0]);
     // The visible tail of the looped clip starts with the program held there.
-    assert_eq!(flat.programs, [(0, 5), (3 * PPQ + PPQ / 4, 9)]);
+    assert_eq!(pairs(&flat.programs), [(0, 5), (3 * PPQ + PPQ / 4, 9)]);
     assert!(flat.sysex.is_empty());
 }
 
@@ -245,4 +249,106 @@ fn a_join_and_a_loop_conversion_carry_the_data() {
         before,
         "the converted clip plays what the loop played"
     );
+}
+
+#[test]
+fn a_bank_select_travels_with_its_program_change_and_saves_as_four_values() {
+    let reg = registry();
+    let banked = ProgramChange {
+        bank_msb: Some(3),
+        bank_lsb: Some(0),
+        ..prog(PPQ, 9)
+    };
+    let half = ProgramChange {
+        bank_lsb: Some(5),
+        ..prog(2 * PPQ, 4)
+    };
+    let midi = MidiData {
+        programs: vec![prog(0, 5), banked, half],
+        sysex: Vec::new(),
+    };
+    let d = with_data(&reg, 4 * BAR, midi);
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let clip = &v["song"]["tracks"][0]["lanes"][0]["clips"][0];
+    assert_eq!(
+        clip["programs"],
+        serde_json::json!([[0, 5], [PPQ, 9, 3, 0], [2 * PPQ, 4, null, 5]])
+    );
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(&loaded, d.doc());
+    assert_eq!(save_project(&loaded), text);
+    // The flattened data keeps the bank, and a cut window carries the bank in force.
+    let flat = flatten_midi_data(&d.doc().song.tracks[0]);
+    assert_eq!(flat.programs[1], banked);
+    let m = midi_of(&d, 1);
+    assert_eq!(m.window(PPQ + 10, 3 * PPQ, 0).programs[0].bank_msb, Some(3));
+    let bad = text.replace("[15360, 9, 3, 0]", "[15360, 9, 300, 0]");
+    let e = load_project(&bad, &reg).unwrap_err().to_string();
+    assert!(e.contains("programs[1][2]"), "{e}");
+}
+
+#[test]
+fn set_clip_midi_replaces_the_data_in_one_undo_step() {
+    let reg = registry();
+    let mut d = with_data(&reg, 2 * BAR, data());
+    let before = d.doc().clone();
+    let next = MidiData {
+        programs: vec![
+            ProgramChange {
+                bank_msb: Some(1),
+                ..prog(PPQ, 7)
+            },
+            prog(0, 2),
+        ],
+        sysex: vec![sysex(5, &[1, 2, 3])],
+    };
+    let set = |midi: MidiData, merge| {
+        sc(SongCommand::SetClipMidi {
+            clip: ClipId(1),
+            midi,
+            merge,
+        })
+    };
+    d.apply(set(next, None), &reg).unwrap();
+    let m = midi_of(&d, 1);
+    assert_eq!(m.programs[0], prog(0, 2), "the data is put in order");
+    assert_eq!(m.programs[1].bank_msb, Some(1));
+    assert_eq!(m.sysex, [sysex(5, &[1, 2, 3])]);
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before);
+    d.redo().unwrap();
+    // Clearing is one step too.
+    d.apply(set(MidiData::default(), None), &reg).unwrap();
+    assert!(midi_of(&d, 1).is_empty());
+    d.undo().unwrap();
+    assert_eq!(midi_of(&d, 1).programs.len(), 2);
+    // A drag shares one merge id: one undo step.
+    let n = d.undo_depth();
+    for t in [10, 20, 30] {
+        d.apply(
+            set(
+                MidiData {
+                    programs: vec![prog(t, 1)],
+                    sysex: Vec::new(),
+                },
+                Some(77),
+            ),
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(d.undo_depth(), n + 1);
+    // Refused: bad data, an unknown clip, audio.
+    let bad = MidiData {
+        programs: vec![prog(0, 200)],
+        sysex: Vec::new(),
+    };
+    assert!(d.apply(set(bad, None), &reg).is_err());
+    let unknown = sc(SongCommand::SetClipMidi {
+        clip: ClipId(99),
+        midi: MidiData::default(),
+        merge: None,
+    });
+    assert!(d.apply(unknown, &reg).is_err());
 }

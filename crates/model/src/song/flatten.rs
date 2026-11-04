@@ -398,12 +398,12 @@ fn lane_controllers(lane: &Lane) -> BTreeMap<ControllerKind, Vec<(i64, f32, Curv
     by_kind
 }
 
-/// What [`flatten_midi_data`] gathers: program changes `(song tick, program)` with strictly
-/// increasing ticks and SysEx messages `(song tick, data bytes)` sorted by tick.
+/// What [`flatten_midi_data`] gathers: program changes (at song ticks, bank select included) with
+/// strictly increasing ticks and SysEx messages `(song tick, data bytes)` sorted by tick.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlatMidiData {
     /// Program changes.
-    pub programs: Vec<(i64, u8)>,
+    pub programs: Vec<crate::midi_data::ProgramChange>,
     /// SysEx messages (the bytes between `F0` and `F7`).
     pub sysex: Vec<(i64, Vec<u8>)>,
 }
@@ -421,7 +421,7 @@ pub fn flatten_midi_data(track: &Track) -> FlatMidiData {
         }
     }
     FlatMidiData {
-        programs: all.programs.iter().map(|p| (p.tick, p.program)).collect(),
+        programs: all.programs,
         sysex: all.sysex.into_iter().map(|s| (s.tick, s.data)).collect(),
     }
 }

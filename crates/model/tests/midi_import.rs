@@ -139,6 +139,54 @@ fn tempo_meter_and_markers_are_part_of_the_same_step() {
 }
 
 #[test]
+fn ranges_are_added_with_fresh_ids_in_the_same_step() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    d.apply(
+        sc(atomik_model::SongCommand::SetRanges(vec![
+            atomik_model::song::RangeMarker {
+                id: 4,
+                start: 0,
+                end: BAR,
+                name: "Old".into(),
+                color: None,
+            },
+        ])),
+        &reg,
+    )
+    .unwrap();
+    let before = d.doc().clone();
+    let mut i = import(vec![track("A", 0, BAR, vec![note(0, PPQ, 60, 0.5)])]);
+    i.ranges = vec![
+        (2 * BAR, 4 * BAR, "Verse".into()),
+        (BAR, 2 * BAR, "Intro".into()),
+    ];
+    run_import(&mut d, &reg, i).unwrap();
+    let ranges: Vec<_> = d
+        .doc()
+        .song
+        .ranges
+        .iter()
+        .map(|r| (r.start, r.end, r.name.as_str()))
+        .collect();
+    assert_eq!(
+        ranges,
+        [
+            (0, BAR, "Old"),
+            (BAR, 2 * BAR, "Intro"),
+            (2 * BAR, 4 * BAR, "Verse")
+        ]
+    );
+    let ids: std::collections::BTreeSet<_> = d.doc().song.ranges.iter().map(|r| r.id).collect();
+    assert_eq!(ids.len(), 3);
+    let mut bad = import(Vec::new());
+    bad.ranges = vec![(BAR, BAR, "Empty".into())];
+    assert!(run_import(&mut d, &reg, bad).is_err());
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
 fn a_file_with_only_a_tempo_map_imports_without_tracks() {
     let reg = registry();
     let mut d = song_start(&reg);

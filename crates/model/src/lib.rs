@@ -1342,6 +1342,7 @@ impl Document {
                 SongCommand::SetClipGeometry { merge: Some(m), .. }
                 | SongCommand::SetClipContent { merge: Some(m), .. }
                 | SongCommand::SetClipControllers { merge: Some(m), .. }
+                | SongCommand::SetClipMidi { merge: Some(m), .. }
                 | SongCommand::SetClipParamLanes { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
                 | SongCommand::SetWarpMarkers { merge: Some(m), .. }

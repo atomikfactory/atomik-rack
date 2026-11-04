@@ -424,6 +424,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::StripSilence { id, .. } => clip_frozen(id),
                 SongCommand::SetClipGrid { clip, .. }
                 | SongCommand::SetClipControllers { clip, .. }
+                | SongCommand::SetClipMidi { clip, .. }
                 | SongCommand::SetClipParamLanes { clip, .. }
                 | SongCommand::SetClipScale { clip, .. }
                 | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),

@@ -643,6 +643,7 @@ pub(crate) fn take_target(doc: &RackDoc, command: &SongCommand) -> Option<ClipId
         | SongCommand::SetWarpMarkers { id, .. } => *id,
         SongCommand::SetClipGrid { clip, .. }
         | SongCommand::SetClipControllers { clip, .. }
+        | SongCommand::SetClipMidi { clip, .. }
         | SongCommand::SetClipParamLanes { clip, .. }
         | SongCommand::SetClipScale { clip, .. } => *clip,
         _ => return None,
