@@ -151,6 +151,16 @@ fn song_core() -> AppCore<RecordingSink> {
         color: None,
     }])))
     .unwrap();
+    c.apply_command(Command::Song(SongCommand::SetRanges(vec![
+        atomik_model::song::RangeMarker {
+            id: 1,
+            start: BAR,
+            end: 2 * BAR,
+            name: "Chorus".into(),
+            color: None,
+        },
+    ])))
+    .unwrap();
     c
 }
 
@@ -213,6 +223,18 @@ fn an_exported_song_imports_back_as_the_same_song_in_one_undo_step() {
     assert_eq!(doc.song.meter, source.doc().song.meter);
     assert_eq!(doc.song.markers[0].name, "Verse");
     assert_eq!(doc.song.markers[0].tick, BAR);
+    assert_eq!(doc.song.markers.len(), 1, "the range is not also a marker");
+    let ranges: Vec<_> = doc
+        .song
+        .ranges
+        .iter()
+        .map(|r| (r.start, r.end, r.name.as_str()))
+        .collect();
+    assert_eq!(
+        ranges,
+        [(BAR, 2 * BAR, "Chorus")],
+        "range markers come back as ranges"
+    );
     let names: Vec<_> = doc
         .song
         .tracks
@@ -628,8 +650,9 @@ fn program_changes_and_sysex_travel_through_a_song_file_and_back_into_clips() {
     let mut clip = source.doc().song.clip(id).unwrap().2.clone();
     clip.midi = atomik_model::MidiData {
         programs: vec![atomik_model::ProgramChange {
-            tick: 0,
-            program: 11,
+            bank_msb: Some(2),
+            bank_lsb: Some(1),
+            ..atomik_model::ProgramChange::new(0, 11)
         }],
         sysex: vec![atomik_model::SysexEvent {
             tick: PPQ,
