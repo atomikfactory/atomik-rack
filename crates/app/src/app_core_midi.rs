@@ -260,6 +260,36 @@ impl<S: EngineSink> AppCore<S> {
         self.import_midi_as(path, mode, place);
     }
 
+    /// Reads the MIDI file at `path` and adds it as a new take of note take group `group` (Import
+    /// File as Take): all its tracks and channels are merged into the one take, which starts
+    /// where the group starts and plays over its extent like a new recording.
+    pub fn import_midi_take(&mut self, path: &Path, group: u32) {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        if let Err(e) = self.add_midi_take(path, group, &name) {
+            self.report(format!("{name}: {e}"));
+        }
+    }
+
+    fn add_midi_take(&mut self, path: &Path, group: u32, name: &str) -> Result<(), String> {
+        let (start, notes) = match self.doc().song.take_group(group) {
+            Some((_, _, g)) => (g.range().0, g.takes.iter().all(|c| c.content.is_notes())),
+            None => return Err("that take group is gone".into()),
+        };
+        if !notes {
+            return Err("this group holds audio: import an audio file as its take".into());
+        }
+        let midi = read_midi(path)?;
+        let count: usize = midi.tracks.iter().map(|t| t.notes.len()).sum();
+        let clip = midi.merged().into_clip(start, &self.doc().song);
+        self.apply_command(Command::Song(SongCommand::AddTake { group, clip }))
+            .map_err(|e| e.to_string())?;
+        self.report(format!("Imported {count} notes from {name} as a take"));
+        Ok(())
+    }
+
     fn import_midi_as(&mut self, path: &Path, mode: ImportMode, place: Place) {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),

@@ -3167,9 +3167,16 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Imports the files picked in the Import Audio dialog: onto the selected audio track, else
     /// onto new tracks, at the snapped playhead ([`AppCore::import_dialog_target`]).
+    ///
+    /// When the dialog was asked for by Import File as Take, the files become takes of that
+    /// group instead.
     pub fn import_files(&mut self, paths: Vec<PathBuf>) {
-        let (target, tick) = self.core.import_dialog_target();
-        self.core.import_audio(paths, target, tick);
+        if let Some(group) = self.core.take_import_request() {
+            self.core.import_takes(paths, group);
+        } else {
+            let (target, tick) = self.core.import_dialog_target();
+            self.core.import_audio(paths, target, tick);
+        }
         self.repaint = true;
     }
 
@@ -4679,7 +4686,19 @@ impl<B: AudioBackend> Shell<B> {
                     let requests = self.execute_command(AppCommand::MaximiseConsole);
                     self.pending.extend(requests);
                 }
-                UiAction::ImportAudioDialog => self.pending.push(ShellRequest::PickImportFiles),
+                UiAction::ImportAudioDialog => {
+                    self.core.set_take_import(None);
+                    self.pending.push(ShellRequest::PickImportFiles);
+                }
+                // Import File as Take: the next file the dialog returns becomes a take.
+                UiAction::ImportTake { group, notes } => {
+                    self.core.set_take_import(Some(*group));
+                    self.pending.push(if *notes {
+                        ShellRequest::PickImportMidi { as_song: false }
+                    } else {
+                        ShellRequest::PickImportFiles
+                    });
+                }
                 // Alt-click on a control: its automation lane, as the control menu's item.
                 UiAction::EditAutomation { device, param } => {
                     if self.core.show_lane_of(device, param) {
@@ -5100,9 +5119,18 @@ impl<B: AudioBackend> Shell<B> {
             },
             AppCommand::SaveAs => vec![ShellRequest::PickSaveFile],
             AppCommand::ExportPatch => vec![ShellRequest::PickExportFile],
-            AppCommand::ImportAudio => vec![ShellRequest::PickImportFiles],
-            AppCommand::ImportMidi => vec![ShellRequest::PickImportMidi { as_song: false }],
-            AppCommand::ImportMidiSong => vec![ShellRequest::PickImportMidi { as_song: true }],
+            AppCommand::ImportAudio => {
+                self.core.set_take_import(None);
+                vec![ShellRequest::PickImportFiles]
+            }
+            AppCommand::ImportMidi => {
+                self.core.set_take_import(None);
+                vec![ShellRequest::PickImportMidi { as_song: false }]
+            }
+            AppCommand::ImportMidiSong => {
+                self.core.set_take_import(None);
+                vec![ShellRequest::PickImportMidi { as_song: true }]
+            }
             AppCommand::ExportMidiClip => self.export_midi_request(MidiExport::Clip),
             AppCommand::ExportMidiTrack => self.export_midi_request(MidiExport::Track),
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
@@ -6149,8 +6177,14 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     /// Imports the MIDI file picked in the Import MIDI dialog (see [`AppCore::import_midi`]).
+    /// When the dialog was asked for by Import File as Take, the file becomes a take of that
+    /// group instead.
     pub fn import_midi(&mut self, path: &Path, as_song: bool) {
-        self.core.import_midi(path, as_song);
+        if let Some(group) = self.core.take_import_request() {
+            self.core.import_midi_take(path, group);
+        } else {
+            self.core.import_midi(path, as_song);
+        }
         self.repaint = true;
     }
 

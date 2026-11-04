@@ -117,6 +117,8 @@ struct Batch {
     relink: Option<relink::RelinkJob>,
     /// Track names that replace the file name (recovered recordings), by file.
     names: BTreeMap<PathBuf, String>,
+    /// Set when each file becomes a take of this take group instead of a clip.
+    take: Option<u32>,
 }
 
 /// Everything audio of an open project.
@@ -699,6 +701,86 @@ impl<S: EngineSink> AppCore<S> {
         self.start_import(paths, target, tick, None);
     }
 
+    /// Imports audio files as takes of take group `group` (Import File as Take): each file is
+    /// registered and added with `AddTake`, starting where the group starts; the take plays over
+    /// its extent like a new recording. The same worker, scratch bundle and peaks as
+    /// [`Self::import_audio`].
+    pub fn import_takes(&mut self, paths: Vec<PathBuf>, group: u32) {
+        let audio = self
+            .doc()
+            .song
+            .take_group(group)
+            .map(|(_, _, g)| g.takes.iter().all(|c| c.content.is_audio()));
+        match audio {
+            None => return self.reject("That take group is gone".to_owned()),
+            Some(false) => {
+                return self
+                    .reject("This group holds notes: import a MIDI file as its take".into());
+            }
+            Some(true) => {}
+        }
+        let Some(batch) = self.start_batch(paths, ImportTarget::NewTracks, 0, None, None) else {
+            return;
+        };
+        if let Some(b) = self.audio.batches.get_mut(&batch) {
+            b.take = Some(group);
+        }
+    }
+
+    /// Registers the asset of an imported file and adds it as a new take of `group`.
+    fn place_take(&mut self, loaded: &Loaded, group: u32) -> Result<(), String> {
+        let info = loaded
+            .info
+            .clone()
+            .ok_or_else(|| "not an imported asset".to_owned())?;
+        self.apply_command(Command::RegisterAsset {
+            hash: info.hash.clone(),
+            meta: atomik_model::AssetMeta {
+                channels: info.channels,
+                sample_rate: info.sample_rate,
+                frames: info.frames,
+                original_name: info.original_name.clone(),
+            },
+        })
+        .map_err(|e| e.to_string())?;
+        let start = self
+            .doc()
+            .song
+            .take_group(group)
+            .map(|(_, _, g)| g.range().0)
+            .ok_or_else(|| "the take group was removed".to_owned())?;
+        let rate = self.doc().sample_rate;
+        let length = ticks_for_frames(&self.doc().song, start, info.frames, rate);
+        let clip = atomik_model::Clip {
+            id: atomik_model::ClipId(0),
+            start,
+            length,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            grid: None,
+            scale: None,
+            param_lanes: Vec::new(),
+            controllers: Vec::new(),
+            name: None,
+            color: None,
+            content: atomik_model::ClipContent::Audio(atomik_model::AudioClipContent {
+                asset: info.hash,
+                source_offset: 0,
+                gain_db: 0.0,
+                fade_in: 0,
+                fade_out: 0,
+                fade_curve: atomik_model::FadeCurve::Linear,
+                reverse: false,
+                envelope: Vec::new(),
+                xfade: None,
+                warp: Default::default(),
+            }),
+        };
+        self.apply_command(Command::Song(SongCommand::AddTake { group, clip }))
+            .map_err(|e| e.to_string())
+    }
+
     /// Imports sample files for a sampler: the same worker, scratch bundle, asset
     /// cache and peaks as [`Self::import_audio`]; when every file is done, **one** `SetZones`
     /// step adds the zones: a sampler maps them with `auto_map` (`at_key` as the base key), a drum machine
@@ -891,6 +973,7 @@ impl<S: EngineSink> AppCore<S> {
                 notes: Vec::new(),
                 relink,
                 names: BTreeMap::new(),
+                take: None,
             },
         );
         let rate = self.doc().sample_rate;
@@ -939,6 +1022,8 @@ impl<S: EngineSink> AppCore<S> {
                 .is_some_and(|b| b.samples.is_some())
             {
                 self.register_sample(batch, &loaded)
+            } else if let Some(group) = self.audio.batches.get(&batch).and_then(|b| b.take) {
+                self.place_take(&loaded, group)
             } else {
                 self.place(batch, &loaded, path)
             }

@@ -7,7 +7,7 @@
 //! holder survives New and Open inside one run (a cross-song paste). It is not shared with the
 //! operating system's clipboard (no dependency, no serialisation contract: backlog).
 
-use atomik_model::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot};
+use atomik_model::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot};
 
 /// What the clipboard holds.
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +24,8 @@ pub enum ClipboardData {
     Tracks(DeviceSnapshot),
     /// The settings of one device (its whole sound), for Paste Settings.
     Settings(DeviceSnapshot),
+    /// Takes of a take group, for Paste Takes.
+    Takes(TakeSnapshot),
 }
 
 /// The kind of [`ClipboardData`], for messages and enabling rules.
@@ -41,6 +43,8 @@ pub enum ClipboardKind {
     Tracks,
     /// The settings of one device.
     Settings,
+    /// Takes of a take group.
+    Takes,
 }
 
 impl ClipboardKind {
@@ -53,6 +57,7 @@ impl ClipboardKind {
             ClipboardKind::Devices => "devices",
             ClipboardKind::Tracks => "tracks",
             ClipboardKind::Settings => "settings",
+            ClipboardKind::Takes => "takes",
         }
     }
 }
@@ -67,6 +72,7 @@ impl ClipboardData {
             ClipboardData::Devices(_) => ClipboardKind::Devices,
             ClipboardData::Tracks(_) => ClipboardKind::Tracks,
             ClipboardData::Settings(_) => ClipboardKind::Settings,
+            ClipboardData::Takes(_) => ClipboardKind::Takes,
         }
     }
 
@@ -79,6 +85,7 @@ impl ClipboardData {
             ClipboardData::Devices(s) | ClipboardData::Tracks(s) | ClipboardData::Settings(s) => {
                 s.devices.len()
             }
+            ClipboardData::Takes(s) => s.takes.len(),
         }
     }
 
@@ -94,7 +101,10 @@ impl ClipboardData {
             ClipboardData::Clips(s) => s.span,
             ClipboardData::Notes(s) => s.span,
             ClipboardData::AutomationPoints(s) => s.span,
-            ClipboardData::Devices(_) | ClipboardData::Tracks(_) | ClipboardData::Settings(_) => 0,
+            ClipboardData::Devices(_)
+            | ClipboardData::Tracks(_)
+            | ClipboardData::Settings(_)
+            | ClipboardData::Takes(_) => 0,
         }
     }
 }

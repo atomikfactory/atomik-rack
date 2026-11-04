@@ -76,6 +76,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Rack => self.view.selection_len() > 0,
             Pane::Arrangement => {
                 !self.arrangement.selected_clips().is_empty()
+                    || self.arrangement.take_focus().is_some()
                     || self.arrangement.selected_points().is_some()
                     || self.arrangement.selected_track().is_some()
             }
@@ -91,7 +92,10 @@ impl<S: EngineSink> AppCore<S> {
             | (
                 Pane::Arrangement,
                 Some(
-                    ClipboardKind::Clips | ClipboardKind::AutomationPoints | ClipboardKind::Tracks,
+                    ClipboardKind::Clips
+                    | ClipboardKind::AutomationPoints
+                    | ClipboardKind::Tracks
+                    | ClipboardKind::Takes,
                 ),
             ) => !self.clipboard.is_empty(),
             (Pane::PianoRoll, Some(ClipboardKind::Notes)) => {
@@ -138,6 +142,9 @@ impl<S: EngineSink> AppCore<S> {
                     .map_err(err)
             }
             Pane::Arrangement => {
+                if let Some(taken) = self.capture_focused_take() {
+                    return taken;
+                }
                 if let Some((clip, indices)) = self.arrangement.selected_points() {
                     let (_, _, c) = doc.song.clip(clip).ok_or_else(nothing)?;
                     return PointSnapshot::capture(c, &indices)
@@ -165,7 +172,7 @@ impl<S: EngineSink> AppCore<S> {
                 if indices.is_empty() {
                     return Err(nothing());
                 }
-                let (_, _, c) = doc.song.clip(id).ok_or_else(nothing)?;
+                let (_, c) = doc.song.clip_or_take(id).ok_or_else(nothing)?;
                 NoteSnapshot::capture(c, &indices)
                     .map(ClipboardData::Notes)
                     .map_err(err)
@@ -176,6 +183,11 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Deletes what the pane has selected, through the view's own `edit.delete`.
     fn delete_selection(&mut self, pane: Pane) -> Result<(), String> {
+        if pane == Pane::Arrangement
+            && let Some(deleted) = self.delete_focused_take()
+        {
+            return deleted;
+        }
         match self.pane_command(pane, "edit.delete", None) {
             Some(_) => Ok(()),
             None => Err("Nothing is selected to cut".into()),
@@ -197,6 +209,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.paste_devices(s, pane)
             }
             (Pane::Arrangement, ClipboardData::Tracks(s)) => self.paste_devices(s, pane),
+            (Pane::Arrangement, ClipboardData::Takes(s)) => self.paste_takes_here(s),
             (Pane::Arrangement, ClipboardData::Clips(s)) => {
                 let span = s.span;
                 let track = self.arrangement.selected_track().cloned();
@@ -266,9 +279,9 @@ impl<S: EngineSink> AppCore<S> {
     /// The song tick a note paste starts at: the playhead when it is inside the clip, else the
     /// clip's start.
     fn paste_tick_in(&self, clip: ClipId) -> i64 {
-        match self.doc().song.clip(clip) {
-            Some((_, _, c)) if self.position >= c.start && self.position < c.end() => self.position,
-            Some((_, _, c)) => c.start,
+        match self.doc().song.clip_or_take(clip) {
+            Some((_, c)) if self.position >= c.start && self.position < c.end() => self.position,
+            Some((_, c)) => c.start,
             None => self.position,
         }
     }
@@ -470,13 +483,13 @@ impl<S: EngineSink> AppCore<S> {
                 at_tick,
                 notes,
             } => {
-                if let Some((_, _, c)) = doc.song.clip(*clip) {
+                if let Some((_, c)) = doc.song.clip_or_take(*clip) {
                     let base = at_tick.saturating_sub(c.start).saturating_add(c.offset);
                     pre.notes = Some((*clip, base, notes.notes.clone()));
                 }
             }
             WorkflowCommand::DuplicateNotes { clip, indices } => {
-                if let Some((_, _, c)) = doc.song.clip(*clip)
+                if let Some((_, c)) = doc.song.clip_or_take(*clip)
                     && let Ok(s) = NoteSnapshot::capture(c, indices)
                     && let ClipContent::Notes(all) = &c.content
                 {
@@ -672,7 +685,7 @@ impl<S: EngineSink> AppCore<S> {
         if self.piano_roll.clip() != Some(clip) {
             return;
         }
-        let Some((_, _, c)) = self.doc().song.clip(clip) else {
+        let Some((_, c)) = self.doc().song.clip_or_take(clip) else {
             return;
         };
         let ClipContent::Notes(all) = &c.content else {
