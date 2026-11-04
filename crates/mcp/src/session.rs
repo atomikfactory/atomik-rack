@@ -1965,7 +1965,7 @@ ends at the End), `span` loop is exactly the frames between the locators with no
 is pcm16 (dithered, see `dither`), pcm24 (no dither, the default) or f32; `sample_rate` converts \
 from the project's rate. The file is read back for the audio report. Returns `path`, `bytes`, \
 `format`, `dither`, `sample_rate`, `frames`, `seconds`, `span_frames`, `tail_frames`, `warnings` \
-and `audio`. `container` is wav (default) or aiff. With `stems` true, `file` names a folder and \
+`loudness` (integrated_lufs, range_lu, true_peak_dbtp, sample_peak_dbfs of the audio \nwritten, null where it does not exist) and `audio`. `container` is wav (default), aiff or flac \n(flac holds pcm16 and pcm24 only). With `stems` true, `file` names a folder and \
 every strip of the console (channels, buses, returns, master) is written to a file of its own \
 in it, numbered in mixer order and lined up with the master (`stems_dry` takes the channels \
 before their strips); the answer lists `stems` (file, kind, name, delay_frames and the `audio` \
@@ -1976,7 +1976,7 @@ report of each).",
                 "string",
                 "The file to write (the folder, with `stems`).",
             ),
-            ("container", "string", "wav (default) or aiff."),
+            ("container", "string", "wav (default), aiff or flac."),
             (
                 "stems",
                 "boolean",
@@ -2059,8 +2059,16 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let container = match args.opt_str("container")?.unwrap_or("wav") {
         "wav" => atomik_render::export::ExportContainer::Wav,
         "aiff" => atomik_render::export::ExportContainer::Aiff,
-        other => return Err(format!("container must be wav or aiff, not `{other}`")),
+        "flac" => atomik_render::export::ExportContainer::Flac,
+        other => {
+            return Err(format!(
+                "container must be wav, aiff or flac, not `{other}`"
+            ));
+        }
     };
+    if container == atomik_render::export::ExportContainer::Flac && bit_depth == BitDepth::Float32 {
+        return Err("flac holds pcm16 and pcm24, not f32".to_string());
+    }
     let stems = args.opt_bool("stems")?.unwrap_or(false);
     let stems_dry = args.opt_bool("stems_dry")?.unwrap_or(false);
     if stems_dry && !stems {
@@ -2135,8 +2143,19 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "span_frames": report.span_frames,
         "tail_frames": report.tail_frames,
         "warnings": report.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "loudness": loudness_json(&report.loudness),
         "audio": analysis::report(&written.channels, written.sample_rate, window_s),
     })))
+}
+
+/// The loudness report of an export as JSON: a value that does not exist is null.
+fn loudness_json(l: &atomik_render::loudness::LoudnessReport) -> Value {
+    json!({
+        "integrated_lufs": l.integrated_lufs,
+        "range_lu": l.range_lu,
+        "true_peak_dbtp": l.true_peak_dbtp,
+        "sample_peak_dbfs": l.sample_peak_dbfs,
+    })
 }
 
 /// `session_export` with `stems`: every strip of the console to its own file in the folder
@@ -2169,13 +2188,14 @@ fn export_stems_json(
     .map_err(|e| e.to_string())?
     .ok_or("the export was cancelled")?;
     let mut rows = Vec::new();
-    for (path, source) in &report.files {
+    for ((path, source), loudness) in report.files.iter().zip(&report.loudness) {
         let written = atomik_audio_file::decode_file(path).map_err(|e| e.to_string())?;
         rows.push(json!({
             "file": path.file_name().map(|n| n.to_string_lossy().into_owned()),
             "kind": source.kind.label(),
             "name": source.name,
             "bytes": std::fs::metadata(path).map(|m| m.len()).ok(),
+            "loudness": loudness_json(loudness),
             "audio": analysis::report(&written.channels, written.sample_rate, window_s),
         }));
     }

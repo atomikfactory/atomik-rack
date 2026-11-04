@@ -2428,6 +2428,45 @@ fn a_session_export_of_the_loop_is_exactly_the_locator_range_at_another_rate() {
 }
 
 #[test]
+fn a_session_export_as_flac_reads_back_the_codes_of_the_wav_and_reports_its_loudness() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let (wav, flac) = (tmp("export-codes.wav"), tmp("export-codes.flac"));
+    let w = ok(
+        &mut s,
+        "session_export",
+        json!({"file": wav, "format": "pcm16", "tail": false}),
+    );
+    let f = ok(
+        &mut s,
+        "session_export",
+        json!({"file": flac, "container": "flac", "format": "pcm16", "tail": false}),
+    );
+    assert_eq!(f["frames"], w["frames"]);
+    assert!(f["bytes"].as_u64() < w["bytes"].as_u64(), "{f}");
+    // Read back, the FLAC file is the audio of the WAV file: the same report, to the last digit.
+    assert_eq!(f["audio"], w["audio"]);
+    let l = &f["loudness"];
+    assert!(l["integrated_lufs"].as_f64().unwrap() < 0.0, "{l}");
+    assert!(l["true_peak_dbtp"].as_f64().is_some(), "{l}");
+    assert_eq!(l, &w["loudness"]);
+    let r = call(
+        &mut s,
+        "session_export",
+        json!({"file": tmp("export-bad.flac"), "container": "flac", "format": "f32"}),
+    );
+    assert!(
+        r.is_error && r.first_text().contains("flac"),
+        "{}",
+        r.first_text()
+    );
+}
+
+#[test]
 fn a_session_export_of_stems_writes_a_file_per_strip_that_adds_up_to_the_master() {
     let mut s = server();
     ok(
