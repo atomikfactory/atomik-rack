@@ -1850,8 +1850,10 @@ the clip (`AudioClipContent`) or a split of the clip.
 - **Model** ([song.rs](../crates/model/src/song.rs),
   [song/flatten.rs](../crates/model/src/song/flatten.rs),
   [audio_edit.rs](../crates/model/src/audio_edit.rs)). An audio clip has `gain_db`, a fade in and a
-  fade out in frames with one `FadeCurve` (`Linear`, `EqualPower` = `sin(t pi / 2)`, `Exponential` =
-  `t^2`, `SCurve` = `t^2 (3 - 2t)`), `reverse`, a gain envelope (`GainPoint { frame, gain_db }`, at
+  fade out in frames with a `FadeCurve` (`Linear`, `EqualPower` = `sin(t pi / 2)`, `Exponential` =
+  `t^2`, `SCurve` = `t^2 (3 - 2t)`; `fade_curve` shapes the fade-in and the fade-out too unless
+  `fade_out_curve` is set, `out_curve()` is the one the fade-out follows, `with_fade_shape` changes
+  one fade and leaves the other), `reverse`, a gain envelope (`GainPoint { frame, gain_db }`, at
   most 512, strictly increasing frames from the clip start) and `xfade: Option<FadeCurve>`. Fades,
   envelope and reverse are all in **clip time** (frames from the clip start; audio is never
   stretched), so reversing a clip leaves its fades and envelope where they are.
@@ -1862,7 +1864,8 @@ the clip (`AudioClipContent`) or a split of the clip.
   one undo step (the first piece keeps the id; piece edges are rounded to ticks and the source
   offset follows the tick, so the sound stays where it was to the frame). `SetAudioClip` and
   `StripSilence` can be batched. The pure parts are in `audio_edit.rs`: `strip_silence` (the
-  detector), `peak`, `normalise_gain_db`, `slice_envelope`. The transport bar's **clip inspector**
+  detector) and `StripScan` (the same detector fed in blocks, with state that does not grow with
+  the span), `peak`, `normalise_gain_db`, `slice_envelope`. The transport bar's **clip inspector**
   (`crates/ui/src/transport/inspector.rs`) edits the selected audio clips in place: the app hands it
   `ArrangementView::audio_inspector()` (the clips with their asset rate and length in frames, or the
   selected audio track) whenever the views sync, and it emits `SetAudioClip` commands, one per clip.
@@ -1895,7 +1898,9 @@ the clip (`AudioClipContent`) or a split of the clip.
   streamed asset still plays bit for bit like the same asset in memory. Allocation-free: gains are
   computed into stack blocks.
 - **File.** Project format 23: an audio clip's `"reverse"` and `"envelope"` (omitted when unused),
-  `"xfade"` (`"off"` or a curve; omitted when equal power) and the two new `"fade_curve"` names. A
+  `"xfade"` (`"off"` or a curve; omitted when equal power) and the two new `"fade_curve"` names.
+  Format 43 added `"fade_out_curve"`, written only when the fade-out is shaped differently from
+  the fade-in (an ignorable field: a reader that lacks it plays both fades with `"fade_curve"`). A
   file older than 23 loads with every clip at `"off"` so that its overlaps stay hard cuts and its
   bounce keeps its bytes; saved by this version it says so. A version 23 file without `"xfade"` is
   equal power.
@@ -1920,12 +1925,20 @@ the clip (`AudioClipContent`) or a split of the clip.
 - **View** ([arrangement/audio_edit.rs](../crates/ui/src/arrangement/audio_edit.rs)). The gain
   envelope is drawn over the waveform on the clip gain scale (-60 to +12 dB); the pencil adds a
   point and drags it at once, a point drags with any tool but the eraser, and a right click or the
-  eraser removes one. A reversed clip draws its waveform right to left with an `R` in its header;
+  eraser removes one. A point being placed or dragged snaps to the grid (the disable-snap role turns
+  it off); Shift-click or Ctrl-click (Cmd on macOS) adds a point to the selection or takes it out
+  (`ArrangementView::selected_envelope_points`), dragging a selected point moves all of them by the
+  same frames and dB (`audio::envelope_move_many`: the group stops at the points it does not hold
+  and at the clip's ends) and `edit.delete` removes them together. A right click on a fade handle
+  opens the shape menu of that fade (`open_fade_menu`: one `SetAudioClip` with `with_fade_shape`);
+  the Fade Shape commands still shape both. A reversed clip draws its waveform right to left with
+  an `R` in its header;
   trimming its left edge keeps the source offset, its right edge moves it (the end of a reversed
   clip is the low end of its span), and a left trim of any clip moves the envelope with the audio
   (`audio::envelope_after_trim`). The fade handles, the gain handle and their drags were there
   before; the new fade shapes are drawn with `FadeCurve::eval`. A crossfade zone is shaded at the
-  start of the later clip with both curves.
+  start of the later clip with both curves; where its length can change, a grip marks the line
+  where it ends (`ClipPart::CrossfadeLength`, see `Drag::Crossfade` below).
 - **Commands.** `sequencer.audio_reverse`, `audio_normalise`, `audio_strip_silence`, `audio_gain`
   (`up`, `down`, `reset`; 1 dB), `audio_fade_shape` and `audio_crossfade` (a curve name, `off` too
   for the crossfade), `audio_fades` (`declick`: 5 ms in and out, or `clear`) and
@@ -1935,10 +1948,12 @@ the clip (`AudioClipContent`) or a split of the clip.
   `Command::Batch`, one undo step, for several). Normalise and Strip Silence live in the app
   ([app_core_audio_edit.rs](../crates/app/src/app_core_audio_edit.rs)) because they read the
   samples: Normalise sets each selected clip's gain from the peak of the span of the asset it plays
-  (before gain, fades and envelope) to 0 dBFS; Strip Silence reads the span, runs the detector (a
-  frame is silent below the threshold in every channel; silent runs of at least the minimum length
-  go, with a silent start and end; each piece grows by the pads and pieces that touch join), maps
-  the pieces to clip time (a reversed clip swaps the pads and the order) and sends one
+  (before gain, fades and envelope) to 0 dBFS; Strip Silence runs the detector over the span a block
+  at a time (`StripScan`: a long clip is never copied into memory, and a test holds it to
+  `strip_silence` at any block size; a frame is silent below the threshold in every channel;
+  silent runs of at least the minimum length go, with a silent start and end; each piece grows by
+  the pads and pieces that touch join), maps the pieces to clip time (a reversed clip swaps the
+  pads and the order) and sends one
   `StripSilence` per clip in one batch, then selects the pieces. The panel is
   [silence_panel.rs](../crates/ui/src/silence_panel.rs) (`SilenceView`, `UiAction::StripSilence`), a
   sibling of the quantize panel with its settings kept between openings.
@@ -4555,10 +4570,13 @@ creation chain in the **Creation chain** bullet.
   crossfade drag (`Drag::Crossfade`, `UiAction::CrossfadeStep`): `MoveCrossfade` (`audio_join` in
   the model) moves the overlap of an audio clip with the clip before it, the later clip starting
   and the earlier one ending the same number of ticks later, so both play what they played at
-  every tick outside it. `JoinClips` on an audio lane (`join_audio`) merges consecutive pieces of
-  one file that continue each other (`piece_from` gives the source frame the second piece must
-  start at) and merges their gain envelopes (`join_envelopes`); anything that would change the
-  sound is refused. *Clipboard*
+  every tick outside it. The grip at the end of the zone drags the crossfade's length instead
+  (`UiAction::CrossfadeLengthStep`, `ResizeCrossfade`: the later clip stays and the earlier clip's
+  end follows, snapped, with the same trial and one undo step on release); it is offered only when
+  the earlier clip ends where the zone does and neither clip plays backwards or loops. `JoinClips`
+  on an audio lane (`join_audio`) merges consecutive pieces of one file that continue each other
+  (`piece_from` gives the source frame the second piece must start at) and merges their gain
+  envelopes (`join_envelopes`); anything that would change the sound is refused. *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of

@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Audio editing follow-ups: a crossfade length handle, a curve for each fade, envelope points that snap and
+  select together, and a strip silence that reads in blocks.** The crossfade where an audio clip starts over an
+  earlier one has a grip at the line where it ends: dragging it makes the crossfade longer or shorter (the later
+  clip stays, the earlier clip's end follows the pointer, snapped to the grid, previewed while you drag and one undo
+  step when you let go), where the earlier clip ends with the crossfade and neither clip plays backwards or loops.
+  A right click on a fade handle chooses the shape of that fade alone, so the fade-in and the fade-out can differ
+  (Fade Shape in the menus still sets both); the shapes play, bounce and save that way (a project written by this
+  version stores a separate fade-out shape only when there is one, and an older reader plays both fades with the
+  fade-in shape), and the MCP clip listing names it. Gain envelope points snap to the grid when one is on, as a new
+  point does with the pencil; Shift-click or Ctrl-click (Cmd on macOS) adds a point to the selection or takes it
+  out, dragging one of the selected points moves them all by the same time and gain (the group stops at the points
+  it does not hold), and Delete removes them together. Strip Silence scans a clip a block at a time instead of
+  copying its whole span into memory, with the same result as before for any clip.
 - **Time-stretch follow-ups: a reversed clip can be warped, a warp button and a tempo field in the clip inspector,
   and the tempo of AIFF files.** A clip that plays backwards can now follow the song tempo and be transposed: the
   stretched audio plays backwards (the buffer is rendered forward from the clip's source offset and turned around,
