@@ -284,6 +284,14 @@ enum RowKind {
     },
 }
 
+/// The VCA group a track's channel is in: the colour of the bar on its header and the group id a
+/// header dropped on the bar joins.
+#[derive(Debug, Clone, PartialEq)]
+struct VcaChip {
+    color: Color,
+    group: u32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct Row {
     kind: RowKind,
@@ -830,7 +838,9 @@ pub struct ArrangementView {
     device_sig: Vec<(DeviceKey, String, String, Option<[u8; 3]>)>,
     /// The colour chip of each track whose console channel is in a VCA group (the group's colour,
     /// a neutral grey when it has none).
-    vca_chips: BTreeMap<DeviceKey, Color>,
+    vca_chips: BTreeMap<DeviceKey, VcaChip>,
+    /// The console channel of each track that has one (the strips a header drag assigns).
+    track_channels: BTreeMap<DeviceKey, DeviceKey>,
     rows: Vec<Row>,
     content_height: f64,
     lane_params: Vec<Vec<Option<ParamDescriptor>>>,
@@ -992,6 +1002,7 @@ impl ArrangementView {
             doc_rev: None,
             device_sig: Vec::new(),
             vca_chips: BTreeMap::new(),
+            track_channels: BTreeMap::new(),
             rows: Vec::new(),
             content_height: 0.0,
             lane_params: Vec::new(),
@@ -1941,7 +1952,7 @@ impl ArrangementView {
             })
             .collect();
         let neutral = self.st.base.text_muted;
-        let chips: BTreeMap<DeviceKey, Color> = doc
+        let chips: BTreeMap<DeviceKey, VcaChip> = doc
             .song
             .tracks
             .iter()
@@ -1949,7 +1960,22 @@ impl ArrangementView {
                 let channel = doc.console.channel_of(&t.device)?;
                 let group = doc.console.vca_of(&channel.channel)?;
                 let color = group.color.map_or(neutral, crate::console_vca::color_of);
-                Some((t.device.clone(), color))
+                Some((
+                    t.device.clone(),
+                    VcaChip {
+                        color,
+                        group: group.id,
+                    },
+                ))
+            })
+            .collect();
+        let channels: BTreeMap<DeviceKey, DeviceKey> = doc
+            .song
+            .tracks
+            .iter()
+            .filter_map(|t| {
+                let channel = doc.console.channel_of(&t.device)?;
+                Some((t.device.clone(), channel.channel.clone()))
             })
             .collect();
         let sources = if headers.is_empty() {
@@ -1961,6 +1987,7 @@ impl ArrangementView {
             && (Arc::ptr_eq(&self.song, &doc.song) || self.song == doc.song)
             && self.rec_sources == sources
             && self.vca_chips == chips
+            && self.track_channels == channels
             && self.device_sig == sig
             && self.assets == doc.assets
             && self.input_channels == doc.input_channels
@@ -1983,6 +2010,7 @@ impl ArrangementView {
         self.input_channels = doc.input_channels;
         self.device_sig = sig;
         self.vca_chips = chips;
+        self.track_channels = channels;
         self.synced = true;
         self.rebuild(doc, registry);
         self.repaint = true;
