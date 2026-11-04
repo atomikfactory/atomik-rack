@@ -73,6 +73,8 @@ struct Snapshot {
     name: String,
     sequence: u64,
     keep: usize,
+    /// The bundle folder the document's audio lives in.
+    bundle: Option<PathBuf>,
 }
 
 enum Job {
@@ -115,7 +117,17 @@ impl RecoveryWriter {
 
     /// Queues a snapshot of `doc` named `<name>-<sequence>` in `dir`, keeping the newest `keep`.
     /// The thread prunes unreferenced assets and serialises; the caller only cloned `doc`.
-    pub fn submit(&self, doc: RackDoc, dir: RecoveryDir, name: String, sequence: u64, keep: usize) {
+    /// `bundle` is the folder the document's audio lives in: a note next to the snapshot keeps
+    /// it, so the recovered song can find its audio again.
+    pub fn submit(
+        &self,
+        doc: RackDoc,
+        dir: RecoveryDir,
+        name: String,
+        sequence: u64,
+        keep: usize,
+        bundle: Option<PathBuf>,
+    ) {
         if let Some(tx) = &self.tx {
             let _ = tx.send(Job::Snapshot(Box::new(Snapshot {
                 doc,
@@ -123,6 +135,7 @@ impl RecoveryWriter {
                 name,
                 sequence,
                 keep,
+                bundle,
             })));
         }
     }
@@ -152,6 +165,13 @@ fn write_snapshot(mut s: Snapshot) -> std::io::Result<()> {
     let text = save_project(&s.doc);
     let path = s.dir.next_path(&s.name, s.sequence);
     atomic_write(&path, text.as_bytes())?;
+    // The note is best effort: without it the snapshot still opens, its audio just shows missing.
+    if let Some(bundle) = s.bundle.filter(|_| !s.doc.assets.is_empty()) {
+        let _ = atomic_write(
+            &RecoveryDir::bundle_note_path(&path),
+            bundle.to_string_lossy().as_bytes(),
+        );
+    }
     s.dir.prune(s.keep)
 }
 
