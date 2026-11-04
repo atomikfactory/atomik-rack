@@ -1,6 +1,9 @@
 //! The tooltips of the console: what the button under the pointer does.
 
-use super::{ConsoleButton, ConsoleView, Drag, Hit, STRIP_W, Target, insert_b_rect, insert_x_rect};
+use super::{
+    ConsoleButton, ConsoleView, Drag, Hit, Jump, STRIP_W, Target, colour_rect, insert_b_rect,
+    insert_x_rect, jump_rects,
+};
 use crate::console_layout::CtrlKind;
 use crate::console_vca::{VcaPart, vca_layout};
 use crate::tooltip::Help;
@@ -134,6 +137,24 @@ impl ConsoleView {
                     VcaPart::Fader => return None,
                 };
                 help(r + off, text)
+            }
+            Hit::Plate(i) => {
+                let l = self.layout_of(self.strips.get(i)?.desc)?;
+                help(
+                    colour_rect(l.name) + Vec2::new(self.strip_x(i), top),
+                    "Colour of the track: click to choose",
+                )
+            }
+            Hit::Jump(i, to) => {
+                let l = self.layout_of(self.strips.get(i)?.desc)?;
+                let (_, rect) = jump_rects(l.name).into_iter().find(|(j, _)| *j == to)?;
+                help(
+                    rect + Vec2::new(self.strip_x(i), top),
+                    match to {
+                        Jump::Rack => "Show this channel's device in the rack",
+                        Jump::Seq => "Show this channel's track in the arrangement",
+                    },
+                )
             }
             Hit::Name(_) | Hit::Menu(_) | Hit::MenuArea | Hit::Empty => None,
         }

@@ -4,14 +4,14 @@
 
 mod support;
 
-use atomik_model::{Command, ConsoleCommand, RackDoc};
+use atomik_model::{Command, ConsoleCommand, Lane, RackDoc};
 use atomik_ui::console_layout::SectionId;
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::widget::KNOB_PIXELS_PER_RANGE;
 use atomik_ui::{
-    ChannelMeters, ConsoleButton, ConsoleView, DisplayList, Flip, Key, Modifiers, PointerButton,
-    RackView, Theme, UiAction, UiEvent,
+    ChannelMeters, ColorTarget, ConsoleButton, ConsoleView, DisplayList, Flip, Key, Modifiers,
+    PointerButton, RackView, Theme, UiAction, UiEvent,
 };
 use support::console::*;
 use support::*;
@@ -1348,4 +1348,50 @@ fn dragging_a_name_with_the_copy_role_copies_the_channel_instead_of_moving_it() 
         matches!(&a[..], [UiAction::CopyStrips { to: 0, .. }]),
         "{a:?}"
     );
+}
+
+#[test]
+fn the_jump_buttons_go_to_the_device_and_to_its_track() {
+    let (doc, reg, mut v) = setup();
+    let ch = key("ch-bass");
+    let rack = v.rack_button_center(&ch).expect("a RACK button");
+    let seq = v.seq_button_center(&ch).expect("a SEQ button");
+    assert!(rack.x < seq.x);
+    assert_eq!(
+        click(&mut v, &doc, &reg, rack),
+        [UiAction::Select(key("bass"))]
+    );
+    assert_eq!(
+        click(&mut v, &doc, &reg, seq),
+        [
+            UiAction::Select(key("bass")),
+            UiAction::RunCommand {
+                id: "rack.go_to_track".into(),
+                arg: None
+            }
+        ]
+    );
+    // A jump is not a click on the name: the strip is not selected.
+    assert!(v.selected_strips().is_empty());
+    // Buses and the master have no device to jump to.
+    assert!(v.rack_button_center(&key("master")).is_none());
+}
+
+#[test]
+fn the_colour_plate_asks_for_the_colour_of_the_track_when_the_source_has_one() {
+    let (mut doc, reg, mut v) = setup();
+    let ch = key("ch-bass");
+    assert!(v.colour_plate_center(&ch).is_none(), "no track, no plate");
+    doc.song_mut()
+        .tracks
+        .push(support::song::track("bass", vec![Lane::notes()]));
+    v.sync(&doc, &reg);
+    let p = v.colour_plate_center(&ch).expect("the band is a plate now");
+    assert_eq!(
+        click(&mut v, &doc, &reg, p),
+        [UiAction::PickColor(ColorTarget::Tracks(vec![key("bass")]))]
+    );
+    // The middle of the name plate is still the name.
+    let name = v.name_center(&ch).unwrap();
+    assert!(click(&mut v, &doc, &reg, name).is_empty());
 }
