@@ -3,7 +3,8 @@
 mod support;
 
 use atomik_model::{SongCommand, WriteMode};
-use atomik_ui::{DisplayList, LaneButton, UiAction};
+use atomik_ui::kurbo::Point;
+use atomik_ui::{DisplayList, Key, LaneButton, Modifiers, UiAction, UiEvent};
 use std::collections::BTreeSet;
 use support::song::*;
 use support::*;
@@ -243,4 +244,81 @@ fn a_muted_lane_lights_its_mute_button() {
     t.lanes[i].muted = true;
     v.sync(&doc, &reg);
     assert_ne!(idle, paint(&mut v, &doc));
+}
+
+// ------------------------------------------------------------------ the static value handle
+
+fn static_doc(value: Option<f32>) -> atomik_model::RackDoc {
+    let mut doc = song_doc();
+    let t = doc
+        .song_mut()
+        .tracks
+        .iter_mut()
+        .find(|t| t.device == key("bass"))
+        .unwrap();
+    let i = t.automation_lane(CUTOFF).unwrap();
+    t.lanes[i].static_value = value;
+    doc
+}
+
+fn statics(actions: &[UiAction]) -> Vec<(f32, Option<u64>)> {
+    song_commands(actions)
+        .into_iter()
+        .filter_map(|c| match c {
+            SongCommand::SetLaneStatic { value, merge, .. } => Some((value?, merge)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_lane_without_a_static_value_has_no_handle() {
+    let (doc, reg) = (static_doc(None), registry());
+    let v = arrangement(&doc, &reg);
+    assert!(v.static_handle_center(&key("bass"), CUTOFF).is_none());
+}
+
+#[test]
+fn dragging_the_static_value_handle_sets_the_value_from_the_height_in_one_merge_group() {
+    let (doc, reg) = (static_doc(Some(1000.0)), registry());
+    let mut v = arrangement(&doc, &reg);
+    let h = v.static_handle_center(&key("bass"), CUTOFF).unwrap();
+    let up_to = Point::new(h.x, h.y - 12.0);
+    let higher = Point::new(h.x, h.y - 20.0);
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down(h), mv(up_to), mv(higher), up(higher)],
+    );
+    let values = statics(&a);
+    assert!(values.len() >= 2, "a command per new value: {values:?}");
+    assert!(
+        values.windows(2).all(|w| w[0].0 < w[1].0),
+        "rises: {values:?}"
+    );
+    assert!(values[0].0 > 1000.0);
+    let merge = values[0].1.expect("a merge id");
+    assert!(values.iter().all(|(_, m)| *m == Some(merge)), "one group");
+    assert_eq!(a.last(), Some(&UiAction::EndMerge));
+    // Nothing else changed: no clip was selected or drawn.
+    assert_eq!(song_commands(&a).len(), values.len());
+}
+
+#[test]
+fn a_click_on_the_handle_changes_nothing_and_escape_puts_the_value_back() {
+    let (doc, reg) = (static_doc(Some(1000.0)), registry());
+    let mut v = arrangement(&doc, &reg);
+    let h = v.static_handle_center(&key("bass"), CUTOFF).unwrap();
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(h), up(h)]);
+    assert!(a.is_empty(), "{a:?}");
+    let away = Point::new(h.x, h.y - 20.0);
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(h), mv(away)]);
+    let escape = UiEvent::Key {
+        key: Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    };
+    let a = v.handle(&escape, &doc, &reg);
+    let values = statics(&a);
+    assert_eq!(values.last().map(|v| v.0), Some(1000.0), "{a:?}");
+    assert_eq!(a.last(), Some(&UiAction::EndMerge));
 }

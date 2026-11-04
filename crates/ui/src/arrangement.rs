@@ -75,6 +75,7 @@ mod organise;
 mod paint_cache;
 mod pattern_lane;
 mod restructure;
+mod static_handle;
 mod stretch;
 mod takes;
 mod tempo;
@@ -379,6 +380,8 @@ enum Hit {
         track: usize,
         lane: usize,
     },
+    /// The handle of the static value of automation lane `lane` of track `track`.
+    StaticHandle(usize, usize),
     /// The chevron of a take group's strip (opens or closes its take rows).
     TakeToggle(u32),
     /// The FLATTEN button of a take group.
@@ -688,6 +691,8 @@ enum Drag {
     },
     /// Drawing a series of automation points with the pencil.
     Series(Box<draw_series::SeriesDrag>),
+    /// The handle of a lane's static value is dragged (`static_handle.rs`).
+    Static(Box<static_handle::StaticDrag>),
     /// Dragging the snap selector: up steps through the resolutions, a press without a drag
     /// cycles forward on release.
     Snap {
@@ -2412,6 +2417,10 @@ impl ArrangementView {
         if pos.y < self.lanes_top() || self.vp.shown_tool() != Tool::Select {
             return None;
         }
+        // The handle of a lane's static value is drawn over the clips.
+        if let Some(hit) = self.static_handle_at(pos) {
+            return Some(hit);
+        }
         // A clip's own controls (edges, fades, points, mute) keep their press.
         if matches!(
             self.hit_base(pos),
@@ -3020,6 +3029,7 @@ impl ArrangementView {
                     last: self.playhead,
                 };
             }
+            Hit::StaticHandle(track, lane) if primary => self.static_down(track, lane, pos),
             Hit::EndMark if primary => {
                 let end = self.song.end_tick();
                 self.drag = Drag::End {
@@ -4288,6 +4298,10 @@ impl ArrangementView {
             self.repaint = true;
             return;
         }
+        if matches!(self.drag, Drag::Static(_)) {
+            self.static_move(pos, out);
+            return;
+        }
         if matches!(self.drag, Drag::Comp { .. }) {
             self.comp_move(pos, modifiers);
             return;
@@ -4330,6 +4344,7 @@ impl ArrangementView {
             | Drag::Comp { .. }
             | Drag::Stretch { .. }
             | Drag::Crossfade { .. }
+            | Drag::Static(_)
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
             | Drag::End { .. }
@@ -4723,6 +4738,7 @@ impl ArrangementView {
             | Drag::Crossfade { .. }
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
             Drag::Stretch { .. } => CursorHint::Stretch,
+            Drag::Static(_) => CursorHint::Move,
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
             Drag::Pan { .. } => CursorHint::Grabbing,
@@ -4746,6 +4762,7 @@ impl ArrangementView {
                 Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::EndMark | Hit::MarkerLine(_)) => {
                     CursorHint::ResizeHorizontal
                 }
+                Some(Hit::StaticHandle(..)) => CursorHint::Move,
                 // The stretch role over an edge: the edge stretches the clip instead.
                 Some(Hit::Clip {
                     part: ClipPart::Edge | ClipPart::EdgeStart,
@@ -4958,6 +4975,7 @@ impl ArrangementView {
                 }
             }
             Drag::Series(_) => out.push(UiAction::EndMerge),
+            Drag::Static(d) => self.static_up(*d, out),
             Drag::Bend {
                 id,
                 original,
@@ -5842,6 +5860,7 @@ impl ArrangementView {
                 ));
                 out.push(UiAction::EndMerge);
             }
+            Drag::Static(d) => self.static_cancel(*d, out),
             Drag::Series(s) => {
                 out.push(content_cmd(s.id, s.base, Some(s.merge)));
                 out.push(UiAction::EndMerge);
@@ -6056,6 +6075,7 @@ impl ArrangementView {
                     .map_or(accent, |[r, g, b]| Color::from_rgb8(r, g, b));
                 self.paint_clip(c, r, clip, accent, &name, &param, selected, muted, tl);
             }
+            self.paint_static_value(c, rr, tl, (track, lane), accent);
         }
         if let Drag::Draw {
             device,
