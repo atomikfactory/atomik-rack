@@ -238,6 +238,70 @@ impl ClipSnapshot {
         })
     }
 
+    /// Copies what lane `lane` of track `device` plays in the song range `[start, end)`: every
+    /// clip that touches the range, cut to it (a clip that reaches out of the range contributes
+    /// the part inside). The snapshot starts at `start`, so pasting it puts the range's start at
+    /// the paste position, and its span is the range's length.
+    ///
+    /// # Errors
+    /// [`ModelError`] for an empty range, an unknown track or lane, no clip inside the range,
+    /// or a looped audio clip the range would cut inside a repetition.
+    pub fn capture_range(
+        doc: &RackDoc,
+        device: &DeviceKey,
+        lane: usize,
+        (start, end): (i64, i64),
+    ) -> Result<Self, ModelError> {
+        if start >= end {
+            return Err(bad_song("the range must end after it starts"));
+        }
+        let track = doc
+            .song
+            .track(device)
+            .ok_or_else(|| ModelError::UnknownKey(device.to_string()))?;
+        let lane_ref = track
+            .lanes
+            .get(lane)
+            .ok_or_else(|| ModelError::UnknownKey(format!("{device} lane {lane}")))?;
+        let mut entries = Vec::new();
+        let mut hashes = BTreeSet::new();
+        for c in &lane_ref.clips {
+            if c.end() <= start || c.start >= end {
+                continue;
+            }
+            let mut inside = c.clone();
+            if c.start < start {
+                inside = crate::song_cmd::split_pair(doc, &inside, start)?.1;
+            }
+            if inside.end() > end {
+                inside = crate::song_cmd::split_pair(doc, &inside, end)?.0;
+            }
+            if let ClipContent::Audio(a) = &inside.content {
+                hashes.insert(a.asset.clone());
+            }
+            entries.push(ClipEntry {
+                device: device.clone(),
+                lane: lane_ref.kind.clone(),
+                note_lane: if track.is_note_lane(lane) { lane } else { 0 },
+                clip: Clip {
+                    id: ClipId(0),
+                    start: inside.start - start,
+                    ..inside
+                },
+            });
+        }
+        if entries.is_empty() {
+            return Err(bad_song("no clip lies inside the range"));
+        }
+        entries.sort_by_key(|e| e.clip.start);
+        Ok(Self {
+            assets: pool_of(doc, &hashes),
+            entries,
+            origin: start,
+            span: end - start,
+        })
+    }
+
     /// Every pool asset the audio clips reference.
     pub fn required_assets(&self) -> BTreeSet<String> {
         self.entries
