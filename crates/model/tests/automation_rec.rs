@@ -406,9 +406,9 @@ fn the_project_version_is_eighteen_and_a_touch_lane_writes_no_field() {
     let reg = registry();
     let d = doc(&reg);
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 42);
+    assert_eq!(PROJECT_VERSION, 43);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 42);
+    assert_eq!(v["version"], 43);
     assert!(!text.contains("\"write\""));
 }
 

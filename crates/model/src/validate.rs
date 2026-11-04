@@ -168,6 +168,17 @@ impl RackDoc {
             if track.lanes.is_empty() {
                 found.add(&at, "a track needs a lane".to_owned());
             }
+            if let Some(g) = &track.groove {
+                if song.groove(&g.name).is_none() {
+                    found.add(&at, format!("the live groove {:?} does not exist", g.name));
+                }
+                if g.strength > crate::groove::GROOVE_STRENGTH_MAX {
+                    found.add(&at, format!("groove strength {} is above 100", g.strength));
+                }
+                if track.is_audio() || track.is_automation_only() {
+                    found.add(&at, "only a note track has a live groove".to_owned());
+                }
+            }
             for (l, lane) in track.lanes.iter().enumerate() {
                 let is_automation = matches!(lane.kind, LaneKind::Automation(_));
                 if lane

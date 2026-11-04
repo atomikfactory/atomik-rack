@@ -31,6 +31,17 @@
 //! ticks to the next free tick (never drops a note). Unselected notes keep their places. (Stacking
 //! two notes on one position and pitch is not possible here, so the nudge stays.)
 //!
+//! # Live groove
+//!
+//! A track can also *name* a groove and a strength ([`crate::song::TrackGroove`]) instead of
+//! having it applied to its notes. The groove is then applied when the song is flattened for the
+//! engine and the offline render ([`crate::song::flatten_track_notes`], [`groove_notes`]): each
+//! note moves by the offset of the slot of the straight grid position nearest to its start, and
+//! its velocity is scaled by the slot's velocity scale, both by the strength. The stored notes
+//! never change, so editing a groove, switching it or removing it re-times every track that uses
+//! it, and a track whose strength is 0 plays exactly as it is stored. The grid is the song's, as
+//! in a quantize.
+//!
 //! # Not in here
 //!
 //! The commands that apply this to clips and keep the grooves in the song are in
@@ -56,6 +67,8 @@ pub const SWING_MIN: u8 = 50;
 pub const SWING_MAX: u8 = 75;
 /// Longest grid a quantize accepts: four 4/4 bars.
 pub const QUANTIZE_GRID_MAX: i64 = 16 * PPQ;
+/// Largest strength of a track's live groove, in percent.
+pub const GROOVE_STRENGTH_MAX: u8 = 100;
 /// What 1.0 of humanize timing means in ticks: a 1/16 note, either way.
 pub const HUMANIZE_TIME_TICKS: i64 = PPQ / 4;
 /// What 1.0 of humanize velocity means: plus or minus half the velocity range.
@@ -280,6 +293,47 @@ pub const fn hash64(seed: u64, a: u64, b: u64) -> u64 {
 /// A hash as a value in `[-1, 1)`.
 pub(crate) fn signed_unit(hash: u64) -> f64 {
     ((hash >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)) * 2.0 - 1.0
+}
+
+/// Applies a live groove to flattened notes `(song tick, length, key, velocity)`: the notes keep
+/// their lengths and move by the offset of the slot nearest to their start, scaled by `strength`
+/// (percent, [`GROOVE_STRENGTH_MAX`] at most), and a start never goes below tick 0. The velocity is
+/// scaled by the slot's velocity scale the same way. The result is sorted by `(tick, key)` like
+/// the input (stably, so equal ticks and keys keep their order). Integer rounding of one `f64`
+/// product per note, so the same song gives the same notes on every host.
+pub fn groove_notes(
+    notes: Vec<(i64, i64, u8, f32)>,
+    groove: &Groove,
+    strength: u8,
+) -> Vec<(i64, i64, u8, f32)> {
+    if strength == 0 || notes.is_empty() {
+        return notes;
+    }
+    let amount = f64::from(strength.min(GROOVE_STRENGTH_MAX)) / 100.0;
+    let step = groove.step.ticks().max(1);
+    let targets = Targets {
+        grid: step,
+        delay: 0.0,
+        groove: Some(groove),
+    };
+    let mut out: Vec<(i64, i64, u8, f32)> = notes
+        .into_iter()
+        .map(|(tick, length, key, velocity)| {
+            let k = (tick + step / 2).div_euclid(step);
+            let slot = targets.slot(k);
+            let moved = (f64::from(slot.offset) * step as f64 * amount).round() as i64;
+            let scale = 1.0 + (f64::from(slot.velocity) - 1.0) * amount;
+            let velocity = (f64::from(velocity) * scale) as f32;
+            (
+                (tick + moved).clamp(0, MAX_TICK),
+                length,
+                key,
+                velocity.clamp(MIN_VELOCITY, 1.0),
+            )
+        })
+        .collect();
+    out.sort_by_key(|&(t, _, k, _)| (t, k));
+    out
 }
 
 /// The result of [`quantize_notes`].

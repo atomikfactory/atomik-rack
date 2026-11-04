@@ -257,6 +257,7 @@ pub(super) fn load_track(
             Some(DeviceKey(key.to_owned()))
         }
     };
+    let groove = load_track_groove(obj, path, song)?;
     let track = Track {
         device,
         muted: flag(obj, path, "muted")?,
@@ -265,6 +266,7 @@ pub(super) fn load_track(
         chase: !flag(obj, path, "no_chase")?,
         notes_to,
         direct_record: flag(obj, path, "direct_record")?,
+        groove,
         frozen,
         lanes,
     };
@@ -276,6 +278,7 @@ pub(super) fn load_track(
             ("no_chase", !track.chase),
             ("notes_to", track.notes_to.is_some()),
             ("direct_record", track.direct_record),
+            ("groove", track.groove.is_some()),
             ("frozen", track.frozen.is_some()),
         ] {
             if set {
@@ -286,6 +289,38 @@ pub(super) fn load_track(
         }
     }
     Ok(track)
+}
+
+/// The optional `"groove"` (a groove of the song or a built-in one) and `"groove_strength"`
+/// (percent, 100 when omitted; 100 is never written) of a track.
+fn load_track_groove(
+    obj: &serde_json::Map<String, Value>,
+    path: &JsonPath,
+    song: &Song,
+) -> Result<Option<TrackGroove>, ModelError> {
+    let strength_path = path.field("groove_strength");
+    let Some(name) = obj.get("groove") else {
+        if obj.contains_key("groove_strength") {
+            return Err(strength_path.error("a strength needs the track's \"groove\""));
+        }
+        return Ok(None);
+    };
+    let name_path = path.field("groove");
+    let name = string(name, &name_path)?;
+    if song.groove(name).is_none() {
+        return Err(name_path.error(format!("the song has no groove named {name:?}")));
+    }
+    let strength = match obj.get("groove_strength") {
+        None => GROOVE_STRENGTH_MAX,
+        Some(v) => {
+            let n = uint(v, &strength_path, u64::from(GROOVE_STRENGTH_MAX - 1))?;
+            u8::try_from(n).map_err(|_| strength_path.error("out of range"))?
+        }
+    };
+    Ok(Some(TrackGroove {
+        name: name.to_owned(),
+        strength,
+    }))
 }
 
 /// Reads a track's `"frozen"` object. Whether its effects are the first of the channel's insert

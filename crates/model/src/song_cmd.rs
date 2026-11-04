@@ -74,6 +74,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        groove: None,
         frozen: None,
         lanes: vec![Lane::notes()],
     }
@@ -99,6 +100,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        groove: None,
         frozen: None,
         lanes: vec![Lane::audio()],
     }
@@ -115,6 +117,7 @@ pub(crate) fn new_automation_track(device: DeviceKey, lane: Lane) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        groove: None,
         frozen: None,
         lanes: vec![lane],
     }
@@ -1021,6 +1024,29 @@ pub(crate) fn plan(
                 new: on,
             })
         }
+        SongCommand::SetTrackGroove { device, groove } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            if t.is_audio() || t.is_automation_only() {
+                return Err(bad(format!("{device} plays no notes for a groove to move")));
+            }
+            if let Some(g) = &groove {
+                if song.groove(&g.name).is_none() {
+                    return Err(ModelError::UnknownKey(format!("groove {}", g.name)));
+                }
+                if g.strength > crate::groove::GROOVE_STRENGTH_MAX {
+                    return Err(range(format!(
+                        "groove strength {} is outside 0..={}",
+                        g.strength,
+                        crate::groove::GROOVE_STRENGTH_MAX
+                    )));
+                }
+            }
+            Edit::Swap(Swap::TrackGroove {
+                device,
+                old: t.groove.clone(),
+                new: groove,
+            })
+        }
         SongCommand::AddNoteLane { device, name } => {
             let t = &song.tracks[track_index(doc, &device)?];
             if t.is_audio() {
@@ -1223,6 +1249,7 @@ pub(crate) fn plan(
         SongCommand::ApplyQuantize { .. }
         | SongCommand::QuantizeNotes { .. }
         | SongCommand::SetGroove(_)
+        | SongCommand::RenameGroove { .. }
         | SongCommand::DeleteGroove { .. }
         | SongCommand::ExtractGroove { .. } => crate::groove_cmd::plan(doc, command)?,
         SongCommand::ApplyNoteTool { .. } => crate::note_tools::plan(doc, command)?,

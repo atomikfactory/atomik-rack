@@ -1,11 +1,11 @@
 //! Planning of the quantize and groove commands (`ApplyQuantize`, `QuantizeNotes`, `SetGroove`,
-//! `DeleteGroove`, `ExtractGroove`); the arithmetic is in [`crate::groove`].
+//! `RenameGroove`, `DeleteGroove`, `ExtractGroove`); the arithmetic is in [`crate::groove`].
 
 use crate::groove::{
     Groove, MAX_GROOVES, QuantizeParams, builtin_groove, extract_groove, quantize_notes,
 };
-use crate::history::Edit;
-use crate::song::{Clip, ClipContent, ClipId, Song, SongCommand};
+use crate::history::{Edit, Swap};
+use crate::song::{Clip, ClipContent, ClipId, Song, SongCommand, TrackGroove};
 use crate::song_cmd::{bad, check_note, range};
 use crate::{DeviceKey, ModelError, RackDoc};
 use std::collections::BTreeSet;
@@ -107,6 +107,25 @@ fn with_groove(song: &Song, groove: Groove) -> Result<Edit, ModelError> {
     })
 }
 
+/// The edits that give every track that names the groove `name` `with(its live groove)` instead.
+fn retarget(
+    song: &Song,
+    name: &str,
+    with: impl Fn(&TrackGroove) -> Option<TrackGroove>,
+) -> Vec<Edit> {
+    song.tracks
+        .iter()
+        .filter_map(|t| {
+            let old = t.groove.clone().filter(|g| g.name == name)?;
+            Some(Edit::Swap(Swap::TrackGroove {
+                device: t.device.clone(),
+                new: with(&old),
+                old: Some(old),
+            }))
+        })
+        .collect()
+}
+
 /// Plans one quantize or groove command.
 pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelError> {
     let song = &doc.song;
@@ -149,6 +168,32 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             )
         }
         SongCommand::SetGroove(groove) => with_groove(song, groove),
+        SongCommand::RenameGroove { from, to } => {
+            let mut new = song.grooves.clone();
+            let at = new
+                .iter()
+                .position(|g| g.name == from)
+                .ok_or_else(|| ModelError::UnknownKey(format!("groove {from}")))?;
+            if from == to {
+                return Err(bad(format!("the groove is already called {to:?}")));
+            }
+            new[at].name = to.clone();
+            new[at].validate().map_err(range)?;
+            if song.groove(&to).is_some() {
+                return Err(bad(format!("a groove called {to:?} exists already")));
+            }
+            let mut edits = vec![Edit::Grooves {
+                old: song.grooves.clone(),
+                new,
+            }];
+            edits.extend(retarget(song, &from, |g| {
+                Some(TrackGroove {
+                    name: to.clone(),
+                    strength: g.strength,
+                })
+            }));
+            Ok(Edit::Compound(edits))
+        }
         SongCommand::DeleteGroove { name } => {
             let mut new = song.grooves.clone();
             let at = new
@@ -156,10 +201,12 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                 .position(|g| g.name == name)
                 .ok_or_else(|| ModelError::UnknownKey(format!("groove {name}")))?;
             new.remove(at);
-            Ok(Edit::Grooves {
+            let mut edits = vec![Edit::Grooves {
                 old: song.grooves.clone(),
                 new,
-            })
+            }];
+            edits.extend(retarget(song, &name, |_| None));
+            Ok(Edit::Compound(edits))
         }
         SongCommand::ExtractGroove {
             clip,

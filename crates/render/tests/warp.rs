@@ -372,7 +372,7 @@ fn a_saved_warp_project_loads_and_bounces_the_same() {
         put(d, a, 0, 4 * PPQ, on(100.0, WarpMode::Beats));
     });
     let text = save_project(&s.doc);
-    assert!(text.contains("\"version\": 42") && text.contains("\"warp\""));
+    assert!(text.contains("\"version\": 43") && text.contains("\"warp\""));
     let loaded = load_project(&text, &default_registry()).unwrap();
     assert_eq!(loaded, s.doc);
     let r1 = render(&s, 512, 0);

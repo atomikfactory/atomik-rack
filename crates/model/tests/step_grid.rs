@@ -386,6 +386,7 @@ fn track_of(clips: Vec<Clip>) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        groove: None,
         frozen: None,
         lanes: vec![
             Lane::notes().with_clips(
@@ -662,7 +663,7 @@ fn v5_writes_grid_only_when_present() {
     let d = doc_with_grids(&reg);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 42);
+    assert_eq!(v["version"], 43);
     let clips = &v["song"]["tracks"][0]["lanes"][0]["clips"];
     assert_eq!(
         clips[0]["grid"],
@@ -703,7 +704,7 @@ fn older_versions_load_without_grids_and_reject_the_field() {
     let text = save_project(d.doc());
     assert!(!text.contains("grid"));
     for version in 3..=4 {
-        let old = text.replace("\"version\": 42", &format!("\"version\": {version}"));
+        let old = text.replace("\"version\": 43", &format!("\"version\": {version}"));
         let back = load_project(&old, &reg).unwrap();
         assert!(
             back.song
@@ -718,7 +719,7 @@ fn older_versions_load_without_grids_and_reject_the_field() {
     // A grid in an older file is an unknown field.
     let with = save_project(doc_with_grids(&reg).doc());
     for version in 3..=4 {
-        let old = with.replace("\"version\": 42", &format!("\"version\": {version}"));
+        let old = with.replace("\"version\": 43", &format!("\"version\": {version}"));
         let e = load_project(&old, &reg).unwrap_err().to_string();
         assert!(e.contains("grid"), "v{version}: {e}");
     }

@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v42), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v43), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -255,7 +255,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 42 (older versions still load; version 42
+- **Project files** are `.atomik` JSON, format version 43 (older versions still load; version 43
+  adds a track's `"groove"` and `"groove_strength"` (the live groove, written only when a track has one;
+  a reader of 42 refuses them, since it would play the notes ungrooved; see 2.14); version 42
   adds the root's `"rack_sort"` after `"tune_cents"` (written only when the rack is sorted, ignorable;
   see "Rack sorting") and, to a container's `"inner"`, a macro's `"kind": "switch"`, macros 9 to 16
   (the list has 16
@@ -1446,9 +1448,11 @@ recording are unchanged: a track with one pass still gets one plain clip.
 ### 2.14 Quantize, swing, groove templates and humanize
 
 Quantize edits the notes: it is **baked** into the note times as one undo step, so the engine,
-`flatten_*` and a bounce see ordinary notes and nothing in playback changed. (A live,
-non-destructive groove that the song flatten applies is a roadmap follow-up; the only live swing is
-a clip's `StepGrid` swing, which is a different scale and never edits a note.)
+`flatten_*` and a bounce see ordinary notes and nothing in playback changed. The other way to
+use a groove is **live**: a track names a groove and a strength (`Track::groove`, a `TrackGroove`)
+and `flatten_track_notes` applies it after the ordinary flattening, so the stored notes stay as
+they are (below). A clip's `StepGrid` swing is a third thing, on a different scale: it never edits
+a note and is applied first.
 
 - **Pure functions** ([groove.rs](../crates/model/src/groove.rs), all unit-tested).
   `quantize_notes(notes, selected, origin, clip_seed, params, groove)` moves each selected note's
@@ -1488,6 +1492,17 @@ a clip's `StepGrid` swing, which is a different scale and never edits a note.)
   command (`QuantizeParams::groove`), so changing a template and applying again re-times the notes
   to the new offsets (at full strength the notes snap to the new targets as long as the offsets are
   small against the step).
+- **Live groove.** `SetTrackGroove { device, groove: Option<TrackGroove> }` (one `Swap::TrackGroove`,
+  `SongChanged`; a note track only, the groove must exist, strength 0 to 100) sets it. `flatten_track_notes`
+  (the one flattening the engine's `song_input`, the offline render and the MIDI export use) runs
+  `flatten_notes_with` and then `groove_notes`: each note moves by the offset of the slot of the
+  song-grid position nearest to its start times the strength, its velocity scales by the slot's scale,
+  its length stays, its start never goes below tick 0, and the result is sorted again. Strength 0 gives
+  `flatten_notes_with` exactly. `SetGroove` on a groove a track uses reports `SongChanged` too, so a
+  template edit re-times every user at once; `RenameGroove { from, to }` renames the groove and the
+  tracks that use it; `DeleteGroove` takes it off them (both one undo step, a compound of the library edit
+  and a swap per track). The track fields are `"groove"` and `"groove_strength"` (format 43, omitted when
+  100). Controller lanes do not move with the notes yet.
 - **Library in the project.** `Song.grooves` is the song's shared library, saved by project format
   21 as `"grooves"` (see section 2 above for the fields; names are unique, not a built-in name, and
   at most 32 characters; a version 20 file loads without it and the field is unknown there).
@@ -3695,7 +3710,7 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   in the canonical form of the top level; v1 to v7 load; every violation is a load error naming its
   JSON path; a v1 to v7 device keyed `boundary` is renamed `boundary-N` with a warning. The
   container's macros, kinds and pass flags added later are optional fields of `inner` (the project
-  format is 42): `macros` has 8 entries, or 16 when one of the last eight is used, a
+  format is 43): `macros` has 8 entries, or 16 when one of the last eight is used, a
   macro's `"kind": "switch"` is written only for a switch, and a split's `"pass_bend"`,
   `"pass_cc"`, `"pass_pressure"` only when `false`, so a project that uses none of it saves as
   before. A CV cable to a container is an ordinary cable to its socket `cv1` to `cv4`.

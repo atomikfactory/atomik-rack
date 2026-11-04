@@ -41,6 +41,8 @@
 //!             "tracks": [{ "device", "muted", "solo", "armed", "no_chase"? (v17),
 //!                          "notes_to"? (v31, a device key: where the track's notes enter),
 //!                          "direct_record"? (v39, `true`: record the notes the players generate),
+//!                          "groove"? (v43, the name of a groove of the song or a built-in one: the
+//!                          track's live groove), "groove_strength"? (v43, percent `0..=99`, 100 when omitted),
 //!                          "group"?, "color"?, "comment"? (v22), "frozen"? (v25),
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio",
 //!                                      "name"?, "muted"? (v30, notes lanes, after "kind"),
@@ -383,8 +385,13 @@
 //! sixteen `"macros"` (the list has 8 entries unless one of them is used) and a split's
 //! `"pass_bend"`, `"pass_cc"` and `"pass_pressure"` set to `false`; each is written only when set (see
 //! [`crate::container_io`]), so a project that uses none of them differs from its version 41 file in
-//! the version line alone. A reader of 41 cannot skip them (`BREAKING_VERSIONS`). Saving always writes
-//! version 42.
+//! the version line alone. A reader of 41 cannot skip them (`BREAKING_VERSIONS`).
+//! Version 43 adds a track's live groove (see [`crate::groove`]): `"groove"` names a groove of the song
+//! or a built-in one (the file must hold it) and `"groove_strength"` is the percent of it applied
+//! (`0..=99`; 100, the usual value, is not written). Both are written only when the track has a groove,
+//! so a project without one differs from its version 42 file in the version line alone. A reader of 42
+//! would play the track's notes ungrooved, so the fields are not ignorable. Saving always writes
+//! version 43.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -398,7 +405,7 @@ use crate::controller::{ControllerKind, ControllerLane, check_lanes};
 use crate::curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
 use crate::drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
 use crate::freeze::Frozen;
-use crate::groove::{Groove, GrooveSlot, MAX_GROOVES, builtin_groove};
+use crate::groove::{GROOVE_STRENGTH_MAX, Groove, GrooveSlot, MAX_GROOVES, builtin_groove};
 use crate::organise::{
     MAX_GROUP_DEPTH, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, TrackGroup, comment_ok,
     group_name_ok,
@@ -412,7 +419,7 @@ use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AudioClipContent, AutomationPoint, Clip, ClipContent,
     ClipId, Curve, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_GAIN_POINTS,
     MAX_LOOP_REPEATS, MAX_MARKER_NAME, MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MeterEvent,
-    Note, RangeMarker, Song, StepGrid, StepResolution, TempoEvent, Track,
+    Note, RangeMarker, Song, StepGrid, StepResolution, TempoEvent, Track, TrackGroove,
 };
 use crate::song::{MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, MAX_TICK};
 use crate::song_cmd::{
@@ -480,8 +487,9 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
 /// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
 /// information) and 39 (no send follow, no parallel channels) and 40 (no master tune) and 41 (no
-/// modulation slots) and 42 (no CV inputs, macro kinds or split pass flags on containers).
-pub const PROJECT_VERSION: u32 = 42;
+/// modulation slots) and 42 (no CV inputs, macro kinds or split pass flags on containers) and 43
+/// (no live track grooves).
+pub const PROJECT_VERSION: u32 = 43;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()
