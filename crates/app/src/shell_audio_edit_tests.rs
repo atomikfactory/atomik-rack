@@ -261,3 +261,304 @@ fn reverse_on_a_warped_clip_turns_the_warp_off_and_reverses() {
     let a = audio(&s, id);
     assert!(!a.reverse && a.warp.enabled, "one undo restores both");
 }
+
+// ------------------------------------------------------------------ restructuring follow-ups
+
+fn clip_length(s: &Shell<NullBackend>, id: ClipId) -> i64 {
+    s.core().doc().song.clip(id).unwrap().2.length
+}
+
+fn type_chars(s: &mut Shell<NullBackend>, text: &str) {
+    for c in text.chars() {
+        s.handle(&UiEvent::Key {
+            key: Key::Char(c),
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        });
+    }
+}
+
+fn press_key(s: &mut Shell<NullBackend>, key: Key) {
+    s.handle(&UiEvent::Key {
+        key,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+}
+
+#[test]
+fn scale_tempo_has_an_other_item_that_opens_the_percent_panel() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    let edit = s
+        .menu_model()
+        .into_iter()
+        .find(|m| m.title == "Edit")
+        .unwrap();
+    let scale = edit
+        .entries
+        .iter()
+        .find_map(|e| match e {
+            MenuEntry::Submenu(sub) if sub.label == "Scale Tempo" => Some(sub),
+            _ => None,
+        })
+        .expect("the Scale Tempo submenu");
+    let last = scale.entries.last().unwrap();
+    let MenuEntry::Item(other) = last else {
+        panic!("an item");
+    };
+    assert_eq!(other.label, "Other\u{2026}");
+    assert_eq!(
+        other.command.command_id(),
+        Some(("sequencer.scale_tempo", Some("dialog")))
+    );
+    assert_eq!(
+        AppCommand::from_command("sequencer.scale_tempo", Some("dialog")),
+        Some(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other))
+    );
+    assert!(!s.scale_open());
+    assert!(s.execute(other.command).is_empty());
+    assert!(s.scale_open());
+}
+
+#[test]
+fn the_percent_panel_previews_while_typing_and_applies_in_one_undo_step() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    let original = clip_length(&s, id);
+    let depth = s.core().document().undo_depth();
+    s.execute(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other));
+    assert!(s.scale_open());
+    assert!(s.wants_text_input());
+    // The panel opens on 150 % and the clip already shows it, without an undo step.
+    assert_eq!(s.scale_view().unwrap().percent(), Some(150.0));
+    assert_eq!(clip_length(&s, id), original * 100 / 150);
+    assert_eq!(s.core().document().undo_depth(), depth);
+    // Typing replaces the selected text: 2 is no usable value (the clip is as it was), 20 and
+    // 200 each preview from the original.
+    type_chars(&mut s, "2");
+    assert_eq!(clip_length(&s, id), original);
+    type_chars(&mut s, "0");
+    assert_eq!(clip_length(&s, id), original * 5);
+    type_chars(&mut s, "0");
+    assert_eq!(clip_length(&s, id), original / 2);
+    assert_eq!(s.core().document().undo_depth(), depth);
+    // Enter applies as one undo step and closes the panel.
+    press_key(&mut s, Key::Enter);
+    assert!(!s.scale_open());
+    assert_eq!(clip_length(&s, id), original / 2);
+    assert_eq!(s.core().document().undo_depth(), depth + 1);
+    s.core_mut().undo();
+    assert_eq!(clip_length(&s, id), original);
+    // The panel opens on the percentage of the last time.
+    s.execute(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other));
+    assert_eq!(s.scale_view().unwrap().text(), "200");
+}
+
+#[test]
+fn escape_and_close_put_the_clips_back_and_apply_waits_for_a_usable_value() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    let original = clip_length(&s, id);
+    let before = s.core().doc().clone();
+    s.execute(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other));
+    assert_ne!(clip_length(&s, id), original);
+    press_key(&mut s, Key::Escape);
+    assert!(!s.scale_open());
+    assert_eq!(s.core().doc(), &before);
+    // CLOSE does the same.
+    s.execute(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other));
+    let close = s.scale_view().unwrap().close_rect().center();
+    click(&mut s, close);
+    assert!(!s.scale_open());
+    assert_eq!(s.core().doc(), &before);
+    // 100 changes nothing: APPLY and Enter do nothing and the panel stays.
+    s.execute(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other));
+    type_chars(&mut s, "100");
+    press_key(&mut s, Key::Enter);
+    assert!(s.scale_open());
+    assert_eq!(s.core().doc(), &before);
+    let mut dl = atomik_ui::DisplayList::new();
+    s.paint(&mut dl);
+    assert!(dl.texts().contains(&"SCALE TEMPO"));
+    press_key(&mut s, Key::Escape);
+    // Nothing selected: the panel says so and applies nothing.
+    s.core_mut().arrangement_mut().set_selected_clips(&[]);
+    s.execute(AppCommand::ScaleTempo(crate::commands::ScaleStep::Other));
+    press_key(&mut s, Key::Enter);
+    assert!(s.scale_open());
+    assert_eq!(s.core().doc(), &before);
+}
+
+#[test]
+fn a_crossfade_zone_drag_previews_without_an_undo_step_and_commits_as_one() {
+    use atomik_core::PPQ;
+    use atomik_model::{Command, SongCommand};
+    let mut s = shell();
+    let first = imported(&mut s);
+    let asset = audio(&s, first).asset;
+    let track = s
+        .core()
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .find(|t| {
+            t.lanes
+                .iter()
+                .any(|l| l.clips.iter().any(|c| c.id == first))
+        })
+        .map(|t| t.device.clone())
+        .unwrap();
+    // One second of audio is two beats: a second clip of the file starts over the end of the
+    // first one and plays on from half a beat in.
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddAudioClip {
+            device: track,
+            start: PPQ,
+            length: PPQ + PPQ / 2,
+            asset,
+            source_offset: 12_000,
+            gain_db: 0.0,
+            fade_in: 0,
+            fade_out: 0,
+            fade_curve: FadeCurve::Linear,
+        }))
+        .unwrap();
+    let later = s.core().document().last_clip_id().unwrap();
+    let before = s.core().doc().clone();
+    let depth = s.core().document().undo_depth();
+    let ends = |s: &Shell<NullBackend>| {
+        let song = &s.core().doc().song;
+        (
+            song.clip(first).unwrap().2.end(),
+            song.clip(later).unwrap().2.start,
+        )
+    };
+    assert_eq!(ends(&s), (2 * PPQ, PPQ));
+    // The zone moves earlier by a quarter beat: the first clip ends and the second starts
+    // sooner by as much, with no undo step until the drag ends.
+    let delta = -(PPQ / 4);
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeStep { later, delta });
+    assert_eq!(ends(&s), (2 * PPQ + delta, PPQ + delta));
+    assert_eq!(s.core().document().undo_depth(), depth);
+    // Another step starts again from the original.
+    s.core_mut().handle_action(UiAction::CrossfadeStep {
+        later,
+        delta: delta / 2,
+    });
+    assert_eq!(ends(&s), (2 * PPQ + delta / 2, PPQ + delta / 2));
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeEnd { commit: false });
+    assert_eq!(s.core().doc(), &before);
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeStep { later, delta });
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeEnd { commit: true });
+    assert_eq!(s.core().document().undo_depth(), depth + 1);
+    assert_eq!(ends(&s), (2 * PPQ + delta, PPQ + delta));
+    s.core_mut().undo();
+    assert_eq!(s.core().doc(), &before);
+    // A move the model refuses (the file has no audio before the second clip's start that far)
+    // says why and leaves the clips alone.
+    s.core_mut().handle_action(UiAction::CrossfadeStep {
+        later,
+        delta: -PPQ / 2 - 1,
+    });
+    assert_eq!(s.core().doc(), &before);
+    assert!(s.core().last_rejection().is_some());
+}
+
+/// A shell with one synth track and a one-bar note clip with two notes (the first is a beat
+/// long at tick 0, the second half a beat long at beat 1).
+fn note_clip_shell() -> Shell<NullBackend> {
+    use atomik_core::PPQ;
+    use atomik_model::{Command, DeviceKey, Note, SongCommand};
+    let mut s = shell();
+    let key = DeviceKey("a".to_string());
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".to_string(),
+            key: Some(key.clone()),
+        })
+        .unwrap();
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddTrack {
+            device: key.clone(),
+        }))
+        .unwrap();
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddClip {
+            device: key,
+            lane: 0,
+            clip: atomik_model::Clip {
+                id: ClipId(0),
+                start: 0,
+                length: 4 * PPQ,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                scale: None,
+                param_lanes: Vec::new(),
+                midi: Default::default(),
+                controllers: Vec::new(),
+                name: None,
+                color: None,
+                grid: None,
+                content: ClipContent::Notes(
+                    vec![Note::new(0, PPQ, 60, 0.8), Note::new(PPQ, PPQ / 2, 62, 0.8)].into(),
+                ),
+            },
+        }))
+        .unwrap();
+    s.core_mut().after_view_change();
+    s.set_focus(Pane::Arrangement);
+    s
+}
+
+fn first_note_tick(s: &Shell<NullBackend>) -> i64 {
+    let clip = s.core().doc().song.tracks[0].lanes[0].clips[0].clone();
+    let ClipContent::Notes(notes) = &clip.content else {
+        panic!("notes");
+    };
+    notes.iter().map(|n| n.tick).min().unwrap()
+}
+
+#[test]
+fn reverse_clips_follows_the_reverse_mode_preference() {
+    use crate::keymap_store::ReverseMode;
+    use atomik_core::PPQ;
+    let item_command = |s: &Shell<NullBackend>| item(s, "Edit", "Reverse Clips").command;
+    let mut s = note_clip_shell();
+    let id = s.core().doc().song.tracks[0].lanes[0].clips[0].id;
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    assert_eq!(item_command(&s), AppCommand::ReverseClipsDefault);
+    assert_eq!(
+        item_command(&s).command_id(),
+        Some(("sequencer.reverse_clips", Some("default")))
+    );
+    assert_eq!(
+        AppCommand::from_command("sequencer.reverse_clips", None),
+        Some(AppCommand::ReverseClipsDefault)
+    );
+    // By default notes mirror as bars: the half-beat note at beat 1 now starts at beat 2.5.
+    s.execute(AppCommand::ReverseClipsDefault);
+    assert_eq!(first_note_tick(&s), PPQ * 5 / 2);
+    s.core_mut().undo();
+    // The preference makes the same command mirror only the starts: the first stays first.
+    let mut prefs = s.workflow().clone();
+    prefs.reverse_mode = ReverseMode::Starts;
+    let user = s.user_keymap.clone();
+    s.apply_preferences(Some((user, prefs)));
+    s.execute(AppCommand::ReverseClipsDefault);
+    assert_eq!(first_note_tick(&s), 0);
+    s.core_mut().undo();
+    // The explicit items do not follow it.
+    s.execute(AppCommand::ReverseClips(true));
+    assert_eq!(first_note_tick(&s), PPQ * 5 / 2);
+}

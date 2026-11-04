@@ -647,7 +647,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 ),
                 item("sequencer.loop_instance", e.loop_instance),
                 item("sequencer.explode_notes", e.lane.can_explode),
-                meter_item("sequencer.reverse_clips", "bars", "Reverse Clips").enabled(e.selection),
+                meter_item("sequencer.reverse_clips", "default", "Reverse Clips")
+                    .enabled(e.selection),
                 Spec::submenu(
                     "Scale Tempo",
                     ScaleStep::ALL
