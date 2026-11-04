@@ -708,6 +708,7 @@ dependencies = [
  "atomik-plugin-host",
  "atomik-ui",
  "parley",
+ "png",
  "proptest",
  "serde",
  "serde_json",
