@@ -321,7 +321,7 @@ fn remap_disconnect(s: &mut Shell<NullBackend>) {
 }
 
 #[test]
-fn the_clipboard_commands_also_work_with_a_control_focused_and_do_nothing_in_the_console() {
+fn the_clipboard_commands_also_work_with_a_control_focused_and_need_a_strip_in_the_console() {
     let mut s = rack3();
     let a = plate(&s, "a");
     click(&mut s, a, Modifiers::NONE);
@@ -332,7 +332,7 @@ fn the_clipboard_commands_also_work_with_a_control_focused_and_do_nothing_in_the
     assert_eq!(saved(&s), before);
     assert!(
         s.core().clipboard().is_empty(),
-        "the console has no clipboard"
+        "no strip is selected in the console: nothing to copy"
     );
 }
 

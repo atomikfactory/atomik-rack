@@ -1290,3 +1290,62 @@ fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
         assert!(items.iter().any(|i| i == label), "{items:?}");
     }
 }
+
+/// The modifiers that hold the copy role on this host (Ctrl, or Cmd on macOS).
+fn copy_modifiers() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers {
+            meta: true,
+            ..Modifiers::NONE
+        }
+    } else {
+        Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        }
+    }
+}
+
+#[test]
+fn dragging_a_name_with_the_copy_role_copies_the_channel_instead_of_moving_it() {
+    let (doc, reg, mut v) = setup();
+    let p = v.name_center(&key("ch-bass")).unwrap();
+    let last = v.strip_rect(&key("ch-keys")).unwrap();
+    let end = Point::new(last.x1 - 5.0, p.y);
+    v.handle(&down(p), &doc, &reg);
+    v.handle(&mv_with(end, copy_modifiers()), &doc, &reg);
+    let a = v.handle(
+        &UiEvent::PointerUp {
+            pos: end,
+            button: PointerButton::Primary,
+            modifiers: copy_modifiers(),
+        },
+        &doc,
+        &reg,
+    );
+    assert_eq!(
+        a,
+        [UiAction::CopyStrips {
+            strips: vec![key("ch-bass")],
+            to: 3
+        }]
+    );
+    // Dropped before the first strip: the copy goes to the front.
+    let first = v.strip_rect(&key("ch-bass")).unwrap();
+    let start = Point::new(first.x0 + 5.0, p.y);
+    v.handle(&down(p), &doc, &reg);
+    v.handle(&mv_with(start, copy_modifiers()), &doc, &reg);
+    let a = v.handle(
+        &UiEvent::PointerUp {
+            pos: start,
+            button: PointerButton::Primary,
+            modifiers: copy_modifiers(),
+        },
+        &doc,
+        &reg,
+    );
+    assert!(
+        matches!(&a[..], [UiAction::CopyStrips { to: 0, .. }]),
+        "{a:?}"
+    );
+}

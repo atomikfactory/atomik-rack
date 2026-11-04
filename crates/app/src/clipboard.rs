@@ -8,7 +8,19 @@
 //! operating system's clipboard (no dependency, no serialisation contract: backlog).
 
 use atomik_model::controller_edit::ControllerSnapshot;
-use atomik_model::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot};
+use atomik_model::{
+    ChannelSettingsClip, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot,
+};
+
+/// Console strips: the devices (and song tracks) the channels carry, and the settings of each
+/// channel, which a device snapshot leaves out (a pasted instrument gets a fresh channel).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StripSnapshot {
+    /// The devices that feed the copied channels, with their tracks.
+    pub devices: DeviceSnapshot,
+    /// The settings of the channel of each device, keyed by its index in `devices.devices`.
+    pub settings: Vec<(usize, ChannelSettingsClip)>,
+}
 
 /// What the clipboard holds.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +35,8 @@ pub enum ClipboardData {
     Devices(DeviceSnapshot),
     /// Tracks: devices together with their song tracks.
     Tracks(DeviceSnapshot),
+    /// Console strips: tracks together with the settings of their channels.
+    Strips(StripSnapshot),
     /// The settings of one device (its whole sound), for Paste Settings.
     Settings(DeviceSnapshot),
     /// Takes of a take group, for Paste Takes.
@@ -44,6 +58,8 @@ pub enum ClipboardKind {
     Devices,
     /// Tracks.
     Tracks,
+    /// Console strips.
+    Strips,
     /// The settings of one device.
     Settings,
     /// Takes of a take group.
@@ -61,6 +77,7 @@ impl ClipboardKind {
             ClipboardKind::AutomationPoints => "automation points",
             ClipboardKind::Devices => "devices",
             ClipboardKind::Tracks => "tracks",
+            ClipboardKind::Strips => "strips",
             ClipboardKind::Settings => "settings",
             ClipboardKind::Takes => "takes",
             ClipboardKind::Controllers => "controller points",
@@ -77,6 +94,7 @@ impl ClipboardData {
             ClipboardData::AutomationPoints(_) => ClipboardKind::AutomationPoints,
             ClipboardData::Devices(_) => ClipboardKind::Devices,
             ClipboardData::Tracks(_) => ClipboardKind::Tracks,
+            ClipboardData::Strips(_) => ClipboardKind::Strips,
             ClipboardData::Settings(_) => ClipboardKind::Settings,
             ClipboardData::Takes(_) => ClipboardKind::Takes,
             ClipboardData::Controllers(_) => ClipboardKind::Controllers,
@@ -92,6 +110,7 @@ impl ClipboardData {
             ClipboardData::Devices(s) | ClipboardData::Tracks(s) | ClipboardData::Settings(s) => {
                 s.devices.len()
             }
+            ClipboardData::Strips(s) => s.devices.devices.len(),
             ClipboardData::Takes(s) => s.takes.len(),
             ClipboardData::Controllers(s) => s.points.len(),
         }
@@ -112,6 +131,7 @@ impl ClipboardData {
             ClipboardData::Controllers(s) => s.span,
             ClipboardData::Devices(_)
             | ClipboardData::Tracks(_)
+            | ClipboardData::Strips(_)
             | ClipboardData::Settings(_)
             | ClipboardData::Takes(_) => 0,
         }

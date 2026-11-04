@@ -51,6 +51,14 @@ pub enum UiAction {
         /// The selected devices in rack order.
         keys: Vec<DeviceKey>,
     },
+    /// Ctrl-drag of console strips: copies of the channels `strips`, placed so that the first
+    /// lands at console position `to` (see `AppCore::copy_strips_to`).
+    CopyStrips {
+        /// The channel strips dragged (the selection, when the dragged one is in it).
+        strips: Vec<DeviceKey>,
+        /// Console position the first copy lands at.
+        to: usize,
+    },
     /// Run a registry command, as if its key was pressed (a context-menu item): the
     /// shell resolves it against the pane the menu belongs to. `arg` is the command's
     /// argument, if it takes one.

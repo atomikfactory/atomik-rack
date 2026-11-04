@@ -3422,6 +3422,31 @@ impl ConsoleView {
                     self.repaint = true;
                     return;
                 }
+                // With the copy role held, a channel is copied (with the selected channels it
+                // is part of) instead of moved.
+                if strip < self.n_channels
+                    && self
+                        .roles
+                        .is_active(Role::CopyDrag, modifiers, GestureClass::DragItem)
+                {
+                    let key = self.strips[strip].key.clone();
+                    let strips: Vec<DeviceKey> = if self.selection.contains(&key) {
+                        self.selected_strips()
+                    } else {
+                        vec![key]
+                    };
+                    let channels = &self.strips[..self.n_channels];
+                    let strips: Vec<DeviceKey> = strips
+                        .into_iter()
+                        .filter(|k| channels.iter().any(|s| &s.key == k))
+                        .collect();
+                    let to = (0..self.n_channels)
+                        .filter(|i| self.strip_x(*i) + STRIP_W / 2.0 < x)
+                        .count();
+                    out.push(UiAction::CopyStrips { strips, to });
+                    self.repaint = true;
+                    return;
+                }
                 // Channels move among the channels, buses among the buses.
                 let to = self.drop_index(strip, x);
                 let command = if strip < self.n_channels {
