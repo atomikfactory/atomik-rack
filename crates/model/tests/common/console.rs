@@ -48,7 +48,7 @@ const fn socket(
     }
 }
 
-static CHANNEL_PARAMS: [ParamDescriptor; 68] = [
+static CHANNEL_PARAMS: [ParamDescriptor; 70] = [
     param(
         0,
         "input.gain",
@@ -686,6 +686,26 @@ static CHANNEL_PARAMS: [ParamDescriptor; 68] = [
     param(
         67,
         "internal.solo_silence",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        68,
+        "dyn.bypass",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        69,
+        "eq.bypass",
         0.0,
         1.0,
         0.0,
