@@ -178,6 +178,7 @@ fn sections(kind: FxKind) -> Def {
             ("INPUT", &["monitor", "rec_gain", "rec_clip_safe"]),
             ("TUNER", &["tuner_mute", "tuner_ref"]),
         ],
+        FxKind::Tuner => &[("SETTINGS", &["mute", "ref"])],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
             ("MULTIBAND", &["multiband.on", "xover.low", "xover.high"]),
@@ -243,7 +244,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Character => "SCREEN",
         FxKind::Spectrum => "SPECTRUM",
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
-        FxKind::AudioTrack => "TUNER",
+        FxKind::AudioTrack | FxKind::Tuner => "TUNER",
     }
 }
 
@@ -260,7 +261,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::Character => (0.0, 0.0),
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
-        FxKind::AudioTrack => (0.0, TOP_TUNER),
+        FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
     }
 }
 
@@ -447,7 +448,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             None,
         ),
         // The display fills the visual; the TUNER button is on the name plate.
-        FxKind::AudioTrack => (
+        FxKind::AudioTrack | FxKind::Tuner => (
             Rect::new(v.x0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
             empty,
             empty,
@@ -543,7 +544,7 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "rec_gain" => "Gain".to_string(),
         "rec_clip_safe" => "Clip safe".to_string(),
         "tuner_mute" => "Mute".to_string(),
-        "tuner_ref" => "A4 Hz".to_string(),
+        "tuner_ref" | "ref" => "A4 Hz".to_string(),
         "corr_time" => "Corr. time".to_string(),
         "mic" => "Mic".to_string(),
         "scope_gain" => "Gain".to_string(),

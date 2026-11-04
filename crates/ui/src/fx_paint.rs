@@ -203,6 +203,18 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
             let shown = info.analyser.tuner_ref_hz;
             crate::tuner_panel::paint(c, theme, fx, info, if shown > 0.0 { shown } else { own })
         }
+        // The tuner device always shows its display: there is no TUNER button to hide it.
+        FxKind::Tuner => {
+            let mut data = info.analyser.clone();
+            data.tuner_on = true;
+            let lit = PanelInfo {
+                analyser: &data,
+                ..*info
+            };
+            let own = p.get("ref");
+            let shown = data.tuner_ref_hz;
+            crate::tuner_panel::paint(c, theme, fx, &lit, if shown > 0.0 { shown } else { own })
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships fifty-four original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships fifty-six original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
@@ -8,8 +8,8 @@ a hardware synth or a virtual port), the effects (reverb, space reverb, convolut
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter, auto-filter, transient shaper, de-esser and the two
-spiders), the note players (step sequencer, arpeggiator,
+sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, tuner, pitch shifter
+and the two spiders), the note players (step sequencer, arpeggiator,
 note filter, key &
 chord, note repeater and note delay), the container and its internal note split, and the console
 devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
@@ -3829,6 +3829,71 @@ Sockets: `in_l`, `in_r` (Audio in), `freq_cv_in` (CV in), `out_l`, `out_r` (Audi
   nothing outside the band moves and a quiet signal passes bit for bit; `wideband` turns the whole
   signal down; `listen` plays the band the detector hears.
 - `freq_cv_in` moves the centre by `trim * cv * 2` octaves. `gr_cv_out` is `1 - gain`. No latency.
+
+### Tuner: `atomik.tuner` (Effect)
+
+A chromatic tuner that passes the audio through. The panel shows the note, the deviation in cents
+on a needle scale and the frequency, as the audio track's tuner does.
+Source: [tuner.rs](../crates/devices/src/tuner.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mute` | 0 or 1 | 0 | toggle |
+| `ref` | 415 to 466 | 440 | Hz |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- The outputs are the inputs bit for bit, with no latency; with `mute` on they ramp to silence
+  over 5 ms, so an instrument can be tuned in silence. The device keeps the newest frames in a scope
+  tap and the app runs the pitch analysis from it on its own thread (the same two-stage tracker as
+  the audio track's tuner), against `ref` shifted by the project's master tune. A bypassed tuner
+  freezes its display.
+- The panel analyses the louder of the two channels and reads the note of a single clear pitch;
+  a chord or noise reads nothing, and the last note stays on the display, dimmed, for a moment
+  after the signal fades.
+
+### Pitch Shifter: `atomik.pitch-shifter` (Effect)
+
+A real-time pitch shifter of up to an octave either way with a fixed, reported latency.
+Source: [pitch_shifter.rs](../crates/devices/src/pitch_shifter.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `pitch_cv_in` (CV in), `out_l`, `out_r` (Audio out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `semitones` | -12 to 12 | 0 | semitones |
+| `cents` | -50 to 50 | 0 | cents |
+| `quality` | 0 to 2: fast, balanced, smooth | 1 | choice |
+| `mix` | 0 to 1 | 1 | percent |
+| `pitch_cv_trim` | -1 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- A read head runs through a ring buffer at `2^(shift / 12)` input samples per output sample. Before
+  it runs into the write head (a shift up) or too far from it (a shift down) it jumps by about
+  `2 X` samples and the old and new heads are cross-faded over `X` samples with a raised cosine.
+  The landing is searched within `X` samples either side with the normalised cross-correlation of the
+  mono sum (a coarse pass at every fourth sample, a fine pass around the best), so the two signals
+  are in phase during the fade; both channels jump together, so the image is kept. Pitched
+  sounds shift cleanly; a dense mix shifts with some roughness at the jumps.
+- `semitones` and `cents` add up (clamped to +-12 semitones); `pitch_cv_in` adds
+  `pitch_cv_trim * cv * 12` semitones. `mix` blends the dry input, delayed by the latency so it stays
+  aligned.
+- **Latency.** The delay stays between `X + 4` and `4 X + 4` samples. `latency_frames` is the
+  middle, `5 X / 2 + 4`, which is exactly the delay at a shift of zero: the head then stands still
+  and the output is the input delayed by that many samples, bit for bit. With a shift the delay
+  moves around that value, so the delay compensation lines the device up on average. A shift that
+  returns to zero while the head is away from the middle brings it home with one more cross-fade
+  (without the search), so the output is exact again within `2 X` samples.
+
+| `quality` | `X` | Latency at 48 kHz |
+|---|---|---|
+| fast | 3 ms | 364 samples (7.6 ms) |
+| balanced | 6 ms | 724 samples (15.1 ms) |
+| smooth | 10 ms | 1204 samples (25.1 ms) |
+
+The latency follows `quality` (the device reports a variable latency); changing the quality
+restarts the device with empty buffers.
 
 ### Audio Split/Merge: `atomik.spider-audio` (Utility)
 

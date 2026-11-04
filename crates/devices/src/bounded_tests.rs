@@ -193,4 +193,16 @@ proptest! {
     fn qa_transient_shaper_any_params_bounded_at_every_sample_rate(s in scene()) {
         check_bounded("atomik.transient-shaper", &s)?;
     }
+
+    /// The pitch shifter: any params and loud noise.
+    #[test]
+    fn qa_pitch_shifter_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.pitch-shifter", &s)?;
+    }
+
+    /// The tuner: any params and loud noise.
+    #[test]
+    fn qa_tuner_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.tuner", &s)?;
+    }
 }

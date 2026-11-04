@@ -110,6 +110,7 @@ const EFFECTS: &[(&str, &str)] = &[
         "atomik.transient-shaper",
         r#"{"attack": 1, "sustain": -1, "output": 3}"#,
     ),
+    ("atomik.pitch-shifter", r#"{"semitones": 7, "quality": 0}"#),
     (
         "atomik.de-esser",
         r#"{"freq": 1000, "q": 0.5, "threshold": -60, "ratio": 20, "range": 24, "mode": 1}"#,

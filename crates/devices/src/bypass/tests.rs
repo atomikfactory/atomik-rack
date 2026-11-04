@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 24, "{ids:?}");
+    assert_eq!(ids.len(), 26, "{ids:?}");
     ids
 }
 
@@ -36,8 +36,9 @@ fn raw(type_id: &str) -> DeviceHarness {
     use crate::stereo_delay;
     use crate::{
         auto_filter, character, compressor, convolver, de_esser, distortion, duck, dynamics, echo,
-        env_filter, eq, gain_tool, gate, guitar_amp, mastering, modulation, phase_meter, reverb,
-        space_reverb, spectrum, stereo_tool, transient_shaper, vocoder,
+        env_filter, eq, gain_tool, gate, guitar_amp, mastering, modulation, phase_meter,
+        pitch_shifter, reverb, space_reverb, spectrum, stereo_tool, transient_shaper, tuner,
+        vocoder,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
@@ -62,6 +63,8 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.convolver" => Box::new(convolver::ConvolutionReverb::new()),
         "atomik.space-reverb" => Box::new(space_reverb::SpaceReverb::new()),
         "atomik.auto-filter" => Box::new(auto_filter::AutoFilter::new()),
+        "atomik.pitch-shifter" => Box::new(pitch_shifter::PitchShifter::new()),
+        "atomik.tuner" => Box::new(tuner::Tuner::new()),
         "atomik.de-esser" => Box::new(de_esser::DeEsser::new()),
         "atomik.transient-shaper" => Box::new(transient_shaper::TransientShaper::new()),
         other => panic!("{other}"),
@@ -371,7 +374,8 @@ fn every_effect_descriptor_ends_with_the_host_style_bypass_param() {
         h.set_param("bypass", 1.0);
         let (i, o) = run(&mut h, 40, 0.5);
         let lat = h.device().latency_frames() as usize;
-        assert_eq!(o[0][100].to_bits(), i[0][100 - lat].to_bits(), "{id}");
+        let at = 100 + lat;
+        assert_eq!(o[0][at].to_bits(), i[0][at - lat].to_bits(), "{id}");
     }
 }
 

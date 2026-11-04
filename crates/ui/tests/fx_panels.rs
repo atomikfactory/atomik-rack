@@ -90,6 +90,7 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::Character), 3);
     assert_eq!(units(FxKind::Spectrum), 4);
     assert_eq!(units(FxKind::PhaseMeter), 3);
+    assert_eq!(units(FxKind::Tuner), 3);
 }
 
 fn overlaps(a: &Rect, b: &Rect) -> bool {
@@ -305,8 +306,8 @@ fn the_visuals_draw_their_readouts() {
 #[test]
 fn meter_values_change_the_painting() {
     for kind in FxKind::EFFECTS {
-        if kind == FxKind::Modulation {
-            // Nothing to feed: the panel is identical.
+        if matches!(kind, FxKind::Modulation | FxKind::Tuner) {
+            // Nothing to feed: the panel is identical (the tuner draws what the app analyses).
             assert_eq!(
                 record(kind, Flip::Front, false),
                 record(kind, Flip::Front, true)
