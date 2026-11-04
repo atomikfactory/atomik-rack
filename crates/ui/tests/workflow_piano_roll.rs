@@ -160,7 +160,17 @@ fn nudge_by_beat_and_by_tick_ignore_the_snap_step() {
         v.set_selected_notes(&[1, 3]);
         let a = v.command(id, None, &doc, &reg);
         let notes = &notes_of(a.actions())[0];
-        assert_eq!(notes.len(), bass_line().len(), "{id}");
+        // A moved note that lands on an unselected note of the same key replaces it (the model
+        // does not hold two notes on one key at one tick).
+        let lands_on = |tick: i64, key: u8| {
+            bass_line()
+                .iter()
+                .enumerate()
+                .any(|(i, n)| ![1, 3].contains(&i) && (n.tick, n.key) == (tick, key))
+        };
+        let replaced = usize::from(lands_on(e0, bass_line()[1].key))
+            + usize::from(lands_on(e2, bass_line()[3].key));
+        assert_eq!(notes.len(), bass_line().len() - replaced, "{id}");
         assert!(
             notes
                 .iter()
