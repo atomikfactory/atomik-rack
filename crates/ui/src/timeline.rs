@@ -255,7 +255,19 @@ pub fn format_time(seconds: f64) -> String {
     format!("{min:02}:{:02}.{:03}", rest / 1000, rest % 1000)
 }
 /// Snap resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Snap {
     /// No snapping (tick resolution).
     Off,

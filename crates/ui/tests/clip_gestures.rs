@@ -469,3 +469,126 @@ fn the_constrain_role_moves_a_note_along_one_axis() {
         .copied();
     assert!(moved.is_some(), "{:?}", lists[0]);
 }
+
+#[test]
+fn the_extend_commands_act_on_the_selected_clips_and_refuse_without_one() {
+    let (mut v, doc, reg) = setup();
+    select(&mut v, &[1]);
+    for (id, next) in [
+        ("sequencer.extend_to_next_clip", true),
+        ("sequencer.extend_to_previous_clip", false),
+    ] {
+        let CommandOutcome::Handled(a) = v.command(id, None, &doc, &reg) else {
+            panic!("{id}")
+        };
+        assert_eq!(
+            workflow_commands(&a),
+            vec![WorkflowCommand::ExtendClips {
+                ids: vec![ClipId(1)],
+                next
+            }]
+        );
+    }
+    select(&mut v, &[]);
+    assert!(matches!(
+        v.command("sequencer.extend_to_next_clip", None, &doc, &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+}
+
+// ---------------------------------------------------------------- lane range
+
+fn alt_shift() -> Modifiers {
+    Modifiers {
+        alt: true,
+        shift: true,
+        ..Modifiers::NONE
+    }
+}
+
+fn down_alt_shift(pos: Point) -> atomik_ui::UiEvent {
+    atomik_ui::UiEvent::PointerDown {
+        pos,
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: alt_shift(),
+        clicks: 1,
+    }
+}
+
+#[test]
+fn an_alt_shift_drag_on_a_lane_selects_a_snapped_time_range_and_draws_nothing() {
+    let (mut v, doc, reg) = setup();
+    v.set_snap(Snap::Bar);
+    assert_eq!(v.lane_range(), None);
+    let (a, b) = (lane_point(&v, "keys", BAR), lane_point(&v, "keys", 3 * BAR));
+    let out = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_alt_shift(a), mv_with(b, alt_shift()), up(b)],
+    );
+    assert!(
+        commands(&out).is_empty(),
+        "selecting a range edits nothing: {out:?}"
+    );
+    assert_eq!(v.lane_range(), Some((key("keys"), 0, BAR, 3 * BAR)));
+    assert!(v.selected_clips().is_empty());
+    // The drag works from right to left too.
+    let out = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_alt_shift(b), mv_with(a, alt_shift()), up(a)],
+    );
+    assert!(commands(&out).is_empty());
+    assert_eq!(v.lane_range(), Some((key("keys"), 0, BAR, 3 * BAR)));
+    // A plain press forgets the range.
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(a), up(a)]);
+    assert_eq!(v.lane_range(), None);
+}
+
+#[test]
+fn delete_on_a_range_cuts_out_the_clips_inside_it_and_escape_forgets_it() {
+    let (mut v, doc, reg) = setup();
+    v.set_snap(Snap::Bar);
+    let (a, b) = (lane_point(&v, "keys", BAR), lane_point(&v, "keys", 2 * BAR));
+    let _ = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_alt_shift(a), mv_with(b, alt_shift()), up(b)],
+    );
+    let CommandOutcome::Handled(actions) = v.command("edit.delete", None, &doc, &reg) else {
+        panic!("handled")
+    };
+    assert_eq!(
+        workflow_commands(&actions),
+        vec![WorkflowCommand::CutOut {
+            ids: vec![ClipId(3)],
+            start: BAR,
+            end: 2 * BAR,
+            copy: false
+        }]
+    );
+    assert_eq!(v.lane_range(), None, "the range is spent");
+    // Escape forgets a range that was not used.
+    let _ = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_alt_shift(a), mv_with(b, alt_shift()), up(b)],
+    );
+    assert!(v.lane_range().is_some());
+    let esc = atomik_ui::UiEvent::Key {
+        key: atomik_ui::Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    };
+    let _ = v.handle(&esc, &doc, &reg);
+    assert_eq!(v.lane_range(), None);
+    // A range with no clip inside is refused.
+    let (c, d) = (
+        lane_point(&v, "keys", 5 * BAR),
+        lane_point(&v, "keys", 6 * BAR),
+    );
+    let _ = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_alt_shift(c), mv_with(d, alt_shift()), up(d)],
+    );
+    assert!(matches!(
+        v.command("edit.delete", None, &doc, &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+}

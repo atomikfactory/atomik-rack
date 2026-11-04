@@ -346,6 +346,7 @@ impl<S: EngineSink> AppCore<S> {
             device: host.clone(),
             param: lane.clone(),
             value: Some(value),
+            merge: None,
         });
         let command = if exists {
             set
@@ -369,6 +370,7 @@ impl<S: EngineSink> AppCore<S> {
             device: device.clone(),
             param: param.to_owned(),
             value: None,
+            merge: None,
         }));
     }
 

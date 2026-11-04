@@ -545,3 +545,70 @@ fn keys_in_an_open_menu_bar_move_between_menus_and_do_not_start_playback() {
     press_key(&mut s, Key::Escape);
     assert!(!s.menubar.as_ref().unwrap().is_open());
 }
+
+#[test]
+fn the_snap_settings_are_saved_and_the_next_session_starts_with_them() {
+    use atomik_ui::SnapMode;
+    use atomik_ui::timeline::Snap;
+    let dir = std::env::temp_dir().join(format!("atomik-snap-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let (mut s, _) = roll_shell(Some(path.clone()));
+    assert_eq!(
+        s.core().arrangement().snap(),
+        Snap::Sixteenth,
+        "the default"
+    );
+    s.core_mut().arrangement_mut().set_snap(Snap::Eighth);
+    s.core_mut().piano_roll_mut().set_snap(Snap::ThirtySecond);
+    s.core_mut()
+        .piano_roll_mut()
+        .set_snap_mode(SnapMode::Relative);
+    // Any event runs the save check.
+    tap(&mut s, "Shift+F");
+    tap(&mut s, "Shift+F");
+    assert_eq!(s.ui_state().arrangement_snap, Snap::Eighth);
+    assert_eq!(s.ui_state().piano_roll_snap, Snap::ThirtySecond);
+    assert_eq!(s.ui_state().snap_mode, SnapMode::Relative);
+    assert_eq!(
+        s.core().arrangement().snap_mode(),
+        SnapMode::Relative,
+        "the two views share the mode"
+    );
+    s.flush_ui_state();
+    let saved = crate::ui_state::UiState::load(&path);
+    assert_eq!(saved.arrangement_snap, Snap::Eighth);
+    let (s2, _) = roll_shell(Some(path.clone()));
+    assert_eq!(s2.core().arrangement().snap(), Snap::Eighth);
+    assert_eq!(s2.core().piano_roll().snap(), Snap::ThirtySecond);
+    assert_eq!(s2.core().piano_roll().snap_mode(), SnapMode::Relative);
+    assert_eq!(s2.core().arrangement().snap_mode(), SnapMode::Relative);
+    // An older file has none of the keys and keeps the defaults.
+    let old = crate::ui_state::UiState::default();
+    assert_eq!(old.arrangement_snap, Snap::Sixteenth);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_notes_menu_turns_note_audition_off_and_the_choice_is_kept() {
+    let dir = std::env::temp_dir().join(format!("atomik-audition-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let (mut s, _) = roll_shell(Some(path.clone()));
+    assert!(s.core().piano_roll().note_audition_on());
+    choose(&mut s, &[], "editor.audition_toggle", "");
+    assert!(!s.core().piano_roll().note_audition_on());
+    assert!(!s.ui_state().piano_roll_audition);
+    s.flush_ui_state();
+    let (mut s2, _) = roll_shell(Some(path.clone()));
+    assert!(
+        !s2.core().piano_roll().note_audition_on(),
+        "kept for the next session"
+    );
+    // The menu shows it checked off, and choosing again turns it back on.
+    choose(&mut s2, &[], "editor.audition_toggle", "");
+    assert!(s2.core().piano_roll().note_audition_on());
+    let _ = std::fs::remove_dir_all(&dir);
+}

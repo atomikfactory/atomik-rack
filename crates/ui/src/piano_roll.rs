@@ -158,6 +158,8 @@ pub struct NoteTools {
     pub root: u8,
     /// Snap to scale is on.
     pub snap_scale: bool,
+    /// Note audition is off.
+    pub audition_off: bool,
     /// The fold.
     pub fold: Fold,
     /// The chord stamp.
@@ -337,6 +339,8 @@ pub struct PianoRollView {
     rows_dirty: bool,
     fold: Fold,
     snap_scale: bool,
+    /// Drawing, moving or stepping to a note plays it (default on).
+    audition_notes: bool,
     /// The root a scale gets when it is chosen while the clip has none.
     root_pref: u8,
     stamp: Stamp,
@@ -439,6 +443,7 @@ impl PianoRollView {
             rows_dirty: false,
             fold: Fold::Off,
             snap_scale: false,
+            audition_notes: true,
             root_pref: 0,
             stamp: Stamp::None,
             inversion: 0,
@@ -594,6 +599,27 @@ impl PianoRollView {
     pub fn set_snap(&mut self, snap: Snap) {
         self.snap = snap;
         self.repaint = true;
+    }
+
+    /// Whether drawing, moving or stepping to a note plays it.
+    pub fn note_audition_on(&self) -> bool {
+        self.audition_notes
+    }
+
+    /// Turns the audition of notes on or off. Turning it off releases nothing: a note already
+    /// sounding stops with its gesture.
+    pub fn set_note_audition(&mut self, on: bool) {
+        self.audition_notes = on;
+    }
+
+    /// Whether a move snaps to grid lines or by whole steps.
+    pub fn snap_mode(&self) -> crate::viewport::SnapMode {
+        self.vp.snap_mode()
+    }
+
+    /// Sets the snap mode.
+    pub fn set_snap_mode(&mut self, mode: crate::viewport::SnapMode) {
+        self.vp.set_snap_mode(mode);
     }
 
     /// The mouse cursor to show: a horizontal resize cursor over a note's edge or the playhead's
@@ -1006,6 +1032,7 @@ impl PianoRollView {
             scale: self.scale(),
             root: self.scale().map_or(self.root_pref, |s| s.root),
             snap_scale: self.snap_scale,
+            audition_off: !self.audition_notes,
             fold: self.fold,
             stamp: self.stamp,
             inversion: self.inversion,
@@ -1581,6 +1608,16 @@ impl PianoRollView {
         )))
     }
 
+    /// The audition of a note being drawn, moved or stepped to: nothing while note audition is
+    /// off (the keys on the left still sound).
+    fn note_audition(&self, key: u8, on: bool) -> Option<UiAction> {
+        if self.audition_notes {
+            self.audition(key, on)
+        } else {
+            None
+        }
+    }
+
     fn audition(&self, key: u8, on: bool) -> Option<UiAction> {
         Some(UiAction::Audition {
             device: self.device.clone()?,
@@ -1936,7 +1973,7 @@ impl PianoRollView {
         self.selection.set(sel);
         out.extend(self.content(list.clone(), Some(merge)));
         for n in &notes {
-            out.extend(self.audition(n.key, true));
+            out.extend(self.note_audition(n.key, true));
         }
         self.drag = Drag::Draw {
             start: pos,
@@ -2032,7 +2069,7 @@ impl PianoRollView {
                 };
             }
             SpanPart::Body => {
-                out.extend(self.audition(key, true));
+                out.extend(self.note_audition(key, true));
                 let reselect = (was && !toggle && !modifiers.shift && sel.len() > 1).then_some(i);
                 self.drag = Drag::Move {
                     start: pos,
@@ -2367,11 +2404,13 @@ impl PianoRollView {
                 }))
             })
         };
+        let audition_notes = self.audition_notes;
         let audition = |key: u8, on: bool| {
             device
                 .clone()
                 .map(|device| UiAction::Audition { device, key, on })
         };
+        let note_audition = |key: u8, on: bool| audition_notes.then(|| audition(key, on)).flatten();
         self.repaint = true;
         let mut new_sel: Option<BTreeSet<usize>> = None;
         match &mut self.drag {
@@ -2484,8 +2523,8 @@ impl PianoRollView {
                     seq_edit::normalize_notes(moved_notes, sel)
                 };
                 if now_key != *sounding {
-                    out.extend(audition(*sounding, false));
-                    out.extend(audition(now_key, true));
+                    out.extend(note_audition(*sounding, false));
+                    out.extend(note_audition(now_key, true));
                     *sounding = now_key;
                 }
                 if list != *last {
@@ -2610,7 +2649,7 @@ impl PianoRollView {
             Drag::Keys { key } => out.extend(self.audition(key, false)),
             Drag::Draw { notes, .. } => {
                 for n in &notes {
-                    out.extend(self.audition(n.key, false));
+                    out.extend(self.note_audition(n.key, false));
                 }
                 out.push(UiAction::EndMerge);
             }
@@ -2622,7 +2661,7 @@ impl PianoRollView {
                 toggle_off,
                 ..
             } => {
-                out.extend(self.audition(sounding, false));
+                out.extend(self.note_audition(sounding, false));
                 if emitted {
                     out.push(UiAction::EndMerge);
                 }
@@ -2868,6 +2907,10 @@ impl PianoRollView {
             "editor.nudge_right_tick" => self.move_selection(1, 0),
             "editor.scale_snap_toggle" => {
                 self.snap_scale = !self.snap_scale;
+                CommandOutcome::Handled(Vec::new())
+            }
+            "editor.audition_toggle" => {
+                self.audition_notes = !self.audition_notes;
                 CommandOutcome::Handled(Vec::new())
             }
             "editor.fold_toggle" => {
@@ -3210,6 +3253,9 @@ impl PianoRollView {
         self.step_sel = Some((anchor, active));
         self.reveal_note(active);
         self.release_audition_into(out);
+        if !self.audition_notes {
+            return;
+        }
         let (Some(device), Some(n)) = (self.device.clone(), self.notes().get(active).copied())
         else {
             return;
@@ -3358,7 +3404,7 @@ impl PianoRollView {
                 base, notes, merge, ..
             } => {
                 for n in &notes {
-                    out.extend(self.audition(n.key, false));
+                    out.extend(self.note_audition(n.key, false));
                 }
                 out.extend(self.content(base, Some(merge)));
                 out.push(UiAction::EndMerge);
@@ -3372,7 +3418,7 @@ impl PianoRollView {
                 sounding,
                 ..
             } => {
-                out.extend(self.audition(sounding, false));
+                out.extend(self.note_audition(sounding, false));
                 if emitted {
                     out.extend(self.content(originals, Some(merge)));
                     out.push(UiAction::EndMerge);

@@ -726,6 +726,8 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.open_clip",
             "sequencer.split_at_playhead",
             "sequencer.join",
+            "sequencer.extend_to_next_clip",
+            "sequencer.extend_to_previous_clip",
             "sequencer.rename_clip",
             "sequencer.loop_instance",
             "sequencer.explode_notes",
@@ -1116,7 +1118,8 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
             "edit.select_all",
             "editor.select_same_pitch",
             "editor.join_notes",
-            "editor.extract_notes"
+            "editor.extract_notes",
+            "editor.audition_toggle"
         ]
     );
     assert!(items.iter().find(|(c, _, _)| c == "edit.paste").unwrap().2);
@@ -1469,4 +1472,56 @@ fn a_stale_menu_position_does_not_steer_a_later_keyboard_paste() {
     click(&mut s, c, Modifiers::NONE);
     tap(&mut s, Os::Windows, "Cmd+V");
     assert!(placed(&s).iter().all(|(_, c)| *c != 2), "{:?}", placed(&s));
+}
+
+#[test]
+fn a_lane_range_copies_cuts_deletes_and_pastes_the_parts_of_the_clips_inside_it() {
+    let mut s = with_clips();
+    let at = |s: &Shell<NullBackend>| {
+        let mut starts: Vec<(i64, i64)> = s
+            .core()
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .flat_map(|t| t.lanes.iter().flat_map(|l| l.clips.iter()))
+            .map(|c| (c.start, c.length))
+            .collect();
+        starts.sort_unstable();
+        starts
+    };
+    let range = |s: &mut Shell<NullBackend>| {
+        s.core_mut()
+            .arrangement_mut()
+            .set_lane_range(key("a"), 0, BAR / 4, BAR / 2);
+    };
+    assert!(!s.core().has_selection(Pane::Arrangement));
+    range(&mut s);
+    assert!(
+        s.core().has_selection(Pane::Arrangement),
+        "a range can be copied"
+    );
+    // Copy changes nothing; Paste lands the range start at the playhead.
+    tap(&mut s, Os::Windows, "Cmd+C");
+    assert_eq!(at(&s), [(0, BAR)]);
+    s.core_mut()
+        .transport_action(atomik_ui::TransportAction::Locate(4 * BAR));
+    tap(&mut s, Os::Windows, "Cmd+V");
+    assert_eq!(at(&s), [(0, BAR), (4 * BAR, BAR / 4)]);
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(at(&s), [(0, BAR)], "one undo step");
+    // Cut copies and removes the part inside the range: the clip is left in two parts.
+    range(&mut s);
+    tap(&mut s, Os::Windows, "Cmd+X");
+    assert_eq!(at(&s), [(0, BAR / 4), (BAR / 2, BAR / 2)]);
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(at(&s), [(0, BAR)], "one undo step");
+    // Delete removes without copying.
+    range(&mut s);
+    tap(&mut s, Os::Windows, "Delete");
+    assert_eq!(at(&s), [(0, BAR / 4), (BAR / 2, BAR / 2)]);
+    assert!(
+        s.core().arrangement().lane_range().is_none(),
+        "a deleted range is spent"
+    );
 }

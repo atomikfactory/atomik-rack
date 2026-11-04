@@ -249,6 +249,7 @@ impl ArrangementView {
             moved: false,
             emitted: added,
             last: (clip.start, clip.length, edited),
+            others: Vec::new(),
         };
     }
 

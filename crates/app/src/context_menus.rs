@@ -651,6 +651,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.open_clip", e.open_clip),
                 item("sequencer.split_at_playhead", true),
                 item("sequencer.join", e.join),
+                item("sequencer.extend_to_next_clip", e.selection),
+                item("sequencer.extend_to_previous_clip", e.selection),
                 item("sequencer.rename_clip", e.clip_one),
                 Spec::submenu(
                     "Clip Colour",
@@ -898,6 +900,13 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             v.extend(note_tool_menu("editor.note_tool", true));
             v.extend([
                 Spec::Separator,
+                Spec::Item {
+                    command: "editor.audition_toggle",
+                    arg: None,
+                    label: None,
+                    enabled: true,
+                    checked: Some(!t.audition_off),
+                },
                 Spec::submenu(
                     "Scale",
                     vec![

@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Automation lane and gesture follow-ups: a static value handle, a time range on a lane, Extend to Next and Previous
+  Clip, no note audition, trimming several audio clips and remembered snap.** An automation lane that holds a static
+  value draws it as a line across the lane with a square handle at the left edge of the timeline; dragging the handle
+  sets the value from the pointer height (on the scale of the lane's points) and one drag is one undo step, Esc puts
+  the value back. Dragging on a lane with the new Lane range select role (Alt+Shift, Opt+Shift on macOS; remappable in
+  Settings, Keyboard) shades a time range, snapped to the grid: Copy takes the parts of the lane's clips inside it, Cut
+  and Delete remove them (the clips are cut at the range edges, one undo step) and Paste puts the copy at the
+  playhead on the range's lane; any other press or Esc forgets the range. Extend to Next Clip and Extend to Previous
+  Clip (`sequencer.extend_to_next_clip`, `sequencer.extend_to_previous_clip`, in the clip menu) grow the selected note
+  and automation clips to the start of the next clip on their lane or back to the end of the previous one, the content
+  staying where it is in song time, in one undo step; audio clips are left alone. Audition Notes in the notes menu of
+  the piano roll (`editor.audition_toggle`) stops notes from sounding while they are drawn, moved or stepped to (the key
+  strip still plays) and is remembered. Dragging the start edge of a selected audio clip trims every selected audio
+  clip by the same distance, each as far as its own file allows. The snap resolution of the arrangement and of the
+  piano roll and the snap mode (grid lines or whole steps) are saved in the window state file and restored at start.
+  `SetLaneStatic` gained an optional merge id. The project format stays 43.
 - **Looped clip and note lane follow-ups: looped audio takes, an audio loop converted into one clip, and a solo and a
   colour for each note lane.** A take of a group can loop now, audio included: the take menu offers Loop Take x2, x4
   and x8 and Play Take Once (`SetTakeLoop`), the take runs that many repetitions of its extent and the comp segments

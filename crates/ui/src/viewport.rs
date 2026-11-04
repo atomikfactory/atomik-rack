@@ -93,7 +93,8 @@ impl Tool {
 }
 
 /// How a move or a nudge meets the grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SnapMode {
     /// The item lands on a grid line (what an item off the grid snaps to).
     #[default]

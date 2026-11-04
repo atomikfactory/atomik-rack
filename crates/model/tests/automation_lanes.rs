@@ -35,6 +35,7 @@ fn set_static(device: &str, param: &str, value: Option<f32>) -> Command {
         device: key(device),
         param: param.into(),
         value,
+        merge: None,
     })
 }
 
@@ -353,4 +354,34 @@ fn a_version_35_file_refuses_the_new_lane_fields_and_36_refuses_bad_values() {
     // A note lane keeps its own muted field; an audio lane never had one.
     let ok = edit(&|_| {});
     assert!(load_project(&ok, &reg).is_ok());
+}
+
+#[test]
+fn a_drag_of_the_static_value_is_one_undo_step() {
+    let reg = registry();
+    let mut d = lead(&reg);
+    let drag = |value: f32, merge: Option<u64>| {
+        sc(SongCommand::SetLaneStatic {
+            device: key("lead"),
+            param: CUTOFF.into(),
+            value: Some(value),
+            merge,
+        })
+    };
+    let before = d.doc().clone();
+    d.apply(drag(100.0, Some(7)), &reg).unwrap();
+    d.apply(drag(300.0, Some(7)), &reg).unwrap();
+    d.apply(drag(700.0, Some(7)), &reg).unwrap();
+    d.end_merge();
+    let lane = |d: &Document| d.doc().song.track(&key("lead")).unwrap().lanes[1].static_value;
+    assert_eq!(lane(&d), Some(700.0));
+    d.undo().unwrap();
+    assert_eq!(*d.doc(), before, "one undo reverts the whole drag");
+    d.redo().unwrap();
+    assert_eq!(lane(&d), Some(700.0));
+    // Without a merge id every change is a step of its own.
+    d.apply(drag(800.0, None), &reg).unwrap();
+    d.apply(drag(900.0, None), &reg).unwrap();
+    d.undo().unwrap();
+    assert_eq!(lane(&d), Some(800.0));
 }

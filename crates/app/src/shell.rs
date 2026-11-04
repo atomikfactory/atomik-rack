@@ -814,6 +814,14 @@ impl<B: AudioBackend> Shell<B> {
             let roll = self.core.piano_roll_mut();
             roll.set_snap_to_scale(self.ui.piano_roll_snap_scale);
             roll.set_fold(self.ui.piano_roll_fold);
+            roll.set_snap(self.ui.piano_roll_snap);
+            roll.set_note_audition(self.ui.piano_roll_audition);
+            roll.set_snap_mode(self.ui.snap_mode);
+        }
+        {
+            let arrangement = self.core.arrangement_mut();
+            arrangement.set_snap(self.ui.arrangement_snap);
+            arrangement.set_snap_mode(self.ui.snap_mode);
         }
     }
 
@@ -4463,6 +4471,34 @@ impl<B: AudioBackend> Shell<B> {
         let roll = self.core.piano_roll();
         let (keys, snap_scale, fold) = (roll.key_height(), roll.snap_to_scale(), roll.fold());
         let audio_mode = self.core.audio_editor().mode();
+        let (arrangement_snap, roll_snap) = (self.core.arrangement().snap(), roll.snap());
+        // The two views share one mode: whichever changed last wins.
+        let (arr_mode, roll_mode) = (self.core.arrangement().snap_mode(), roll.snap_mode());
+        let snap_mode = if arr_mode != self.ui.snap_mode {
+            arr_mode
+        } else {
+            roll_mode
+        };
+        let audition = roll.note_audition_on();
+        if audition != self.ui.piano_roll_audition {
+            self.ui.piano_roll_audition = audition;
+            self.ui_changed();
+        }
+        if arr_mode != snap_mode {
+            self.core.arrangement_mut().set_snap_mode(snap_mode);
+        }
+        if roll_mode != snap_mode {
+            self.core.piano_roll_mut().set_snap_mode(snap_mode);
+        }
+        if arrangement_snap != self.ui.arrangement_snap
+            || roll_snap != self.ui.piano_roll_snap
+            || snap_mode != self.ui.snap_mode
+        {
+            self.ui.arrangement_snap = arrangement_snap;
+            self.ui.piano_roll_snap = roll_snap;
+            self.ui.snap_mode = snap_mode;
+            self.ui_changed();
+        }
         if (zoom - self.ui.track_zoom).abs() > f64::EPSILON
             || (keys - self.ui.piano_roll_key_height).abs() > f64::EPSILON
             || snap_scale != self.ui.piano_roll_snap_scale

@@ -522,6 +522,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .decline(),
+    cmd(
+        "editor.audition_toggle",
+        "Audition Notes",
+        G::Editor,
+        C::Editor,
+    ),
     cmd("editor.chop", "Chop Notes", G::Editor, C::Editor)
         .arg(CHOP_NOTE_ARGS)
         .decline(),
@@ -1629,6 +1635,20 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .menu()
+    .decline(),
+    cmd(
+        "sequencer.extend_to_next_clip",
+        "Extend to Next Clip",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.extend_to_previous_clip",
+        "Extend to Previous Clip",
+        G::Sequencer,
+        C::Sequencer,
+    )
     .decline(),
     cmd(
         "sequencer.extend_track_selection_down",

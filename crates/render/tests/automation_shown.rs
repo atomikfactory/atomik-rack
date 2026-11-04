@@ -125,6 +125,7 @@ fn a_static_lane_plays_its_value_around_a_clip_and_a_muted_lane_plays_nothing() 
             device: synth.clone(),
             param: "filter.cutoff".into(),
             value: Some(300.0),
+            merge: None,
         }),
     ] {
         d.apply(c.clone(), &registry)

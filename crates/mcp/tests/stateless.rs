@@ -1048,6 +1048,7 @@ fn project_inspect_lists_a_muted_automation_lane_and_its_static_value() {
             device: channel.clone(),
             param: "fader".into(),
             value: Some(0.5),
+            merge: None,
         },
     ] {
         d.apply(Command::Song(c), &reg).unwrap();

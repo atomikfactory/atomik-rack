@@ -381,6 +381,18 @@ pub enum WorkflowCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Extends every listed note or automation clip to the clip that follows it on its lane
+    /// (`next`: the end moves out to that clip's start, the content stays where it is) or to the
+    /// clip before it (the start moves back to that clip's end, like a trim to the left, the
+    /// content stays where it is in song time). A clip with no neighbour on that side, one that
+    /// already touches or overlaps it, and audio clips are left as they are; a command that
+    /// would change nothing rejects. One undo step.
+    ExtendClips {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// Extend to the next clip (else to the previous one).
+        next: bool,
+    },
     /// Removes what the listed note and automation clips do not play: notes that start outside
     /// the clip's content window (`[offset, offset + length)`, or the loop window of a looped
     /// clip) and automation or controller points outside it, keeping the nearest point on each
@@ -968,6 +980,9 @@ pub(crate) fn plan(
         WorkflowCommand::TrimClips {
             ids, start_delta, ..
         } => plain(trim_clips(doc, registry, &ids, start_delta)),
+        WorkflowCommand::ExtendClips { ids, next } => {
+            plain(extend_clips(doc, registry, &ids, next))
+        }
         WorkflowCommand::DeleteOutsideEvents { ids } => plain(delete_outside_events(doc, &ids)),
         WorkflowCommand::SplitClips { ids, at } => split_clips(doc, &ids, at),
         WorkflowCommand::CutOut {
@@ -2232,61 +2247,7 @@ fn trim_clips(
     }
     let mut edits = Vec::new();
     for (device, lane, c) in clips_in_song_order(doc, ids)? {
-        if c.content.is_audio() {
-            return Err(bad_song(format!(
-                "clip {} is an audio clip: trim it with its own handle",
-                c.id.0
-            )));
-        }
-        let start = c.start.saturating_add(delta);
-        let length = c.length.saturating_sub(delta);
-        let (offset, shift) = match c.loop_length {
-            Some(n) => ((c.offset + delta).rem_euclid(n), 0),
-            None if c.offset + delta < 0 => (0, -(c.offset + delta)),
-            None => (c.offset + delta, 0),
-        };
-        check_geometry(start, length, offset, c.loop_length).map_err(ModelError::OutOfRange)?;
-        let mut new = Clip {
-            start,
-            length,
-            offset,
-            ..c.clone()
-        };
-        if shift > 0 {
-            let desc = rules::descriptor(registry, &rules::device(doc, &device)?.type_id)?;
-            let kind = lane_kind(doc, &device, lane)?;
-            let moved = |p: &AutomationPoint| AutomationPoint {
-                tick: p.tick.saturating_add(shift),
-                ..*p
-            };
-            new.content = check_content(
-                doc,
-                match &c.content {
-                    ClipContent::Notes(notes) => ClipContent::Notes(
-                        notes
-                            .iter()
-                            .map(|n| Note {
-                                tick: n.tick.saturating_add(shift),
-                                ..*n
-                            })
-                            .collect(),
-                    ),
-                    ClipContent::Automation(points) => {
-                        ClipContent::Automation(points.iter().map(moved).collect())
-                    }
-                    audio @ ClipContent::Audio(_) => audio.clone(),
-                },
-                kind,
-                desc,
-            )?;
-            new.controllers = c
-                .controllers
-                .iter()
-                .map(|l| ControllerLane::new(l.kind, l.points.iter().map(moved).collect()))
-                .collect();
-            crate::controller::check_lanes(&new.controllers, crate::song::MAX_TICK)
-                .map_err(ModelError::OutOfRange)?;
-        }
+        let new = trimmed(doc, registry, (&device, lane), c, delta)?;
         edits.push(Edit::Clip {
             device,
             lane,
@@ -2295,6 +2256,143 @@ fn trim_clips(
         });
     }
     Ok(Edit::Compound(edits))
+}
+
+/// Plans `ExtendClips`: see the command docs.
+fn extend_clips(
+    doc: &RackDoc,
+    registry: &Registry,
+    ids: &[ClipId],
+    next: bool,
+) -> Result<Edit, ModelError> {
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips_in_song_order(doc, ids)? {
+        if c.content.is_audio() {
+            continue;
+        }
+        let Some(clips) = doc
+            .song
+            .track(&device)
+            .and_then(|t| t.lanes.get(lane))
+            .map(|l| &l.clips)
+        else {
+            continue;
+        };
+        let new = if next {
+            let Some(to) = clips
+                .iter()
+                .filter(|o| o.id != c.id && o.start >= c.end())
+                .map(|o| o.start)
+                .min()
+            else {
+                continue;
+            };
+            if to <= c.end() {
+                continue;
+            }
+            let length = to - c.start;
+            check_geometry(c.start, length, c.offset, c.loop_length)
+                .map_err(ModelError::OutOfRange)?;
+            Clip {
+                length,
+                ..c.clone()
+            }
+        } else {
+            let Some(to) = clips
+                .iter()
+                .filter(|o| o.id != c.id && o.end() <= c.start)
+                .map(Clip::end)
+                .max()
+            else {
+                continue;
+            };
+            if to >= c.start {
+                continue;
+            }
+            trimmed(doc, registry, (&device, lane), c, to - c.start)?
+        };
+        edits.push(Edit::Clip {
+            device,
+            lane,
+            old: Some(c.clone()),
+            new: Some(new),
+        });
+    }
+    if edits.is_empty() {
+        return Err(bad_song(if next {
+            "no selected note or automation clip has a gap before the next clip"
+        } else {
+            "no selected note or automation clip has a gap after the previous clip"
+        }));
+    }
+    Ok(Edit::Compound(edits))
+}
+
+/// The clip `c` of lane `lane` of `device` with its start moved by `delta` ticks and its end
+/// kept (see `TrimClips`).
+fn trimmed(
+    doc: &RackDoc,
+    registry: &Registry,
+    (device, lane): (&DeviceKey, usize),
+    c: &Clip,
+    delta: i64,
+) -> Result<Clip, ModelError> {
+    if c.content.is_audio() {
+        return Err(bad_song(format!(
+            "clip {} is an audio clip: trim it with its own handle",
+            c.id.0
+        )));
+    }
+    let start = c.start.saturating_add(delta);
+    let length = c.length.saturating_sub(delta);
+    let (offset, shift) = match c.loop_length {
+        Some(n) => ((c.offset + delta).rem_euclid(n), 0),
+        None if c.offset + delta < 0 => (0, -(c.offset + delta)),
+        None => (c.offset + delta, 0),
+    };
+    check_geometry(start, length, offset, c.loop_length).map_err(ModelError::OutOfRange)?;
+    let mut new = Clip {
+        start,
+        length,
+        offset,
+        ..c.clone()
+    };
+    if shift > 0 {
+        let desc = rules::descriptor(registry, &rules::device(doc, device)?.type_id)?;
+        let kind = lane_kind(doc, device, lane)?;
+        let moved = |p: &AutomationPoint| AutomationPoint {
+            tick: p.tick.saturating_add(shift),
+            ..*p
+        };
+        new.content = check_content(
+            doc,
+            match &c.content {
+                ClipContent::Notes(notes) => ClipContent::Notes(
+                    notes
+                        .iter()
+                        .map(|n| Note {
+                            tick: n.tick.saturating_add(shift),
+                            ..*n
+                        })
+                        .collect(),
+                ),
+                ClipContent::Automation(points) => {
+                    ClipContent::Automation(points.iter().map(moved).collect())
+                }
+                audio @ ClipContent::Audio(_) => audio.clone(),
+            },
+            kind,
+            desc,
+        )?;
+        new.controllers = c
+            .controllers
+            .iter()
+            .map(|l| ControllerLane::new(l.kind, l.points.iter().map(moved).collect()))
+            .collect();
+        crate::controller::check_lanes(&new.controllers, crate::song::MAX_TICK)
+            .map_err(ModelError::OutOfRange)?;
+    }
+    Ok(new)
 }
 
 /// The points of `points` (sorted by tick) that start inside `[lo, hi)`, with the last one

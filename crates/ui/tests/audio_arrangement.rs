@@ -1172,3 +1172,56 @@ fn a_track_that_records_a_strip_shows_it_and_going_back_to_an_input_clears_the_s
         ["rec_source=0", "in_2>in_l", "in_2>in_r"]
     );
 }
+
+#[test]
+fn trimming_the_start_of_one_selected_audio_clip_trims_every_selected_audio_clip() {
+    let (doc, reg) = (audio_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    v.set_selected_clips(&[ClipId(10), ClipId(11), ClipId(1)]);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let edge = Point::new(r.x0 + 2.0, r.center().y + 12.0);
+    // Half a bar later (48 px = 48000 frames).
+    let a = drag_to(
+        &mut v,
+        &doc,
+        &reg,
+        edge,
+        edge + atomik_ui::kurbo::Vec2::new(48.0, 0.0),
+    );
+    let cmds = audio_cmds(&a);
+    let last_of = |id: u64| {
+        cmds.iter()
+            .rev()
+            .find_map(|c| match c {
+                SongCommand::SetAudioClip {
+                    id: i,
+                    start,
+                    length,
+                    content,
+                    ..
+                } if i.0 == id => Some((*start, *length, content.source_offset, merge_of(c))),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no command for clip {id}"))
+    };
+    let (s10, l10, o10, m10) = last_of(10);
+    assert_eq!(
+        (s10, l10, o10),
+        (BAR + 30_720, 2 * BAR - 30_720, OFFSET_10 + 48_000)
+    );
+    let (s11, l11, o11, m11) = last_of(11);
+    assert_eq!(
+        (s11, l11, o11),
+        (4 * BAR + 30_720, 2 * BAR - 30_720, 24_000 + 48_000),
+        "the other audio clip trims by the same distance"
+    );
+    assert_eq!(m10, m11, "one undo step");
+    assert!(
+        song_commands(&a)
+            .iter()
+            .all(|c| !matches!(c, SongCommand::SetClipGeometry { .. })),
+        "the note clip is not touched"
+    );
+    assert_eq!(a.last(), Some(&UiAction::EndMerge));
+}
