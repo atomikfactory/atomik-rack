@@ -10,7 +10,8 @@ mod common;
 use atomik_core::PPQ;
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, DeviceKey, Document, Groove, GrooveSlot, Note,
-    QuantizeParams, RackDoc, SongCommand, StepResolution, empty_doc, load_project, save_project,
+    QuantizeParams, RackDoc, SongCommand, StepResolution, TrackGroove, empty_doc, load_project,
+    save_project,
 };
 use atomik_render::default_registry;
 use atomik_render::project::ProjectOptions;
@@ -297,4 +298,115 @@ fn undo_of_a_quantize_brings_the_original_bounce_back() {
     assert!(bounce(d.doc()) != loose_bounce);
     d.undo().unwrap();
     assert!(bounce(d.doc()) == loose_bounce);
+}
+
+// ---- live groove: a groove named on the track, applied when the song is flattened ----
+
+/// Late and soft odd 1/16 slots: the same template as a baked groove would use.
+fn late_odds() -> Groove {
+    Groove {
+        name: "Late odds".into(),
+        step: StepResolution::Sixteenth,
+        slots: vec![
+            GrooveSlot::STRAIGHT,
+            GrooveSlot {
+                offset: 0.25,
+                velocity: 0.5,
+            },
+        ],
+    }
+}
+
+fn live_groove(d: &mut Document, groove: Option<TrackGroove>) {
+    apply(
+        d,
+        song(SongCommand::SetTrackGroove {
+            device: DeviceKey("synth".into()),
+            groove,
+        }),
+    );
+}
+
+fn on_track(strength: u8) -> Option<TrackGroove> {
+    Some(TrackGroove {
+        name: "Late odds".into(),
+        strength,
+    })
+}
+
+#[test]
+fn a_live_groove_changes_the_bounce_and_removing_it_restores_the_original_bytes() {
+    let mut d = synth_doc(loose(0));
+    apply(&mut d, song(SongCommand::SetGroove(late_odds())));
+    let original = bounce(d.doc());
+    live_groove(&mut d, on_track(100));
+    let grooved = bounce(d.doc());
+    assert!(grooved != original, "the live groove changed the sound");
+    live_groove(&mut d, None);
+    assert!(
+        bounce(d.doc()) == original,
+        "removing it gives the same bytes"
+    );
+    // Strength 0 is the same as no groove, to the bit.
+    live_groove(&mut d, on_track(0));
+    assert!(bounce(d.doc()) == original);
+}
+
+#[test]
+fn a_live_groove_bounces_exactly_like_notes_written_at_the_moved_ticks() {
+    let mut d = synth_doc(loose(0));
+    apply(&mut d, song(SongCommand::SetGroove(late_odds())));
+    live_groove(&mut d, on_track(100));
+    // A quarter of a 1/16 step later on the odd steps, at half velocity.
+    let by_hand = synth_doc(
+        (0..8)
+            .map(|i| {
+                let (late, v) = if i % 2 == 1 { (S / 4, 0.45) } else { (0, 0.9) };
+                Note::new(i * S + late, S / 2, 60, v)
+            })
+            .collect(),
+    );
+    assert!(bounce(d.doc()) == bounce(by_hand.doc()));
+    // The onsets are where the closed form puts them.
+    let mut plain = synth_doc(loose(0));
+    apply(&mut plain, song(SongCommand::SetGroove(late_odds())));
+    let before = onsets(&bounce(plain.doc()), 32, 0.01);
+    let after = onsets(&bounce(d.doc()), 32, 0.01);
+    assert_eq!((before.len(), after.len()), (8, 8));
+    let delay = (S as f64 / 4.0).round() * FRAMES_PER_TICK;
+    for i in 0..8 {
+        let want = if i % 2 == 1 { delay } else { 0.0 };
+        let got = after[i] as f64 - before[i] as f64;
+        assert!((got - want).abs() <= 33.0, "note {i}: {got} against {want}");
+    }
+}
+
+#[test]
+fn editing_the_template_re_times_the_bounce_without_touching_the_notes() {
+    let mut d = synth_doc(loose(0));
+    apply(&mut d, song(SongCommand::SetGroove(late_odds())));
+    live_groove(&mut d, on_track(100));
+    let first = bounce(d.doc());
+    let stored = notes_of(&d);
+    let mut later = late_odds();
+    later.slots[1].offset = 0.5;
+    apply(&mut d, song(SongCommand::SetGroove(later)));
+    assert!(bounce(d.doc()) != first, "a new template, a new bounce");
+    assert_eq!(notes_of(&d), stored, "the stored notes are as they were");
+}
+
+#[test]
+fn a_live_groove_bounces_the_same_at_any_block_and_worker_count_and_after_a_save() {
+    let mut d = synth_doc(loose(0));
+    apply(&mut d, song(SongCommand::SetGroove(late_odds())));
+    live_groove(&mut d, on_track(70));
+    let first = bounce_with(d.doc(), 512, 0);
+    for (block, workers) in [(64, 0), (333, 2), (1024, 4)] {
+        assert!(
+            bounce_with(d.doc(), block, workers) == first,
+            "{block}/{workers}"
+        );
+    }
+    let loaded = load_project(&save_project(d.doc()), &default_registry()).unwrap();
+    assert!(bounce(&loaded) == first, "a save and load keeps the sound");
 }

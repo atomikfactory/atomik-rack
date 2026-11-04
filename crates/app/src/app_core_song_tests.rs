@@ -2558,3 +2558,95 @@ fn alt_dragging_the_end_edge_of_a_one_bar_note_clip_doubles_it_and_one_undo_undo
     let clip = only_clip(&c);
     assert_eq!((clip.start, clip.length), (BAR, BAR));
 }
+
+// ---- live groove ----------------------------------------------------------------------------
+
+fn note_ticks(calls: &[SinkCall]) -> Vec<i64> {
+    let input = songs(calls)
+        .into_iter()
+        .next_back()
+        .expect("a song was submitted");
+    let mut ticks: Vec<i64> = input.tracks[0].notes.iter().map(|n| n.tick.0).collect();
+    ticks.sort_unstable();
+    ticks
+}
+
+/// A groove on the track reaches the engine as moved notes, the notes in the document stay, and
+/// switching it off sends the original song again.
+#[test]
+fn a_live_groove_reaches_the_engine_without_changing_the_notes() {
+    let step = PPQ / 4;
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 50), (step, 52)]),
+        }),
+    );
+    let stored = c.doc().song.tracks[0].lanes[0].clips[0].content.clone();
+    let groove = |strength| {
+        song(SongCommand::SetTrackGroove {
+            device: key("a"),
+            groove: Some(atomik_model::TrackGroove {
+                name: "Swing 66%".into(),
+                strength,
+            }),
+        })
+    };
+    let calls = apply(&mut c, groove(100));
+    let moved = note_ticks(&calls);
+    assert_eq!(moved[0], 0);
+    assert!(moved[1] > step, "the odd step plays late: {moved:?}");
+    assert_eq!(c.doc().song.tracks[0].lanes[0].clips[0].content, stored);
+    let calls = apply(
+        &mut c,
+        song(SongCommand::SetTrackGroove {
+            device: key("a"),
+            groove: None,
+        }),
+    );
+    assert_eq!(note_ticks(&calls), [0, step]);
+    // An undo of the removal brings the groove back and the engine hears it.
+    assert!(c.undo());
+    assert_eq!(note_ticks(&c.sink_mut().take()), moved);
+}
+
+/// The MIDI file of a track has the groove in it, like the engine does.
+#[test]
+fn a_live_groove_is_in_the_exported_midi_notes() {
+    let step = PPQ / 4;
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(step, 52)]),
+        }),
+    );
+    apply(
+        &mut c,
+        song(SongCommand::SetTrackGroove {
+            device: key("a"),
+            groove: Some(atomik_model::TrackGroove {
+                name: "Swing 66%".into(),
+                strength: 100,
+            }),
+        }),
+    );
+    let doc = c.doc();
+    let bytes = crate::midi_file::track_file(&doc.song, &doc.song.tracks[0], "a");
+    let file = atomik_midi_io::smf::read(&bytes).expect("a valid file");
+    let on = file
+        .tracks
+        .iter()
+        .flat_map(|t| &t.events)
+        .find(|e| matches!(e.message, atomik_midi_io::smf::SmfMessage::NoteOn { .. }))
+        .expect("a note on");
+    let grooved = atomik_model::song::flatten_track_notes(&doc.song, &doc.song.tracks[0]);
+    assert!(grooved[0].0 > step);
+    // The file counts in the same ticks as the model (15 360 per quarter note).
+    assert_eq!(on.tick as i64, grooved[0].0);
+}
