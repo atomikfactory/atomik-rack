@@ -580,6 +580,43 @@ pub(crate) fn plan_freeze(
     if track.frozen.is_some() {
         return Err(bad(format!("{device} is already frozen")));
     }
+    check_frozen(doc, registry, device, &frozen)?;
+    Ok(Edit::Frozen {
+        device: device.clone(),
+        old: None,
+        new: Some(frozen),
+    })
+}
+
+/// Plans `RefreezeTrack`: the frozen render of `device` is replaced by `frozen` in one step (the
+/// track stays frozen, so its devices keep their places in the engine).
+pub(crate) fn plan_refreeze(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    frozen: Frozen,
+) -> Result<Edit, ModelError> {
+    let index = track_index(doc, device)?;
+    let old = doc.song.tracks[index]
+        .frozen
+        .clone()
+        .ok_or_else(|| bad(format!("{device} is not frozen")))?;
+    check_frozen(doc, registry, device, &frozen)?;
+    Ok(Edit::Frozen {
+        device: device.clone(),
+        old: Some(old),
+        new: Some(frozen),
+    })
+}
+
+/// What a render must satisfy to freeze `device`: its effects are the first of the channel's
+/// insert chain, its place is valid and its audio is plain audio of the pool.
+fn check_frozen(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    frozen: &Frozen,
+) -> Result<(), ModelError> {
     let chain = track_chain(doc, registry, device).map_err(bad)?;
     let n = frozen.effects.len();
     if n > chain.effects.len() || chain.effects[..n] != frozen.effects[..] {
@@ -593,11 +630,7 @@ pub(crate) fn plan_freeze(
     if frozen.audio.reverse || frozen.audio.warp.active() {
         return Err(bad("a frozen render is plain audio: no reverse, no warp"));
     }
-    Ok(Edit::Frozen {
-        device: device.clone(),
-        old: None,
-        new: Some(frozen),
-    })
+    Ok(())
 }
 
 /// Plans `UnfreezeTrack` (without keeping the audio; see `SongCommand::UnfreezeTrack`).
