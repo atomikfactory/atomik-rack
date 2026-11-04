@@ -267,3 +267,115 @@ fn a_committed_trial_is_trimmed_like_any_step() {
     d.commit_trial();
     assert_eq!(d.undo_depth(), 3);
 }
+
+/// The notes of the only clip of `d`.
+fn only_notes(d: &Document) -> Vec<Note> {
+    let id = clip_ids(d.doc())[0];
+    match &d.doc().song.clip(id).unwrap().2.content {
+        ClipContent::Notes(n) => n.to_vec(),
+        _ => panic!("a note clip"),
+    }
+}
+
+#[test]
+fn an_edit_of_a_few_notes_of_a_very_large_clip_keeps_only_those_notes_in_the_history() {
+    let reg = registry();
+    let mut d = Document::new(empty_doc());
+    d.apply(add(0, SYNTH, Some("lead")), &reg).unwrap();
+    d.apply(
+        sc(SongCommand::AddTrack {
+            device: key("lead"),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let base: Vec<Note> = (0..50_000)
+        .map(|n| note(n * 10, 5, (n % 100) as u8 + 20, 0.5))
+        .collect();
+    d.apply(
+        add_clip("lead", 0, notes_clip(0, 600_000, base.clone())),
+        &reg,
+    )
+    .unwrap();
+    let id = clip_ids(d.doc())[0];
+    // A megabyte of history: a whole 50 000-note list is some 1.6 MB, so a step that stores
+    // the list twice would leave room for one step; a sparse step is a few hundred bytes.
+    d.set_undo_limits(MAX_UNDO_STEPS, 1 << 20);
+    let mut now = base.clone();
+    for step in 0..40usize {
+        for i in 0..5 {
+            now[1000 * i + step].velocity = 0.6 + step as f32 / 100.0;
+        }
+        d.apply(
+            sc(SongCommand::SetClipContent {
+                id,
+                content: ClipContent::Notes(now.clone().into()),
+                merge: None,
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(only_notes(&d), now);
+    assert!(
+        d.undo_depth() >= 40,
+        "{} steps kept of 41: the edits are sparse",
+        d.undo_depth()
+    );
+    // Undo and redo walk the notes exactly.
+    let mut before = now.clone();
+    for step in (0..40usize).rev() {
+        for i in 0..5 {
+            before[1000 * i + step] = base[1000 * i + step];
+        }
+        assert!(d.undo().is_some());
+        assert_eq!(only_notes(&d), before, "undo of step {step}");
+    }
+    for _ in 0..40 {
+        assert!(d.redo().is_some());
+    }
+    assert_eq!(only_notes(&d), now);
+}
+
+#[test]
+fn a_content_change_that_reorders_or_resizes_the_list_still_undoes() {
+    let reg = registry();
+    let mut d = Document::new(empty_doc());
+    d.apply(add(0, SYNTH, Some("lead")), &reg).unwrap();
+    d.apply(
+        sc(SongCommand::AddTrack {
+            device: key("lead"),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let base: Vec<Note> = (0..3000).map(|n| note(n * 10, 5, 60, 0.5)).collect();
+    d.apply(
+        add_clip("lead", 0, notes_clip(0, 40_000, base.clone())),
+        &reg,
+    )
+    .unwrap();
+    let id = clip_ids(d.doc())[0];
+    let mut longer = base.clone();
+    longer.push(note(31_000, 5, 61, 0.5));
+    let mut moved = longer.clone();
+    for n in moved.iter_mut().take(1000) {
+        n.key = 62;
+    }
+    for content in [longer.clone(), moved.clone()] {
+        d.apply(
+            sc(SongCommand::SetClipContent {
+                id,
+                content: ClipContent::Notes(content.into()),
+                merge: None,
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(only_notes(&d), moved);
+    d.undo().unwrap();
+    assert_eq!(only_notes(&d), longer);
+    d.undo().unwrap();
+    assert_eq!(only_notes(&d), base);
+}

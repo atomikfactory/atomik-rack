@@ -12,7 +12,9 @@ use crate::macros::MacroSet;
 use crate::midi_map::MidiMapping;
 use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
-use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
+use crate::song::{
+    Clip, ClipContent, ClipId, Lane, Marker, MeterEvent, Note, RangeMarker, TempoEvent, Track,
+};
 use crate::steps::StepSeqDoc;
 use crate::takes::TakeGroup;
 use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
@@ -114,6 +116,16 @@ pub(crate) enum Edit {
         lane: usize,
         old: Option<Clip>,
         new: Option<Clip>,
+    },
+    /// A few notes of a big note clip replaced in place, the list keeping its length and order
+    /// (see `SONG_SPARSE_NOTES`): `old` and `new` hold the changed positions with the note
+    /// there before and after. The step costs the notes it changes, not the whole list.
+    Notes {
+        device: DeviceKey,
+        lane: usize,
+        clip: ClipId,
+        old: Vec<(usize, Note)>,
+        new: Vec<(usize, Note)>,
     },
     /// A lane's whole take group list.
     TakeGroups {
@@ -420,10 +432,12 @@ impl Edit {
                 continue;
             };
             // The latest earlier edit that touches this clip, when it left the clip on this lane.
+            // (A sparse note edit of the clip is a barrier: it is undone before the earlier edit.)
             let at = parts.iter().rposition(|p| match p {
                 Edit::Clip { old: o, new: n, .. } => {
                     [o, n].into_iter().flatten().any(|c| c.id == old.id)
                 }
+                Edit::Notes { clip, .. } => *clip == old.id,
                 _ => false,
             });
             match at.map(|i| (i, &mut parts[i])) {
@@ -611,6 +625,19 @@ impl Edit {
             } => Edit::Clip {
                 device,
                 lane,
+                old: new,
+                new: old,
+            },
+            Edit::Notes {
+                device,
+                lane,
+                clip,
+                old,
+                new,
+            } => Edit::Notes {
+                device,
+                lane,
+                clip,
                 old: new,
                 new: old,
             },
@@ -1002,6 +1029,34 @@ impl Edit {
                 if let Some(new) = new {
                     let at = clips.partition_point(|c| (c.start, c.id) < (new.start, new.id));
                     clips.insert(at, new.clone());
+                }
+                vec![SyncOp::SongChanged]
+            }
+            Edit::Notes {
+                device,
+                lane,
+                clip,
+                old,
+                new,
+            } => {
+                let Some(c) = lane_mut(doc, device, *lane)?
+                    .clips
+                    .iter_mut()
+                    .find(|c| c.id == *clip)
+                else {
+                    return fail("the clip is not on the lane");
+                };
+                let ClipContent::Notes(list) = &mut c.content else {
+                    return fail("the clip holds no notes");
+                };
+                let held = old.iter().all(|(i, n)| list.get(*i) == Some(n));
+                if !held || new.iter().any(|(i, _)| *i >= list.len()) {
+                    return fail("the notes are not the ones the edit changes");
+                }
+                // The first write through a list that is shared (the views hold copies) copies it.
+                let notes: &mut Vec<Note> = list;
+                for (i, n) in new {
+                    notes[*i] = *n;
                 }
                 vec![SyncOp::SongChanged]
             }
