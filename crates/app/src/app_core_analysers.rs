@@ -33,7 +33,9 @@ use crate::sink::EngineSink;
 use atomik_device_sdk::DeviceDescriptor;
 use atomik_devices::phase_meter::value;
 use atomik_devices::spectrum::{CHANNEL_NAMES, SIZES, TILT_DB_PER_OCT};
-use atomik_dsp::spectrum::{ChannelMode, Settings, Spectrum, WindowKind, band_centres};
+use atomik_dsp::spectrum::{
+    ChannelMode, Settings, Smoothing, Spectrum, Weighting, WindowKind, band_centres,
+};
 use atomik_model::{DeviceKey, ExpandedRack, RackDevice};
 use atomik_ui::analyser::{AnalyserData, SCOPE_READ_FRAMES, TRACE_COLUMNS};
 use atomik_ui::fx::FxKind;
@@ -79,11 +81,23 @@ pub fn spectrum_settings(desc: &DeviceDescriptor, dev: &RackDevice) -> Settings 
             3 => ChannelMode::Side,
             _ => ChannelMode::Sum,
         },
-        bands: choice("mode", 1) == 1,
+        // Mode 2, the spectrogram, shows the fine trace as an image.
+        bands: choice("mode", 2) == 1,
         averaging_ms: param(desc, dev, "averaging"),
         hold_ms: param(desc, dev, "hold"),
         decay_db_per_s: param(desc, dev, "decay"),
         tilt_db_per_oct: TILT_DB_PER_OCT[choice("tilt", TILT_DB_PER_OCT.len() - 1)],
+        smoothing: match choice("smoothing", 3) {
+            1 => Smoothing::Twelfth,
+            2 => Smoothing::Sixth,
+            3 => Smoothing::Third,
+            _ => Smoothing::Off,
+        },
+        weighting: if choice("weighting", 1) == 1 {
+            Weighting::K
+        } else {
+            Weighting::Flat
+        },
     }
 }
 

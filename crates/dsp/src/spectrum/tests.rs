@@ -20,6 +20,8 @@ fn settings(size: usize, window: WindowKind) -> Settings {
         hold_ms: 0.0,
         decay_db_per_s: 15.0,
         tilt_db_per_oct: 0.0,
+        smoothing: Smoothing::Off,
+        weighting: Weighting::Flat,
     }
 }
 
@@ -424,4 +426,165 @@ fn a_change_of_settings_starts_over_and_the_result_is_deterministic() {
     assert_eq!(a.peaks().len(), 60);
     a.reset();
     assert!(a.trace().is_empty());
+}
+
+#[test]
+fn the_largest_transform_reads_a_tone_at_its_own_power() {
+    assert_eq!(MAX_SIZE, 16_384);
+    let size = 16_384;
+    let x = sine(1000.0, 48_000.0, size, 0.5);
+    let silent = vec![0.0; size];
+    let mut sp = Spectrum::new();
+    let s = settings(size, WindowKind::Hann);
+    sp.update(&x, &silent, 0, 48_000.0, &s, 400);
+    assert_eq!(Analyser::new(1 << 20, WindowKind::Hann).size(), MAX_SIZE);
+    // The tone sits near a bin (bin width 2.9 Hz): its level is within the scalloping loss.
+    assert!(near(sp.peak_db(), -6.02, 1.5), "{}", sp.peak_db());
+    assert!(near(sp.peak_hz(), 1000.0, 3.0), "{}", sp.peak_hz());
+}
+
+#[test]
+fn smoothing_flattens_the_ragged_noise_floor_and_keeps_a_wide_level() {
+    let size = 16_384;
+    let silent = vec![0.0; size];
+    let x = noise(11, size, 0.5);
+    let ragged = Settings {
+        ..settings(size, WindowKind::Hann)
+    };
+    let mut a = Spectrum::new();
+    a.update(&x, &silent, 0, 48_000.0, &ragged, 240);
+    let smooth = Settings {
+        smoothing: Smoothing::Third,
+        ..ragged
+    };
+    let mut b = Spectrum::new();
+    b.update(&x, &silent, 0, 48_000.0, &smooth, 240);
+    // The spread of the trace between 1 kHz and 10 kHz (columns on a log axis).
+    let spread = |t: &[f32]| {
+        let lo = t.len() * 5 / 8;
+        let hi = t.len() * 7 / 8;
+        let m = t[lo..hi].iter().sum::<f32>() / (hi - lo) as f32;
+        (t[lo..hi].iter().map(|v| (v - m) * (v - m)).sum::<f32>() / (hi - lo) as f32).sqrt()
+    };
+    assert!(spread(b.trace()) < 0.5 * spread(a.trace()));
+    // The mean level stays within a dB or two (the average of power is above the mean of dB).
+    let mean = |t: &[f32]| t.iter().sum::<f32>() / t.len() as f32;
+    assert!((mean(a.trace()) - mean(b.trace())).abs() < 3.0);
+}
+
+#[test]
+fn smoothing_does_not_touch_the_peak_readout_or_the_bands() {
+    let size = 8192;
+    let silent = vec![0.0; size];
+    let x = sine(2000.0, 48_000.0, size, 0.5);
+    let off = settings(size, WindowKind::Hann);
+    let on = Settings {
+        smoothing: Smoothing::Third,
+        ..off
+    };
+    let mut a = Spectrum::new();
+    let mut b = Spectrum::new();
+    a.update(&x, &silent, 0, 48_000.0, &off, 240);
+    b.update(&x, &silent, 0, 48_000.0, &on, 240);
+    assert_eq!(a.peak_db().to_bits(), b.peak_db().to_bits());
+    assert_eq!(a.peak_hz().to_bits(), b.peak_hz().to_bits());
+    // The peak of the fine trace is lower: its energy is spread over a third of an octave.
+    let top = |t: &[f32]| t.iter().copied().fold(FLOOR_DB, f32::max);
+    assert!(top(b.trace()) < top(a.trace()) - 10.0);
+    let bands = Settings { bands: true, ..off };
+    let bands_smooth = Settings { bands: true, ..on };
+    let (mut c, mut d) = (Spectrum::new(), Spectrum::new());
+    c.update(&x, &silent, 0, 48_000.0, &bands, 240);
+    d.update(&x, &silent, 0, 48_000.0, &bands_smooth, 240);
+    assert_eq!(c.trace(), d.trace());
+}
+
+#[test]
+fn the_k_weighting_lifts_the_top_and_cuts_the_bottom() {
+    let size = 8192;
+    let silent = vec![0.0; size];
+    let flat = settings(size, WindowKind::Hann);
+    let k = Settings {
+        weighting: Weighting::K,
+        ..flat
+    };
+    let level = |hz: f64, s: &Settings| {
+        let x = sine(hz, 48_000.0, size, 0.5);
+        let mut sp = Spectrum::new();
+        sp.update(&x, &silent, 0, 48_000.0, s, 240);
+        sp.peak_db()
+    };
+    let diff = |hz: f64| level(hz, &k) - level(hz, &flat);
+    let expected = |hz: f64| crate::k_weighting::k_weighting_db(hz, 48_000.0) as f32;
+    for hz in [50.0, 1000.0, 4000.0, 12_000.0] {
+        assert!(near(diff(hz), expected(hz), 0.3), "{hz}: {}", diff(hz));
+    }
+    assert!(diff(4000.0) > 2.0 && diff(50.0) < -2.0);
+    // The bands carry it too.
+    let kb = Settings { bands: true, ..k };
+    let fb = Settings {
+        bands: true,
+        ..flat
+    };
+    let x = sine(8000.0, 48_000.0, size, 0.5);
+    let (mut a, mut b) = (Spectrum::new(), Spectrum::new());
+    a.update(&x, &silent, 0, 48_000.0, &kb, 240);
+    b.update(&x, &silent, 0, 48_000.0, &fb, 240);
+    let i = band_centres()
+        .iter()
+        .position(|c| (c - 8000.0).abs() < 100.0)
+        .unwrap();
+    assert!(near(a.trace()[i] - b.trace()[i], expected(8000.0), 0.4));
+}
+
+#[test]
+fn band_levels_are_the_bands_of_the_average_without_tilt() {
+    let size = 8192;
+    let silent = vec![0.0; size];
+    let x = sine(1000.0, 48_000.0, size, 0.5);
+    let tilted = Settings {
+        bands: true,
+        tilt_db_per_oct: 4.5,
+        ..settings(size, WindowKind::Hann)
+    };
+    let flat = Settings {
+        tilt_db_per_oct: 0.0,
+        ..tilted
+    };
+    let mut a = Spectrum::new();
+    assert!(a.band_levels().iter().all(|v| *v == FLOOR_DB));
+    a.update(&x, &silent, 0, 48_000.0, &tilted, 240);
+    let mut b = Spectrum::new();
+    b.update(&x, &silent, 0, 48_000.0, &flat, 240);
+    assert_eq!(a.band_levels(), b.trace()[..]);
+    assert_ne!(a.trace(), b.trace());
+}
+
+#[test]
+fn a_reference_curve_follows_the_stored_bands_the_level_and_the_tilt() {
+    let stored: [f32; BAND_COUNT] = std::array::from_fn(|i| -40.0 - i as f32);
+    let now: [f32; BAND_COUNT] = std::array::from_fn(|i| -30.0 - i as f32);
+    let plain = reference_curve(&stored, &now, false, 0.0);
+    assert_eq!(plain, stored);
+    let matched = reference_curve(&stored, &now, true, 0.0);
+    for (m, n) in matched.iter().zip(&now) {
+        assert!(near(*m, *n, 1e-3));
+    }
+    let tilted = reference_curve(&stored, &now, false, 3.0);
+    // 1 kHz is band 17: no tilt there; an octave above (2 kHz is 3 bands up) it is 3 dB higher.
+    assert!(near(tilted[17], stored[17], 0.01));
+    assert!(near(tilted[20] - stored[20], 3.0, 0.1));
+    // A silent stored band stays silent and does not shift the match.
+    let mut gappy = stored;
+    gappy[3] = FLOOR_DB;
+    let m = reference_curve(&gappy, &now, true, 2.0);
+    assert_eq!(m[3], FLOOR_DB);
+    assert!(near(
+        m[10] - 2.0 * (band_centres()[10] / 1000.0).log2(),
+        now[10],
+        1e-3
+    ));
+    // Nothing to match against: unshifted.
+    let silent = [FLOOR_DB; BAND_COUNT];
+    assert_eq!(reference_curve(&stored, &silent, true, 0.0), stored);
 }

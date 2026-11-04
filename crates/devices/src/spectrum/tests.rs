@@ -54,6 +54,10 @@ fn descriptor_validates_and_follows_the_effect_conventions() {
             "decay",
             "range",
             "tilt",
+            "smoothing",
+            "weighting",
+            "reference",
+            "reference.capture",
             "bypass",
         ],
         &["in_l", "in_r", "out_l", "out_r"],
@@ -61,6 +65,23 @@ fn descriptor_validates_and_follows_the_effect_conventions() {
     assert_eq!(DESCRIPTOR.type_id, "atomik.spectrum");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
     assert_eq!(SIZES.len(), SIZE_NAMES.len());
+    assert_eq!(SIZES[SIZES.len() - 1], 16_384);
+    let size_max = DESCRIPTOR.param_by_key("size").unwrap().max as usize;
+    assert_eq!(size_max, SIZES.len() - 1);
+    assert_eq!(
+        DESCRIPTOR.param_by_key("mode").unwrap().max as usize,
+        MODE_NAMES.len() - 1
+    );
+    assert_eq!(MODE_NAMES[2], "Spectrogram");
+    for (key, names) in [
+        ("smoothing", SMOOTHING_NAMES.len()),
+        ("weighting", WEIGHTING_NAMES.len()),
+        ("reference", REFERENCE_NAMES.len()),
+    ] {
+        let p = DESCRIPTOR.param_by_key(key).unwrap();
+        assert_eq!(p.max as usize, names - 1, "{key}");
+        assert_eq!(p.default, 0.0, "{key}");
+    }
     let size = DESCRIPTOR.param_by_key("size").unwrap();
     assert_eq!(SIZES[size.default as usize], 4096);
     assert_eq!(

@@ -19,6 +19,11 @@
 //!   in dBTP, from the same code as `atomik.mastering` (`mastering::loudness`). A 1 kHz sine at
 //!   -23 dBFS peak in both channels reads about -23 LUFS. Off, the loudness and the true peak read
 //!   -120 and cost nothing.
+//! * **History.** With `loudness_view` on History the panel draws the short-term loudness of the
+//!   last ten minutes, one value a second, with the loudness range (LRA, EBU Tech 3342) of the
+//!   programme since the last reset and a line at `target` (LUFS). Both settings are display
+//!   settings: the device stores them and does not use them; the UI keeps the history from the
+//!   published short-term values.
 //! * **`meter.reset`** is a momentary toggle like the mastering meter's: a rising edge clears the
 //!   integrated loudness, the loudness windows, the peak maxima and the holds (as does `reset()`).
 //! * **Scope.** Every batch goes into the device's [`ScopeTap`]; the UI draws the goniometer
@@ -47,6 +52,8 @@ pub const PHASE_METERS: usize = 16;
 pub const HOLD_NAMES: [&str; 5] = ["Off", "1 s", "3 s", "10 s", "Infinite"];
 /// Names of the `scope` choice.
 pub const SCOPE_NAMES: [&str; 2] = ["M/S", "L/R"];
+/// Names of the `loudness_view` choice: the numbers, or the history graph with the range.
+pub const LOUDNESS_VIEW_NAMES: [&str; 2] = ["Readouts", "History"];
 
 /// Hold time in seconds of each `hold` choice (`None`: until reset).
 const HOLD_SECONDS: [Option<f32>; 5] = [Some(0.0), Some(1.0), Some(3.0), Some(10.0), None];
@@ -57,6 +64,8 @@ const P_SCOPE: u32 = 2;
 const P_SCOPE_GAIN: u32 = 3;
 const P_LOUDNESS: u32 = 4;
 const P_RESET: u32 = 5;
+const P_LOUDNESS_VIEW: u32 = 6;
+const P_TARGET: u32 = 7;
 
 /// The index of each published value (see the module docs).
 pub mod value {
@@ -117,7 +126,7 @@ const fn param(
     }
 }
 
-static PARAMS: [ParamDescriptor; 7] = [
+static PARAMS: [ParamDescriptor; 9] = [
     param(
         P_CORR_TIME,
         "corr_time",
@@ -172,7 +181,25 @@ static PARAMS: [ParamDescriptor; 7] = [
         Unit::Toggle,
         true,
     ),
-    bypass_param(6),
+    param(
+        P_LOUDNESS_VIEW,
+        "loudness_view",
+        "Loudness view",
+        (0.0, 1.0, 0.0),
+        Taper::Linear,
+        Unit::Choice(&LOUDNESS_VIEW_NAMES),
+        true,
+    ),
+    param(
+        P_TARGET,
+        "target",
+        "Target loudness (LUFS)",
+        (-36.0, -6.0, -14.0),
+        Taper::Linear,
+        Unit::None,
+        false,
+    ),
+    bypass_param(8),
 ];
 
 const IN_L: SocketId = SocketId(0);

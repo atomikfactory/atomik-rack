@@ -31,12 +31,22 @@
 //! * **Peak hold.** Each column keeps its highest value for [`Settings::hold_ms`] and then falls
 //!   by [`Settings::decay_db_per_s`] until it meets the trace; a hold of 0 turns it off (the
 //!   peaks equal the trace).
+//! * **Smoothing** ([`Smoothing`]): the fine trace can average the power across neighbouring bins
+//!   over a fraction of an octave (1/12, 1/6 or 1/3) before it is mapped to columns, so the
+//!   ragged bass of a large transform reads as a smooth curve. The width grows with the frequency
+//!   (a constant-Q window); the bands and the peak readout are never smoothed.
+//! * **Weighting** ([`Weighting`]): the K-weighting of BS.1770 ([`crate::k_weighting`]) multiplies
+//!   the power of every bin, so the trace shows what the loudness meter hears. It applies to the
+//!   trace, the bands, the peaks and the readout alike.
+//! * **Band levels** ([`Spectrum::band_levels`]): the 31 band levels of the current average
+//!   without the tilt, what a reference curve stores.
 //! * **Peak readout** ([`Spectrum::peak_hz`], [`Spectrum::peak_db`]): the loudest bin between 20
 //!   Hz and 20 kHz of the averaged spectrum, refined by a parabola through the dB values of its
 //!   neighbours, so the frequency is good to a small fraction of a bin and the level to the
 //!   scalloping of the window.
 
 use crate::det_trig::cos_cycles;
+use crate::k_weighting::k_weighting_power;
 use crate::stretch::fft::Fft;
 use crate::{exp2_det_f64, log2_det};
 
@@ -47,7 +57,7 @@ pub const DISPLAY_HI_HZ: f32 = 20_000.0;
 /// Smallest analysis size.
 pub const MIN_SIZE: usize = 256;
 /// Largest analysis size (the scope tap holds twice as many frames).
-pub const MAX_SIZE: usize = 8192;
+pub const MAX_SIZE: usize = 16_384;
 /// Number of one-third-octave bands from 20 Hz to 20 kHz.
 pub const BAND_COUNT: usize = 31;
 /// A power below this reads as silence (dB).
@@ -61,6 +71,44 @@ pub enum WindowKind {
     Hann,
     /// Four-term Blackman-Harris (minimum side lobe): wide main lobe, over 90 dB of range.
     BlackmanHarris,
+}
+
+/// Smoothing of the fine trace across neighbouring bins, as a fraction of an octave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Smoothing {
+    /// No smoothing: the bins as they are. The default.
+    #[default]
+    Off,
+    /// A twelfth of an octave.
+    Twelfth,
+    /// A sixth of an octave.
+    Sixth,
+    /// A third of an octave.
+    Third,
+}
+
+impl Smoothing {
+    /// The ratio between the upper edge of the averaging window and its centre frequency: half
+    /// the fraction of an octave on either side (`2^(1/24)` for a twelfth). `None` for off.
+    fn half_ratio(self) -> Option<f64> {
+        let octaves = match self {
+            Smoothing::Off => return None,
+            Smoothing::Twelfth => 1.0 / 12.0,
+            Smoothing::Sixth => 1.0 / 6.0,
+            Smoothing::Third => 1.0 / 3.0,
+        };
+        Some(exp2_det_f64(0.5 * octaves))
+    }
+}
+
+/// A frequency weighting applied to the spectrum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Weighting {
+    /// None. The default.
+    #[default]
+    Flat,
+    /// The K-weighting of BS.1770-4 (high-pass at the bottom, a shelf of about 4 dB at the top).
+    K,
 }
 
 /// What the analyser listens to.
@@ -227,6 +275,47 @@ impl Analyser {
     }
 }
 
+/// The level in dB of band `i` of an averaged power spectrum with the bin spacing `df`: the sum
+/// of the bin power inside the band edges (a bin that straddles an edge counts in proportion),
+/// divided by the noise bandwidth `enbw` of the window in bins.
+fn band_db(avg: &[f32], df: f64, enbw: f64, i: usize) -> f32 {
+    let half = exp2_det_f64(0.05 * std::f64::consts::LOG2_10);
+    let fc = band_centre(i);
+    let (f_lo, f_hi) = (fc / half, fc * half);
+    let mut sum = 0.0f64;
+    let k0 = (f_lo / df - 0.5).floor().max(0.0) as usize;
+    let k1 = ((f_hi / df + 0.5).ceil() as usize).min(avg.len() - 1);
+    for (k, p) in avg.iter().enumerate().take(k1 + 1).skip(k0) {
+        let (b_lo, b_hi) = ((k as f64 - 0.5) * df, (k as f64 + 0.5) * df);
+        let overlap = (f_hi.min(b_hi) - f_lo.max(b_lo)).max(0.0) / df;
+        sum += overlap * f64::from(*p);
+    }
+    db_of_power((sum / enbw) as f32)
+}
+
+/// Averages the power of `src` over `ratio` either way in frequency (bin `k` over bins
+/// `k / ratio` to `k * ratio`) into `out`, using the running sums in `prefix`.
+fn smooth_bins(src: &[f32], ratio: f64, prefix: &mut Vec<f64>, out: &mut Vec<f32>) {
+    prefix.clear();
+    prefix.push(0.0);
+    let mut acc = 0.0f64;
+    for p in src {
+        acc += f64::from(*p);
+        prefix.push(acc);
+    }
+    out.clear();
+    let last = src.len().saturating_sub(1);
+    for (k, p) in src.iter().enumerate() {
+        if k == 0 {
+            out.push(*p);
+            continue;
+        }
+        let lo = ((k as f64 / ratio).ceil() as usize).clamp(1, k);
+        let hi = ((k as f64 * ratio).floor() as usize).clamp(k, last);
+        out.push(((prefix[hi + 1] - prefix[lo]) / (hi + 1 - lo) as f64) as f32);
+    }
+}
+
 #[derive(Clone, Copy)]
 enum PowerOut {
     Main,
@@ -249,6 +338,41 @@ pub const BAND_LABELS: [f32; BAND_COUNT] = [
     500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0,
     8000.0, 10_000.0, 12_500.0, 16_000.0, 20_000.0,
 ];
+
+/// The reference curve to draw over a trace: the stored band levels `stored`, optionally shifted
+/// so that their mean equals the mean of the current band levels `now` (a comparison of shape,
+/// not of level), plus the same `tilt_db_per_oct` the trace has. A band that is silent in either
+/// does not take part in the mean and a silent stored band stays silent.
+pub fn reference_curve(
+    stored: &[f32; BAND_COUNT],
+    now: &[f32; BAND_COUNT],
+    match_level: bool,
+    tilt_db_per_oct: f32,
+) -> [f32; BAND_COUNT] {
+    let live = |v: f32| v > FLOOR_DB + 50.0;
+    let mut offset = 0.0f32;
+    if match_level {
+        let (mut sum_now, mut sum_ref, mut n) = (0.0f32, 0.0f32, 0u32);
+        for (a, b) in stored.iter().zip(now) {
+            if live(*a) && live(*b) {
+                sum_ref += *a;
+                sum_now += *b;
+                n += 1;
+            }
+        }
+        if n > 0 {
+            offset = (sum_now - sum_ref) / n as f32;
+        }
+    }
+    let centres = band_centres();
+    std::array::from_fn(|i| {
+        if live(stored[i]) {
+            stored[i] + offset + tilt_db_per_oct * log2_det(centres[i] / 1000.0)
+        } else {
+            FLOOR_DB
+        }
+    })
+}
 
 /// The log-frequency of column `c` of `columns`, edges included (`c` in `0..=columns`): the
 /// frequency in Hz at `c / columns` of the way from [`DISPLAY_LO_HZ`] to [`DISPLAY_HI_HZ`].
@@ -276,6 +400,10 @@ pub struct Settings {
     pub decay_db_per_s: f32,
     /// Slope compensation in dB per octave about 1 kHz.
     pub tilt_db_per_oct: f32,
+    /// Smoothing of the fine trace across bins (the bands are never smoothed).
+    pub smoothing: Smoothing,
+    /// A weighting applied to the bin power.
+    pub weighting: Weighting,
 }
 
 impl Default for Settings {
@@ -289,6 +417,8 @@ impl Default for Settings {
             hold_ms: 1000.0,
             decay_db_per_s: 15.0,
             tilt_db_per_oct: 0.0,
+            smoothing: Smoothing::Off,
+            weighting: Weighting::Flat,
         }
     }
 }
@@ -309,6 +439,16 @@ pub struct Spectrum {
     age: Vec<f32>,
     peak_hz: f32,
     peak_db: f32,
+    smoothing: Smoothing,
+    weighting: Weighting,
+    /// Per-bin power factor of the K-weighting and the rate it was built for.
+    weights: Vec<f32>,
+    weights_rate: f32,
+    /// The averaged power after the weighting.
+    work: Vec<f32>,
+    /// `work` smoothed across bins, and the running sums used to do it.
+    smooth: Vec<f32>,
+    prefix: Vec<f64>,
 }
 
 impl Default for Spectrum {
@@ -333,6 +473,13 @@ impl Spectrum {
             age: Vec::new(),
             peak_hz: 0.0,
             peak_db: FLOOR_DB,
+            smoothing: Smoothing::Off,
+            weighting: Weighting::Flat,
+            weights: Vec::new(),
+            weights_rate: 0.0,
+            work: Vec::new(),
+            smooth: Vec::new(),
+            prefix: Vec::new(),
         }
     }
 
@@ -344,6 +491,7 @@ impl Spectrum {
         self.age.clear();
         self.peak_hz = 0.0;
         self.peak_db = FLOOR_DB;
+        self.work.clear();
     }
 
     /// The trace in dB, one value per column (or per band), [`FLOOR_DB`] for silence.
@@ -364,6 +512,18 @@ impl Spectrum {
     /// Level of the loudest bin in dB ([`FLOOR_DB`] for silence).
     pub fn peak_db(&self) -> f32 {
         self.peak_db
+    }
+
+    /// The 31 one-third-octave band levels of the current average in dB (the weighting applied,
+    /// no tilt, no smoothing), [`FLOOR_DB`] each before the first update. This is what a
+    /// reference curve stores.
+    pub fn band_levels(&self) -> [f32; BAND_COUNT] {
+        if self.work.is_empty() {
+            return [FLOOR_DB; BAND_COUNT];
+        }
+        let df = f64::from(self.sample_rate) / self.analyser.size() as f64;
+        let enbw = f64::from(self.analyser.enbw());
+        std::array::from_fn(|i| band_db(&self.work, df, enbw, i))
     }
 
     /// The dB of the averaged spectrum at `hz`, interpolated between bins (no tilt).
@@ -394,6 +554,8 @@ impl Spectrum {
             || columns != self.columns
             || s.bands != self.bands
             || s.channel != self.channel
+            || s.smoothing != self.smoothing
+            || s.weighting != self.weighting
             || (sample_rate - self.sample_rate).abs() > 0.5;
         if changed {
             self.reset();
@@ -401,6 +563,8 @@ impl Spectrum {
         self.columns = columns;
         self.bands = s.bands;
         self.channel = s.channel;
+        self.smoothing = s.smoothing;
+        self.weighting = s.weighting;
         self.sample_rate = sample_rate;
         let dt = (elapsed_frames as f64 / f64::from(sample_rate)) as f32;
 
@@ -419,28 +583,54 @@ impl Spectrum {
             }
             None => self.avg = Some(power.to_vec()),
         }
+        let df = f64::from(sample_rate) / self.analyser.size() as f64;
+        let bins = self.analyser.bins();
+        if s.weighting == Weighting::K
+            && (self.weights.len() != bins || (self.weights_rate - sample_rate).abs() > 0.5)
+        {
+            self.weights = (0..bins)
+                .map(|k| k_weighting_power(k as f64 * df, f64::from(sample_rate)) as f32)
+                .collect();
+            self.weights_rate = sample_rate;
+        }
         let Some(avg) = self.avg.as_deref() else {
             return;
         };
-        let df = f64::from(sample_rate) / self.analyser.size() as f64;
+        self.work.clear();
+        if s.weighting == Weighting::K {
+            self.work
+                .extend(avg.iter().zip(&self.weights).map(|(p, w)| p * w));
+        } else {
+            self.work.extend_from_slice(avg);
+        }
+        let weighted: &[f32] = &self.work;
+        let smoothed = s.smoothing.half_ratio().filter(|_| !s.bands);
+        if let Some(ratio) = smoothed {
+            smooth_bins(weighted, ratio, &mut self.prefix, &mut self.smooth);
+        }
+        let avg: &[f32] = if smoothed.is_some() {
+            &self.smooth
+        } else {
+            weighted
+        };
 
         // Readout from the loudest bin of 20 Hz to 20 kHz.
-        let lo = ((f64::from(DISPLAY_LO_HZ) / df).ceil() as usize).clamp(1, avg.len() - 2);
-        let hi = ((f64::from(DISPLAY_HI_HZ) / df).floor() as usize).clamp(lo, avg.len() - 2);
+        let lo = ((f64::from(DISPLAY_LO_HZ) / df).ceil() as usize).clamp(1, weighted.len() - 2);
+        let hi = ((f64::from(DISPLAY_HI_HZ) / df).floor() as usize).clamp(lo, weighted.len() - 2);
         let mut best = lo;
         for k in lo..=hi {
-            if avg[k] > avg[best] {
+            if weighted[k] > weighted[best] {
                 best = k;
             }
         }
-        if avg[best] <= 1e-20 {
+        if weighted[best] <= 1e-20 {
             self.peak_hz = 0.0;
             self.peak_db = FLOOR_DB;
         } else {
             let (a, b, c) = (
-                db_of_power(avg[best - 1]),
-                db_of_power(avg[best]),
-                db_of_power(avg[best + 1]),
+                db_of_power(weighted[best - 1]),
+                db_of_power(weighted[best]),
+                db_of_power(weighted[best + 1]),
             );
             let denom = a - 2.0 * b + c;
             let delta = if denom < -1e-6 {
@@ -456,20 +646,10 @@ impl Spectrum {
         self.trace.clear();
         let tilt = |hz: f64| -> f32 { s.tilt_db_per_oct * log2_det((hz / 1000.0) as f32) };
         if s.bands {
-            let half = exp2_det_f64(0.05 * std::f64::consts::LOG2_10);
             let enbw = f64::from(self.analyser.enbw());
             for i in 0..BAND_COUNT {
-                let fc = band_centre(i);
-                let (f_lo, f_hi) = (fc / half, fc * half);
-                let mut sum = 0.0f64;
-                let k0 = (f_lo / df - 0.5).floor().max(0.0) as usize;
-                let k1 = ((f_hi / df + 0.5).ceil() as usize).min(avg.len() - 1);
-                for (k, p) in avg.iter().enumerate().take(k1 + 1).skip(k0) {
-                    let (b_lo, b_hi) = ((k as f64 - 0.5) * df, (k as f64 + 0.5) * df);
-                    let overlap = (f_hi.min(b_hi) - f_lo.max(b_lo)).max(0.0) / df;
-                    sum += overlap * f64::from(*p);
-                }
-                self.trace.push(db_of_power((sum / enbw) as f32) + tilt(fc));
+                self.trace
+                    .push(band_db(avg, df, enbw, i) + tilt(band_centre(i)));
             }
         } else {
             for c in 0..columns {
