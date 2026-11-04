@@ -58,6 +58,7 @@ mod draw_series;
 mod folder_clips;
 mod ghost;
 mod header_band;
+mod header_drop;
 mod heights;
 mod help;
 mod inspector;
@@ -905,6 +906,10 @@ pub struct ArrangementView {
     drop_hover: Option<DropHover>,
     /// A library clip hovering over a note lane: track, lane and snapped tick.
     clip_hover: Option<(DeviceKey, usize, i64)>,
+    /// The track header a library device or patch that can replace its device hovers over.
+    header_hover: Option<DeviceKey>,
+    /// The device type a hovering patch file holds, read once per file.
+    lib_peek: Option<(std::path::PathBuf, Option<String>)>,
 }
 
 /// The header state of an audio track, derived from the document (cables and params).
@@ -1013,6 +1018,8 @@ impl ArrangementView {
             rec_sources: Vec::new(),
             drop_hover: None,
             clip_hover: None,
+            header_hover: None,
+            lib_peek: None,
         }
     }
 
@@ -2714,14 +2721,16 @@ impl ArrangementView {
                 pressed: true,
             } => self.key(key, *modifiers, &mut out),
             UiEvent::Key { .. } => {}
-            UiEvent::FileHover { pos, paths } => self.file_hover(*pos, paths),
+            UiEvent::FileHover { pos, paths } => self.file_hover(*pos, paths, doc, registry),
             UiEvent::FileHoverCancel => {
                 self.set_drop_hover(None);
                 self.set_clip_hover(None);
+                self.set_header_hover(None);
             }
             UiEvent::FileDrop { pos, paths } => {
                 self.set_drop_hover(None);
                 self.set_clip_hover(None);
+                self.set_header_hover(None);
                 // MIDI files land on the note lane under the pointer, else make new tracks.
                 // Library items are never imported as audio: a clip lands on a note lane,
                 // every other item (and a clip anywhere else) is refused.
@@ -2738,7 +2747,10 @@ impl ArrangementView {
                         });
                     }
                 } else if paths.iter().any(|p| library_drop::is_library(p)) {
-                    if let Some(path) = library_drop::clip_item(paths)
+                    if let Some((path, device)) = self.header_replace_at(paths, *pos, doc, registry)
+                    {
+                        out.push(UiAction::ReplaceWithLibrary { path, device });
+                    } else if let Some(path) = library_drop::clip_item(paths)
                         && let Some((track, lane, tick)) = self.clip_drop_target_at(*pos)
                     {
                         out.push(UiAction::InsertLibraryClip {
@@ -2769,8 +2781,15 @@ impl ArrangementView {
         }
     }
 
-    fn file_hover(&mut self, pos: Point, paths: &[std::path::PathBuf]) {
+    fn file_hover(
+        &mut self,
+        pos: Point,
+        paths: &[std::path::PathBuf],
+        doc: &RackDoc,
+        registry: &Registry,
+    ) {
         if !library_drop::midi_files(paths).is_empty() {
+            self.set_header_hover(None);
             // The marker of a lane drop over a note lane, the new-tracks indicator elsewhere.
             let lane = self.clip_drop_target_at(pos);
             self.set_clip_hover(lane.clone());
@@ -2787,11 +2806,16 @@ impl ArrangementView {
         }
         if paths.iter().any(|p| library_drop::is_library(p)) {
             self.set_drop_hover(None);
+            let header = self
+                .header_replace_at(paths, pos, doc, registry)
+                .map(|(_, device)| device);
+            self.set_header_hover(header);
             let target = library_drop::clip_item(paths).and_then(|_| self.clip_drop_target_at(pos));
             self.set_clip_hover(target);
             return;
         }
         self.set_clip_hover(None);
+        self.set_header_hover(None);
         let hover = if paths.is_empty() {
             None
         } else {
@@ -5826,6 +5850,7 @@ impl ArrangementView {
         self.paint_marker_list(canvas);
         self.paint_inspector(canvas);
         self.paint_org_overlay(canvas);
+        self.paint_header_drop(canvas);
         if let Some(m) = &self.menu {
             paint_menu(canvas, &self.st, m);
         }

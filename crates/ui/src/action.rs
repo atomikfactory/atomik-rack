@@ -272,6 +272,17 @@ pub enum UiAction {
         /// Where it goes.
         slot: RackSlot,
     },
+    /// A device row or a one-device patch from the library was dropped on a device of the same
+    /// kind (on the middle of its panel in the rack, or on a track header in the arrangement):
+    /// the device is replaced in place, as the browser's replace does, routed like Replace
+    /// Device; a patch of another type also loads its sound. One undo step; the app refuses
+    /// what the model refuses and says why. `device` is the top-level key of the device.
+    ReplaceWithLibrary {
+        /// The device URI or the `.atomikpatch` file.
+        path: PathBuf,
+        /// The device that is replaced.
+        device: DeviceKey,
+    },
     /// A patch item was dropped on the patch strip of a device: the device takes the patch if
     /// the file holds one device of the device's type (the app says why when it does not). One
     /// undo step.
