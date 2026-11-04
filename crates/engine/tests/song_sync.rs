@@ -343,6 +343,129 @@ impl Following {
     }
 }
 
+/// A scripted sender for the phase lock: the clocks come every `frames` frames (the sender's real
+/// pace) while the tempo it reports stays what the follower measured, so the two disagree.
+impl Following {
+    /// Starts the sender at tick 0 with a position count, as a follower reports it.
+    fn start_counting(&mut self, bpm: f64) {
+        self.publish(|s| {
+            s.tempo = Some(bpm);
+            s.running = true;
+            s.position = 0;
+            s.phase = Some(0);
+            s.locates += 1;
+        });
+    }
+
+    /// Runs `clocks` clocks of `frames` frames each; every clock moves the count by one clock.
+    fn run_counted(&mut self, clocks: usize, frames: usize) {
+        for _ in 0..clocks {
+            self.publish(|s| {
+                s.clocks += 1;
+                s.phase = s.phase.map(|p| p + atomik_engine::TICKS_PER_CLOCK);
+            });
+            run(&mut self.engine, frames, 64);
+        }
+    }
+
+    /// The player's tick minus the middle of the clock the sender is counting.
+    fn lag(&self) -> i64 {
+        let phase = self.state.phase.unwrap();
+        self.handle.transport_state().tick - (phase - atomik_engine::TICKS_PER_CLOCK / 2).max(0)
+    }
+}
+
+#[test]
+fn a_sender_that_runs_faster_than_its_measured_tempo_does_not_pull_the_song_away() {
+    // 120 BPM measured, but the clocks arrive every 960 frames (125 BPM): in 40 clocks an
+    // unlocked song falls 40 * 40 ticks behind; the lock holds it within a fraction of a clock.
+    let mut locked = Following::new();
+    locked.start_counting(120.0);
+    locked.run_counted(40, 960);
+    let mut free = Following::new();
+    free.start_counting(120.0);
+    free.publish(|s| s.phase = None);
+    free.run_counted(40, 960);
+    let clock = atomik_engine::TICKS_PER_CLOCK;
+    let free_lag =
+        (free.handle.transport_state().tick - (locked.state.phase.unwrap() - clock / 2)).abs();
+    assert!(free_lag > clock, "unlocked lag {free_lag}");
+    assert!(
+        locked.lag().abs() < clock / 2,
+        "locked lag {}",
+        locked.lag()
+    );
+}
+
+#[test]
+fn the_lock_moves_the_song_smoothly_and_never_backwards() {
+    let mut f = Following::new();
+    f.start_counting(120.0);
+    f.run_counted(8, 1000);
+    // The sender jumps a quarter of a beat ahead without a locate (clocks lost on the cable).
+    f.publish(|s| s.phase = s.phase.map(|p| p + PPQ / 4));
+    let mut last = f.handle.transport_state().tick;
+    let mut worst_step = 0;
+    for _ in 0..120 {
+        f.run_counted(1, 1000);
+        let t = f.handle.transport_state().tick;
+        assert!(t >= last, "the position went back: {last} -> {t}");
+        worst_step = worst_step.max(t - last);
+        last = t;
+    }
+    // The pace never exceeds the normal one (640 ticks a clock) by much more than the bound
+    // (10 %); the position is read at batch starts, which adds up to a batch of rounding.
+    assert!(worst_step <= 640 * 12 / 10, "{worst_step}");
+    assert!(f.lag().abs() < 320, "settled at {}", f.lag());
+}
+
+#[test]
+fn a_jump_of_more_than_a_beat_without_a_locate_relocates() {
+    let mut f = Following::new();
+    f.start_counting(120.0);
+    f.run_counted(8, 1000);
+    f.publish(|s| s.phase = s.phase.map(|p| p + 3 * PPQ));
+    f.run_counted(2, 1000);
+    assert!(f.lag().abs() < 640, "{}", f.lag());
+}
+
+#[test]
+fn the_lock_follows_the_loop_the_song_plays() {
+    let mut f = Following::new();
+    f.handle
+        .transport(TransportCommand::SetLoop {
+            start: Ticks(0),
+            end: Ticks(2 * PPQ),
+            enabled: true,
+        })
+        .unwrap();
+    f.run(64);
+    f.start_counting(120.0);
+    // Three beats of clocks: the song has wrapped once and is inside the loop, not relocated
+    // out of it, and stays within a clock of the folded position.
+    f.run_counted(72 + 1, 1000);
+    let t = f.handle.transport_state();
+    assert!(t.playing);
+    let phase = f.state.phase.unwrap() - atomik_engine::TICKS_PER_CLOCK / 2;
+    let folded = phase.rem_euclid(2 * PPQ);
+    let err = (t.tick - folded + PPQ).rem_euclid(2 * PPQ) - PPQ;
+    assert!(err.abs() < 2 * 640, "{err} ({} vs {folded})", t.tick);
+    assert!(t.loop_count >= 1);
+}
+
+#[test]
+fn without_a_position_count_the_song_runs_on_the_tempo_alone() {
+    let mut f = Following::new();
+    f.start_counting(120.0);
+    f.publish(|s| s.phase = None);
+    f.run_counted(8, 1000);
+    // A tempo that does not match the clock pace is not corrected: the lock needs a count.
+    let tick = f.handle.transport_state().tick;
+    f.run_counted(8, 500);
+    let advanced = f.handle.transport_state().tick - tick;
+    assert!((advanced - 8 * 500 * 64 / 100).abs() < 200, "{advanced}");
+}
+
 #[test]
 fn a_started_clock_plays_the_song_at_its_tempo() {
     let mut f = Following::new();

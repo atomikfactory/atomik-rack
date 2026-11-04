@@ -13,6 +13,7 @@ mod graph;
 mod interface;
 mod live;
 mod offline;
+mod phase_lock;
 mod plan;
 mod player;
 mod preview;

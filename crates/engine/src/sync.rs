@@ -307,6 +307,12 @@ pub struct ExternalState {
     pub locates: u64,
     /// How many clocks have arrived; a count that stops moving means the clock was lost.
     pub clocks: u64,
+    /// Where the sender is, in ticks, counted in whole clocks: its last locate plus
+    /// [`TICKS_PER_CLOCK`] for every clock that arrived while it ran. Exact (it is a count, not
+    /// a time), so it does not wander with the tempo; it moves in steps of one clock, which the
+    /// player's phase lock looks through. `None` until the sender has said where it is (a Start,
+    /// a Song Position Pointer): the player then follows the tempo alone.
+    pub phase: Option<i64>,
 }
 
 /// Lock-free (seqlock) cell holding an [`ExternalState`]: one writer (the clock input's thread),
@@ -321,6 +327,7 @@ pub struct ExternalClock {
     position: AtomicU64,
     locates: AtomicU64,
     clocks: AtomicU64,
+    phase: AtomicU64,
 }
 
 impl ExternalClock {
@@ -346,8 +353,12 @@ impl ExternalClock {
         fence(Ordering::Release); // the odd sequence is visible before the data changes
         let (has, bpm) = state.tempo.map_or((0, 0.0), |t| (1, t));
         self.tempo.store(bpm.to_bits(), Ordering::Relaxed);
-        self.flags
-            .store(u64::from(state.running) | has << 1, Ordering::Relaxed);
+        let (phased, phase) = state.phase.map_or((0, 0), |p| (1, p));
+        self.phase.store(phase as u64, Ordering::Relaxed);
+        self.flags.store(
+            u64::from(state.running) | has << 1 | phased << 2,
+            Ordering::Relaxed,
+        );
         self.position
             .store(state.position as u64, Ordering::Relaxed);
         self.locates.store(state.locates, Ordering::Relaxed);
@@ -374,6 +385,7 @@ impl ExternalClock {
                 position: self.position.load(Ordering::Relaxed) as i64,
                 locates: self.locates.load(Ordering::Relaxed),
                 clocks: self.clocks.load(Ordering::Relaxed),
+                phase: (flags & 4 != 0).then(|| self.phase.load(Ordering::Relaxed) as i64),
             };
             fence(Ordering::Acquire); // the data loads happen before the re-check
             if self.seq.load(Ordering::Relaxed) == before {
@@ -442,9 +454,13 @@ mod tests {
             position: -5,
             locates: 3,
             clocks: 99,
+            phase: Some(-40),
         };
         cell.publish(&s);
         assert_eq!(cell.read(), s);
+        let unphased = ExternalState { phase: None, ..s };
+        cell.publish(&unphased);
+        assert_eq!(cell.read(), unphased);
         cell.publish(&ExternalState::default());
         assert_eq!(cell.read(), ExternalState::default());
     }

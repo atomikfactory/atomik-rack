@@ -9,11 +9,15 @@
 //! * [`open_clock_in`] connects a midir input port and feeds a follower from its callback (midir's
 //!   thread, not the audio thread). The callback does a few atomic stores per message.
 //!
-//! The follower tracks no phase: the player takes the tempo and the transport from it and runs on
-//! its own frame counter (see the engine's player documentation).
+//! The follower also counts the sender's position: its last locate plus one clock's worth of
+//! ticks for every clock that arrived while it ran (`ExternalState::phase`). That is a count,
+//! not a time, so it is exact whatever the tempo does; the player compares it with its own
+//! position and pulls itself into line (see the engine's player documentation, *Following*).
 
 use crate::{MidiError, match_port, new_backend, port_names, timing};
-use atomik_engine::{ExternalClock, ExternalState, SONG_POSITION, song_position_ticks};
+use atomik_engine::{
+    ExternalClock, ExternalState, SONG_POSITION, TICKS_PER_CLOCK, song_position_ticks,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -64,12 +68,14 @@ impl ClockFollower {
             [0xFA, ..] => {
                 self.state.running = true;
                 self.state.position = 0;
+                self.state.phase = Some(0);
                 self.state.locates += 1;
             }
             [0xFB, ..] => self.state.running = true,
             [0xFC, ..] => self.state.running = false,
             [SONG_POSITION, lsb, msb, ..] => {
                 self.state.position = song_position_ticks(*lsb, *msb);
+                self.state.phase = Some(self.state.position);
                 self.state.locates += 1;
             }
             _ => return,
@@ -79,6 +85,10 @@ impl ClockFollower {
 
     fn clock(&mut self, at: Instant) {
         self.state.clocks += 1;
+        if self.state.running {
+            // The sender moves on by one clock (a stopped sender may keep clocking: no move).
+            self.state.phase = self.state.phase.map(|p| p.saturating_add(TICKS_PER_CLOCK));
+        }
         let last = self.latest();
         if last.is_some_and(|l| at.saturating_duration_since(l) > RESTART_AFTER) {
             self.filled = 0;

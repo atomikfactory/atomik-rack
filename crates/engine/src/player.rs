@@ -84,15 +84,22 @@
 //! * **Following.** While the [`crate::ExternalClock`] is followed, the player replaces every
 //!   tempo map with one constant segment at the clock's tempo (the position keeps its musical
 //!   place when the tempo moves: the tick is kept, the frame recomputed), starts, stops and
-//!   locates as the clock does, ignores the transport commands and the count-in, leaves the audio
-//!   clips out (they are placed on the song's own tempo) and stops the transport, releasing every
-//!   held note, when the clock count stops moving for half a second. The phase of the clock is
-//!   not tracked: the song runs on the tempo measured, from the start the clock gave.
+//!   locates as the clock does, leaves the audio clips out (they are placed on the song's own
+//!   tempo), ignores the transport commands and the count-in, and stops the transport,
+//!   releasing every held note, when the clock count stops moving for half a second. The
+//!   measured tempo lags a sender whose tempo wanders, so the player also tracks the sender's
+//!   *position* (the clock count the
+//!   clock input publishes as `ExternalState::phase`) with the phase lock of `phase_lock`: once
+//!   per batch it moves the position a few frames towards the sender's, bounded and
+//!   deterministic, and locates to it when the two are a beat apart. A Start or a Song
+//!   Position Pointer is the hard anchor: the position jumps there and the lock starts afresh.
+//!   Without a count (a sender that has not said where it is) the song runs on the tempo alone.
 
 use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
 use crate::console::DelayLine;
 use crate::graph::DeviceInstanceId;
+use crate::phase_lock::{Correction, PhaseLock, error_ticks, expected_tick};
 use crate::seq::{
     ChaseNote, CompiledTrack, PreRoll, SongCurve, SongPoint, SongSnapshot, TrackCursor,
     TransportCommand, TransportState,
@@ -565,6 +572,8 @@ struct Follow {
     /// The clock count at the last batch, and the frames since it last moved.
     clocks: u64,
     quiet_frames: u64,
+    /// The phase lock: the remainder of the corrections too small for a whole frame.
+    lock: PhaseLock,
 }
 
 /// The clock may be silent this long (in seconds) while the sender runs before the transport
@@ -945,6 +954,7 @@ impl Player {
             locates: state.locates,
             clocks: state.clocks,
             quiet_frames: 0,
+            lock: PhaseLock::default(),
         });
         // The same musical position on the clock's tempo, with the cursors moved to it.
         self.apply_command(
@@ -992,6 +1002,9 @@ impl Player {
             f.quiet_frames = 0;
         }
         let silent = f.quiet_frames as f64 > CLOCK_LOST_SECONDS * sr;
+        if locate.is_some() {
+            f.lock.reset();
+        }
         self.follow = Some(f);
         if let Some(position) = locate {
             self.apply_command(
@@ -1008,8 +1021,54 @@ impl Player {
             self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
         } else if !running && s.running && !silent {
             self.apply_command(TransportCommand::Play, engine_tempo, sr, dropped);
+        } else if running
+            && locate.is_none()
+            && let Some(phase) = s.phase
+        {
+            self.lock_phase(&mut f, phase, sr, engine_tempo, dropped);
         }
         self.follow = Some(f);
+    }
+
+    /// The phase lock (see `phase_lock`): moves the position a few frames towards the sender's
+    /// count, or locates to it when the two are a beat apart.
+    fn lock_phase(
+        &mut self,
+        f: &mut Follow,
+        phase: i64,
+        sr: f64,
+        engine_tempo: Tempo,
+        dropped: &AtomicU64,
+    ) {
+        if !self.playing {
+            return;
+        }
+        let map = [TempoSegment::constant(f.tempo)];
+        let map = TempoMap::new(&map);
+        let looped = (self.loop_enabled && self.loop_end > self.loop_start)
+            .then_some((self.loop_start, self.loop_end));
+        let expected = expected_tick(phase, looped);
+        let tick = map.tick(self.pos as f64, sr);
+        let tpf = map.ticks_per_frame(tick, sr);
+        match f.lock.step(error_ticks(expected, tick, looped), tpf) {
+            Correction::Frames(n) => {
+                let mut pos = (self.pos as i64).saturating_add(n).max(0) as u64;
+                if looped.is_some() {
+                    // Never past the loop end: the wrap is found by comparing with it.
+                    let end = map.song_frame(self.loop_end, sr);
+                    if self.pos <= end {
+                        pos = pos.min(end);
+                    }
+                }
+                self.pos = pos;
+            }
+            Correction::Relocate => self.apply_command(
+                TransportCommand::Locate(Ticks(expected.round() as i64)),
+                engine_tempo,
+                sr,
+                dropped,
+            ),
+        }
     }
 
     /// The engine tempo changed: a song-less transport keeps its tick.
