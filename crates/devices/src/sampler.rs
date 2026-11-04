@@ -14,6 +14,10 @@
 //! * **Performance controllers.** Pitch bend adds up to `bend.range` semitones (default 2) to the
 //!   pitch of every voice; the sustain pedal holds back the note-off of gate zones; volume and
 //!   expression scale the output (see [`crate::controller_state`]).
+//! * **Mod wheel.** CC 1 (`0..=1`) adds `wheel · wheel.to_pitch` semitones of LFO vibrato to the
+//!   pitch (default 1) and `wheel · wheel.to_cutoff` octaves to the filter cutoff (default 1; it
+//!   needs the filter on). At rest, or without CC 1, both terms are zero and the output is bit for
+//!   bit what it was before the wheel existed; a stop or a locate returns the wheel to rest.
 //! * **Reverse.** A zone with `reverse` plays from `end - 1` down to `start` through the same
 //!   playhead (no loop; the end fade of 64 frames or 1.5 ms is at `start`).
 //! * **Trigger modes.** Gate zones release on note-off; one-shot zones ignore note-off and play
@@ -29,7 +33,7 @@
 //! * **Filter.** Off by default (`filter.enabled`); then it costs nothing and the signal is
 //!   untouched. When on, each voice has a stereo pair of 12 dB state-variable filters. Cutoff =
 //!   `filter.cutoff · 2^(env_amount·6·filter env + key_track·(key − 60)/12 + lfo.to_cutoff·lfo +
-//!   cv.cutoff_amount·cv + 4·filter.velocity·(velocity − 1))`, updated every 16 samples with the
+//!   wheel·wheel.to_cutoff + cv.cutoff_amount·cv + 4·filter.velocity·(velocity − 1))`, updated every 16 samples with the
 //!   coefficient interpolated in between (as the poly-synth).
 //! * **Groups, crossfades and round-robin.** A zone belongs to a group (0..32). With a velocity
 //!   crossfade it fades in over the first `vel_xfade` velocities above `vel_lo` and out over the
@@ -140,7 +144,9 @@ const P_CV_RESONANCE: u32 = 27;
 const P_CV_LEVEL: u32 = 28;
 const P_CV_PAN: u32 = 29;
 const P_BEND_RANGE: u32 = 30;
-const PARAM_COUNT: usize = 31;
+const P_WHEEL_PITCH: u32 = 31;
+const P_WHEEL_CUTOFF: u32 = 32;
+const PARAM_COUNT: usize = 33;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -424,6 +430,24 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Semitones,
         false,
     ),
+    param(
+        P_WHEEL_PITCH,
+        "wheel.to_pitch",
+        "Wheel to vibrato",
+        (0.0, 12.0, 1.0),
+        Lin,
+        Unit::Semitones,
+        false,
+    ),
+    param(
+        P_WHEEL_CUTOFF,
+        "wheel.to_cutoff",
+        "Wheel to cutoff",
+        (0.0, 4.0, 1.0),
+        Lin,
+        Unit::Octaves,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -621,6 +645,11 @@ struct Shared {
     lfo_to_pitch: f32,
     lfo_to_cutoff: f32,
     lfo_to_amp: f32,
+    /// The mod wheel (CC 1), `0..=1`, and what a full wheel does: semitones of LFO vibrato and
+    /// octaves of cutoff.
+    wheel: f32,
+    wheel_pitch: f32,
+    wheel_cutoff: f32,
     cv_pitch: f32,
     cv_cutoff: f32,
     /// Normalised resonance (the base of the resonance CV).
@@ -879,7 +908,10 @@ impl Voice {
         let semis = (i32::from(self.key) - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
         let exponent = (semis + p.tune_semi + p.bend) / 12.0
             + (z.tune_cents + p.tune_fine + p.master_cents) / 1200.0
-            + (lfo * p.lfo_to_pitch + cv_pitch.clamp(-1.0, 1.0) * p.cv_pitch) / 12.0;
+            + (lfo * p.lfo_to_pitch
+                + cv_pitch.clamp(-1.0, 1.0) * p.cv_pitch
+                + lfo * (p.wheel * p.wheel_pitch))
+                / 12.0;
         self.ratio = f64::from(exponent.exp2());
         if !p.filter_on {
             self.filter_ready = false;
@@ -889,6 +921,7 @@ impl Voice {
         let octaves = p.env_amount * 6.0 * self.fenv.level()
             + p.key_track * (f32::from(self.key) - 60.0) / 12.0
             + p.lfo_to_cutoff * lfo
+            + p.wheel_cutoff * p.wheel
             + p.cv_cutoff * cv_cutoff.clamp(-1.0, 1.0)
             + VELOCITY_CUTOFF_OCTAVES * p.filter_velocity * (self.velocity - 1.0);
         let cutoff = (p.cutoff * octaves.exp2()).clamp(20.0, MAX_CUTOFF_RATIO * p.sample_rate);
@@ -1108,6 +1141,9 @@ impl Sampler {
                 lfo_to_pitch: 0.0,
                 lfo_to_cutoff: 0.0,
                 lfo_to_amp: 0.0,
+                wheel: 0.0,
+                wheel_pitch: 1.0,
+                wheel_cutoff: 1.0,
                 cv_pitch: 12.0,
                 cv_cutoff: 2.0,
                 resonance: 0.2,
@@ -1221,6 +1257,8 @@ impl Sampler {
                 self.ctl.set_bend_range(v);
                 s.bend = self.ctl.bend_semitones();
             }
+            P_WHEEL_PITCH => s.wheel_pitch = v,
+            P_WHEEL_CUTOFF => s.wheel_cutoff = v,
             _ => {}
         }
     }
@@ -1305,6 +1343,11 @@ impl Sampler {
                 self.ctl.all_off();
                 self.voices.iter_mut().for_each(Voice::release);
             }
+            // The mod wheel opens the cutoff and deepens the LFO vibrato.
+            NoteKind::Cc {
+                controller: 1,
+                value,
+            } => self.shared.wheel = value.clamp(0.0, 1.0),
             // Pedal, volume, expression, pressure, bend and its range.
             _ => {
                 if self.ctl.handle(kind) == Effect::ReleaseHeld {
@@ -1380,6 +1423,7 @@ impl Device for Sampler {
         self.round_robin.fill(0);
         self.ctl.reset();
         self.shared.bend = 0.0;
+        self.shared.wheel = 0.0;
         self.lfo.reset();
         let m = self.master.target();
         self.master.set_immediate(m);
