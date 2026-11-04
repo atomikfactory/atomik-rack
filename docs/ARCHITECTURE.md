@@ -4449,13 +4449,24 @@ creation chain in the **Creation chain** bullet.
   `Batch` of `SetClipGeometry` and stop the group at tick 0. **Clip gestures.** The left edge of any
   clip trims it (note and automation clips: `WorkflowCommand::TrimClips`, which moves the start,
   keeps the end and moves the content offset; a clip that grows left past content tick 0 shifts its
-  notes and points right, a looped clip wraps its loop; audio keeps its own handle and trims one
-  clip at a time); the right edge resizes every selected clip by the same change; both are one merge
-  group, so one undo step. `sequencer.delete_outside_events` (`DeleteOutsideEvents`) removes what
+  notes and points right, a looped clip wraps its loop; audio keeps its own handle, and the other
+  selected audio clips follow it by the same distance); the right edge resizes every selected clip
+  by the same change; both are one merge group, so one undo step. `sequencer.delete_outside_events` (`DeleteOutsideEvents`) removes what
   lies outside the clips' content window (automation points keep one boundary point on each side).
   The **constrain** role (Shift) keeps a clip's start while it is dragged between lanes and a note
   on one axis, and the **copy** role (Ctrl, Option on macOS) drags copies of notes as well as clips;
   both read the modifiers on every move, so they can be pressed after the mouse-down.
+- **Lane handle, lane range and extend.** `arrangement/static_handle.rs` draws the static value of an automation
+  lane as a line with a handle (`Hit::StaticHandle`, `Drag::Static`); the drag sends `SetLaneStatic` with one merge id
+  (`MergeKey::LaneStatic` folds the steps into one) and Esc sends the old value back. `arrangement/lane_range.rs`
+  holds the time range of one lane that a drag with `Role::RangeDrag` selects (view state, forgotten by any other
+  press or Esc): `edit.delete` on it sends `CutOut`, and the app captures it with `ClipSnapshot::capture_range`
+  (the parts of the lane's clips inside the range, starting at its start) for Copy and Cut and pastes the clips on
+  the range's lane at the playhead. `WorkflowCommand::ExtendClips` grows note and automation clips to the
+  neighbouring clip of their lane (the start side reuses the left-trim planner). A drag of the start edge of an
+  audio clip also trims the other selected audio clips by the same ticks (`Drag::Audio` carries them). The snap
+  resolutions and the snap mode (`arrangement_snap`, `piano_roll_snap`, `snap_mode`) and the piano roll's note
+  audition switch (`piano_roll_audition`, command `editor.audition_toggle`) are saved in `ui-state.json`.
 - **Daily keys: transport, panes, create.** `AppCore` gained `locate_bars`, `go_locator`,
   `stop_or_rewind` (a second Stop returns to the start), `nudge_tempo`
   ([app/src/app_core_workflow.rs](../crates/app/src/app_core_workflow.rs)); the numpad transport
