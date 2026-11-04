@@ -38,6 +38,7 @@ use super::{
 };
 use crate::action::{ContextTarget, UiAction};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::color_picker::ColorTarget;
 use crate::event::{Key, Modifiers, PointerButton};
 use crate::keymap::CommandOutcome;
 use crate::marker_edit::{auto_name, palette_color};
@@ -182,6 +183,8 @@ pub(super) struct OrgUi {
     pub shape: Vec<(usize, bool)>,
     /// A running track header drag.
     pub mv: Option<super::track_move::TrackMoveDrag>,
+    /// A running rubber band over the headers.
+    pub band: Option<super::header_band::HeaderBand>,
     /// A running note lane header drag.
     pub lane_mv: Option<super::lane_move::LaneMoveDrag>,
     /// The nesting depth of each folder.
@@ -418,11 +421,12 @@ impl ArrangementView {
                 .is_some_and(|(d, p)| self.song.lane_folded(&d, &p))
     }
 
-    /// The accent colour of a track: its own colour, else its device's.
+    /// The accent colour of a track: its own colour, else the one of the folder it is in, else
+    /// its device's.
     pub(super) fn track_accent(&self, doc: &RackDoc, track: usize) -> Color {
         let device = &self.song.tracks[track].device;
         self.song
-            .track_color(device)
+            .shown_color(device)
             .map_or_else(|| sp::device_accent(&self.st.base, doc, device), rgb)
     }
 
@@ -728,6 +732,10 @@ impl ArrangementView {
             }
             Hit::Folder(g) => {
                 self.set_selected_group(Some(*g));
+                // A press on the header (not the timeline part) can start a drag of the folder.
+                if button == PointerButton::Primary && clicks < 2 && pos.x < self.axis.x0 {
+                    self.begin_group_move(*g, pos);
+                }
                 if button == PointerButton::Secondary {
                     out.push(UiAction::ContextMenu {
                         target: ContextTarget::Folder,
@@ -777,31 +785,33 @@ impl ArrangementView {
         }
     }
 
-    /// M, S or R on a folder: every track of it in one batch.
+    /// M, S or R on a folder. Mute and solo are the folder's own flags (its tracks keep theirs
+    /// and play as muted or soloed with it); arm sets the flag on every track of it in one batch.
     fn folder_button(&mut self, group: u32, b: FolderButton, out: &mut Vec<UiAction>) {
-        // An automation track can only be muted: solo and arm leave it as it is.
+        if b != FolderButton::Arm {
+            let Some(g) = self.song.org.group(group) else {
+                return;
+            };
+            let (mut muted, mut solo) = (g.muted, g.solo);
+            match b {
+                FolderButton::Mute => muted = !muted,
+                _ => solo = !solo,
+            }
+            out.push(song_cmd(SongCommand::SetGroupFlags { group, muted, solo }));
+            return;
+        }
+        // An automation track has no arm: it stays as it is.
         let tracks = self.flagged_tracks(group, b);
-        let flag = |t: &atomik_model::Track| match b {
-            FolderButton::Mute => t.muted,
-            FolderButton::Solo => t.solo,
-            FolderButton::Arm => t.armed,
-        };
-        let set = !tracks.iter().all(|i| flag(&self.song.tracks[*i]));
+        let set = !tracks.iter().all(|i| self.song.tracks[*i].armed);
         let commands: Vec<Command> = tracks
             .iter()
             .map(|i| {
                 let t = &self.song.tracks[*i];
-                let (mut muted, mut solo, mut armed) = (t.muted, t.solo, t.armed);
-                match b {
-                    FolderButton::Mute => muted = set,
-                    FolderButton::Solo => solo = set,
-                    FolderButton::Arm => armed = set,
-                }
                 Command::Song(SongCommand::SetTrackFlags {
                     device: t.device.clone(),
-                    muted,
-                    solo,
-                    armed,
+                    muted: t.muted,
+                    solo: t.solo,
+                    armed: set,
                 })
             })
             .collect();
@@ -820,17 +830,15 @@ impl ArrangementView {
         tracks
     }
 
-    /// The flags of a folder's buttons: lit when every track of a non-empty folder has them
-    /// (the automation tracks do not count for solo and arm).
+    /// The flags of a folder's buttons: mute and solo are the folder's own, arm is lit when
+    /// every track of a non-empty folder is armed (the automation tracks do not count).
     fn folder_flags(&self, group: u32) -> [bool; 3] {
-        let all = |b: FolderButton, f: fn(&atomik_model::Track) -> bool| {
-            let tracks = self.flagged_tracks(group, b);
-            !tracks.is_empty() && tracks.iter().all(|i| f(&self.song.tracks[*i]))
-        };
+        let g = self.song.org.group(group);
+        let tracks = self.flagged_tracks(group, FolderButton::Arm);
         [
-            all(FolderButton::Mute, |t| t.muted),
-            all(FolderButton::Solo, |t| t.solo),
-            all(FolderButton::Arm, |t| t.armed),
+            g.is_some_and(|g| g.muted),
+            g.is_some_and(|g| g.solo),
+            !tracks.is_empty() && tracks.iter().all(|i| self.song.tracks[*i].armed),
         ]
     }
 
@@ -1091,6 +1099,20 @@ impl ArrangementView {
                     Some(c) => CommandOutcome::Handled(vec![song_cmd(c)]),
                     None => CommandOutcome::Handled(Vec::new()),
                 }
+            }
+            "sequencer.track_color" if arg == Some("custom") => {
+                // Any colour: the app opens the picker for the folder or the selected tracks.
+                let target = match self.og.group {
+                    Some(group) => ColorTarget::Folder(group),
+                    None => {
+                        let tracks = self.selected_tracks();
+                        if tracks.is_empty() {
+                            return Some(CommandOutcome::Declined);
+                        }
+                        ColorTarget::Tracks(tracks)
+                    }
+                };
+                CommandOutcome::Handled(vec![UiAction::PickColor(target)])
             }
             "sequencer.track_color" => {
                 let Some(color) = arg.and_then(palette_color) else {
@@ -1466,6 +1488,7 @@ impl ArrangementView {
     pub(super) fn paint_org_overlay(&self, c: &mut dyn Canvas) {
         self.paint_track_drop(c);
         self.paint_lane_drop(c);
+        self.paint_header_band(c);
         if let (Some(e), Some(r)) = (&self.og.edit, self.edit_rect()) {
             super::markers::name_field(c, &self.st, r, &e.text);
         } else if let Some(text) = self.comment_tooltip()

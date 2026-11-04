@@ -327,6 +327,14 @@ impl Song {
             .any(|g| self.org.group(*g).is_some_and(|g| g.muted))
     }
 
+    /// Whether a folder above the track solos it.
+    pub fn soloed_by_folder(&self, device: &DeviceKey) -> bool {
+        let chain = self.org.chain(self.org.members.get(device).copied());
+        chain
+            .iter()
+            .any(|g| self.org.group(*g).is_some_and(|g| g.solo))
+    }
+
     /// The mute and solo of every track as played, in track order: a track is muted when it or
     /// a folder above it is, and soloed when it or a folder above it is. The folder of a track
     /// is the one the outline shows (see the module documentation).

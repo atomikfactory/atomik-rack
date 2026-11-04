@@ -295,6 +295,11 @@ pub const STEP_SHIFT_ARGS: &[&str] = &["right", "left"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
+/// The values of `sequencer.track_color`: the palette names, `none`, and `custom`, which opens
+/// the colour picker.
+pub const TRACK_COLOR_ARGS: &[&str] = &[
+    "none", "red", "orange", "yellow", "green", "blue", "purple", "custom",
+];
 /// The values of `sequencer.clip_color`: the palette names, and `track` for the colour of the
 /// clip's track.
 pub const CLIP_COLOR_ARGS: &[&str] = &[
@@ -2103,7 +2108,7 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
-    .arg(MARKER_COLOR_ARGS)
+    .arg(TRACK_COLOR_ARGS)
     .decline(),
     cmd(
         "sequencer.track_comment",

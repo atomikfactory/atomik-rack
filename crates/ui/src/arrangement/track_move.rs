@@ -8,6 +8,10 @@
 //! of it when it is collapsed). Below the last row is the end of the list. A place the model
 //! would refuse (the middle of another folder, a frozen track, no change) shows no line and the
 //! release does nothing. Escape cancels.
+//!
+//! A press on the header of a folder row drags the folder the same way, with its tracks and
+//! sub-folders: the pointer picks the same places, and the release moves the folder into or out
+//! of another folder (`MoveGroupTo`). A folder is not copied.
 
 use super::{ArrangementView, DRAG_THRESHOLD, Drag, RowKind, TRACK_INDENT, song_cmd, workflow_cmd};
 use crate::action::UiAction;
@@ -40,6 +44,8 @@ pub(super) struct TrackMoveDrag {
     moved: bool,
     /// The copy role is held: the tracks are copied.
     copy: bool,
+    /// The folder that is dragged, with its tracks (`devices` is empty then).
+    group: Option<u32>,
     drop: Option<TrackDrop>,
 }
 
@@ -61,6 +67,21 @@ impl ArrangementView {
             devices,
             moved: false,
             copy: false,
+            group: None,
+            drop: None,
+        });
+        self.drag = Drag::TrackMove;
+    }
+
+    /// Starts a drag of the folder `group` from a press on its header.
+    pub(super) fn begin_group_move(&mut self, group: u32, at: Point) {
+        self.og.mv = Some(TrackMoveDrag {
+            start: at,
+            press: DeviceKey(String::new()),
+            devices: Vec::new(),
+            moved: false,
+            copy: false,
+            group: Some(group),
             drop: None,
         });
         self.drag = Drag::TrackMove;
@@ -85,9 +106,12 @@ impl ArrangementView {
             return;
         }
         d.moved = true;
-        d.copy = copy;
-        let devices = d.devices.clone();
-        let drop = self.track_drop_at(&devices, copy, pos.y);
+        d.copy = copy && d.group.is_none();
+        let (devices, group) = (d.devices.clone(), d.group);
+        let drop = match group {
+            Some(g) => self.group_drop_at(g, pos.y),
+            None => self.track_drop_at(&devices, copy, pos.y),
+        };
         if let Some(d) = &mut self.og.mv {
             d.drop = drop;
         }
@@ -111,6 +135,13 @@ impl ArrangementView {
         let Some(drop) = d.drop else {
             return;
         };
+        if let Some(group) = d.group {
+            out.push(song_cmd(SongCommand::MoveGroupTo {
+                group,
+                place: drop.place,
+            }));
+            return;
+        }
         out.push(if d.copy {
             workflow_cmd(WorkflowCommand::DuplicateTracks {
                 devices: d.devices,
@@ -129,6 +160,25 @@ impl ArrangementView {
         self.drag = Drag::None;
         self.og.mv = None;
         self.repaint = true;
+    }
+
+    /// The drop of the folder `group` with the pointer at `y`, `None` where the model would
+    /// refuse it (into itself, into the middle of another folder, no change).
+    fn group_drop_at(&self, group: u32, y: f64) -> Option<TrackDrop> {
+        let song = &self.song;
+        let (at, into, line) = self.insertion_at(y)?;
+        let inside = song.group_tracks(group);
+        // The folder's own tracks leave before the place do not count.
+        let before = inside.iter().filter(|i| **i < at).count();
+        let place = TrackPlace {
+            to_index: at - before,
+            into,
+        };
+        song.moves_group(group, place).then(|| TrackDrop {
+            place,
+            y: line,
+            depth: into.map_or(0, |g| self.og.folder_depth.get(&g).map_or(0, |d| d + 1)),
+        })
     }
 
     /// The drop of `devices` with the pointer at `y`, `None` where nothing can be dropped.
