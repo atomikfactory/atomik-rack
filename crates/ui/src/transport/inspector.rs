@@ -1,6 +1,6 @@
 //! The clip inspector at the right of the transport bar's tempo and signature readouts: the
-//! properties of the selected audio clips (fade in, fade out, transpose, gain, reverse), edited
-//! in place.
+//! properties of the selected audio clips (fade in, fade out, transpose, gain, reverse, warp and
+//! the source tempo), edited in place.
 //!
 //! The app hands the bar what is selected ([`InspectorSource`], from
 //! [`ArrangementView::audio_inspector`](crate::ArrangementView::audio_inspector)); with nothing
@@ -14,19 +14,28 @@
 //!   length minus the other fade. The small unit tag at the top right of a fade box switches
 //!   both fades between milliseconds and ticks (the clip's own tick span over its frames).
 //! * Transpose is in semitones with two decimals (the model keeps cents): a drag or the wheel on
-//!   the whole part steps a semitone, on the decimals a cent. A reversed clip cannot be
-//!   transposed and the Repitch warp mode does not transpose, so a clip of either kind keeps its
-//!   settings, and when no selected clip can be transposed the field is disabled and its tooltip
-//!   says why.
-//! * Reverse switches a warped clip's warp and transposition off, as the Reverse Audio command
-//!   does.
+//!   the whole part steps a semitone, on the decimals a cent. The Repitch warp mode does not
+//!   transpose, so a clip in it keeps its settings, and when no selected clip can be transposed
+//!   the field is disabled and its tooltip says why.
+//! * Reverse plays the clip backwards; a warped clip keeps its warp (the stretched span plays
+//!   backwards).
+//! * WARP switches the clip's tempo following on and off (its mode, tempo and markers stay when
+//!   it goes off).
+//! * TEMPO is the tempo the clip's audio was recorded at, in BPM with two decimals (the model's
+//!   source tempo). It is edited like the other values and works on the clips that are warped:
+//!   with warp off the field is dimmed and its tooltip says to switch warp on first.
 //!
-//! When the bar is too narrow the clip name goes first, then fields from the right (gain,
-//! reverse, transpose, fade out), so nothing overlaps the readouts.
+//! When the bar is too narrow the clip name goes first, then fields from the right (tempo,
+//! warp, gain, reverse, transpose, fade out), so nothing overlaps the readouts. The warp and
+//! tempo boxes come after the five older ones and only use room the rest leaves free: the
+//! transport cluster does not give up space for them.
 
 use super::*;
 use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
-use atomik_model::{AudioClipContent, ClipId, DeviceKey, WARP_TRANSPOSE_MAX_CENTS, WarpMode};
+use atomik_model::{
+    AudioClipContent, ClipId, DeviceKey, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS,
+    WarpMode,
+};
 
 /// Gap between the inspector's boxes.
 const GAP: f64 = 8.0;
@@ -140,9 +149,9 @@ impl InspClip {
         }
     }
 
-    /// The clip can be transposed: not reversed and not in the Repitch mode.
+    /// The clip can be transposed: it is not in the Repitch mode.
     fn can_transpose(&self) -> bool {
-        !self.content.reverse && self.content.warp.mode != WarpMode::Repitch
+        self.content.warp.mode != WarpMode::Repitch
     }
 
     /// The most a fade can be, in `unit`: the clip less the other fade.
@@ -183,6 +192,10 @@ pub enum InspectorField {
     Gain,
     /// The reverse button.
     Reverse,
+    /// The warp button.
+    Warp,
+    /// The source tempo of a warped clip.
+    Tempo,
 }
 
 /// A box of the inspector (the transposition is one box with two zones).
@@ -193,14 +206,22 @@ enum Slot {
     Transpose,
     Gain,
     Reverse,
+    Warp,
+    Tempo,
 }
 
-const SLOTS: [Slot; 5] = [
+/// The boxes the bar always keeps room for (the transport cluster and the clip name give way
+/// to them); the boxes after them only appear when the window is wide enough.
+const CORE_SLOTS: usize = 5;
+
+const SLOTS: [Slot; 7] = [
     Slot::FadeIn,
     Slot::FadeOut,
     Slot::Transpose,
     Slot::Gain,
     Slot::Reverse,
+    Slot::Warp,
+    Slot::Tempo,
 ];
 
 impl Slot {
@@ -210,6 +231,8 @@ impl Slot {
             Slot::Transpose => 78.0,
             Slot::Gain => 72.0,
             Slot::Reverse => 40.0,
+            Slot::Warp => 44.0,
+            Slot::Tempo => 70.0,
         }
     }
 
@@ -220,6 +243,8 @@ impl Slot {
             Slot::Transpose => "TRANSPOSE",
             Slot::Gain => "GAIN",
             Slot::Reverse => "REV",
+            Slot::Warp => "WARP",
+            Slot::Tempo => "TEMPO",
         }
     }
 }
@@ -232,6 +257,8 @@ impl InspectorField {
             InspectorField::TransposeWhole | InspectorField::TransposeCents => Slot::Transpose,
             InspectorField::Gain => Slot::Gain,
             InspectorField::Reverse => Slot::Reverse,
+            InspectorField::Warp => Slot::Warp,
+            InspectorField::Tempo => Slot::Tempo,
         }
     }
 }
@@ -285,6 +312,8 @@ fn slot_value(c: &InspClip, slot: Slot, unit: FadeUnit) -> i64 {
         Slot::Transpose => i64::from(c.content.warp.transpose_cents),
         Slot::Gain => (f64::from(c.content.gain_db) * 10.0).round() as i64,
         Slot::Reverse => i64::from(c.content.reverse),
+        Slot::Warp => i64::from(c.content.warp.enabled),
+        Slot::Tempo => (c.content.warp.source_bpm * 100.0).round() as i64,
     }
 }
 
@@ -331,11 +360,10 @@ impl Inspector {
             return Some("select an audio clip to edit it");
         }
         if slot == Slot::Transpose && !clips.iter().any(InspClip::can_transpose) {
-            return Some(if clips.iter().all(|c| c.content.reverse) {
-                "a reversed clip cannot be transposed"
-            } else {
-                "the Repitch warp mode does not transpose: pick another mode"
-            });
+            return Some("the Repitch warp mode does not transpose: pick another mode");
+        }
+        if slot == Slot::Tempo && !clips.iter().any(|c| c.content.warp.enabled) {
+            return Some("switch warp on to set the tempo the audio was recorded at");
         }
         None
     }
@@ -358,7 +386,11 @@ impl Inspector {
                 (f64::from(AUDIO_GAIN_DB_MIN) * 10.0).ceil() as i64,
                 (f64::from(AUDIO_GAIN_DB_MAX) * 10.0).floor() as i64,
             ),
-            Slot::Reverse => (0, 1),
+            Slot::Reverse | Slot::Warp => (0, 1),
+            Slot::Tempo => (
+                (WARP_BPM_MIN * 100.0).ceil() as i64,
+                (WARP_BPM_MAX * 100.0).floor() as i64,
+            ),
         }
     }
 
@@ -389,12 +421,13 @@ impl Inspector {
                         a.warp.transpose_cents = value as i32;
                     }
                     Slot::Gain => a.gain_db = value as f32 / 10.0,
-                    Slot::Reverse => {
-                        a.reverse = value != 0;
-                        if a.reverse {
-                            a.warp.enabled = false;
-                            a.warp.transpose_cents = 0;
+                    Slot::Reverse => a.reverse = value != 0,
+                    Slot::Warp => a.warp.enabled = value != 0,
+                    Slot::Tempo => {
+                        if !c.content.warp.enabled {
+                            return None;
                         }
+                        a.warp.source_bpm = value as f64 / 100.0;
                     }
                 }
                 (a != c.content).then_some((i, a))
@@ -484,7 +517,14 @@ fn step_value(field: InspectorField, v: i64, notches: i32, fine: bool, unit: Fad
                 GAIN_STEP
             }
         }
-        InspectorField::Reverse => 0,
+        InspectorField::Reverse | InspectorField::Warp => 0,
+        InspectorField::Tempo => {
+            if fine {
+                1
+            } else {
+                100
+            }
+        }
     };
     v + i64::from(notches) * step
 }
@@ -496,7 +536,8 @@ fn value_text(slot: Slot, v: i64, unit: FadeUnit) -> String {
         Slot::FadeIn | Slot::FadeOut => format!("{v} ms"),
         Slot::Transpose => format!("{:+.2}", v as f64 / 100.0),
         Slot::Gain => format!("{:+.1} dB", v as f64 / 10.0),
-        Slot::Reverse => String::new(),
+        Slot::Tempo => format!("{:.2}", v as f64 / 100.0),
+        Slot::Reverse | Slot::Warp => String::new(),
     }
 }
 
@@ -506,7 +547,8 @@ fn edit_text(slot: Slot, v: i64) -> String {
         Slot::FadeIn | Slot::FadeOut => v.to_string(),
         Slot::Transpose => format!("{:.2}", v as f64 / 100.0),
         Slot::Gain => format!("{:.1}", v as f64 / 10.0),
-        Slot::Reverse => String::new(),
+        Slot::Tempo => format!("{:.2}", v as f64 / 100.0),
+        Slot::Reverse | Slot::Warp => String::new(),
     }
 }
 
@@ -520,7 +562,8 @@ fn parse_text(slot: Slot, text: &str) -> Option<i64> {
         Slot::FadeIn | Slot::FadeOut => v.round() as i64,
         Slot::Transpose => (v * 100.0).round() as i64,
         Slot::Gain => (v * 10.0).round() as i64,
-        Slot::Reverse => return None,
+        Slot::Tempo => (v * 100.0).round() as i64,
+        Slot::Reverse | Slot::Warp => return None,
     })
 }
 
@@ -560,6 +603,8 @@ impl TransportBar {
                 ],
                 Slot::Gain => vec![InspectorField::Gain],
                 Slot::Reverse => vec![InspectorField::Reverse],
+                Slot::Warp => vec![InspectorField::Warp],
+                Slot::Tempo => vec![InspectorField::Tempo],
             })
             .collect()
     }
@@ -589,7 +634,7 @@ impl TransportBar {
         if self.insp.source == InspectorSource::None {
             return 0.0;
         }
-        let all: f64 = SLOTS.iter().map(|s| s.width() + GAP).sum();
+        let all: f64 = SLOTS[..CORE_SLOTS].iter().map(|s| s.width() + GAP).sum();
         LEAD + 118.0 + GAP + all - GAP
     }
 
@@ -604,7 +649,7 @@ impl TransportBar {
         let x0 = self.cluster_end() + LEAD;
         let limit = self.bounds.x1 - TAIL - self.rec_reserved();
         let y0 = self.bounds.center().y - BOX_H / 2.0;
-        let all: f64 = SLOTS.iter().map(|s| s.width() + GAP).sum();
+        let all: f64 = SLOTS[..CORE_SLOTS].iter().map(|s| s.width() + GAP).sum();
         let name_w = 118.0;
         let mut x = x0;
         if x0 + name_w + GAP + all - GAP <= limit {
@@ -676,6 +721,8 @@ impl TransportBar {
                     Slot::FadeOut => InspectorField::FadeOut,
                     Slot::Gain => InspectorField::Gain,
                     Slot::Reverse => InspectorField::Reverse,
+                    Slot::Warp => InspectorField::Warp,
+                    Slot::Tempo => InspectorField::Tempo,
                     Slot::Transpose => {
                         if pos.x >= r.x1 - LCD_PAD - decimals_w() {
                             InspectorField::TransposeCents
@@ -700,7 +747,7 @@ impl TransportBar {
         if self.insp.disabled(slot).is_some() {
             return Vec::new();
         }
-        if field == InspectorField::Reverse {
+        if matches!(field, InspectorField::Reverse | InspectorField::Warp) {
             let to = i64::from(self.insp.shown(slot) != Shown::Value(1));
             return self.insp.one_step(slot, to).into_iter().collect();
         }
@@ -767,7 +814,10 @@ impl TransportBar {
         out: &mut Vec<UiAction>,
     ) {
         let slot = field.slot();
-        if notches == 0 || field == InspectorField::Reverse || self.insp.disabled(slot).is_some() {
+        if notches == 0
+            || matches!(field, InspectorField::Reverse | InspectorField::Warp)
+            || self.insp.disabled(slot).is_some()
+        {
             return;
         }
         let (lo, hi) = self.insp.range(slot);
@@ -841,6 +891,8 @@ impl TransportBar {
                 Slot::Transpose => "Transpose",
                 Slot::Gain => "Clip gain",
                 Slot::Reverse => "Reverse",
+                Slot::Warp => "Warp",
+                Slot::Tempo => "Tempo",
             };
             return Some(Help::new(r, format!("{what}: {why}")));
         }
@@ -860,13 +912,19 @@ impl TransportBar {
                 ));
             }
             Slot::Transpose => {
-                "Transpose in semitones: drag or scroll the whole part, or the cents after the point; double-click to type. Reversed clips and the Repitch mode are left alone"
+                "Transpose in semitones: drag or scroll the whole part, or the cents after the point; double-click to type. A clip in the Repitch mode is left alone"
             }
             Slot::Gain => {
                 "Clip gain in dB: drag or scroll to change (Shift: fine), double-click to type"
             }
             Slot::Reverse => {
-                "Play the clip backwards (a warped clip stops following the tempo and transposing)"
+                "Play the clip backwards (a warped clip keeps its warp: the stretched audio plays backwards)"
+            }
+            Slot::Warp => {
+                "Warp: follow the song tempo, keeping the pitch (the mode, tempo and markers stay when it is switched off)"
+            }
+            Slot::Tempo => {
+                "The tempo the audio was recorded at, in BPM: drag or scroll to change (Shift: fine), double-click to type. The clip plays faster or slower to follow the song"
             }
         };
         Some(Help::new(r, text))
@@ -909,7 +967,7 @@ impl TransportBar {
         for (slot, r) in layout.slots {
             let off = self.insp.disabled(slot).is_some();
             let shown = self.insp.shown(slot);
-            if slot == Slot::Reverse {
+            if matches!(slot, Slot::Reverse | Slot::Warp) {
                 let lit = match shown {
                     Shown::Value(1) => Some(t.focus),
                     Shown::Mixed => Some(mix(t.focus, t.button, 0.55)),

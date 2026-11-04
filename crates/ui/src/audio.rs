@@ -406,6 +406,26 @@ pub fn trim_left_reversed(
     }
 }
 
+/// Trims the left edge of a warped *reversed* clip `(start, length, source_offset)` to
+/// `wanted_start` (already snapped). Such a clip plays its stretched span from the end, so its
+/// start is the end of the forward stretch: moving it only cuts or restores that end, and the
+/// source offset and the markers (which count from the span's other end) stay. The start is
+/// limited to tick 0 and to `min_len` before the end.
+pub fn trim_left_stretched_reversed(
+    (start, length, source_offset): (i64, i64, u64),
+    wanted_start: i64,
+    min_len: i64,
+) -> Trim {
+    let end = start + length;
+    let hi = (end - min_len).max(0);
+    let new_start = wanted_start.clamp(0, hi);
+    Trim {
+        start: new_start,
+        length: end - new_start,
+        source_offset,
+    }
+}
+
 /// The source offset of a *reversed* clip after its end moved so it lasts `new_frames` instead
 /// of `old_frames`: the end of a reversed clip is the *low* end of its source span, so the offset
 /// moves by what was cut (and can go no lower than frame 0, which also limits how long

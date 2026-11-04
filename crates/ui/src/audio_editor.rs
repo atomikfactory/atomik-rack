@@ -1300,7 +1300,7 @@ impl AudioEditorView {
         }
         let Some(info) = &self.info else { return };
         if info.content.reverse {
-            self.status = "A reversed clip cannot be warped, so it cannot be sliced".into();
+            self.status = "A reversed clip cannot be sliced: un-reverse it to place markers".into();
             return;
         }
         if !info.content.warp.enabled

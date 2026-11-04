@@ -135,21 +135,22 @@ fn a_warped_clip_toggles_off_and_transpose_clamps() {
 }
 
 #[test]
-fn a_reversed_clip_is_not_warped_by_the_commands() {
+fn a_reversed_clip_is_warped_and_transposed_by_the_commands() {
     let (mut doc, reg) = (audio_doc(), registry());
     edit_clip(&mut doc, 10, |a| a.reverse = true);
     let mut v = audio_arrangement(&doc, &reg);
     v.set_selected_clips(&[ClipId(10)]);
-    assert!(!v.audio_menu().can_warp);
-    for (id, arg) in [
-        ("sequencer.audio_warp", None),
-        ("sequencer.audio_transpose", Some("up")),
-    ] {
-        assert!(
-            matches!(run(&mut v, &doc, &reg, id, arg), CommandOutcome::Handled(a) if a.is_empty()),
-            "{id}"
-        );
-    }
+    assert!(v.audio_menu().can_warp);
+    let on = one_content(&run(&mut v, &doc, &reg, "sequencer.audio_warp", None));
+    assert!(on.reverse && on.warp.enabled);
+    let up = one_content(&run(
+        &mut v,
+        &doc,
+        &reg,
+        "sequencer.audio_transpose",
+        Some("up"),
+    ));
+    assert!(up.reverse && up.warp.transpose_cents == 100);
 }
 
 #[test]
@@ -210,6 +211,23 @@ fn a_left_trim_of_a_warped_clip_moves_the_offset_through_the_map() {
     let (t, _) =
         audio::trim_left_warped(rate, (start, length, &content), 60_000, start + length, 240);
     assert!(t.source_offset <= 60_000 && t.start + 240 <= start + length);
+}
+
+#[test]
+fn trimming_the_start_of_a_warped_reversed_clip_cuts_the_end_of_the_stretched_span() {
+    let (start, length) = (4 * atomik_core::PPQ, 4 * atomik_core::PPQ);
+    let orig = (start, length, 1_000);
+    // The start moves later: the end stays, the source offset (the low end of the span, which
+    // the markers count from) stays too.
+    let wanted = start + atomik_core::PPQ;
+    let t = audio::trim_left_stretched_reversed(orig, wanted, 240);
+    assert_eq!((t.start, t.source_offset), (wanted, 1_000));
+    assert_eq!(t.start + t.length, start + length);
+    // It can go earlier, to tick 0, and is kept a minimum length before the end.
+    let t = audio::trim_left_stretched_reversed(orig, -5, 240);
+    assert_eq!((t.start, t.source_offset), (0, 1_000));
+    let t = audio::trim_left_stretched_reversed(orig, start + length + 10, 240);
+    assert_eq!(t.start + 240, start + length);
 }
 
 fn paint_json(

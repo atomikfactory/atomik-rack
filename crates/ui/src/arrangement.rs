@@ -7726,7 +7726,11 @@ fn trim_start_audio(
 ) -> (i64, i64, AudioClipContent) {
     let orig = (start, length, content.source_offset);
     let mut markers = None;
-    let t = if content.warp.enabled {
+    let t = if content.warp.enabled && content.reverse {
+        // A warped clip played backwards plays its stretched span from the end: trimming its
+        // start cuts the end of that span, so the source offset and the markers stay.
+        audio::trim_left_stretched_reversed(orig, wanted, min)
+    } else if content.warp.enabled {
         let (t, m) =
             audio::trim_left_warped(rate, (start, length, content), asset_frames, wanted, min);
         markers = Some(m);
@@ -7794,7 +7798,7 @@ fn resize_cmd(
     let rate = assets.get(&a.asset).map_or(DEFAULT_RATE, |m| m.sample_rate);
     let mut frames = clip_frames(tempo, clip.start, new.0, rate);
     let mut source_offset = a.source_offset;
-    if a.reverse {
+    if a.reverse && !a.warp.enabled {
         // The end of a reversed clip is the low end of its source span: the offset moves with
         // it, and the clip grows no further than frame 0.
         let old = clip_frames(tempo, clip.start, clip.length, rate);
