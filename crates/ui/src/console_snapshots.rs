@@ -270,14 +270,9 @@ fn edit_field(c: &mut dyn Canvas, st: &SeqTheme, chip: Rect, text: &str) {
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
     let room = r.width() - 12.0;
-    let mut shown: &str = text;
-    while paint::estimate_width(shown, 9.0) > room {
-        let mut chars = shown.chars();
-        chars.next();
-        shown = chars.as_str();
-    }
+    let shown = paint::tail_fit(c, text, room, 9.0, 700);
     c.text(&TextRun::new(shown, pt(r.x0 + 5.0, r.center().y + 3.2), 9.0, t.text).weight(700));
-    let cx = r.x0 + 5.0 + paint::estimate_width(shown, 9.0);
+    let cx = r.x0 + 5.0 + paint::measure(c, shown, 9.0, 700);
     c.stroke_with(
         vello::kurbo::Line::new(pt(cx + 1.0, r.y0 + 4.0), pt(cx + 1.0, r.y1 - 4.0)),
         1.2,

@@ -30,6 +30,7 @@ use crate::keymap::{CommandOutcome, GestureClass, Os, Role, Roles};
 use crate::library_drop;
 use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
+use crate::pick_list::PickList;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
@@ -138,7 +139,6 @@ const HSCROLL_HEIGHT: f64 = 12.0;
 const ZOOM_STEP: f64 = 1.15;
 /// Zoom factor of the zoom commands (H and G).
 const ZOOM_KEY: f64 = 1.25;
-const MENU_ROW: f64 = 20.0;
 const MENU_W: f64 = 200.0;
 const MENU_ROWS: usize = 12;
 const MERGE_BASE: u64 = 1 << 40;
@@ -394,9 +394,8 @@ struct Menu {
     device: DeviceKey,
     kind: MenuKind,
     items: Vec<(String, String)>,
-    origin: Point,
-    scroll: usize,
-    hover: Option<usize>,
+    /// The panel, its scrolling and the hover row.
+    list: PickList,
     /// The row of the current choice (input menu), drawn lit.
     current: Option<usize>,
     /// Rows drawn with a check mark (the lanes the track has, in the parameter menu).
@@ -415,31 +414,32 @@ enum MenuKind {
 }
 
 impl Menu {
-    fn visible(&self) -> usize {
-        self.items.len().min(MENU_ROWS)
+    /// A menu at `origin` whose first shown row is `top`.
+    fn new(
+        device: DeviceKey,
+        kind: MenuKind,
+        items: Vec<(String, String)>,
+        origin: Point,
+        top: usize,
+    ) -> Self {
+        let list = PickList::new(origin, MENU_W, MENU_ROWS, items.len(), top);
+        Self {
+            device,
+            kind,
+            items,
+            list,
+            current: None,
+            checked: Vec::new(),
+        }
     }
     fn rect(&self) -> Rect {
-        Rect::new(
-            self.origin.x,
-            self.origin.y,
-            self.origin.x + MENU_W,
-            self.origin.y + self.visible() as f64 * MENU_ROW + 8.0,
-        )
+        self.list.rect()
     }
     fn row_rect(&self, i: usize) -> Option<Rect> {
-        (i >= self.scroll && i < self.scroll + self.visible()).then(|| {
-            let y = self.origin.y + 4.0 + (i - self.scroll) as f64 * MENU_ROW;
-            Rect::new(
-                self.origin.x + 4.0,
-                y,
-                self.origin.x + MENU_W - 4.0,
-                y + MENU_ROW,
-            )
-        })
+        self.list.row_rect(i)
     }
     fn row_at(&self, p: Point) -> Option<usize> {
-        (self.scroll..self.scroll + self.visible())
-            .find(|i| self.row_rect(*i).is_some_and(|r| r.contains(p)))
+        self.list.row_at(p)
     }
 }
 
@@ -3197,10 +3197,7 @@ impl ArrangementView {
 
     /// Opens a menu, moved up when it would run below the view.
     fn open_menu(&mut self, mut menu: Menu) {
-        let h = menu.rect().height();
-        if menu.origin.y + h > self.bounds.y1 {
-            menu.origin.y = (self.bounds.y1 - h).max(self.bounds.y0);
-        }
+        menu.list.keep_above(self.bounds.y1, self.bounds.y0);
         self.menu = Some(menu);
     }
 
@@ -3345,16 +3342,14 @@ impl ArrangementView {
                     return;
                 };
                 let br = self.track_button_rect(self.row_rect(row), track, TrackButton::AddLane);
-                let menu = Menu {
-                    device: t.device.clone(),
-                    kind: MenuKind::Param,
+                let mut menu = Menu::new(
+                    t.device.clone(),
+                    MenuKind::Param,
                     items,
-                    origin: Point::new(br.x0, br.y1 + 2.0),
-                    scroll: 0,
-                    hover: None,
-                    current: None,
-                    checked,
-                };
+                    Point::new(br.x0, br.y1 + 2.0),
+                    0,
+                );
+                menu.checked = checked;
                 self.open_menu(menu);
             }
             TrackButton::Input => {
@@ -3383,16 +3378,14 @@ impl ArrangementView {
                     return;
                 };
                 let br = self.track_button_rect(self.row_rect(row), track, TrackButton::Input);
-                let menu = Menu {
+                let mut menu = Menu::new(
                     device,
-                    kind: MenuKind::Input(options.clone()),
+                    MenuKind::Input(options.clone()),
                     items,
-                    origin: Point::new(br.x0, br.y1 + 2.0),
-                    scroll: 0,
-                    hover: None,
-                    current: options.iter().position(|o| *o == current),
-                    checked: Vec::new(),
-                };
+                    Point::new(br.x0, br.y1 + 2.0),
+                    0,
+                );
+                menu.current = options.iter().position(|o| *o == current);
                 self.open_menu(menu);
             }
             TrackButton::Keys => {
@@ -4071,8 +4064,8 @@ impl ArrangementView {
             let h = self.hit(pos);
             if let Some(m) = &mut self.menu {
                 let row = m.row_at(pos);
-                if row != m.hover {
-                    m.hover = row;
+                if row != m.list.hover {
+                    m.list.hover = row;
                     self.repaint = true;
                 }
             }
@@ -4911,12 +4904,7 @@ impl ArrangementView {
         if let Some(m) = &mut self.menu
             && m.rect().contains(pos)
         {
-            let max = m.items.len().saturating_sub(MENU_ROWS);
-            m.scroll = if dy > 0.0 {
-                m.scroll.saturating_sub(1)
-            } else {
-                (m.scroll + 1).min(max)
-            };
+            m.list.wheel(dy);
             return;
         }
         if modifiers.zooms_vertically() {
@@ -5789,7 +5777,7 @@ impl ArrangementView {
         };
         let x = self.axis.tick_to_x(self.playhead);
         if x >= tl.x0 - 1.0 && x <= tl.x1 + 1.0 {
-            let x = x.round() + 0.5;
+            let x = crate::paint::snap_hairline(x, self.scale);
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, tl.y0), pt(x, tl.y1)),
                 1.5,
@@ -5848,7 +5836,7 @@ impl ArrangementView {
                 Rect::new(end_x.max(tl.x0), tl.y0, tl.x1, tl.y1),
                 st.end_shade,
             );
-            let x = end_x.round() + 0.5;
+            let x = crate::paint::snap_hairline(end_x, self.scale);
             sp::line(c, x, tl.y0, x, tl.y1, st.end_mark.with_alpha(0.55));
         }
         for (row, rr) in self.visible_rows() {
@@ -6037,7 +6025,7 @@ impl ArrangementView {
             &Stroke::new(1.0).with_dashes(0.0, [4.0, 3.0]),
             &accent.into(),
         );
-        let x = self.axis.tick_to_x(hover.tick).round() + 0.5;
+        let x = crate::paint::snap_hairline(self.axis.tick_to_x(hover.tick), self.scale);
         if x >= tl.x0 && x <= tl.x1 {
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, area.y0), pt(x, area.y1)),
@@ -6064,7 +6052,7 @@ impl ArrangementView {
             &Stroke::new(1.0).with_dashes(0.0, [4.0, 3.0]),
             &accent.into(),
         );
-        let x = self.axis.tick_to_x(*tick).round() + 0.5;
+        let x = crate::paint::snap_hairline(self.axis.tick_to_x(*tick), self.scale);
         if x >= tl.x0 && x <= tl.x1 {
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, area.y0), pt(x, area.y1)),
@@ -6196,7 +6184,7 @@ impl ArrangementView {
                 st.handle.with_alpha(0.85)
             }
         };
-        let gy = g.gain_y.round() + 0.5;
+        let gy = crate::paint::snap_hairline(g.gain_y, self.scale);
         sp::line(c, vis.x0, gy, vis.x1, gy, st.gain_line.with_alpha(0.55));
         if let Some(h) = g.gain {
             let shape = RoundedRect::from_rect(h, 2.0);
@@ -6487,7 +6475,7 @@ impl ArrangementView {
             ClipContent::Notes(_) => {}
         }
         for w in windows.iter().skip(1) {
-            let x = self.axis.tick_to_x(w.song_start).round() + 0.5;
+            let x = crate::paint::snap_hairline(self.axis.tick_to_x(w.song_start), self.scale);
             if x > tl.x0 && x < tl.x1 {
                 // A bevelled seam: a dark line with a light one beside it.
                 sp::line(c, x, vis.y0, x, vis.y1, st.base.plate.with_alpha(0.7));
@@ -6735,12 +6723,12 @@ impl ArrangementView {
         // The lines first, so a flag's body covers the line of another.
         for f in &flags {
             let col = self.flag_colour(f, on);
-            let x = f.x.round() + 0.5;
+            let x = crate::paint::snap_hairline(f.x, self.scale);
             sp::line(c, x, band.y0 + 1.0, x, band.y1, col);
         }
         for f in flags.iter().rev() {
             let col = self.flag_colour(f, on);
-            let x = f.x.round() + 0.5;
+            let x = crate::paint::snap_hairline(f.x, self.scale);
             let body = Flag { x, ..*f }.body(self.flag_top(f.row));
             c.fill_with(RoundedRect::from_rect(body, 2.0), col.with_alpha(0.85));
             sp::label(
@@ -7311,18 +7299,8 @@ fn new_clip_cmd(
 
 fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
     let t = &st.base;
-    let r = m.rect();
-    c.fill_with(
-        RoundedRect::from_rect(r.inset(2.0) + vello::kurbo::Vec2::new(0.0, 3.0), 5.0),
-        t.cable_shadow,
-    );
-    c.fill_with(RoundedRect::from_rect(r, 4.0), t.browser_bg);
-    c.stroke_with(
-        RoundedRect::from_rect(r.inset(-0.5), 4.5),
-        1.0,
-        t.bevel_dark,
-    );
-    for i in m.scroll..m.scroll + m.visible() {
+    m.list.paint_frame(c, st);
+    for i in m.list.visible() {
         let Some(rr) = m.row_rect(i) else { continue };
         if m.current == Some(i) {
             c.fill_with(
@@ -7330,7 +7308,7 @@ fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
                 st.selection.with_alpha(0.22),
             );
         }
-        if m.hover == Some(i) {
+        if m.list.hover == Some(i) {
             c.fill_with(RoundedRect::from_rect(rr, 3.0), t.browser_row);
         }
         let text = fit_label(&m.items[i].1, MENU_W - 24.0, 10.0);
@@ -7353,16 +7331,7 @@ fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
             c.stroke(&tick.into(), &Stroke::new(1.6), &st.selection.into());
         }
     }
-    if m.items.len() > MENU_ROWS {
-        let frac = MENU_ROWS as f64 / m.items.len() as f64;
-        let h = (r.height() - 8.0) * frac;
-        let max = (m.items.len() - MENU_ROWS) as f64;
-        let y = r.y0 + 4.0 + (r.height() - 8.0 - h) * (m.scroll as f64 / max);
-        c.fill_with(
-            RoundedRect::new(r.x1 - 6.0, y, r.x1 - 3.0, y + h, 1.5),
-            t.text_muted.with_alpha(0.6),
-        );
-    }
+    m.list.paint_scrollbar(c, st);
 }
 
 /// The y range `(top, bottom)` for values inside an automation clip rectangle.

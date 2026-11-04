@@ -81,6 +81,7 @@ use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::{CommandOutcome, GestureClass, Role, Roles};
 use crate::paint::{self, fit_label};
+use crate::pick_list::PickList;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
 use crate::widget::{self, ValueDrag};
@@ -342,17 +343,14 @@ struct Menu {
     new_vca_name: String,
     /// The item that is the strip's current destination (marked with a dot).
     current: Option<usize>,
-    /// Menu width.
-    width: f64,
-    /// The first item shown (long menus scroll with the wheel).
-    top: usize,
-    origin: Point,
-    hover: Option<usize>,
+    /// The panel, its scrolling and the hover row (rows are list indices).
+    list: PickList,
 }
 
 impl Menu {
     /// A plain pick list.
     fn plain(items: Vec<(String, MenuItem)>, origin: Point) -> Self {
+        let list = PickList::new(origin, MENU_W, MENU_ROWS, items.len(), 0);
         Self {
             items,
             slot: None,
@@ -363,38 +361,24 @@ impl Menu {
             targets: Vec::new(),
             new_vca_name: String::new(),
             current: None,
-            width: MENU_W,
-            top: 0,
-            origin,
-            hover: None,
+            list,
         }
     }
-    /// Visible rows.
-    fn rows(&self) -> usize {
-        self.items.len().saturating_sub(self.top).min(MENU_ROWS)
-    }
-    /// The item shown on visible row `i`.
+    /// The item of list row `i`.
     fn item(&self, i: usize) -> Option<&(String, MenuItem)> {
-        (i < self.rows()).then(|| self.items.get(self.top + i))?
+        self.list
+            .visible()
+            .contains(&i)
+            .then(|| self.items.get(i))?
     }
     fn rect(&self) -> Rect {
-        Rect::new(
-            self.origin.x,
-            self.origin.y,
-            self.origin.x + self.width,
-            self.origin.y + self.rows() as f64 * MENU_ROW + 8.0,
-        )
+        self.list.rect()
     }
     fn row_rect(&self, i: usize) -> Option<Rect> {
-        (i < self.rows()).then(|| {
-            let y = self.origin.y + 4.0 + i as f64 * MENU_ROW;
-            Rect::new(
-                self.origin.x + 4.0,
-                y,
-                self.origin.x + self.width - 4.0,
-                y + MENU_ROW,
-            )
-        })
+        self.list.row_rect(i)
+    }
+    fn row_at(&self, p: Point) -> Option<usize> {
+        self.list.row_at(p)
     }
 }
 
@@ -1609,7 +1593,7 @@ impl ConsoleView {
 
     fn hit(&self, p: Point) -> Hit {
         if let Some(m) = &self.menu {
-            if let Some(i) = (0..m.rows()).find(|i| m.row_rect(*i).is_some_and(|r| r.contains(p))) {
+            if let Some(i) = m.row_at(p) {
                 return Hit::Menu(i);
             }
             if m.rect().contains(p) {
@@ -2115,7 +2099,7 @@ impl ConsoleView {
             }
             UiEvent::PointerLeave => {
                 if let Some(m) = &mut self.menu {
-                    m.hover = None;
+                    m.list.hover = None;
                     self.repaint = true;
                 }
             }
@@ -2714,7 +2698,7 @@ impl ConsoleView {
         };
         let (slot, insert, choice, strip) =
             (m.slot, m.insert.clone(), m.choice.clone(), m.strip.clone());
-        let is_current = m.current == Some(m.top + i);
+        let is_current = m.current == Some(i);
         let new_bus_name = m.new_bus_name.clone();
         let (targets, new_vca_name) = (m.targets.clone(), m.new_vca_name.clone());
         if let (MenuItem::Choice(value), Some((key, param))) = (&item, &choice) {
@@ -3041,9 +3025,11 @@ impl ConsoleView {
             strip: Some(strip),
             new_bus_name: doc.console.default_bus_name(),
             current,
-            width: OUTPUT_MENU_W,
             ..Menu::plain(items, origin)
         });
+        if let Some(m) = &mut self.menu {
+            m.list.width = OUTPUT_MENU_W;
+        }
     }
 
     // ---------------------------------------------------------------- rename and selection
@@ -3396,10 +3382,9 @@ impl ConsoleView {
             }
             Drag::None => {
                 if let Some(m) = &mut self.menu {
-                    let hover =
-                        (0..m.rows()).find(|i| m.row_rect(*i).is_some_and(|r| r.contains(pos)));
-                    if hover != m.hover {
-                        m.hover = hover;
+                    let hover = m.row_at(pos);
+                    if hover != m.list.hover {
+                        m.list.hover = hover;
                         self.repaint = true;
                     }
                 }
@@ -3487,10 +3472,7 @@ impl ConsoleView {
     fn wheel(&mut self, delta: Vec2, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         if let Some(m) = &mut self.menu {
             // A long menu scrolls.
-            if m.items.len() > MENU_ROWS {
-                let max = m.items.len() - MENU_ROWS;
-                let top = m.top as i64 - delta.y.signum() as i64;
-                m.top = top.clamp(0, max as i64) as usize;
+            if m.list.wheel(delta.y) {
                 self.repaint = true;
             }
             return;
@@ -4945,14 +4927,9 @@ fn rename_field(c: &mut dyn Canvas, st: &SeqTheme, plate: Rect, text: &str) {
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
     let room = r.width() - 12.0;
-    let mut shown: &str = text;
-    while paint::estimate_width(shown, 10.0) > room {
-        let mut chars = shown.chars();
-        chars.next();
-        shown = chars.as_str();
-    }
+    let shown = paint::tail_fit(c, text, room, 10.0, 700);
     c.text(&TextRun::new(shown, pt(r.x0 + 5.0, r.y0 + 17.0), 10.0, t.text).weight(700));
-    let cx = r.x0 + 5.0 + paint::estimate_width(shown, 10.0);
+    let cx = r.x0 + 5.0 + paint::measure(c, shown, 10.0, 700);
     c.stroke_with(
         Line::new(pt(cx + 1.0, r.y0 + 7.0), pt(cx + 1.0, r.y0 + 20.0)),
         1.2,
@@ -5138,28 +5115,18 @@ fn record_master(
 
 fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
     let t = &st.base;
-    let r = m.rect();
-    c.fill_with(
-        RoundedRect::from_rect(r.inset(2.0) + Vec2::new(0.0, 3.0), 5.0),
-        t.cable_shadow,
-    );
-    c.fill_with(RoundedRect::from_rect(r, 4.0), t.browser_bg);
-    c.stroke_with(
-        RoundedRect::from_rect(r.inset(-0.5), 4.5),
-        1.0,
-        t.bevel_dark,
-    );
-    for i in 0..m.rows() {
+    m.list.paint_frame(c, st);
+    for i in m.list.visible() {
         let (Some(rr), Some((label, item))) = (m.row_rect(i), m.item(i)) else {
             continue;
         };
         let disabled = *item == MenuItem::Disabled;
-        if m.hover == Some(i) && !disabled {
+        if m.list.hover == Some(i) && !disabled {
             c.fill_with(RoundedRect::from_rect(rr, 3.0), t.browser_row);
         }
-        let text = fit_label(label, m.width - 24.0, 10.0);
+        let text = fit_label(label, m.list.width - 24.0, 10.0);
         let col = if disabled { t.text_muted } else { t.text };
-        if m.current == Some(m.top + i) {
+        if m.current == Some(i) {
             c.fill_with(Circle::new(pt(rr.x0 + 5.0, rr.y0 + 10.0), 2.0), t.highlight);
         }
         sp::label(

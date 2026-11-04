@@ -2,11 +2,12 @@
 //! list and the EDIT button of each return.
 
 use super::{Flip, Hit, RackView, UiAction, param_cmd};
-use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::canvas::{Align, Canvas, TextRun, pt};
 use crate::master_panel;
+use crate::pick_list::CompactList;
 use atomik_device_sdk::RACK_WIDTH;
 use atomik_model::DeviceKey;
-use vello::kurbo::{Point, Rect, RoundedRect};
+use vello::kurbo::{Point, Rect};
 
 /// Height of one row of a pick list.
 const ROW_H: f64 = 16.0;
@@ -21,17 +22,11 @@ pub(super) struct ChoiceMenu {
     names: &'static [&'static str],
     current: usize,
     /// The list rectangle, rack coordinates.
-    rect: Rect,
-    hover: Option<usize>,
-}
-
-fn row_rect(menu: Rect, i: usize) -> Rect {
-    let y = menu.y0 + 2.0 + i as f64 * ROW_H;
-    Rect::new(menu.x0 + 2.0, y, menu.x1 - 2.0, y + ROW_H)
+    list: CompactList,
 }
 
 fn row_at(menu: &ChoiceMenu, rp: Point) -> Option<usize> {
-    (0..menu.names.len()).find(|&i| row_rect(menu.rect, i).contains(rp))
+    menu.list.row_at(menu.names.len(), rp)
 }
 
 impl RackView {
@@ -54,7 +49,7 @@ impl RackView {
         let d = &self.devices[i];
         let cell = d.spec.front[slot].rect + d.offset();
         let (lcd_top, lcd_bottom) = (cell.y0 + 3.0, cell.y0 + 19.0);
-        let h = names.len() as f64 * ROW_H + 4.0;
+        let h = CompactList::height(names.len(), ROW_H);
         let x0 = (cell.center().x - MENU_W / 2.0)
             .clamp(d.x, d.x + f64::from(RACK_WIDTH) - 16.0 - MENU_W);
         let (top, bottom) = (
@@ -74,8 +69,7 @@ impl RackView {
             param: p.key,
             names,
             current,
-            rect: Rect::new(x0, y0, x0 + MENU_W, y0 + h),
-            hover: None,
+            list: CompactList::new(Rect::new(x0, y0, x0 + MENU_W, y0 + h), ROW_H),
         });
     }
 
@@ -98,8 +92,8 @@ impl RackView {
         let rp = self.view_to_rack(pos);
         if let Some(menu) = &mut self.choice_menu {
             let hover = row_at(menu, rp);
-            if hover != menu.hover {
-                menu.hover = hover;
+            if hover != menu.list.hover {
+                menu.list.hover = hover;
                 self.repaint = true;
             }
         }
@@ -109,20 +103,10 @@ impl RackView {
     pub(super) fn paint_choice_menu(&self, c: &mut dyn Canvas) {
         let Some(m) = &self.choice_menu else { return };
         let theme = &self.theme;
-        c.fill_with(RoundedRect::from_rect(m.rect, 4.0), theme.tooltip_bg);
-        c.stroke_with(
-            RoundedRect::from_rect(m.rect, 4.0),
-            1.0,
-            theme.ink.with_alpha(0.14),
-        );
+        m.list.paint_frame(c, theme);
         for (k, name) in m.names.iter().enumerate() {
-            let r = row_rect(m.rect, k);
-            if m.hover == Some(k) {
-                c.fill_with(
-                    RoundedRect::from_rect(r.inset(-1.0), 3.0),
-                    theme.browser_row,
-                );
-            }
+            let r = m.list.row_rect(k);
+            m.list.paint_hover(c, theme, k);
             let current = m.current == k;
             if current {
                 c.text(
@@ -148,7 +132,7 @@ impl RackView {
     /// Centre of row `i` of the open pick list (logical view coordinates).
     pub fn choice_menu_row_center(&self, i: usize) -> Option<Point> {
         let m = self.choice_menu.as_ref()?;
-        (i < m.names.len()).then(|| self.rack_to_view(row_rect(m.rect, i).center()))
+        (i < m.names.len()).then(|| self.rack_to_view(m.list.row_rect(i).center()))
     }
 
     /// Centre of the display of the choice param `param` of device `key` (logical view

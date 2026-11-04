@@ -73,6 +73,67 @@ pub fn fit_label(text: &str, width: f64, size: f32) -> String {
     }
 }
 
+/// The advance of `text` at `size` and `weight`, measured by the canvas (logical pixels). Unlike
+/// [`estimate_width`] this follows the glyphs actually drawn, so CJK, Cyrillic and wide Latin
+/// text neither clips nor truncates early. A canvas without a text engine falls back to its own
+/// estimate.
+pub fn measure(c: &mut dyn Canvas, text: &str, size: f32, weight: u16) -> f64 {
+    c.text_width(&TextRun::new(text, pt(0.0, 0.0), size, Color::BLACK).weight(weight))
+}
+
+/// Cuts `text` to fit `width` at `size`, measured on the canvas: the longest prefix that fits
+/// with a closing `.` (like [`fit_label`]); the text itself when it fits. At least one character
+/// is kept.
+pub fn fit_label_in(c: &mut dyn Canvas, text: &str, width: f64, size: f32) -> String {
+    fit_label_weight(c, text, width, size, 400)
+}
+
+/// [`fit_label_in`] for text drawn at `weight`.
+pub fn fit_label_weight(
+    c: &mut dyn Canvas,
+    text: &str,
+    width: f64,
+    size: f32,
+    weight: u16,
+) -> String {
+    if text.is_empty() || measure(c, text, size, weight) <= width {
+        return text.to_string();
+    }
+    let ends: Vec<usize> = text.char_indices().map(|(i, _)| i).skip(1).collect();
+    // The longest cut (in characters kept) whose text plus the closing `.` fits.
+    let (mut lo, mut hi) = (0usize, ends.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let cut = format!("{}.", &text[..ends[mid - 1]]);
+        if measure(c, &cut, size, weight) <= width {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let keep = lo.max(1);
+    let end = ends.get(keep - 1).copied().unwrap_or(text.len());
+    format!("{}.", &text[..end])
+}
+
+/// The end of `text` that fits `room` at `size` and `weight` (the text of a field that scrolls
+/// to its caret), measured on the canvas.
+pub fn tail_fit<'a>(
+    c: &mut dyn Canvas,
+    text: &'a str,
+    room: f64,
+    size: f32,
+    weight: u16,
+) -> &'a str {
+    let mut shown = text;
+    while !shown.is_empty() && measure(c, shown, size, weight) > room {
+        let mut chars = shown.chars();
+        chars.next();
+        shown = chars.as_str();
+    }
+    shown
+}
+
 /// Splits a name into at most two lines that fit `width` (word boundaries first).
 pub fn wrap_name(text: &str, width: f64, size: f32) -> Vec<String> {
     let fits = |t: &str| fit_label(t, width, size) == t;
@@ -111,6 +172,14 @@ pub fn wrap_pad_name(text: &str, width: f64, size: f32) -> Vec<String> {
     let rest: String = chars[at..].iter().collect();
     let first = first.trim_end().to_string();
     vec![first, fit_label(rest.trim_start(), width, size)]
+}
+
+/// Moves a hairline coordinate (logical pixels) to the middle of a physical pixel at `scale`, so
+/// a one-pixel line covers one pixel row instead of straddling two (a blurred, doubled line at
+/// 125 to 175 percent). At a scale of 1 this is `v.round() + 0.5`.
+pub fn snap_hairline(v: f64, scale: f64) -> f64 {
+    let scale = scale.max(0.1);
+    ((v * scale).round() + 0.5) / scale
 }
 
 /// Estimated advance of a run (for tooltip boxes only).
@@ -2081,4 +2150,33 @@ pub fn fill_rect<C: Canvas + ?Sized>(c: &mut C, rect: Rect, color: Color) {
 /// Bounding box helper.
 pub fn bbox(shape: &impl Shape) -> Rect {
     shape.bounding_box()
+}
+
+#[cfg(test)]
+mod hairline_tests {
+    use super::snap_hairline;
+
+    #[test]
+    fn a_hairline_sits_in_the_middle_of_a_physical_pixel_at_fractional_scales() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            for i in 0..400 {
+                let v = f64::from(i) * 0.137;
+                let phys = snap_hairline(v, scale) * scale;
+                assert!(
+                    (phys - phys.floor() - 0.5).abs() < 1e-9,
+                    "{v} at {scale} lands at {phys}"
+                );
+                assert!(
+                    (snap_hairline(v, scale) - v).abs() <= 1.0 / scale,
+                    "{v} at {scale} moved too far"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn at_scale_one_it_is_round_plus_half() {
+        assert_eq!(snap_hairline(10.4, 1.0), 10.5);
+        assert_eq!(snap_hairline(10.6, 1.0), 11.5);
+    }
 }

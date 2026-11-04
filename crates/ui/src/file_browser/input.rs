@@ -5,7 +5,7 @@ use super::layout::{self as lay, Layout};
 use super::menu::{Act, Menu, MenuItem};
 use super::{Entry, EntryKind, FileBrowserView, Gesture, Hover, Pane, TextField, tree};
 use crate::action::{BrowseAction, Place, UiAction};
-use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::event::{ImeEvent, Key, Modifiers, PointerButton, UiEvent};
 use atomik_library::{FileKind, FileRow, Query, SortKey};
 use std::path::PathBuf;
 use vello::kurbo::{Point, Rect};
@@ -80,7 +80,21 @@ impl FileBrowserView {
                 modifiers,
                 pressed: true,
             } => self.key_down(key, *modifiers, out),
+            UiEvent::Ime(ime) => self.ime(ime),
             _ => {}
+        }
+    }
+
+    /// An input-method event goes to the field that owns the keyboard.
+    fn ime(&mut self, ime: &ImeEvent) {
+        if self.search_focused {
+            if self.search.ime(ime) {
+                self.query_changed();
+            }
+            self.dirty = true;
+        } else if let Some(entry) = self.entry.as_mut() {
+            entry.field.ime(ime);
+            self.dirty = true;
         }
     }
 
@@ -271,6 +285,7 @@ impl FileBrowserView {
             self.gesture = Gesture::Resize;
         } else if lay.search.contains(pos) {
             self.search_focused = true;
+            self.search.press(pos, clicks, mods.shift);
         } else if lay.recursive_btn.contains(pos) {
             self.recursive = !self.recursive;
             emit(out, BrowseAction::SetRecursive(self.recursive));

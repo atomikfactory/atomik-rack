@@ -1015,7 +1015,14 @@ impl<B: AudioBackend> Shell<B> {
     /// Whether a text field has the keys, so the window system should offer its input method
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
-        self.song_info.is_some()
+        self.song_info.is_some() || self.ime_target().is_some()
+    }
+
+    /// The pane an input-method event goes to: the focused pane while one of its editable text
+    /// fields (the browser's search and name entries) has the keys.
+    fn ime_target(&self) -> Option<Pane> {
+        let focus = self.live_pane(self.focus);
+        (focus == Pane::FileBrowser && self.core.file_browser().is_text_owner()).then_some(focus)
     }
 
     /// The song information panel, while it is open.
@@ -3497,6 +3504,13 @@ impl<B: AudioBackend> Shell<B> {
             return self.context_menu_event(window, event);
         }
         let bar_open = self.menubar.as_ref().is_some_and(MenuBar::is_open);
+        if matches!(event, UiEvent::Ime(_)) {
+            if let Some(pane) = self.ime_target().filter(|_| !bar_open) {
+                self.repaint = true;
+                self.forward(pane, event);
+            }
+            return Vec::new();
+        }
         if let UiEvent::Key {
             key,
             modifiers,

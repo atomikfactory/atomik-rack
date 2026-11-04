@@ -3216,6 +3216,15 @@ and the native menu. Audio adds:
   input-method composition (`UiEvent::Ime`, sent by `platform/app.rs` from winit's `Ime` events while
   `Shell::wants_text_input` holds) and AltGr characters as text. `Canvas::text_width` measures a run so the caret
   sits on the shaped glyphs (the display-list recorder falls back to an estimate).
+  The file browser's search and path fields are the same widget. The rack-style pick lists (the arrangement's
+  input, parameter, bus and take lists, the console's bus and source lists, the plugin parameter and preset lists,
+  the container macro and CV lists) share [`PickList`](../crates/ui/src/pick_list.rs) and `CompactList` for their
+  geometry, hover row, scrolling and frame; the registry-driven `ContextMenu` stays the menu for commands. Labels
+  that must fit a width are cut by what the canvas measures (`paint::fit_label_in`, `paint::tail_fit`) in the file
+  browser and the rename fields, not by a character count. `paint::snap_hairline` places a one-pixel line in the
+  middle of a physical pixel at fractional display scales (the arrangement and the audio editor use it). The rack
+  forgets the per-device view state (selected pad, edited pattern, page, cache ids) of devices that leave the
+  document (`prune_device_maps`).
 - [`app_core_archive.rs`](../crates/app/src/app_core_archive.rs) and
   [`archive_worker.rs`](../crates/app/src/archive_worker.rs): File > Export and Import Project
   Archive. The archive is one `.atomikz` file, a stored (uncompressed) ZIP with ZIP64 fields for

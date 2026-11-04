@@ -61,6 +61,7 @@
 use crate::action::UiAction;
 use crate::canvas::Canvas;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::pick_list::CompactList;
 use crate::plugin_panel::{MAX_FEATURED, featured_pins, param_id_of, param_key};
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -220,8 +221,7 @@ enum MenuEntry {
 struct Menu {
     id: u32,
     entries: Vec<(MenuEntry, String)>,
-    rect: Rect,
-    hover: Option<usize>,
+    list: CompactList,
 }
 
 /// The parameter pane. See the module documentation.
@@ -694,13 +694,8 @@ impl PluginParamsView {
         m.entries
             .iter()
             .enumerate()
-            .map(|(i, (_, l))| (l.clone(), Self::menu_row(m.rect, i).center()))
+            .map(|(i, (_, l))| (l.clone(), m.list.row_rect(i).center()))
             .collect()
-    }
-
-    fn menu_row(menu: Rect, i: usize) -> Rect {
-        let y = menu.y0 + 2.0 + i as f64 * MENU_ROW_H;
-        Rect::new(menu.x0 + 2.0, y, menu.x1 - 2.0, y + MENU_ROW_H)
     }
 
     /// What the button under `pos` does, for its tooltip (`None` during a drag and away from a
@@ -746,10 +741,11 @@ impl PluginParamsView {
             return h;
         }
         if let Some(m) = &self.menu
-            && m.rect.contains(pos)
+            && m.list.rect.contains(pos)
         {
-            return (0..m.entries.len())
-                .find(|&i| Self::menu_row(m.rect, i).contains(pos))
+            return m
+                .list
+                .row_at(m.entries.len(), pos)
                 .map_or(Hit::None, Hit::MenuRow);
         }
         if self.close_rect().contains(pos) {
@@ -1156,9 +1152,9 @@ impl PluginParamsView {
             self.repaint = true;
         }
         if let Some(m) = &mut self.menu {
-            let hover = (0..m.entries.len()).find(|&i| Self::menu_row(m.rect, i).contains(pos));
-            if hover != m.hover {
-                m.hover = hover;
+            let hover = m.list.row_at(m.entries.len(), pos);
+            if hover != m.list.hover {
+                m.list.hover = hover;
                 self.repaint = true;
             }
         }
@@ -1346,7 +1342,7 @@ impl PluginParamsView {
         if let Some(k) = self.cv_drivers.get(&id) {
             entries.push((MenuEntry::ClearCv(*k), format!("Clear CV {}", k + 1)));
         }
-        let h = entries.len() as f64 * MENU_ROW_H + 4.0;
+        let h = CompactList::height(entries.len(), MENU_ROW_H);
         let b = self.bounds;
         let x0 = (r.x1 - MENU_W).max(b.x0 + 4.0);
         let y0 = if r.y1 + h > b.y1 {
@@ -1357,8 +1353,7 @@ impl PluginParamsView {
         self.menu = Some(Menu {
             id,
             entries,
-            rect: Rect::new(x0, y0, x0 + MENU_W, y0 + h),
-            hover: None,
+            list: CompactList::new(Rect::new(x0, y0, x0 + MENU_W, y0 + h), MENU_ROW_H),
         });
     }
 
@@ -1390,7 +1385,7 @@ impl PluginParamsView {
                 })
                 .collect(),
         };
-        let h = entries.len() as f64 * MENU_ROW_H + 4.0;
+        let h = CompactList::height(entries.len(), MENU_ROW_H);
         let b = self.bounds;
         let x0 = (r.x1 - MENU_W).max(b.x0 + 4.0);
         let y0 = if r.y1 + h > b.y1 {
@@ -1401,8 +1396,7 @@ impl PluginParamsView {
         self.menu = Some(Menu {
             id,
             entries,
-            rect: Rect::new(x0, y0, x0 + MENU_W, y0 + h),
-            hover: None,
+            list: CompactList::new(Rect::new(x0, y0, x0 + MENU_W, y0 + h), MENU_ROW_H),
         });
     }
 

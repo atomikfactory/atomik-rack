@@ -1,6 +1,9 @@
-//! A one-line text field state (search, new tag, rename tag): the caret is always at the end.
+//! A one-line text field of the browser (search, new tag, rename tag): the shared
+//! [`crate::text_field::TextField`] with the Enter and Escape keys the browser reacts to.
 
-use crate::event::{Key, Modifiers};
+use crate::event::{ImeEvent, Key, Modifiers};
+use crate::text_field::{FieldColors, TextField as Edit};
+use vello::kurbo::{Point, Rect};
 
 /// Longest text a field accepts, in characters.
 pub(super) const MAX_CHARS: usize = 128;
@@ -18,112 +21,111 @@ pub(super) enum FieldEvent {
     Escape,
 }
 
-/// The text and the select-all flag of a field.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The text, caret and selection of a field.
+#[derive(Debug, Clone)]
 pub(super) struct TextField {
-    text: String,
-    all: bool,
+    edit: Edit,
+}
+
+impl PartialEq for TextField {
+    fn eq(&self, other: &Self) -> bool {
+        self.edit.text() == other.edit.text()
+            && self.edit.caret() == other.edit.caret()
+            && self.edit.selection() == other.edit.selection()
+    }
+}
+
+impl Default for TextField {
+    fn default() -> Self {
+        Self::with_text("", false)
+    }
 }
 
 impl TextField {
     /// A field holding `text`, optionally all selected (typing replaces it).
     pub fn with_text(text: &str, all: bool) -> Self {
-        Self {
-            text: text.chars().take(MAX_CHARS).collect(),
-            all: all && !text.is_empty(),
+        let mut edit = Edit::new(text, MAX_CHARS, false);
+        if all {
+            edit.select_all();
         }
+        Self { edit }
     }
 
     /// The text.
     pub fn text(&self) -> &str {
-        &self.text
+        self.edit.text()
     }
 
     /// True when the whole text is selected.
+    #[cfg(test)]
     pub fn is_all_selected(&self) -> bool {
-        self.all
+        !self.edit.is_empty() && self.edit.selection() == Some((0, self.edit.len()))
     }
 
     /// Selects the whole text.
     pub fn select_all(&mut self) {
-        self.all = !self.text.is_empty();
+        self.edit.select_all();
     }
 
     /// Empties the field; true when it held text.
     pub fn clear(&mut self) -> bool {
-        self.all = false;
-        let had = !self.text.is_empty();
-        self.text.clear();
+        let had = !self.edit.is_empty();
+        self.edit.set_text("");
         had
-    }
-
-    fn insert(&mut self, c: char) -> bool {
-        if self.all {
-            self.text.clear();
-            self.all = false;
-        }
-        if self.text.chars().count() >= MAX_CHARS {
-            return false;
-        }
-        self.text.push(c);
-        true
-    }
-
-    fn backspace(&mut self, word: bool) -> bool {
-        if self.all {
-            return self.clear();
-        }
-        if self.text.is_empty() {
-            return false;
-        }
-        if word {
-            while self.text.ends_with(char::is_whitespace) {
-                self.text.pop();
-            }
-            while self
-                .text
-                .chars()
-                .next_back()
-                .is_some_and(|c| !c.is_whitespace())
-            {
-                self.text.pop();
-            }
-        } else {
-            self.text.pop();
-        }
-        true
     }
 
     /// Applies a key press.
     pub fn key(&mut self, key: &Key, mods: Modifiers) -> FieldEvent {
-        let edited = |changed: bool| {
-            if changed {
-                FieldEvent::Edited
-            } else {
-                FieldEvent::Ignored
-            }
-        };
         match key {
             Key::Escape => FieldEvent::Escape,
             Key::Enter => FieldEvent::Enter,
-            Key::Backspace => edited(self.backspace(mods.command())),
-            Key::Delete => edited(self.all && self.clear()),
-            Key::Space if !mods.command() => edited(self.insert(' ')),
-            Key::Char(c) if mods.command() => {
-                if c.eq_ignore_ascii_case(&'a') {
-                    self.select_all();
+            _ => {
+                let before = self.edit.text().to_string();
+                self.edit.handle_key(key, mods);
+                if self.edit.text() != before {
+                    FieldEvent::Edited
+                } else {
+                    FieldEvent::Ignored
                 }
-                FieldEvent::Ignored
             }
-            Key::Char(c) if !mods.alt && !c.is_control() => edited(self.insert(*c)),
-            _ => FieldEvent::Ignored,
         }
+    }
+
+    /// Applies an input-method event; true when the text changed.
+    pub fn ime(&mut self, event: &ImeEvent) -> bool {
+        let before = self.edit.text().to_string();
+        self.edit.handle_ime(event);
+        self.edit.text() != before
+    }
+
+    /// Whether a composition is in progress.
+    pub fn composing(&self) -> bool {
+        self.edit.preedit().is_some()
+    }
+
+    /// A press at `pos` places the caret (a double click selects a word).
+    pub fn press(&mut self, pos: Point, clicks: u8, extend: bool) {
+        self.edit.press(pos, clicks, extend);
+    }
+
+    /// Paints the text, the selection and (when `focused`) the caret in `rect`.
+    pub fn paint(
+        &self,
+        c: &mut dyn crate::canvas::Canvas,
+        rect: Rect,
+        size: f32,
+        colors: FieldColors,
+        focused: bool,
+    ) {
+        self.edit
+            .paint(c, rect, size, f64::from(size) + 6.0, colors, focused);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::ImeEvent;
 
     fn type_str(f: &mut TextField, s: &str) {
         for c in s.chars() {
@@ -182,5 +184,27 @@ mod tests {
         let mut f = TextField::default();
         assert_eq!(f.key(&Key::Enter, Modifiers::NONE), FieldEvent::Enter);
         assert_eq!(f.key(&Key::Escape, Modifiers::NONE), FieldEvent::Escape);
+    }
+
+    #[test]
+    fn the_caret_moves_and_edits_in_the_middle() {
+        let mut f = TextField::default();
+        type_str(&mut f, "kik");
+        f.key(&Key::Left, Modifiers::NONE);
+        type_str(&mut f, "c");
+        assert_eq!(f.text(), "kick");
+    }
+
+    #[test]
+    fn a_composition_commits_its_text() {
+        let mut f = TextField::default();
+        assert!(!f.ime(&ImeEvent::Preedit {
+            text: "ni".into(),
+            cursor: None
+        }));
+        assert!(f.composing());
+        assert!(f.ime(&ImeEvent::Commit("\u{4f60}".into())));
+        assert_eq!(f.text(), "\u{4f60}");
+        assert!(!f.composing());
     }
 }

@@ -353,6 +353,7 @@ pub mod paint;
 pub mod param_search_panel;
 pub mod piano_keys;
 pub mod piano_roll;
+pub mod pick_list;
 pub mod plugin_banner;
 pub mod plugin_data;
 pub mod plugin_panel;
