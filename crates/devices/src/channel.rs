@@ -36,6 +36,24 @@
 //!   knee [`atomik_dsp::KNEE_DB`] dB, `comp.peak` selects peak instead of the default RMS
 //!   detector. Gate attack is [`GATE_ATTACK_MS`] ([`GATE_FAST_ATTACK_MS`] with `gate.fast`).
 //!   `gate.range` is the attenuation in dB when closed (the expander's floor).
+//! * **Compressor look-ahead** (`comp.lookahead`, 0..[`LOOKAHEAD_MAX_MS`] ms, default 0): the
+//!   dynamics section (gate and compressor) delays the audio it processes by that many samples
+//!   while the gains are still computed from the signal as it arrives, so the compressor
+//!   (and the gate) acts before a peak reaches the output. The delay is real and **reported**
+//!   ([`Device::latency_frames`]), so the engine lines the other channels up with this one. It
+//!   is applied whenever the look-ahead is above 0, with the section on, off or bypassed, so
+//!   the strip does not shift in time when the compressor is switched. Changing the amount
+//!   re-reads the line from a different point (a click, like `latency.adjust`). At 0 the strip
+//!   is bit-identical to one without the parameter. The detector (`comp.peak`) is the peak
+//!   or RMS choice.
+//! * **Polarity:** `input.phase` inverts both sides; `input.phase_r` inverts the right side on
+//!   top of it, so `input.phase` with `input.phase_r` inverts the left side alone and
+//!   `input.phase_r` alone the right side alone. Each side has a 5 ms ramp of its own.
+//! * **Section bypass** (`dyn.bypass`, `eq.bypass`): the dynamics (gate and compressor) or the
+//!   EQ is taken out of the signal with the same 5 ms crossfade as its on switch, without
+//!   losing its settings or its `on` state. The look-ahead delay stays, so the strip keeps its
+//!   time alignment. The console's bypass-all switch sets them with the insert effects'
+//!   bypass.
 //! * **EQ:** RBJ biquads with smoothed parameters. HF and LF are shelves (Q 1/√2, cookbook slope
 //!   S = 1) or, with `*.bell`, bells with a fixed Q of [`OUTER_BELL_Q`]. HMF and LMF are bells.
 //! * **Inserts:** `insert_send_*` always carry the signal at the insert point. When either
@@ -131,6 +149,8 @@ pub const MAX_LATENCY_ADJUST: u32 = 480_000;
 const LATENCY_LINE_START: usize = 4_800;
 /// Ramp time of every smoothed gain.
 pub const SMOOTH_MS: f32 = 5.0;
+/// Longest `comp.lookahead` in milliseconds.
+pub const LOOKAHEAD_MAX_MS: f32 = 10.0;
 /// Compressor attack time constant.
 pub const COMP_ATTACK_MS: f32 = 10.0;
 /// Compressor attack time constant with `comp.fast`.
@@ -327,7 +347,15 @@ const P_PCOMP_MIX: usize = P_PCOMP_ON + 6;
 /// The analyser tap switch (`internal.tap_live`: set by the app while a window shows the strip,
 /// never stored): appended last so every existing id is unchanged.
 const P_TAP_LIVE: usize = P_PCOMP_ON + 7;
-const PARAM_COUNT: usize = P_TAP_LIVE + 1;
+/// Strip upgrades appended after the tap switch so every existing id is unchanged: the
+/// compressor look-ahead, the parallel compressor's detector, the right side's polarity and the
+/// bypass of the dynamics and the EQ sections.
+const P_COMP_LOOKAHEAD: usize = P_TAP_LIVE + 1;
+const P_PCOMP_PEAK: usize = P_TAP_LIVE + 2;
+const P_PHASE_R: usize = P_TAP_LIVE + 3;
+const P_DYN_BYPASS: usize = P_TAP_LIVE + 4;
+const P_EQ_BYPASS: usize = P_TAP_LIVE + 5;
+const PARAM_COUNT: usize = P_TAP_LIVE + 6;
 
 /// Full-scale swing of `fader_cv_in` in dB.
 const FADER_CV_DB: f32 = 24.0;
@@ -542,6 +570,20 @@ pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
         Unit::Percent,
     );
     out[P_TAP_LIVE] = toggle(P_TAP_LIVE as u32, "internal.tap_live", "Analyser tap", 0.0);
+    out[P_COMP_LOOKAHEAD] = param(
+        P_COMP_LOOKAHEAD as u32,
+        "comp.lookahead",
+        "Comp look-ahead",
+        0.0,
+        LOOKAHEAD_MAX_MS,
+        0.0,
+        Taper::Linear,
+        Unit::Ms,
+    );
+    out[P_PCOMP_PEAK] = toggle(P_PCOMP_PEAK as u32, "pcomp.peak", "Parallel comp peak", 0.0);
+    out[P_PHASE_R] = toggle(P_PHASE_R as u32, "input.phase_r", "Phase invert R", 0.0);
+    out[P_DYN_BYPASS] = toggle(P_DYN_BYPASS as u32, "dyn.bypass", "Dynamics bypass", 0.0);
+    out[P_EQ_BYPASS] = toggle(P_EQ_BYPASS as u32, "eq.bypass", "EQ bypass", 0.0);
     let mut k = 0;
     while k < SENDS {
         out[P_SEND_TRIM_FIRST + k] = cv[k];
@@ -798,6 +840,11 @@ fn run_filter(f: &mut PassFilter, sec: &mut Section, l: &mut Block, r: &mut Bloc
     }
 }
 
+/// Samples the look-ahead lines hold at `sample_rate`.
+fn look_line_len(sample_rate: f32) -> usize {
+    (LOOKAHEAD_MAX_MS * 0.001 * sample_rate).ceil() as usize + 1
+}
+
 /// Smoother at `v` with the strip's ramp time.
 pub(crate) fn smoother(v: f32, sample_rate: f32) -> Smoother {
     Smoother::new(v, SMOOTH_MS, sample_rate)
@@ -836,6 +883,12 @@ pub struct Channel {
     delay_l: DelayLine,
     delay_r: DelayLine,
     input: Smoother,
+    /// The input gain of the right side (the polarity of the right side can differ).
+    input_r: Smoother,
+    /// Compressor look-ahead: the delay of the dynamics section in samples, and its lines.
+    look: u32,
+    look_l: DelayLine,
+    look_r: DelayLine,
     hpf: PassFilter,
     lpf: PassFilter,
     hpf_on: Section,
@@ -915,6 +968,10 @@ impl Channel {
             delay_l: DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize),
             delay_r: DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize),
             input: sm,
+            input_r: sm,
+            look: 0,
+            look_l: DelayLine::new(look_line_len(sr)),
+            look_r: DelayLine::new(look_line_len(sr)),
             hpf: PassFilter::new(PassKind::Highpass, 80.0, sr),
             lpf: PassFilter::new(PassKind::Lowpass, 12_000.0, sr),
             hpf_on: Section::new(sr),
@@ -967,16 +1024,27 @@ impl Channel {
     fn apply(&mut self, i: usize) {
         let v = self.values[i];
         match i {
-            P_INPUT_GAIN | P_INPUT_PHASE => {
+            P_INPUT_GAIN | P_INPUT_PHASE | P_PHASE_R => {
                 let sign = if self.on(P_INPUT_PHASE) { -1.0 } else { 1.0 };
-                self.input
-                    .set_target(sign * db_to_gain(self.values[P_INPUT_GAIN]));
+                let sign_r = if self.on(P_PHASE_R) { -sign } else { sign };
+                let gain = db_to_gain(self.values[P_INPUT_GAIN]);
+                self.input.set_target(sign * gain);
+                self.input_r.set_target(sign_r * gain);
             }
             P_HPF_ON => self.hpf_on.set_on(self.on(i)),
             P_HPF_FREQ => self.hpf.set_freq(v),
             P_LPF_ON => self.lpf_on.set_on(self.on(i)),
             P_LPF_FREQ => self.lpf.set_freq(v),
-            P_COMP_ON => self.comp_on.set_on(self.on(i)),
+            P_COMP_ON | P_DYN_BYPASS => {
+                self.comp_on
+                    .set_on(self.on(P_COMP_ON) && !self.on(P_DYN_BYPASS));
+                self.gate_on
+                    .set_on(self.on(P_GATE_ON) && !self.on(P_DYN_BYPASS));
+            }
+            P_COMP_LOOKAHEAD => {
+                let frames = (v.clamp(0.0, LOOKAHEAD_MAX_MS) * 0.001 * self.sample_rate).round();
+                self.look = (frames as u32).min(self.look_l.max_delay() as u32);
+            }
             P_COMP_THRESHOLD => self.comp.set_threshold_db(v),
             P_COMP_RATIO => self.comp.set_ratio(v),
             P_COMP_RELEASE => self.comp.set_release_ms(v),
@@ -990,7 +1058,7 @@ impl Channel {
             } else {
                 COMP_ATTACK_MS
             }),
-            P_GATE_ON => self.gate_on.set_on(self.on(i)),
+            P_GATE_ON => self.gate_on.set_on(self.on(i) && !self.on(P_DYN_BYPASS)),
             P_GATE_THRESHOLD => self.gate.set_threshold_db(v),
             P_GATE_RANGE => self.gate.set_range_db(v),
             P_GATE_HOLD => self.gate.set_hold_ms(v),
@@ -1001,7 +1069,12 @@ impl Channel {
                 GATE_ATTACK_MS
             }),
             P_GATE_EXPANDER => self.gate.set_expander(self.on(i)),
-            P_EQ_ON => self.eq_on.set_on(self.on(i)),
+            P_EQ_ON | P_EQ_BYPASS => self.eq_on.set_on(self.on(P_EQ_ON) && !self.on(P_EQ_BYPASS)),
+            P_PCOMP_PEAK => self.pcomp.set_detector(if self.on(i) {
+                Detector::Peak
+            } else {
+                Detector::Rms
+            }),
             P_PCOMP_ON | P_PCOMP_MIX => self.pcomp_mix.set_target(if self.on(P_PCOMP_ON) {
                 self.values[P_PCOMP_MIX].clamp(0.0, 1.0)
             } else {
@@ -1134,6 +1207,7 @@ impl Channel {
     fn smoothers_mut(&mut self) -> impl Iterator<Item = &mut Smoother> {
         [
             &mut self.input,
+            &mut self.input_r,
             &mut self.pcomp_mix,
             &mut self.pcomp_makeup,
             &mut self.insert,
@@ -1196,16 +1270,18 @@ impl Channel {
         if comp == Step::Fresh {
             self.comp.reset();
         }
-        if gate == Step::Skip && comp == Step::Skip {
+        let idle = gate == Step::Skip && comp == Step::Skip;
+        if idle && self.look == 0 {
             return;
         }
         let (mut sl, mut sr) = match key {
             Some(k) => (*k, *k),
             None => (*l, *r),
         };
-        if self.on(P_FILTERS_TO_SC) {
+        if !idle && self.on(P_FILTERS_TO_SC) {
             self.filters(&mut sl, &mut sr);
         }
+        let look = self.look as f32;
         for n in 0..BATCH {
             let mut g = 1.0;
             if gate != Step::Skip {
@@ -1215,6 +1291,14 @@ impl Channel {
             if comp != Step::Skip {
                 let m = self.comp_on.next();
                 g *= 1.0 + (self.comp.process(sl[n], sr[n]) - 1.0) * m;
+            }
+            if self.look > 0 {
+                // The audio is late by the look-ahead, the gains were computed on its early copy.
+                let (x, y) = (l[n], r[n]);
+                l[n] = self.look_l.read(look);
+                r[n] = self.look_r.read(look);
+                self.look_l.write(x);
+                self.look_r.write(y);
             }
             l[n] *= g;
             r[n] *= g;
@@ -1307,9 +1391,8 @@ impl Channel {
         self.key_active = self.on(P_KEY_ON) && ctx.is_connected(SocketId(S_KEY));
         self.gr = [0.0; BATCH];
         for (a, b) in l.iter_mut().zip(r.iter_mut()) {
-            let g = self.input.next_value();
-            *a *= g;
-            *b *= g;
+            *a *= self.input.next_value();
+            *b *= self.input_r.next_value();
         }
         if !self.on(P_FILTERS_TO_SC) {
             self.filters(&mut l, &mut r);
@@ -1465,6 +1548,8 @@ impl Device for Channel {
         }
         self.delay_l = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
         self.delay_r = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
+        self.look_l = DelayLine::new(look_line_len(sr));
+        self.look_r = DelayLine::new(look_line_len(sr));
         for s in self.smoothers_mut() {
             s.set_time(SMOOTH_MS, sr);
         }
@@ -1499,6 +1584,8 @@ impl Device for Channel {
         }
         self.delay_l.clear();
         self.delay_r.clear();
+        self.look_l.clear();
+        self.look_r.clear();
         self.mid = ([0.0; BATCH], [0.0; BATCH]);
         self.gr = [0.0; BATCH];
     }
@@ -1512,7 +1599,7 @@ impl Device for Channel {
     }
 
     fn latency_frames(&self) -> u32 {
-        self.phantom_latency
+        self.phantom_latency + self.look
     }
 
     fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
