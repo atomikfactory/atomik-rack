@@ -200,11 +200,16 @@ impl MidiData {
         .canonical()
     }
 
-    /// Appends `other` (already in this clip's ticks) and restores the canonical form.
+    /// Appends `other` (already in this clip's ticks) and restores the canonical form. A clip
+    /// never keeps more than [`MAX_PROGRAM_CHANGES`] program changes or [`MAX_SYSEX_EVENTS`]
+    /// SysEx messages (the limits a saved project is checked against): the latest ones past
+    /// the limit are dropped, as a MIDI file import drops them.
     pub fn append(&mut self, other: MidiData) {
         self.programs.extend(other.programs);
         self.sysex.extend(other.sysex);
         *self = std::mem::take(self).canonical();
+        self.programs.truncate(MAX_PROGRAM_CHANGES);
+        self.sysex.truncate(MAX_SYSEX_EVENTS);
     }
 
     /// The data with `change` added, replacing the program change at its tick; the index it has
@@ -428,6 +433,22 @@ mod tests {
         a.append(d);
         assert_eq!(a.programs, [prog(0, 9), prog(10, 1), prog(11, 2)]);
         assert_eq!(a.sysex.len(), 1);
+    }
+
+    #[test]
+    fn append_keeps_the_per_clip_limits() {
+        let many = |n: usize, at: i64| MidiData {
+            programs: (0..MAX_PROGRAM_CHANGES + 5)
+                .map(|i| prog(at + i as i64, 1))
+                .collect(),
+            sysex: (0..n).map(|i| sx(at + i as i64, &[1])).collect(),
+        };
+        let mut a = many(MAX_SYSEX_EVENTS - 2, 0);
+        a.append(many(MAX_SYSEX_EVENTS - 2, 100_000));
+        assert_eq!(a.sysex.len(), MAX_SYSEX_EVENTS);
+        assert_eq!(a.programs.len(), MAX_PROGRAM_CHANGES);
+        assert!(a.check(i64::MAX / 2).is_ok());
+        assert!(a.sysex.windows(2).all(|w| w[0].tick <= w[1].tick));
     }
 
     #[test]
