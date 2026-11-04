@@ -185,7 +185,9 @@ fn the_track_header_and_clip_menus_carry_the_freeze_items() {
     let header = ids(atomik_ui::ContextTarget::TrackHeader);
     for (id, on) in [
         ("sequencer.freeze_track", true),
+        ("sequencer.refreeze_track", false),
         ("sequencer.unfreeze_track", false),
+        ("sequencer.bounce_range", true),
     ] {
         assert_eq!(
             header.iter().find(|(c, _)| *c == id).map(|(_, e)| *e),
