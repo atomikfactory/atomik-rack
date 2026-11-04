@@ -1364,6 +1364,34 @@ recording are unchanged: a track with one pass still gets one plain clip.
   and `SetTake { group, take, gain_db, source_offset_delta }` sets the level of an audio take and
   moves its audio inside the asset (the take keeps its start). Take clips count as referenced
   assets (the bundle keeps their files and undo finds them) and `RelinkAsset` swaps them too.
+- **Takes clipboard** ([workflow.rs](../crates/model/src/workflow.rs) `TakeSnapshot`). Copy Take and
+  Copy All Takes capture takes of a group with their layout relative to the earliest copied take and
+  the pool entries of audio takes. `WorkflowCommand::PasteTakes { target, at_tick, takes }` puts them
+  into a group as new takes on top (`TakeTarget::Group`; each plays over its extent, as `AddTake` does)
+  or starts a group on a lane (`TakeTarget::Lane`); the takes must be of the target's kind and an audio
+  take needs its asset in the pool, which the app registers first (a cross-song paste, as for clips).
+  The app keeps the snapshot on the in-process clipboard (`ClipboardData::Takes`), so it survives New
+  and Open, and the workspace carries the clipboard to the song the calls are routed to next, so a copy
+  pastes into another open song. Edit > Copy, Cut and Paste work on the take row that has the keyboard
+  focus; Paste with no row focused starts a group on the selected lane at the playhead.
+- **Editing a take.** A take has a clip id like any clip but lives in its group, so the clip editors
+  open it by that id (`Song::clip_or_take`). The commands they send for a clip (`SetClipContent`,
+  `SetAudioClip`, `SetWarpMarkers`, `SetClipGrid`, `SetClipControllers`, `SetClipParamLanes`,
+  `SetClipScale`, and `PasteNotes` and `DuplicateNotes` for the piano roll's clipboard) are planned
+  by `plan_take_edit` when the id is a take: the command is planned on a scratch document where the
+  take is a clip of its lane, and the clip it comes out as replaces the take in its group, with the
+  comp compiled again, in one undo step. A command that is not one of these (a split, a strip silence)
+  names no lane clip and is refused as before.
+- **Take rows by key and import.** The arrangement keeps a take row with the keyboard focus
+  (`ArrangementView::take_focus`, valid while no clip is selected): a click on a take row or its menu
+  focuses it, `sequencer.take_next` and `sequencer.take_prev` (Alt+Down, Alt+Up) step through the take
+  rows that are shown, `sequencer.take_pick` (Alt+P) plays the focused take alone and
+  `sequencer.open_clip` (Enter) opens it in the piano roll or the audio editor. The take menu also
+  has Copy, Paste, Open in Piano Roll or Audio Editor and Import File as Take
+  (`UiAction::ImportTake`): the shell remembers the group, asks for an audio file or a MIDI file
+  with the usual dialog request and the file becomes a take starting where the group starts
+  (`AppCore::import_takes`, `AppCore::import_midi_take`; a MIDI file's tracks are merged into one
+  take). The project format is unchanged.
 - **Audio boundaries.** A comp cut that is not the natural edge of its take (a segment that begins
   or ends strictly inside the take) gets a fade of `COMP_FADE_FRAMES` (240, 5 ms at 48 kHz, at most
   half the piece), equal power; a natural edge keeps the own fade of the take. Overlapping audio

@@ -1575,6 +1575,14 @@ and one undo step. `crates/ui/tests/takes.rs` drives the strip and the take rows
 through a real document (open and close, pick, comp drag, Escape, delete, flatten, painted names)
 and keeps a display-list golden (`arrangement_takes_1x.json`;
 `cargo test -p atomik-ui --test takes -- --ignored` writes a preview PNG).
+`crates/model/tests/takes_follow.rs` covers the takes clipboard (capture, paste into a group and onto a lane,
+a refusal for the wrong kind, a missing group or a missing asset, a paste into another song) and the clip
+commands on a take (one undo step, the compiled lane clip follows, a refusal changes nothing), and
+`doc_sequences.rs` runs an edit of a take among the random take commands. `crates/app/src/app_core_takes_tests.rs`
+runs the menu actions, Edit > Copy, Cut and Paste on a focused row, a paste across New, a file (audio and MIDI)
+imported as a take and a take opened in the piano roll; `workspace_tests.rs` checks the clipboard follows the
+routed song and `shell_midi_tests.rs` the dialog request. The take keys and the new menu rows are in
+`crates/ui/tests/takes.rs`.
 `crates/render/tests/takes.rs` bounces an audio comp (the tone of each segment, sample-exact inside
 a segment, no click at the splices where the comp fades while the same cuts as plain clips jump) and
 a note comp (the pitch of each bar), and checks that a comp bounces like its flattened group, after
