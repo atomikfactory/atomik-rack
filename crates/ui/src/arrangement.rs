@@ -1250,6 +1250,11 @@ impl ArrangementView {
         self.repaint = true;
     }
 
+    /// Sets whether a move snaps to grid lines or by whole steps.
+    pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        self.vp.set_snap_mode(mode);
+    }
+
     /// The active tool.
     pub fn tool(&self) -> Tool {
         self.vp.tool()

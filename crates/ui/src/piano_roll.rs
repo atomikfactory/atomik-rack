@@ -596,6 +596,16 @@ impl PianoRollView {
         self.repaint = true;
     }
 
+    /// Whether a move snaps to grid lines or by whole steps.
+    pub fn snap_mode(&self) -> crate::viewport::SnapMode {
+        self.vp.snap_mode()
+    }
+
+    /// Sets the snap mode.
+    pub fn set_snap_mode(&mut self, mode: crate::viewport::SnapMode) {
+        self.vp.set_snap_mode(mode);
+    }
+
     /// The mouse cursor to show: a horizontal resize cursor over a note's edge or the playhead's
     /// line (and during an edge or playhead drag), a move cursor over a note body with Select
     /// (and during a move), the tool's own cursor (pen, eraser, blade) over the grid, and a

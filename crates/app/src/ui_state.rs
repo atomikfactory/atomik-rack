@@ -26,7 +26,8 @@ use crate::windows::WindowsState;
 use atomik_ui::arrangement::clamp_track_zoom;
 use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
-use atomik_ui::{AudioMode, FileBrowserView};
+use atomik_ui::timeline::Snap;
+use atomik_ui::{AudioMode, FileBrowserView, SnapMode};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -114,6 +115,13 @@ pub struct UiState {
     /// The piano roll snaps drawn notes, drags and transposes to the scale of the clip. An
     /// absent key means off.
     pub piano_roll_snap_scale: bool,
+    /// The snap resolution of the arrangement. An absent key means the default (1/16).
+    pub arrangement_snap: Snap,
+    /// The snap resolution of the piano roll. An absent key means the default (1/16).
+    pub piano_roll_snap: Snap,
+    /// Whether moves snap to grid lines or by whole steps, in both views. An absent key means
+    /// grid lines.
+    pub snap_mode: SnapMode,
     /// Which keys the piano roll shows (`"off"`, `"scale"` or `"used"`). An absent key means
     /// every key.
     pub piano_roll_fold: Fold,
@@ -164,6 +172,9 @@ impl Default for UiState {
             track_zoom: 1.0,
             piano_roll_key_height: KEY_HEIGHT,
             piano_roll_snap_scale: false,
+            arrangement_snap: Snap::default(),
+            piano_roll_snap: Snap::default(),
+            snap_mode: SnapMode::default(),
             piano_roll_fold: Fold::Off,
             audio_editor_mode: AudioMode::Overview,
             console_notice_seen: false,
