@@ -85,7 +85,7 @@ impl RackView {
         };
         if !matches!(
             self.devices[i].fx,
-            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack)
+            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack | FxKind::Tuner)
         ) || self.devices[i].analyser == *data
         {
             return;
@@ -107,7 +107,7 @@ impl RackView {
         let d = &self.devices[self.device_index(key)?];
         matches!(
             d.fx,
-            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack)
+            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack | FxKind::Tuner)
         )
         .then_some(&d.analyser)
     }

@@ -35,11 +35,13 @@ pub enum FxKind {
     PhaseMeter,
     /// `atomik.audio-track`: the input settings and the tuner display.
     AudioTrack,
+    /// `atomik.tuner`: the tuner display of an effect (fed by the app from the device's scope tap).
+    Tuner,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 11] = [
+    pub const ALL: [FxKind; 12] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -51,12 +53,13 @@ impl FxKind {
         FxKind::Spectrum,
         FxKind::PhaseMeter,
         FxKind::AudioTrack,
+        FxKind::Tuner,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 10] = [
+    pub const EFFECTS: [FxKind; 11] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -67,6 +70,7 @@ impl FxKind {
         FxKind::Character,
         FxKind::Spectrum,
         FxKind::PhaseMeter,
+        FxKind::Tuner,
     ];
 
     /// The kind of a device type id.
@@ -88,6 +92,7 @@ impl FxKind {
             FxKind::Spectrum => "atomik.spectrum",
             FxKind::PhaseMeter => "atomik.phase-meter",
             FxKind::AudioTrack => "atomik.audio-track",
+            FxKind::Tuner => "atomik.tuner",
         }
     }
 
@@ -104,7 +109,7 @@ impl FxKind {
             FxKind::Character => CHARACTER_METERS,
             FxKind::Spectrum => SPECTRUM_METERS,
             FxKind::PhaseMeter => phase::COUNT,
-            FxKind::AudioTrack => 0,
+            FxKind::AudioTrack | FxKind::Tuner => 0,
         }
     }
 }

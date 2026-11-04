@@ -400,3 +400,132 @@ fn the_probe_refuses_a_project_without_analysers() {
     let err = c.probe_meters(4_800, None).unwrap_err();
     assert!(err.contains("no spectrum or phase meter"), "{err}");
 }
+
+// ------------------------------------------------------------------ the tuner device
+
+const TUNER: &str = "atomik.tuner";
+
+#[test]
+fn the_tuner_panel_gets_the_pitch_of_the_tap_against_its_reference() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, TUNER, "tun");
+    let id = c.device_id(&key("tun")).unwrap();
+    // 110 Hz is A2 exactly against the default 440 Hz.
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(110.0, 8192, 8192, 1.0));
+    c.frame();
+    let d = data(&c, "tun");
+    assert!(d.tuner_on);
+    let r = d.tuner.expect("a note");
+    assert_eq!(r.note.key, 45);
+    assert!(r.note.cents.abs() < 1.0, "{}", r.note.cents);
+    assert_eq!(d.tuner_ref_hz, 0.0, "in tune: the panel shows its own ref");
+    // The same write position is not analysed again; a new one is, against the new reference.
+    set(&mut c, "tun", "ref", 446.0);
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(110.0, 8192, 8192 + 4096, 1.0));
+    c.frame();
+    let r = data(&c, "tun").tuner.expect("a note");
+    let want = -1200.0 * (446.0f32 / 440.0).log2();
+    assert!(
+        (r.note.cents - want).abs() < 1.5,
+        "{} vs {want}",
+        r.note.cents
+    );
+    // Silence reads nothing (after the hold).
+    c.sink_mut()
+        .device_scopes
+        .insert(id, (vec![0.0; 8192], vec![0.0; 8192], 8192 + 4096 + 96_000));
+    c.frame();
+    assert!(data(&c, "tun").tuner.is_none());
+}
+
+#[test]
+fn the_master_tune_moves_the_tuner_reference() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, TUNER, "tun");
+    c.apply_command(Command::SetMasterTune(20.0)).unwrap();
+    let id = c.device_id(&key("tun")).unwrap();
+    // A2 tuned 20 cents up is in tune for a project tuned 20 cents up.
+    let hz = 110.0 * 2f64.powf(20.0 / 1200.0);
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(hz, 8192, 8192, 1.0));
+    c.frame();
+    let d = data(&c, "tun");
+    let r = d.tuner.expect("a note");
+    assert!(r.note.cents.abs() < 1.5, "{}", r.note.cents);
+    assert!((d.tuner_ref_hz - 445.1).abs() < 0.2, "{}", d.tuner_ref_hz);
+}
+
+#[test]
+fn a_real_engine_feeds_the_tuner_the_note_it_plays_and_the_probe_reports_it() {
+    let mut c = AppCore::new(OfflineSink::new());
+    add(&mut c, SYNTH, "synth");
+    add(&mut c, TUNER, "tun");
+    set(&mut c, "synth", "osc1.wave", 0.0);
+    for side in ["l", "r"] {
+        connect(
+            &mut c,
+            ("synth", &format!("out_{side}")),
+            ("tun", &format!("in_{side}")),
+        );
+    }
+    c.apply_command(Command::Song(SongCommand::AddTrack {
+        device: key("synth"),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("synth"),
+        lane: 0,
+        clip: clip(
+            8 * PPQ,
+            ClipContent::Notes(vec![Note::new(0, 8 * PPQ, 57, 0.9)].into()),
+        ),
+    }))
+    .unwrap();
+    c.transport_action(atomik_ui::TransportAction::Play);
+    for _ in 0..12 {
+        c.sink_mut().render(4_800);
+        c.frame();
+    }
+    let r = data(&c, "tun").tuner.expect("A3 is heard");
+    assert_eq!(r.note.key, 57);
+    assert!(r.note.cents.abs() < 5.0, "{}", r.note.cents);
+}
+
+#[test]
+fn the_probe_reads_the_pitch_of_a_tuner_device() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SYNTH, "synth");
+    add(&mut c, TUNER, "tun");
+    set(&mut c, "synth", "osc1.wave", 0.0);
+    for side in ["l", "r"] {
+        connect(
+            &mut c,
+            ("synth", &format!("out_{side}")),
+            ("tun", &format!("in_{side}")),
+        );
+    }
+    c.apply_command(Command::Song(SongCommand::AddTrack {
+        device: key("synth"),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("synth"),
+        lane: 0,
+        clip: clip(
+            8 * PPQ,
+            ClipContent::Notes(vec![Note::new(0, 8 * PPQ, 69, 0.9)].into()),
+        ),
+    }))
+    .unwrap();
+    let readouts = c.probe_meters(48_000, None).expect("a probe");
+    assert_eq!(readouts.len(), 1);
+    let value = |n: &str| readouts[0].values.iter().find(|(k, _)| *k == n).unwrap().1;
+    assert_eq!(value("key"), 69.0);
+    assert!(value("cents").abs() < 5.0 && (value("hz") - 440.0).abs() < 3.0);
+    assert!(data(&c, "tun").tuner.is_some(), "the probe fed the panel");
+}

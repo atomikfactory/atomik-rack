@@ -77,6 +77,9 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
         FxKind::AudioTrack => {
             set(&mut d, "tuner_ref", 440.0);
         }
+        FxKind::Tuner => {
+            set(&mut d, "ref", 442.0);
+        }
     }
     doc.devices.push(d);
     doc
@@ -110,7 +113,7 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
             -20.1,
         ],
         // The audio track publishes no meter values.
-        FxKind::AudioTrack => vec![],
+        FxKind::AudioTrack | FxKind::Tuner => vec![],
     }
 }
 

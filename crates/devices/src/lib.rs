@@ -4,7 +4,7 @@
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! The utility devices [`gain_tool`], [`stereo_tool`], [`gate`], [`dynamics`] (gate then
-//! compressor), [`duck`] (the sidechain tool), [`env_filter`] and the two cable mergers in
+//! compressor), [`duck`] (the sidechain tool), [`env_filter`], [`auto_filter`], [`transient_shaper`], [`de_esser`], [`tuner`], [`pitch_shifter`] and the two cable mergers in
 //! [`spider`] share the descriptor builders of the private `tool_support` module.
 //!
 //! The effects are wrapped in [`bypass::Bypassable`], which adds their `bypass` param.
@@ -16,6 +16,7 @@
 
 pub mod arpeggiator;
 pub mod audio_track;
+pub mod auto_filter;
 pub mod bus;
 pub mod bypass;
 mod chain_clock;
@@ -27,6 +28,7 @@ pub mod controller_state;
 pub mod convolver;
 mod cv_in;
 pub mod cv_sequencer;
+pub mod de_esser;
 pub mod distortion;
 pub mod drum_generator;
 pub mod drum_machine;
@@ -60,6 +62,7 @@ pub mod note_repeater;
 mod note_shape;
 pub mod note_split;
 pub mod phase_meter;
+pub mod pitch_shifter;
 pub mod poly_synth;
 mod recent_peak;
 pub mod reverb;
@@ -72,6 +75,8 @@ pub mod step_sequencer;
 pub mod stereo_delay;
 pub mod stereo_tool;
 mod tool_support;
+pub mod transient_shaper;
+pub mod tuner;
 pub mod vocoder;
 pub mod wavetable_synth;
 
@@ -156,8 +161,10 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(space_reverb::factory())?;
     registry.register(vocoder::factory())?;
     registry.register_with_samples(convolver::factory())?;
+    registry.register(auto_filter::factory())?;
     registry.register(compressor::factory())?;
     registry.register(container::factory())?;
+    registry.register(de_esser::factory())?;
     registry.register(distortion::factory())?;
     registry.register(duck::factory())?;
     registry.register(echo::factory())?;
@@ -177,6 +184,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(note_repeater::factory())?;
     registry.register(note_split::factory())?;
     registry.register(phase_meter::factory())?;
+    registry.register(pitch_shifter::factory())?;
     registry.register(bus::factory())?;
     registry.register(channel::factory())?;
     registry.register(character::factory())?;
@@ -184,6 +192,8 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(spectrum::factory())?;
     registry.register(spider::audio_factory())?;
     registry.register(spider::cv_factory())?;
+    registry.register(transient_shaper::factory())?;
+    registry.register(tuner::factory())?;
     Ok(())
 }
 
@@ -196,9 +206,10 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 51] = [
+    const TYPE_IDS: [&str; 56] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
+        "atomik.auto-filter",
         "atomik.bus",
         "atomik.channel",
         "atomik.character",
@@ -206,6 +217,7 @@ mod tests {
         "atomik.container",
         "atomik.convolver",
         "atomik.cv-sequencer",
+        "atomik.de-esser",
         "atomik.distortion",
         "atomik.drum-generator",
         "atomik.drum-machine",
@@ -235,6 +247,7 @@ mod tests {
         "atomik.note-repeater",
         "atomik.note-split",
         "atomik.phase-meter",
+        "atomik.pitch-shifter",
         "atomik.poly-synth",
         "atomik.reverb",
         "atomik.sampler",
@@ -246,12 +259,14 @@ mod tests {
         "atomik.step-sequencer",
         "atomik.stereo-delay",
         "atomik.stereo-tool",
+        "atomik.transient-shaper",
+        "atomik.tuner",
         "atomik.vocoder",
         "atomik.wavetable-synth",
     ];
 
     #[test]
-    // Name kept; it now covers all fifty-one devices.
+    // Name kept; it now covers all fifty-six devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -285,14 +300,19 @@ mod tests {
     fn the_utility_devices_have_a_section_in_the_device_reference() {
         let doc = include_str!("../../../docs/DEVICES.md");
         for id in [
+            "atomik.auto-filter",
+            "atomik.de-esser",
             "atomik.duck",
             "atomik.dynamics",
             "atomik.env-filter",
             "atomik.gain-tool",
             "atomik.gate",
+            "atomik.pitch-shifter",
             "atomik.spider-audio",
             "atomik.spider-cv",
             "atomik.stereo-tool",
+            "atomik.transient-shaper",
+            "atomik.tuner",
         ] {
             assert!(
                 doc.lines().any(|l| l.starts_with('#') && l.contains(id)),

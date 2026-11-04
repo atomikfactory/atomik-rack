@@ -435,3 +435,62 @@ fn goldens_of_the_tuner_states() {
         &record(&AnalyserData::default(), Flip::Back),
     );
 }
+
+fn device_texts(data: &AnalyserData) -> Vec<String> {
+    let (doc, mut v) = rack(FxKind::Tuner);
+    v.set_analyser(&key("fx"), data);
+    paint(&doc, &mut v)
+        .texts()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn the_tuner_device_is_an_effect_with_an_always_on_display() {
+    assert_eq!(FxKind::of("atomik.tuner"), Some(FxKind::Tuner));
+    assert_eq!(FxKind::Tuner.meter_count(), 0);
+    assert!(FxKind::EFFECTS.contains(&FxKind::Tuner));
+    let d = registry().get("atomik.tuner").unwrap().descriptor;
+    let spec = fx_layout(FxKind::Tuner, d);
+    let p = spec.fx.expect("a visual");
+    assert_eq!(p.kind, FxKind::Tuner);
+    assert!(
+        p.plot.width() > 300.0 && p.plot.height() > 60.0,
+        "{:?}",
+        p.plot
+    );
+    // The reference and the mute switch are placed; the bypass is the name strip's.
+    let mut placed: Vec<&str> = spec.front.iter().map(|c| d.params[c.param].key).collect();
+    placed.sort_unstable();
+    assert_eq!(placed, ["mute", "ref"]);
+    // Before anything was fed the display is on, saying it waits for a note.
+    let idle = device_texts(&AnalyserData::default());
+    assert!(!has(&idle, "A4 = 440 Hz"), "{idle:?}");
+    assert!(has(&idle, "A4 = 442 Hz"), "{idle:?}");
+}
+
+#[test]
+fn the_tuner_device_shows_the_note_the_app_read() {
+    let data = AnalyserData {
+        tuner_on: true,
+        tuner: Some(Reading {
+            hz: 81.9,
+            note: Note {
+                key: 40,
+                cents: -11.0,
+            },
+            held: false,
+        }),
+        ..AnalyserData::default()
+    };
+    let t = device_texts(&data);
+    assert!(has(&t, "E") && has(&t, "2") && has(&t, "FLAT"), "{t:?}");
+    assert!(has(&t, "81.90 Hz"), "{t:?}");
+    // Even a fed reading without the audio track's `tuner_on` flag is drawn.
+    let t = device_texts(&AnalyserData {
+        tuner_on: false,
+        ..data
+    });
+    assert!(has(&t, "E") && has(&t, "81.90 Hz"), "{t:?}");
+}

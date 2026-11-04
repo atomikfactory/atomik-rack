@@ -1,4 +1,4 @@
-//! The analyser devices (`atomik.spectrum`, `atomik.phase-meter`) in the app core.
+//! The analyser devices (`atomik.spectrum`, `atomik.phase-meter`, `atomik.tuner`) in the app core.
 //!
 //! # Live feed
 //!
@@ -13,6 +13,8 @@
 //!   document, so a knob turn shows on the next frame).
 //! * **Phase meter:** the newest 2048 frames, every second one, for the goniometer. Its numbers
 //!   (correlation, levels, loudness) come through the ordinary meter values.
+//! * **Tuner:** the pitch of the louder channel ([`atomik_dsp::tuner`]) against the device's `ref`
+//!   (A4) shifted by the project's master tune, smoothed and held as the audio track's tuner is.
 //!
 //! The FFT and the drawing therefore cost the audio thread nothing. A device whose tap did not
 //! move since the last feed (a paused engine) is skipped, so an idle project costs no view work;
@@ -39,7 +41,8 @@ use std::collections::BTreeMap;
 
 /// The device types of the analyser feed.
 fn analyser_kind(type_id: &str) -> Option<FxKind> {
-    FxKind::of(type_id).filter(|k| matches!(k, FxKind::Spectrum | FxKind::PhaseMeter))
+    FxKind::of(type_id)
+        .filter(|k| matches!(k, FxKind::Spectrum | FxKind::PhaseMeter | FxKind::Tuner))
 }
 
 /// The analyser devices of an expansion, in its order.
@@ -84,9 +87,26 @@ pub fn spectrum_settings(desc: &DeviceDescriptor, dev: &RackDevice) -> Settings 
     }
 }
 
+/// The A4 a tuner device reads against: its `ref` shifted by the master tune. The second value is
+/// what the panel shows instead of its own `ref`, 0 while the project is in tune.
+fn tuner_reference(desc: &DeviceDescriptor, dev: &RackDevice, tune_cents: f32) -> (f32, f32) {
+    let own = param(desc, dev, "ref");
+    let own = if own > 0.0 {
+        own
+    } else {
+        atomik_dsp::tuner::REF_DEFAULT_HZ
+    };
+    if tune_cents.to_bits() == 0 {
+        return (own, 0.0);
+    }
+    let shifted = (f64::from(own) * atomik_model::tune_ratio(tune_cents)) as f32;
+    (shifted, shifted)
+}
+
 /// The analysis state of one device.
 struct State {
     spectrum: Spectrum,
+    tuner: atomik_dsp::tuner::Tuner,
     /// The tap head the data was computed at.
     head: u64,
     /// The data was computed at least once.
@@ -98,6 +118,7 @@ impl State {
     fn new() -> Self {
         Self {
             spectrum: Spectrum::new(),
+            tuner: atomik_dsp::tuner::Tuner::new(),
             head: 0,
             fed: false,
             data: AnalyserData::default(),
@@ -112,8 +133,10 @@ impl State {
         (left, right): (&[f32], &[f32]),
         head: u64,
         sample_rate: f32,
+        reference: (f32, f32),
     ) {
         let elapsed = head.saturating_sub(self.head);
+        let first = !self.fed;
         self.head = head;
         self.fed = true;
         let d = &mut self.data;
@@ -130,6 +153,18 @@ impl State {
                 d.bands = settings.bands;
                 d.peak_hz = self.spectrum.peak_hz();
                 d.peak_db = self.spectrum.peak_db();
+            }
+            FxKind::Tuner => {
+                // The louder channel: a mono source may sit on either input.
+                let mono = if atomik_dsp::tuner::rms(left) >= atomik_dsp::tuner::rms(right) {
+                    left
+                } else {
+                    right
+                };
+                let elapsed = if first { 0 } else { elapsed };
+                d.tuner = self.tuner.update(mono, sample_rate, elapsed, reference.0);
+                d.tuner_on = true;
+                d.tuner_ref_hz = reference.1;
             }
             _ => {
                 d.scope_l.clear();
@@ -214,6 +249,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         let mut a = std::mem::take(&mut self.analysers);
         let sample_rate = self.doc().sample_rate as f32;
+        let tune_cents = self.doc().tune_cents;
         for (key, kind) in &a.devices {
             let Some(id) = self.ids.get(key).copied() else {
                 continue;
@@ -225,10 +261,11 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             }
             let settings = spectrum_settings(desc, dev);
-            let want = if *kind == FxKind::Spectrum {
-                settings.size
-            } else {
-                SCOPE_READ_FRAMES
+            let reference = tuner_reference(desc, dev, tune_cents);
+            let want = match kind {
+                FxKind::Spectrum => settings.size,
+                FxKind::Tuner => atomik_dsp::tuner::frames_wanted(sample_rate),
+                _ => SCOPE_READ_FRAMES,
             };
             a.left.resize(want, 0.0);
             a.right.resize(want, 0.0);
@@ -240,7 +277,7 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             }
             let frames = (&a.left[..n], &a.right[..n]);
-            state.apply(*kind, &settings, frames, head, sample_rate);
+            state.apply(*kind, &settings, frames, head, sample_rate, reference);
             self.view.set_analyser(key, &state.data);
         }
         self.analysers = a;
@@ -293,6 +330,7 @@ impl<S: EngineSink> AppCore<S> {
         )
         .map_err(|e| e.to_string())?;
         let sample_rate = self.doc().sample_rate as f32;
+        let tune_cents = self.doc().tune_cents;
         let mut out = Vec::new();
         for probe in probes {
             let Some(kind) = keys.iter().find(|(k, _)| *k == probe.key).map(|(_, k)| *k) else {
@@ -304,12 +342,14 @@ impl<S: EngineSink> AppCore<S> {
             let settings = spectrum_settings(desc, dev);
             let type_id = dev.type_id.clone();
             let mut state = State::new();
+            let reference = tuner_reference(desc, dev, tune_cents);
             state.apply(
                 kind,
                 &settings,
                 (&probe.left, &probe.right),
                 probe.head,
                 sample_rate,
+                reference,
             );
             self.view.set_device_meter_values(&probe.key, &probe.values);
             self.view.set_analyser(&probe.key, &state.data);
@@ -322,6 +362,12 @@ impl<S: EngineSink> AppCore<S> {
             if kind == FxKind::PhaseMeter {
                 for (name, v) in PHASE_VALUE_NAMES.iter().zip(&probe.values) {
                     readout.values.push((*name, *v));
+                }
+            } else if kind == FxKind::Tuner {
+                if let Some(r) = state.data.tuner {
+                    readout.values.push(("hz", r.hz));
+                    readout.values.push(("key", r.note.key as f32));
+                    readout.values.push(("cents", r.note.cents));
                 }
             } else {
                 readout.values.push(("peak_hz", state.data.peak_hz));

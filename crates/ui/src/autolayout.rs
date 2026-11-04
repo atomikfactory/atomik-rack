@@ -1107,11 +1107,11 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
 mod tests {
     use super::*;
     use atomik_devices::{
-        dual_layer, duck, dynamics, env_filter, gain_tool, gate, line_mixer, mono_bass, poly_synth,
-        spider, stereo_delay, stereo_tool,
+        auto_filter, de_esser, dual_layer, duck, dynamics, env_filter, gain_tool, gate, line_mixer,
+        mono_bass, pitch_shifter, poly_synth, spider, stereo_delay, stereo_tool, transient_shaper,
     };
 
-    fn all() -> [&'static DeviceDescriptor; 13] {
+    fn all() -> [&'static DeviceDescriptor; 17] {
         [
             &poly_synth::DESCRIPTOR,
             &mono_bass::DESCRIPTOR,
@@ -1124,6 +1124,10 @@ mod tests {
             &dynamics::DESCRIPTOR,
             &duck::DESCRIPTOR,
             &env_filter::DESCRIPTOR,
+            &auto_filter::DESCRIPTOR,
+            &transient_shaper::DESCRIPTOR,
+            &de_esser::DESCRIPTOR,
+            &pitch_shifter::DESCRIPTOR,
             &spider::AUDIO_DESCRIPTOR,
             &spider::CV_DESCRIPTOR,
         ]
