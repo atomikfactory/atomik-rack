@@ -1515,6 +1515,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.bounce_range",
+        "Bounce Range in Place",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.bypass_players",
         "Bypass All Players",
         G::Sequencer,
@@ -1949,6 +1957,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.pattern_lane_to_notes",
         "Pattern Lane to Notes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.refreeze_track",
+        "Re-render Frozen Track",
         G::Sequencer,
         C::Sequencer,
     )

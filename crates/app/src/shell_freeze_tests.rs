@@ -143,8 +143,21 @@ fn the_freeze_commands_run_from_the_menu_and_the_registry_and_show_their_progres
         AppCommand::from_command("sequencer.unfreeze_track", None),
         Some(AppCommand::UnfreezeTrack)
     );
+    for (id, command) in [
+        ("sequencer.bounce_range", AppCommand::BounceRange),
+        ("sequencer.refreeze_track", AppCommand::RefreezeTrack),
+    ] {
+        assert_eq!(AppCommand::from_command(id, None), Some(command));
+        assert_eq!(command.command_id(), Some((id, None)));
+    }
+    assert!(item(&s, "Re-render Frozen Track").0);
+    s.execute(AppCommand::RefreezeTrack);
+    assert!(s.core().freeze_busy());
+    s.core_mut().wait_background();
+    assert!(lead_frozen(&s), "still frozen after the render");
     s.execute(AppCommand::UnfreezeTrack);
     assert!(!lead_frozen(&s));
+    assert!(!item(&s, "Re-render Frozen Track").0);
     // The tail switch is a check item.
     s.execute(AppCommand::FreezeTail);
     assert_eq!(item(&s, "Freeze with Tail").1, Some(false));

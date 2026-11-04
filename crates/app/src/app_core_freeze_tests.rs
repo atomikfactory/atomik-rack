@@ -738,3 +738,182 @@ fn a_freeze_that_finishes_during_playback_waits_for_the_stop() {
     assert!(calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
     assert!(!c.is_playing());
 }
+
+#[test]
+fn a_frozen_track_is_rendered_again_without_being_unfrozen() {
+    let mut c = core_with(1);
+    // A clip that ends with the notes, so the tail option changes the render.
+    let id = c.doc().song.track(&key("lead")).unwrap().lanes[0].clips[0].id;
+    c.apply_command(Command::Song(SongCommand::SetClipGeometry {
+        id,
+        start: 0,
+        length: 2 * PPQ,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        merge: None,
+    }))
+    .unwrap();
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    let first = frozen(&c, "lead").unwrap();
+    assert!(first.length > 2 * PPQ, "the first render has a tail");
+    select_track(&mut c, "lead");
+    assert!(c.freeze_menu().can_refreeze && !c.freeze_menu().can_freeze);
+    let steps = c.document.undo_depth();
+
+    c.toggle_freeze_tail();
+    c.refreeze_tracks();
+    assert!(c.freeze_busy());
+    assert!(
+        c.freeze_progress()
+            .is_some_and(|t| t.starts_with("Re-rendering Lead")),
+        "{:?}",
+        c.freeze_progress()
+    );
+    assert!(
+        !c.freeze_menu().can_refreeze,
+        "no second render while one runs"
+    );
+    assert_eq!(
+        frozen(&c, "lead").as_ref(),
+        Some(&first),
+        "the old render plays until the new one is done"
+    );
+    c.wait_background();
+    let second = frozen(&c, "lead").unwrap();
+    assert_eq!(second.length, 2 * PPQ, "the render without the tail");
+    assert_ne!(second.audio.asset, first.audio.asset);
+    assert_eq!(second.effects, first.effects, "through the same effects");
+    assert_eq!(c.document.undo_depth(), steps + 1, "one undo step");
+    assert!(
+        c.last_rejection().unwrap().contains("Rendered Lead again"),
+        "{:?}",
+        c.last_rejection()
+    );
+
+    c.undo();
+    assert_eq!(frozen(&c, "lead").as_ref(), Some(&first), "undo");
+    c.redo();
+    assert_eq!(frozen(&c, "lead").as_ref(), Some(&second), "redo");
+    // The track was frozen the whole time: unfreezing still restores it.
+    c.unfreeze_tracks(false);
+    assert!(frozen(&c, "lead").is_none());
+}
+
+#[test]
+fn rendering_again_needs_a_frozen_track_and_a_render_that_still_matches() {
+    let mut c = core_with(0);
+    select_track(&mut c, "lead");
+    assert!(!c.freeze_menu().can_refreeze);
+    c.refreeze_tracks();
+    assert!(c.last_rejection().unwrap().contains("frozen track"));
+    assert!(!c.freeze_busy());
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    select_track(&mut c, "lead");
+    c.refreeze_tracks();
+    assert!(c.freeze_busy());
+    c.cancel_freeze();
+    c.wait_background();
+    assert!(
+        frozen(&c, "lead").is_some(),
+        "a stopped render keeps the old one"
+    );
+    assert!(
+        c.last_rejection().unwrap().contains("cancelled"),
+        "{:?}",
+        c.last_rejection()
+    );
+}
+
+#[test]
+fn a_range_bounce_renders_the_locators_into_a_new_track() {
+    let mut c = core_with(0);
+    c.toggle_freeze_tail();
+    c.apply_command(Command::Song(SongCommand::SetLoop {
+        range: (BAR, 2 * BAR),
+        enabled: false,
+    }))
+    .unwrap();
+    select_track(&mut c, "lead");
+    assert!(c.freeze_menu().can_bounce_range);
+    let tracks = c.doc().song.tracks.len();
+    let clips = c.doc().song.track(&key("lead")).unwrap().lanes[0]
+        .clips
+        .clone();
+    c.bounce_range();
+    assert!(
+        c.freeze_progress()
+            .is_some_and(|t| t.starts_with("Bouncing Lead")),
+        "{:?}",
+        c.freeze_progress()
+    );
+    c.wait_background();
+    assert_eq!(c.doc().song.tracks.len(), tracks + 1);
+    let new = &c.doc().song.tracks[1];
+    assert!(new.is_audio(), "right after Lead");
+    let clip = &new.lanes[0].clips[0];
+    assert_eq!((clip.start, clip.length), (BAR, BAR), "exactly the range");
+    assert_eq!(
+        c.doc().song.track(&key("lead")).unwrap().lanes[0].clips,
+        clips,
+        "the originals stay"
+    );
+    assert!(frozen(&c, "lead").is_none());
+    c.undo();
+    assert_eq!(c.doc().song.tracks.len(), tracks, "one undo step");
+}
+
+#[test]
+fn a_range_bounce_takes_the_range_selected_on_a_lane_for_its_track() {
+    let mut c = core_with(0);
+    c.toggle_freeze_tail();
+    // Bass plays a bar from BAR; the selected range is the second half of it.
+    c.arrangement_mut()
+        .set_lane_range(key("bass"), 0, BAR + BAR / 2, 2 * BAR);
+    assert!(c.freeze_menu().can_bounce_range);
+    c.bounce_range();
+    c.wait_background();
+    let new = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .find(|t| t.is_audio())
+        .expect("a bounced track");
+    let clip = &new.lanes[0].clips[0];
+    assert_eq!((clip.start, clip.length), (BAR + BAR / 2, BAR / 2));
+    assert_eq!(c.doc().device(&new.device).unwrap().name, "Bass (bounce)");
+}
+
+#[test]
+fn a_range_bounce_says_why_it_renders_nothing() {
+    let mut c = core_with(0);
+    c.bounce_range();
+    assert!(c.last_rejection().unwrap().contains("Select a track"));
+    // Nothing of the track plays between the locators.
+    c.apply_command(Command::Song(SongCommand::SetLoop {
+        range: (6 * BAR, 7 * BAR),
+        enabled: false,
+    }))
+    .unwrap();
+    select_track(&mut c, "lead");
+    assert!(!c.freeze_menu().can_bounce_range);
+    c.bounce_range();
+    assert!(
+        c.last_rejection().unwrap().contains("nothing in the range"),
+        "{:?}",
+        c.last_rejection()
+    );
+    assert!(!c.freeze_busy());
+    // A frozen track is not bounced.
+    c.apply_command(Command::Song(SongCommand::SetLoop {
+        range: (0, BAR),
+        enabled: false,
+    }))
+    .unwrap();
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    select_track(&mut c, "lead");
+    c.bounce_range();
+    assert!(c.last_rejection().unwrap().contains("frozen"));
+    assert!(!c.freeze_busy());
+}
