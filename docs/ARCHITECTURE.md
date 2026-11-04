@@ -2110,7 +2110,9 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
 - **The frozen state.** `Track::frozen` is a `Frozen { start, length, audio, effects }`: the render
   as a plain audio clip (an asset of the pool, no reverse, no warp, placed in ticks) and the frozen
   effects. The track's clips, instrument and effects stay in the document untouched, so unfreezing
-  restores it exactly. `SongCommand::FreezeTrack`, `UnfreezeTrack { keep_audio }` (which can also
+  restores it exactly. `SongCommand::FreezeTrack`, `RefreezeTrack` (the render of a track that is
+  frozen already replaced by a new one through the same checks, `plan_refreeze`; the effects must
+  still be the first of the insert chain), `UnfreezeTrack { keep_audio }` (which can also
   leave the render as a clip on a new audio track, in the same step) and `AddRenderedTrack` (bounce
   in place: a new audio track with one clip, the originals muted when asked) are single undo steps
   with their own `Edit` (`Edit::Frozen`); the asset counts as referenced while the track is frozen
@@ -2152,13 +2154,23 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
 - **App** ([app_core_freeze.rs](../crates/app/src/app_core_freeze.rs),
   [freeze_worker.rs](../crates/app/src/freeze_worker.rs)). The commands in the Track menu
   (`sequencer.freeze_track`, `freeze_track_to_device`, `freeze_tail`, `freeze_cancel`,
-  `unfreeze_track`, `unfreeze_track_keep`, `bounce_in_place`, `bounce_in_place_mute`; no default
-  keys), in the track header menu and (bounce) in the clip menu queue jobs; one `atomik-freeze`
+  `unfreeze_track`, `unfreeze_track_keep`, `refreeze_track`, `bounce_in_place`,
+  `bounce_in_place_mute`, `bounce_range`; no default keys), in the track header menu and (bounce)
+  in the clip menu queue jobs; one `atomik-freeze`
   worker at a time renders a copy of the document into the project's bundle (the scratch bundle
   before the first save) and sends `Msg::Frozen`, counted like the other workers so
   `wait_background` waits for it; the status line shows `Freezing Lead 37%` and Cancel Freeze stops
   it. When the result arrives it is thrown away if the track, its chain, the tempo or the meter
   changed meanwhile (`print_of` compares them), else the asset is registered and one step applies.
+  **Bounce Range in Place** renders a time range instead of whole clips: the range selected on a
+  lane (that track alone) or the locators (`song.loop_range`) on each selected track that plays
+  a note or audio clip in it, through the whole chain, with `clips: None` and `span` set to the range,
+  so a clip that crosses an edge contributes the part inside; the new track's clip starts at the
+  range. **Re-render Frozen Track** queues a `Refreeze` job through the effects the track froze; the
+  worker renders a copy of the document with that track unfrozen (its devices run for the
+  render), the track keeps playing the old render, and `RefreezeTrack` swaps the new one in as one
+  undo step (the render is thrown away if the track or its chain changed meanwhile, as for a
+  freeze).
   `SyncOp::FrozenChanged` makes the app restart its engine: `rebuild_engine` skips the frozen
   devices but spends their ids, so freezing or unfreezing stops playback. With plugins, the worker
   makes its own `PluginHost` from the app's scan cache and settings with the sandbox of the app in
@@ -2180,7 +2192,9 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   that latency. Not frozen: sends, the channel strip's fader, pan and output, effects after the
   freeze point, container effects. The frozen audio does not follow tempo changes (they are refused
   while a track is frozen). The render is stereo at the project rate; a mono tap plays on both
-  sides. Bounce in place renders whole clips of the main lane (a time range is not offered).
+  sides. Bounce in place renders the chosen clips as they play, or the range of Bounce Range in
+  Place. The channel strip and the sends are never part of a render, so they stay live on a frozen
+  track and on a bounced one; baking them into a render is not offered.
 
 ### 2.20 Audio to notes
 
