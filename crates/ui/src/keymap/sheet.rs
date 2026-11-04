@@ -255,6 +255,7 @@ A role is a modifier held during a pointer gesture, not a chord. Settings, Keybo
 | Reset parameter | `Ctrl` | `Cmd` | A click on a knob or fader in the rack and the mixer sets its default (a double-click does too) |
 | Constrain | `Shift` | `Shift` | A drag keeps to one axis; the pencil on an automation clip puts its points on the straight line from the press |
 | Flat automation range | `Ctrl+Shift` | `Cmd+Shift` | The pencil on an automation clip holds the value where the stroke began up to the pointer |
+| Lane range select | `Alt+Shift` | `Opt+Shift` | A drag on a lane of the arrangement selects the time range it covers (Copy, Cut, Delete and Paste work on it) |
 
 The places that take a finer step from the modifier on their own (the clip inspector, the macro and plugin panels, the container editor) still use `Shift`.
 

@@ -69,6 +69,7 @@ mod lanes;
 mod loops;
 use loops::loop_handle_rect;
 mod lane_move;
+mod lane_range;
 mod markers;
 mod meters;
 mod organise;
@@ -693,6 +694,8 @@ enum Drag {
     Series(Box<draw_series::SeriesDrag>),
     /// The handle of a lane's static value is dragged (`static_handle.rs`).
     Static(Box<static_handle::StaticDrag>),
+    /// A time range is dragged on a lane (`lane_range.rs`).
+    Range(Box<lane_range::RangeDrag>),
     /// Dragging the snap selector: up steps through the resolutions, a press without a drag
     /// cycles forward on release.
     Snap {
@@ -855,6 +858,8 @@ pub struct ArrangementView {
     point_sel: Option<(ClipId, BTreeSet<usize>)>,
     menu: Option<Menu>,
     drag: Drag,
+    /// The time range selected on one lane (`lane_range.rs`).
+    range_sel: Option<lane_range::LaneRange>,
     hover: Option<Hit>,
     next_merge: u64,
     /// Counts the uses of the random note tools: each run is its own take.
@@ -997,6 +1002,7 @@ impl ArrangementView {
             point_sel: None,
             menu: None,
             drag: Drag::None,
+            range_sel: None,
             hover: None,
             next_merge: MERGE_BASE,
             tool_seed: 0,
@@ -2984,6 +2990,12 @@ impl ArrangementView {
             };
             return;
         }
+        if primary {
+            if self.range_press(&hit, pos, modifiers, tool) {
+                return;
+            }
+            self.range_sel = None;
+        }
         if !matches!(hit, Hit::TempoPoint(_) | Hit::MeterTag(_)) {
             self.tempo_sel = None;
             self.meter_sel = None;
@@ -4302,6 +4314,10 @@ impl ArrangementView {
             self.static_move(pos, out);
             return;
         }
+        if matches!(self.drag, Drag::Range(_)) {
+            self.range_move(pos, modifiers);
+            return;
+        }
         if matches!(self.drag, Drag::Comp { .. }) {
             self.comp_move(pos, modifiers);
             return;
@@ -4345,6 +4361,7 @@ impl ArrangementView {
             | Drag::Stretch { .. }
             | Drag::Crossfade { .. }
             | Drag::Static(_)
+            | Drag::Range(_)
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
             | Drag::End { .. }
@@ -4739,6 +4756,7 @@ impl ArrangementView {
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
             Drag::Stretch { .. } => CursorHint::Stretch,
             Drag::Static(_) => CursorHint::Move,
+            Drag::Range(_) => CursorHint::Crosshair,
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
             Drag::Pan { .. } => CursorHint::Grabbing,
@@ -4976,6 +4994,7 @@ impl ArrangementView {
             }
             Drag::Series(_) => out.push(UiAction::EndMerge),
             Drag::Static(d) => self.static_up(*d, out),
+            Drag::Range(d) => self.range_up(*d),
             Drag::Bend {
                 id,
                 original,
@@ -5118,6 +5137,7 @@ impl ArrangementView {
                     self.cancel_drag(out);
                 } else {
                     self.selection.clear();
+                    self.range_sel = None;
                     self.selected_track = None;
                     self.point_sel = None;
                     self.tempo_sel = None;
@@ -5221,6 +5241,9 @@ impl ArrangementView {
                 }
             }
             "edit.delete" => {
+                if let Some(outcome) = self.range_delete() {
+                    return outcome;
+                }
                 if let Some((id, indices)) = self.selected_points() {
                     let points = match find_clip(&self.song, id).map(|(_, _, c)| &c.content) {
                         Some(ClipContent::Automation(p)) => p.clone(),
@@ -5871,6 +5894,7 @@ impl ArrangementView {
                 out.push(UiAction::EndMerge);
             }
             Drag::Static(d) => self.static_cancel(*d, out),
+            Drag::Range(_) => {}
             Drag::Series(s) => {
                 out.push(content_cmd(s.id, s.base, Some(s.merge)));
                 out.push(UiAction::EndMerge);
@@ -6087,6 +6111,7 @@ impl ArrangementView {
             }
             self.paint_static_value(c, rr, tl, (track, lane), accent);
         }
+        self.paint_lane_range(c, tl);
         if let Drag::Draw {
             device,
             lane,

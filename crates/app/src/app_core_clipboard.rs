@@ -121,6 +121,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Console => !self.console.selected_strips().is_empty(),
             Pane::Arrangement => {
                 !self.arrangement.selected_clips().is_empty()
+                    || self.arrangement.lane_range().is_some()
                     || self.arrangement.take_focus().is_some()
                     || self.arrangement.selected_points().is_some()
                     || self.arrangement.selected_track().is_some()
@@ -201,6 +202,12 @@ impl<S: EngineSink> AppCore<S> {
                     .map_err(err)
             }
             Pane::Arrangement => {
+                // A time range selected on a lane copies the parts of the clips inside it.
+                if let Some((device, lane, start, end)) = self.arrangement.lane_range() {
+                    return ClipSnapshot::capture_range(doc, &device, lane, (start, end))
+                        .map(ClipboardData::Clips)
+                        .map_err(err);
+                }
                 if let Some(taken) = self.capture_focused_take() {
                     return taken;
                 }
@@ -287,9 +294,17 @@ impl<S: EngineSink> AppCore<S> {
             (Pane::Arrangement, ClipboardData::Takes(s)) => self.paste_takes_here(s),
             (Pane::Arrangement, ClipboardData::Clips(s)) => {
                 let span = s.span;
-                let track = self.arrangement.selected_track().cloned();
+                // A selected range names the track and lane the clips land on.
+                let ranged = self.arrangement.lane_range();
+                let track = match &ranged {
+                    Some((device, ..)) => Some(device.clone()),
+                    None => self.arrangement.selected_track().cloned(),
+                };
                 // Note clips land on the selected lane of the selected track.
-                let lane = self.arrangement.selected_lane().map(|(_, l)| l);
+                let lane = match &ranged {
+                    Some((_, lane, ..)) => Some(*lane),
+                    None => self.arrangement.selected_lane().map(|(_, l)| l),
+                };
                 let at_tick = self.position;
                 self.apply_workflow(WorkflowCommand::PasteClips {
                     track,
