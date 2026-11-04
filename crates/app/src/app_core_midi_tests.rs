@@ -378,14 +378,24 @@ fn the_clip_file_of_the_core_matches_the_converter() {
     c.arrangement_mut().set_selected_clips(&[id]);
     c.export_midi(MidiExport::Clip, &tmp.path("c.mid"));
     let (t, _, clip) = c.doc().song.clip(id).unwrap();
-    let want = clip_file(&c.doc().song, clip, &c.device_name(&t.device));
+    let want = clip_file(
+        &c.doc().song,
+        clip,
+        &c.device_name(&t.device),
+        crate::midi_file::MidiResolution::Native,
+    );
     assert_eq!(std::fs::read(tmp.path("c.mid")).unwrap(), want);
     c.arrangement_mut().set_selected_track(Some(key("lead")));
     c.export_midi(MidiExport::Track, &tmp.path("t.mid"));
     let track = c.doc().song.track(&key("lead")).unwrap();
     assert_eq!(
         std::fs::read(tmp.path("t.mid")).unwrap(),
-        track_file(&c.doc().song, track, "Lead")
+        track_file(
+            &c.doc().song,
+            track,
+            "Lead",
+            crate::midi_file::MidiResolution::Native
+        )
     );
 }
 
@@ -448,7 +458,13 @@ fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
     let keys = |c: &AppCore<RecordingSink>| {
         let song = &c.doc().song;
         let track = song.track(&key("pad")).unwrap();
-        let midi = read_song(&track_file(song, track, "Pad")).unwrap();
+        let midi = read_song(&track_file(
+            song,
+            track,
+            "Pad",
+            crate::midi_file::MidiResolution::Native,
+        ))
+        .unwrap();
         let mut keys: Vec<u8> = midi.merged().notes.iter().map(|n| n.key).collect();
         keys.sort_unstable();
         keys
@@ -573,4 +589,72 @@ fn loading_a_midi_file_from_the_browser_is_the_file_menu_import() {
     std::fs::write(tmp.path("junk.mid"), b"nope").unwrap();
     browser.browse(atomik_ui::BrowseAction::Load(tmp.path("junk.mid")));
     assert!(browser.last_rejection().unwrap().contains("junk.mid"));
+}
+
+#[test]
+fn the_export_resolution_is_the_cores_setting_and_the_native_one_by_default() {
+    let tmp = Tmp::new("resolution");
+    let division = |name: &str| {
+        let bytes = std::fs::read(tmp.path(name)).unwrap();
+        u16::from_be_bytes([bytes[12], bytes[13]])
+    };
+    let mut c = song_core();
+    assert_eq!(
+        c.midi_resolution(),
+        crate::midi_file::MidiResolution::Native
+    );
+    c.export_midi(MidiExport::Song, &tmp.path("native.mid"));
+    assert_eq!(division("native.mid"), 15_360);
+    c.arrangement_mut().set_selected_track(Some(key("lead")));
+    for (res, want) in [
+        (crate::midi_file::MidiResolution::Ppq960, 960),
+        (crate::midi_file::MidiResolution::Ppq480, 480),
+    ] {
+        c.set_midi_resolution(res);
+        assert_eq!(c.midi_resolution(), res);
+        c.export_midi(MidiExport::Song, &tmp.path("song.mid"));
+        assert_eq!(division("song.mid"), want);
+        c.export_midi(MidiExport::Track, &tmp.path("track.mid"));
+        assert_eq!(division("track.mid"), want);
+    }
+}
+
+#[test]
+fn program_changes_and_sysex_travel_through_a_song_file_and_back_into_clips() {
+    let tmp = Tmp::new("program");
+    let mut source = core();
+    add_synth(&mut source, "pad", "Pad");
+    let id = add_clip(&mut source, "pad", 0, vec![Note::new(0, PPQ, 60, vel(100))]);
+    let mut clip = source.doc().song.clip(id).unwrap().2.clone();
+    clip.midi = atomik_model::MidiData {
+        programs: vec![atomik_model::ProgramChange {
+            tick: 0,
+            program: 11,
+        }],
+        sysex: vec![atomik_model::SysexEvent {
+            tick: PPQ,
+            data: vec![0x41, 0x10, 0x42],
+        }],
+    }
+    .into();
+    source
+        .apply_command(Command::Song(SongCommand::RemoveClip { id }))
+        .unwrap();
+    source
+        .apply_command(Command::Song(SongCommand::AddClip {
+            device: key("pad"),
+            lane: 0,
+            clip: clip.clone(),
+        }))
+        .unwrap();
+    source.set_midi_resolution(crate::midi_file::MidiResolution::Ppq960);
+    source.export_midi(MidiExport::Song, &tmp.path("data.mid"));
+
+    let mut target = core();
+    target.import_midi(&tmp.path("data.mid"), true);
+    let track = &target.doc().song.tracks[0];
+    assert_eq!(track.lanes[0].clips[0].midi, clip.midi);
+    // The import is one undo step, data included.
+    assert!(target.undo());
+    assert!(target.doc().song.tracks.is_empty());
 }

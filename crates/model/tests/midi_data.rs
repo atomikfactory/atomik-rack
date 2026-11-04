@@ -37,13 +37,13 @@ fn with_data(reg: &Registry, length: i64, midi: MidiData) -> Document {
     let mut d = song_start(reg);
     d.apply(add_track("synth"), reg).unwrap();
     let mut c = notes_clip(0, length, vec![note(0, PPQ, 60, 0.8)]);
-    c.midi = midi;
+    c.midi = midi.into();
     d.apply(add_clip("synth", 0, c), reg).unwrap();
     d
 }
 
 fn midi_of(d: &Document, id: u64) -> MidiData {
-    d.doc().song.clip(ClipId(id)).expect("clip").2.midi.clone()
+    (*d.doc().song.clip(ClipId(id)).expect("clip").2.midi).clone()
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn bad_data_is_refused_without_a_change() {
     let before = d.doc().clone();
     let mut try_add = |midi: MidiData| {
         let mut c = notes_clip(0, BAR, vec![]);
-        c.midi = midi;
+        c.midi = midi.into();
         d.apply(add_clip("synth", 0, c), &reg)
     };
     assert!(
@@ -195,7 +195,8 @@ fn a_join_and_a_loop_conversion_carry_the_data() {
     second.midi = MidiData {
         programs: vec![prog(PPQ / 4, 40)],
         sysex: vec![sysex(1, &[3])],
-    };
+    }
+    .into();
     d.apply(add_clip("synth", 0, second), &reg).unwrap();
     d.apply(
         Command::Workflow(WorkflowCommand::JoinClips {

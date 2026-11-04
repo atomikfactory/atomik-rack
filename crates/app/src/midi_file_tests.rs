@@ -3,7 +3,7 @@
 use super::*;
 use atomik_core::PPQ;
 use atomik_midi_io::smf::{SmfEvent, SmfFile, SmfMessage, SmfTrack, read};
-use atomik_model::song::{Marker, empty_song};
+use atomik_model::song::{Marker, RangeMarker, empty_song};
 
 const BAR: i64 = PPQ * 4;
 
@@ -104,7 +104,12 @@ fn busy_clip() -> Clip {
 fn a_clip_survives_export_and_import_unchanged() {
     let song = empty_song(120.0);
     let original = busy_clip();
-    let bytes = clip_file(&song, &original, "Busy");
+    let bytes = clip_file(
+        &song,
+        &original,
+        "Busy",
+        crate::midi_file::MidiResolution::Native,
+    );
     let f = read(&bytes).unwrap();
     assert_eq!((f.format, f.ppq, f.tracks.len()), (0, 15_360, 1));
     let imported = read_song(&bytes).unwrap();
@@ -141,11 +146,16 @@ fn a_clip_file_plays_what_the_clip_plays() {
     );
     // Offset 0, a loop of one beat repeated over two beats: the second pass is a copy.
     c.loop_length = Some(PPQ);
-    let got = read_song(&clip_file(&song, &c, "Loop"))
-        .unwrap()
-        .tracks
-        .remove(0)
-        .notes;
+    let got = read_song(&clip_file(
+        &song,
+        &c,
+        "Loop",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap()
+    .tracks
+    .remove(0)
+    .notes;
     let keys: Vec<(i64, u8)> = got.iter().map(|n| (n.tick, n.key)).collect();
     assert_eq!(keys, [(0, 60), (PPQ, 60)]);
     // A muted note and a muted clip flag are not exported; the clip itself still is.
@@ -159,11 +169,16 @@ fn a_clip_file_plays_what_the_clip_plays() {
         n[1].muted = true;
     }
     m.muted = true;
-    let got = read_song(&clip_file(&song, &m, "M"))
-        .unwrap()
-        .tracks
-        .remove(0)
-        .notes;
+    let got = read_song(&clip_file(
+        &song,
+        &m,
+        "M",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap()
+    .tracks
+    .remove(0)
+    .notes;
     assert_eq!(got.len(), 1);
 }
 
@@ -180,11 +195,16 @@ fn overlapping_notes_of_one_key_are_cut_so_each_off_pairs_with_its_on() {
         ],
         Vec::new(),
     );
-    let got = read_song(&clip_file(&song, &c, "O"))
-        .unwrap()
-        .tracks
-        .remove(0)
-        .notes;
+    let got = read_song(&clip_file(
+        &song,
+        &c,
+        "O",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap()
+    .tracks
+    .remove(0)
+    .notes;
     assert_eq!(
         got,
         vec![
@@ -203,10 +223,15 @@ fn a_linear_controller_segment_is_sampled_and_ends_on_its_value() {
         vec![point(0, 0.0, Curve::Linear), point(PPQ, 1.0, Curve::Step)],
     );
     let c = clip(0, BAR, vec![note(0, PPQ, 60, 100)], vec![lane]);
-    let back = read_song(&clip_file(&song, &c, "R"))
-        .unwrap()
-        .tracks
-        .remove(0);
+    let back = read_song(&clip_file(
+        &song,
+        &c,
+        "R",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap()
+    .tracks
+    .remove(0);
     let pts = &back.controllers[0].points;
     assert!(pts.len() > 8 && pts.len() <= 128, "{} points", pts.len());
     assert_eq!((pts[0].tick, pts[0].value), (0, 0.0));
@@ -275,7 +300,12 @@ fn conducted_song() -> Song {
 fn a_song_survives_export_and_import_unchanged() {
     let song = conducted_song();
     let name_of = |k: &DeviceKey| format!("dev {}", k.0);
-    let bytes = song_file(&song, "My Song", &name_of);
+    let bytes = song_file(
+        &song,
+        "My Song",
+        &name_of,
+        crate::midi_file::MidiResolution::Native,
+    );
     let f = read(&bytes).unwrap();
     assert_eq!((f.format, f.tracks.len()), (1, 3));
     let imported = read_song(&bytes).unwrap();
@@ -313,7 +343,13 @@ fn a_song_survives_export_and_import_unchanged() {
 #[test]
 fn a_track_file_is_type_zero_with_the_tempo_map_and_markers() {
     let song = conducted_song();
-    let f = read(&track_file(&song, &song.tracks[1], "Bass")).unwrap();
+    let f = read(&track_file(
+        &song,
+        &song.tracks[1],
+        "Bass",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap();
     assert_eq!((f.format, f.tracks.len()), (0, 1));
     let events = &f.tracks[0].events;
     assert!(
@@ -331,7 +367,13 @@ fn a_track_file_is_type_zero_with_the_tempo_map_and_markers() {
             .iter()
             .any(|e| matches!(e.message, SmfMessage::NoteOn { key: 36, .. }))
     );
-    let imported = read_song(&track_file(&song, &song.tracks[1], "Bass")).unwrap();
+    let imported = read_song(&track_file(
+        &song,
+        &song.tracks[1],
+        "Bass",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap();
     assert_eq!(imported.tracks[0].name, "Bass");
     assert_eq!(imported.tempo.unwrap().len(), 3);
 }
@@ -343,7 +385,13 @@ fn the_song_file_skips_audio_tracks() {
         lanes: vec![Lane::audio()],
         ..track("audio", Vec::new())
     });
-    let f = read(&song_file(&song, "S", &|k| k.0.clone())).unwrap();
+    let f = read(&song_file(
+        &song,
+        "S",
+        &|k| k.0.clone(),
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap();
     assert_eq!(f.tracks.len(), 3);
 }
 
@@ -359,7 +407,13 @@ fn a_tempo_ramp_becomes_a_staircase() {
         TempoEvent::step(BAR, 120.0),
     ];
     let c = clip(0, BAR, vec![note(0, PPQ, 60, 100)], Vec::new());
-    let f = read(&track_file(&song, &track("t", vec![c]), "R")).unwrap();
+    let f = read(&track_file(
+        &song,
+        &track("t", vec![c]),
+        "R",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap();
     let micros: Vec<u32> = f.tracks[0]
         .events
         .iter()
@@ -700,6 +754,7 @@ fn a_clip_takes_the_track_end_or_rounds_the_content_up_to_a_bar() {
         name: String::new(),
         notes: vec![note(0, PPQ, 60, 100)],
         controllers: Vec::new(),
+        midi: Default::default(),
         end,
     };
     assert_eq!(make(3 * PPQ).into_clip(0, &song).length, 3 * PPQ);
@@ -716,12 +771,14 @@ fn merging_tracks_joins_notes_and_controllers() {
         name: "A".into(),
         notes: vec![note(0, PPQ, 60, 100)],
         controllers: vec![lane(0, 0.25), lane(0, 0.25)],
+        midi: Default::default(),
         end: PPQ,
     };
     let b = MidiTrack {
         name: "B".into(),
         notes: vec![note(0, PPQ, 60, 50), note(PPQ, PPQ, 62, 50)],
         controllers: vec![lane(0, 0.75)],
+        midi: Default::default(),
         end: 2 * PPQ,
     };
     let m = MidiSong {
@@ -747,4 +804,403 @@ fn midi_paths_are_recognised_in_any_case() {
     assert!(is_midi_path(Path::new("song.midi")));
     assert!(!is_midi_path(Path::new("song.wav")));
     assert!(!is_midi_path(Path::new("mid")));
+}
+
+// ------------------------------------------------------------ resolution, ranges, program, SysEx
+
+fn events_of(bytes: &[u8]) -> Vec<SmfEvent> {
+    read(bytes).unwrap().tracks.remove(0).events
+}
+
+fn note_ticks(events: &[SmfEvent]) -> Vec<(u64, bool, u8)> {
+    events
+        .iter()
+        .filter_map(|e| match e.message {
+            SmfMessage::NoteOn { key, .. } => Some((e.tick, true, key)),
+            SmfMessage::NoteOff { key, .. } => Some((e.tick, false, key)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_resolution_is_a_choice_and_the_file_says_which() {
+    let song = empty_song(120.0);
+    let c = clip(0, BAR, vec![note(0, PPQ, 60, 100)], Vec::new());
+    for (res, ppq, id) in [
+        (MidiResolution::Native, 15_360, "native"),
+        (MidiResolution::Ppq960, 960, "960"),
+        (MidiResolution::Ppq480, 480, "480"),
+    ] {
+        let f = read(&clip_file(&song, &c, "C", res)).unwrap();
+        assert_eq!(f.ppq, ppq);
+        assert_eq!(res.ppq(), ppq);
+        assert_eq!(MidiResolution::from_id(id), Some(res));
+        assert_eq!(res.id(), id);
+    }
+    assert_eq!(MidiResolution::from_id("7680"), None);
+    assert_eq!(MidiResolution::default(), MidiResolution::Native);
+}
+
+#[test]
+fn a_coarser_resolution_rounds_ticks_and_a_round_trip_returns_grid_aligned_music() {
+    let song = empty_song(120.0);
+    // Whole 1/32 notes (480 ticks) survive 960 and 480 unchanged; a tick of the model between
+    // two file ticks goes to the nearest.
+    let aligned = clip(
+        0,
+        BAR,
+        vec![
+            note(0, PPQ, 60, 100),
+            note(PPQ / 8, PPQ / 4, 62, 90),
+            note(PPQ, PPQ * 2, 64, 80),
+        ],
+        vec![ControllerLane::new(
+            ControllerKind::Cc(1),
+            vec![point(PPQ / 2, vel(64), Curve::Step)],
+        )],
+    );
+    for res in [MidiResolution::Ppq960, MidiResolution::Ppq480] {
+        let bytes = clip_file(&song, &aligned, "A", res);
+        let back = read_song(&bytes).unwrap();
+        assert_eq!(back.tracks[0].notes, notes_of(&aligned), "{res:?}");
+        assert_eq!(back.tracks[0].controllers, aligned.controllers, "{res:?}");
+    }
+    // A note at model tick 24 is 1.5 file ticks at 960 (16 per tick): it lands on tick 2 (round
+    // half up); its length of 40 model ticks (2.5) is tick 4, so the note lasts 2 file ticks.
+    let odd = clip(0, BAR, vec![note(24, 16, 60, 100)], Vec::new());
+    let events = events_of(&clip_file(&song, &odd, "O", MidiResolution::Ppq960));
+    assert_eq!(note_ticks(&events), [(2, true, 60), (3, false, 60)]);
+}
+
+#[test]
+fn a_note_shorter_than_a_file_tick_keeps_one_and_a_crowded_one_is_dropped() {
+    let song = empty_song(120.0);
+    // One model tick long: one file tick at 480.
+    let tiny = clip(0, BAR, vec![note(0, 1, 60, 100)], Vec::new());
+    let events = events_of(&clip_file(&song, &tiny, "T", MidiResolution::Ppq480));
+    assert_eq!(note_ticks(&events), [(0, true, 60), (1, false, 60)]);
+    // Two notes of one key 3 model ticks apart fall in the same 480 tick: the first has no room
+    // and goes, the second stays. At the native resolution both are written.
+    let crowded = clip(
+        0,
+        BAR,
+        vec![note(0, 2, 60, 100), note(3, 100, 60, 90)],
+        Vec::new(),
+    );
+    let at480 = events_of(&clip_file(&song, &crowded, "C", MidiResolution::Ppq480));
+    assert_eq!(note_ticks(&at480), [(0, true, 60), (3, false, 60)]);
+    let native = events_of(&clip_file(&song, &crowded, "C", MidiResolution::Native));
+    assert_eq!(
+        native
+            .iter()
+            .filter(|e| matches!(e.message, SmfMessage::NoteOn { .. }))
+            .count(),
+        2
+    );
+    // Every note-off still pairs with a note-on of its key, in order.
+    for (res, notes) in [
+        (MidiResolution::Ppq480, &at480),
+        (MidiResolution::Native, &native),
+    ] {
+        let mut open = 0i32;
+        for (_, on, _) in note_ticks(notes) {
+            open += if on { 1 } else { -1 };
+            assert!((0..=1).contains(&open), "{res:?}");
+        }
+        assert_eq!(open, 0, "{res:?}");
+    }
+}
+
+#[test]
+fn the_conductor_track_scales_tempo_meter_and_markers_too() {
+    let mut song = empty_song(120.0);
+    song.tempo = vec![TempoEvent::step(0, 100.0), TempoEvent::step(2 * BAR, 150.0)];
+    song.markers = vec![Marker {
+        id: 1,
+        tick: 3 * BAR,
+        name: "Drop".into(),
+        color: None,
+    }];
+    song.tracks = vec![track(
+        "a",
+        vec![clip(0, 4 * BAR, vec![note(0, PPQ, 60, 90)], Vec::new())],
+    )];
+    let bytes = song_file(&song, "S", &|k| k.0.clone(), MidiResolution::Ppq480);
+    let f = read(&bytes).unwrap();
+    assert_eq!(f.ppq, 480);
+    let tempo: Vec<u64> = f.tracks[0]
+        .events
+        .iter()
+        .filter(|e| matches!(e.message, SmfMessage::Tempo(_)))
+        .map(|e| e.tick)
+        .collect();
+    assert_eq!(tempo, [0, 2 * 4 * 480]);
+    let marker = f.tracks[0]
+        .events
+        .iter()
+        .find(|e| matches!(&e.message, SmfMessage::Marker(m) if m == "Drop"))
+        .unwrap();
+    assert_eq!(marker.tick, 3 * 4 * 480);
+    // A file written at 480 reads back to the same song time.
+    let back = read_song(&bytes).unwrap();
+    assert_eq!(back.markers, [(3 * BAR, "Drop".to_owned())]);
+    assert_eq!(back.tracks[0].notes, [note(0, PPQ, 60, 90)]);
+}
+
+#[test]
+fn range_markers_are_written_as_a_start_and_an_end_marker() {
+    let mut song = empty_song(120.0);
+    song.ranges = vec![
+        RangeMarker {
+            id: 1,
+            start: BAR,
+            end: 3 * BAR,
+            name: "Verse".into(),
+            color: None,
+        },
+        RangeMarker {
+            id: 2,
+            start: 3 * BAR,
+            end: 4 * BAR,
+            name: "Chorus".into(),
+            color: Some([1, 2, 3]),
+        },
+    ];
+    song.tracks = vec![track(
+        "a",
+        vec![clip(0, 4 * BAR, vec![note(0, PPQ, 60, 90)], Vec::new())],
+    )];
+    for bytes in [
+        song_file(&song, "S", &|k| k.0.clone(), MidiResolution::Native),
+        track_file(&song, &song.tracks[0], "a", MidiResolution::Native),
+    ] {
+        let f = read(&bytes).unwrap();
+        let markers: Vec<(u64, String)> = f.tracks[0]
+            .events
+            .iter()
+            .filter_map(|e| match &e.message {
+                SmfMessage::Marker(m) => Some((e.tick, m.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            markers,
+            [
+                (BAR as u64, "Verse".to_owned()),
+                (3 * BAR as u64, "Verse (end)".to_owned()),
+                (3 * BAR as u64, "Chorus".to_owned()),
+                (4 * BAR as u64, "Chorus (end)".to_owned()),
+            ]
+        );
+    }
+    // A clip file has no song-level markers.
+    let clip_bytes = clip_file(
+        &song,
+        &song.tracks[0].lanes[0].clips[0],
+        "c",
+        MidiResolution::Native,
+    );
+    assert!(
+        !events_of(&clip_bytes)
+            .iter()
+            .any(|e| matches!(e.message, SmfMessage::Marker(_)))
+    );
+}
+
+fn midi_clip() -> Clip {
+    let mut c = clip(
+        0,
+        2 * BAR,
+        vec![note(0, PPQ, 60, 100)],
+        vec![
+            ControllerLane::new(ControllerKind::Cc(0), vec![point(0, vel(1), Curve::Step)]),
+            ControllerLane::new(ControllerKind::Cc(32), vec![point(0, vel(2), Curve::Step)]),
+        ],
+    );
+    c.midi = MidiData {
+        programs: vec![
+            ProgramChange {
+                tick: 0,
+                program: 5,
+            },
+            ProgramChange {
+                tick: BAR,
+                program: 99,
+            },
+        ],
+        sysex: vec![SysexEvent {
+            tick: PPQ,
+            data: vec![0x7E, 0x7F, 0x09, 0x01],
+        }],
+    }
+    .into();
+    c
+}
+
+#[test]
+fn bank_selects_program_changes_and_sysex_survive_a_clip_round_trip() {
+    let song = empty_song(120.0);
+    let original = midi_clip();
+    let bytes = clip_file(&song, &original, "M", MidiResolution::Native);
+    let events = events_of(&bytes);
+    // At tick 0 the bank select (CC 0, then CC 32) comes before the program change.
+    let at_zero: Vec<&SmfMessage> = events
+        .iter()
+        .filter(|e| e.tick == 0)
+        .map(|e| &e.message)
+        .filter(|m| {
+            matches!(
+                m,
+                SmfMessage::Controller { .. } | SmfMessage::Program { .. }
+            )
+        })
+        .collect();
+    assert_eq!(
+        at_zero,
+        [
+            &SmfMessage::Controller {
+                channel: 0,
+                controller: 0,
+                value: 1
+            },
+            &SmfMessage::Controller {
+                channel: 0,
+                controller: 32,
+                value: 2
+            },
+            &SmfMessage::Program {
+                channel: 0,
+                program: 5
+            },
+        ]
+    );
+    assert!(
+        events.iter().any(|e| e.tick == PPQ as u64
+            && e.message == SmfMessage::SysEx(vec![0x7E, 0x7F, 0x09, 0x01]))
+    );
+    let back = read_song(&bytes).unwrap();
+    let t = &back.tracks[0];
+    assert_eq!(t.midi, *original.midi);
+    assert_eq!(t.controllers, original.controllers);
+    let clip = t.clone().into_clip(0, &song);
+    assert_eq!(clip.midi, original.midi);
+}
+
+#[test]
+fn program_changes_and_sysex_follow_the_track_into_a_song_file() {
+    let mut song = empty_song(120.0);
+    song.tracks = vec![track("a", vec![midi_clip()])];
+    let bytes = song_file(&song, "S", &|k| k.0.clone(), MidiResolution::Ppq960);
+    let back = read_song(&bytes).unwrap();
+    assert_eq!(back.tracks.len(), 1);
+    assert_eq!(back.tracks[0].midi, *midi_clip().midi);
+    // At 960 the ticks are whole file ticks and come back exactly.
+    assert_eq!(back.merged().midi, *midi_clip().midi);
+}
+
+#[test]
+fn import_keeps_the_last_program_of_a_tick_and_sysex_only_of_tracks_with_notes() {
+    let sysex = |t, b: u8| ev(t, SmfMessage::SysEx(vec![0x43, b]));
+    let bytes = smf(
+        96,
+        vec![
+            // A conductor track: its SysEx has no clip to live in.
+            vec![sysex(0, 1), ev(0, SmfMessage::Tempo(500_000))],
+            vec![
+                ev(
+                    0,
+                    SmfMessage::Program {
+                        channel: 0,
+                        program: 3,
+                    },
+                ),
+                ev(
+                    0,
+                    SmfMessage::Program {
+                        channel: 0,
+                        program: 8,
+                    },
+                ),
+                ev(
+                    0,
+                    SmfMessage::Program {
+                        channel: 1,
+                        program: 40,
+                    },
+                ),
+                sysex(48, 2),
+                ev(0, on(0, 60, 100)),
+                ev(96, off(0, 60)),
+                ev(0, on(1, 62, 100)),
+                ev(96, off(1, 62)),
+                // A channel with a program change and no notes is left out.
+                ev(
+                    10,
+                    SmfMessage::Program {
+                        channel: 5,
+                        program: 9,
+                    },
+                ),
+            ],
+        ],
+    );
+    let s = read_song(&bytes).unwrap();
+    assert_eq!(s.tracks.len(), 2);
+    assert_eq!(
+        s.tracks[0].midi.programs,
+        [ProgramChange {
+            tick: 0,
+            program: 8
+        }]
+    );
+    assert_eq!(
+        s.tracks[1].midi.programs,
+        [ProgramChange {
+            tick: 0,
+            program: 40
+        }]
+    );
+    assert_eq!(
+        s.tracks[0].midi.sysex.len(),
+        1,
+        "the first clip of the track carries it"
+    );
+    assert!(s.tracks[1].midi.sysex.is_empty());
+    assert_eq!(s.skipped, 1);
+    // Merged into one clip: all programs, the later channel winning a shared tick.
+    let m = s.merged();
+    assert_eq!(
+        m.midi.programs,
+        [ProgramChange {
+            tick: 0,
+            program: 40
+        }]
+    );
+    assert_eq!(m.midi.sysex.len(), 1);
+}
+
+#[test]
+fn imported_data_stays_within_the_limits_of_a_clip() {
+    let mut events = vec![ev(0, on(0, 60, 100)), ev(10, off(0, 60))];
+    for i in 0..(MAX_PROGRAM_CHANGES as u64 + 50) {
+        events.push(ev(
+            i,
+            SmfMessage::Program {
+                channel: 0,
+                program: (i % 128) as u8,
+            },
+        ));
+    }
+    for i in 0..(MAX_SYSEX_EVENTS as u64 + 10) {
+        events.push(ev(i, SmfMessage::SysEx(vec![1, 2, 3])));
+    }
+    events.push(ev(5, SmfMessage::SysEx(vec![7; MAX_SYSEX_BYTES + 1])));
+    events.sort_by_key(|e| e.tick);
+    let s = read_song(&smf(96, vec![events])).unwrap();
+    let midi = &s.tracks[0].midi;
+    assert_eq!(midi.programs.len(), MAX_PROGRAM_CHANGES);
+    assert_eq!(midi.sysex.len(), MAX_SYSEX_EVENTS);
+    assert!(midi.sysex.iter().all(|m| m.data.len() <= MAX_SYSEX_BYTES));
+    assert!(midi.check(MAX_TICK).is_ok());
 }

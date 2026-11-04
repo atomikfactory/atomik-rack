@@ -5,7 +5,9 @@
 //!
 //! **Export** writes the note clip open in the piano roll or selected in the arrangement
 //! (type 0), the selected note track (type 0 with the song's tempo map, meter and markers) or
-//! the whole song (type 1). The command is disabled when there is nothing to write.
+//! the whole song (type 1), at the resolution File > MIDI Export Resolution chose (the native
+//! 15 360 ticks per quarter note, 960 or 480). The command is disabled when there is nothing to
+//! write.
 //!
 //! **Import** has two forms:
 //! - *Import MIDI* puts the whole file in **one clip** on the selected note track at the snapped
@@ -24,7 +26,7 @@
 //! that cannot be read is reported by name; nothing changes then.
 
 use super::*;
-use crate::midi_file::{self, MidiSong, MidiTrack};
+use crate::midi_file::{self, MidiResolution, MidiSong, MidiTrack};
 use atomik_model::{ClipContent, ImportedTrack, MidiImport, WorkflowCommand};
 
 /// The instrument a track made by a MIDI import plays.
@@ -133,6 +135,17 @@ impl<S: EngineSink> AppCore<S> {
             })
     }
 
+    /// The ticks per quarter note a MIDI file is written at.
+    pub fn midi_resolution(&self) -> MidiResolution {
+        self.midi_resolution
+    }
+
+    /// Chooses the resolution of the MIDI files written from now on (the shell keeps it in the
+    /// workflow preferences).
+    pub fn set_midi_resolution(&mut self, resolution: MidiResolution) {
+        self.midi_resolution = resolution;
+    }
+
     /// True when File > Export MIDI can write `what`.
     pub fn can_export_midi(&self, what: MidiExport) -> bool {
         match what {
@@ -185,7 +198,12 @@ impl<S: EngineSink> AppCore<S> {
                     .name
                     .clone()
                     .unwrap_or_else(|| self.device_name(&track.device));
-                Ok(midi_file::clip_file(song, clip, &name))
+                Ok(midi_file::clip_file(
+                    song,
+                    clip,
+                    &name,
+                    self.midi_resolution,
+                ))
             }
             MidiExport::Track => {
                 let device = self.midi_track_source().ok_or(what.needs())?;
@@ -194,15 +212,19 @@ impl<S: EngineSink> AppCore<S> {
                     song,
                     track,
                     &self.device_name(&device),
+                    self.midi_resolution,
                 ))
             }
             MidiExport::Song => {
                 if !self.can_export_midi(MidiExport::Song) {
                     return Err(what.needs().to_owned());
                 }
-                Ok(midi_file::song_file(song, &self.project_name(), &|k| {
-                    self.device_name(k)
-                }))
+                Ok(midi_file::song_file(
+                    song,
+                    &self.project_name(),
+                    &|k| self.device_name(k),
+                    self.midi_resolution,
+                ))
             }
         }
     }

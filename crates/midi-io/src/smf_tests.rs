@@ -57,7 +57,7 @@ fn reads_a_note_with_running_status_and_a_velocity_zero_off() {
 }
 
 #[test]
-fn reads_meta_events_and_skips_sysex_and_unknown_meta() {
+fn reads_meta_events_and_whole_sysex_and_skips_unknown_meta() {
     let track = [
         0x00, 0xFF, 0x03, 0x04, b'L', b'e', b'a', b'd', // track name
         0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // tempo 500000
@@ -80,9 +80,43 @@ fn reads_meta_events_and_skips_sysex_and_unknown_meta() {
                     denominator_power: 2
                 }
             ),
+            ev(0, SmfMessage::SysEx(vec![0x7E, 0x01])),
             ev(16, SmfMessage::Marker("AB".into())),
         ]
     );
+}
+
+#[test]
+fn sysex_packets_and_escapes_are_skipped_and_a_written_message_reads_back() {
+    let track = [
+        0x00, 0xF0, 0x03, 0x7E, 0x01, 0x02, // no closing F7: the first packet
+        0x00, 0xF7, 0x02, 0x01, 0xF7, // an escape
+        0x00, 0xF0, 0x03, 0x7E, 0x80, 0xF7, // a data byte above 127
+        0x00, 0xF0, 0x01, 0xF7, // nothing between
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let f = read(&file(0, 96, &[&track])).unwrap();
+    assert!(f.tracks[0].events.is_empty());
+    let out = SmfFile {
+        format: 0,
+        ppq: 96,
+        tracks: vec![SmfTrack {
+            events: vec![
+                ev(5, SmfMessage::SysEx(vec![0x43, 0x10, 0x4C, 0x00])),
+                ev(
+                    5,
+                    SmfMessage::NoteOn {
+                        channel: 0,
+                        key: 60,
+                        velocity: 90,
+                    },
+                ),
+                ev(7, SmfMessage::SysEx(vec![0x7E; 300])),
+            ],
+            end_tick: 9,
+        }],
+    };
+    assert_eq!(read(&out.to_bytes()).unwrap(), out);
 }
 
 #[test]

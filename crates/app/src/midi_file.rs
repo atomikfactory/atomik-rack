@@ -8,17 +8,24 @@
 //! track's live groove, a later clip hiding an earlier one, muted notes and clips left out), so the file sounds like
 //! the arrangement.
 //!
-//! - The resolution is [`PPQ`](atomik_core::PPQ) (15 360 ticks per quarter note, a valid 15-bit
-//!   division), so every model tick survives a round trip unchanged. Velocities are 7 bit
-//!   (`round(v * 127)`, at least 1), pitch bend 14 bit, other controllers 7 bit.
+//! - The resolution is a choice ([`MidiResolution`]): the native [`PPQ`](atomik_core::PPQ) (15 360
+//!   ticks per quarter note, a valid 15-bit division), so every model tick survives a round trip
+//!   unchanged, or 960 or 480 for hardware that dislikes a division that large. At a coarser
+//!   resolution every tick is rounded to the nearest file tick (a note keeps at least one tick,
+//!   a note that a following note of the same key leaves no tick for is dropped). Velocities are
+//!   7 bit (`round(v * 127)`, at least 1), pitch bend 14 bit, other controllers 7 bit.
 //! - A clip or a track is a type 0 file (one `MTrk`, channel 1); the song is a type 1 file: the
 //!   first `MTrk` holds the song name, tempo map, time signatures and markers, then one `MTrk`
 //!   per note track (named after its device, channel `index mod 16`). Audio and automation
 //!   lanes are not exported.
 //! - Tempo ramps become a staircase (a tempo event every sixteenth note, at most 2048 per
-//!   ramp); the time signature events sit on the bar lines; range markers are not exported,
-//!   point markers are marker meta events. A clip file carries the tempo and time signature in
-//!   effect where the clip starts, a track file the whole tempo map, meter map and markers.
+//!   ramp); the time signature events sit on the bar lines; point markers are marker meta
+//!   events, and so are range markers: one named after the range at its start and one named
+//!   `<name> (end)` at its end. A clip file carries the tempo and time signature in effect where
+//!   the clip starts, a track file the whole tempo map, meter map and markers.
+//! - Program changes a clip carries are written on the track's channel, after the controllers of
+//!   their tick (so a bank select, which is the `CC 0` and `CC 32` controller lane, comes first),
+//!   and so are the SysEx messages it carries (see `Clip::midi`).
 //! - A linear controller segment is sampled (every 1/16 quarter note, only the changes); a step
 //!   point is one event. Notes of one key that overlap are shortened so every note-off pairs with
 //!   its own note-on.
@@ -29,19 +36,24 @@
 //! ends the earlier note there (and replaces it when both start at one tick), a hanging note
 //! ends with its track, a note is at least one tick long, two notes at the same tick and key keep
 //! the first. Controllers become `Step` points
-//! (the last value at a tick wins); channel-mode controllers (120 and above), data entry and
-//! (N)RPN numbers are skipped, and so are program changes and SysEx. Tempo, time signature and
-//! marker events from every track make the song-level data. Ticks are rescaled from the file's
-//! division with rounding.
+//! (the last value at a tick wins, bank select `CC 0` and `CC 32` included); channel-mode
+//! controllers (120 and above), data entry and (N)RPN numbers are skipped. Program changes (the
+//! last one at a tick wins) and the complete SysEx messages of a track that has notes are kept in
+//! the clip's `midi` data (at most as many as a clip holds); SysEx of a track without notes has no
+//! clip to live in and is dropped. Tempo, time signature and marker events from every track make
+//! the song-level data. Ticks are rescaled from the file's division with rounding.
 
 use atomik_core::PPQ;
 use atomik_midi_io::smf::{SmfError, SmfEvent, SmfFile, SmfMessage, SmfTrack, read};
+use atomik_model::midi_data::{MAX_PROGRAM_CHANGES, MAX_SYSEX_BYTES, MAX_SYSEX_EVENTS};
 use atomik_model::song::{
     AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, MAX_MARKER_NAME, MAX_TICK, MeterEvent,
-    Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_notes_with,
-    flatten_track_notes,
+    Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_midi_data,
+    flatten_notes_with, flatten_track_notes,
 };
-use atomik_model::{ControllerKind, ControllerLane, DeviceKey};
+use atomik_model::{
+    ControllerKind, ControllerLane, DeviceKey, MidiData, ProgramChange, SysexEvent,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -65,6 +77,69 @@ pub enum MidiFileError {
     /// The file holds no notes (only tempo, markers or controllers).
     #[error("the MIDI file has no notes")]
     NoNotes,
+}
+
+/// The ticks per quarter note a MIDI file is written at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MidiResolution {
+    /// The model's own resolution ([`PPQ`]): no tick is rounded.
+    #[default]
+    Native,
+    /// 960 ticks per quarter note.
+    Ppq960,
+    /// 480 ticks per quarter note.
+    Ppq480,
+}
+
+impl MidiResolution {
+    /// Every choice, finest first.
+    pub const ALL: [MidiResolution; 3] = [
+        MidiResolution::Native,
+        MidiResolution::Ppq960,
+        MidiResolution::Ppq480,
+    ];
+
+    /// The file's division.
+    pub fn ppq(self) -> u16 {
+        match self {
+            MidiResolution::Native => u16::try_from(PPQ).unwrap_or(u16::MAX),
+            MidiResolution::Ppq960 => 960,
+            MidiResolution::Ppq480 => 480,
+        }
+    }
+
+    /// The id used in command arguments and `workflow.json`.
+    pub fn id(self) -> &'static str {
+        match self {
+            MidiResolution::Native => "native",
+            MidiResolution::Ppq960 => "960",
+            MidiResolution::Ppq480 => "480",
+        }
+    }
+
+    /// The choice with this id.
+    pub fn from_id(id: &str) -> Option<MidiResolution> {
+        MidiResolution::ALL.into_iter().find(|r| r.id() == id)
+    }
+
+    /// The label menus show.
+    pub fn label(self) -> String {
+        match self {
+            MidiResolution::Native => format!("{} (native)", PPQ),
+            _ => self.ppq().to_string(),
+        }
+    }
+
+    /// Model ticks per file tick.
+    fn divisor(self) -> i64 {
+        PPQ / i64::from(self.ppq())
+    }
+
+    /// `tick` (model ticks, not negative) in file ticks, rounded to the nearest.
+    fn scale(self, tick: i64) -> i64 {
+        let d = self.divisor();
+        (tick.max(0) + d / 2) / d
+    }
 }
 
 /// A velocity as 7 bit, never 0 (a note-on with velocity 0 is a note-off).
@@ -141,7 +216,7 @@ fn time_signature(num: u8, den: u8) -> SmfMessage {
     }
 }
 
-/// Tempo map, time signatures (on the bar lines) and point markers of the song.
+/// Tempo map, time signatures (on the bar lines), point markers and range markers of the song.
 fn conductor_events(song: &Song) -> Vec<Timed> {
     let mut out = tempo_events(&song.tempo);
     let table = song.meter_table();
@@ -151,25 +226,47 @@ fn conductor_events(song: &Song) -> Vec<Timed> {
     for m in &song.markers {
         out.push(timed(m.tick, 1, SmfMessage::Marker(m.name.clone())));
     }
+    for r in &song.ranges {
+        out.push(timed(r.start, 1, SmfMessage::Marker(r.name.clone())));
+        out.push(timed(
+            r.end,
+            1,
+            SmfMessage::Marker(format!("{} (end)", r.name)),
+        ));
+    }
     out
 }
 
-/// Note-on and note-off events of flattened notes `(tick, length, key, velocity)` on `channel`.
-fn note_events(notes: &[(i64, i64, u8, f32)], channel: u8) -> Vec<Timed> {
+/// Note-on and note-off events of flattened notes `(tick, length, key, velocity)` on `channel`,
+/// at `res` (each tick is a whole file tick; see the module docs for notes that get short).
+fn note_events(notes: &[(i64, i64, u8, f32)], channel: u8, res: MidiResolution) -> Vec<Timed> {
+    let d = res.divisor();
+    let starts: Vec<i64> = notes.iter().map(|n| res.scale(n.0)).collect();
     // Overlapping notes of one key are cut at the next one's start.
-    let mut ends: Vec<i64> = notes.iter().map(|n| n.0 + n.1).collect();
+    let mut ends: Vec<i64> = notes.iter().map(|n| res.scale(n.0 + n.1.max(1))).collect();
     let mut next_of_key: BTreeMap<u8, usize> = BTreeMap::new();
+    let mut next_start: Vec<Option<i64>> = vec![None; notes.len()];
     for i in (0..notes.len()).rev() {
         if let Some(&j) = next_of_key.get(&notes[i].2) {
-            ends[i] = ends[i].min(notes[j].0);
+            ends[i] = ends[i].min(starts[j]);
+            next_start[i] = Some(starts[j]);
         }
         next_of_key.insert(notes[i].2, i);
     }
     let mut out = Vec::new();
-    for (n, end) in notes.iter().zip(ends) {
-        let end = end.max(n.0 + 1);
+    for (i, n) in notes.iter().enumerate() {
+        let (start, mut end) = (starts[i], ends[i]);
+        if end <= start {
+            // Shorter than a file tick: it keeps one tick unless the next note of the key
+            // starts in this very tick (at the native resolution that note still follows).
+            let crowded = next_start[i].is_some_and(|s| s <= start);
+            if crowded && res != MidiResolution::Native {
+                continue;
+            }
+            end = start + 1;
+        }
         out.push(timed(
-            n.0,
+            start * d,
             4,
             SmfMessage::NoteOn {
                 channel,
@@ -178,7 +275,7 @@ fn note_events(notes: &[(i64, i64, u8, f32)], channel: u8) -> Vec<Timed> {
             },
         ));
         out.push(timed(
-            end,
+            end * d,
             2,
             SmfMessage::NoteOff {
                 channel,
@@ -243,10 +340,11 @@ fn controller_events(lanes: &[FlatController], channel: u8) -> Vec<Timed> {
     out
 }
 
-/// Sorts the messages and turns them into a track ending at `end` (at least the last tick).
-fn smf_track(mut events: Vec<Timed>, end: i64) -> SmfTrack {
+/// Sorts the messages and turns them into a track ending at `end` (at least the last tick), its
+/// ticks at `res`.
+fn smf_track(mut events: Vec<Timed>, end: i64, res: MidiResolution) -> SmfTrack {
     events.sort_by_key(|e| (e.tick, e.rank));
-    let tick = |t: i64| t.max(0) as u64;
+    let tick = |t: i64| res.scale(t) as u64;
     let end_tick = events.last().map_or(0, |e| tick(e.tick)).max(tick(end));
     SmfTrack {
         events: events
@@ -264,21 +362,35 @@ fn named(name: &str) -> Timed {
     timed(0, 0, SmfMessage::TrackName(name.to_owned()))
 }
 
-/// The notes and controllers a track plays, as events on `channel` (see the module docs).
-fn play_events(track: &Track, channel: u8, song: Option<&Song>) -> Vec<Timed> {
+/// The notes, controllers, program changes and SysEx messages a track plays, as events on
+/// `channel` (see the module docs).
+fn play_events(track: &Track, channel: u8, song: Option<&Song>, res: MidiResolution) -> Vec<Timed> {
     let notes = match song {
         Some(song) => flatten_track_notes(song, track),
         None => flatten_notes_with(track, false),
     };
-    let mut out = note_events(&notes, channel);
+    let mut out = note_events(&notes, channel, res);
     out.extend(controller_events(&flatten_controllers(track), channel));
+    let extra = flatten_midi_data(track);
+    out.extend(
+        extra
+            .programs
+            .into_iter()
+            .map(|(tick, program)| timed(tick, 3, SmfMessage::Program { channel, program })),
+    );
+    out.extend(
+        extra
+            .sysex
+            .into_iter()
+            .map(|(tick, data)| timed(tick, 3, SmfMessage::SysEx(data))),
+    );
     out
 }
 
-fn file(format: u16, tracks: Vec<SmfTrack>) -> SmfFile {
+fn file(format: u16, tracks: Vec<SmfTrack>, res: MidiResolution) -> SmfFile {
     SmfFile {
         format,
-        ppq: u16::try_from(PPQ).unwrap_or(u16::MAX),
+        ppq: res.ppq(),
         tracks,
     }
 }
@@ -305,7 +417,7 @@ fn lone_clip_track(clip: &Clip) -> Track {
 
 /// A note clip as a type 0 file: the clip's notes and controllers from tick 0 for the clip's
 /// length, with the tempo and time signature in effect where the clip starts.
-pub fn clip_file(song: &Song, clip: &Clip, name: &str) -> Vec<u8> {
+pub fn clip_file(song: &Song, clip: &Clip, name: &str, res: MidiResolution) -> Vec<u8> {
     let table = song.tempo_table();
     let meter = song.meter_table();
     let bpm = table.map().bpm(clip.start as f64);
@@ -315,25 +427,30 @@ pub fn clip_file(song: &Song, clip: &Clip, name: &str) -> Vec<u8> {
         timed(0, 1, SmfMessage::Tempo(micros_of(bpm))),
         timed(0, 1, time_signature(num, den)),
     ];
-    events.extend(play_events(&lone_clip_track(clip), 0, None));
-    file(0, vec![smf_track(events, clip.length)]).to_bytes()
+    events.extend(play_events(&lone_clip_track(clip), 0, None, res));
+    file(0, vec![smf_track(events, clip.length, res)], res).to_bytes()
 }
 
 /// A track as a type 0 file: its notes and controllers at their song ticks, with the song's
 /// tempo map, time signatures and markers.
-pub fn track_file(song: &Song, track: &Track, name: &str) -> Vec<u8> {
+pub fn track_file(song: &Song, track: &Track, name: &str, res: MidiResolution) -> Vec<u8> {
     let mut events = vec![named(name)];
     events.extend(conductor_events(song));
-    events.extend(play_events(track, 0, Some(song)));
-    file(0, vec![smf_track(events, 0)]).to_bytes()
+    events.extend(play_events(track, 0, Some(song), res));
+    file(0, vec![smf_track(events, 0, res)], res).to_bytes()
 }
 
 /// The song as a type 1 file: a conductor track (name, tempo map, time signatures, markers) and
 /// one track per note track, named by `name_of` (see the module docs).
-pub fn song_file(song: &Song, name: &str, name_of: &dyn Fn(&DeviceKey) -> String) -> Vec<u8> {
+pub fn song_file(
+    song: &Song,
+    name: &str,
+    name_of: &dyn Fn(&DeviceKey) -> String,
+    res: MidiResolution,
+) -> Vec<u8> {
     let mut events = vec![named(name)];
     events.extend(conductor_events(song));
-    let mut tracks = vec![smf_track(events, 0)];
+    let mut tracks = vec![smf_track(events, 0, res)];
     let note_tracks = song
         .tracks
         .iter()
@@ -341,10 +458,10 @@ pub fn song_file(song: &Song, name: &str, name_of: &dyn Fn(&DeviceKey) -> String
     for (i, track) in note_tracks.enumerate() {
         let channel = (i % 16) as u8;
         let mut events = vec![named(&name_of(&track.device))];
-        events.extend(play_events(track, channel, Some(song)));
-        tracks.push(smf_track(events, 0));
+        events.extend(play_events(track, channel, Some(song), res));
+        tracks.push(smf_track(events, 0, res));
     }
-    file(1, tracks).to_bytes()
+    file(1, tracks, res).to_bytes()
 }
 
 // ------------------------------------------------------------------------------------ import
@@ -359,6 +476,9 @@ pub struct MidiTrack {
     pub notes: Vec<Note>,
     /// The controller lanes, canonical (sorted by kind, no empty lane).
     pub controllers: Vec<ControllerLane>,
+    /// The program changes and SysEx messages of the track, canonical and within the limits of
+    /// a clip.
+    pub midi: MidiData,
     /// The tick the track ended at (its end-of-track event, or its last event).
     pub end: i64,
 }
@@ -391,6 +511,7 @@ struct Channel {
     open: BTreeMap<u8, (i64, f32)>,
     notes: Vec<Note>,
     lanes: BTreeMap<ControllerKind, Vec<AutomationPoint>>,
+    programs: Vec<ProgramChange>,
 }
 
 impl Channel {
@@ -428,7 +549,7 @@ impl Channel {
 
     /// Ends the hanging notes at `end` (at least a sixteenth long) and returns the finished
     /// track data, or `None` for a channel without notes.
-    fn finish(mut self, end: i64) -> Option<(Vec<Note>, Vec<ControllerLane>)> {
+    fn finish(mut self, end: i64) -> Option<ChannelData> {
         for (key, (start, velocity)) in std::mem::take(&mut self.open) {
             let length = if end > start { end - start } else { PPQ / 4 };
             self.notes.push(Note::new(start, length, key, velocity));
@@ -444,8 +565,25 @@ impl Channel {
             .into_iter()
             .map(|(kind, points)| ControllerLane::new(kind, points))
             .collect();
-        Some((notes, lanes))
+        let programs = MidiData {
+            programs: self.programs,
+            sysex: Vec::new(),
+        };
+        Some((notes, lanes, programs))
     }
+}
+
+/// What a channel with notes yields: the notes, the controller lanes and the program changes
+/// (in the `programs` of a [`MidiData`]).
+type ChannelData = (Vec<Note>, Vec<ControllerLane>, MidiData);
+
+/// `data` in canonical form and within the limits a clip keeps (the first ones win).
+fn limited(data: MidiData) -> MidiData {
+    let mut data = data.canonical();
+    data.programs.truncate(MAX_PROGRAM_CHANGES);
+    data.sysex.retain(|s| s.data.len() <= MAX_SYSEX_BYTES);
+    data.sysex.truncate(MAX_SYSEX_EVENTS);
+    data
 }
 
 fn level(v: u8) -> f32 {
@@ -481,6 +619,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
     for (index, t) in smf.tracks.iter().enumerate() {
         let end = model_tick(t.end_tick, ppq);
         let mut channels: BTreeMap<u8, Channel> = BTreeMap::new();
+        let mut sysex: Vec<SysexEvent> = Vec::new();
         let mut title = None;
         for e in &t.events {
             let tick = model_tick(e.tick, ppq);
@@ -542,23 +681,41 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                         title = clean_name(text);
                     }
                 }
-                SmfMessage::Controller { .. } | SmfMessage::Program { .. } => {}
+                SmfMessage::Program { channel, program } => {
+                    channels
+                        .entry(*channel)
+                        .or_default()
+                        .programs
+                        .push(ProgramChange {
+                            tick,
+                            program: *program,
+                        });
+                }
+                SmfMessage::SysEx(data) => sysex.push(SysexEvent {
+                    tick,
+                    data: data.clone(),
+                }),
+                SmfMessage::Controller { .. } => {}
             }
         }
-        let finished: Vec<(u8, Vec<Note>, Vec<ControllerLane>)> = channels
+        let finished: Vec<(u8, ChannelData)> = channels
             .into_iter()
             .filter_map(|(ch, c)| {
-                let has_lanes = !c.lanes.is_empty();
+                let has_lanes = !c.lanes.is_empty() || !c.programs.is_empty();
                 let done = c.finish(end);
                 if done.is_none() && has_lanes {
                     skipped += 1;
                 }
-                done.map(|(n, l)| (ch, n, l))
+                done.map(|d| (ch, d))
             })
             .collect();
+        // A SysEx message belongs to the file track, not to a channel: the first clip of the
+        // track carries it.
+        let mut sysex = Some(sysex);
         let several = finished.len() > 1;
         let base = title.unwrap_or_else(|| format!("Track {}", index + 1));
-        for (channel, notes, controllers) in finished {
+        for (channel, (notes, controllers, mut midi)) in finished {
+            midi.sysex = sysex.take().unwrap_or_default();
             tracks.push(MidiTrack {
                 name: if several {
                     format!("{base} ch{}", channel + 1)
@@ -567,6 +724,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                 },
                 notes,
                 controllers,
+                midi: limited(midi),
                 end,
             });
         }
@@ -667,6 +825,10 @@ impl MidiSong {
                 ControllerLane::new(kind, points)
             })
             .collect();
+        let mut midi = MidiData::default();
+        for t in &self.tracks {
+            midi.append(t.midi.clone());
+        }
         MidiTrack {
             name: self
                 .tracks
@@ -674,6 +836,7 @@ impl MidiSong {
                 .map_or_else(String::new, |t| t.name.clone()),
             notes,
             controllers,
+            midi: limited(midi),
             end: self.tracks.iter().map(|t| t.end).max().unwrap_or(0),
         }
     }
@@ -715,8 +878,8 @@ impl MidiTrack {
             grid: None,
             scale: None,
             param_lanes: Vec::new(),
-            midi: Default::default(),
             controllers: self.controllers,
+            midi: self.midi.into(),
             content: ClipContent::Notes(self.notes.into()),
         }
     }

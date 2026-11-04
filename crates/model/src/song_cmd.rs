@@ -711,7 +711,7 @@ pub(crate) fn check_new_clip(
     }
     let controllers = canonical(clip.controllers.clone());
     check_lanes(&controllers, MAX_TICK).map_err(range)?;
-    let midi = clip.midi.clone().canonical();
+    let midi = (*clip.midi).clone().canonical();
     midi.check(MAX_TICK).map_err(range)?;
     // Targets are not checked here: a clip pasted from another project keeps lanes whose device
     // is missing, and they play nothing (see the module docs of `param_lane`).
@@ -729,7 +729,7 @@ pub(crate) fn check_new_clip(
         scale,
         controllers,
         param_lanes,
-        midi,
+        midi: std::sync::Arc::new(midi),
         ..clip
     })
 }

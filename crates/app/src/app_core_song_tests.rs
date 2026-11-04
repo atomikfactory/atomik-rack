@@ -2639,7 +2639,12 @@ fn a_live_groove_is_in_the_exported_midi_notes() {
         }),
     );
     let doc = c.doc();
-    let bytes = crate::midi_file::track_file(&doc.song, &doc.song.tracks[0], "a");
+    let bytes = crate::midi_file::track_file(
+        &doc.song,
+        &doc.song.tracks[0],
+        "a",
+        crate::midi_file::MidiResolution::Native,
+    );
     let file = atomik_midi_io::smf::read(&bytes).expect("a valid file");
     let on = file
         .tracks

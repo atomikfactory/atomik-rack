@@ -197,7 +197,7 @@ pub(super) fn load_clip(
             Some(c) => load_controllers(c, &path.field("controllers"))?,
             None => Vec::new(),
         },
-        midi: load_midi_data(obj, path)?,
+        midi: std::sync::Arc::new(load_midi_data(obj, path)?),
         content,
     })
 }

@@ -415,8 +415,8 @@ pub struct Clip {
     pub param_lanes: Vec<ParamLane>,
     /// Program changes and SysEx messages a MIDI file import kept, in content ticks: non-empty
     /// only on a note clip (see [`crate::midi_data`]). Nothing plays them; a MIDI file export
-    /// writes them back.
-    pub midi: MidiData,
+    /// writes them back. Shared, so a clip without any costs one pointer.
+    pub midi: Arc<MidiData>,
     /// Content.
     pub content: ClipContent,
 }

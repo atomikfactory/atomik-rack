@@ -291,7 +291,7 @@ fn unrolled(
         content,
         controllers,
         param_lanes,
-        midi,
+        midi: std::sync::Arc::new(midi),
         ..(*c).clone()
     };
     check_geometry(clip.start, clip.length, 0, None).map_err(range)?;

@@ -286,7 +286,12 @@ fn a_midi_file_imports_as_a_note_take_and_is_refused_by_an_audio_group() {
         ),
         ..note_take(0, BAR, 70)
     };
-    let bytes = clip_file(&c.doc().song, &source, "take");
+    let bytes = clip_file(
+        &c.doc().song,
+        &source,
+        "take",
+        crate::midi_file::MidiResolution::Native,
+    );
     let path = t.path("take.mid");
     std::fs::write(&path, bytes).unwrap();
     let depth = c.document().undo_depth();

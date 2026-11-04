@@ -2082,7 +2082,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         scale: first.scale,
         controllers,
         param_lanes,
-        midi,
+        midi: std::sync::Arc::new(midi),
         content,
     };
     let mut edits: Vec<Edit> = clips[1..]
