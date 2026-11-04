@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **FLAC export, stems between the locators and a loudness report.** The export panel has a FLAC choice next to
+  WAV and AIFF, for Export Song, Export Loop and Export Stems, at 16 or 24 bits (FLAC has no 32-bit float, so
+  that button is inert while FLAC is chosen). The encoder is our own, with no new dependency: fixed predictors,
+  Rice coding and stereo decorrelation, silence stored in a few bytes, and the MD5 of the samples in the header
+  so `flac -t` and other tools can verify the file. It quantises exactly as the WAV writer does, so a FLAC file
+  decodes to the same samples as the WAV of the same export, and the same project gives the same bytes. MP3
+  stays out until its encoder licence is settled. Export Stems has a RANGE row: the whole song, or only what lies
+  between the locators with no tail, lined up and numbered as before. Every finished export now says how loud it
+  is, in the toast and in the log: the integrated loudness in LUFS, the true peak in dBTP and the loudness range
+  in LU of the audio that was written (after any sample rate conversion); for stems the toast shows the master's
+  and the log every file's. The MCP `session_export` takes `container` `flac` and returns a `loudness` object for
+  the file and for each stem. FLAC and the range are remembered in `export.json`. The project format stays 43.
 - **Console strip clipboard, longer insert chains and strip header buttons.** In the console, Cut, Copy, Paste and
   Duplicate (the Edit menu and the usual keys) work on the selected strips. A copied strip is its channel with the
   instrument or track device that feeds it, the song track and every setting of the channel (levels, sends,
