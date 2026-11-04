@@ -340,13 +340,26 @@ fn the_clipboard_commands_also_work_with_a_control_focused_and_need_a_strip_in_t
 
 fn open_menu_on(s: &mut Shell<NullBackend>, device: &str) -> Vec<(String, Option<String>, bool)> {
     let at = plate(s, device);
-    open_menu(s, at)
+    open_menu_all(s, at)
 }
+/// The items of the first panel of the menu a right click at `at` opens.
 fn open_menu(s: &mut Shell<NullBackend>, at: Point) -> Vec<(String, Option<String>, bool)> {
     press(s, at, PointerButton::Secondary, Modifiers::NONE);
     s.context_menu()
         .map(|m| {
             m.items()
+                .map(|i| (i.command.clone(), i.shortcut.clone(), i.enabled))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+/// [`open_menu`] with the items of the submenus too (the rack menus hold Create in one).
+fn open_menu_all(s: &mut Shell<NullBackend>, at: Point) -> Vec<(String, Option<String>, bool)> {
+    press(s, at, PointerButton::Secondary, Modifiers::NONE);
+    s.context_menu()
+        .map(|m| {
+            m.all_items()
+                .into_iter()
                 .map(|i| (i.command.clone(), i.shortcut.clone(), i.enabled))
                 .collect()
         })
@@ -496,7 +509,7 @@ fn right_click_on_the_empty_rack_offers_paste_create_columns_and_select_all() {
     let mut s = rack3();
     let l = s.layout();
     let empty = Point::new(500.0, l.rack.y1 - 4.0);
-    let items = open_menu(&mut s, empty);
+    let items = open_menu_all(&mut s, empty);
     let ids: Vec<&str> = items.iter().map(|(c, _, _)| c.as_str()).collect();
     assert_eq!(
         ids,
@@ -577,7 +590,8 @@ fn save_to_library_is_off_for_the_master_section_alone() {
     let items: Vec<_> = s
         .context_menu()
         .unwrap()
-        .items()
+        .all_items()
+        .into_iter()
         .map(|i| (i.command.clone(), i.enabled))
         .collect();
     let on = |id: &str| items.iter().find(|(c, _)| c == id).unwrap().1;

@@ -985,6 +985,9 @@ impl<S: EngineSink> AppCore<S> {
                 container,
                 slot,
             } => self.load_library_item(&path, LoadTarget::Rack { container, slot }),
+            UiAction::ReplaceWithLibrary { path, device } => {
+                self.load_library_item(&path, LoadTarget::Replace(device));
+            }
             UiAction::ApplyLibraryPatch { path, device } => {
                 self.load_library_item(&path, LoadTarget::Device(device));
             }

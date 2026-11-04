@@ -57,8 +57,9 @@ use atomik_library::{
     unique_name,
 };
 use atomik_model::{
-    ClipEntry, ClipFile, ClipSnapshot, ContainerCommand, DeviceSnapshot, ItemKind, LaneKind,
-    RackSlot, WorkflowCommand, load_clip_file, load_device_item, save_clip_file, save_device_item,
+    ClipEntry, ClipFile, ClipSnapshot, ContainerCommand, CreateSource, DeviceSnapshot, ItemKind,
+    LaneKind, RackSlot, WorkflowCommand, load_clip_file, load_device_item, replace_reason,
+    save_clip_file, save_device_item,
 };
 use atomik_ui::Modifiers;
 use std::collections::BTreeMap;
@@ -83,6 +84,10 @@ pub enum LoadTarget {
     /// type replaces the device's sound in place, as one undo step. Any other item is refused
     /// with a message.
     Device(DeviceKey),
+    /// A device of the rack, or the device of a track (a drop on a device panel or on a track
+    /// header): a device row or a one-device patch replaces it in place, as Replace Device
+    /// does, as one undo step. A patch of the device's own type changes its sound instead.
+    Replace(DeviceKey),
     /// A note lane of a track at a song tick (a drop on the arrangement).
     Track {
         /// The track's instrument device.
@@ -167,6 +172,9 @@ impl<S: EngineSink> AppCore<S> {
                 _ => Err(format!("'{}' is not a device patch", file_name(path))),
             };
         }
+        if let LoadTarget::Replace(device) = &target {
+            return self.replace_with_item(path, device);
+        }
         if let Some(type_id) = device_type_of(path) {
             return self.load_device_row(type_id, target);
         }
@@ -187,6 +195,65 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => Err(format!("'{}' is not a library item", file_name(path))),
         }
+    }
+
+    /// Replaces `device` by the device row or the one-device patch `path` (see
+    /// [`LoadTarget::Replace`]). The model's refusal is the message; a patch whose sound cannot
+    /// be loaded after the swap puts the old device back.
+    fn replace_with_item(&mut self, path: &Path, device: &DeviceKey) -> Result<(), String> {
+        let name = file_name(path);
+        let patch = classify(path, false) == Some(FileKind::Patch);
+        let type_id = match device_type_of(path) {
+            Some(type_id) => type_id.to_string(),
+            None if patch => {
+                let text = atomik_model::read_document_text(path)
+                    .map_err(|e| format!("'{name}' cannot be read: {e}"))?;
+                let snapshot = load_device_item(&text, &self.registry)
+                    .map_err(|e| format!("'{name}' cannot be loaded: {e}"))?;
+                snapshot
+                    .single_device()
+                    .map(|d| d.type_id.clone())
+                    .ok_or_else(|| {
+                        format!(
+                            "'{name}' holds {} devices: a device patch holds exactly one",
+                            snapshot.devices.len()
+                        )
+                    })?
+            }
+            None => {
+                return Err(format!(
+                    "'{name}' cannot replace a device: drop a device or a device patch"
+                ));
+            }
+        };
+        let current = self
+            .doc()
+            .resolve(device)
+            .ok_or_else(|| format!("The device '{device}' is gone"))?
+            .type_id
+            .clone();
+        if patch && current == type_id {
+            return self.apply_patch_file(path, device);
+        }
+        let source = CreateSource::Type(type_id);
+        if let Some(why) = replace_reason(self.doc(), &self.registry, device, &source) {
+            return Err(why);
+        }
+        self.apply_workflow(WorkflowCommand::ReplaceDevice {
+            target: device.clone(),
+            source,
+        })?;
+        if !patch {
+            return Ok(());
+        }
+        // The patch's sound joins the replacement's undo step.
+        self.join_next = true;
+        let applied = self.apply_patch_with(path, device, false);
+        self.join_next = false;
+        if applied.is_err() {
+            self.undo();
+        }
+        applied
     }
 
     fn load_device_row(&mut self, type_id: &str, target: LoadTarget) -> Result<(), String> {
