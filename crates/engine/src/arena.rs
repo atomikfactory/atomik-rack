@@ -16,6 +16,7 @@
 //! API keeps working, implemented on top of this if convenient.
 
 use crate::console::{DelayLine, Latencies, MAX_METER_VALUES, Meters, PdcReport};
+use crate::fault::FaultState;
 use crate::graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError, rules};
 use crate::plan::{CompileOptions, Node, Route, Routed, Step};
 use atomik_core::{Batch, NoteBuffer, NoteKind, ParamId};
@@ -349,6 +350,8 @@ pub(crate) struct Arena {
     pub(crate) nodes: Vec<Option<Box<Node>>>,
     /// `(id, slot)` sorted by id, capacity = slot count.
     index: Vec<(DeviceInstanceId, usize)>,
+    /// A node panicked outside `process` since the last [`Arena::settle_faults`].
+    fresh_fault: bool,
 }
 
 /// Non-RT construction.
@@ -358,6 +361,7 @@ impl Arena {
         Self {
             nodes: (0..capacity).map(|_| None).collect(),
             index: Vec::with_capacity(capacity),
+            fresh_fault: false,
         }
     }
 
@@ -441,15 +445,34 @@ impl Arena {
     }
 
     /// After a batch, publishes the `Device::meter_values` of every device that opted
-    /// in, in ascending id order (deterministic). Other devices cost one bool test.
-    pub(crate) fn publish_device_values(&self, meters: &Meters) {
+    /// in, in ascending id order (deterministic). Other devices cost one bool test. A device
+    /// that panics while answering is contained like one that panics in `process`.
+    pub(crate) fn publish_device_values(&mut self, meters: &Meters) {
         let mut buf = [0.0f32; MAX_METER_VALUES];
         for &(id, slot) in &self.index {
-            if let Some(node) = self.nodes.get(slot).and_then(|n| n.as_deref())
+            if let Some(node) = self.nodes.get_mut(slot).and_then(|n| n.as_deref_mut())
                 && node.has_meter_values
             {
-                let n = node.device.meter_values(&mut buf).min(MAX_METER_VALUES);
-                meters.publish_device_values(slot, id, &buf[..n]);
+                let n = node.contain(|device| device.meter_values(&mut buf));
+                self.fresh_fault |= node.fresh_fault;
+                if let Some(n) = n {
+                    meters.publish_device_values(slot, id, &buf[..n.min(MAX_METER_VALUES)]);
+                }
+            }
+        }
+    }
+
+    /// Records every device that panicked outside `process` since the last call in the
+    /// fault state of the engine. One bool test while nothing did; never allocates.
+    pub(crate) fn settle_faults(&mut self, fault: &FaultState) {
+        if !std::mem::take(&mut self.fresh_fault) {
+            return;
+        }
+        for &(id, slot) in &self.index {
+            if let Some(node) = self.nodes.get_mut(slot).and_then(|n| n.as_deref_mut())
+                && std::mem::take(&mut node.fresh_fault)
+            {
+                fault.record(id);
             }
         }
     }
@@ -474,12 +497,16 @@ impl Arena {
     /// Publishes the `latency_frames()` of every arena device that can change it
     /// (`Device::variable_latency`) into its slot of `bank`; the others were published when they
     /// were inserted. One virtual call and one atomic swap per such device; never allocates.
-    pub(crate) fn publish_latencies(&self, bank: &Latencies) {
+    pub(crate) fn publish_latencies(&mut self, bank: &Latencies) {
         for &(_, slot) in &self.index {
-            if let Some(node) = self.nodes.get(slot).and_then(|n| n.as_deref())
+            if let Some(node) = self.nodes.get_mut(slot).and_then(|n| n.as_deref_mut())
                 && node.variable_latency
             {
-                bank.publish(slot, node.device.latency_frames());
+                let frames = node.contain(|device| device.latency_frames());
+                self.fresh_fault |= node.fresh_fault;
+                if let Some(frames) = frames {
+                    bank.publish(slot, frames);
+                }
             }
         }
     }
@@ -487,9 +514,12 @@ impl Arena {
     /// Sets a param of device `id` (clamped). Unknown targets are ignored. Applies whether or
     /// not the device is routed.
     pub(crate) fn set_param(&mut self, id: DeviceInstanceId, param: ParamId, plain: f32) {
-        if let Some(node) = self.node_by_id(id) {
-            node.set_param(param, plain);
-        }
+        let Some(node) = self.node_by_id(id) else {
+            return;
+        };
+        node.set_param(param, plain);
+        let fresh = node.fresh_fault;
+        self.fresh_fault |= fresh;
     }
 
     /// Hands a sample map to device `id` and returns what must be retired: the map
@@ -500,10 +530,17 @@ impl Arena {
         id: DeviceInstanceId,
         map: Option<SampleMapRef>,
     ) -> Option<SampleMapRef> {
-        match self.node_by_id(id) {
-            Some(node) => node.device.swap_samples(map),
-            None => map,
+        let Some(node) = self.node_by_id(id) else {
+            return map;
+        };
+        // A faulted device is not called: the map goes straight back to be retired.
+        if node.faulted {
+            return map;
         }
+        let old = node.contain(|device| device.swap_samples(map)).flatten();
+        let fresh = node.fresh_fault;
+        self.fresh_fault |= fresh;
+        old
     }
 
     /// Hands pattern data to device `id` and returns what must be retired: the data
@@ -514,10 +551,18 @@ impl Arena {
         id: DeviceInstanceId,
         data: Option<PlayerDataRef>,
     ) -> Option<PlayerDataRef> {
-        match self.node_by_id(id) {
-            Some(node) => node.device.swap_player_data(data),
-            None => data,
+        let Some(node) = self.node_by_id(id) else {
+            return data;
+        };
+        if node.faulted {
+            return data;
         }
+        let old = node
+            .contain(|device| device.swap_player_data(data))
+            .flatten();
+        let fresh = node.fresh_fault;
+        self.fresh_fault |= fresh;
+        old
     }
 
     /// Sets (or clears) the note tap of device `id`; returns the tap it replaces, which the

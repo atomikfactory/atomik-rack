@@ -1398,6 +1398,8 @@ impl Engine {
             &self.dropped,
         );
         self.arena.publish_latencies(&self.latencies);
+        // A device that panicked taking a param, a hand-off or a lane value is named now.
+        self.arena.settle_faults(&self.fault);
         self.deliver_notes();
         let time = TimeInfo {
             frame: self.frame,
@@ -1442,6 +1444,7 @@ impl Engine {
             tap.capture(self.frame, &self.in_fifo, &self.arena);
         }
         self.arena.publish_device_values(&self.meters);
+        self.arena.settle_faults(&self.fault);
         if crate::timing::enabled() {
             self.arena.publish_cpu(&self.meters);
             self.meters
