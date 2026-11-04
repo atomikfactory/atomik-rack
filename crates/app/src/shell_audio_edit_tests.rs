@@ -246,7 +246,7 @@ fn the_panel_cannot_apply_without_an_audio_clip_and_paints() {
 }
 
 #[test]
-fn reverse_on_a_warped_clip_turns_the_warp_off_and_reverses() {
+fn reverse_on_a_warped_clip_keeps_the_warp_and_reverses() {
     let mut s = shell();
     let id = imported(&mut s);
     s.core_mut().arrangement_mut().set_selected_clips(&[id]);
@@ -256,10 +256,13 @@ fn reverse_on_a_warped_clip_turns_the_warp_off_and_reverses() {
     s.execute(AppCommand::AudioReverse);
     let a = audio(&s, id);
     assert!(a.reverse, "the clip is reversed");
-    assert!(!a.warp.active(), "and no longer warped");
+    assert!(a.warp.enabled, "and still warped");
     s.core_mut().undo();
     let a = audio(&s, id);
-    assert!(!a.reverse && a.warp.enabled, "one undo restores both");
+    assert!(
+        !a.reverse && a.warp.enabled,
+        "one undo restores the direction"
+    );
 }
 
 // ------------------------------------------------------------------ restructuring follow-ups

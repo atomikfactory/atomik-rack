@@ -136,7 +136,7 @@ fn applying_the_panel_sets_every_selected_clip_in_one_undo_step() {
 }
 
 #[test]
-fn a_reversed_clip_is_left_out_of_a_warp() {
+fn a_reversed_clip_is_warped_and_keeps_playing_backwards() {
     let t = Tmp::new("reversed");
     let a = wav(&t, "a.wav", 48_000, clicks(24_000, 0));
     let mut c = core();
@@ -155,7 +155,14 @@ fn a_reversed_clip_is_left_out_of_a_warp() {
     .unwrap();
     select(&mut c, &ids);
     c.apply_warp(&values(true, WarpMode::Beats, 1200, 0));
-    assert!(c.last_rejection().unwrap().contains("reversed"));
+    let a = audio(&c, ids[0]);
+    assert!(a.reverse && a.warp.enabled && a.warp.transpose_cents == 0);
+    // Reversing it again keeps the warp.
+    select(&mut c, &ids);
+    c.apply_warp(&values(true, WarpMode::Tonal, 1200, 3));
+    assert!(audio(&c, ids[0]).warp.transpose_cents == 300);
+    assert!(c.undo());
+    assert!(c.undo());
     assert!(!audio(&c, ids[0]).warp.enabled);
 }
 
