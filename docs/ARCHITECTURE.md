@@ -4973,9 +4973,15 @@ items are ordinary project texts, plus one small new file type.
   `ItemSummary::device_type` and `ItemInfo::device_type` carry the type id of a one-device patch. In
   the app, `LoadTarget::Device(key)` (a drop on a device's patch strip, or anywhere on the panel of
   a device of the patch's own type, `UiAction::ApplyLibraryPatch`; a patch dropped on a panel of
-  another type is inserted below it) applies a patch file and says why when it holds several
+  another type is inserted below it, unless the type is of the panel's kind: see
+  `LoadTarget::Replace` below) applies a patch file and says why when it holds several
   devices or
-  is for another type; `save_device_patch` writes one device as a patch named after the file the
+  is for another type; `LoadTarget::Replace(key)` (`UiAction::ReplaceWithLibrary`: a device row or a
+  one-device patch dropped on the middle of a top-level device of the same kind in the rack, or on a
+  track header in the arrangement) is `WorkflowCommand::ReplaceDevice` after `replace_reason`, and a
+  patch of another type then loads its sound with the next command joined into the same undo step
+  (a failed load undoes the swap); a patch of the device's own type only applies;
+  `save_device_patch` writes one device as a patch named after the file the
   platform's save dialog picked (`ShellRequest::PickSavePatch`, which confirms an overwrite) and
   keeps the name on the device; `step_patch` walks the patches of the device's type in the folder of
   the patch it last took (else the folder last browsed for its type, else the library's Patches
