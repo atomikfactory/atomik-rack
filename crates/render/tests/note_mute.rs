@@ -1,5 +1,8 @@
 //! A muted note is silent in the bounce (and so live: both play what `flatten_notes` gives),
 //! and the same project with the note unmuted is not.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -7,7 +10,7 @@ use atomik_model::{
     load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 
 fn song(muted: bool) -> RackDoc {
     let registry = default_registry();
@@ -57,7 +60,7 @@ fn song(muted: bool) -> RackDoc {
 }
 
 fn peak(doc: &RackDoc) -> f32 {
-    let r = render_doc(doc, &default_registry(), &ProjectOptions::default()).unwrap();
+    let r = common::render_guarded(doc, &default_registry(), &ProjectOptions::default()).unwrap();
     r.channels
         .iter()
         .flatten()

@@ -1,6 +1,9 @@
 //! Note tails: with the song flag a note rings out past the end of its clip; without it (every
 //! project written before format 35) the note is cut at the clip end and the bounce is what it
 //! was.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -8,7 +11,7 @@ use atomik_model::{
     load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 
 /// A synth with a one-beat clip holding a note four beats long; the song is eight beats.
 fn song(tails: bool) -> RackDoc {
@@ -55,7 +58,7 @@ fn song(tails: bool) -> RackDoc {
 
 /// The summed magnitude of the left channel between beats `from` and `to` (120 BPM, 48 kHz).
 fn energy(doc: &RackDoc, from: usize, to: usize) -> f32 {
-    let r = render_doc(doc, &default_registry(), &ProjectOptions::default()).unwrap();
+    let r = common::render_guarded(doc, &default_registry(), &ProjectOptions::default()).unwrap();
     let per_beat = 24_000;
     r.channels[0][from * per_beat..to * per_beat]
         .iter()
@@ -81,7 +84,7 @@ fn a_note_rings_past_its_clip_end_with_tails_and_not_without() {
 fn the_first_beat_is_the_same_either_way_and_the_flag_survives_save_and_load() {
     let (off, on) = (song(false), song(true));
     let first = |d: &RackDoc| {
-        let r = render_doc(d, &default_registry(), &ProjectOptions::default()).unwrap();
+        let r = common::render_guarded(d, &default_registry(), &ProjectOptions::default()).unwrap();
         r.channels[0][..24_000].to_vec()
     };
     assert_eq!(

@@ -2,6 +2,9 @@
 //! bit for bit like a project whose controls were set to that mix by hand, a compare flip
 //! bounces as either side, and a project without snapshots (or with snapshots it does not
 //! recall) is bit for bit the plain project, including a version 26 file.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -9,7 +12,7 @@ use atomik_model::{
     SnapshotScope, SongCommand, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 fn key(k: &str) -> DeviceKey {
@@ -80,7 +83,7 @@ fn bounce(doc: &RackDoc) -> Vec<f32> {
         workers: 0,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

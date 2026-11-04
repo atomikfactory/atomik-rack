@@ -2,6 +2,9 @@
 //! render: the lane changes the sound, plays exactly as a param set to the same value would, is
 //! stopped by the track's mute and by nothing else, and the render does not depend on the block
 //! size or the worker count.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -9,7 +12,7 @@ use atomik_model::{
     Document, InsertEffect, Note, RackDoc, SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const FADER: &str = "fader";
@@ -148,7 +151,7 @@ fn bounce_with(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

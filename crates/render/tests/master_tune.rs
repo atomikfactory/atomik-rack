@@ -2,12 +2,14 @@
 //! for every block size and worker count, and undoing the change gives the untuned bits back.
 atomik_testkit::install_alloc_guard!();
 
+mod common;
+
 use atomik_core::PPQ;
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, DeviceKey, Document, Note, RackDoc, SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use atomik_testkit::signal::dominant_frequency;
 use std::num::NonZeroUsize;
 
@@ -93,7 +95,7 @@ fn options(block: usize, workers: u16) -> ProjectOptions {
 }
 
 fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<Vec<f32>> {
-    render_doc_in(doc, &default_registry(), &options(block, workers), None)
+    common::render_guarded_in(doc, &default_registry(), &options(block, workers), None)
         .unwrap()
         .channels
 }

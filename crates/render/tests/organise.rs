@@ -2,6 +2,9 @@
 //! and a project saved and loaded with them bounce the same bytes as the plain song, and muting
 //! the tracks of a folder in one batch (what the arrangement's folder button sends) is muting
 //! each of them.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -9,7 +12,7 @@ use atomik_model::{
     load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const CUTOFF: &str = "filter.cutoff";
@@ -77,7 +80,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

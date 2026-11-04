@@ -2,6 +2,9 @@
 //! and end at the frames of the closed form (the log formula written out here, independent of
 //! `atomik_core`), the bounce is the same at any host block, and it is the same sound the live
 //! engine plays for the same project (the engine song of `song_input`, rendered by hand).
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_audio_file::{AudioData, Bundle};
 use atomik_core::PPQ;
@@ -9,7 +12,7 @@ use atomik_model::{
     AssetMeta, Command, DeviceKey, Document, FadeCurve, MeterEvent, RackDoc, SongCommand,
     TempoEvent, empty_doc, load_project, save_project,
 };
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use atomik_render::{Rendered, default_registry};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -130,7 +133,7 @@ fn render(doc: &RackDoc, bundle: &Bundle, block: usize) -> Rendered {
         workers: 0,
         loop_count: None,
     };
-    render_doc_in(doc, &default_registry(), &options, Some(bundle.root())).unwrap()
+    common::render_guarded_in(doc, &default_registry(), &options, Some(bundle.root())).unwrap()
 }
 
 /// The `[start, end)` frame runs where the channel is not silent.

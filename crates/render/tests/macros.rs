@@ -2,6 +2,9 @@
 //! written by hand on the driven param, a static macro value like the param set to the same value,
 //! a bank without assignments (or a project from before the format) bounces exactly as the
 //! project without it, and the render does not depend on the block size or the worker count.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -9,7 +12,7 @@ use atomik_model::{
     MacroCommand, Note, RackDoc, SongCommand, assign_value, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const CUTOFF: &str = "filter.cutoff";
@@ -141,7 +144,7 @@ fn bounce_with(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

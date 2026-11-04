@@ -16,6 +16,9 @@
 //! report 2400, like a look-ahead plug-in. With compensation on, the engine delays Click A
 //! by 2400 so both clicks reach the master together; with it off, Click B lands 2400 samples
 //! (50 ms at 48 kHz) after Click A.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -24,7 +27,7 @@ use atomik_model::{
 };
 use atomik_model::{DeviceKey, INTERFACE_KEY};
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc, render_project_json};
+use atomik_render::project::{ProjectOptions, render_project_json};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -235,11 +238,11 @@ fn the_pdc_clicks_example_is_generated_and_canonical() {
 fn e4_2_clicks_align_with_compensation_and_are_offset_without() {
     let registry = default_registry();
     let mut doc = clicks();
-    let on = render_doc(&doc, &registry, &options(512, 0))
+    let on = common::render_guarded(&doc, &registry, &options(512, 0))
         .unwrap()
         .channels;
     doc.console.compensation = false;
-    let off = render_doc(&doc, &registry, &options(512, 0))
+    let off = common::render_guarded(&doc, &registry, &options(512, 0))
         .unwrap()
         .channels;
     // Beat 0 is checked by `e4_2_beat_0_aligns_too`.
@@ -262,11 +265,11 @@ fn e4_2_clicks_align_with_compensation_and_are_offset_without() {
 fn e4_2_beat_0_aligns_too() {
     let registry = default_registry();
     let mut doc = clicks();
-    let on = render_doc(&doc, &registry, &options(512, 0))
+    let on = common::render_guarded(&doc, &registry, &options(512, 0))
         .unwrap()
         .channels;
     doc.console.compensation = false;
-    let off = render_doc(&doc, &registry, &options(512, 0))
+    let off = common::render_guarded(&doc, &registry, &options(512, 0))
         .unwrap()
         .channels;
     // Nothing reaches the master before the compensated clicks.
@@ -300,13 +303,14 @@ fn ac_x4_console_bounces_with_pdc_are_bit_identical_across_blocks_and_workers() 
         let mut doc = clicks();
         doc.console.compensation = compensation;
         let reference = bits(
-            &render_doc(&doc, &registry, &options(64, 0))
+            &common::render_guarded(&doc, &registry, &options(64, 0))
                 .unwrap()
                 .channels,
         );
         for block in [1, 64, 4096] {
             for workers in [0, 4] {
-                let got = render_doc(&doc, &registry, &options(block, workers)).unwrap();
+                let got =
+                    common::render_guarded(&doc, &registry, &options(block, workers)).unwrap();
                 assert!(
                     bits(&got.channels) == reference,
                     "compensation {compensation}, block {block}, workers {workers} differ"
@@ -354,9 +358,9 @@ fn soloing_a_channel_bounces_like_muting_the_others() {
         .unwrap();
         d.doc().clone()
     };
-    let solo = render_doc(&with(&bass, "solo"), &registry, &options(512, 0)).unwrap();
-    let mute = render_doc(&with(&lead, "mute"), &registry, &options(512, 0)).unwrap();
-    let plain = render_doc(&doc, &registry, &options(512, 0)).unwrap();
+    let solo = common::render_guarded(&with(&bass, "solo"), &registry, &options(512, 0)).unwrap();
+    let mute = common::render_guarded(&with(&lead, "mute"), &registry, &options(512, 0)).unwrap();
+    let plain = common::render_guarded(&doc, &registry, &options(512, 0)).unwrap();
     assert!(bits(&solo.channels) == bits(&mute.channels));
     assert!(bits(&solo.channels) != bits(&plain.channels));
 }

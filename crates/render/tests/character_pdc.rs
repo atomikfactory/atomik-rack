@@ -16,6 +16,9 @@
 //! The mid-song case needs the bounce to follow a latency change the way the live app does: the
 //! engine publishes a new latency epoch when the crossfade between two presets of different
 //! classes ends, and the routing is recompiled with it one batch later (see `render::project`).
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -23,7 +26,7 @@ use atomik_model::{
     Curve, DeviceKey, Document, MacroTarget, Note, RackDoc, SocketRef, SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BEAT: usize = 24_000;
@@ -293,7 +296,7 @@ fn options(block: usize, workers: u16) -> ProjectOptions {
 }
 
 fn render(doc: &RackDoc, block: usize, workers: u16) -> Vec<Vec<f32>> {
-    render_doc(doc, &default_registry(), &options(block, workers))
+    common::render_guarded(doc, &default_registry(), &options(block, workers))
         .unwrap()
         .channels
 }

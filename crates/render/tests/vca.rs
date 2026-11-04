@@ -2,6 +2,9 @@
 //! bounces like its members' faders at -6 dB, a group at 0 dB (or no group) is bit for bit the
 //! plain project, a group's mute and solo are the members' own, and the bounce does not depend
 //! on the block size or the worker count.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_dsp::fader_pos_for_db;
@@ -10,7 +13,7 @@ use atomik_model::{
     SongCommand, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 fn key(k: &str) -> DeviceKey {
@@ -66,7 +69,7 @@ fn bounce_with(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)
