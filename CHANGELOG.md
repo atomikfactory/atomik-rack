@@ -9,6 +9,24 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Looped clip and note lane follow-ups: looped audio takes, an audio loop converted into one clip, and a solo and a
+  colour for each note lane.** A take of a group can loop now, audio included: the take menu offers Loop Take x2, x4
+  and x8 and Play Take Once (`SetTakeLoop`), the take runs that many repetitions of its extent and the comp segments
+  that ended at its end run on with it. A looped note take stays a looped clip; a looped audio take compiles to one
+  clip per repetition, each restarting the source with its own fades and warp, so the lane plays what the looped
+  take played, and a comp cut inside a repetition fades like a cut in any audio take. Convert Loop > To a Single Clip
+  now works on audio: the looped clip is rendered on the freeze worker as the track plays it (gain, fades, envelope
+  and warp, before the insert effects and the channel strip) and the clip becomes one plain clip of that render with
+  the same place, name and colour, in one undo step (the status line shows the render's progress; looped note and
+  automation clips among the selected ones convert at once as before). A note lane has an S button beside M on its
+  header (the first lane's chip has no room: use Solo Lane in the track header menu, `sequencer.toggle_lane_solo`):
+  while a lane is soloed only the soloed lanes of the track play, in the engine, the bounce, a freeze and the lane
+  merge alike, a mute still silences a soloed lane, and the clips of the other lanes are drawn like a muted lane's.
+  A Lane Colour submenu (`sequencer.lane_color`, a palette name or `track`) colours a lane's clips and header bar; a
+  clip's own colour still wins. Both are saved as the optional `"solo"` and `"color"` fields of a notes lane, written
+  only when set and ignorable by an older reader, and `project_inspect` lists them. Bouncing chosen clips in place
+  ignores a solo on another lane. Recording to several lanes at once is not done yet (a take still goes to the one
+  selected lane). The project format stays 43.
 - **Rack editing follow-ups: "+" handles, a Create submenu, unfolding under a cable and replacing a device by
   dropping a library item.** Resting the pointer on the seam between two devices of a rack column, or at the top or
   foot of a column, shows a small "+": pressing it opens the device browser (titled INSERT DEVICE) and the row
