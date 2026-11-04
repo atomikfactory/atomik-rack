@@ -4,14 +4,14 @@
 
 mod support;
 
-use atomik_model::{Command, ConsoleCommand, RackDoc};
+use atomik_model::{Command, ConsoleCommand, Lane, RackDoc};
 use atomik_ui::console_layout::SectionId;
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::widget::KNOB_PIXELS_PER_RANGE;
 use atomik_ui::{
-    ChannelMeters, ConsoleButton, ConsoleView, DisplayList, Flip, Key, Modifiers, PointerButton,
-    RackView, Theme, UiAction, UiEvent,
+    ChannelMeters, ColorTarget, ConsoleButton, ConsoleView, DisplayList, Flip, Key, Modifiers,
+    PointerButton, RackView, Theme, UiAction, UiEvent,
 };
 use support::console::*;
 use support::*;
@@ -1289,4 +1289,109 @@ fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
     ] {
         assert!(items.iter().any(|i| i == label), "{items:?}");
     }
+}
+
+/// The modifiers that hold the copy role on this host (Ctrl, or Cmd on macOS).
+fn copy_modifiers() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers {
+            meta: true,
+            ..Modifiers::NONE
+        }
+    } else {
+        Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        }
+    }
+}
+
+#[test]
+fn dragging_a_name_with_the_copy_role_copies_the_channel_instead_of_moving_it() {
+    let (doc, reg, mut v) = setup();
+    let p = v.name_center(&key("ch-bass")).unwrap();
+    let last = v.strip_rect(&key("ch-keys")).unwrap();
+    let end = Point::new(last.x1 - 5.0, p.y);
+    v.handle(&down(p), &doc, &reg);
+    v.handle(&mv_with(end, copy_modifiers()), &doc, &reg);
+    let a = v.handle(
+        &UiEvent::PointerUp {
+            pos: end,
+            button: PointerButton::Primary,
+            modifiers: copy_modifiers(),
+        },
+        &doc,
+        &reg,
+    );
+    assert_eq!(
+        a,
+        [UiAction::CopyStrips {
+            strips: vec![key("ch-bass")],
+            to: 3
+        }]
+    );
+    // Dropped before the first strip: the copy goes to the front.
+    let first = v.strip_rect(&key("ch-bass")).unwrap();
+    let start = Point::new(first.x0 + 5.0, p.y);
+    v.handle(&down(p), &doc, &reg);
+    v.handle(&mv_with(start, copy_modifiers()), &doc, &reg);
+    let a = v.handle(
+        &UiEvent::PointerUp {
+            pos: start,
+            button: PointerButton::Primary,
+            modifiers: copy_modifiers(),
+        },
+        &doc,
+        &reg,
+    );
+    assert!(
+        matches!(&a[..], [UiAction::CopyStrips { to: 0, .. }]),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn the_jump_buttons_go_to_the_device_and_to_its_track() {
+    let (doc, reg, mut v) = setup();
+    let ch = key("ch-bass");
+    let rack = v.rack_button_center(&ch).expect("a RACK button");
+    let seq = v.seq_button_center(&ch).expect("a SEQ button");
+    assert!(rack.x < seq.x);
+    assert_eq!(
+        click(&mut v, &doc, &reg, rack),
+        [UiAction::Select(key("bass"))]
+    );
+    assert_eq!(
+        click(&mut v, &doc, &reg, seq),
+        [
+            UiAction::Select(key("bass")),
+            UiAction::RunCommand {
+                id: "rack.go_to_track".into(),
+                arg: None
+            }
+        ]
+    );
+    // A jump is not a click on the name: the strip is not selected.
+    assert!(v.selected_strips().is_empty());
+    // Buses and the master have no device to jump to.
+    assert!(v.rack_button_center(&key("master")).is_none());
+}
+
+#[test]
+fn the_colour_plate_asks_for_the_colour_of_the_track_when_the_source_has_one() {
+    let (mut doc, reg, mut v) = setup();
+    let ch = key("ch-bass");
+    assert!(v.colour_plate_center(&ch).is_none(), "no track, no plate");
+    doc.song_mut()
+        .tracks
+        .push(support::song::track("bass", vec![Lane::notes()]));
+    v.sync(&doc, &reg);
+    let p = v.colour_plate_center(&ch).expect("the band is a plate now");
+    assert_eq!(
+        click(&mut v, &doc, &reg, p),
+        [UiAction::PickColor(ColorTarget::Tracks(vec![key("bass")]))]
+    );
+    // The middle of the name plate is still the name.
+    let name = v.name_center(&ch).unwrap();
+    assert!(click(&mut v, &doc, &reg, name).is_empty());
 }

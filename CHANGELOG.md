@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Console strip clipboard, longer insert chains and strip header buttons.** In the console, Cut, Copy, Paste and
+  Duplicate (the Edit menu and the usual keys) work on the selected strips. A copied strip is its channel with the
+  instrument or track device that feeds it, the song track and every setting of the channel (levels, sends,
+  processing and the insert chain with the settings of its effects; plugins are not copied). Paste puts the new
+  strips after the selected strip, Duplicate does the same without touching the clipboard, and each is one undo
+  step; Cut copies and then deletes as Delete Channel does. A strip copied in the console can also be pasted in the
+  rack or the arrangement, which take its devices and tracks. Dragging a channel name with the copy modifier held
+  (Ctrl, or Cmd on macOS) copies the channel to the drop position instead of moving it. An insert chain now holds
+  up to sixteen effects (an edit used to stop at four); the INSERTS section still shows four rows, scrolls a longer
+  chain with the wheel and shows a thin bar at its right edge, and the track panel lists as many insert rows as the
+  chain has. Each channel name plate has RACK and SEQ buttons that show the channel's device in the rack and its
+  track in the arrangement, and the coloured band along its top picks the colour of the track when the device has
+  one; a track with no colour of its own shows its folder's colour. Buses, the master and channels with no source
+  device are not copied. The project format stays 43.
 - **MIDI controller data and MIDI file follow-ups.** In the piano roll's controller area you can select several
   points: Shift-click adds or removes a point, a Shift press on empty space drags a rubber band, and Select All
   takes the whole lane. A selected point drags the whole selection (time on the grid, value at the MIDI

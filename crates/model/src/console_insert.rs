@@ -21,8 +21,8 @@ use crate::console_cmd::{Planner, at, bad, wire};
 use crate::{Cable, Command, DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::{DeviceKind, Direction, Registry, SocketKind};
 
-/// Longest chain read back from cables (a guard; edits allow [`INSERT_SLOTS`]).
-const MAX_DERIVED: usize = 16;
+/// Longest chain read back from cables (a guard; edits allow the same).
+const MAX_DERIVED: usize = INSERT_SLOTS;
 
 const SEND: [&str; 2] = ["insert_send_l", "insert_send_r"];
 const RETURN: [&str; 2] = ["insert_return_l", "insert_return_r"];

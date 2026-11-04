@@ -167,10 +167,15 @@ fn typing_a_new_length_shifts_three_selected_notes_by_the_difference_in_one_step
 
 #[test]
 fn position_clamps_at_zero_and_keeps_the_notes_sorted_with_the_selection() {
-    let (mut v, doc) = roll(&[0, 1]);
+    // Two notes of different keys both clamp to tick 0 and stay two notes.
+    let (mut v, doc) = roll(&[0, 2]);
     let at = v.inspector_part_point(NoteField::Position, 0).unwrap();
     let l = lists(&handle(&mut v, &doc, &[wheel(at, -1.0)]));
     assert_eq!(l[0].0.iter().filter(|n| n.tick == 0).count(), 2);
+    // Two notes of the same key clamp onto each other and merge into one.
+    let (mut v, doc) = roll(&[0, 1]);
+    let l = lists(&handle(&mut v, &doc, &[wheel(at, -1.0)]));
+    assert_eq!(l[0].0.iter().filter(|n| n.tick == 0).count(), 1);
     // Moving note 0 a bar forward re-sorts the list: the selection follows the note.
     let (mut v, doc) = roll(&[0]);
     let l = lists(&handle(&mut v, &doc, &[wheel(at, 1.0)]));

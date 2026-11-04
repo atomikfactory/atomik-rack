@@ -12,7 +12,7 @@
 //! points), because only the app knows which view shows them.
 
 use super::*;
-use crate::clipboard::{Clipboard, ClipboardData, ClipboardKind};
+use crate::clipboard::{Clipboard, ClipboardData, ClipboardKind, StripSnapshot};
 use atomik_model::controller_edit::{self, ControllerSnapshot};
 use atomik_model::{
     AssetMeta, ClipContent, ClipSnapshot, DeviceSnapshot, Note, NoteSnapshot, PointSnapshot,
@@ -52,6 +52,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Copy, cut and paste for the focused pane. `None`: not a clipboard command, or a pane
     /// without one. A refusal is reported (status message and toast) and counts as taken.
     pub(super) fn clipboard_command(&mut self, pane: Pane, id: &str) -> Option<Vec<UiAction>> {
+        if pane == Pane::Console {
+            return self.strip_clipboard_command(id);
+        }
         if !matches!(id, "edit.copy" | "edit.cut" | "edit.paste") {
             return None;
         }
@@ -71,10 +74,51 @@ impl<S: EngineSink> AppCore<S> {
         Some(Vec::new())
     }
 
+    /// Copy, cut, paste and duplicate in the console, on its strips (see `app_core_strips.rs`).
+    fn strip_clipboard_command(&mut self, id: &str) -> Option<Vec<UiAction>> {
+        let result = match id {
+            "edit.copy" => self.copy_strips(),
+            "edit.cut" => self.copy_strips().and_then(|()| {
+                if self.remove_selected_strips(Pane::Console) {
+                    Ok(())
+                } else {
+                    // The reason is already reported.
+                    Err(String::new())
+                }
+            }),
+            "edit.duplicate" => self.duplicate_strips(),
+            "edit.paste" => self.paste_strips_from_clipboard(),
+            _ => return None,
+        };
+        if let Err(message) = result
+            && !message.is_empty()
+        {
+            self.report(message);
+        }
+        Some(Vec::new())
+    }
+
+    fn paste_strips_from_clipboard(&mut self) -> Result<(), String> {
+        match self.clipboard.get().cloned() {
+            Some(ClipboardData::Strips(s)) if !s.devices.devices.is_empty() => self.paste_strips(s),
+            Some(ClipboardData::Tracks(devices)) if !devices.devices.is_empty() => self
+                .paste_strips(StripSnapshot {
+                    devices,
+                    settings: Vec::new(),
+                }),
+            Some(held) if !held.is_empty() => Err(format!(
+                "The clipboard holds {}: copy strips in the console, or tracks, to paste them here",
+                held.kind().noun()
+            )),
+            _ => Err("The clipboard is empty: copy something first".into()),
+        }
+    }
+
     /// Whether Copy, Cut and Duplicate have something to work on in `pane` (menus).
     pub fn has_selection(&self, pane: Pane) -> bool {
         match pane {
             Pane::Rack => self.view.selection_len() > 0,
+            Pane::Console => !self.console.selected_strips().is_empty(),
             Pane::Arrangement => {
                 !self.arrangement.selected_clips().is_empty()
                     || self.arrangement.take_focus().is_some()
@@ -91,16 +135,23 @@ impl<S: EngineSink> AppCore<S> {
     /// Whether the clipboard holds something `pane` can paste (menus).
     pub fn can_paste(&self, pane: Pane) -> bool {
         match (pane, self.clipboard.kind()) {
-            (Pane::Rack, Some(ClipboardKind::Devices | ClipboardKind::Tracks))
+            (
+                Pane::Rack,
+                Some(ClipboardKind::Devices | ClipboardKind::Tracks | ClipboardKind::Strips),
+            )
             | (
                 Pane::Arrangement,
                 Some(
                     ClipboardKind::Clips
                     | ClipboardKind::AutomationPoints
                     | ClipboardKind::Tracks
+                    | ClipboardKind::Strips
                     | ClipboardKind::Takes,
                 ),
             ) => !self.clipboard.is_empty(),
+            (Pane::Console, Some(ClipboardKind::Strips | ClipboardKind::Tracks)) => {
+                !self.clipboard.is_empty()
+            }
             (Pane::PianoRoll, Some(ClipboardKind::Notes)) => {
                 !self.clipboard.is_empty() && self.piano_roll.clip().is_some()
             }
@@ -228,6 +279,9 @@ impl<S: EngineSink> AppCore<S> {
         match (pane, data) {
             (Pane::Rack, ClipboardData::Devices(s) | ClipboardData::Tracks(s)) => {
                 self.paste_devices(s, pane)
+            }
+            (Pane::Rack | Pane::Arrangement, ClipboardData::Strips(s)) => {
+                self.paste_devices(s.devices, pane)
             }
             (Pane::Arrangement, ClipboardData::Tracks(s)) => self.paste_devices(s, pane),
             (Pane::Arrangement, ClipboardData::Takes(s)) => self.paste_takes_here(s),

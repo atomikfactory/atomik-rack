@@ -839,6 +839,9 @@ impl<S: EngineSink> AppCore<S> {
                     let _ = self.apply_command(c);
                 }
             }
+            UiAction::CopyStrips { strips, to } => {
+                self.copy_strips_to(&strips, to);
+            }
             UiAction::StretchStep {
                 ids,
                 percent,
@@ -3335,6 +3338,9 @@ mod settings_ops;
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;
 
+#[path = "app_core_strips.rs"]
+mod strip_ops;
+
 #[path = "app_core_snapshots.rs"]
 mod snapshots;
 
@@ -3580,6 +3586,10 @@ mod clipboard_tests;
 #[cfg(test)]
 #[path = "app_core_console_select_tests.rs"]
 mod console_select_tests;
+
+#[cfg(test)]
+#[path = "app_core_strips_tests.rs"]
+mod strips_tests;
 
 #[cfg(test)]
 #[path = "app_core_master_keyboard_tests.rs"]

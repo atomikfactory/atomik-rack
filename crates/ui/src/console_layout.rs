@@ -70,7 +70,9 @@ pub const BUTTON_H: f64 = 20.0;
 pub const SEND_ROW_H: f64 = 19.0;
 /// One insert chain slot row.
 pub const INSERT_ROW_H: f64 = 15.0;
-/// Slots shown in an insert chain.
+/// Rows an insert chain shows at once; a longer chain scrolls.
+pub const INSERT_ROWS: usize = 4;
+/// Slots an insert chain can hold.
 pub const INSERT_SLOTS: usize = atomik_model::INSERT_SLOTS;
 /// Gain-reduction bar row.
 pub const GR_ROW_H: f64 = 12.0;
@@ -710,12 +712,13 @@ impl Placer<'_> {
         y - start
     }
 
-    /// The insert chain slot rows (`INSERT_SLOTS` fixed rows keep every strip aligned).
+    /// The insert chain rows (`INSERT_ROWS` fixed rows keep every strip aligned; a longer chain
+    /// scrolls inside them).
     fn chain(&mut self, y: f64) -> f64 {
         if self.desc.socket_by_key("insert_send_l").is_none() {
             return 0.0;
         }
-        for i in 0..INSERT_SLOTS {
+        for i in 0..INSERT_ROWS {
             let top = y + i as f64 * INSERT_ROW_H;
             self.slots.push(Rect::new(
                 self.x0,
@@ -724,7 +727,7 @@ impl Placer<'_> {
                 top + INSERT_ROW_H - 1.0,
             ));
         }
-        INSERT_SLOTS as f64 * INSERT_ROW_H + 2.0
+        INSERT_ROWS as f64 * INSERT_ROW_H + 2.0
     }
 
     fn sends(&mut self, mut y: f64) -> f64 {

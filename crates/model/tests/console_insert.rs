@@ -1,4 +1,4 @@
-//! Insert chains: `SetInsert` / `MoveInsert` wire up to four effects
+//! Insert chains: `SetInsert` / `MoveInsert` wire up to sixteen effects
 //! between a channel's (or the master's) insert send and return, derived from cables.
 
 mod common;
@@ -208,17 +208,32 @@ fn move_insert_reorders_and_rewires() {
 }
 
 #[test]
-fn at_most_four_inserts() {
+fn a_chain_holds_sixteen_inserts_and_no_more() {
     let reg = console_registry();
     let mut d = rack(&reg);
     for (i, k) in ["comp", "eq", "verb", "dist"].into_iter().enumerate() {
         d.apply(set("channel", i, existing(k)), &reg).unwrap();
     }
+    assert_eq!(chain_of(&d, &reg, "channel").len(), 4);
+    for i in 4..INSERT_SLOTS {
+        d.apply(set("channel", i, new_fx("atomik.eq")), &reg)
+            .unwrap();
+    }
+    assert_eq!(INSERT_SLOTS, 16);
     assert_eq!(chain_of(&d, &reg, "channel").len(), INSERT_SLOTS);
-    let e = rejects(&mut d, set("channel", 4, new_fx("atomik.eq")), &reg);
+    let before = d.doc().clone();
+    let e = rejects(
+        &mut d,
+        set("channel", INSERT_SLOTS, new_fx("atomik.eq")),
+        &reg,
+    );
     assert!(matches!(e, ModelError::BadConsole(_)), "{e:?}");
-    let e = rejects(&mut d, set("channel", 9, None), &reg);
+    let e = rejects(&mut d, set("channel", 20, None), &reg);
     assert!(matches!(e, ModelError::BadConsole(_)), "{e:?}");
+    assert_eq!(d.doc(), &before);
+    // The fifth effect moves like any other, and the order survives.
+    d.apply(mv("channel", 15, 4), &reg).unwrap();
+    assert_eq!(chain_of(&d, &reg, "channel").len(), INSERT_SLOTS);
 }
 
 #[test]

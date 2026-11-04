@@ -20,7 +20,14 @@
 //! that section on every strip; drag a strip's name plate to reorder; click an FX
 //! return's name to pick its effect; click an INSERTS slot to select its effect in the rack, its
 //! x to remove it, the first empty slot to add one (`ConsoleCommand::SetInsert`); middle-drag or
-//! wheel scrolls (Shift+wheel or wheel over the faders scrolls sideways).
+//! wheel scrolls (Shift+wheel or wheel over the faders scrolls sideways). A chain holds up to
+//! [`INSERT_SLOTS`] effects and the section draws four rows: with more, the wheel over the rows
+//! scrolls them and a thin bar at the right edge shows where they are.
+//! A channel plate has RACK and SEQ buttons (select the channel's device in the rack, and go to
+//! its track: [`UiAction::Select`] then `rack.go_to_track`) and, when the channel's device has a
+//! song track, a colour band along its top that asks for the track's colour
+//! ([`UiAction::PickColor`]). Dragging a channel plate with the copy role held asks for copies of
+//! the channel ([`UiAction::CopyStrips`]) instead of moving it.
 //!
 //! Output buses: every strip has an output selector above its name plate (a menu of the master,
 //! the buses that would not loop, the Audio I/O pairs with the unusable ones greyed, and "New
@@ -69,6 +76,7 @@ mod help;
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::color_picker::ColorTarget;
 use crate::console_gang as gang;
 use crate::console_layout::{
     self as cl, CtrlKind, Folds, MASTER_W, MasterLayout, PlacedCtrl, STRIP_GAP, STRIP_W, SectionId,
@@ -262,6 +270,11 @@ enum Hit {
     Header(SectionId),
     Ctrl(Target, usize),
     Name(usize),
+    /// A strip's colour plate (the band along the top of its name plate): picks the colour of
+    /// its track.
+    Plate(usize),
+    /// A strip's RACK or SEQ jump button.
+    Jump(usize, Jump),
     /// A strip's output selector.
     OutputSel(usize),
     /// A part of VCA strip `i`.
@@ -278,6 +291,36 @@ enum Hit {
     Menu(usize),
     MenuArea,
     Empty,
+}
+
+/// Where a strip's jump button goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Jump {
+    /// To the strip's device in the rack.
+    Rack,
+    /// To the strip's track in the arrangement.
+    Seq,
+}
+
+/// The name plate of a strip as it is drawn: the plate rect inside the strip's name area.
+fn plate_rect(name: Rect) -> Rect {
+    name.inset((-2.0, -2.0))
+}
+
+/// The RACK and SEQ jump buttons along the bottom of a name plate, between the caption and the
+/// lamp.
+fn jump_rects(name: Rect) -> [(Jump, Rect); 2] {
+    let r = plate_rect(name);
+    let (y0, y1) = (r.y1 - 11.0, r.y1 - 3.0);
+    let seq = Rect::new(r.x1 - 31.0, y0, r.x1 - 14.0, y1);
+    let rack = Rect::new(seq.x0 - 22.0, y0, seq.x0 - 2.0, y1);
+    [(Jump::Rack, rack), (Jump::Seq, seq)]
+}
+
+/// The colour plate hotspot: the top band of a name plate (a little deeper than it is drawn).
+fn colour_rect(name: Rect) -> Rect {
+    let r = plate_rect(name);
+    Rect::new(r.x0, r.y0, r.x1, r.y0 + 6.0)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,6 +494,12 @@ struct StripView {
     insert_bypass: Vec<Option<bool>>,
     /// The state of the strip's bypass-all switch (see `atomik_model::inserts_bypassed`).
     bypass_all: Option<bool>,
+    /// The device that feeds a channel strip (the jump buttons go to it).
+    source: Option<DeviceKey>,
+    /// The channel's source has a song track (its colour plate can pick the track's colour).
+    has_track: bool,
+    /// The first chain slot the INSERTS section shows (a chain longer than its rows scrolls).
+    insert_scroll: usize,
     /// The name plate caption ("CH 1", "BUS 1").
     caption: String,
     /// Where the output goes, as the selector reads it.
@@ -497,6 +546,9 @@ impl StripView {
             inserts: Vec::new(),
             insert_bypass: Vec::new(),
             bypass_all: None,
+            insert_scroll: 0,
+            source: None,
+            has_track: false,
             caption: String::new(),
             output: String::new(),
             selected: false,
@@ -599,23 +651,47 @@ fn insert_hit(
     slots: &[Rect],
     bypass: &[Option<bool>],
     used: usize,
+    first: usize,
     p: Point,
     target: Target,
 ) -> Option<Hit> {
-    let slot = slots.iter().position(|r| r.contains(p))?;
+    let row = slots.iter().position(|r| r.contains(p))?;
+    let slot = first + row;
     if slot > used {
         return None;
     }
-    Some(if slot < used && insert_x_rect(slots[slot]).contains(p) {
+    Some(if slot < used && insert_x_rect(slots[row]).contains(p) {
         Hit::InsertRemove(target, slot)
     } else if slot < used
         && bypass.get(slot).is_some_and(Option::is_some)
-        && insert_b_rect(slots[slot]).contains(p)
+        && insert_b_rect(slots[row]).contains(p)
     {
         Hit::InsertBypass(target, slot)
     } else {
         Hit::Insert(target, slot)
     })
+}
+
+/// The rows an insert chain of `used` effects fills: its effects and, while it has room, the
+/// "+ add" row.
+fn chain_rows(used: usize) -> usize {
+    (used + 1).min(INSERT_SLOTS)
+}
+
+/// The first slot shown after the chain changed from `was` to `now` effects: kept, brought back
+/// into range, and moved to the end when the chain grew past its rows (the new "+ add" row
+/// shows).
+fn next_insert_scroll(scroll: usize, was: usize, now: usize) -> usize {
+    if now > was && was >= cl::INSERT_ROWS - 1 {
+        insert_scroll_max(now)
+    } else {
+        scroll.min(insert_scroll_max(now))
+    }
+}
+
+/// The most the chain can scroll: the first slot shown when its last row is the bottom one.
+fn insert_scroll_max(used: usize) -> usize {
+    chain_rows(used).saturating_sub(cl::INSERT_ROWS)
 }
 
 fn chain_sig(chain: &[(DeviceKey, String)]) -> Vec<String> {
@@ -1520,6 +1596,33 @@ impl ConsoleView {
         Some((l.name + Vec2::new(self.strip_x(i), self.area_top())).center())
     }
 
+    /// Centre of the RACK jump button of a channel strip, when it has one.
+    pub fn rack_button_center(&self, channel: &DeviceKey) -> Option<Point> {
+        self.jump_center(channel, Jump::Rack)
+    }
+
+    /// Centre of the SEQ jump button of a channel strip, when it has one.
+    pub fn seq_button_center(&self, channel: &DeviceKey) -> Option<Point> {
+        self.jump_center(channel, Jump::Seq)
+    }
+
+    fn jump_center(&self, channel: &DeviceKey, to: Jump) -> Option<Point> {
+        let i = self.strips.iter().position(|s| &s.key == channel)?;
+        let l = self.layout_of(self.strips[i].desc)?;
+        let (_, r) = jump_rects(l.name).into_iter().find(|(j, _)| *j == to)?;
+        let p = (r + Vec2::new(self.strip_x(i), self.area_top())).center();
+        matches!(self.hit(p), Hit::Jump(..)).then_some(p)
+    }
+
+    /// Centre of the colour plate (the top band of the name plate) of a channel strip whose
+    /// source has a track.
+    pub fn colour_plate_center(&self, channel: &DeviceKey) -> Option<Point> {
+        let i = self.strips.iter().position(|s| &s.key == channel)?;
+        let l = self.layout_of(self.strips[i].desc)?;
+        let p = (colour_rect(l.name) + Vec2::new(self.strip_x(i), self.area_top())).center();
+        matches!(self.hit(p), Hit::Plate(_)).then_some(p)
+    }
+
     /// Centre of a section header on the first strip, when it is in view.
     pub fn header_center(&self, section: SectionId) -> Option<Point> {
         let s = self.strips.first()?;
@@ -1544,11 +1647,13 @@ impl ConsoleView {
     fn insert_rect(&self, device: &DeviceKey, slot: usize) -> Option<Rect> {
         if let Some(i) = self.strips.iter().position(|s| &s.key == device) {
             let l = self.layout_of(self.strips[i].desc)?;
-            let r = *l.insert_slots.get(slot)?;
+            let row = slot.checked_sub(self.strips[i].insert_scroll)?;
+            let r = *l.insert_slots.get(row)?;
             return Some(r + Vec2::new(self.strip_x(i), self.area_top() - self.scroll.y));
         }
-        self.master.as_ref().filter(|m| &m.key == device)?;
-        let r = *self.master_layout.as_ref()?.insert_slots.get(slot)?;
+        let m = self.master.as_ref().filter(|m| &m.key == device)?;
+        let row = slot.checked_sub(m.insert_scroll)?;
+        let r = *self.master_layout.as_ref()?.insert_slots.get(row)?;
         Some(r + Vec2::new(self.master_x()?, self.area_top() - self.master_scroll))
     }
 
@@ -1655,6 +1760,7 @@ impl ConsoleView {
                 &l.insert_slots,
                 self.master.as_ref().map_or(&[][..], |m| &m.insert_bypass),
                 self.master.as_ref().map_or(0, |m| m.inserts.len()),
+                self.master.as_ref().map_or(0, |m| m.insert_scroll),
                 up,
                 Target::Master,
             ) {
@@ -1698,6 +1804,15 @@ impl ConsoleView {
                 lp + Vec2::new(0.0, self.scroll.y)
             };
             if pinned && l.name.contains(lp) {
+                if s.source.is_some()
+                    && let Some((j, _)) =
+                        jump_rects(l.name).into_iter().find(|(_, r)| r.contains(lp))
+                {
+                    return Hit::Jump(i, j);
+                }
+                if s.has_track && colour_rect(l.name).contains(lp) {
+                    return Hit::Plate(i);
+                }
                 return Hit::Name(i);
             }
             if pinned && l.output.is_some_and(|r| r.contains(lp)) {
@@ -1716,6 +1831,7 @@ impl ConsoleView {
                     &l.insert_slots,
                     &s.insert_bypass,
                     s.inserts.len(),
+                    s.insert_scroll,
                     q,
                     Target::Strip(i),
                 )
@@ -1926,6 +2042,18 @@ impl ConsoleView {
                 s.accent = source
                     .or(device.as_ref())
                     .map_or(self.st.base.text_muted, |d| self.st.base.accent_for(d));
+                // A track with no colour of its own shows the colour of its folder.
+                if let Some(src) = &c.source
+                    && source.is_some_and(|d| d.color.is_none())
+                    && let Some([cr, cg, cb]) = doc.song.shown_color(src)
+                {
+                    s.accent = Color::from_rgb8(cr, cg, cb);
+                }
+                s.source = c.source.clone();
+                s.has_track = c
+                    .source
+                    .as_ref()
+                    .is_some_and(|k| doc.song.track(k).is_some());
                 s.caption = format!("CH {}", i + 1);
             } else if let Some(b) = console.buses.get(i - n_channels) {
                 s.name = b.name.clone();
@@ -1942,7 +2070,9 @@ impl ConsoleView {
             s.latency = self.latencies.get(&key).copied();
             s.device = device;
             s.silenced = silence.get(&key).copied().unwrap_or(false);
+            let was = s.inserts.len();
             s.inserts = chain_names(doc, registry, &key);
+            s.insert_scroll = next_insert_scroll(s.insert_scroll, was, s.inserts.len());
             (s.insert_bypass, s.bypass_all) = bypass_view(doc, registry, &key, &s.inserts);
             let mut extra = vec![
                 s.caption.clone(),
@@ -1952,6 +2082,8 @@ impl ConsoleView {
                 format!("{:?} {:?}", s.insert_bypass, s.bypass_all),
                 format!("{:?}", s.driven),
                 format!("{:?}", s.automated),
+                format!("{}", s.insert_scroll),
+                format!("{:?} {}", s.source, s.has_track),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -1997,10 +2129,13 @@ impl ConsoleView {
                     m.desc = desc;
                     m.name = "MASTER".into();
                     m.accent = accent;
+                    let was = m.inserts.len();
                     m.inserts = chain_names(doc, registry, k);
+                    m.insert_scroll = next_insert_scroll(m.insert_scroll, was, m.inserts.len());
                     (m.insert_bypass, m.bypass_all) = bypass_view(doc, registry, k, &m.inserts);
                     let mut extra = names.clone();
                     extra.push(format!("{:?} {:?}", m.insert_bypass, m.bypass_all));
+                    extra.push(format!("{}", m.insert_scroll));
                     extra.push(format!("{:?}", m.driven));
                     extra.push(format!("{:?}", m.automated));
                     extra.extend(flags);
@@ -2315,7 +2450,25 @@ impl ConsoleView {
                     x: pos.x,
                 };
             }
-            (Hit::Name(i), PointerButton::Secondary) => self.open_strip_menu(i, pos, doc),
+            (Hit::Name(i) | Hit::Plate(i) | Hit::Jump(i, _), PointerButton::Secondary) => {
+                self.open_strip_menu(i, pos, doc)
+            }
+            (Hit::Plate(i), PointerButton::Primary) => {
+                if let Some(source) = self.strips.get(i).and_then(|s| s.source.clone()) {
+                    out.push(UiAction::PickColor(ColorTarget::Tracks(vec![source])));
+                }
+            }
+            (Hit::Jump(i, to), PointerButton::Primary) => {
+                if let Some(source) = self.strips.get(i).and_then(|s| s.source.clone()) {
+                    out.push(UiAction::Select(source));
+                    if to == Jump::Seq {
+                        out.push(UiAction::RunCommand {
+                            id: "rack.go_to_track".to_owned(),
+                            arg: None,
+                        });
+                    }
+                }
+            }
             (Hit::Snap(i), PointerButton::Primary) => self.snap_down(i, clicks, doc, registry, out),
             (Hit::Snap(i), PointerButton::Secondary) => {
                 self.open_snapshot_menu(i, pos, doc, registry)
@@ -3422,6 +3575,31 @@ impl ConsoleView {
                     self.repaint = true;
                     return;
                 }
+                // With the copy role held, a channel is copied (with the selected channels it
+                // is part of) instead of moved.
+                if strip < self.n_channels
+                    && self
+                        .roles
+                        .is_active(Role::CopyDrag, modifiers, GestureClass::DragItem)
+                {
+                    let key = self.strips[strip].key.clone();
+                    let strips: Vec<DeviceKey> = if self.selection.contains(&key) {
+                        self.selected_strips()
+                    } else {
+                        vec![key]
+                    };
+                    let channels = &self.strips[..self.n_channels];
+                    let strips: Vec<DeviceKey> = strips
+                        .into_iter()
+                        .filter(|k| channels.iter().any(|s| &s.key == k))
+                        .collect();
+                    let to = (0..self.n_channels)
+                        .filter(|i| self.strip_x(*i) + STRIP_W / 2.0 < x)
+                        .count();
+                    out.push(UiAction::CopyStrips { strips, to });
+                    self.repaint = true;
+                    return;
+                }
                 // Channels move among the channels, buses among the buses.
                 let to = self.drop_index(strip, x);
                 let command = if strip < self.n_channels {
@@ -3506,6 +3684,16 @@ impl ConsoleView {
             }
             return;
         }
+        // Over an insert chain longer than its rows the wheel scrolls the chain; at either end
+        // it stays there.
+        if matches!(self.drag, Drag::None)
+            && !modifiers.shift
+            && delta.y != 0.0
+            && let Some(t) = self.insert_area_at(pos)
+        {
+            self.scroll_inserts(t, if delta.y < 0.0 { 1 } else { -1 });
+            return;
+        }
         let horizontal = modifiers.shift || delta.x.abs() > delta.y.abs();
         let amount = if delta.x.abs() > delta.y.abs() {
             -delta.x
@@ -3525,6 +3713,84 @@ impl ConsoleView {
         }
         self.clamp_scroll();
         self.repaint = true;
+    }
+
+    /// The strip whose insert rows `pos` is over, when its chain has more rows than fit.
+    fn insert_area_at(&self, pos: Point) -> Option<Target> {
+        let top = self.area_top();
+        if let (Some(mx), Some(l), Some(m)) = (
+            self.master_x(),
+            self.master_layout.as_ref(),
+            self.master.as_ref(),
+        ) && pos.x >= mx
+        {
+            let up = Point::new(pos.x - mx, pos.y - top + self.master_scroll);
+            let over = l
+                .insert_slots
+                .first()
+                .zip(l.insert_slots.last())
+                .is_some_and(|(a, b)| Rect::new(a.x0, a.y0, a.x1, b.y1).contains(up));
+            return (over && insert_scroll_max(m.inserts.len()) > 0).then_some(Target::Master);
+        }
+        if !self.strips_rect().contains(pos) {
+            return None;
+        }
+        let i = (0..self.strips.len()).find(|i| {
+            let x = self.strip_x(*i);
+            pos.x >= x && pos.x < x + STRIP_W
+        })?;
+        let s = &self.strips[i];
+        let l = self.layout_of(s.desc)?;
+        let lp = Point::new(pos.x - self.strip_x(i), pos.y - top);
+        if lp.y >= l.pinned_top {
+            return None;
+        }
+        let q = lp + Vec2::new(0.0, self.scroll.y);
+        let (a, b) = l.insert_slots.first().zip(l.insert_slots.last())?;
+        (Rect::new(a.x0, a.y0, a.x1, b.y1).contains(q) && insert_scroll_max(s.inserts.len()) > 0)
+            .then_some(Target::Strip(i))
+    }
+
+    /// Scrolls the insert rows of `t` by `rows` (clamped to the chain).
+    fn scroll_inserts(&mut self, t: Target, rows: isize) {
+        let view = match t {
+            Target::Strip(i) => self.strips.get_mut(i),
+            Target::Master => self.master.as_mut(),
+        };
+        let Some(v) = view else { return };
+        let to = v
+            .insert_scroll
+            .saturating_add_signed(rows)
+            .min(insert_scroll_max(v.inserts.len()));
+        if to != v.insert_scroll {
+            v.insert_scroll = to;
+            // The strip's cached lists carry the rows: draw them again.
+            v.revision += 1;
+            self.repaint = true;
+        }
+    }
+
+    /// First chain slot the INSERTS section of `device` shows (0 for a chain that fits).
+    pub fn insert_scroll_of(&self, device: &DeviceKey) -> usize {
+        self.strips
+            .iter()
+            .chain(self.master.as_ref())
+            .find(|s| &s.key == device)
+            .map_or(0, |s| s.insert_scroll)
+    }
+
+    /// Scrolls the insert rows of channel (or master) `device` so that slot `first` is the
+    /// first one shown (clamped to the chain).
+    pub fn scroll_inserts_to(&mut self, device: &DeviceKey, first: usize) {
+        let target = if let Some(i) = self.strips.iter().position(|s| &s.key == device) {
+            Target::Strip(i)
+        } else if self.master.as_ref().is_some_and(|m| &m.key == device) {
+            Target::Master
+        } else {
+            return;
+        };
+        let current = self.insert_scroll_of(device);
+        self.scroll_inserts(target, first as isize - current as isize);
     }
 
     /// Runs a registry command of the `Mixer` context (what the arrow keys, Page Up / Down,
@@ -4813,6 +5079,7 @@ fn record_strip(
         &l.insert_slots,
         &s.inserts,
         &s.insert_bypass,
+        s.insert_scroll,
         s.accent,
     );
     if let Some(r) = l.gr_meter {
@@ -4825,7 +5092,15 @@ fn record_strip(
         output_selector(pinned, st, r, &s.output);
     }
     name_plate(
-        pinned, st, l.name, &s.name, &s.caption, s.accent, s.silenced, s.selected,
+        pinned,
+        st,
+        l.name,
+        &s.name,
+        &s.caption,
+        s.accent,
+        s.silenced,
+        s.selected,
+        s.source.is_some(),
     );
     if let Some((color, _)) = s.vca {
         cv::chip(pinned, l.name, color);
@@ -4854,10 +5129,12 @@ fn record_inserts(
     slots: &[Rect],
     inserts: &[(DeviceKey, String)],
     bypass: &[Option<bool>],
+    first: usize,
     accent: Color,
 ) {
     let t = &st.base;
-    for (i, r) in slots.iter().enumerate() {
+    for (row, r) in slots.iter().enumerate() {
+        let i = first + row;
         match inserts.get(i) {
             Some((_, name)) => {
                 let state = bypass.get(i).copied().flatten();
@@ -4888,9 +5165,26 @@ fn record_inserts(
                 let x = insert_x_rect(*r);
                 lcd_text(c, st, x.inset((-1.0, 0.0)), "x", t.text_muted, 7.0);
             }
-            None if i == inserts.len() => lcd_text(c, st, *r, "+ add", t.text_muted, 7.0),
+            None if i == inserts.len() && i < INSERT_SLOTS => {
+                lcd_text(c, st, *r, "+ add", t.text_muted, 7.0);
+            }
             None => lcd_text(c, st, *r, "—", t.text_muted.with_alpha(0.4), 7.0),
         }
+    }
+    // A chain longer than its rows shows a thin bar at the right edge: where the rows are.
+    let rows = chain_rows(inserts.len());
+    if let (Some(top), Some(bottom)) = (slots.first(), slots.last())
+        && rows > slots.len()
+    {
+        let (y0, y1) = (top.y0, bottom.y1);
+        let x1 = top.x1;
+        c.fill_with(
+            Rect::new(x1 - 1.5, y0, x1, y1),
+            t.text_muted.with_alpha(0.25),
+        );
+        let h = (y1 - y0) * slots.len() as f64 / rows as f64;
+        let y = y0 + (y1 - y0 - h) * first as f64 / (rows - slots.len()) as f64;
+        c.fill_with(Rect::new(x1 - 1.5, y, x1, y + h), t.text_muted);
     }
 }
 
@@ -4947,9 +5241,11 @@ fn name_plate(
     accent: Color,
     dim: bool,
     selected: bool,
+    jumps: bool,
 ) {
     let t = &st.base;
-    let r = r.inset((-2.0, -2.0));
+    let name_rect = r;
+    let r = plate_rect(r);
     if selected {
         paint::outline(c, r.inset(1.5), 4.0, 1.6, t.highlight);
     }
@@ -4972,6 +5268,12 @@ fn name_plate(
     );
     let led = pt(r.x1 - 7.0, r.y1 - 6.0);
     c.fill_with(Circle::new(led, 2.2), if dim { t.led_off } else { accent });
+    if jumps {
+        for (jump, rect) in jump_rects(name_rect) {
+            let label = if jump == Jump::Rack { "RACK" } else { "SEQ" };
+            small_button(c, st, rect, label, None, true, 5.2);
+        }
+    }
 }
 
 fn record_master(
@@ -5074,6 +5376,7 @@ fn record_master(
         &l.insert_slots,
         &m.inserts,
         &m.insert_bypass,
+        m.insert_scroll,
         t.highlight,
     );
     if let Some(r) = l.gr_meter {
@@ -5108,6 +5411,7 @@ fn record_master(
         "MASTER",
         "MAIN OUT",
         t.highlight,
+        false,
         false,
         false,
     );

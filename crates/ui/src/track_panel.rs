@@ -857,7 +857,7 @@ fn build_items(doc: &RackDoc, registry: &Registry, track: Option<&DeviceKey>) ->
     };
     items.push(Item::Heading("Inserts".to_owned()));
     let chain = insert_chain(doc, registry, &channel);
-    for slot in 0..INSERT_SLOTS {
+    for slot in 0..(chain.len() + 1).clamp(4, INSERT_SLOTS) {
         let Some(effect) = chain.get(slot) else {
             items.push(Item::EmptyInsert);
             continue;

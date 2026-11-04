@@ -56,7 +56,7 @@ impl Role {
             Role::AlternateTool => &["viewport", "audio_editor"],
             Role::DisableSnap => &["viewport"],
             Role::ToggleSelect | Role::RangeSelect => &["rack/selection"],
-            Role::CopyDrag => &["arrangement", "piano_roll"],
+            Role::CopyDrag => &["arrangement", "piano_roll", "console"],
             Role::FineAdjust => &["rack/selection", "console", "arrangement"],
             Role::ResetParam => &["rack/selection", "console", "spectrum_eq"],
             Role::EditAutomation => &["rack/selection", "console"],

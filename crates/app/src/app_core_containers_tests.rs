@@ -1121,6 +1121,9 @@ fn engine_facing_code_never_walks_the_raw_document_lists() {
         // The device above a top-level slot of `CreateEffectAt`.
         ("app_core_clipboard.rs", "doc.devices[at.index - 1]"),
         ("app_core_containers.rs", "doc.devices"),
+        // A strip paste looks for the new top-level devices a snapshot made and for where to put
+        // them; nothing is sent to the engine from these lists.
+        ("app_core_strips.rs", "doc.devices"),
         // All Notes Off reaches every top-level device; `target_of` resolves a container to the
         // notes input of its split device.
         ("app_core_workflow.rs", "for d in &self.doc().devices"),
