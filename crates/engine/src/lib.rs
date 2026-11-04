@@ -5,6 +5,7 @@
 //!
 mod arena;
 mod audio;
+mod audio_follow;
 mod console;
 mod controllers;
 mod engine;

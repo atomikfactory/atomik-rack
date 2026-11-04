@@ -659,3 +659,78 @@ fn switching_clock_out_off_while_playing_stops_the_receiver_once() {
     run(&mut e, 2_000, 64);
     assert!(drain(&tap).is_empty());
 }
+
+// ---- Audio clips while following ----
+
+/// Bounces `frames` frames of a song with one audio track (a plain clip of asset 0 at song frame
+/// `start`, `len` frames long, at the song's own 120 BPM) while following a clock that is
+/// running at `bpm` from the beginning. Returns the left output.
+fn followed_audio(bpm: f64, start: u64, len: u64, frames: usize) -> Vec<f32> {
+    use atomik_engine::{OfflineJob, compile_song, render_offline_song};
+    let c = common::cfg(0, 2);
+    let mut rig = common::hot::Rig::new(&c);
+    let id = rig.insert(0, 1, atomik_devices::audio_track::factory(), &[]);
+    rig.wire_outputs(id, "out_1", "out_2");
+    rig.route(0);
+    let (mut engine, mut handle) = common::engine_with(c, 0, None);
+    let cell = handle.external_clock();
+    cell.set_following(true);
+    cell.publish(&ExternalState {
+        tempo: Some(bpm),
+        running: true,
+        ..ExternalState::default()
+    });
+    let input = common::audio::audio_input(
+        vec![common::audio::audio_track_of(
+            1,
+            vec![common::audio::region(start, 0, len)],
+        )],
+        vec![common::audio::asset(2, 8_000)],
+    );
+    let job = OfflineJob {
+        frames,
+        host_block: 64,
+        notes: &[],
+        params: &[],
+        inputs: &[],
+    };
+    let song = compile_song(&input).unwrap();
+    let out = render_offline_song(&mut engine, &mut handle, &job, song, rig.edits, |f| {
+        atomik_testkit::no_alloc::assert_no_alloc(f)
+    });
+    out.into_iter().next().unwrap()
+}
+
+#[test]
+fn an_audio_clip_plays_while_following_and_starts_where_the_clock_reaches_it() {
+    // The song's own tempo is 120 BPM; the clock runs at 60: the clip placed at 4800 frames
+    // (0.1 s of the song) is reached after 0.2 s, 9600 frames, of the clock's time. The song
+    // starts at engine frame 64 (the first batch enters the follow).
+    let out = followed_audio(60.0, 4_800, 2_000, 16_000);
+    let first = out
+        .iter()
+        .position(|v| *v != 0.0)
+        .expect("the clip is heard");
+    assert!(first.abs_diff(9_600 + 64) <= 64, "starts at {first}");
+    // It plays at its own rate: the asset's own samples, one a frame.
+    for i in 0..2_000 {
+        let want = common::audio::value(0, i);
+        let got = out[first + i];
+        assert!((got - want).abs() < 1.0e-5, "frame {i}: {got} vs {want}");
+    }
+    assert!(out[first + 2_000..].iter().all(|v| v.abs() < 1.0e-9));
+}
+
+#[test]
+fn the_clip_is_heard_at_the_same_place_in_the_song_at_any_followed_tempo() {
+    // The same clip, followed at 120 and 240 BPM: it starts at the same musical place, so its
+    // start in time halves, and its length does not change.
+    let a = followed_audio(120.0, 9_600, 1_500, 20_000);
+    let b = followed_audio(240.0, 9_600, 1_500, 20_000);
+    let start = |o: &[f32]| o.iter().position(|v| *v != 0.0).unwrap();
+    let (sa, sb) = (start(&a), start(&b));
+    assert!(sa.abs_diff(9_600 + 64) <= 64, "{sa}");
+    assert!(sb.abs_diff(4_800 + 64) <= 64, "{sb}");
+    let len = |o: &[f32]| o.iter().filter(|v| v.abs() > 1.0e-9).count();
+    assert_eq!(len(&a), len(&b));
+}
