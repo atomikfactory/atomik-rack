@@ -1227,7 +1227,10 @@ notes, and reach the track's device as the note events it already understands
   the notes, the content stays aligned by the offset), a join merges them per kind with the later
   clip winning where clips overlap (each window is cut with a value at its start and a closing point
   when a ramp is cut). Project format 19 stores them as `"controllers"`; version 18 files load
-  without lanes.
+  without lanes. Editing several points at once is pure functions on the lane list in
+  [controller_edit.rs](../crates/model/src/controller_edit.rs) (`ControllerSnapshot`, `paste_points`,
+  `remove_points`, `move_points`, `thin_selection`), each giving the whole canonical list for one
+  `SetClipControllers`.
 - **Flattening** (`flatten_controllers`, [flatten.rs](../crates/model/src/song/flatten.rs)). The
   notes' audible spans, offsets and loops apply. A lane says nothing before its first point, so a
   piece emits a point at its start only when the lane already has a value there; a ramp still
@@ -1252,7 +1255,9 @@ notes, and reach the track's device as the note events it already understands
   up to `bend.range` semitones (default 2; RPN 0 changes it), the sustain pedal (CC 64) holds
   note-offs until it goes up, volume and expression (CC 7, CC 11) scale the output, and channel and
   key pressure are kept as a modulation source; the mod wheel (CC 1) adds up to one semitone of LFO
-  vibrato in the synths (`WHEEL_VIBRATO`, at the 16-sample control rate). `AllOff` keeps bend and
+  vibrato in the synths (`WHEEL_VIBRATO`, at the 16-sample control rate). The sampler reads it too,
+  with two params of its own: `wheel.to_pitch` (semitones of LFO vibrato, default 1) and
+  `wheel.to_cutoff` (octaves of filter cutoff, default 1), both zero-effect with the wheel at rest. `AllOff` keeps bend and
   the mod wheel, `reset` clears them. The chart of every instrument is under "MIDI" in
   [DEVICES.md](DEVICES.md) and is checked by a test. The other instruments ignore the messages.
 - **Recording** ([record.rs](../crates/app/src/record.rs)). The MIDI forwarder already offered every
@@ -1274,7 +1279,19 @@ notes, and reach the track's device as the note events it already understands
   resolution (pitch bend within 0.03 of the centre, 1.5 % of its range, lands on it); a selected
   point shows its value as 0 to 127 (pitch bend as -8192 to +8191). All edits are pure functions on
   the lane list (`set_point`, `move_point`, `remove_point`, `toggle_curve`) and one
-  `SetClipControllers` each.
+  `SetClipControllers` each. Several points: Shift-click toggles a point in the selection, a Shift press on
+  empty space drags a rubber band that adds the points inside it, dragging a selected point moves the whole
+  selection together (time on the grid, value at the MIDI resolution, the group stopping at the edges of
+  the range), Select All and Delete act on the points while the lane has the focus (a press in the lane
+  sets it, a press anywhere else gives it back to the notes), and the THIN chip (or
+  `editor.thin_controllers`, with `normal`, `heavy` or `maximum`, the level of the Interface thinning
+  preference when none is given) simplifies the selection, or the whole lane when none is selected: the
+  ramp points the line through their neighbours reproduces and the held values that repeat go, keeping
+  the ends of each run. Copy and Cut put the points on the clipboard (`ClipboardData::Controllers`, the
+  kind and the points relative to the first), Paste lays them into the lane shown from the playhead (values
+  keep their place in the range of the target, points at or after the clip's content end are dropped, a
+  point on an existing one replaces it) in one undo step and selects them. `editor.toggle_controllers`
+  (Shift+L) shows and hides the area.
 - **Parameter lanes** ([param_lane.rs](../crates/model/src/param_lane.rs)). A note clip can also carry
   `Clip.param_lanes: Vec<ParamLane>`: the points of one parameter of one device (`device`, `param`
   key, `AutomationPoint`s in content ticks, `Linear`, `Step` or `Bend`), sorted by `(device, param)`,
@@ -1583,8 +1600,9 @@ of them touching the engine or the audio thread.
 - **The file format** ([smf.rs](../crates/midi-io/src/smf.rs), `atomik-midi-io`, no dependency
   added). `smf::read` gives an `SmfFile` (format, ticks per quarter note, tracks of events at
   absolute ticks) and `SmfFile::to_bytes` writes one back with running status and an end-of-track
-  event per track. It keeps channel messages and the tempo, time signature, marker and track-name
-  meta events, skips SysEx, unknown meta events and unknown chunks, reads a RIFF-wrapped file,
+  event per track. It keeps channel messages, whole SysEx messages (`F0 ... F7`, no packets) and the
+  tempo, time signature, marker and track-name meta events, skips unknown meta events and unknown
+  chunks, reads a RIFF-wrapped file,
   accepts running status across meta events, reads a truncated track up to the cut and refuses type
   2, an SMPTE division, a bad header, a data byte with no status, a number longer than four bytes
   and a file with no track, each with a message. It never panics (property tests feed it random and
@@ -1593,18 +1611,28 @@ of them touching the engine or the audio thread.
   crate, which is where the model and `atomik-midi-io` meet). *Export* writes what plays: a clip, a
   track or the song is flattened with the model's own `flatten_notes` and `flatten_controllers`
   (loops, offsets, swing, a later clip hiding an earlier one, muted notes and clips left out). The
-  file's resolution is the model's, `PPQ` = 15 360 (a valid 15-bit division), so every tick survives
-  a round trip; velocities are 7 bit, pitch bend 14 bit. A clip or a track is a type 0 file on
+  file's resolution is a choice (`MidiResolution`): the model's own, `PPQ` = 15 360 (a valid 15-bit
+  division), so every tick survives a round trip, or 960 or 480 ticks per quarter note for hardware
+  that dislikes 15 360 (each tick is rounded to the nearest file tick; a note keeps at least one
+  tick and one that a following note of its key leaves no tick for is dropped); velocities are 7 bit,
+  pitch bend 14 bit. A clip or a track is a type 0 file on
   channel 1 (a clip carries the tempo and time signature in effect where it starts and ends at the
   clip's length; a track carries the whole tempo map, meter map and markers); the song is type 1: a
   conductor track (name, tempo map, time signatures on the bar lines, point markers) and one track
   per note track on channel `index mod 16`. Tempo ramps become a staircase, a linear controller
   segment is sampled, overlapping notes of one key are cut so each note-off pairs with its note-on.
-  Audio and automation lanes and range markers are not exported. *Import* makes one `MidiTrack` per
+  Audio and automation lanes are not exported; a range marker is a marker at its start named after it
+  and one named `<name> (end)` at its end. The program changes and SysEx messages a clip carries
+  (`flatten_midi_data`: the same pieces, offsets, loops and hiding as the controllers) are written on
+  the track's channel after the controllers of their tick, so a bank select, which is the `CC 0` and
+  `CC 32` lane, comes before its program change. *Import* makes one `MidiTrack` per
   MIDI track and channel that has notes (type 0 splits by channel): a note-on with velocity 0 is a
   note-off, a re-struck key ends the earlier note, a hanging note ends with its track, a note is at
   least one tick, two notes at one tick and key keep the first; controllers become `Step` points
-  (the last value at a tick wins) with channel-mode, data-entry and (N)RPN controllers skipped;
+  (the last value at a tick wins, bank select included) with channel-mode, data-entry and (N)RPN
+  controllers skipped; program changes (the last at a tick wins) and the SysEx messages of a track
+  that has notes are kept in `Clip.midi` (at most 4096 changes, 1024 messages of 4096 bytes per clip;
+  the SysEx of a file track goes to its first clip, and a track without notes has none);
   tempo (as BPM rounded to 0.001), time signatures (a change in the middle of a bar takes effect at
   the next bar line, unsupported signatures are skipped) and markers (trimmed, 64 characters) come
   from every track. The file's ticks are rescaled with rounding and clamped to `MAX_TICK`.
@@ -1614,8 +1642,11 @@ of them touching the engine or the audio thread.
   console channel, as `CreateInstrument` does), an unarmed song track, the device name and a note
   clip, then replaces the tempo map and the meter map when given, adds markers with fresh ids, and
   grows the song end to the next bar line when a clip reaches past it, all as **one undo step**; a
-  rejected import changes nothing. A clip import is a plain `AddClip`. There is no new persisted
-  state, so the project format is unchanged.
+  rejected import changes nothing. A clip import is a plain `AddClip`. A clip's program changes and
+  SysEx messages are the new data `Clip.midi` ([midi_data.rs](../crates/model/src/midi_data.rs), shared
+  through an `Arc`): saved as the optional, ignorable `"programs"` (`[tick, program]`) and `"sysex"`
+  (`[tick, "7E 7F 09 01"]`) fields of a note clip under format 43, kept by moves, splits, duplicates,
+  loops, joins, loop conversion and tempo scaling, and played by nothing.
 - **The app** ([app_core_midi.rs](../crates/app/src/app_core_midi.rs), `Shell`, the menu). File >
   Import MIDI puts the whole file (all tracks and channels merged) in one clip on the selected note
   track (the track selected in the arrangement, the track of a selected or open clip, or the
@@ -1635,8 +1666,10 @@ of them touching the engine or the audio thread.
   `ShellRequest::PickImportMidi` and `PickExportMidi`; the file is read and converted before
   anything is applied, so a bad file is reported by name and changes nothing, and files above 64 MiB
   are refused. The registry ids are `file.import_midi`, `file.import_midi_song`,
-  `file.export_midi_clip`, `file.export_midi_track` and `file.export_midi_song`; none has a key. The
-  QA server has `session_midi` (MCP.md).
+  `file.export_midi_clip`, `file.export_midi_track` and `file.export_midi_song`; none has a key.
+  File > MIDI Export Resolution (`file.midi_resolution` with `native`, `960` or `480`) sets the
+  resolution of the files written from then on and is kept in `workflow.json`. The QA server has
+  `session_midi` (MCP.md).
 
 ### 2.16 Track organisation
 
@@ -5423,17 +5456,20 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   clip, no per-note expression (MPE) data, and a recorded lane is one `Step` point per burst of
   events, not a smooth curve. A ramp is played as steps of 40 ticks. Pressure is kept as a
   modulation source in five instruments but no parameter reads it yet, and the only registered
-  parameter is RPN 0 (the bend range); there is no NRPN. Lanes have no selection of several points,
-  copy or paste of points, or thinning command.
-- **MIDI files.** Type 2 files and SMPTE divisions are refused, SysEx, program changes, RPN and NRPN
-  data and per-note expression are not kept, and a tempo ramp is exported as a staircase and
-  imported as steps. A song file does not carry audio tracks, automation lanes or range markers. A
+  parameter is RPN 0 (the bend range); there is no NRPN. Points are selected, copied and thinned
+  one lane at a time: there is no selection across lanes and no duplicate of points.
+- **MIDI files.** Type 2 files and SMPTE divisions are refused, RPN and NRPN data and per-note
+  expression are not kept, and a tempo ramp is exported as a staircase and imported as steps. A song
+  file does not carry audio tracks or automation lanes, and a range marker is two plain markers (it is
+  not read back as a range). Program changes and SysEx messages are kept in the clip but cannot be
+  edited or cleared yet, a bank select is a `CC 0` and `CC 32` lane (not part of the program change),
+  and the SysEx of a file track that has no notes is dropped. A
   file imported as one clip merges all its tracks and channels into that clip's controller lanes
   (the last value at a tick wins), and a channel that has controllers but no notes is left out (a
-  controller lane needs a note clip, 2.12). The export resolution is 15 360 ticks per quarter note,
-  which every reader should accept but a hardware sequencer may not; there is no option to choose
-  960 yet. The file browser does not list `.mid` files, so a file can only be dropped from the
-  operating system.
+  controller lane needs a note clip, 2.12). The default export resolution is 15 360 ticks per quarter
+  note, which every reader should accept but a hardware sequencer may not; File > MIDI Export
+  Resolution offers 960 and 480. The file browser does not list `.mid` files, so a file can only be
+  dropped from the operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or
   clip waits for a worker (the clip plays an interim resampled read meanwhile, at the right timing
   but the wrong pitch for a transposed clip; a streamed asset plays unwarped); reverse and warp

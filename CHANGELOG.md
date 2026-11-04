@@ -9,6 +9,24 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **MIDI controller data and MIDI file follow-ups.** In the piano roll's controller area you can select several
+  points: Shift-click adds or removes a point, a Shift press on empty space drags a rubber band, and Select All
+  takes the whole lane. A selected point drags the whole selection (time on the grid, value at the MIDI
+  resolution, the shape kept); Delete removes it, Copy and Cut put the points on the clipboard and Paste lays
+  them into the lane shown from the playhead (the values keep their place in the range, so a bend can become a
+  CC; points past the clip's end are dropped), each one undo step. The new THIN chip (and
+  `editor.thin_controllers` with `normal`, `heavy` or `maximum`) simplifies the selection, or the whole lane when
+  nothing is selected, dropping ramp points the line reproduces and held values that repeat. `Shift+L`
+  (`editor.toggle_controllers`) shows and hides the controller area. The sampler answers the mod wheel (CC 1):
+  `wheel.to_pitch` deepens the LFO vibrato (default 1 semitone) and `wheel.to_cutoff` opens the filter (default
+  1 octave); with the wheel at rest nothing changes. File > MIDI Export Resolution writes MIDI files at the native
+  15 360 ticks per quarter note, 960 or 480 (kept in the preferences; ticks are rounded, a note keeps at least a
+  tick). Exported song and track files now carry range markers (a marker named after the range at its start and
+  one named `<name> (end)` at its end). Program changes and complete SysEx messages in an imported file are kept
+  in the clip and written back on export (bank selects already travelled as `CC 0` and `CC 32` lanes). The
+  project format stays 43: a note clip's `"programs"` and `"sysex"` are optional, written only when set, and
+  ignorable. Deferred: controller lanes without a note clip, MPE (per-note expression) lanes, a groove taken from
+  a MIDI file, editing or clearing a clip's program changes and SysEx, and reading range markers back as ranges.
 - **Track organisation follow-ups.** A folder mutes and solos by itself: the M and S buttons of a folder row set
   the folder's own flags, every track in it (and in its sub-folders) plays as muted or soloed with it, the
   tracks keep their own flags, and a track's button shows dimmed while a folder holds it. A folder is dragged by
