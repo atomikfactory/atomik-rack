@@ -211,6 +211,8 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.arrangement
             .set_automation_thinning(self.autorec.thinning);
+        self.piano_roll
+            .set_controller_thinning(self.autorec.thinning);
     }
 
     /// Whether the lane of `param` on `device` is being written by the running take (the

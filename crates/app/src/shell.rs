@@ -1974,6 +1974,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .set_automation_thinning(self.workflow.automation_thinning.fraction());
         self.core.set_auto_color(self.workflow.auto_color);
+        self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
@@ -2335,6 +2336,7 @@ impl<B: AudioBackend> Shell<B> {
             clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
             follow_clock: self.core.sink().settings().sync.follow_clock,
             sample_rate: self.core.doc().sample_rate,
+            midi_resolution: self.core.midi_resolution(),
             input_channels: self.core.doc().input_channels,
             output_channels: self.core.doc().output_channels,
             quantize: self.core.input_quantize(),
@@ -5191,6 +5193,12 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ConvertRate(rate) => {
                 self.core.convert_sample_rate(rate);
+                Vec::new()
+            }
+            AppCommand::SetMidiResolution(resolution) => {
+                self.workflow.midi_resolution = resolution;
+                self.save_workflow();
+                self.core.set_midi_resolution(resolution);
                 Vec::new()
             }
             AppCommand::InputChannels(n) => {

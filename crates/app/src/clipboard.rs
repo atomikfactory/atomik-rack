@@ -7,6 +7,7 @@
 //! holder survives New and Open inside one run (a cross-song paste). It is not shared with the
 //! operating system's clipboard (no dependency, no serialisation contract: backlog).
 
+use atomik_model::controller_edit::ControllerSnapshot;
 use atomik_model::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot};
 
 /// What the clipboard holds.
@@ -26,6 +27,8 @@ pub enum ClipboardData {
     Settings(DeviceSnapshot),
     /// Takes of a take group, for Paste Takes.
     Takes(TakeSnapshot),
+    /// Points of one controller lane of a note clip (bend, aftertouch or a CC).
+    Controllers(ControllerSnapshot),
 }
 
 /// The kind of [`ClipboardData`], for messages and enabling rules.
@@ -45,6 +48,8 @@ pub enum ClipboardKind {
     Settings,
     /// Takes of a take group.
     Takes,
+    /// Controller points of a note clip.
+    Controllers,
 }
 
 impl ClipboardKind {
@@ -58,6 +63,7 @@ impl ClipboardKind {
             ClipboardKind::Tracks => "tracks",
             ClipboardKind::Settings => "settings",
             ClipboardKind::Takes => "takes",
+            ClipboardKind::Controllers => "controller points",
         }
     }
 }
@@ -73,6 +79,7 @@ impl ClipboardData {
             ClipboardData::Tracks(_) => ClipboardKind::Tracks,
             ClipboardData::Settings(_) => ClipboardKind::Settings,
             ClipboardData::Takes(_) => ClipboardKind::Takes,
+            ClipboardData::Controllers(_) => ClipboardKind::Controllers,
         }
     }
 
@@ -86,6 +93,7 @@ impl ClipboardData {
                 s.devices.len()
             }
             ClipboardData::Takes(s) => s.takes.len(),
+            ClipboardData::Controllers(s) => s.points.len(),
         }
     }
 
@@ -101,6 +109,7 @@ impl ClipboardData {
             ClipboardData::Clips(s) => s.span,
             ClipboardData::Notes(s) => s.span,
             ClipboardData::AutomationPoints(s) => s.span,
+            ClipboardData::Controllers(s) => s.span,
             ClipboardData::Devices(_)
             | ClipboardData::Tracks(_)
             | ClipboardData::Settings(_)

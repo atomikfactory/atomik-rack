@@ -646,6 +646,7 @@ mod tests {
             clock_while_stopped: false,
             follow_clock: false,
             sample_rate: 48_000,
+            midi_resolution: crate::midi_file::MidiResolution::Native,
             input_channels: 2,
             output_channels: 2,
             quantize: crate::record::InputQuantize::OFF,

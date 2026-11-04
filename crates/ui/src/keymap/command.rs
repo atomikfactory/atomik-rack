@@ -192,6 +192,9 @@ pub const TEMPLATE_ARGS: &[&str] = &[
 ];
 /// The values of `file.new_rate` and `file.convert_rate`: the project sample rate in Hz.
 pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
+/// The values of `file.midi_resolution`: the ticks per quarter note of an exported MIDI file
+/// (`native` is the model's own 15 360).
+pub const MIDI_RESOLUTION_ARGS: &[&str] = &["native", "960", "480"];
 /// The values of `audio.input_channels`: the host inputs the project asks for.
 pub const INPUT_CHANNEL_ARGS: &[&str] = &["0", "1", "2", "4", "8", "16", "32"];
 /// The values of `audio.output_channels`: the host outputs the project asks for.
@@ -849,6 +852,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Global,
         C::Global,
     )
+    .menu(),
+    cmd(
+        "file.midi_resolution",
+        "MIDI Export Resolution",
+        G::Global,
+        C::Global,
+    )
+    .arg(MIDI_RESOLUTION_ARGS)
     .menu(),
     cmd("file.new", "New", G::Global, C::Global).menu(),
     cmd("file.new_rate", "New at Sample Rate", G::Global, C::Global)

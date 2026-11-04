@@ -751,3 +751,131 @@ fn chop_scale_and_insert_bars_are_one_undo_step_each() {
     assert!(c.undo());
     assert_eq!(c.doc().song.clip(ClipId(1)).unwrap().2.start, start);
 }
+
+// ------------------------------------------------------------------ controller points
+
+fn lane_of(c: &AppCore<RecordingSink>, kind: atomik_model::ControllerKind) -> Vec<(i64, f32)> {
+    let (_, _, clip) = c.doc().song.clip(ClipId(1)).unwrap();
+    clip.controllers
+        .iter()
+        .find(|l| l.kind == kind)
+        .map(|l| l.points.iter().map(|p| (p.tick, p.value)).collect())
+        .unwrap_or_default()
+}
+
+/// The clip of [`with_clip`] with a mod wheel lane of four held points, open in the roll with the
+/// controller area shown on the wheel lane.
+fn with_wheel_lane() -> AppCore<RecordingSink> {
+    use atomik_model::{ControllerKind, ControllerLane};
+    let mut c = with_clip();
+    let points = (0..4)
+        .map(|i| AutomationPoint {
+            tick: i * PPQ / 2,
+            value: 0.1 + 0.2 * i as f32,
+            curve: Curve::Step,
+        })
+        .collect();
+    song(
+        &mut c,
+        SongCommand::SetClipControllers {
+            clip: ClipId(1),
+            lanes: vec![ControllerLane::new(ControllerKind::Cc(1), points)],
+            merge: None,
+        },
+    );
+    open_roll(&mut c);
+    c.piano_roll_mut().set_controllers_open(true);
+    c.piano_roll_mut()
+        .set_controller_kind(atomik_model::ControllerKind::Cc(1));
+    c
+}
+
+#[test]
+fn copy_and_paste_controller_points_at_the_playhead_one_undo_step_each() {
+    use atomik_model::ControllerKind;
+    let wheel = ControllerKind::Cc(1);
+    let mut c = with_wheel_lane();
+    c.piano_roll_mut().set_controller_selection(&[1, 2]);
+    assert!(c.has_selection(Pane::PianoRoll));
+    command(&mut c, Pane::PianoRoll, "edit.copy");
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Controllers));
+    assert_eq!(c.clipboard().get().map(|d| d.len()), Some(2));
+    assert!(c.can_paste(Pane::PianoRoll));
+    let before = lane_of(&c, wheel);
+    c.transport_action(TransportAction::Locate(2 * PPQ));
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    let after = lane_of(&c, wheel);
+    assert_eq!(after.len(), before.len() + 2, "{after:?}");
+    assert!(after.contains(&(2 * PPQ, before[1].1)), "{after:?}");
+    assert!(
+        after.contains(&(2 * PPQ + PPQ / 2, before[2].1)),
+        "{after:?}"
+    );
+    // The pasted points are the selection, and the playhead moved on by their span.
+    assert_eq!(c.piano_roll().selected_controller_points(), [4, 5]);
+    assert!(c.piano_roll().controller_focus());
+    assert_eq!(c.position(), 2 * PPQ + PPQ / 2);
+    assert!(c.undo());
+    assert_eq!(lane_of(&c, wheel), before, "one step");
+}
+
+#[test]
+fn cut_removes_the_points_and_paste_maps_them_into_the_lane_shown() {
+    use atomik_model::ControllerKind;
+    let mut c = with_wheel_lane();
+    c.piano_roll_mut().set_controller_selection(&[0, 3]);
+    command(&mut c, Pane::PianoRoll, "edit.cut");
+    assert_eq!(lane_of(&c, ControllerKind::Cc(1)).len(), 2);
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Controllers));
+    // Show the volume lane (empty) and paste there: the values keep their place in the range.
+    c.piano_roll_mut()
+        .set_controller_kind(ControllerKind::Cc(7));
+    c.transport_action(TransportAction::Locate(0));
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    let volume = lane_of(&c, ControllerKind::Cc(7));
+    assert_eq!(volume.len(), 2, "{volume:?}");
+    assert!((volume[0].1 - 0.1).abs() < 0.01 && (volume[1].1 - 0.7).abs() < 0.01);
+    // A pitch bend lane takes the same points across its range -1..1.
+    c.piano_roll_mut()
+        .set_controller_kind(ControllerKind::PitchBend);
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    let bend = lane_of(&c, ControllerKind::PitchBend);
+    assert!(
+        bend.iter().all(|(_, v)| (-1.0..=1.0).contains(v)),
+        "{bend:?}"
+    );
+    assert!((bend[0].1 - (-0.8)).abs() < 0.02, "{bend:?}");
+}
+
+#[test]
+fn points_past_the_clip_are_dropped_and_a_hidden_area_refuses_the_paste() {
+    use atomik_model::ControllerKind;
+    let mut c = with_wheel_lane();
+    c.piano_roll_mut().set_controller_selection(&[0, 3]);
+    command(&mut c, Pane::PianoRoll, "edit.copy");
+    // The second copied point is a beat and a half after the first: starting a beat before the
+    // clip's end leaves only the first inside.
+    c.transport_action(TransportAction::Locate(BAR - PPQ));
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    let wheel = lane_of(&c, ControllerKind::Cc(1));
+    assert!(wheel.iter().any(|(t, _)| *t == BAR - PPQ));
+    assert!(wheel.iter().all(|(t, _)| *t < BAR), "{wheel:?}");
+    // With the area hidden the paste says why and changes nothing.
+    c.piano_roll_mut().set_controllers_open(false);
+    assert!(!c.can_paste(Pane::PianoRoll));
+    let before = lane_of(&c, ControllerKind::Cc(1));
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    assert_eq!(lane_of(&c, ControllerKind::Cc(1)), before);
+}
+
+#[test]
+fn notes_copy_when_the_notes_are_the_selection_and_points_when_the_lane_has_the_focus() {
+    let mut c = with_wheel_lane();
+    c.piano_roll_mut().set_selected_notes(&[0]);
+    command(&mut c, Pane::PianoRoll, "edit.copy");
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Notes));
+    assert!(!c.can_paste(Pane::PianoRoll) || c.clipboard().kind() == Some(ClipboardKind::Notes));
+    c.piano_roll_mut().set_controller_selection(&[0]);
+    command(&mut c, Pane::PianoRoll, "edit.copy");
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Controllers));
+}

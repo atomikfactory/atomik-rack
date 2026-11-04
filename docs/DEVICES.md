@@ -3819,7 +3819,8 @@ identically in each:
   frame of its event, so a render does not depend on how the engine cuts the blocks.
 
 The mod wheel (CC 1) and the other controllers keep the per-instrument meaning in each device's
-table; in the sampler the wheel deepens the LFO vibrato and opens the filter cutoff (see its params). Controllers an instrument does not list are ignored.
+table; in the sampler the wheel deepens the LFO vibrato and opens the filter cutoff (see its
+params). Controllers an instrument does not list are ignored.
 
 ## Third-party plugin devices: `clap.<id>` and `vst3.<id>`
 

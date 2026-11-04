@@ -122,14 +122,6 @@ impl MidiResolution {
         MidiResolution::ALL.into_iter().find(|r| r.id() == id)
     }
 
-    /// The label menus show.
-    pub fn label(self) -> String {
-        match self {
-            MidiResolution::Native => format!("{} (native)", PPQ),
-            _ => self.ppq().to_string(),
-        }
-    }
-
     /// Model ticks per file tick.
     fn divisor(self) -> i64 {
         PPQ / i64::from(self.ppq())

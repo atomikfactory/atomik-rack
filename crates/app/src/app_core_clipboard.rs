@@ -13,9 +13,10 @@
 
 use super::*;
 use crate::clipboard::{Clipboard, ClipboardData, ClipboardKind};
+use atomik_model::controller_edit::{self, ControllerSnapshot};
 use atomik_model::{
     AssetMeta, ClipContent, ClipSnapshot, DeviceSnapshot, Note, NoteSnapshot, PointSnapshot,
-    RackSlot, WorkflowCommand,
+    RackSlot, SongCommand, WorkflowCommand,
 };
 use std::collections::BTreeSet;
 
@@ -80,7 +81,9 @@ impl<S: EngineSink> AppCore<S> {
                     || self.arrangement.selected_points().is_some()
                     || self.arrangement.selected_track().is_some()
             }
-            Pane::PianoRoll => !self.piano_roll.selected_notes().is_empty(),
+            Pane::PianoRoll => {
+                !self.piano_roll.selected_notes().is_empty() || self.piano_roll.controller_focus()
+            }
             _ => false,
         }
     }
@@ -100,6 +103,11 @@ impl<S: EngineSink> AppCore<S> {
             ) => !self.clipboard.is_empty(),
             (Pane::PianoRoll, Some(ClipboardKind::Notes)) => {
                 !self.clipboard.is_empty() && self.piano_roll.clip().is_some()
+            }
+            (Pane::PianoRoll, Some(ClipboardKind::Controllers)) => {
+                !self.clipboard.is_empty()
+                    && self.piano_roll.clip().is_some()
+                    && self.piano_roll.controllers_open()
             }
             _ => false,
         }
@@ -168,6 +176,19 @@ impl<S: EngineSink> AppCore<S> {
             }
             Pane::PianoRoll => {
                 let id = self.piano_roll.clip().ok_or_else(nothing)?;
+                // Points selected in the controller area are what Copy takes while the area has
+                // the focus (a press in its lane); otherwise the selected notes.
+                if self.piano_roll.controller_focus() {
+                    let (_, c) = doc.song.clip_or_take(id).ok_or_else(nothing)?;
+                    let indices = self.piano_roll.selected_controller_points();
+                    return ControllerSnapshot::capture(
+                        &c.controllers,
+                        self.piano_roll.controller_kind(),
+                        &indices,
+                    )
+                    .map(ClipboardData::Controllers)
+                    .ok_or_else(nothing);
+                }
                 let indices = self.piano_roll.selected_notes();
                 if indices.is_empty() {
                     return Err(nothing());
@@ -259,6 +280,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.advance_playhead(span);
                 Ok(())
             }
+            (Pane::PianoRoll, ClipboardData::Controllers(s)) => self.paste_controllers(&s),
             (Pane::Rack, held) => foreign(
                 held.kind(),
                 "click the arrangement or the piano roll to paste them",
@@ -274,6 +296,42 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => Err("This pane has no clipboard".into()),
         }
+    }
+
+    /// Lays copied controller points into the lane the roll shows, from the playhead (the clip's
+    /// start when the playhead is outside it): one undo step, and the pasted points are the
+    /// selection afterwards.
+    fn paste_controllers(&mut self, snapshot: &ControllerSnapshot) -> Result<(), String> {
+        let clip = self
+            .piano_roll
+            .clip()
+            .ok_or_else(|| "Open a clip to paste the points into".to_string())?;
+        if !self.piano_roll.controllers_open() {
+            return Err("Show the controller area to paste the points into its lane".into());
+        }
+        let kind = self.piano_roll.controller_kind();
+        let at_song = self.paste_tick_in(clip);
+        let (_, c) = self
+            .doc()
+            .song
+            .clip_or_take(clip)
+            .ok_or_else(|| "The clip is gone".to_string())?;
+        // Content ticks: the model's own mapping for a paste (the clip's offset shifts them), and
+        // the content a looped clip plays ends at its loop.
+        let at = at_song - c.start + c.offset;
+        let limit = c.loop_length.unwrap_or(c.offset + c.length);
+        let (lanes, picked) =
+            controller_edit::paste_points(&c.controllers, kind, at, snapshot, limit)
+                .ok_or_else(|| "Nothing of the copied points falls inside the clip".to_string())?;
+        self.apply_command(Command::Song(SongCommand::SetClipControllers {
+            clip,
+            lanes,
+            merge: None,
+        }))
+        .map_err(|_| String::new())?;
+        self.piano_roll.set_controller_selection(&picked);
+        self.advance_playhead(snapshot.span);
+        Ok(())
     }
 
     /// The song tick a note paste starts at: the playhead when it is inside the clip, else the
