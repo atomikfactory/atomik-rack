@@ -2,8 +2,10 @@
 //! goniometer and Lissajous mapping of a sample pair, and the readout texts.
 
 use atomik_ui::analyser::{
-    PLOT_HI_HZ, PLOT_LO_HZ, ScopeMode, balance_text, correlation_text, freq_pos, freq_x,
-    grid_step_db, hz_text, level_text, level_y, peak_text, scope_point, width_text,
+    LOUDNESS_WINDOW_S, PLOT_HI_HZ, PLOT_LO_HZ, SPECTROGRAM_STEPS, ScopeMode, balance_text,
+    band_centre_hz, cell_intensity, correlation_text, freq_pos, freq_x, grid_step_db, hz_text,
+    level_text, level_y, loudness_runs, loudness_y, lra_text, peak_text, scope_point,
+    spectrogram_step, target_text, width_text,
 };
 use vello::kurbo::Rect;
 
@@ -103,4 +105,89 @@ fn the_readout_texts_are_short_and_stable() {
     assert_eq!(balance_text(0.123), "R 12%");
     assert_eq!(width_text(0.5), "50%");
     assert_eq!(width_text(0.0), "0%");
+}
+
+#[test]
+fn the_band_centres_are_the_dsp_centres() {
+    for (i, centre) in atomik_dsp::spectrum::band_centres().into_iter().enumerate() {
+        assert!(
+            near(band_centre_hz(i) / f64::from(centre), 1.0, 1e-4),
+            "{i}"
+        );
+    }
+}
+
+#[test]
+fn a_spectrogram_cell_reads_louder_the_closer_it_is_to_zero_db() {
+    use atomik_dsp::spectrogram::quantise;
+    assert!(near(f64::from(cell_intensity(0, 80.0)), 0.0, 0.0));
+    assert!(near(
+        f64::from(cell_intensity(quantise(0.0), 80.0)),
+        1.0,
+        1e-6
+    ));
+    assert!(near(
+        f64::from(cell_intensity(quantise(-40.0), 80.0)),
+        0.5,
+        1e-6
+    ));
+    // Quieter than the range: nothing.
+    assert!(near(
+        f64::from(cell_intensity(quantise(-90.0), 80.0)),
+        0.0,
+        0.0
+    ));
+    // The palette: nothing for the floor, the first step just above it, the last at the top.
+    assert_eq!(spectrogram_step(0.0), 0);
+    assert_eq!(spectrogram_step(0.03), 1);
+    assert_eq!(spectrogram_step(1.0), SPECTROGRAM_STEPS);
+    let mut last = 0;
+    for i in 0..=100 {
+        let step = spectrogram_step(i as f32 / 100.0);
+        assert!(step >= last && step <= SPECTROGRAM_STEPS);
+        last = step;
+    }
+}
+
+#[test]
+fn the_loudness_graph_puts_the_target_a_little_below_the_top() {
+    let plot = Rect::new(0.0, 10.0, 300.0, 52.0);
+    // 12 LU above the target at the top, 30 below at the bottom: 42 LU over 42 px.
+    assert!(near(loudness_y(plot, -2.0, -14.0), 10.0, 1e-4));
+    assert!(near(loudness_y(plot, -14.0, -14.0), 22.0, 1e-4));
+    assert!(near(loudness_y(plot, -44.0, -14.0), 52.0, 1e-4));
+    assert!(near(loudness_y(plot, 0.0, -14.0), 10.0, 0.0));
+    assert!(near(loudness_y(plot, -90.0, -14.0), 52.0, 0.0));
+    // The target moves the whole graph.
+    assert!(near(loudness_y(plot, -23.0, -23.0), 22.0, 1e-4));
+}
+
+#[test]
+fn the_loudness_runs_end_at_the_right_edge_and_break_at_silence() {
+    let plot = Rect::new(0.0, 0.0, 299.0, 42.0);
+    let runs = loudness_runs(plot, &[-20.0, -20.0, -120.0, -18.0, -18.0, -18.0], -14.0);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].len(), 2);
+    assert_eq!(runs[1].len(), 3);
+    // One second is one pixel here (299 px for 300 s); the newest is at the right edge.
+    assert!(near(runs[1][2].0, 299.0, 1e-9));
+    assert!(near(runs[1][1].0, 298.0, 1e-9));
+    assert!(near(runs[0][1].0, 295.0, 1e-9));
+    assert!(near(runs[0][0].0, 294.0, 1e-9));
+    // Only the last five minutes are drawn.
+    let long = vec![-20.0f32; LOUDNESS_WINDOW_S + 50];
+    let runs = loudness_runs(plot, &long, -14.0);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].len(), LOUDNESS_WINDOW_S);
+    assert!(near(runs[0][0].0, 0.0, 1e-9));
+    assert!(loudness_runs(plot, &[], -14.0).is_empty());
+}
+
+#[test]
+fn the_loudness_texts_are_short_and_stable() {
+    assert_eq!(lra_text(Some(6.24)), "LRA 6.2 LU");
+    assert_eq!(lra_text(Some(0.0)), "LRA 0.0 LU");
+    assert_eq!(lra_text(None), "LRA --");
+    assert_eq!(target_text(-14.0), "TARGET -14");
+    assert_eq!(target_text(-23.4), "TARGET -23");
 }

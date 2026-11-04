@@ -183,6 +183,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
             crate::analyser_paint::SpectrumLook {
                 range_db: p.get("range").clamp(30.0, 120.0),
                 hold: p.get("hold") > 0.0,
+                spectrogram: p.get("mode").round() >= 2.0,
                 bypassed: crate::paint::bypassed(info),
             },
         ),
@@ -195,6 +196,8 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
                 mode: crate::analyser::ScopeMode::of_choice(p.get("scope")),
                 gain_db: p.get("scope_gain"),
                 loudness: p.on("loudness"),
+                history: p.on("loudness_view"),
+                target: p.get("target"),
                 bypassed: crate::paint::bypassed(info),
             },
         ),

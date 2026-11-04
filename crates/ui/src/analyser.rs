@@ -3,9 +3,10 @@
 //! plot, how a pair of samples becomes a point of the goniometer, and the texts of the readouts.
 //! Nothing here touches a canvas, a clock or the document (`tests/analyser_maths.rs`).
 //!
-//! The analysis itself (FFT, averaging, peak hold, decimation of the scope frames) is done by
-//! the app from the device's scope tap and handed over as an [`AnalyserData`]; the numbers the
-//! phase meter publishes arrive as ordinary meter values (`crate::fx::update_display`).
+//! The analysis itself (FFT, averaging, peak hold, decimation of the scope frames, the
+//! spectrogram image, the reference curve, the loudness history) is done by the app from the
+//! device's scope tap and handed over as an [`AnalyserData`]; the numbers the phase meter
+//! publishes arrive as ordinary meter values (`crate::fx::update_display`).
 
 use vello::kurbo::Rect;
 
@@ -32,6 +33,24 @@ pub struct AnalyserData {
     pub peak_hz: f32,
     /// Level of the loudest bin in dB.
     pub peak_db: f32,
+    /// The spectrogram image, `spectrogram_rows` rows of `spectrogram_cols` cells, the newest
+    /// row first ([`atomik_dsp::spectrogram`] cells). Empty outside the spectrogram mode.
+    pub spectrogram: Vec<u8>,
+    /// Columns of the spectrogram image.
+    pub spectrogram_cols: usize,
+    /// Rows of the spectrogram image.
+    pub spectrogram_rows: usize,
+    /// Seconds of audio the spectrogram image spans.
+    pub spectrogram_span_s: f32,
+    /// The reference curve: the 31 one-third-octave band levels in dB, already shifted and
+    /// tilted for display, [`atomik_dsp::spectrum::FLOOR_DB`] for a band without a level. Empty
+    /// without a reference.
+    pub reference: Vec<f32>,
+    /// The short-term loudness history of the loudness meter, one LUFS value a second, oldest
+    /// first.
+    pub loudness_history: Vec<f32>,
+    /// The loudness range (LRA) of the programme since the last reset, LU.
+    pub lra: Option<f32>,
     /// Left channel of the scope frames, oldest first.
     pub scope_l: Vec<f32>,
     /// Right channel of the scope frames, oldest first.
@@ -112,6 +131,90 @@ pub fn band_edges(i: usize) -> (f64, f64) {
     let centre = 1000.0 * 10f64.powf((i as f64 - 17.0) / 10.0);
     let half = 10f64.powf(0.05);
     (centre / half, centre * half)
+}
+
+/// The centre frequency in Hz of one-third-octave band `i` (the geometric mean of its edges).
+pub fn band_centre_hz(i: usize) -> f64 {
+    let (lo, hi) = band_edges(i);
+    (lo * hi).sqrt()
+}
+
+/// How intense a spectrogram cell reads, `0` (silence or below the range) to `1` (0 dB), for a
+/// plot that shows `range_db` below 0 dB.
+pub fn cell_intensity(cell: u8, range_db: f32) -> f32 {
+    if cell == 0 {
+        return 0.0;
+    }
+    let db = atomik_dsp::spectrogram::level_db(cell);
+    (1.0 + db / range_db.max(1.0)).clamp(0.0, 1.0)
+}
+
+/// Levels the spectrogram palette steps through (a cell is drawn in one of this many colours).
+pub const SPECTROGRAM_STEPS: usize = 14;
+
+/// The palette step `1..=SPECTROGRAM_STEPS` of an intensity, `0` for none (nothing is drawn).
+pub fn spectrogram_step(intensity: f32) -> usize {
+    if intensity <= 0.02 {
+        0
+    } else {
+        ((intensity * SPECTROGRAM_STEPS as f32).ceil() as usize).clamp(1, SPECTROGRAM_STEPS)
+    }
+}
+
+/// Seconds of the loudness history the graph shows (the newest at the right edge).
+pub const LOUDNESS_WINDOW_S: usize = 300;
+/// LU the loudness graph shows above its target line.
+pub const LOUDNESS_ABOVE_LU: f32 = 12.0;
+/// LU the loudness graph shows below its target line.
+pub const LOUDNESS_BELOW_LU: f32 = 30.0;
+
+/// Plot y of a loudness in LUFS for a graph whose target line is at `target`: the top edge is
+/// [`LOUDNESS_ABOVE_LU`] above it, the bottom [`LOUDNESS_BELOW_LU`] below it; values outside are
+/// clamped to the plot.
+pub fn loudness_y(plot: Rect, lufs: f32, target: f32) -> f64 {
+    let top = target + LOUDNESS_ABOVE_LU;
+    let t = f64::from(((top - lufs) / (LOUDNESS_ABOVE_LU + LOUDNESS_BELOW_LU)).clamp(0.0, 1.0));
+    plot.y0 + t * plot.height()
+}
+
+/// The loudness graph's polylines: the history split into runs of audible values (a value at or
+/// below -70 LUFS is silence and breaks the line), each as `(x, y)` points in the plot with the
+/// newest value at the right edge and one value per `plot.width() / LOUDNESS_WINDOW_S`.
+pub fn loudness_runs(plot: Rect, history: &[f32], target: f32) -> Vec<Vec<(f64, f64)>> {
+    let shown = &history[history.len().saturating_sub(LOUDNESS_WINDOW_S)..];
+    let step = plot.width() / (LOUDNESS_WINDOW_S - 1) as f64;
+    let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut open = false;
+    for (i, v) in shown.iter().enumerate() {
+        if *v <= -70.0 {
+            open = false;
+            continue;
+        }
+        let x = plot.x1 - (shown.len() - 1 - i) as f64 * step;
+        let point = (x, loudness_y(plot, *v, target));
+        if open {
+            if let Some(run) = runs.last_mut() {
+                run.push(point);
+            }
+        } else {
+            runs.push(vec![point]);
+            open = true;
+        }
+    }
+    runs
+}
+
+/// The loudness range readout: `LRA 6.2 LU`, or `LRA --` before there is a range.
+pub fn lra_text(lra: Option<f32>) -> String {
+    match lra {
+        Some(v) => format!("LRA {v:.1} LU"),
+        None => "LRA --".to_string(),
+    }
+}
+
+/// The target readout of the loudness graph: `TARGET -14`.
+pub fn target_text(target: f32) -> String {
+    format!("TARGET {target:.0}")
 }
 
 /// Spacing of the horizontal grid lines for a range: 5, 10 or 20 dB.

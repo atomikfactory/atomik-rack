@@ -7,8 +7,10 @@
 //! empty. A bypassed device shows what it last saw, dimmed, with `BYPASSED` over it.
 
 use crate::analyser::{
-    AnalyserData, ScopeMode, balance_text, band_edges, correlation_text, freq_x, grid_step_db,
-    level_text, level_y, peak_text, scope_point, width_text,
+    AnalyserData, LOUDNESS_ABOVE_LU, LOUDNESS_BELOW_LU, SPECTROGRAM_STEPS, ScopeMode, balance_text,
+    band_centre_hz, band_edges, cell_intensity, correlation_text, freq_x, grid_step_db, level_text,
+    level_y, loudness_runs, loudness_y, lra_text, peak_text, scope_point, spectrogram_step,
+    target_text, width_text,
 };
 use crate::autolayout::FxPanel;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
@@ -34,6 +36,8 @@ pub struct SpectrumLook {
     pub range_db: f32,
     /// Peak hold is on (the peaks are drawn).
     pub hold: bool,
+    /// The spectrogram mode: the image replaces the trace.
+    pub spectrogram: bool,
     /// Frozen: the device is bypassed.
     pub bypassed: bool,
 }
@@ -47,6 +51,10 @@ pub struct PhaseLook {
     pub gain_db: f32,
     /// The loudness readouts are on.
     pub loudness: bool,
+    /// The loudness box shows the history graph instead of the readouts.
+    pub history: bool,
+    /// The target loudness in LUFS (the line of the history graph).
+    pub target: f32,
     /// Frozen: the device is bypassed.
     pub bypassed: bool,
 }
@@ -89,7 +97,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
     // Grid: levels every 5, 10 or 20 dB, frequencies every decade step.
     let step = grid_step_db(look.range_db);
     let mut db = 0.0f32;
-    while db <= look.range_db + 0.01 {
+    while db <= look.range_db + 0.01 && !look.spectrogram {
         let y = level_y(r, -db, look.range_db).round() + 0.5;
         let a = if db == 0.0 { 0.2 } else { 0.06 };
         c.stroke_with(
@@ -98,6 +106,9 @@ pub fn spectrum<C: Canvas + ?Sized>(
             alpha(theme.ink, a),
         );
         db += step;
+    }
+    if look.spectrogram {
+        spectrogram_image(c, theme, r, data, look, info.accent, dim);
     }
     for f in GRID_HZ {
         let x = freq_x(r, f).round() + 0.5;
@@ -109,7 +120,9 @@ pub fn spectrum<C: Canvas + ?Sized>(
         );
     }
     let n = data.trace.len();
-    if n > 0 && data.bands {
+    if look.spectrogram {
+        // The image is drawn under the grid above.
+    } else if n > 0 && data.bands {
         for (i, v) in data.trace.iter().enumerate() {
             let (lo, hi) = band_edges(i);
             let (xa, xb) = (freq_x(r, lo), freq_x(r, hi));
@@ -164,6 +177,9 @@ pub fn spectrum<C: Canvas + ?Sized>(
             c.stroke_with(line(&data.peaks), 1.0, alpha(theme.ink, 0.45 * dim));
         }
     }
+    if !look.spectrogram {
+        reference_line(c, theme, r, data, look.range_db, dim);
+    }
     c.pop_clip();
     // Axis labels.
     for (f, label) in [
@@ -187,8 +203,26 @@ pub fn spectrum<C: Canvas + ?Sized>(
             None,
         );
     }
+    if look.spectrogram {
+        small(
+            c,
+            theme,
+            "NOW",
+            pt(r.x0 - 4.0, r.y0 + 8.0),
+            Align::End,
+            None,
+        );
+        small(
+            c,
+            theme,
+            format!("-{:.0}s", data.spectrogram_span_s.round()),
+            pt(r.x0 - 4.0, r.y1 - 1.0),
+            Align::End,
+            None,
+        );
+    }
     let mut db = 0.0f32;
-    while db <= look.range_db + 0.01 {
+    while db <= look.range_db + 0.01 && !look.spectrogram {
         let text = if db == 0.0 {
             "0".to_string()
         } else {
@@ -240,6 +274,93 @@ pub fn spectrum<C: Canvas + ?Sized>(
             Align::Center,
             None,
         );
+    }
+}
+
+/// The colour of palette step `step` (`1..=SPECTROGRAM_STEPS`) of the spectrogram: from the
+/// display's own dark through the device accent to a bright top.
+fn spectrogram_color(theme: &Theme, accent: Color, step: usize, dim: f32) -> Color {
+    let t = step as f32 / SPECTROGRAM_STEPS as f32;
+    let c = if t < 0.6 {
+        mix(theme.lcd, accent, t / 0.6)
+    } else {
+        mix(accent, theme.ink, (t - 0.6) / 0.4 * 0.7)
+    };
+    alpha(c, dim)
+}
+
+/// The spectrogram image: one row of cells per period, the newest at the top, a cell column per
+/// column of the fine trace. Runs of equal colour in a row are one rectangle.
+fn spectrogram_image<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    data: &AnalyserData,
+    look: SpectrumLook,
+    accent: Color,
+    dim: f32,
+) {
+    let (cols, rows) = (data.spectrogram_cols, data.spectrogram_rows);
+    if cols == 0 || rows == 0 || data.spectrogram.len() < cols * rows {
+        return;
+    }
+    let (cw, rh) = (r.width() / cols as f64, r.height() / rows as f64);
+    let palette: Vec<Color> = (1..=SPECTROGRAM_STEPS)
+        .map(|s| spectrogram_color(theme, accent, s, dim))
+        .collect();
+    for row in 0..rows {
+        let cells = &data.spectrogram[row * cols..(row + 1) * cols];
+        let (y0, y1) = (r.y0 + row as f64 * rh, r.y0 + (row + 1) as f64 * rh + 0.5);
+        let mut col = 0;
+        while col < cols {
+            let step = spectrogram_step(cell_intensity(cells[col], look.range_db));
+            let mut end = col + 1;
+            while end < cols && spectrogram_step(cell_intensity(cells[end], look.range_db)) == step
+            {
+                end += 1;
+            }
+            if step > 0 {
+                c.fill_with(
+                    Rect::new(
+                        r.x0 + col as f64 * cw,
+                        y0,
+                        (r.x0 + end as f64 * cw + 0.5).min(r.x1),
+                        y1.min(r.y1),
+                    ),
+                    palette[step - 1],
+                );
+            }
+            col = end;
+        }
+    }
+}
+
+/// The reference curve over the plot: a line through the band levels at the band centres.
+fn reference_line<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    data: &AnalyserData,
+    range_db: f32,
+    dim: f32,
+) {
+    let mut path = BezPath::new();
+    let mut pen_down = false;
+    for (i, v) in data.reference.iter().enumerate() {
+        if *v <= -150.0 {
+            pen_down = false;
+            continue;
+        }
+        let p = pt(freq_x(r, band_centre_hz(i)), level_y(r, *v, range_db));
+        if pen_down {
+            path.line_to(p);
+        } else {
+            path.move_to(p);
+            pen_down = true;
+        }
+    }
+    if !path.elements().is_empty() {
+        c.stroke_with(path, 1.5, alpha(theme.warning, 0.9 * dim));
     }
 }
 
@@ -503,6 +624,13 @@ pub fn phase_meter<C: Canvas + ?Sized>(
     // Loudness and peaks.
     let ao = fx.aux;
     lcd(c, theme, ao);
+    if look.history {
+        loudness_history(c, theme, ao, info, look, dim);
+        if look.bypassed {
+            bypassed_banner(c, theme, fx.plot);
+        }
+        return;
+    }
     let on = look.loudness;
     let text = |v: f32, enabled: bool| {
         if enabled {
@@ -576,6 +704,128 @@ pub fn phase_meter<C: Canvas + ?Sized>(
             None,
         );
     }
+}
+
+/// The loudness box in its history form: the short-term loudness of the last five minutes with
+/// a line at the target, and below it the integrated loudness, the loudness range and the target.
+fn loudness_history<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    ao: Rect,
+    info: &PanelInfo<'_>,
+    look: PhaseLook,
+    dim: f32,
+) {
+    let data: &AnalyserData = info.analyser;
+    let on = look.loudness;
+    let g = Rect::new(ao.x0 + 6.0, ao.y0 + 14.0, ao.x1 - 22.0, ao.y1 - 22.0);
+    small(
+        c,
+        theme,
+        "SHORT-TERM",
+        pt(ao.x0 + 7.0, ao.y0 + 9.0),
+        Align::Start,
+        None,
+    );
+    let now = if on {
+        level_text(meter(info, phase::SHORT_TERM, -120.0))
+    } else {
+        "--".to_string()
+    };
+    c.text(
+        &TextRun::new(
+            format!("{now} LUFS"),
+            pt(ao.x1 - 7.0, ao.y0 + 10.0),
+            9.0,
+            alpha(theme.text, dim),
+        )
+        .align(Align::End)
+        .weight(700),
+    );
+    c.fill_with(g, alpha(theme.ink, 0.04));
+    c.push_clip(&g.into());
+    // A line every 6 LU from the target, the target brighter and in the warning colour.
+    let mut offset = -LOUDNESS_BELOW_LU + 6.0;
+    while offset < LOUDNESS_ABOVE_LU {
+        if offset.abs() > 0.01 {
+            let y = loudness_y(g, look.target + offset, look.target).round() + 0.5;
+            c.stroke_with(
+                Line::new(pt(g.x0, y), pt(g.x1, y)),
+                1.0,
+                alpha(theme.ink, 0.06),
+            );
+        }
+        offset += 6.0;
+    }
+    let trace_color = alpha(mix(info.accent, theme.ink, 0.3), dim);
+    if on {
+        for run in loudness_runs(g, &data.loudness_history, look.target) {
+            // A lone second is drawn as a dot (a line of no length shows nothing).
+            if let [(x, y)] = run[..] {
+                c.fill_with(Rect::new(x - 1.0, y - 1.0, x + 1.0, y + 1.0), trace_color);
+                continue;
+            }
+            let mut path = BezPath::new();
+            for (i, (x, y)) in run.iter().enumerate() {
+                if i == 0 {
+                    path.move_to(pt(*x, *y));
+                } else {
+                    path.line_to(pt(*x, *y));
+                }
+            }
+            c.stroke_with(path, 1.5, trace_color);
+        }
+    }
+    let ty = loudness_y(g, look.target, look.target).round() + 0.5;
+    c.stroke_with(
+        Line::new(pt(g.x0, ty), pt(g.x1, ty)),
+        1.0,
+        alpha(theme.warning, 0.9 * dim),
+    );
+    c.pop_clip();
+    small(
+        c,
+        theme,
+        format!("{:.0}", look.target),
+        pt(g.x1 + 3.0, ty + 2.5),
+        Align::Start,
+        Some(alpha(theme.warning, dim)),
+    );
+    // The foot: integrated loudness, range and target.
+    let foot = ao.y1 - 7.0;
+    let integrated = if on {
+        level_text(meter(info, phase::INTEGRATED, -120.0))
+    } else {
+        "--".to_string()
+    };
+    small(
+        c,
+        theme,
+        format!("INT {integrated}"),
+        pt(ao.x0 + 7.0, foot),
+        Align::Start,
+        None,
+    );
+    small(
+        c,
+        theme,
+        if on {
+            lra_text(data.lra)
+        } else {
+            "LRA --".to_string()
+        },
+        pt(ao.center().x, foot),
+        Align::Center,
+        None,
+    );
+    small(
+        c,
+        theme,
+        target_text(look.target),
+        pt(ao.x1 - 7.0, foot),
+        Align::End,
+        Some(alpha(theme.warning, dim)),
+    );
 }
 
 /// A plain horizontal fill from the left (`fill` 0..=1).
