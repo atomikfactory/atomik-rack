@@ -353,6 +353,9 @@ pub struct PianoRollView {
     clip: Option<Clip>,
     /// The document revision and clip id [`Self::sync_at`] last read the clip at.
     clip_rev: Option<(u64, Option<ClipId>)>,
+    /// The parts of the open clip a later clip of its lane hides (content ticks, sorted): its
+    /// notes there do not play and are drawn dimmed.
+    masked: Vec<(i64, i64)>,
     /// The revision of the document the host hands the next calls (see [`Self::set_doc_revision`]).
     doc_rev: Option<u64>,
     device: Option<DeviceKey>,
@@ -395,6 +398,36 @@ pub struct PianoRollView {
     playhead: i64,
     focused: bool,
     repaint: bool,
+}
+
+/// The parts of clip `id` that a later-starting clip of its lane hides, in content ticks (empty
+/// for a take, a muted or a looped clip: those are not windowed by the lane's overlap rule).
+fn masked_spans(song: &atomik_model::Song, id: ClipId) -> Vec<(i64, i64)> {
+    let Some((track, lane, clip)) = song.clip(id) else {
+        return Vec::new();
+    };
+    if clip.muted || clip.loop_length.is_some() || !clip.content.is_notes() {
+        return Vec::new();
+    }
+    let audible: Vec<(i64, i64)> = atomik_model::song::audible_spans(&track.lanes[lane])
+        .into_iter()
+        .filter(|(c, _, _)| *c == id)
+        .map(|(_, a, b)| (a, b))
+        .collect();
+    let mut out = Vec::new();
+    let mut at = clip.start;
+    for (a, b) in audible {
+        if a > at {
+            out.push((at, a));
+        }
+        at = at.max(b);
+    }
+    if at < clip.end() {
+        out.push((at, clip.end()));
+    }
+    out.into_iter()
+        .map(|(a, b)| (a - clip.start + clip.offset, b - clip.start + clip.offset))
+        .collect()
 }
 
 impl PianoRollView {
@@ -453,6 +486,7 @@ impl PianoRollView {
             vp: ViewportState::new(),
             clip_id: None,
             clip_rev: None,
+            masked: Vec::new(),
             doc_rev: None,
             clip: None,
             device: None,
@@ -1124,6 +1158,11 @@ impl PianoRollView {
         self.clip_rev = revision.map(|rev| (rev, Some(id)));
         // A take of a take group opens like a clip (its edits go to the take).
         let found = doc.song.clip_or_take(id);
+        let masked = masked_spans(&doc.song, id);
+        if masked != self.masked {
+            self.masked = masked;
+            self.repaint = true;
+        }
         // The clip grid counts content ticks from the clip start: the meter in effect there.
         let meter = Meter::at(&doc.song, found.map_or(0, |(_, c)| c.start));
         // Compared in place: the clip (every note and controller lane) is cloned only when it
@@ -3558,6 +3597,20 @@ impl PianoRollView {
                 st.loop_on.with_alpha(0.6),
             );
         }
+        for &(a, b) in &self.masked {
+            let (x0, x1) = (
+                self.axis.tick_to_x(a).max(g.x0),
+                self.axis.tick_to_x(b).min(g.x1),
+            );
+            if x0 < x1 {
+                sp::rect(c, Rect::new(x0, g.y0, x1, g.y1), st.outside);
+            }
+        }
+        // Where the clip does not sound: before its first and after its last played tick, and
+        // where a later clip hides it. A note is drawn there too, dimmed (its tail past the end
+        // is shown, it just does not play).
+        let mut silent: Vec<(i64, i64)> = vec![(i64::MIN / 4, a), (z, i64::MAX / 4)];
+        silent.extend(self.masked.iter().copied());
         for (i, n) in self.notes().iter().enumerate() {
             let r = self.rect_of(n);
             if r.x1 < g.x0 || r.x0 > g.x1 || r.y1 < g.y0 || r.y0 > g.y1 {
@@ -3589,6 +3642,16 @@ impl PianoRollView {
                 (false, false) => (1.0, st.base.bevel_dark),
             };
             c.stroke_with(rr, w, col);
+            for &(sa, sb) in &silent {
+                let (x0, x1) = (
+                    self.axis.tick_to_x(sa).clamp(r.x0, r.x1),
+                    self.axis.tick_to_x(sb).clamp(r.x0, r.x1),
+                );
+                if x0 < x1 {
+                    let veil = Rect::new(x0, r.y0, x1, r.y1);
+                    c.fill_with(veil, st.lane.with_alpha(0.62));
+                }
+            }
         }
         if let Drag::Band { start, pos, .. } = &self.drag {
             let r = Rect::from_points(*start, *pos);
