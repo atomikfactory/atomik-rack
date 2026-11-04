@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Audio to notes follow-ups: pitch bend kept as a lane, several clips at once, progress and cancel, whole long
+  clips, and drum kits with key maps.** With Keep pitch bend on (the default; a row of the Audio to Notes panel) a
+  pitched note keeps how the voice moves inside it: the new note clip gets a pitch-bend lane that follows the
+  notes (scaled for the default bend range of 2 semitones, each note's curve starting with the note and holding
+  until the next one, the bend recentred between notes), where before the pitch was rounded to the semitone and the
+  rest lost. Every selected audio clip is extracted now, one after the other, each into a note clip of its own on
+  its own new track (or on the selected note track) and each one undo step. The analysis reads the whole of a clip,
+  whatever its length, a minute of audio at a time (it was cut at ten minutes and read the clip into memory at
+  once), so memory no longer grows with the clip; velocities are judged against the loudest note of the whole
+  clip. The status line counts the percent while it runs (with the clip number when there are several), and the
+  Audio to Notes panel opened meanwhile shows a bar and a CANCEL button that stops the work within a minute of
+  audio and adds nothing for the clip it was on. In Drums mode the new Drum kit row can tell three toms and a
+  crash from the kick and the hats (a tom holds its pitch after the hit where a kick sweeps down; a hat that rings
+  for 600 ms is a crash), and the new Drum keys row writes the drums on General MIDI keys or on the pads in a row
+  from the first pad of the drum machine (kick, snare, closed hat, open hat, low, mid and high tom, crash). The
+  MCP tool `session_audio_notes` takes `keep_bend`, `kit` and `drum_keys` and returns `bend_points`. No project
+  format change.
 - **Freeze and bounce follow-ups: bounce a time range, and render a frozen track again.** Track > Bounce Range in
   Place renders a time range instead of whole clips: the range selected on a lane of a track, or else the range
   between the locators on each selected track that plays a note or audio clip in it. Everything the track plays in
