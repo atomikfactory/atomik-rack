@@ -560,7 +560,9 @@ fn song_input_inner(
                         None => {
                             let (key, asset) = assets.get_key_value(r.asset.as_str())?;
                             // Streamed assets keep playing unwarped until the buffer is ready.
-                            if let (true, Some(job), false) = (interim, &r.warp, asset.is_stream())
+                            // A reversed clip plays its asset backwards, unwarped, meanwhile.
+                            if let (true, Some(job), false, false) =
+                                (interim, &r.warp, asset.is_stream(), r.reverse)
                             {
                                 let k = job.key();
                                 let at =

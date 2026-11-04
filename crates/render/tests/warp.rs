@@ -544,3 +544,118 @@ fn the_live_song_plays_an_unready_warp_through_its_time_map_and_the_bounce_does_
     assert_eq!(done.audio[0].regions[0].warp, None);
     assert!(done.audio[0].warp_maps.is_empty());
 }
+
+/// `put` with the clip played backwards.
+fn put_reversed(d: &mut Document, asset: &str, start: i64, length: i64, warp: WarpSettings) {
+    put(d, asset, start, length, warp);
+    let registry = default_registry();
+    let id = d.last_clip_id().unwrap();
+    let mut a = match &d.doc().song.clip(id).unwrap().2.content {
+        atomik_model::ClipContent::Audio(a) => a.clone(),
+        other => panic!("{other:?}"),
+    };
+    a.reverse = true;
+    d.apply(
+        Command::Song(SongCommand::SetAudioClip {
+            id,
+            start,
+            length,
+            muted: false,
+            content: a,
+            merge: None,
+        }),
+        &registry,
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_reversed_warped_clip_plays_the_stretched_audio_backwards() {
+    // A drum loop at 100 BPM squeezed to 120: the reversed clip is the warped one turned around.
+    for mode in [WarpMode::Beats, WarpMode::Tonal] {
+        let asset = clicks(BEAT * 6 / 5, 4 * BEAT * 6 / 5);
+        let forward = song("rev-fwd", &asset, |d, a| {
+            put(d, a, 0, 4 * PPQ, on(100.0, mode))
+        });
+        let backward = song("rev-back", &asset, |d, a| {
+            put_reversed(d, a, 0, 4 * PPQ, on(100.0, mode));
+        });
+        let f = render(&forward, 512, 0).channels[0].clone();
+        let b = render(&backward, 512, 0).channels[0].clone();
+        let clip = 96_000;
+        let peak = f.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(peak > 0.01, "{mode:?}: silent");
+        // The console is linear and the fades are off, so the bounce is the exact mirror (the
+        // clip's last frame is the first one of the reversed clip).
+        let worst = (0..clip)
+            .map(|i| (b[i] - f[clip - 1 - i]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            worst < peak * 1e-3,
+            "{mode:?}: mirror error {worst} of {peak}"
+        );
+        // It is not the forward render.
+        let same = (0..clip)
+            .map(|i| (b[i] - f[i]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            same > peak * 0.1,
+            "{mode:?}: the reversed clip equals the forward one"
+        );
+        // Same length: silent after the clip.
+        assert!(rms(&b[clip + 2000..clip + 8000]) < 0.01);
+    }
+}
+
+#[test]
+fn a_reversed_clip_can_be_transposed_without_changing_its_length() {
+    let s = song("rev-transpose", &sine(440.0, 96_000), |d, a| {
+        let w = WarpSettings {
+            transpose_cents: 1200,
+            mode: WarpMode::Tonal,
+            ..WarpSettings::default()
+        };
+        put_reversed(d, a, 0, 4 * PPQ, w);
+    });
+    let l = &render(&s, 512, 0).channels[0].clone();
+    assert!(rms(&l[10_000..90_000]) > 0.05);
+    assert!(tone(l, 20_000, 80_000, 880.0) > 8.0 * tone(l, 20_000, 80_000, 440.0));
+    assert!(rms(&l[100_000..110_000]) < 0.01);
+}
+
+#[test]
+fn warped_reversed_bounces_are_bit_identical_across_runs_blocks_and_workers() {
+    let s = song("rev-det", &clicks(BEAT / 2, 6 * BEAT), |d, a| {
+        put_reversed(d, a, 0, 3 * PPQ, on(110.0, WarpMode::Beats));
+    });
+    let first = bits(&render(&s, 512, 0));
+    assert_eq!(first, bits(&render(&s, 512, 0)));
+    assert_eq!(first, bits(&render(&s, 128, 0)));
+    assert_eq!(first, bits(&render(&s, 512, 2)));
+}
+
+#[test]
+fn the_live_song_plays_a_reversed_unready_warp_backwards_and_unwarped() {
+    let registry = default_registry();
+    let s = song("rev-interim", &sine(440.0, 115_200), |d, a| {
+        put_reversed(d, a, 0, 4 * PPQ, on(100.0, WarpMode::Tonal));
+    });
+    let assets = atomik_render::bundle::load_song_assets(&s.doc, Some(&s.bundle)).unwrap();
+    let ids = std::collections::BTreeMap::from([(
+        DeviceKey("audio-track".into()),
+        atomik_engine::DeviceInstanceId(1),
+    )]);
+    let id_of = |k: &DeviceKey| ids.get(k).copied();
+    // No buffer yet: the asset plays reversed in real time (no interim time map).
+    let live = song_input_live(&s.doc, &registry, id_of, &assets, &Default::default());
+    let region = live.audio[0].regions[0];
+    assert!(region.reverse && region.warp.is_none());
+    assert_eq!(live.assets, vec![assets[&s.asset].clone()]);
+    // With the buffer the pool holds it and it plays forward (the buffer is already turned).
+    let warps = render_warps(&s.doc, &assets);
+    assert_eq!(warps.len(), 1);
+    let done = song_input_live(&s.doc, &registry, id_of, &assets, &warps);
+    let region = done.audio[0].regions[0];
+    assert!(!region.reverse);
+    assert_eq!(region.source_offset, 0);
+}

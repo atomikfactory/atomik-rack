@@ -104,6 +104,14 @@ pub fn render_warp(
         }
         _ => vec![vec![0.0; frames]; channels.max(1)],
     };
+    let mut rendered = rendered;
+    if job.reverse {
+        // A reversed clip plays the stretched span backwards: turn the buffer around once here
+        // so the engine reads it forward like any other.
+        for channel in &mut rendered {
+            channel.reverse();
+        }
+    }
     let data: Arc<[Vec<f32>]> = rendered.into();
     Some(SongAsset::memory(data))
 }
