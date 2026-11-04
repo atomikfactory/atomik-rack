@@ -184,7 +184,7 @@ pub use audio_edit::{
     leading_silence, normalise_gain_db, peak, rms_db, slice_envelope, split_envelope,
     strip_silence,
 };
-pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
+pub use audio_notes::{BEND_RANGE_SEMITONES, FoundBend, FoundNote, NoteOptions, notes_clip};
 pub use audition::{AuditionSpan, audition_span};
 pub use automation_rec::{ThinLevel, WriteMode};
 pub use automation_view::{AutomationCurves, ShownValues};

@@ -3,7 +3,10 @@
 //! * [`extract_pitched_notes`] ([`pitched`]) follows the pitch of a single voice or instrument
 //!   (YIN) and cuts it into notes.
 //! * [`extract_drum_notes`] ([`drums`]) finds the hits of a drum loop and sorts each into kick,
-//!   snare, closed hat or open hat on the General MIDI keys.
+//!   snare, closed hat or open hat (and, for a full kit, toms and a crash) on the keys of a
+//!   [`DrumMap`].
+//! * [`extract_in_segments`] ([`long`]) runs either of them over a clip of any length, a minute
+//!   at a time, with progress and a way to stop.
 //!
 //! Both are pure and deterministic and run off the real-time thread (they allocate). Same
 //! samples, rate and parameters give the same notes on every platform: the decision path uses
@@ -13,15 +16,26 @@
 //! Positions and lengths are in **frames** of the input; the caller turns them into ticks.
 
 pub mod drums;
+pub mod long;
 pub mod pitched;
 
-pub use drums::{DrumParams, extract_drum_notes};
+pub use drums::{DrumClass, DrumKit, DrumMap, DrumParams, extract_drum_notes};
+pub use long::{Analysis, extract_in_segments};
 pub use pitched::{PitchParams, extract_pitched_notes};
 
 use crate::det_math::log2_det;
 
-/// One note found in the audio.
+/// One point of the pitch of a note: how far the voice is from the note's key.
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendPoint {
+    /// Frame of the input.
+    pub frame: u64,
+    /// Semitones above (positive) or below the note's key.
+    pub semitones: f32,
+}
+
+/// One note found in the audio.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExtractedNote {
     /// First frame of the note.
     pub start: u64,
@@ -31,6 +45,12 @@ pub struct ExtractedNote {
     pub key: u8,
     /// Velocity in `(0, 1]`.
     pub velocity: f32,
+    /// The level the velocity was made from (peak, linear), so that the notes of separate
+    /// stretches of a long take can be given velocities against one reference.
+    pub level: f32,
+    /// How the pitch moves inside the note, in time order; empty for a note that holds its key
+    /// (and always for drums, and unless [`PitchParams::bend`] is set).
+    pub bend: Vec<BendPoint>,
 }
 
 /// Range of levels, in dB below the loudest note, that velocity spreads over.

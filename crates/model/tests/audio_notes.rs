@@ -6,9 +6,9 @@
 mod common;
 
 use atomik_model::{
-    AudioClipContent, ClipContent, Command, FoundNote, ImportedTrack, MidiImport, NoteOptions,
-    SongCommand, TempoEvent, WarpMarker, WarpSettings, WorkflowCommand, load_project, notes_clip,
-    save_project,
+    AudioClipContent, ClipContent, Command, ControllerKind, Curve, FoundBend, FoundNote,
+    ImportedTrack, MidiImport, NoteOptions, SongCommand, TempoEvent, WarpMarker, WarpSettings,
+    WorkflowCommand, load_project, notes_clip, save_project,
 };
 use common::song::*;
 use common::*;
@@ -23,6 +23,7 @@ fn found(start: u64, length: u64, key: u8) -> FoundNote {
         length,
         key,
         velocity: 0.8,
+        bend: Vec::new(),
     }
 }
 
@@ -242,7 +243,7 @@ fn transposition_clamps_and_the_clip_bounds_the_notes() {
         SR,
         (0, 2 * PPQ),
         &audio(),
-        &[found[1]],
+        &[found[1].clone()],
         NoteOptions {
             snap: 0,
             transpose: -12,
@@ -347,4 +348,161 @@ fn the_clip_goes_onto_a_note_track_in_one_step_and_the_format_is_unchanged() {
     assert_eq!(save_project(&loaded), text, "canonical");
     d.undo().unwrap();
     assert_eq!(d.doc(), &before);
+}
+
+// ------------------------------------------------------------------ pitch bend
+
+fn bent(start: u64, length: u64, key: u8, bend: &[(u64, f32)]) -> FoundNote {
+    FoundNote {
+        bend: bend
+            .iter()
+            .map(|&(frame, semitones)| FoundBend { frame, semitones })
+            .collect(),
+        ..found(start, length, key)
+    }
+}
+
+/// The points of the clip's pitch-bend lane as `(tick, value, holds)`.
+fn bend_points(c: &atomik_model::Clip) -> Vec<(i64, f32, bool)> {
+    assert!(c.controllers.len() <= 1);
+    c.controllers.first().map_or_else(Vec::new, |l| {
+        assert_eq!(l.kind, ControllerKind::PitchBend);
+        l.points
+            .iter()
+            .map(|p| (p.tick, p.value, p.curve == Curve::Step))
+            .collect()
+    })
+}
+
+fn clip_of(found: &[FoundNote], options: NoteOptions) -> atomik_model::Clip {
+    notes_clip(&song_at(120.0), SR, (0, 2 * BAR), &audio(), found, options).unwrap()
+}
+
+#[test]
+fn no_contour_means_no_lane() {
+    let c = clip_of(&[found(0, BEAT_F, 60)], NoteOptions::default());
+    assert!(c.controllers.is_empty());
+}
+
+#[test]
+fn a_contour_becomes_a_pitch_bend_lane_scaled_to_the_bend_range() {
+    // A note 0.5 sharp that glides to 1 semitone sharp, then one flat by 0.25.
+    let c = clip_of(
+        &[
+            bent(
+                0,
+                BEAT_F,
+                60,
+                &[(0, 0.5), (BEAT_F / 2, 0.5), (BEAT_F - 1, 1.0)],
+            ),
+            bent(2 * BEAT_F, BEAT_F, 62, &[(2 * BEAT_F, -0.25)]),
+        ],
+        NoteOptions::default(),
+    );
+    let pts = bend_points(&c);
+    let q = |v: f32| ControllerKind::PitchBend.quantize(v);
+    assert_eq!(pts.len(), 5, "{pts:?}");
+    assert_eq!((pts[0].0, pts[0].1, pts[0].2), (0, q(0.25), false));
+    assert_eq!((pts[1].0, pts[1].1), (PPQ / 2, q(0.25)));
+    assert_eq!(
+        (pts[2].0, pts[2].2),
+        (PPQ - 1, true),
+        "the last point holds"
+    );
+    assert!((pts[2].1 - 0.5).abs() < 1e-3);
+    assert_eq!((pts[3].0, pts[3].1, pts[3].2), (2 * PPQ, q(-0.125), true));
+    // The bend returns to the centre where the last note ends.
+    assert_eq!((pts[4].0, pts[4].1), (3 * PPQ, 0.0));
+    for w in pts.windows(2) {
+        assert!(w[0].0 < w[1].0, "{pts:?}");
+    }
+}
+
+#[test]
+fn the_contour_starts_with_its_note_and_the_next_note_without_one_recentres() {
+    // The first contour point is a little late; the second note has no contour.
+    let c = clip_of(
+        &[
+            bent(0, 2 * BEAT_F, 60, &[(BEAT_F / 4, 0.4), (BEAT_F, 0.4)]),
+            found(2 * BEAT_F, BEAT_F, 64),
+        ],
+        NoteOptions::default(),
+    );
+    let pts = bend_points(&c);
+    assert_eq!(pts[0].0, 0, "the first point is moved to the note start");
+    assert_eq!(pts.last().map(|p| (p.0, p.1)), Some((2 * PPQ, 0.0)));
+    assert_eq!(pts.len(), 4, "{pts:?}");
+    assert_eq!(pts[1].0, PPQ / 4, "the late point keeps its place");
+}
+
+#[test]
+fn a_snapped_note_takes_its_contour_with_it() {
+    // The note starts 30 ticks before the 16th grid line; its contour moves the same distance.
+    let sixteenth = PPQ / 4;
+    let early = (sixteenth - 30) as u64 * BEAT_F / PPQ as u64;
+    let c = clip_of(
+        &[bent(
+            early,
+            BEAT_F,
+            60,
+            &[(early, 0.2), (early + BEAT_F / 2, 0.6)],
+        )],
+        NoteOptions {
+            snap: sixteenth,
+            ..NoteOptions::default()
+        },
+    );
+    let n = notes_of(&c);
+    assert_eq!(n[0].0, sixteenth);
+    let pts = bend_points(&c);
+    assert_eq!(pts[0].0, sixteenth);
+    assert!(pts[1].0 > sixteenth + PPQ / 2 - 5 && pts[1].0 < sixteenth + PPQ / 2 + 5);
+}
+
+#[test]
+fn points_outside_the_clip_or_not_finite_are_dropped() {
+    // A point after the clip end is dropped; non-finite points never get in.
+    let c = clip_of(
+        &[bent(
+            0,
+            BEAT_F,
+            60,
+            &[(0, 0.3), (BEAT_F / 2, f32::NAN), (50 * BEAT_F, 0.3)],
+        )],
+        NoteOptions::default(),
+    );
+    let pts = bend_points(&c);
+    assert_eq!(pts.len(), 2, "{pts:?}");
+    assert!(pts.iter().all(|p| p.0 < 2 * BAR));
+}
+
+#[test]
+fn a_contour_beyond_the_range_is_clamped_and_the_clip_validates() {
+    let reg = registry();
+    let c = clip_of(
+        &[bent(0, BEAT_F, 60, &[(0, 5.0), (BEAT_F / 2, -9.0)])],
+        NoteOptions::default(),
+    );
+    let pts = bend_points(&c);
+    assert_eq!((pts[0].1, pts[1].1), (1.0, -1.0));
+    let mut d = song_start(&reg);
+    d.apply(add_track("lead"), &reg).unwrap();
+    d.apply(
+        Command::Song(SongCommand::AddClip {
+            device: key("lead"),
+            lane: 0,
+            clip: c,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let id = d.last_clip_id().unwrap();
+    let text = save_project(d.doc());
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(&loaded, d.doc());
+    assert_eq!(
+        loaded.song.clip(id).unwrap().2.controllers.len(),
+        1,
+        "the lane survives a save"
+    );
 }

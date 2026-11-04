@@ -115,6 +115,7 @@ fn analyse(
                 key_lo: v.key_lo,
                 key_hi: v.key_hi,
                 tolerance_cents: v.drift_cents,
+                bend: false,
             },
         ),
         NotesMode::Drums => extract_drum_notes(
@@ -123,6 +124,7 @@ fn analyse(
             &DrumParams {
                 sensitivity,
                 open_hats: v.open_hats,
+                ..DrumParams::default()
             },
         ),
     };
@@ -134,6 +136,7 @@ fn analyse(
                 length: n.length,
                 key: n.key,
                 velocity: n.velocity,
+                bend: Vec::new(),
             })
             .collect(),
         truncated,
