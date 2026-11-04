@@ -29,7 +29,7 @@ fn param_of(p: &'static ParamDescriptor) -> &'static str {
 }
 
 #[test]
-fn the_parallel_section_follows_the_dynamics_and_holds_four_controls() {
+fn the_parallel_section_follows_the_dynamics_and_holds_its_controls() {
     let desc = &atomik_devices::channel::DESCRIPTOR;
     let l = strip_layout(desc, Folds::default(), 900.0);
     let ids: Vec<SectionId> = l.sections.iter().map(|s| s.id).collect();
@@ -46,6 +46,7 @@ fn the_parallel_section_follows_the_dynamics_and_holds_four_controls() {
         par,
         [
             ("pcomp.on", CtrlKind::Button),
+            ("pcomp.peak", CtrlKind::Button),
             ("pcomp.threshold", CtrlKind::Knob),
             ("pcomp.ratio", CtrlKind::Knob),
             ("pcomp.mix", CtrlKind::Knob),
@@ -65,7 +66,13 @@ fn the_detail_params_are_in_the_rack_only_and_every_other_param_is_placed_once()
     let desc = &atomik_devices::channel::DESCRIPTOR;
     let l = strip_layout(desc, Folds::default(), 900.0);
     let placed: Vec<&str> = l.controls.iter().map(|c| c.param).collect();
-    for rack_only in ["pcomp.attack", "pcomp.release", "pcomp.makeup"] {
+    for rack_only in [
+        "pcomp.attack",
+        "pcomp.release",
+        "pcomp.makeup",
+        "dyn.bypass",
+        "eq.bypass",
+    ] {
         assert!(
             !placed.contains(&rack_only),
             "{rack_only} stays in the rack"
@@ -78,7 +85,7 @@ fn the_detail_params_are_in_the_rack_only_and_every_other_param_is_placed_once()
     for p in desc.params {
         if is_hidden_param(p.key)
             || p.key.starts_with("pcomp.a")
-            || ["pcomp.release", "pcomp.makeup"].contains(&p.key)
+            || ["pcomp.release", "pcomp.makeup", "dyn.bypass", "eq.bypass"].contains(&p.key)
         {
             continue;
         }
@@ -89,8 +96,8 @@ fn the_detail_params_are_in_the_rack_only_and_every_other_param_is_placed_once()
             p.key
         );
     }
-    // The input trim and the polarity switch are the first controls of the strip.
-    assert_eq!(&placed[..2], ["input.gain", "input.phase"]);
+    // The input trim and the polarity switches are the first controls of the strip.
+    assert_eq!(&placed[..3], ["input.gain", "input.phase", "input.phase_r"]);
     let kind = |k: &str| l.controls.iter().find(|c| c.param == k).unwrap().kind;
     assert_eq!(kind("input.gain"), CtrlKind::Knob);
     assert_eq!(kind("input.phase"), CtrlKind::Button);
@@ -142,4 +149,81 @@ fn the_parallel_mix_knob_drags_through_its_range_with_one_merge_id() {
         _ => None,
     });
     assert!(top.unwrap() > 0.5, "dragging up raises the mix");
+}
+
+#[test]
+fn the_lookahead_knob_sits_in_the_dynamics_section() {
+    let desc = &atomik_devices::channel::DESCRIPTOR;
+    let l = strip_layout(desc, Folds::default(), 900.0);
+    let look = l
+        .controls
+        .iter()
+        .find(|c| c.param == "comp.lookahead")
+        .expect("placed");
+    assert_eq!(
+        (look.section, look.kind),
+        (SectionId::Dynamics, CtrlKind::Knob)
+    );
+    let peak = l.controls.iter().find(|c| c.param == "pcomp.peak").unwrap();
+    assert_eq!(peak.section, SectionId::Parallel);
+}
+
+fn strip_texts(doc: &RackDoc, reg: &Registry, v: &mut ConsoleView) -> Vec<String> {
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, doc, reg);
+    dl.texts().into_iter().map(String::from).collect()
+}
+
+#[test]
+fn the_trim_knob_reads_its_value_at_rest() {
+    let (mut doc, reg) = (console_doc(), console_registry_real_channel());
+    let mut v = view(&doc, &reg);
+    assert!(
+        strip_texts(&doc, &reg, &mut v)
+            .iter()
+            .any(|t| t.starts_with("+0.0")),
+        "a trim at unity reads +0.0"
+    );
+    let ch = doc
+        .devices
+        .iter_mut()
+        .find(|d| d.key == key("ch-bass"))
+        .unwrap();
+    ch.params.insert("input.gain".into(), 3.5);
+    let mut v = view(&doc, &reg);
+    let texts = strip_texts(&doc, &reg, &mut v);
+    assert!(
+        texts.iter().any(|t| t.starts_with("+3.5")),
+        "the trim reads its value: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t == "THR"),
+        "the other knobs keep their labels: {texts:?}"
+    );
+}
+
+#[test]
+fn the_gain_reduction_bar_reads_the_reduction_in_db() {
+    let (doc, reg) = (console_doc(), console_registry_real_channel());
+    let mut v = view(&doc, &reg);
+    v.set_meters(&[(
+        key("ch-bass"),
+        atomik_ui::ChannelMeters {
+            out_peak_l: 0.5,
+            out_peak_r: 0.5,
+            out_rms_l: 0.1,
+            out_rms_r: 0.1,
+            gr: 0.5,
+        },
+    )]);
+    v.set_frame_time(0.0);
+    let texts = strip_texts(&doc, &reg, &mut v);
+    assert!(texts.iter().any(|t| t == "-6.0"), "{texts:?}");
+    v.set_meters(&[(key("ch-bass"), atomik_ui::ChannelMeters::SILENT)]);
+    v.set_frame_time(30.0);
+    let texts = strip_texts(&doc, &reg, &mut v);
+    assert!(
+        !texts.iter().any(|t| t == "-6.0"),
+        "no reduction, no readout"
+    );
 }

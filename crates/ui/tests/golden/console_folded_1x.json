@@ -473,6 +473,8 @@
 {"fill":{"rrect":[194.00,198.00,318.00,205.00,1.50]},"brush":"#0f1214ff"},
 {"text":"GR","at":[196.00,203.50],"size":5.50,"weight":700,"align":"start","color":"#8f96a0ff"},
 {"fill":{"rect":[273.17,199.00,317.00,204.00]},"brush":"#e0a83cff"},
+{"fill":{"rrect":[194.00,198.00,214.00,205.00,1.50]},"brush":"#0f1214ff"},
+{"text":"-3.1","at":[196.00,203.50],"size":5.50,"weight":700,"align":"start","color":"#ece8e1ff"},
 {"pop_transform":true},
 {"pop_clip":true},
 {"fill":{"rect":[1004.00,52.00,1096.00,776.00]},"brush":{"gradient":{"linear":[1004.00,0.00,1096.00,0.00],"stops":[[0.00,"#33373dff"],[1.00,"#23262bff"]]}}},
