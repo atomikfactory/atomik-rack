@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Phase lock for a followed MIDI clock.** The clock input now counts the sender's position (the last Start
+  or Song Position Pointer plus one clock's worth of ticks for each clock that arrives while it runs), and
+  the player holds the song to it: once per batch it moves the position a few frames towards the sender's,
+  closing the difference over an eighth of a beat and never changing the pace by more than 10 %, so a
+  sender whose tempo wanders no longer drifts from the song. A difference of more than a beat (clocks lost
+  on the cable) relocates; a Start or a Song Position Pointer still jumps to its position. A sender that has
+  not said where it is (clocks and Continue only) is followed by tempo alone, as before.
+- **Audio clips while following a clock.** Audio clips used to be silent while the song followed an external
+  clock; they now play. Each clip starts where the followed song reaches its first frame and plays at its
+  own rate, and a locate, the transport starting, a loop wrap or a new song restarts the clips underway from
+  the right place. Clips are not stretched to the followed tempo (a long take drifts by the share the two
+  tempos differ) and streamed audio stays silent while following. No saved field changes (the project
+  format is still 42).
 - **Several open songs.** Window > New Song Window and Open Song in New Window open a song in a window of its
   own (Ctrl+Shift+N and Ctrl+Shift+O, Cmd on macOS); each song has its own undo history, panes, plugins,
   autosave and recovery snapshots, and the Window menu lists the open songs (Next Song and Previous Song,

@@ -184,11 +184,16 @@ its items to this file in the same pull request, with the automated test it comp
 ### HW-MID-05 Follow an external MIDI clock
 - **Applies to:** Windows, macOS, Linux
 - **Preconditions:** a hardware clock source.
-- **Steps:** choose the clock input, start the source, change its tempo, stop and restart it.
+- **Steps:** choose the clock input, start the source, change its tempo, stop and restart it. Then let the
+  source's tempo wander (a slow swing of 10 % either way, or a tempo knob turned by hand) for a minute with a
+  song of notes and an audio clip playing, and send a Song Position Pointer in the middle.
 - **Expected:** the transport follows start, stop and tempo; the readout in the status line says that
-  the clock is external; losing the clock stops following without a crash.
-- **Automated:** none
-- **Known bad:** a transport that keeps running after the clock stops.
+  the clock is external; losing the clock stops following without a crash. The song stays on the beat of the
+  source however the tempo wanders (no slow drift), the audio clips play from where the song reaches them,
+  and a position pointer moves the song at once.
+- **Automated:** `crates/engine/tests/song_sync.rs`
+- **Known bad:** a transport that keeps running after the clock stops; a song that creeps away from a
+  source whose tempo wanders.
 
 ### HW-MID-06 A control surface
 - **Applies to:** Windows, macOS, Linux
