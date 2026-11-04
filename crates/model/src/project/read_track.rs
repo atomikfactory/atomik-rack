@@ -211,6 +211,14 @@ pub(super) fn load_track(
             }
             lane_out.muted = true;
         }
+        if let Some(m) = lane.get("solo") {
+            let sp = p.field("solo");
+            if !boolean(m, &sp)? {
+                return Err(sp.error("expected true (false is the default)"));
+            }
+            lane_out.solo = true;
+        }
+        lane_out.color = marker_color(lane, &p)?;
         lane_out.static_value = static_value;
         lanes.push(lane_out);
     }

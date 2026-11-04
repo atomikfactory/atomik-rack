@@ -4,7 +4,7 @@
 
 use crate::history::Edit;
 use crate::song::{Clip, ClipContent, ClipId, LaneKind, MAX_TICK, SongCommand};
-use crate::song_cmd::{bad, check_audio, check_new_clip, range, track_index};
+use crate::song_cmd::{bad, check_audio, check_geometry, check_new_clip, range, track_index};
 use crate::takes::{
     CompSegment, TakeGroup, check_comp, clear_segment, comp_clips, comp_with_take_inserted,
     comp_with_take_moved, comp_within, comp_without_take, layered_comp, set_segment,
@@ -60,17 +60,6 @@ fn build(
 ) -> Result<Edit, ModelError> {
     let track = &doc.song.tracks[track_index(doc, device)?];
     let lane_ref = &track.lanes[lane];
-    // A comp cuts a take anywhere, which a repetition of an audio loop cannot follow.
-    if let Some(group) = &new
-        && group
-            .takes
-            .iter()
-            .any(|t| t.loop_length.is_some() && t.content.is_audio())
-    {
-        return Err(bad(
-            "an audio take cannot loop: convert the loop to separate clips first",
-        ));
-    }
     let mut edits = Vec::new();
     if let Some(old) = old
         && clips != Clips::Keep
@@ -498,6 +487,66 @@ pub(crate) fn plan(
             }
             let mut new = g.clone();
             new.takes[take].content = ClipContent::Audio(content);
+            build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::SetTakeLoop {
+            group,
+            take,
+            repeats,
+        } => {
+            let (device, lane, g) = find(doc, group)?;
+            check_take(g, take)?;
+            if repeats == 0 {
+                return Err(range("a take plays its loop at least once"));
+            }
+            let old = &g.takes[take];
+            if matches!(&old.content, ClipContent::Audio(a) if a.reverse) {
+                return Err(bad("a reversed audio take cannot loop"));
+            }
+            let n = old.loop_length.unwrap_or(old.length);
+            let length = n
+                .checked_mul(i64::from(repeats))
+                .filter(|l| *l <= MAX_TICK)
+                .ok_or_else(|| range("the looped take would run past the last tick"))?;
+            let loop_length = (repeats > 1).then_some(n);
+            // Repeating a take whole is not a loop of its own: one repetition is the take.
+            let offset = if loop_length.is_none() && old.loop_length.is_some() {
+                old.offset.rem_euclid(n)
+            } else {
+                old.offset
+            };
+            check_geometry(old.start, length, offset, loop_length).map_err(range)?;
+            if length == old.length && loop_length == old.loop_length {
+                return Err(bad("the take already plays that many repetitions"));
+            }
+            let mut new = g.clone();
+            let t = &mut new.takes[take];
+            let (old_end, new_end) = (old.end(), old.start + length);
+            *t = Clip {
+                length,
+                loop_length,
+                offset,
+                ..t.clone()
+            };
+            if new_end > MAX_TICK {
+                return Err(range("the looped take would run past the last tick"));
+            }
+            // A segment that ran to the end of the take runs on to the new end, up to the next
+            // segment; one that ran past a shorter end is cut there.
+            let starts: Vec<i64> = g.comp.iter().map(|s| s.start).collect();
+            for (i, s) in new.comp.iter_mut().enumerate() {
+                if s.take != take {
+                    continue;
+                }
+                if s.end == old_end && new_end > old_end {
+                    let wall = starts.get(i + 1).copied().unwrap_or(i64::MAX);
+                    s.end = new_end.min(wall);
+                } else if s.end > new_end {
+                    s.end = new_end;
+                }
+            }
+            new.comp.retain(|s| s.start < s.end);
+            new.comp = comp_within(&new.comp, new.range());
             build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
         }
         SongCommand::FlattenTakes { group } => {

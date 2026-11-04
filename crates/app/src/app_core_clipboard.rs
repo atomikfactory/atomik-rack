@@ -708,6 +708,10 @@ impl<S: EngineSink> AppCore<S> {
                 self.after_view_change();
                 self.arrangement.set_selected_clips(&[instance]);
             }
+            WorkflowCommand::RenderLoop { id, .. } => {
+                self.after_view_change();
+                self.arrangement.set_selected_clips(&[*id]);
+            }
             WorkflowCommand::PasteDevices { .. }
             | WorkflowCommand::PasteDevicesAt { .. }
             | WorkflowCommand::DuplicateDevices { .. }

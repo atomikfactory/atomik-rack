@@ -624,7 +624,7 @@ fn a_looped_audio_clip_splits_only_on_a_repetition_boundary() {
 }
 
 #[test]
-fn takes_refuse_a_looped_audio_clip() {
+fn a_looped_audio_clip_becomes_a_take_that_plays_the_same() {
     let reg = audio_registry();
     let mut d = with_audio_track(&reg);
     d.apply(add_audio_clip("audio-track", 0, 2 * BAR, 1), &reg)
@@ -643,7 +643,9 @@ fn takes_refuse_a_looped_audio_clip() {
         &reg,
     )
     .unwrap();
-    let e = rejected(
+    let song = d.doc().song.clone();
+    let before = flatten_audio(song.track(&key("audio-track")).unwrap(), &song, 48_000);
+    one_step(
         &mut d,
         &reg,
         sc(SongCommand::GroupAsTakes {
@@ -653,17 +655,17 @@ fn takes_refuse_a_looped_audio_clip() {
             extra: vec![],
         }),
     );
-    assert!(matches!(e, ModelError::BadSong(m) if m.contains("loop")));
-    // A reversed clip cannot loop, nor a looped one reverse.
-    let e = rejected(
-        &mut d,
-        &reg,
-        wf(WorkflowCommand::ReverseClips {
-            ids: vec![id],
-            graphical: false,
-        }),
+    let song = d.doc().song.clone();
+    assert!(
+        song.tracks[0].lanes[0]
+            .clips
+            .iter()
+            .all(|c| c.loop_length.is_none())
     );
-    assert!(matches!(e, ModelError::BadSong(_)));
+    assert_eq!(
+        flatten_audio(song.track(&key("audio-track")).unwrap(), &song, 48_000),
+        before
+    );
 }
 
 #[test]

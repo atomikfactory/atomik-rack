@@ -562,6 +562,14 @@ pub struct Lane {
     /// lane drives nothing: its param keeps the value it has (muting through the app first
     /// holds the value the lane gave at that moment). Always `false` on audio lanes.
     pub muted: bool,
+    /// A soloed note lane: while any note lane of the track is soloed, only the soloed lanes
+    /// play (a muted lane still plays nothing). Always `false` on automation and audio lanes.
+    /// Written only when set (an optional field of project format 43).
+    pub solo: bool,
+    /// The colour of a note lane's clips, over the track's colour and under a clip's own
+    /// (`None`: the track's). Always `None` on automation and audio lanes. Written only when set
+    /// (an optional field of project format 43).
+    pub color: Option<[u8; 3]>,
     /// The value an automation lane gives its param wherever no clip is audible: before the
     /// first clip, between clips and after the last one (see [`flatten_automation`]). With no
     /// clips the lane holds it for the whole song. `None` (the default) holds the first value
@@ -878,6 +886,26 @@ pub enum SongCommand {
         lane: usize,
         /// The new state.
         muted: bool,
+    },
+    /// Solo or unsolo a note lane (see [`Lane::solo`]); setting the value it has is an error.
+    /// One undo step.
+    SetLaneSolo {
+        /// Device (track).
+        device: DeviceKey,
+        /// Index of the note lane.
+        lane: usize,
+        /// The new state.
+        solo: bool,
+    },
+    /// Set or clear (`None`) the colour of a note lane (see [`Lane::color`]); setting what the
+    /// lane has is an error. One undo step.
+    SetLaneColor {
+        /// Device (track).
+        device: DeviceKey,
+        /// Index of the note lane.
+        lane: usize,
+        /// The colour, or `None` for the track's.
+        color: Option<[u8; 3]>,
     },
     /// Remove an automation lane with its clips (one undo step; its write mode and fold go with
     /// it). A track that holds automation lanes alone goes with its last lane. The lane must
@@ -1400,6 +1428,22 @@ pub enum SongCommand {
         /// Frames added to the source offset (negative moves it back).
         source_offset_delta: i64,
     },
+    /// Repeat a take: its current extent becomes the loop (a take that already loops keeps its
+    /// loop length) and the take runs `repeats` repetitions of it, so the take is
+    /// `loop * repeats` ticks long; the comp segments that ended at the old end of the take run
+    /// on to the new one. With `repeats` 1 a looping take stops looping and is one loop long
+    /// again. An audio take loops like an audio clip (each repetition plays its source again,
+    /// see [`flatten_audio`]) and the comp compiles to one clip per repetition. One undo step.
+    /// An error when nothing changes, for a reversed audio take, and when the take would hold
+    /// more than [`MAX_LOOP_REPEATS`] repetitions or run past the last tick.
+    SetTakeLoop {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+        /// How many times the loop plays (1 or more).
+        repeats: u32,
+    },
     /// Dissolve a group: its comp clips stay on the lane as plain clips, the takes are dropped.
     /// One undo step.
     FlattenTakes {
@@ -1813,6 +1857,8 @@ impl Lane {
             kind,
             name: None,
             muted: false,
+            solo: false,
+            color: None,
             static_value: None,
             clips: Vec::new(),
             take_groups: Vec::new(),
@@ -1871,6 +1917,14 @@ impl Track {
     /// The track's note lanes in order (lane `i` of the iterator is `lanes[i]`).
     pub fn note_lanes(&self) -> impl Iterator<Item = &Lane> {
         self.lanes.iter().take_while(|l| l.kind.is_notes())
+    }
+
+    /// The note lanes that play, in order: the unmuted ones, and when any lane is soloed only the
+    /// soloed ones (see [`Lane::solo`]). Track mute and solo are not applied here.
+    pub fn played_note_lanes(&self) -> impl Iterator<Item = &Lane> {
+        let any_solo = self.note_lanes().any(|l| l.solo);
+        self.note_lanes()
+            .filter(move |l| !l.muted && (!any_solo || l.solo))
     }
 
     /// How many note lanes the track has (0 for an audio track).

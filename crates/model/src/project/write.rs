@@ -269,7 +269,11 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
                         .as_ref()
                         .map_or(String::new(), |n| format!(", \"name\": {}", json_str(n)));
                     let muted = if lane.muted { ", \"muted\": true" } else { "" };
-                    format!("\"kind\": \"notes\"{name}{muted}")
+                    let solo = if lane.solo { ", \"solo\": true" } else { "" };
+                    let color = lane.color.map_or(String::new(), |[r, g, b]| {
+                        format!(", \"color\": \"#{r:02x}{g:02x}{b:02x}\"")
+                    });
+                    format!("\"kind\": \"notes\"{name}{muted}{solo}{color}")
                 }
                 LaneKind::Audio => "\"kind\": \"audio\"".to_owned(),
                 LaneKind::Automation(p) => {

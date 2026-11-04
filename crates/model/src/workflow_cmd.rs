@@ -20,7 +20,8 @@ use crate::param_lane::{ParamLane, canonical_params};
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
 use crate::rack_columns::{self, Placement};
 use crate::song::{
-    AUDIO_TRACK_TYPE, AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note, automation_piece,
+    AUDIO_TRACK_TYPE, AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note,
+    automation_piece,
 };
 use crate::song_cmd::{
     check_audio, check_content, check_geometry, has_notes_input, is_audio_track_type,
@@ -311,6 +312,17 @@ pub enum WorkflowCommand {
         ids: Vec<ClipId>,
         /// What the loop becomes.
         mode: LoopConvert,
+    },
+    /// Replaces a looped audio clip by one plain clip of `audio`, a render of what the loop
+    /// played (the app renders it, see [`LoopConvert`]). The clip keeps its id, start, length,
+    /// name, colour, mute and crossfade; the loop and the clip's own gain, fades, envelope and
+    /// warp go, as the render has them in it. One undo step. Rejected: a clip that is not a
+    /// looped audio clip, audio that is not in the pool, and audio with a reverse or a warp.
+    RenderLoop {
+        /// The looped audio clip.
+        id: ClipId,
+        /// The render, from its first frame.
+        audio: AudioClipContent,
     },
     /// Makes repetition `index` (0-based, the repetitions a looped clip shows from `offset mod
     /// loop`) of a looped clip a clip of its own, so it can be edited alone. The repetitions
@@ -949,6 +961,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::DuplicateLoopInstance { id, index } => {
             crate::loop_convert::loop_instance(doc, id, index)
+        }
+        WorkflowCommand::RenderLoop { id, audio } => {
+            plain(crate::loop_convert::render_loop(doc, id, audio))
         }
         WorkflowCommand::TrimClips {
             ids, start_delta, ..

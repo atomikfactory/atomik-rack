@@ -129,7 +129,7 @@ fn audible_pieces(lane: &Lane) -> Vec<(&Clip, i64, i64, i64)> {
         .collect()
 }
 
-/// The notes a track's unmuted note lanes play, as `(song tick, length, key, velocity)` sorted
+/// The notes a track's played note lanes play, as `(song tick, length, key, velocity)` sorted
 /// by `(tick, key)` (rules in the module docs). The lanes' notes merge; at an equal tick and key
 /// the earlier lane comes first. Track mute and solo are not applied here; see
 /// [`effective_tracks`].
@@ -143,7 +143,7 @@ pub fn flatten_notes(track: &Track) -> Vec<(i64, i64, u8, f32)> {
 /// its piece.
 pub fn flatten_notes_with(track: &Track, tails: bool) -> Vec<(i64, i64, u8, f32)> {
     let mut out = Vec::new();
-    for lane in track.note_lanes().filter(|l| !l.muted) {
+    for lane in track.played_note_lanes() {
         for (clip, s, e, cs) in audible_pieces(lane) {
             let ClipContent::Notes(notes) = &clip.content else {
                 continue;
@@ -349,13 +349,13 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
 /// One kind's flattened controller points: `(song tick, value, curve)`.
 pub type FlatController = (ControllerKind, Vec<(i64, f32, Curve)>);
 
-/// The controller data a track's unmuted note lanes play: for each [`ControllerKind`] in use
+/// The controller data a track's played note lanes play: for each [`ControllerKind`] in use
 /// (sorted by kind) the points `(song tick, value, curve)` with strictly increasing ticks
 /// (rules in the module docs). The lanes' points of a kind merge by tick; at an equal tick the
 /// later lane wins. Empty without controller lanes. Track mute and solo are not applied here.
 pub fn flatten_controllers(track: &Track) -> Vec<FlatController> {
     let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = BTreeMap::new();
-    let mut lanes = track.note_lanes().filter(|l| !l.muted);
+    let mut lanes = track.played_note_lanes();
     let first = lanes.next().map(lane_controllers).unwrap_or_default();
     // One lane is the common case and needs no merge.
     let rest: Vec<_> = lanes.map(lane_controllers).collect();
@@ -408,12 +408,12 @@ pub struct FlatMidiData {
     pub sysex: Vec<(i64, Vec<u8>)>,
 }
 
-/// The program changes and SysEx messages a track's unmuted note lanes carry (rules in the
+/// The program changes and SysEx messages a track's played note lanes carry (rules in the
 /// module docs). The lanes merge by tick, the later lane winning a program change at an equal
 /// tick. Empty when no clip carries any. Track mute and solo are not applied here.
 pub fn flatten_midi_data(track: &Track) -> FlatMidiData {
     let mut all = crate::midi_data::MidiData::default();
-    for lane in track.note_lanes().filter(|l| !l.muted) {
+    for lane in track.played_note_lanes() {
         for (clip, s, e, cs) in audible_pieces(lane) {
             if !clip.midi.is_empty() {
                 all.append(clip.midi.window(cs, cs + (e - s), s));
@@ -432,7 +432,7 @@ pub type FlatParam = (DeviceKey, String, Vec<FlatPoint>);
 /// One flattened point: `(song tick, value, curve)`.
 pub type FlatPoint = (i64, f32, Curve);
 
-/// The device-parameter lanes a track's unmuted note lanes play: for each `(device, param)` in
+/// The device-parameter lanes a track's played note lanes play: for each `(device, param)` in
 /// use (sorted) the points `(song tick, value, curve)` with strictly increasing ticks (rules in
 /// the module docs). Each lane flattens like an automation lane ([`flatten_automation`]: a piece
 /// starts with the value it has there, a ramp cut by the piece end is closed, the last point of a
@@ -442,7 +442,7 @@ pub type FlatPoint = (i64, f32, Curve);
 /// same param (the render does that).
 pub fn flatten_param_lanes(track: &Track) -> Vec<FlatParam> {
     let mut by_param: BTreeMap<(DeviceKey, String), Vec<FlatPoint>> = BTreeMap::new();
-    for lane in track.note_lanes().filter(|l| !l.muted) {
+    for lane in track.played_note_lanes() {
         for (clip, s, e, cs) in audible_pieces(lane) {
             for p in &clip.param_lanes {
                 if p.points.is_empty() {

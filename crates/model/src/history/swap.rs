@@ -2,7 +2,7 @@
 //! document. They share one inverse (`old` and `new` swap), so a new one is one entry in the
 //! table below: its name, what it is keyed by, the type of the value and how to store it.
 
-use super::{InvariantError, device_mut, fail, track_mut};
+use super::{InvariantError, device_mut, fail, lane_mut, track_mut};
 use crate::song_info::SongInfo;
 use crate::{DeviceKey, RackDoc, SyncOp};
 
@@ -120,6 +120,16 @@ swaps! {
     /// Track live groove.
     TrackGroove { device: DeviceKey }: Option<crate::song::TrackGroove> => |doc, new| {
         track_mut(doc, device)?.groove.clone_from(new);
+        Ok(vec![SyncOp::SongChanged])
+    };
+    /// Whether a note lane is soloed.
+    LaneSolo { device: DeviceKey, lane: usize }: bool => |doc, new| {
+        lane_mut(doc, device, *lane)?.solo = *new;
+        Ok(vec![SyncOp::SongChanged])
+    };
+    /// The colour of a note lane (`None`: the track's).
+    LaneColor { device: DeviceKey, lane: usize }: Option<[u8; 3]> => |doc, new| {
+        lane_mut(doc, device, *lane)?.color = *new;
         Ok(vec![SyncOp::SongChanged])
     };
     /// Where a track's notes enter (`None`: its own device).

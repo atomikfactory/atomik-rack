@@ -21,9 +21,13 @@ use crate::controller::{ControllerLane, canonical};
 use crate::history::Edit;
 use crate::param_lane::ParamLane;
 use crate::song::{
-    AutomationPoint, Clip, ClipContent, ClipId, Curve, Note, automation_piece, controller_piece,
+    AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, Curve, Note, automation_piece,
+    controller_piece,
 };
-use crate::song_cmd::{bad, check_content, check_geometry, find_clip, range};
+use crate::song_cmd::{
+    audio_span_frames, bad, check_audio, check_audio_span, check_content, check_geometry,
+    find_clip, range,
+};
 use crate::{DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::Registry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -296,6 +300,39 @@ fn unrolled(
     };
     check_geometry(clip.start, clip.length, 0, None).map_err(range)?;
     Ok(clip)
+}
+
+/// Plans `RenderLoop`: see the command docs. The render must be the clip's whole span, which the
+/// caller measured; the new clip is `audio` over the old clip's place.
+pub(crate) fn render_loop(
+    doc: &RackDoc,
+    id: ClipId,
+    audio: AudioClipContent,
+) -> Result<Edit, ModelError> {
+    let found = find_clip(doc, id)?;
+    let (device, lane, c) = &found;
+    if c.loop_length.is_none() || !c.content.is_audio() {
+        return Err(bad(format!("clip {} is not a looped audio clip", id.0)));
+    }
+    if audio.reverse || audio.warp.active() {
+        return Err(bad("a rendered loop is plain audio: no reverse, no warp"));
+    }
+    check_audio(doc, &audio)?;
+    check_audio_span(&audio, audio_span_frames(doc, c.start, c.length, None))?;
+    let ClipContent::Audio(old) = &c.content else {
+        unreachable!("checked above");
+    };
+    let audio = AudioClipContent {
+        xfade: old.xfade,
+        ..audio
+    };
+    let clip = Clip {
+        offset: 0,
+        loop_length: None,
+        content: ClipContent::Audio(audio),
+        ..(*c).clone()
+    };
+    Ok(replace(device, *lane, c, clip))
 }
 
 /// Plans `DuplicateLoopInstance`: see the command docs.
