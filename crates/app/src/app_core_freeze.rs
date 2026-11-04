@@ -34,6 +34,15 @@
 //! instrument's own output (an audio clip's gain, fades and warp included), before the effects
 //! and the channel strip, so the new track holds the clip's sound alone.
 //!
+//! # Convert Loop to One Clip (audio)
+//!
+//! A looped audio clip has no content to unroll, so `sequencer.convert_loop` with `single` renders
+//! it: each looped audio clip among the selected ones is bounced as the track plays it (its gain,
+//! fades, envelope and warp, the repetitions one after the other, before the insert effects and
+//! the strip), on the same worker and queue as a freeze, and the clip becomes one plain clip of
+//! that render in one `RenderLoop` step. The clip keeps its id, place, name and colour. Looped
+//! note and automation clips among the selected ones convert at once, as before.
+//!
 //! The commands are in the Track menu, the track header menu and (bounce) the clip menu, and in
 //! the registry as `sequencer.freeze_track`, `sequencer.freeze_track_to_device`,
 //! `sequencer.freeze_tail`, `sequencer.freeze_cancel`, `sequencer.unfreeze_track`,
@@ -44,11 +53,11 @@ use super::*;
 use crate::commands::FreezeMenu;
 use crate::freeze_worker::{self, Done, PluginEnv, Work};
 use atomik_model::{
-    AssetMeta, AudioClipContent, Cable, ClipContent, Frozen, MeterEvent, TempoEvent, Track,
-    clips_span, track_chain,
+    AssetMeta, AudioClipContent, Cable, ClipContent, Frozen, LoopConvert, MeterEvent, TempoEvent,
+    Track, WorkflowCommand, clips_span, track_chain,
 };
 use atomik_render::freeze::FreezeRequest;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The longest tail a freeze keeps past the end of the clips, in seconds.
@@ -71,6 +80,8 @@ enum Kind {
     /// Add the render as a new audio track; mute these clips (the originals) with it. `dry`: the
     /// render is the instrument's own output, before the insert effects and the strip.
     Bounce { mute: Vec<ClipId>, dry: bool },
+    /// Replace the looped audio clip by one clip of the render (dry, the clip alone).
+    Loop { clip: ClipId },
 }
 
 /// A render waiting for its turn.
@@ -167,6 +178,7 @@ impl<S: EngineSink> AppCore<S> {
         let verb = match running.job.kind {
             Kind::Freeze => "Freezing",
             Kind::Bounce { .. } => "Bouncing",
+            Kind::Loop { .. } => "Rendering",
         };
         let waiting = self.audio.freeze.queue.len();
         let more = if waiting > 0 {
@@ -358,6 +370,76 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Turns `ConvertLoop` to a single clip of looped audio clips into renders (see the module
+    /// docs): returns the command to apply for what is left (the looped note and automation clips
+    /// of the selection), or `None` when the renders were all there was.
+    pub(super) fn render_audio_loops(&mut self, command: Command) -> Option<Command> {
+        let Command::Workflow(WorkflowCommand::ConvertLoop {
+            ids,
+            mode: LoopConvert::Single,
+        }) = &command
+        else {
+            return Some(command);
+        };
+        let doc = self.doc();
+        let mut jobs = Vec::new();
+        let mut skipped = Vec::new();
+        let mut rest = Vec::new();
+        let mut rest_loops = false;
+        let mut seen = BTreeSet::new();
+        for id in ids {
+            if !seen.insert(*id) {
+                continue;
+            }
+            let Some((track, _, clip)) = doc.song.clip(*id) else {
+                rest.push(*id);
+                continue;
+            };
+            if clip.loop_length.is_none() || !clip.content.is_audio() {
+                rest_loops |= clip.loop_length.is_some();
+                rest.push(*id);
+                continue;
+            }
+            let name = doc
+                .device(&track.device)
+                .map_or_else(|| track.device.0.clone(), |d| d.name.clone());
+            if track.frozen.is_some() {
+                skipped.push(format!("{name} is frozen: unfreeze it to convert its loop"));
+                continue;
+            }
+            jobs.push((track.device.clone(), *id, clip.start, clip.end(), name));
+        }
+        if jobs.is_empty() && skipped.is_empty() {
+            return Some(command);
+        }
+        let jobs: Vec<Job> = jobs
+            .into_iter()
+            .map(|(device, clip, start, end, name)| Job {
+                id: self.next_freeze_job(),
+                kind: Kind::Loop { clip },
+                request: FreezeRequest {
+                    device,
+                    effects: 0,
+                    clips: Some(vec![clip]),
+                    span: (start, end),
+                    tail_seconds: 0.0,
+                },
+                name,
+            })
+            .collect();
+        if !jobs.is_empty() {
+            self.audio.freeze.queue.extend(jobs);
+            self.start_next_job();
+        }
+        if !skipped.is_empty() {
+            self.reject(skipped.join(" \u{b7} "));
+        }
+        rest_loops.then_some(Command::Workflow(WorkflowCommand::ConvertLoop {
+            ids: rest,
+            mode: LoopConvert::Single,
+        }))
+    }
+
     /// Stops the running render and drops the ones that wait.
     pub fn cancel_freeze(&mut self) {
         let waiting = std::mem::take(&mut self.audio.freeze.queue);
@@ -465,6 +547,7 @@ impl<S: EngineSink> AppCore<S> {
             let label = match job.kind {
                 Kind::Freeze => "frozen",
                 Kind::Bounce { .. } => "bounce",
+                Kind::Loop { .. } => "loop",
             };
             let work = Work {
                 doc,
@@ -572,6 +655,15 @@ impl<S: EngineSink> AppCore<S> {
                         job.name,
                         tail.unwrap_or_default()
                     ));
+                }
+            }
+            Kind::Loop { clip } => {
+                let applied = self.apply_command(Command::Workflow(WorkflowCommand::RenderLoop {
+                    id: clip,
+                    audio,
+                }));
+                if applied.is_ok() {
+                    self.reject(format!("Converted the loop of {} to one clip", job.name));
                 }
             }
             Kind::Bounce { mute, dry } => {
