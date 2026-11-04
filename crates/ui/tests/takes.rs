@@ -627,6 +627,9 @@ fn the_take_row_menu_duplicates_and_reorders_in_one_step_each() {
             "Duplicate Take",
             "Move Take Up",
             "Move Take Down",
+            "Loop Take x2",
+            "Loop Take x4",
+            "Loop Take x8",
             "Delete Take",
             "Delete Unused Takes"
         ],
@@ -664,6 +667,43 @@ fn the_take_row_menu_duplicates_and_reorders_in_one_step_each() {
     );
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).takes.len(), 2);
+}
+
+#[test]
+fn the_take_row_menu_loops_a_take_and_plays_it_once_again() {
+    let (mut d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    let at = v.take_point(1, 1, 4 * BAR + PPQ).unwrap();
+    right_click(&d, &reg, &mut v, at);
+    assert!(!v.menu_labels().iter().any(|l| l == "Play Take Once"));
+    let actions = pick_row(&d, &reg, &mut v, "Loop Take x4");
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetTakeLoop {
+            group: 1,
+            take: 1,
+            repeats: 4
+        }]
+    );
+    apply(&mut d, &reg, &actions);
+    let looped = group(&d).takes[1].clone();
+    assert!(looped.loop_length.is_some());
+    // The view follows the document, and the menu now offers the way back (and not x4).
+    v.sync(d.doc(), &reg);
+    let at = v.take_point(1, 1, 4 * BAR + PPQ).unwrap();
+    right_click(&d, &reg, &mut v, at);
+    let labels = v.menu_labels();
+    assert!(labels.iter().any(|l| l == "Play Take Once"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "Loop Take x4"), "{labels:?}");
+    let actions = pick_row(&d, &reg, &mut v, "Play Take Once");
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetTakeLoop {
+            group: 1,
+            take: 1,
+            repeats: 1
+        }]
+    );
 }
 
 #[test]

@@ -8,6 +8,12 @@
 //!   With more than one lane, the header of lane 0 gets a small chip with the same two controls
 //!   on the second line, hidden when the row is [`COMPACT_BELOW`] short. A muted lane's clips are
 //!   painted like the clips of a muted track.
+//! * **Solo and colour.** An S button beside M solos the lane (`SetLaneSolo`; lane 0's chip has
+//!   no room for it, use the menu item): while a lane is
+//!   soloed only the soloed lanes of the track play, and the clips of the others are painted like
+//!   a muted lane's. `sequencer.toggle_lane_solo` does the same for the selected lane, and
+//!   `sequencer.lane_color` (a palette name, or `track`) gives it a colour of its own for its
+//!   clips and its header bar (`SetLaneColor`); a clip's own colour still wins.
 //! * **The selected lane** ([`ArrangementView::record_lane`]) is the lane a click on its header,
 //!   on its empty part or on one of its clips picks. It is where a recording, a paste and an
 //!   import land, and what the lane commands act on. It is view state, not saved, and it is
@@ -39,6 +45,8 @@ pub struct LaneMenu {
     pub can_delete: bool,
     /// The selected lane is muted (the Mute item is checked).
     pub muted: bool,
+    /// The selected lane is soloed (the Solo item is checked).
+    pub soloed: bool,
     /// A selected track has several note lanes that can merge onto its top lane.
     pub can_merge: bool,
     /// One note clip with several pitches is selected, so it can explode into lanes.
@@ -100,6 +108,34 @@ impl ArrangementView {
         }
     }
 
+    /// The colour command of the selected note lane: `sequencer.lane_color` with a palette name
+    /// (`track` goes back to the track's colour).
+    pub(super) fn lane_color_command(&self, arg: Option<&str>) -> CommandOutcome {
+        let Some((device, lane)) = self.selected_lane().map(|(d, l)| (d.clone(), l)) else {
+            return CommandOutcome::Declined;
+        };
+        let color = match arg {
+            Some("track") => None,
+            Some(name) => match crate::marker_edit::palette_color(name) {
+                Some(Some(rgb)) => Some(rgb),
+                _ => return CommandOutcome::Declined,
+            },
+            None => return CommandOutcome::Declined,
+        };
+        let ok = self
+            .song
+            .track(&device)
+            .is_some_and(|t| t.is_note_lane(lane) && t.frozen.is_none());
+        if !ok {
+            return CommandOutcome::Declined;
+        }
+        CommandOutcome::Handled(vec![song_cmd(SongCommand::SetLaneColor {
+            device,
+            lane,
+            color,
+        })])
+    }
+
     /// Whether row `lane` of track `track` is a note lane after the first (it has a header of
     /// its own).
     pub(super) fn is_extra_note_lane(&self, track: usize, lane: usize) -> bool {
@@ -136,8 +172,19 @@ impl ArrangementView {
         }
     }
 
+    /// The rectangle of the S button of lane `lane` in its header row `hr`, left of the M button.
+    /// Lane 0 has none (the second line of a track header is full): `Rect::ZERO`.
+    pub(super) fn lane_solo_rect(&self, hr: Rect, lane: usize) -> Rect {
+        if lane == 0 {
+            return Rect::ZERO;
+        }
+        let m = self.lane_mute_rect(hr, lane);
+        Rect::new(m.x0 - 22.0, m.y0, m.x0 - 2.0, m.y1)
+    }
+
     /// The label area of lane `lane`'s header (a double-click renames, a click picks the lane).
     pub(super) fn lane_label_rect(&self, hr: Rect, track: usize, lane: usize) -> Rect {
+        let solo = self.lane_solo_rect(hr, lane);
         if lane == 0 {
             let x = hr.x0 + TRACK_LIST_WIDTH;
             Rect::new(x - 46.0, hr.y0 + 33.0, x - 24.0, hr.y0 + 49.0)
@@ -145,7 +192,7 @@ impl ArrangementView {
             Rect::new(
                 hr.x0 + 18.0 + self.track_indent(track),
                 hr.y0,
-                self.lane_mute_rect(hr, lane).x0 - 2.0,
+                solo.x0 - 2.0,
                 hr.y1,
             )
         }
@@ -165,6 +212,9 @@ impl ArrangementView {
         }
         if self.lane_mute_rect(hr, lane).contains(pos) {
             return Some(Hit::LaneButton(track, lane, LaneButton::Mute));
+        }
+        if self.lane_solo_rect(hr, lane).contains(pos) {
+            return Some(Hit::LaneButton(track, lane, LaneButton::Solo));
         }
         self.lane_label_rect(hr, track, lane)
             .contains(pos)
@@ -212,15 +262,16 @@ impl ArrangementView {
             .then(|| self.lane_label_rect(hr, track, lane).center())
     }
 
-    /// Centre of a control in the header of note lane `lane` of `device`'s track: the M button
-    /// (`None` when the lane has none: lane 0 of a track with one lane, or in a compact row).
+    /// Centre of a control in the header of note lane `lane` of `device`'s track: the M or S
+    /// button (`None` when the lane has none: lane 0 of a track with one lane, or in a compact
+    /// row).
     pub fn note_lane_button_center(
         &self,
         device: &DeviceKey,
         lane: usize,
         button: LaneButton,
     ) -> Option<Point> {
-        if button != LaneButton::Mute {
+        if !matches!(button, LaneButton::Mute | LaneButton::Solo) {
             return None;
         }
         let track = self.song.tracks.iter().position(|t| &t.device == device)?;
@@ -229,7 +280,32 @@ impl ArrangementView {
         if !self.is_note_lane(track, lane) || (lane == 0 && !self.has_lane_chip(hr, track)) {
             return None;
         }
-        Some(self.lane_mute_rect(hr, lane).center())
+        if lane == 0 && button == LaneButton::Solo {
+            return None;
+        }
+        Some(if button == LaneButton::Solo {
+            self.lane_solo_rect(hr, lane).center()
+        } else {
+            self.lane_mute_rect(hr, lane).center()
+        })
+    }
+
+    /// The S button of a lane header: solos the lane, or unsolos it.
+    pub(super) fn lane_solo_button(&self, track: usize, lane: usize, out: &mut Vec<UiAction>) {
+        let Some(t) = self.song.tracks.get(track) else {
+            return;
+        };
+        if t.frozen.is_some() {
+            return;
+        }
+        let Some(l) = t.lanes.get(lane).filter(|_| t.is_note_lane(lane)) else {
+            return;
+        };
+        out.push(song_cmd(SongCommand::SetLaneSolo {
+            device: t.device.clone(),
+            lane,
+            solo: !l.solo,
+        }));
     }
 
     /// The M button of a lane header: mutes the lane, or unmutes it.
@@ -314,6 +390,7 @@ impl ArrangementView {
             can_rename: true,
             can_delete: t.note_lane_count() > 1,
             muted: t.lanes.get(lane).is_some_and(|l| l.muted),
+            soloed: t.lanes.get(lane).is_some_and(|l| l.solo),
             ..workflows
         }
     }
@@ -428,6 +505,7 @@ impl ArrangementView {
                 | "sequencer.rename_note_lane"
                 | "sequencer.delete_note_lane"
                 | "sequencer.toggle_lane_mute"
+                | "sequencer.toggle_lane_solo"
         ) {
             return None;
         }
@@ -456,6 +534,11 @@ impl ArrangementView {
                 return Some(CommandOutcome::Handled(Vec::new()));
             }
             "sequencer.delete_note_lane" => SongCommand::RemoveNoteLane { device, lane },
+            "sequencer.toggle_lane_solo" => SongCommand::SetLaneSolo {
+                device,
+                lane,
+                solo: !menu.soloed,
+            },
             _ => SongCommand::SetLaneMuted {
                 device,
                 lane,
@@ -479,6 +562,9 @@ impl ArrangementView {
         let st = &self.st;
         let t = &st.base;
         let tr = &self.song.tracks[track];
+        let accent = tr.lanes[lane]
+            .color
+            .map_or(accent, |[r, g, b]| vello::peniko::Color::from_rgb8(r, g, b));
         let x = hr.x0 + self.track_indent(track);
         sp::rect(c, hr, st.header_lane);
         sp::rect(
@@ -493,7 +579,7 @@ impl ArrangementView {
         );
         let cy = hr.y0 + hr.height() / 2.0 + 3.5;
         sp::label(c, &label, x + 26.0, cy, 10.0, t.text, Align::Start);
-        self.paint_lane_mute(c, hr, track, lane);
+        self.paint_note_lane_buttons(c, hr, track, lane);
         if self.selected_note_lane(track) == Some(lane) {
             c.stroke_with(
                 RoundedRect::from_rect(hr.inset(-1.5), 2.0),
@@ -537,20 +623,31 @@ impl ArrangementView {
             },
             Align::Center,
         );
-        self.paint_lane_mute(c, hr, track, 0);
+        self.paint_note_lane_buttons(c, hr, track, 0);
     }
 
-    fn paint_lane_mute(&self, c: &mut dyn Canvas, hr: Rect, track: usize, lane: usize) {
+    /// The S and M buttons of a note lane header.
+    fn paint_note_lane_buttons(&self, c: &mut dyn Canvas, hr: Rect, track: usize, lane: usize) {
         let st = &self.st;
-        let muted = self.song.tracks[track].lanes[lane].muted;
-        let hovered = self.hover == Some(Hit::LaneButton(track, lane, LaneButton::Mute));
+        let l = &self.song.tracks[track].lanes[lane];
+        let hovered = |b| self.hover == Some(Hit::LaneButton(track, lane, b));
+        if lane > 0 {
+            sp::button(
+                c,
+                st,
+                self.lane_solo_rect(hr, lane),
+                "S",
+                l.solo.then_some(st.solo),
+                hovered(LaneButton::Solo),
+            );
+        }
         sp::button(
             c,
             st,
             self.lane_mute_rect(hr, lane),
             "M",
-            muted.then_some(st.mute),
-            hovered,
+            l.muted.then_some(st.mute),
+            hovered(LaneButton::Mute),
         );
     }
 

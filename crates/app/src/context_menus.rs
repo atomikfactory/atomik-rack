@@ -571,6 +571,23 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     enabled: e.lane.can_rename,
                     checked: Some(e.lane.muted),
                 },
+                Spec::Item {
+                    command: "sequencer.toggle_lane_solo",
+                    arg: None,
+                    label: None,
+                    enabled: e.lane.can_rename,
+                    checked: Some(e.lane.soloed),
+                },
+                Spec::submenu(
+                    "Lane Colour",
+                    CLIP_COLORS
+                        .iter()
+                        .map(|(arg, label)| {
+                            meter_item("sequencer.lane_color", arg, label)
+                                .enabled(e.lane.can_rename)
+                        })
+                        .collect(),
+                ),
                 item("sequencer.merge_note_lanes", e.lane.can_merge),
                 Spec::Separator,
                 item("sequencer.delete_automation_lane", e.lane.automation),
@@ -1426,6 +1443,7 @@ mod tests {
                 None,
                 Some("Duplicate Track"),
                 Some("Delete Track"),
+                None,
                 None,
                 None,
                 None,

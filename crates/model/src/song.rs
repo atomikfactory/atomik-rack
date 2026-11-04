@@ -1927,6 +1927,12 @@ impl Track {
             .filter(move |l| !l.muted && (!any_solo || l.solo))
     }
 
+    /// True when note lane `lane` plays nothing only because another note lane is soloed (a
+    /// muted lane is not counted: it is silent by itself).
+    pub fn silenced_by_lane_solo(&self, lane: usize) -> bool {
+        self.is_note_lane(lane) && !self.lanes[lane].solo && self.note_lanes().any(|l| l.solo)
+    }
+
     /// How many note lanes the track has (0 for an audio track).
     pub fn note_lane_count(&self) -> usize {
         self.note_lanes().count()

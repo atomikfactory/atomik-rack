@@ -639,6 +639,9 @@ impl ArrangementView {
                 {
                     rows.extend(self.take_level_rows(group, t, a));
                 }
+                if let Some(clip) = g.takes.get(t) {
+                    rows.extend(take_loop_rows(group, t, clip));
+                }
                 rows.push((
                     "Delete Take".into(),
                     SongCommand::DeleteTake { group, take: t },
@@ -1068,4 +1071,38 @@ impl ArrangementView {
             | RowKind::AddAudio => {}
         }
     }
+}
+
+/// The loop rows of a take's menu: the take repeated twice, four and eight times (those that fit
+/// and are not what the take does already) and, for a looping take, one repetition again. A
+/// reversed audio take has none (it cannot loop).
+fn take_loop_rows(group: u32, take: usize, clip: &Clip) -> Vec<(String, SongCommand)> {
+    if matches!(&clip.content, ClipContent::Audio(a) if a.reverse) {
+        return Vec::new();
+    }
+    let unit = clip.loop_length.unwrap_or(clip.length);
+    let now = (clip.length / unit.max(1)).max(1);
+    let row = |label: String, repeats: u32| {
+        (
+            label,
+            SongCommand::SetTakeLoop {
+                group,
+                take,
+                repeats,
+            },
+        )
+    };
+    let mut rows: Vec<(String, SongCommand)> = [2u32, 4, 8]
+        .into_iter()
+        .filter(|r| i64::from(*r) != now)
+        .filter(|r| {
+            unit.checked_mul(i64::from(*r))
+                .is_some_and(|l| l <= atomik_model::song::MAX_TICK)
+        })
+        .map(|r| row(format!("Loop Take x{r}"), r))
+        .collect();
+    if clip.loop_length.is_some() {
+        rows.push(row("Play Take Once".into(), 1));
+    }
+    rows
 }

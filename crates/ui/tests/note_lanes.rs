@@ -260,6 +260,94 @@ fn lane_mute_button_on_a_muted_lane_unmutes_it() {
 }
 
 #[test]
+fn lane_solo_button_on_a_lane_header_solos_that_lane_and_a_soloed_one_unsolos() {
+    let (mut doc, reg, mut v) = setup();
+    let at = v
+        .note_lane_button_center(&key("keys"), 1, LaneButton::Solo)
+        .unwrap();
+    let acts = click(&mut v, &doc, &reg, at);
+    assert_eq!(
+        song_commands(&acts),
+        vec![SongCommand::SetLaneSolo {
+            device: key("keys"),
+            lane: 1,
+            solo: true
+        }]
+    );
+    doc.song_mut().tracks[2].lanes[1].solo = true;
+    v.sync(&doc, &reg);
+    let acts = click(&mut v, &doc, &reg, at);
+    assert_eq!(
+        song_commands(&acts),
+        vec![SongCommand::SetLaneSolo {
+            device: key("keys"),
+            lane: 1,
+            solo: false
+        }]
+    );
+    // Lane 0's chip has no room for the button; the menu item does it.
+    assert!(
+        v.note_lane_button_center(&key("keys"), 0, LaneButton::Solo)
+            .is_none()
+    );
+}
+
+#[test]
+fn a_solo_and_a_lane_colour_change_the_painting() {
+    let (mut doc, reg, mut v) = setup();
+    let plain = painted(&mut v, &doc);
+    doc.song_mut().tracks[2].lanes[1].solo = true;
+    v.sync(&doc, &reg);
+    let soloed = painted(&mut v, &doc);
+    assert_ne!(plain, soloed, "the other lanes are dimmed, S is lit");
+    doc.song_mut().tracks[2].lanes[1].solo = false;
+    doc.song_mut().tracks[2].lanes[1].color = Some([200, 30, 30]);
+    v.sync(&doc, &reg);
+    assert_ne!(
+        plain,
+        painted(&mut v, &doc),
+        "the lane's clips take its colour"
+    );
+}
+
+#[test]
+fn lane_commands_solo_and_colour_the_selected_lane() {
+    let (doc, reg, mut v) = setup();
+    select_lane(&mut v, &doc, &reg, 2);
+    assert_eq!(
+        command(&mut v, &doc, &reg, "sequencer.toggle_lane_solo"),
+        Some(vec![SongCommand::SetLaneSolo {
+            device: key("keys"),
+            lane: 2,
+            solo: true
+        }])
+    );
+    let outcome = v.command("sequencer.lane_color", Some("red"), &doc, &reg);
+    let CommandOutcome::Handled(a) = outcome else {
+        panic!("declined");
+    };
+    let SongCommand::SetLaneColor { lane, color, .. } = &song_commands(&a)[0] else {
+        panic!("{a:?}");
+    };
+    assert_eq!((*lane, color.is_some()), (2, true));
+    let outcome = v.command("sequencer.lane_color", Some("track"), &doc, &reg);
+    let CommandOutcome::Handled(a) = outcome else {
+        panic!("declined");
+    };
+    assert!(matches!(
+        song_commands(&a)[0],
+        SongCommand::SetLaneColor { color: None, .. }
+    ));
+    // A name that is not a colour and no argument decline.
+    for arg in [Some("magenta"), None] {
+        assert!(matches!(
+            v.command("sequencer.lane_color", arg, &doc, &reg),
+            CommandOutcome::Declined
+        ));
+    }
+}
+
+#[test]
 fn lane_chip_on_lane_zero_shows_with_several_lanes_and_mutes_lane_zero() {
     let (doc, reg, mut v) = setup();
     let at = v
