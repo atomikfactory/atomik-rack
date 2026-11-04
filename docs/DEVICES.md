@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships fifty-six original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-two original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
@@ -8,8 +8,9 @@ a hardware synth or a virtual port), the effects (reverb, space reverb, convolut
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, tuner, pitch shifter
-and the two spiders), the note players (step sequencer, arpeggiator,
+sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, tuner, pitch shifter,
+the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
+envelope follower) and the two spiders), the note players (step sequencer, arpeggiator,
 note filter, key &
 chord, note repeater and note delay), the container and its internal note split, and the console
 devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
@@ -3922,6 +3923,146 @@ Sockets: `in1` to `in4` (CV summing inputs), `sum_out`, `split1_in`, `split2_in`
 
 `sum_out` is the sum of the four inputs, each times its trim (a negative trim inverts, a small one
 attenuates). Each split output is `in * level`, its inverted twin is `-in * level`.
+
+### CV Math: `atomik.cv-math` (Utility)
+
+Arithmetic on two control voltages, with a scale and an offset on the result.
+Source: [cv_math.rs](../crates/devices/src/cv_math.rs).
+
+Sockets: `a_in`, `b_in` (CV in), `out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `op` | 0 to 5: add, subtract, multiply, minimum, maximum, absolute | 0 | choice |
+| `b` | -1 to 1 | 0 | none |
+| `scale` | -4 to 4 | 1 | none |
+| `offset` | -1 to 1 | 0 | none |
+| `clip` | 0 or 1 | 0 | toggle |
+
+- `out = op(a, b) * scale + offset`. `subtract` is `a - b`; `absolute` is `|a|` and ignores b.
+- With a cable on `b_in` the second operand follows it sample by sample. Without one it is the `b`
+  knob, so one input plus a constant covers adding an offset, applying a gain or taking the larger
+  of a CV and a floor.
+- Each input is limited to +-8 (a non-finite sample counts as 0); the output is limited to +-8, or
+  to +-1 with `clip` on. No latency, no state.
+
+### CV Quantizer: `atomik.cv-quantizer` (Utility)
+
+Snaps a pitch CV to the nearest note of a scale.
+Source: [cv_quantizer.rs](../crates/devices/src/cv_quantizer.rs).
+
+Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `scale` | 0 to 15, the 16 scales of the piano roll (chromatic first) | 1 (major) | choice |
+| `root` | 0 to 11: C to B | 0 | choice |
+| `transpose` | -24 to 24 | 0 | semitones |
+
+- The pitch CV is the one of the sequencers, `(key - 60) / 24`: 0 is middle C, +-1 two octaves
+  either way, one semitone 1/24. An input beyond +-1 still quantizes (limited to +-8).
+- The result is the scale key nearest to the input (the nearer of the highest key at or below it and
+  the lowest one above; an exact tie goes down), then moved by `transpose`. The scale list is the
+  one of the piano roll, `ScaleKind` in `atomik_core::theory`, each on the chosen root. A chromatic
+  scale rounds to the nearest semitone.
+- `trig_out` is a 1 ms pulse at every change of the quantized key (the first sample after a start
+  only sets the key). No latency.
+
+### Sample and Hold: `atomik.sample-hold` (Utility)
+
+Samples a CV (or noise) at each clock tick and holds it.
+Source: [sample_hold.rs](../crates/devices/src/sample_hold.rs).
+
+Sockets: `cv_in`, `trig_in` (CV in), `cv_out`, `clock_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `clock` | 0 to 2: trigger, free, tempo | 0 | choice |
+| `rate` | 0.1 to 200 | 4 | Hz |
+| `division` | 0 to 11: 1/32 to 1/1 with triplets and dotted values | 5 (1/8) | choice |
+| `level` | -1 to 1 | 1 | percent |
+
+- `trigger` ticks at every rising edge of `trig_in` (high above 0.5, low below 0.3). `free` ticks at
+  `rate`. `tempo` ticks at the note value `division` of the transport tempo; while the transport
+  plays it takes its position from the song (a locate and a bounce tick at the same places) and
+  while stopped it runs freely at the tempo. The two internal clocks tick at the first sample after
+  a start, so a value is held at once.
+- At a tick the held value becomes `cv_in` limited to +-1 (a non-finite sample counts as 0). With no
+  cable on `cv_in` it becomes noise, uniform in -1..+1 from a generator seeded by the project
+  seed, so a bounce repeats.
+- `cv_out` is the held value times `level` (applied to the output, so a change is heard at once; a
+  negative level inverts). It is 0 before the first tick. `clock_out` is a 1 ms pulse at every
+  tick. No latency.
+
+### Slew Limiter: `atomik.slew-limiter` (Utility)
+
+Limits how fast a CV may rise and fall, with a separate time for each direction.
+Source: [slew_limiter.rs](../crates/devices/src/slew_limiter.rs).
+
+Sockets: `cv_in` (CV in), `cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `rise` | 0.1 to 10000 | 100 | ms |
+| `fall` | 0.1 to 10000 | 100 | ms |
+| `shape` | 0 to 1: linear, exponential | 0 | choice |
+
+- **Linear** moves the output toward the input by at most `1 / time` per sample, so a swing of 1
+  takes the set time, a swing of 0.5 half of it, and the output arrives exactly. **Exponential**
+  is a one-pole smoother whose time constant is the set time (it covers 63 % of a jump in that
+  time) and snaps to the input when the gap is below 1e-9.
+- `rise` applies while the input is above the output, `fall` while it is below. The input is limited
+  to +-8 (a non-finite sample counts as 0); the output starts at 0 and `reset` returns it there.
+  No latency.
+
+### Gate Processor: `atomik.gate-processor` (Utility)
+
+Gate and trigger conversion, division, delay, length and logic.
+Source: [gate_processor.rs](../crates/devices/src/gate_processor.rs).
+
+Sockets: `gate_in`, `gate_b_in` (CV in), `gate_out`, `trig_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `logic` | 0 to 5: a, and, or, xor, nand, nor | 0 | choice |
+| `divide` | 1 to 16 | 1 | none |
+| `delay` | 0 to 2000 | 0 | ms |
+| `length` | 0 to 2000 | 0 | ms |
+
+- The chain is logic, divide, delay, length. Gates have hysteresis (high above 0.5, low below 0.3).
+- `logic` combines `gate_in` (A) with `gate_b_in` (B; unconnected counts as low); `a` ignores B. A
+  gate that is already high at the first sample after a start is the starting state, not an edge.
+- `divide` passes the first of every N rising edges together with its gate and drops the rest.
+- `delay` shifts the result later by up to two seconds, edges and length together. It is a
+  deliberate delay, not a latency. A change takes effect at once.
+- `length` 0 keeps the gate as long as it was; above 0 each rising edge makes a gate of exactly that
+  many ms (at least one sample), and an edge inside a running gate restarts it, so a trigger
+  becomes a gate of a set length.
+- `trig_out` is a 1 ms pulse at every rising edge of `gate_out`, a gate to trigger converter.
+
+### Envelope Follower: `atomik.envelope-follower` (Utility)
+
+Turns the level of an audio signal into a CV and a gate, passing the audio through.
+Source: [envelope_follower.rs](../crates/devices/src/envelope_follower.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `cv_out`, `gate_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mode` | 0 to 1: peak, rms | 0 | choice |
+| `attack` | 0.1 to 500 | 5 | ms |
+| `release` | 1 to 5000 | 100 | ms |
+| `gain` | -24 to 48 | 0 | dB |
+| `curve` | 0 to 1: linear, db | 0 | choice |
+| `threshold` | -60 to 0 | -30 | dB |
+
+- `peak` follows the louder channel sample by sample; `rms` follows the mean power of both and
+  takes the square root (a steady sine reads 0.707 of its amplitude). Attack and release are
+  one-pole time constants: the level covers 63 % of a jump in that time.
+- `gain` scales the level before the curve and the gate. `linear` outputs the level (limited to 8);
+  `db` maps -60 dB and below to 0 and 0 dB to 1, linearly in dB.
+- `gate_out` opens when the level reaches `threshold` and closes 3 dB below it.
+- The audio passes through bit for bit (a non-finite sample counts as 0). No latency.
 
 ---
 
