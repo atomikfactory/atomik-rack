@@ -102,6 +102,18 @@ const EFFECTS: &[(&str, &str)] = &[
         "atomik.env-filter",
         r#"{"cutoff": 300, "amount": 4, "attack": 2, "decay": 300, "resonance": 0.5}"#,
     ),
+    (
+        "atomik.auto-filter",
+        r#"{"cutoff": 300, "depth": 1, "rate": 3, "resonance": 0.5, "shape": 1}"#,
+    ),
+    (
+        "atomik.transient-shaper",
+        r#"{"attack": 1, "sustain": -1, "output": 3}"#,
+    ),
+    (
+        "atomik.de-esser",
+        r#"{"freq": 1000, "q": 0.5, "threshold": -60, "ratio": 20, "range": 24, "mode": 1}"#,
+    ),
 ];
 
 #[test]

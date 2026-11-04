@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships fifty-one original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships fifty-four original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
@@ -8,7 +8,8 @@ a hardware synth or a virtual port), the effects (reverb, space reverb, convolut
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter and the two spiders), the note players (step sequencer, arpeggiator,
+sidechain tool, envelope filter, auto-filter, transient shaper, de-esser and the two
+spiders), the note players (step sequencer, arpeggiator,
 note filter, key &
 chord, note repeater and note delay), the container and its internal note split, and the console
 devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
@@ -3734,6 +3735,100 @@ Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `gate_cv_in` (CV in),
   input peak against `threshold` (re-arming 6 dB lower). `env_cv_out` is the envelope, 0 to 1.
 - A step-gated variant is not a mode: the step sequencer and CV sequencer gate it through
   `gate_cv_in`.
+
+### Auto-Filter: `atomik.auto-filter` (Effect)
+
+A state-variable filter whose cutoff an LFO and the input level sweep.
+Source: [auto_filter.rs](../crates/devices/src/auto_filter.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `cutoff_cv_in`, `depth_cv_in`, `rate_cv_in` (CV in), `out_l`,
+`out_r` (Audio out), `lfo_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `mode` | 0 to 3: lowpass, bandpass, highpass, notch | 0 | choice |
+| `slope` | 0 to 1: 12 dB, 24 dB | 0 | choice |
+| `cutoff` | 20 to 20000 | 800 | Hz |
+| `resonance` | 0 to 1 | 0.35 | percent |
+| `depth` | 0 to 1 | 0.5 | percent |
+| `rate` | 0.02 to 20 | 1 | Hz |
+| `sync` | 0 or 1 | 0 | toggle |
+| `division` | 0 to 11: 1/32 up to 1/1 (triplets and dotted values between) | 8 (1/4) | choice |
+| `shape` | 0 to 4: sine, triangle, saw, square, sample and hold | 0 | choice |
+| `spread` | 0 to 1 | 0 | percent |
+| `follow` | -1 to 1 | 0 | percent |
+| `mix` | 0 to 1 | 1 | percent |
+| `cutoff_cv_trim`, `depth_cv_trim`, `rate_cv_trim` | -1 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- The cutoff is `cutoff * 2^(4 * (depth * lfo + follow * level + trim * cutoff_cv))`, refreshed
+  every 8 samples; `slope` 24 dB runs a second filter behind the first. `notch` is the sum of the
+  low-pass and high-pass outputs, `bandpass` has unity gain at the centre.
+- With `sync` on, a playing transport sets the LFO phase from the song position (a locate and a
+  bounce give the same sweep); stopped, it runs free at the note value of the tempo. `spread` puts
+  the right channel up to half a cycle behind. `follow` reads the input peak from -50 dBFS (0) to
+  0 dBFS (1). `rate_cv_in` multiplies the free rate by up to 8 either way.
+- The output is soft-limited above +-4 (12 dB over full scale) and unchanged below it.
+  `lfo_cv_out` is the left LFO, -1 to 1. No latency.
+
+### Transient Shaper: `atomik.transient-shaper` (Effect)
+
+Raises or lowers the attack and the sustain of a signal whatever its level.
+Source: [transient_shaper.rs](../crates/devices/src/transient_shaper.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `attack_cv_in`, `sustain_cv_in` (CV in), `out_l`, `out_r`
+(Audio out), `transient_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `attack` | -1 to 1 | 0 | percent |
+| `sustain` | -1 to 1 | 0 | percent |
+| `fast` | 0.5 to 30 | 5 | ms |
+| `slow` | 10 to 500 | 50 | ms |
+| `threshold` | -90 to -20 | -70 | dB |
+| `output` | -24 to 12 | 0 | dB |
+| `mix` | 0 to 1 | 1 | percent |
+| `attack_cv_trim`, `sustain_cv_trim` | -1 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- Two followers of the stereo-linked power, one with the `fast` and one with the `slow` time
+  constant, give a difference `d` in dB. An onset makes `d` positive, a decaying tail negative and a
+  steady tone zero, so the same settings work at any level. The gain in dB is
+  `attack * clamp(d, 0, 12) + sustain * clamp(-d, 0, 12) + output`, never more than +18 dB. Power
+  under `threshold` reads as `threshold`, so a noise floor does not move the gain.
+- The CV inputs add `trim * cv` to `attack` and `sustain` (the batch mean). `transient_cv_out`
+  is the attack part of `d` scaled to 0 to 1. With both amounts at 0 and `output` at 0 the signal
+  passes bit for bit. No latency: the first milliseconds of an onset are shaped as the fast
+  follower rises.
+
+### De-esser: `atomik.de-esser` (Effect)
+
+Turns down sibilance in its own band, or across the whole signal.
+Source: [de_esser.rs](../crates/devices/src/de_esser.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `freq_cv_in` (CV in), `out_l`, `out_r` (Audio out), `gr_cv_out`
+(CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `freq` | 1000 to 16000 | 6500 | Hz |
+| `q` | 0.5 to 8 | 2 | none |
+| `threshold` | -60 to 0 | -30 | dB |
+| `ratio` | 1.5 to 20 | 6 | none |
+| `range` | 0 to 24 | 12 | dB |
+| `attack` | 0.05 to 20 | 0.5 | ms |
+| `release` | 5 to 500 | 40 | ms |
+| `mode` | 0 to 1: split, wideband | 0 | choice |
+| `listen` | 0 or 1 | 0 | toggle |
+| `freq_cv_trim` | -1 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- A band-pass at `freq` with unity gain at the centre feeds a level follower (the louder channel
+  wins, so the image stays put). The reduction is `(level - threshold) * (1 - 1/ratio)` dB, at
+  most `range`. In `split` mode the band is subtracted by the share that is turned down, so
+  nothing outside the band moves and a quiet signal passes bit for bit; `wideband` turns the whole
+  signal down; `listen` plays the band the detector hears.
+- `freq_cv_in` moves the centre by `trim * cv * 2` octaves. `gr_cv_out` is `1 - gain`. No latency.
 
 ### Audio Split/Merge: `atomik.spider-audio` (Utility)
 

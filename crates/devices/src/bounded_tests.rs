@@ -175,4 +175,22 @@ proptest! {
     fn qa_character_any_params_bounded_at_every_sample_rate(s in scene()) {
         check_bounded("atomik.character", &s)?;
     }
+
+    /// The auto-filter: any params, resonant sweeps and loud noise.
+    #[test]
+    fn qa_auto_filter_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.auto-filter", &s)?;
+    }
+
+    /// The de-esser: any params and loud noise.
+    #[test]
+    fn qa_de_esser_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.de-esser", &s)?;
+    }
+
+    /// The transient shaper: any params and loud noise.
+    #[test]
+    fn qa_transient_shaper_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.transient-shaper", &s)?;
+    }
 }
