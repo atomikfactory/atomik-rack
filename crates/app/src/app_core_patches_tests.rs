@@ -678,3 +678,55 @@ fn a_patch_that_cannot_replace_the_device_changes_nothing() {
     assert!(c.last_rejection().unwrap().contains("exactly one"));
     assert_eq!(save_project(c.doc()), before);
 }
+
+#[test]
+fn the_display_settings_of_the_analysers_are_saved_and_applied_as_user_presets() {
+    // The patch strip of every device is the user preset of its display settings: the new
+    // smoothing, weighting, reference, view and target travel with a patch like any param.
+    let lib = Tmp::new("analysers");
+    let mut c = core(&lib);
+    for (kind, k, settings) in [
+        (
+            "atomik.spectrum",
+            "spec",
+            [
+                ("size", 4.0),
+                ("mode", 2.0),
+                ("smoothing", 2.0),
+                ("weighting", 1.0),
+                ("reference", 2.0),
+                ("range", 60.0),
+            ],
+        ),
+        (
+            "atomik.phase-meter",
+            "ph",
+            [
+                ("loudness_view", 1.0),
+                ("target", -23.0),
+                ("scope", 1.0),
+                ("scope_gain", 6.0),
+                ("hold", 3.0),
+                ("loudness", 1.0),
+            ],
+        ),
+    ] {
+        add(&mut c, kind, k);
+        let twin = format!("{k}2");
+        add(&mut c, kind, &twin);
+        for (p, v) in settings {
+            set(&mut c, k, p, v);
+        }
+        c.save_device_patch(&key(k), &patch_path(&lib, k));
+        c.load_library_item(&patch_path(&lib, k), LoadTarget::Device(key(&twin)));
+        for (p, v) in settings {
+            assert_eq!(param(&c, &twin, p), Some(v), "{kind} {p}");
+        }
+        // Resetting the device is the preset of a new one.
+        c.apply_command(Command::Workflow(WorkflowCommand::ResetDevice {
+            device: key(&twin),
+        }))
+        .unwrap();
+        assert_ne!(param(&c, &twin, settings[0].0), Some(settings[0].1));
+    }
+}
