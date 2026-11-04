@@ -1671,8 +1671,12 @@ fall back to the last working configuration. `crates/app/src/shell_device_loss_t
 shell: `failed_apply_keeps_last_good_settings` (the settings file is byte for byte unchanged), the
 toast once per stall, the reset to the default devices only when the setting is on, and
 `status.rs` the status-bar strings and the dialog's drift warning (different devices warn, one
-device does not). No test unplugs a device; the callbacks stay allocation-free under the existing
-`audio-io` allocation tests.
+device does not). The return of a chosen device is covered with the session fake
+(`the_chosen_device_is_taken_back_once_it_is_listed_again`, one try, never while it is only listed) and in
+the shell (`the_chosen_device_comes_back_by_itself_when_it_returns_after_a_loss`, held while the song plays).
+No test unplugs a device; the callbacks stay allocation-free under the existing `audio-io` allocation tests.
+`crates/engine/tests/control_faults.rs` panics a device in `set_param` and in its meter read: only that
+device is silenced and named, and the healthy path allocates nothing.
 
 Hand checks, not automated (they need an audio interface and your hands):
 
@@ -1683,6 +1687,8 @@ Hand checks, not automated (they need an audio interface and your hands):
 - Turn on Audio Settings > If the audio device is lost > Switch to the default devices, repeat: the
   app moves to the default output by itself with a toast, and `settings.json` still names the
   interface. Do it once for each host (WASAPI, ASIO where built, CoreAudio, ALSA).
+- With that setting on (or after applying a device that could not open), plug the interface back in:
+  within a few seconds the app switches to it by itself with a toast, and does not while the song plays.
 - Apply a device that cannot open (an exclusive-mode device held by another program): a toast says
   so, the previous device keeps playing and `settings.json` is unchanged.
 - Choose an input and an output on two different interfaces and record for a minute: the dialog

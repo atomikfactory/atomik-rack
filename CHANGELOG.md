@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Recovery and fault follow-ups.** A recovery snapshot now opens with its audio: the writer leaves a note
+  next to each snapshot that has audio, naming the project folder it was taken in, and opening the snapshot
+  copies that audio into the new unsaved song (an older snapshot without the note still shows its clips as
+  missing). A recovered recording is one undo step, track and clip together. When the chosen audio device is
+  lost, or does not open and the last working configuration plays instead, the app reads the device list
+  every few seconds and, once the device is listed again, switches back to it by itself (not while the song
+  plays or records), with a log line and a toast; that is one try, so a device that is listed but still does
+  not open is not retried in a loop, and choosing devices in the settings forgets the one to go back to. A
+  device that panics outside `process` (taking a parameter, a sample or pattern hand-off, a meter or latency
+  read) is now caught on the audio thread like one that panics in `process`: only that device is silenced
+  and named, the others keep playing. No saved field changes (the project format is still 42).
 - **Phase lock for a followed MIDI clock.** The clock input now counts the sender's position (the last Start
   or Song Position Pointer plus one clock's worth of ticks for each clock that arrives while it runs), and
   the player holds the song to it: once per batch it moves the position a few frames towards the sender's,
