@@ -376,3 +376,57 @@ fn a_gain_wheel_steps_a_decibel() {
     let a = handle(&mut b, &doc, &[wheel(p, 1.0)]);
     assert!((contents(&a)[0].1.gain_db - -2.0).abs() < 1e-6);
 }
+
+// ---------------------------------------------------------------- fade unit
+
+#[test]
+fn the_unit_tag_switches_the_fades_between_ms_and_ticks() {
+    use atomik_ui::FadeUnit;
+    let doc = audio_doc();
+    let mut b = bar(&doc, &[10], 1500.0);
+    assert_eq!(b.fade_unit(), FadeUnit::Ms);
+    let tag = b.fade_unit_tag_point().unwrap();
+    let a = handle(&mut b, &doc, &[down(tag), up(tag)]);
+    assert!(a.is_empty(), "the switch edits nothing");
+    assert_eq!(b.fade_unit(), FadeUnit::Ticks);
+    let t = texts(&mut b, &doc);
+    assert!(t.iter().any(|s| s == "TICKS"), "{t:?}");
+    assert!(
+        t.iter().any(|s| s.ends_with(" t")) && !t.iter().any(|s| s == "500 ms"),
+        "{t:?}"
+    );
+    // A wheel notch is a 16th note now, not 10 ms.
+    let p = b
+        .inspector_point(atomik_ui::InspectorField::FadeIn)
+        .unwrap();
+    let a = handle(&mut b, &doc, &[wheel(p, 1.0)]);
+    let frames = contents(&a)[0].1.fade_in;
+    assert!(frames > 24_000 + 480, "{frames}");
+    // Back to milliseconds.
+    handle(&mut b, &doc, &[down(tag), up(tag)]);
+    assert_eq!(b.fade_unit(), FadeUnit::Ms);
+    assert!(texts(&mut b, &doc).iter().any(|s| s == "500 ms"));
+}
+
+#[test]
+fn a_fade_typed_in_ticks_round_trips_through_frames() {
+    use atomik_ui::FadeUnit;
+    let doc = audio_doc();
+    let mut b = bar(&doc, &[10], 1500.0);
+    b.set_fade_unit(FadeUnit::Ticks);
+    let p = b
+        .inspector_point(atomik_ui::InspectorField::FadeOut)
+        .unwrap();
+    handle(&mut b, &doc, &[down_mods(p, Modifiers::NONE, 2), up(p)]);
+    for c in "1920".chars() {
+        handle(&mut b, &doc, &[key_down(Key::Char(c))]);
+    }
+    let a = handle(&mut b, &doc, &[key_down(Key::Enter)]);
+    let frames = contents(&a)[0].1.fade_out;
+    // Applied again the same value reads back the typed ticks.
+    let mut after = doc.clone();
+    audio_mut(&mut after, 10, |a| a.fade_out = frames);
+    let mut b2 = bar(&after, &[10], 1500.0);
+    b2.set_fade_unit(FadeUnit::Ticks);
+    assert!(texts(&mut b2, &after).iter().any(|s| s == "1920 t"));
+}

@@ -276,6 +276,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             WindowKind::Console => AppCommand::DetachConsole,
             WindowKind::SpectrumEq => AppCommand::ToggleSpectrumEq,
             WindowKind::Browser => AppCommand::DetachBrowser,
+            WindowKind::PianoKeys => AppCommand::TogglePianoKeys,
             WindowKind::Main | WindowKind::Rack => AppCommand::DetachRack,
         };
         if *kind != WindowKind::Main && !shell.detached(*kind) {
@@ -1337,23 +1338,25 @@ impl App {
                     }
                 }
                 ShellRequest::ConfirmSave { then } => {
-                    // Yes saves, No discards, Cancel leaves everything as it is.
+                    // Save saves, Don't Save discards, Cancel leaves everything as it is. The
+                    // buttons carry these words on every platform (a task dialog on Windows).
+                    let (save, discard, cancel) = window_logic::SAVE_BUTTONS;
                     let mut dialog = rfd::MessageDialog::new()
                         .set_level(rfd::MessageLevel::Warning)
                         .set_title("Unsaved changes")
-                        .set_description(
-                            "The rack has unsaved changes. Save them first?
-
-Yes saves, No discards the changes, Cancel keeps the song open.",
-                        )
-                        .set_buttons(rfd::MessageButtons::YesNoCancel);
+                        .set_description("The rack has unsaved changes. Save them first?")
+                        .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                            save.into(),
+                            discard.into(),
+                            cancel.into(),
+                        ));
                     if let Some(w) = self.parent_window() {
                         dialog = dialog.set_parent(w);
                     }
-                    let more = match dialog.show() {
-                        rfd::MessageDialogResult::Yes => self.shell.save_then(then),
-                        rfd::MessageDialogResult::No => self.shell.discard_then(then),
-                        _ => Vec::new(),
+                    let more = match window_logic::save_answer(&dialog.show()) {
+                        window_logic::SaveAnswer::Save => self.shell.save_then(then),
+                        window_logic::SaveAnswer::Discard => self.shell.discard_then(then),
+                        window_logic::SaveAnswer::Cancel => Vec::new(),
                     };
                     self.handle_requests(event_loop, more);
                 }

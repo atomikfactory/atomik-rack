@@ -11,7 +11,8 @@
 //! text, one merge group for a drag).
 //!
 //! * Fades are in milliseconds (the model keeps frames); a fade never grows past the clip's
-//!   length minus the other fade.
+//!   length minus the other fade. The small unit tag at the top right of a fade box switches
+//!   both fades between milliseconds and ticks (the clip's own tick span over its frames).
 //! * Transpose is in semitones with two decimals (the model keeps cents): a drag or the wheel on
 //!   the whole part steps a semitone, on the decimals a cent. A reversed clip cannot be
 //!   transposed and the Repitch warp mode does not transpose, so a clip of either kind keeps its
@@ -41,6 +42,38 @@ const VALUE_SIZE: f32 = 12.0;
 const TEXT_MAX: usize = 8;
 /// Milliseconds of a fade step (Shift: one).
 const FADE_STEP_MS: i64 = 10;
+/// Ticks of a fade step when the fades are shown in ticks (Shift: one): a 16th note.
+const FADE_STEP_TICKS: i64 = 960;
+/// Width of the unit tag at the top right of a fade box.
+const UNIT_TAG_W: f64 = 30.0;
+/// Height of the label row of a box, which holds the unit tag.
+const LABEL_ROW_H: f64 = 13.0;
+
+/// The unit the inspector shows the fades in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FadeUnit {
+    /// Milliseconds.
+    #[default]
+    Ms,
+    /// Ticks of the clip's own span.
+    Ticks,
+}
+
+impl FadeUnit {
+    fn other(self) -> Self {
+        match self {
+            Self::Ms => Self::Ticks,
+            Self::Ticks => Self::Ms,
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Ms => "MS",
+            Self::Ticks => "TICKS",
+        }
+    }
+}
 /// Cents of a semitone step (Shift: ten cents).
 const SEMITONE_CENTS: i64 = 100;
 /// Tenths of a dB of a gain step (Shift: one tenth).
@@ -79,19 +112,47 @@ impl InspClip {
         (ms.max(0) as u64 * u64::from(self.rate) + 500) / 1000
     }
 
+    /// Ticks of `frames`: the clip's tick length spread over its frames, rounded.
+    fn ticks(&self, frames: u64) -> i64 {
+        let total = u128::from(self.frames.max(1));
+        ((u128::from(frames) * self.length.max(0) as u128 + total / 2) / total) as i64
+    }
+
+    /// Frames of `ticks` ticks of the clip.
+    fn frames_of_ticks(&self, ticks: i64) -> u64 {
+        let length = u128::from(self.length.max(1) as u64);
+        ((ticks.max(0) as u128 * u128::from(self.frames) + length / 2) / length) as u64
+    }
+
+    /// `frames` in `unit`.
+    fn fade_in_unit(&self, frames: u64, unit: FadeUnit) -> i64 {
+        match unit {
+            FadeUnit::Ms => self.ms(frames),
+            FadeUnit::Ticks => self.ticks(frames),
+        }
+    }
+
+    /// Frames of `value` in `unit`.
+    fn fade_frames(&self, value: i64, unit: FadeUnit) -> u64 {
+        match unit {
+            FadeUnit::Ms => self.frames_of(value),
+            FadeUnit::Ticks => self.frames_of_ticks(value),
+        }
+    }
+
     /// The clip can be transposed: not reversed and not in the Repitch mode.
     fn can_transpose(&self) -> bool {
         !self.content.reverse && self.content.warp.mode != WarpMode::Repitch
     }
 
-    /// The most a fade can be, in milliseconds: the clip less the other fade.
-    fn fade_max_ms(&self, out: bool) -> i64 {
+    /// The most a fade can be, in `unit`: the clip less the other fade.
+    fn fade_max(&self, out: bool, unit: FadeUnit) -> i64 {
         let other = if out {
             self.content.fade_in
         } else {
             self.content.fade_out
         };
-        self.ms(self.frames.saturating_sub(other))
+        self.fade_in_unit(self.frames.saturating_sub(other), unit)
     }
 }
 
@@ -204,6 +265,8 @@ struct InspDrag {
 pub(super) struct Inspector {
     source: InspectorSource,
     drag: Option<InspDrag>,
+    /// The unit the fades are shown, dragged and typed in.
+    unit: FadeUnit,
     /// The field being typed into, its text and whether the text is still the untouched original.
     editing: Option<(InspectorField, String, bool)>,
 }
@@ -214,11 +277,11 @@ struct Layout {
     slots: Vec<(Slot, Rect)>,
 }
 
-/// The value of `slot` on a clip (ms, cents, tenths of a dB, 0 or 1).
-fn slot_value(c: &InspClip, slot: Slot) -> i64 {
+/// The value of `slot` on a clip (ms or ticks, cents, tenths of a dB, 0 or 1).
+fn slot_value(c: &InspClip, slot: Slot, unit: FadeUnit) -> i64 {
     match slot {
-        Slot::FadeIn => c.ms(c.content.fade_in),
-        Slot::FadeOut => c.ms(c.content.fade_out),
+        Slot::FadeIn => c.fade_in_unit(c.content.fade_in, unit),
+        Slot::FadeOut => c.fade_in_unit(c.content.fade_out, unit),
         Slot::Transpose => i64::from(c.content.warp.transpose_cents),
         Slot::Gain => (f64::from(c.content.gain_db) * 10.0).round() as i64,
         Slot::Reverse => i64::from(c.content.reverse),
@@ -243,10 +306,11 @@ impl Inspector {
 
     fn shown(&self, slot: Slot) -> Shown {
         let clips = self.clips();
-        let Some(first) = clips.first().map(|c| slot_value(c, slot)) else {
+        let unit = self.unit;
+        let Some(first) = clips.first().map(|c| slot_value(c, slot, unit)) else {
             return Shown::Empty;
         };
-        if clips.iter().all(|c| slot_value(c, slot) == first) {
+        if clips.iter().all(|c| slot_value(c, slot, unit) == first) {
             Shown::Value(first)
         } else {
             Shown::Mixed
@@ -255,7 +319,9 @@ impl Inspector {
 
     /// The value a drag, the wheel or typing starts from: the shared value, or the first clip's.
     fn base(&self, slot: Slot) -> i64 {
-        self.clips().first().map_or(0, |c| slot_value(c, slot))
+        self.clips()
+            .first()
+            .map_or(0, |c| slot_value(c, slot, self.unit))
     }
 
     /// Why a slot cannot be edited, `None` when it can.
@@ -280,7 +346,7 @@ impl Inspector {
                 0,
                 self.clips()
                     .iter()
-                    .map(|c| c.fade_max_ms(slot == Slot::FadeOut))
+                    .map(|c| c.fade_max(slot == Slot::FadeOut, self.unit))
                     .max()
                     .unwrap_or(0),
             ),
@@ -308,12 +374,12 @@ impl Inspector {
                 match slot {
                     Slot::FadeIn => {
                         a.fade_in = c
-                            .frames_of(value)
+                            .fade_frames(value, self.unit)
                             .min(c.frames.saturating_sub(c.content.fade_out));
                     }
                     Slot::FadeOut => {
                         a.fade_out = c
-                            .frames_of(value)
+                            .fade_frames(value, self.unit)
                             .min(c.frames.saturating_sub(c.content.fade_in));
                     }
                     Slot::Transpose => {
@@ -392,11 +458,13 @@ impl Inspector {
 }
 
 /// The value `notches` steps from `v` on `field`, in the units of its slot, clamped.
-fn step_value(field: InspectorField, v: i64, notches: i32, fine: bool) -> i64 {
+fn step_value(field: InspectorField, v: i64, notches: i32, fine: bool, unit: FadeUnit) -> i64 {
     let step = match field {
         InspectorField::FadeIn | InspectorField::FadeOut => {
             if fine {
                 1
+            } else if unit == FadeUnit::Ticks {
+                FADE_STEP_TICKS
             } else {
                 FADE_STEP_MS
             }
@@ -422,8 +490,9 @@ fn step_value(field: InspectorField, v: i64, notches: i32, fine: bool) -> i64 {
 }
 
 /// The text of a value, as the field shows it.
-fn value_text(slot: Slot, v: i64) -> String {
+fn value_text(slot: Slot, v: i64, unit: FadeUnit) -> String {
     match slot {
+        Slot::FadeIn | Slot::FadeOut if unit == FadeUnit::Ticks => format!("{v} t"),
         Slot::FadeIn | Slot::FadeOut => format!("{v} ms"),
         Slot::Transpose => format!("{:+.2}", v as f64 / 100.0),
         Slot::Gain => format!("{:+.1} dB", v as f64 / 10.0),
@@ -553,6 +622,52 @@ impl TransportBar {
         out
     }
 
+    /// The unit shown for the fades.
+    pub fn fade_unit(&self) -> FadeUnit {
+        self.insp.unit
+    }
+
+    /// Shows the fades in `unit`.
+    pub fn set_fade_unit(&mut self, unit: FadeUnit) {
+        if self.insp.unit != unit {
+            self.insp.unit = unit;
+            self.insp.editing = None;
+            self.insp.drag = None;
+            self.repaint = true;
+        }
+    }
+
+    /// The centre of the unit tag of the fade-in box (`None` when the box is not shown).
+    pub fn fade_unit_tag_point(&self) -> Option<Point> {
+        let (_, r) = self
+            .inspector_layout()
+            .slots
+            .into_iter()
+            .find(|(s, _)| *s == Slot::FadeIn)?;
+        Some(pt(r.x1 - UNIT_TAG_W / 2.0, r.y0 + LABEL_ROW_H / 2.0))
+    }
+
+    /// True when `pos` is on the unit tag of a fade box.
+    fn unit_tag_at(&self, pos: Point) -> bool {
+        self.inspector_layout().slots.into_iter().any(|(s, r)| {
+            matches!(s, Slot::FadeIn | Slot::FadeOut)
+                && pos.x >= r.x1 - UNIT_TAG_W
+                && pos.x < r.x1
+                && pos.y >= r.y0
+                && pos.y < r.y0 + LABEL_ROW_H
+        })
+    }
+
+    /// A press on the unit tag switches the fades' unit; true when it was one.
+    pub(super) fn inspector_unit_press(&mut self, pos: Point) -> bool {
+        if self.insp.clips().is_empty() || !self.unit_tag_at(pos) {
+            return false;
+        }
+        let unit = self.insp.unit.other();
+        self.set_fade_unit(unit);
+        true
+    }
+
     fn inspector_hit(&self, pos: Point) -> Option<InspectorField> {
         for (s, r) in self.inspector_layout().slots {
             if r.contains(pos) {
@@ -621,7 +736,7 @@ impl TransportBar {
         let n = d.steps.update(y, PX_PER_STEP);
         if n != 0 {
             let (lo, hi) = self.insp.range(d.field.slot());
-            d.value = step_value(d.field, d.value, n, fine).clamp(lo, hi);
+            d.value = step_value(d.field, d.value, n, fine, self.insp.unit).clamp(lo, hi);
             if d.value != d.sent {
                 d.sent = d.value;
                 let actions = self.insp.merged(d.field.slot(), d.value, d.merge);
@@ -656,7 +771,8 @@ impl TransportBar {
             return;
         }
         let (lo, hi) = self.insp.range(slot);
-        let v = step_value(field, self.insp.base(slot), notches, fine).clamp(lo, hi);
+        let v =
+            step_value(field, self.insp.base(slot), notches, fine, self.insp.unit).clamp(lo, hi);
         out.extend(self.insp.one_step(slot, v));
     }
 
@@ -729,11 +845,19 @@ impl TransportBar {
             return Some(Help::new(r, format!("{what}: {why}")));
         }
         let text = match slot {
-            Slot::FadeIn => {
-                "Fade in time in ms: drag or scroll to change (Shift: fine), double-click to type"
-            }
-            Slot::FadeOut => {
-                "Fade out time in ms: drag or scroll to change (Shift: fine), double-click to type"
+            Slot::FadeIn | Slot::FadeOut => {
+                let unit = if self.insp.unit == FadeUnit::Ticks {
+                    "ticks"
+                } else {
+                    "ms"
+                };
+                let what = if slot == Slot::FadeIn { "in" } else { "out" };
+                return Some(Help::new(
+                    r,
+                    format!(
+                        "Fade {what} time in {unit}: drag or scroll to change (Shift: fine), double-click to type; click the unit tag to switch between ms and ticks"
+                    ),
+                ));
             }
             Slot::Transpose => {
                 "Transpose in semitones: drag or scroll the whole part, or the cents after the point; double-click to type. Reversed clips and the Repitch mode are left alone"
@@ -810,9 +934,20 @@ impl TransportBar {
                 t.text_muted,
                 Align::Start,
             );
+            if matches!(slot, Slot::FadeIn | Slot::FadeOut) {
+                sp::label(
+                    c,
+                    self.insp.unit.tag(),
+                    r.x1 - LCD_PAD,
+                    r.y0 + 10.0,
+                    6.5,
+                    t.focus,
+                    Align::End,
+                );
+            }
             let text = match (editing, shown) {
                 (Some((_, s, _)), _) => format!("{s}_"),
-                (None, Shown::Value(v)) => value_text(slot, v),
+                (None, Shown::Value(v)) => value_text(slot, v, self.insp.unit),
                 (None, Shown::Mixed) => MIXED.to_owned(),
                 (None, Shown::Empty) => String::new(),
             };

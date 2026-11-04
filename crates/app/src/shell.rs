@@ -165,11 +165,11 @@ use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
     ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, MacrosAction, MacrosView,
     MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
-    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
-    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
-    UiEvent, WarpAction, WarpValues, WarpView,
+    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
+    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
+    RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView,
+    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, WarpAction,
+    WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -385,11 +385,8 @@ pub struct Layout {
     /// The file browser column (only while it shows): the full height below the menu bar, to
     /// the left of everything else.
     pub file_browser: Option<Rect>,
-    /// The Piano Keys strip (only while it shows): the full width right of the file browser,
-    /// above the status bar.
-    pub piano_keys: Option<Rect>,
     /// The Track Panel column (only while it shows): on the right of the window, between the
-    /// menu bar and the Piano Keys strip or the status bar.
+    /// menu bar and the status bar.
     pub track_panel: Option<Rect>,
 }
 
@@ -566,7 +563,6 @@ pub struct Shell<B: AudioBackend> {
     /// resize drag of the panel.
     browser_edge: f64,
     /// The Piano Keys strip is shown (View > Piano Keys).
-    piano_keys_visible: bool,
     /// The file drag in progress (see [`Capture::FileDrag`]).
     file_drag: Option<FileDrag>,
     /// The help tooltip: what the pointer rests on and whether it shows yet.
@@ -732,7 +728,6 @@ impl<B: AudioBackend> Shell<B> {
             keymap_stamp,
             seq_only_prev: None,
             browser_edge: 0.0,
-            piano_keys_visible: false,
             file_drag: None,
             tips: Tips::default(),
             silent: false,
@@ -810,6 +805,11 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .piano_roll_mut()
             .set_key_height(self.ui.piano_roll_key_height);
+        {
+            let keys = self.core.piano_keys_mut();
+            keys.set_octave(self.ui.piano_keys_octave);
+            keys.set_velocity(self.ui.piano_keys_velocity);
+        }
         {
             let roll = self.core.piano_roll_mut();
             roll.set_snap_to_scale(self.ui.piano_roll_snap_scale);
@@ -2385,7 +2385,7 @@ impl<B: AudioBackend> Shell<B> {
             cables: view.cable_visibility(),
             browser: view.browser_visible(),
             file_browser: self.ui.file_browser_visible,
-            piano_keys: self.piano_keys_visible,
+            piano_keys: self.detached(WindowKind::PianoKeys),
             track_panel: self.core.track_panel_visible(),
             rack_sort: self.core.doc().sort_mode,
             single_column: view.single_column(),
@@ -2493,39 +2493,15 @@ impl<B: AudioBackend> Shell<B> {
         )
     }
 
-    /// The height the Piano Keys strip takes above the status bar (0 while hidden).
-    fn keys_height(&self) -> f64 {
-        if self.piano_keys_visible {
-            PIANO_KEYS_HEIGHT
-        } else {
-            0.0
-        }
-    }
-
-    /// The Piano Keys strip, when it shows.
-    fn piano_keys_rect(&self) -> Option<Rect> {
-        if !self.piano_keys_visible {
-            return None;
-        }
-        let x0 = self.file_browser_rect().map_or(0.0, |r| r.x1);
-        let y1 = (self.size().height - STATUS_BAR_HEIGHT).max(self.top() + 1.0);
-        Some(Rect::new(
-            x0,
-            (y1 - PIANO_KEYS_HEIGHT).max(self.top()),
-            self.size().width.max(x0 + 1.0),
-            y1,
-        ))
-    }
-
-    /// The Track Panel column, when it shows: on the right of the window, above the Piano Keys
-    /// strip, narrower when the window leaves the rest less than [`MIN_REST_WIDTH`].
+    /// The Track Panel column, when it shows: on the right of the window, above the status
+    /// bar, narrower when the window leaves the rest less than [`MIN_REST_WIDTH`].
     fn track_panel_rect(&self) -> Option<Rect> {
         if !self.core.track_panel_visible() {
             return None;
         }
         let left = self.file_browser_rect().map_or(0.0, |r| r.x1);
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
         let room = (self.size().width - left - MIN_REST_WIDTH).max(0.0);
         let width = TRACK_PANEL_WIDTH.min(room);
         (width >= MIN_TRACK_PANEL_WIDTH)
@@ -2555,8 +2531,7 @@ impl<B: AudioBackend> Shell<B> {
         let w = (tp.map_or(self.size().width, |r| r.x0) - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
-        let keys = self.piano_keys_rect();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
         if self.maximised() {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
@@ -2565,7 +2540,6 @@ impl<B: AudioBackend> Shell<B> {
                 transport: Rect::new(x0, transport_top, x1, bottom),
                 song: Some(Rect::new(x0, top, x1, transport_top)),
                 file_browser: fb,
-                piano_keys: keys,
                 track_panel: tp,
             };
         }
@@ -2577,7 +2551,6 @@ impl<B: AudioBackend> Shell<B> {
                 transport: Rect::new(x0, transport_top, x1, bottom),
                 song: None,
                 file_browser: fb,
-                piano_keys: keys,
                 track_panel: tp,
             };
         }
@@ -2594,7 +2567,6 @@ impl<B: AudioBackend> Shell<B> {
                     bottom.max(transport.y1 + 1.0),
                 )),
                 file_browser: fb,
-                piano_keys: keys,
                 track_panel: tp,
             };
         }
@@ -2614,7 +2586,6 @@ impl<B: AudioBackend> Shell<B> {
                 bottom.max(transport.y1 + 1.0),
             )),
             file_browser: fb,
-            piano_keys: keys,
             track_panel: tp,
         }
     }
@@ -2648,8 +2619,8 @@ impl<B: AudioBackend> Shell<B> {
         {
             self.core.file_browser_mut().set_bounds(rect);
         }
-        if let Some(keys) = l.piano_keys {
-            self.core.piano_keys_mut().set_bounds(keys);
+        if let Some((_, rect)) = self.pane_rect(Pane::PianoKeys) {
+            self.core.piano_keys_mut().set_bounds(rect);
         }
         if let Some(panel) = l.track_panel {
             self.core.track_panel_mut().set_bounds(panel);
@@ -2839,7 +2810,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
-            Pane::PianoKeys if !self.piano_keys_visible => self.live_pane(Pane::Rack),
+            Pane::PianoKeys if !self.detached(WindowKind::PianoKeys) => self.live_pane(Pane::Rack),
             Pane::TrackPanel if !self.core.track_panel_visible() => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
             Pane::Rack if !self.rack_in_main() => self.song_pane(),
@@ -2906,15 +2877,14 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Console => Pane::Console,
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
                 WindowKind::Browser => Pane::FileBrowser,
+                WindowKind::PianoKeys => Pane::PianoKeys,
                 _ => Pane::Rack,
             };
             let (_, rect) = self.pane_rect(pane)?;
             return rect.contains(pos).then_some(Ok(pane));
         }
         let l = self.layout();
-        if l.piano_keys.is_some_and(|r| r.contains(pos)) {
-            Some(Ok(Pane::PianoKeys))
-        } else if l.track_panel.is_some_and(|r| r.contains(pos)) {
+        if l.track_panel.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::TrackPanel))
         } else if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
@@ -4315,27 +4285,10 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Sends a key no command took to the focused view (numpad keys as the characters they
     /// type).
-    /// Opens or closes the Piano Keys strip. Opening gives it the keyboard focus; closing
+    /// Opens or closes the Piano Keys window. Opening gives it the keyboard focus; closing
     /// releases its notes.
     fn set_piano_keys_visible(&mut self, visible: bool) {
-        if visible == self.piano_keys_visible {
-            return;
-        }
-        self.piano_keys_visible = visible;
-        if visible {
-            self.layout_view();
-            self.set_focus(Pane::PianoKeys);
-        } else {
-            if self.focus == Pane::PianoKeys {
-                self.set_focus(Pane::Rack);
-            }
-            let released = self.core.piano_keys_mut().release_all();
-            for action in released {
-                self.core.handle_action(action);
-            }
-            self.layout_view();
-        }
-        self.repaint = true;
+        self.set_detached(WindowKind::PianoKeys, visible);
     }
 
     /// Shift is the sustain pedal while the strip types: tell it what the key event says.
@@ -4432,7 +4385,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn drag_divider(&mut self, pos: Point, grab: f64, released: bool) {
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let rack_h = (pos.y - grab - top).clamp(0.0, avail);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
@@ -4479,7 +4432,14 @@ impl<B: AudioBackend> Shell<B> {
         } else {
             roll_mode
         };
-        let audition = roll.note_audition_on();
+        let strip = self.core.piano_keys();
+        let (octave, velocity) = (strip.octave(), strip.velocity());
+        if octave != self.ui.piano_keys_octave || velocity != self.ui.piano_keys_velocity {
+            self.ui.piano_keys_octave = octave;
+            self.ui.piano_keys_velocity = velocity;
+            self.ui_changed();
+        }
+        let audition = self.core.piano_roll().note_audition_on();
         if audition != self.ui.piano_roll_audition {
             self.ui.piano_roll_audition = audition;
             self.ui_changed();
@@ -5593,7 +5553,7 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::TogglePianoKeys => {
-                self.set_piano_keys_visible(!self.piano_keys_visible);
+                self.set_piano_keys_visible(!self.detached(WindowKind::PianoKeys));
                 Vec::new()
             }
             AppCommand::ToggleTrackPanel => {
@@ -7139,6 +7099,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Browser => {
                 return self.repaint || win.dirty || self.core.file_browser().needs_repaint();
             }
+            WindowKind::PianoKeys => return self.repaint || win.dirty,
             WindowKind::Main => {}
         }
         self.repaint
@@ -7181,6 +7142,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Rack
             | WindowKind::Console
             | WindowKind::SpectrumEq
+            | WindowKind::PianoKeys
             | WindowKind::Browser => {
                 self.paint_detached(window, canvas);
             }
@@ -7189,9 +7151,6 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn paint_main(&mut self, canvas: &mut dyn Canvas) {
-        if self.piano_keys_visible {
-            self.refresh_key_labels();
-        }
         let scale = self.scale();
         let l = self.layout();
         let (w, h) = (self.size().width, self.size().height);
@@ -7213,9 +7172,6 @@ impl<B: AudioBackend> Shell<B> {
         self.core.paint_pane(Pane::Transport, canvas);
         if l.file_browser.is_some() {
             self.core.paint_pane(Pane::FileBrowser, canvas);
-        }
-        if l.piano_keys.is_some() {
-            self.core.paint_pane(Pane::PianoKeys, canvas);
         }
         if l.track_panel.is_some() {
             self.core.sync_track_panel();

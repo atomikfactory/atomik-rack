@@ -435,7 +435,10 @@ pub use midi_marks::MidiMarks;
 pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};
 pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
-pub use piano_keys::{KeysButton, KeysMode, PIANO_KEYS_HEIGHT, PianoKeysView};
+pub use piano_keys::{
+    DEFAULT_OCTAVE, DEFAULT_VELOCITY, KeysButton, KeysMode, OCTAVES, PIANO_KEYS_HEIGHT,
+    PianoKeysView,
+};
 pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
@@ -462,8 +465,8 @@ pub use theme::{Theme, ThemeChoice};
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use track_panel::{TRACK_PANEL_WIDTH, TrackPanelView};
 pub use transport::{
-    ClusterPart, InspClip, InspectorField, InspectorSource, REPEAT_DELAY, REPEAT_EVERY, RecInput,
-    RecInputPart, TransportBar, TransportButton, TransportState, transport_shortcut,
+    ClusterPart, FadeUnit, InspClip, InspectorField, InspectorSource, REPEAT_DELAY, REPEAT_EVERY,
+    RecInput, RecInputPart, TransportBar, TransportButton, TransportState, transport_shortcut,
 };
 pub use vello;
 pub use vello::{kurbo, peniko};

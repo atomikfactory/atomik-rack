@@ -9,6 +9,25 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Recording and editing follow-ups: dimmed masked notes and tails, a Piano Keys window, a Save question in its
+  own words, fades in ticks and sparse edits of large clips.** The piano roll dims what the open clip does not
+  play: the notes (or parts of notes) under a later clip of the same lane, and the tail of a note that runs past
+  the end of the clip, which is still drawn so it can be seen and trimmed; a clip with a loop, a muted clip and a
+  take are not dimmed for the lane's overlap rule. View > Piano Keys (`F4`) now opens a floating window of its own
+  (it moves, resizes and can sit on another monitor), the window's geometry and whether it was open are remembered
+  with the other windows, and so are the strip's octave and velocity (`ui-state.json` `piano_keys_octave`,
+  `piano_keys_velocity`); the main window's lower panes no longer give up room to a strip. The window is named
+  `piano-keys` for the MCP session tools and `--detach`-style options. The question about unsaved changes has
+  the buttons Save, Don't Save and Cancel on every platform: a task dialog with those words on Windows (which
+  needs a manifest asking for Common Controls version 6, now embedded in the app and the MCP server), the native
+  alert on macOS and the zenity question on Linux. The clip inspector's FADE IN and FADE OUT show a small unit
+  tag, MS or TICKS: a click on it switches both fades between milliseconds and ticks of the clip's own span (a
+  wheel notch or a typed value is then a 16th note or a number of ticks; the file keeps frames). A change of
+  the note list of a large clip that keeps its length and touches at most an eighth of the notes (an inspector
+  step on a selection, a transpose, a velocity or length change) is stored in the undo history as the changed
+  notes only, so a long run of inspector steps on a clip of tens of thousands of notes no longer fills the history
+  with copies of the whole list. No saved field changes (the project format stays 43). Deferred: the dimming of
+  the masked parts of a looped clip, and remembering the fade unit between sessions.
 - **Automation lane and gesture follow-ups: a static value handle, a time range on a lane, Extend to Next and Previous
   Clip, no note audition, trimming several audio clips and remembered snap.** An automation lane that holds a static
   value draws it as a line across the lane with a square handle at the left edge of the timeline; dragging the handle
@@ -188,7 +207,7 @@ may break APIs and the patch and project formats.
   not open is not retried in a loop, and choosing devices in the settings forgets the one to go back to. A
   device that panics outside `process` (taking a parameter, a sample or pattern hand-off, a meter or latency
   read) is now caught on the audio thread like one that panics in `process`: only that device is silenced
-  and named, the others keep playing. No saved field changes (the project format is still 42).
+  and named, the others keep playing. No saved field changes (the project format is unchanged).
 - **Phase lock for a followed MIDI clock.** The clock input now counts the sender's position (the last Start
   or Song Position Pointer plus one clock's worth of ticks for each clock that arrives while it runs), and
   the player holds the song to it: once per batch it moves the position a few frames towards the sender's,
@@ -201,7 +220,7 @@ may break APIs and the patch and project formats.
   own rate, and a locate, the transport starting, a loop wrap or a new song restarts the clips underway from
   the right place. Clips are not stretched to the followed tempo (a long take drifts by the share the two
   tempos differ) and streamed audio stays silent while following. No saved field changes (the project
-  format is still 42).
+  format is unchanged).
 - **Several open songs.** Window > New Song Window and Open Song in New Window open a song in a window of its
   own (Ctrl+Shift+N and Ctrl+Shift+O, Cmd on macOS); each song has its own undo history, panes, plugins,
   autosave and recovery snapshots, and the Window menu lists the open songs (Next Song and Previous Song,

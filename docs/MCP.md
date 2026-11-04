@@ -145,7 +145,7 @@ Move the pointer onto a button with `session_pointer` `action: "move"` and `wait
 The rack and the mixer can live in windows of their own, and a headless session has them too, with no platform.
 
 1. `session_open`, then `session_command` `view.detach_rack` and `view.detach_console` (they toggle). `session_status` lists `windows`: the main one, then each detached one with its `logical` and `physical` size (a detached window starts at 1280 x 720 for the rack and 1280 x 520 for the mixer, at the main scale), its `scale` and whether it is `focused`.
-2. Aim at a window with `window` (`rack`, `console`, `spectrum-eq` or `browser`; `main` is the default; `view.detach_browser` opens the file browser window) on `session_pointer`, `session_key`, `session_texts` and `session_screenshot`. Positions are logical pixels of that window, which a detached pane fills from `0,0`. A window that is not open is refused with `the rack window is not open: run view.detach_rack`.
+2. Aim at a window with `window` (`rack`, `console`, `spectrum-eq`, `browser` or `piano-keys`; `main` is the default; `view.detach_browser` opens the file browser window and `view.toggle_piano_keys` the Piano Keys window) on `session_pointer`, `session_key`, `session_texts` and `session_screenshot`. Positions are logical pixels of that window, which a detached pane fills from `0,0`. A window that is not open is refused with `the rack window is not open: run view.detach_rack`.
 3. A key sent to a window that does not have the focus gives it the focus first, as clicking into the window would, so `session_status` `focus` follows (`Rack`, `Console`) and the keymap context with it. Transport, undo and save keys work from every window.
 4. `session_window` plays the operating system: `focus`, `resize` (`width`, `height`) and `close`. Closing a detached window attaches its pane to the main window again, as the close button does; the main window is refused (`session_close` ends the session).
 5. Screenshots are CPU renders at each window's own physical size: a screenshot of the rack window is the rack alone, with no menu bar and no status bar.
@@ -300,7 +300,7 @@ Say in "How it was tested" which of these you ran and what they showed (for exam
 
 ### Recipe: play the Piano Keys with the keyboard
 
-1. `session_command` `view.toggle_piano_keys` (or `session_key` `F4`) shows the strip and gives it the focus; `session_texts` shows the key labels and the octave (`C4`) and velocity readouts.
+1. `session_command` `view.toggle_piano_keys` (or `session_key` `F4`) opens the Piano Keys window and gives it the focus (aim `session_texts`, `session_key` and `session_screenshot` at it with `window` `piano-keys`); `session_texts` shows the key labels and the octave (`C4`) and velocity readouts.
 2. `session_key` with `text` `asdf` presses and releases the keys of the home row: each is a note on and off to the armed track (or the selected device) on the same live note path as a MIDI keyboard, and the take recorder is offered the same notes. `z` and `x` shift the octave, `1` to `0` set the velocity, and `shift` is the sustain pedal. The session has no engine and no MIDI link, so nothing sounds and no take is captured there: read the effect on the strip with `session_texts` (octave and velocity) and `session_screenshot`; the recorded take is covered by the `app_core_keys_tests`.
 3. Letters are commands again as soon as the strip loses the focus (a click elsewhere) or its mode is MOUSE.
 

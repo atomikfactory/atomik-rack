@@ -30,6 +30,9 @@ impl Edit {
                 Edit::Track { old, new, .. } => track_bytes(old) + track_bytes(new),
                 Edit::Lane { old, new, .. } => lane_bytes(old) + lane_bytes(new),
                 Edit::Clip { old, new, .. } => clip_bytes(old.as_ref()) + clip_bytes(new.as_ref()),
+                Edit::Notes { old, new, .. } => {
+                    (old.len() + new.len()) * size_of::<(usize, crate::Note)>()
+                }
                 Edit::TakeGroups { old, new, .. } => old
                     .iter()
                     .chain(new)

@@ -21,6 +21,54 @@ use atomik_core::compile_meter;
 use atomik_device_sdk::{DeviceDescriptor, Direction, Registry, SocketKind};
 use std::collections::BTreeMap;
 
+/// Notes a clip needs before a content change is stored as a sparse edit instead of the whole
+/// clip twice over.
+const SPARSE_MIN_NOTES: usize = 2048;
+
+/// The edit that gives clip `c` (on `lane` of `device`) the `content`. A note clip whose list
+/// keeps its length and changes in at most an eighth of its positions (a transpose, a velocity
+/// or length change of a selection, a nudge that reorders nothing) becomes an [`Edit::Notes`]
+/// holding only the changed notes, so an inspector step on a very large clip keeps a few notes
+/// in the undo history, not the whole list; anything else replaces the clip.
+fn content_edit(device: DeviceKey, lane: usize, c: &Clip, content: ClipContent) -> Edit {
+    if let (ClipContent::Notes(old), ClipContent::Notes(new)) = (&c.content, &content)
+        && old.len() >= SPARSE_MIN_NOTES
+        && old.len() == new.len()
+    {
+        let limit = old.len() / 8;
+        let mut was = Vec::new();
+        let mut now = Vec::new();
+        for (i, (a, b)) in old.iter().zip(new.iter()).enumerate() {
+            if a != b {
+                if was.len() >= limit {
+                    was.clear();
+                    break;
+                }
+                was.push((i, *a));
+                now.push((i, *b));
+            }
+        }
+        if !was.is_empty() {
+            return Edit::Notes {
+                device,
+                lane,
+                clip: c.id,
+                old: was,
+                new: now,
+            };
+        }
+    }
+    Edit::Clip {
+        device,
+        lane,
+        old: Some(c.clone()),
+        new: Some(Clip {
+            content,
+            ..c.clone()
+        }),
+    }
+}
+
 pub(crate) fn bad(message: impl Into<String>) -> ModelError {
     ModelError::BadSong(message.into())
 }
@@ -1408,15 +1456,7 @@ pub(crate) fn plan(
             if let ClipContent::Audio(a) = &content {
                 check_audio_shape(c.offset, c.loop_length, a.reverse)?;
             }
-            Edit::Clip {
-                device,
-                lane,
-                old: Some(c.clone()),
-                new: Some(Clip {
-                    content,
-                    ..c.clone()
-                }),
-            }
+            content_edit(device, lane, c, content)
         }
         SongCommand::SetClipGrid { clip, grid, .. } => {
             let (device, lane, c) = find_clip(doc, clip)?;
