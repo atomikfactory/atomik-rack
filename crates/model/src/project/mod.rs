@@ -36,7 +36,7 @@
 //!             "track_heights"?: {"<device key>": 24..=400, …}         (v15; written only when non-empty),
 //!             "grooves"?: [{"name", "step", "slots": [[offset, velocity]…]}…]
 //!                                                                     (v21; written only when non-empty),
-//!             "groups"?: [{"id", "name", "parent"?, "collapsed"?, "color"?}…]
+//!             "groups"?: [{"id", "name", "parent"?, "collapsed"?, "color"?, "muted"? (v43), "solo"? (v43)}…]
 //!                                                                     (v22; written only when non-empty),
 //!             "tracks": [{ "device", "muted", "solo", "armed", "no_chase"? (v17),
 //!                          "notes_to"? (v31, a device key: where the track's notes enter),
@@ -222,6 +222,8 @@
 //! carry `"groups"` (folders: `"id"` from 1, unique; a trimmed `"name"` of 1 to 64 characters; an
 //! optional `"parent"` folder, at most 8 levels deep and no loops; `"collapsed": true`; an
 //! optional `"#rrggbb"` `"color"`; at most 256, written sorted by id) after its `"grooves"`, and
+//! a folder may carry `"muted": true` and `"solo": true` (version 43: the folder mutes or solos
+//! every track in it, each written only when set) after its colour, and
 //! a track may carry `"group"` (its innermost folder), `"color"` and `"comment"` (trimmed, 1 to
 //! 1000 characters, newlines allowed) after its `"no_chase"`, an automation lane `"folded": true`
 //! after its `"write"`, and a take group `"open": true` after its `"clips"` (its take rows are

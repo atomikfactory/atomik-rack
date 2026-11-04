@@ -1249,6 +1249,8 @@ pub(crate) fn plan(
         | SongCommand::MoveTrack { .. }
         | SongCommand::MoveTracks { .. }
         | SongCommand::MoveGroup { .. }
+        | SongCommand::MoveGroupTo { .. }
+        | SongCommand::SetGroupFlags { .. }
         | SongCommand::SetTrackColor { .. }
         | SongCommand::SetTrackComment { .. }
         | SongCommand::SetLaneFolded { .. }

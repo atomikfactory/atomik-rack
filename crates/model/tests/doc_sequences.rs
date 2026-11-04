@@ -47,6 +47,11 @@ enum WfOp {
     /// Several tracks moved to a place (the place, and the folder picked by the third value;
     /// 0 is the top level).
     MoveTracks(Vec<usize>, usize, usize),
+    /// A folder (the n-th, wrapping) muted or soloed, or moved to a place and folder.
+    FolderFlags(usize, bool, bool),
+    /// Tracks gathered in a new folder.
+    Folder(Vec<usize>),
+    MoveFolder(usize, usize, usize),
     PasteDevices(Vec<usize>, usize, bool),
     /// A device is replaced by one of five types (the second value); kinds that do not match
     /// are rejected, which the sequence tolerates.
@@ -260,6 +265,9 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), proptest::option::of((0usize..12, 0usize..4)))
             .prop_map(|(s, p)| WfOp::DuplicateTracks(s, p)),
         (sel(), 0usize..12, 0usize..4).prop_map(|(s, a, g)| WfOp::MoveTracks(s, a, g)),
+        (0usize..4, any::<bool>(), any::<bool>()).prop_map(|(g, m, s)| WfOp::FolderFlags(g, m, s)),
+        sel().prop_map(WfOp::Folder),
+        (0usize..4, 0usize..12, 0usize..4).prop_map(|(g, a, i)| WfOp::MoveFolder(g, a, i)),
         (sel(), 0usize..12, any::<bool>()).prop_map(|(s, a, i)| WfOp::PasteDevices(s, a, i)),
         (0usize..12, 0u8..5).prop_map(|(d, t)| WfOp::Replace(d, t)),
         (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
@@ -416,6 +424,33 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 },
             })
         }
+        WfOp::Folder(s) => {
+            let mut seen = Vec::new();
+            let devices: Vec<DeviceKey> = chosen(&tracks, s)
+                .into_iter()
+                .filter(|d| {
+                    let fresh = !seen.contains(d);
+                    seen.push(d.clone());
+                    fresh
+                })
+                .collect();
+            sc(SongCommand::GroupTracks {
+                devices,
+                name: "F".into(),
+            })
+        }
+        WfOp::FolderFlags(g, muted, solo) => sc(SongCommand::SetGroupFlags {
+            group: folder_pick(doc, g + 1)?,
+            muted: *muted,
+            solo: *solo,
+        }),
+        WfOp::MoveFolder(g, to_index, i) => sc(SongCommand::MoveGroupTo {
+            group: folder_pick(doc, g + 1)?,
+            place: atomik_model::TrackPlace {
+                to_index: *to_index,
+                into: folder_pick(doc, *i),
+            },
+        }),
         WfOp::PasteDevices(s, at, inner) => {
             let keys = chosen(&copyable_keys(doc, *inner), s);
             let snapshot = DeviceSnapshot::capture(doc, &keys, !*inner && at % 2 == 0).ok()?;

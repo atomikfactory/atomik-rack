@@ -4,9 +4,12 @@
 //! the track list that can be collapsed. Which folder a track is in, a track's colour and
 //! comment, the automation lanes that are folded and the take groups whose take rows are open
 //! all live in [`Organisation`] (`Song::org`), keyed by device key like the track heights. None
-//! of it reaches the audio: folders do not change routing, and mute, solo and arm on a folder
-//! are the same flags on its tracks (a client sets them on every track of the folder in one
-//! batch; see [`Song::group_tracks`]).
+//! of it reaches the audio but the mute and solo of a folder: folders do not change routing, a
+//! folder that is muted silences every track in it and in its sub-folders, and a folder that is
+//! soloed counts as a solo of each of those tracks (see [`Song::played_flags`]); the flags of
+//! the tracks themselves stay as they are. Arm on a folder is still the flag on each of its
+//! tracks (a client sets it on every track of the folder in one batch; see
+//! [`Song::group_tracks`]).
 //!
 //! **Invariant.** The tracks of a folder, with those of its sub-folders, are one block in
 //! `Song::tracks`, a sub-folder's block lies inside its parent's, and a folder has at least one
@@ -40,8 +43,13 @@ pub struct TrackGroup {
     pub parent: Option<u32>,
     /// The tracks of the folder are hidden in the arrangement (its own row stays).
     pub collapsed: bool,
-    /// Colour of the folder row; the tracks keep their own.
+    /// Colour of the folder row; a track in the folder that has no colour of its own shows it
+    /// (the nearest folder above the track that has one).
     pub color: Option<[u8; 3]>,
+    /// The folder is muted: no track in it (or in its sub-folders) plays.
+    pub muted: bool,
+    /// The folder is soloed: its tracks count as soloed.
+    pub solo: bool,
 }
 
 /// Where moved or copied tracks go (see [`crate::SongCommand::MoveTracks`]).
@@ -290,9 +298,55 @@ impl Song {
         !at_edge || nested
     }
 
-    /// The colour of a track, if it has one.
+    /// The colour of a track, if it has one of its own.
     pub fn track_color(&self, device: &DeviceKey) -> Option<[u8; 3]> {
         self.org.colors.get(device).copied()
+    }
+
+    /// The colour a track shows when it has none of its own: the colour of the nearest folder
+    /// above it that has one.
+    pub fn inherited_color(&self, device: &DeviceKey) -> Option<[u8; 3]> {
+        let chain = self.org.chain(self.org.members.get(device).copied());
+        chain
+            .iter()
+            .rev()
+            .find_map(|g| self.org.group(*g).and_then(|g| g.color))
+    }
+
+    /// The colour a track shows: its own, else the one it inherits from a folder.
+    pub fn shown_color(&self, device: &DeviceKey) -> Option<[u8; 3]> {
+        self.track_color(device)
+            .or_else(|| self.inherited_color(device))
+    }
+
+    /// Whether a folder above the track mutes it.
+    pub fn muted_by_folder(&self, device: &DeviceKey) -> bool {
+        let chain = self.org.chain(self.org.members.get(device).copied());
+        chain
+            .iter()
+            .any(|g| self.org.group(*g).is_some_and(|g| g.muted))
+    }
+
+    /// The mute and solo of every track as played, in track order: a track is muted when it or
+    /// a folder above it is, and soloed when it or a folder above it is. The folder of a track
+    /// is the one the outline shows (see the module documentation).
+    pub fn played_flags(&self) -> Vec<(bool, bool)> {
+        let mut flags: Vec<(bool, bool)> = self.tracks.iter().map(|t| (t.muted, t.solo)).collect();
+        if self.org.groups.iter().all(|g| !g.muted && !g.solo) {
+            return flags;
+        }
+        for e in self.outline() {
+            let OutlineKind::Track(i) = e.kind else {
+                continue;
+            };
+            for g in self.org.chain(e.parent) {
+                if let Some(g) = self.org.group(g) {
+                    flags[i].0 |= g.muted;
+                    flags[i].1 |= g.solo;
+                }
+            }
+        }
+        flags
     }
 
     /// The comment of a track (empty when it has none).

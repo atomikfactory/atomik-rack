@@ -348,8 +348,8 @@ fn take_summary(lane: &Lane, open: &std::collections::BTreeSet<u32>) -> Vec<Valu
         .collect()
 }
 
-/// The song's folders of tracks, in display order: id, name, parent, collapsed, colour and the
-/// devices of the tracks inside (sub-folders included). Empty for a song without folders.
+/// The song's folders of tracks, in display order: id, name, parent, collapsed, colour, mute and
+/// solo (when set) and the devices of the tracks inside (sub-folders included). Empty for a song without folders.
 fn folder_summary(doc: &RackDoc) -> Vec<Value> {
     use atomik_model::OutlineKind;
     doc.song
@@ -368,6 +368,12 @@ fn folder_summary(doc: &RackDoc) -> Vec<Value> {
                 }
                 if let Some([r, gr, b]) = g.color {
                     v["color"] = json!(format!("#{r:02x}{gr:02x}{b:02x}"));
+                }
+                if g.muted {
+                    v["muted"] = json!(true);
+                }
+                if g.solo {
+                    v["solo"] = json!(true);
                 }
                 v
             }),

@@ -1051,6 +1051,7 @@ impl Edit {
             }
             Edit::Organise { new, .. } => {
                 let song = doc.song_mut();
+                let flags_before = song.played_flags();
                 let moved = song.tracks.iter().map(|t| &t.device).ne(new.order.iter());
                 if moved {
                     song.tracks.sort_by_key(|t| {
@@ -1061,6 +1062,9 @@ impl Edit {
                     });
                 }
                 song.org.clone_from(&new.org);
+                // What plays also changes with a folder's flags and with the folder a folder is
+                // in.
+                let moved = moved || song.played_flags() != flags_before;
                 vec![if moved {
                     SyncOp::SongChanged
                 } else {

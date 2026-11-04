@@ -816,7 +816,7 @@ pub enum Command {
 /// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track has a live groove |
 /// | a track's live groove (`SetTrackGroove`; also undo/redo) | `SongChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
-/// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveTracks`, `MoveGroup`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |
+/// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveTracks`, `MoveGroup`, `MoveGroupTo`, `SetGroupFlags`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
 /// | console structure, compensation, a channel's `solo` | `ConsoleChanged` (after the `ParamChanged` for `solo`) |
 /// | `SetZones` (also undo/redo) | `ZonesChanged` |

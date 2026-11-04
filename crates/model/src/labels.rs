@@ -77,6 +77,8 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::MoveTrack { .. } => "Move Track",
         SongCommand::MoveTracks { devices, .. } if devices.len() > 1 => "Move Tracks",
         SongCommand::MoveTracks { .. } => "Move Track",
+        SongCommand::MoveGroupTo { .. } => "Move Folder",
+        SongCommand::SetGroupFlags { .. } => "Change Folder",
         SongCommand::AddAutomationLane { .. } => "Add Automation Lane",
         SongCommand::RemoveAutomationLane { .. } => "Remove Automation Lane",
         SongCommand::AddClip { .. } | SongCommand::AddAudioClip { .. } => "Add Clip",

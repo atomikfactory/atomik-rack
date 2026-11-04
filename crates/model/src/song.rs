@@ -977,6 +977,28 @@ pub enum SongCommand {
         /// Down instead of up.
         down: bool,
     },
+    /// Set the mute and solo of a folder (see [`crate::TrackGroup::muted`]): the flags of its
+    /// tracks stay as they are. Setting the values it has is an error. One undo step; reports
+    /// [`crate::SyncOp::SongChanged`].
+    SetGroupFlags {
+        /// Folder id.
+        group: u32,
+        /// Mute.
+        muted: bool,
+        /// Solo.
+        solo: bool,
+    },
+    /// Move a folder, with its tracks and sub-folders, to a place of the track list: `to_index`
+    /// counts the tracks that stay (those outside the folder) and `into` is the folder it joins
+    /// (`None` for the top level). The folder cannot go into itself or one of its sub-folders,
+    /// nor past the folder depth limit, and a place in the middle of another folder is refused.
+    /// One undo step.
+    MoveGroupTo {
+        /// Folder id.
+        group: u32,
+        /// The place.
+        place: crate::TrackPlace,
+    },
     /// Set or clear a track's colour (its clips are drawn in it).
     SetTrackColor {
         /// Device.
