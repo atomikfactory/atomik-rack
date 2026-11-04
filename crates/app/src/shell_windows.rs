@@ -312,6 +312,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.song_info {
                     v.set_scale(scale);
                 }
+                if let Some((v, _)) = &mut self.color_picker {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.notes {
                     v.set_scale(scale);
                 }
@@ -476,6 +479,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.quantize.is_some()
             || self.silence.is_some()
             || self.song_info.is_some()
+            || self.color_picker.is_some()
             || self.notes.is_some()
             || self.warp.is_some()
     }

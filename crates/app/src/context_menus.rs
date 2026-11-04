@@ -142,13 +142,14 @@ const CLIP_COLORS: [(&str, &str); 7] = [
 ];
 
 /// The colours of the track and folder menus: the command argument and the label.
-const TRACK_COLORS: [(&str, &str); 7] = [
+const TRACK_COLORS: [(&str, &str); 8] = [
     ("red", "Red"),
     ("orange", "Orange"),
     ("yellow", "Yellow"),
     ("green", "Green"),
     ("blue", "Blue"),
     ("purple", "Purple"),
+    ("custom", "Custom..."),
     ("none", "None (the device's colour)"),
 ];
 
@@ -1917,7 +1918,9 @@ mod tests {
         };
         assert_eq!(
             args("sequencer.track_color"),
-            ["red", "orange", "yellow", "green", "blue", "purple", "none"]
+            [
+                "red", "orange", "yellow", "green", "blue", "purple", "custom", "none"
+            ]
         );
         assert_eq!(
             args("sequencer.track_height"),
