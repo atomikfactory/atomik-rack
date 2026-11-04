@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Time-stretch follow-ups: a reversed clip can be warped, a warp button and a tempo field in the clip inspector,
+  and the tempo of AIFF files.** A clip that plays backwards can now follow the song tempo and be transposed: the
+  stretched audio plays backwards (the buffer is rendered forward from the clip's source offset and turned around,
+  so a bounce is the exact mirror of the forward clip and stays bit-identical from run to run). Reverse no longer
+  switches a warped clip's warp and transposition off, Warp Audio, Transpose Audio, the warp panel, Scale Tempo and
+  stretching a clip's edge accept reversed clips, and a project that holds such a clip saves and loads (a version
+  before this one refuses the file). Until the buffer is ready a reversed warped clip plays its file backwards,
+  unwarped. Trimming the start of a warped reversed clip cuts the end of its stretched span and leaves its markers
+  alone; Detect Tempo, Warp to Song Tempo, Warp Loop as N Bars, Quantize Audio and the slice editor still refuse a
+  reversed clip. The clip inspector in the transport bar has a WARP button and a TEMPO field after Reverse
+  (they only appear when the window leaves room for them): WARP switches tempo following on and off for every
+  selected clip as one undo step, TEMPO is the tempo the audio was recorded at, in BPM with two decimals, dragged,
+  scrolled (one BPM a notch, Shift for a hundredth) or typed like the other fields, one merge group per drag, and
+  dimmed with a reason until a selected clip is warped. AIFF and AIFF-C files now give the importer what they
+  state: the beat count of an Apple loop (`basc`, the tempo follows from the length), a tempo written as
+  `120 BPM` in a name, annotation or comment, and an instrument loop flag, so a loop in such a file warps on
+  import as a WAV with a tempo does.
 - **MIDI file follow-ups: bank selects with their program change, editable program changes and SysEx, SysEx-only
   tracks and ranges read back.** A program change now carries the bank select that goes with it (`CC 0` and
   `CC 32`, either or both): a file's bank select just before a program change at the same tick joins it and

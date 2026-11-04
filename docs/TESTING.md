@@ -871,7 +871,7 @@ in Beats mode keeps every hit within 3 ms of where the map puts it with no pre-e
 through odd maps (starting before the source, standing still, running past the end) stays finite and
 bounded in every mode, silence and empty input give silence, and the result is repeatable and a
 cancel returns `None`. `crates/model/tests/warp.rs` covers the settings and their checks, undo of
-`SetAudioClip` with warp, reverse and warp excluding each other, the format (round trip, canonical,
+`SetAudioClip` with warp, reverse and warp combining (the reversed job, the format round trip), the format (round trip, canonical,
 default omitted, bad fields with their JSON path, version 23 refusing the field and loading without
 it), the time map through a constant tempo, a tempo step and a ramp (every knot on the beat map,
 monotone), markers (straight between, source tempo outside, the inverse), a split keeping the sound
@@ -890,7 +890,7 @@ project and golden moves only by the version line. `crates/ui/tests/warp.rs` dri
 of a warped clip through the map, the `W` mark and marker lines in the display list, and the warp
 panel (stepping and clamping, /2 and x2, the two-octave limit, APPLY, DETECT and CLOSE, the
 picture). `crates/app/src/app_core_warp_tests.rs` runs the cache and the commands with real files:
-APPLY as one undo step, a reversed clip left out, Warp Loop as N Bars (tempo, clip length, the 999
+APPLY as one undo step, a reversed clip warped and transposed, Warp Loop as N Bars (tempo, clip length, the 999
 BPM limit), Warp to Song Tempo and DETECT finding 100 BPM in a click track (and the song tempo, with
 a message, in a flat file), Quantize Audio putting late hits on the grid, the song going out dry at
 once and again with the buffer when the worker is done, a tempo edit replacing the buffer, warp off
