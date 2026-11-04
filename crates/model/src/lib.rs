@@ -1157,6 +1157,8 @@ enum MergeKey {
     /// The clip commands of one gesture (`SetClipGeometry`, `SetClipContent`, ..., and the
     /// final `MoveClips` of a drag): a drag of several clips is one step.
     Clip(u64),
+    /// `SetLaneStatic` on one automation lane.
+    LaneStatic(u64, DeviceKey, String),
     /// `DragTempoMap`.
     TempoMap(u64),
     /// `DragMeterMap`.
@@ -1349,6 +1351,12 @@ impl Document {
                 WorkflowCommand::MoveClips { merge: Some(m), .. }
                 | WorkflowCommand::TrimClips { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
+            Command::Song(SongCommand::SetLaneStatic {
+                device,
+                param,
+                merge: Some(m),
+                ..
+            }) => Some(MergeKey::LaneStatic(*m, device.clone(), param.clone())),
             Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
                 Some(MergeKey::TempoMap(*merge))
             }
@@ -1512,6 +1520,11 @@ impl Document {
                 if merged =>
             {
                 new.clone_from(latest);
+            }
+            (Some(Edit::LaneStatic { new, .. }), Edit::LaneStatic { new: latest, .. })
+                if merged =>
+            {
+                *new = *latest;
             }
             (Some(Edit::TempoMap { new, .. }), Edit::TempoMap { new: latest, .. }) if merged => {
                 new.clone_from(latest);

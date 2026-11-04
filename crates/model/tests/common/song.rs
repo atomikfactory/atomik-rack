@@ -311,11 +311,13 @@ pub fn resolve_song(
                     device,
                     param,
                     value: Some(f32::from(*v) / 8.0),
+                    merge: None,
                 }),
                 _ => sc(SongCommand::SetLaneStatic {
                     device,
                     param,
                     value: None,
+                    merge: None,
                 }),
             }
         }

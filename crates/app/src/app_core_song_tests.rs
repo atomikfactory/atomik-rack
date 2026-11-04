@@ -2368,6 +2368,7 @@ fn a_pattern_lane_converts_to_notes_that_follow_its_switches() {
             device: seq.clone(),
             param: "pattern".into(),
             value: Some(1.0),
+            merge: None,
         }),
     );
     c.arrangement_mut().set_selected_track(Some(key("a")));

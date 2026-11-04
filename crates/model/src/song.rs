@@ -926,6 +926,9 @@ pub enum SongCommand {
         param: String,
         /// The value, or `None` for no static value.
         value: Option<f32>,
+        /// Commands of one gesture (a drag of the handle) with the same id on the same lane
+        /// are one undo step.
+        merge: Option<u64>,
     },
     /// Set the write mode of an automation lane (see [`Song::lane_write`]); the lane must
     /// exist. One undo step. Reports [`crate::SyncOp::ViewChanged`] only: the engine never sees

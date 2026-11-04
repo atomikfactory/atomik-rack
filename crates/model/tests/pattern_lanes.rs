@@ -65,6 +65,7 @@ fn a_pattern_clip_switches_at_its_start_and_the_static_value_takes_over_at_its_e
             device: key("seq"),
             param: PATTERN_PARAM.into(),
             value: Some(1.0),
+            merge: None,
         }),
         &reg,
     )

@@ -1224,6 +1224,7 @@ pub(crate) fn plan(
             device,
             param,
             value,
+            merge: _,
         } => {
             let t = &song.tracks[track_index(doc, &device)?];
             let Some(lane) = t
