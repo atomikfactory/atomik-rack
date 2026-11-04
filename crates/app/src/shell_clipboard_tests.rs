@@ -726,6 +726,8 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.open_clip",
             "sequencer.split_at_playhead",
             "sequencer.join",
+            "sequencer.extend_to_next_clip",
+            "sequencer.extend_to_previous_clip",
             "sequencer.rename_clip",
             "sequencer.loop_instance",
             "sequencer.explode_notes",

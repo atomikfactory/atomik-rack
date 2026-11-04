@@ -469,3 +469,29 @@ fn the_constrain_role_moves_a_note_along_one_axis() {
         .copied();
     assert!(moved.is_some(), "{:?}", lists[0]);
 }
+
+#[test]
+fn the_extend_commands_act_on_the_selected_clips_and_refuse_without_one() {
+    let (mut v, doc, reg) = setup();
+    select(&mut v, &[1]);
+    for (id, next) in [
+        ("sequencer.extend_to_next_clip", true),
+        ("sequencer.extend_to_previous_clip", false),
+    ] {
+        let CommandOutcome::Handled(a) = v.command(id, None, &doc, &reg) else {
+            panic!("{id}")
+        };
+        assert_eq!(
+            workflow_commands(&a),
+            vec![WorkflowCommand::ExtendClips {
+                ids: vec![ClipId(1)],
+                next
+            }]
+        );
+    }
+    select(&mut v, &[]);
+    assert!(matches!(
+        v.command("sequencer.extend_to_next_clip", None, &doc, &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+}

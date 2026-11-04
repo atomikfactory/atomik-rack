@@ -1637,6 +1637,20 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.extend_to_next_clip",
+        "Extend to Next Clip",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.extend_to_previous_clip",
+        "Extend to Previous Clip",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.extend_track_selection_down",
         "Extend Track Selection Down",
         G::Sequencer,

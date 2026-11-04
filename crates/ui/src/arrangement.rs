@@ -5294,6 +5294,16 @@ impl ArrangementView {
                 }
                 CommandOutcome::Handled(vec![workflow_cmd(WorkflowCommand::JoinClips { ids })])
             }
+            "sequencer.extend_to_next_clip" | "sequencer.extend_to_previous_clip" => {
+                let ids: Vec<ClipId> = self.selected_in_order().iter().map(|c| c.id).collect();
+                if ids.is_empty() {
+                    return CommandOutcome::NotApplicable("Select the clips to extend".into());
+                }
+                CommandOutcome::Handled(vec![workflow_cmd(WorkflowCommand::ExtendClips {
+                    ids,
+                    next: id == "sequencer.extend_to_next_clip",
+                })])
+            }
             "sequencer.delete_outside_events" => {
                 let selected: Vec<ClipId> = self.selected_in_order().iter().map(|c| c.id).collect();
                 let ids = if selected.is_empty() {
