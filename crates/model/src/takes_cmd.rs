@@ -9,6 +9,8 @@ use crate::takes::{
     CompSegment, TakeGroup, check_comp, clear_segment, comp_clips, comp_with_take_inserted,
     comp_with_take_moved, comp_within, comp_without_take, layered_comp, set_segment,
 };
+use crate::workflow::TakeSnapshot;
+use crate::workflow_cmd::TakeTarget;
 use crate::{DeviceKey, ModelError, RackDoc};
 use atomik_device_sdk::Registry;
 
@@ -504,4 +506,134 @@ pub(crate) fn plan(
         }
         _ => unreachable!("only take commands are routed here"),
     }
+}
+
+/// Plans [`crate::WorkflowCommand::PasteTakes`]: the snapshot's takes join a group as new takes
+/// on top (each plays over its extent, as a new recording does), or start a group on a lane.
+pub(crate) fn paste(
+    doc: &RackDoc,
+    registry: &Registry,
+    target: &TakeTarget,
+    at_tick: i64,
+    snapshot: &TakeSnapshot,
+) -> Result<Edit, ModelError> {
+    if snapshot.takes.is_empty() {
+        return Err(bad("the clipboard holds no takes"));
+    }
+    if let Some(h) = snapshot
+        .required_assets()
+        .into_iter()
+        .find(|h| !doc.assets.contains_key(h))
+    {
+        return Err(ModelError::UnknownKey(format!(
+            "asset {h} is not in this project's sample pool"
+        )));
+    }
+    let moved = |c: &Clip| Clip {
+        start: at_tick.saturating_add(c.start),
+        ..c.clone()
+    };
+    match target {
+        TakeTarget::Lane { device, lane } => plan(
+            doc,
+            registry,
+            SongCommand::NewTakeGroup {
+                device: device.clone(),
+                lane: *lane,
+                takes: snapshot.takes.iter().map(moved).collect(),
+            },
+        ),
+        TakeTarget::Group(id) => {
+            let (device, lane, g) = find(doc, *id)?;
+            if g.takes.len() + snapshot.takes.len() > MAX_TAKES {
+                return Err(range(format!(
+                    "a take group holds at most {MAX_TAKES} takes"
+                )));
+            }
+            let mut new = g.clone();
+            let first = doc.song.next_clip_id;
+            let mut next = first;
+            for take in &snapshot.takes {
+                let mut clip = check_new_clip(doc, registry, &device, lane, moved(take))?;
+                clip.id = ClipId(next);
+                next = next
+                    .checked_add(1)
+                    .ok_or_else(|| bad("clip ids are exhausted"))?;
+                let (start, end) = (clip.start, clip.end());
+                new.takes.push(clip);
+                let top = new.takes.len() - 1;
+                set_segment(&mut new.comp, top, start, end);
+            }
+            let mut scratch = doc.clone();
+            scratch.song_mut().next_clip_id = next;
+            let edit = build(
+                &scratch,
+                &device,
+                lane,
+                Some(g),
+                Some(new),
+                Clips::Recompile,
+            )?;
+            Ok(Edit::Compound(vec![
+                Edit::NextClipId {
+                    old: first,
+                    new: next,
+                },
+                edit,
+            ]))
+        }
+    }
+}
+
+/// The take a clip-editing command (what the piano roll and the audio editor send) names, when
+/// its clip id is a take and not a clip of a lane.
+pub(crate) fn take_target(doc: &RackDoc, command: &SongCommand) -> Option<ClipId> {
+    let id = match command {
+        SongCommand::SetClipContent { id, .. }
+        | SongCommand::SetAudioClip { id, .. }
+        | SongCommand::SetWarpMarkers { id, .. } => *id,
+        SongCommand::SetClipGrid { clip, .. }
+        | SongCommand::SetClipControllers { clip, .. }
+        | SongCommand::SetClipParamLanes { clip, .. }
+        | SongCommand::SetClipScale { clip, .. } => *clip,
+        _ => return None,
+    };
+    (doc.song.clip(id).is_none() && doc.song.take_clip(id).is_some()).then_some(id)
+}
+
+/// Plans a clip-editing command on take `id`: the command is planned on a scratch document where
+/// the take is a clip of its lane, and the clip it comes out as replaces the take in its group
+/// (the comp is compiled again, so the lane plays the edit). One undo step, the same as the
+/// command makes on a plain clip.
+pub(crate) fn plan_take_edit(
+    doc: &RackDoc,
+    registry: &Registry,
+    command: SongCommand,
+    id: ClipId,
+) -> Result<Edit, ModelError> {
+    let (track, lane, group, at) = doc
+        .song
+        .take_clip(id)
+        .ok_or_else(|| ModelError::UnknownKey(format!("take clip {}", id.0)))?;
+    let device = track.device.clone();
+    let mut scratch = doc.clone();
+    let ti = track_index(doc, &device)?;
+    scratch.song_mut().tracks[ti].lanes[lane]
+        .clips
+        .push(group.takes[at].clone());
+    let (edit, _) = crate::song_cmd::plan(&scratch, registry, command)?;
+    let Edit::Clip {
+        new: Some(clip), ..
+    } = edit
+    else {
+        return Err(bad("that edit cannot be made on a take"));
+    };
+    if clip.id != id {
+        return Err(bad("that edit cannot be made on a take"));
+    }
+    let mut new = group.clone();
+    new.takes[at] = clip;
+    // The edit may have moved or resized the take: the comp stays inside the group's range.
+    new.comp = comp_within(&new.comp, new.range());
+    build(doc, &device, lane, Some(group), Some(new), Clips::Recompile)
 }

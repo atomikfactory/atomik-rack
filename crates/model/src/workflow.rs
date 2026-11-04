@@ -264,6 +264,76 @@ fn picked(indices: &[usize], len: usize, what: &str) -> Result<Vec<usize>, Model
     Ok(set.into_iter().collect())
 }
 
+/// Takes copied from one take group (the takes clipboard): whole take clips, with their layout
+/// in time relative to the earliest copied take, so a paste puts them in another group, on
+/// another lane or in another song.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TakeSnapshot {
+    /// The takes in group order (bottom to top). Ids are 0 (a paste allocates new ones) and
+    /// `start` is relative to the earliest copied take.
+    pub takes: Vec<Clip>,
+    /// From the earliest start to the latest end.
+    pub span: i64,
+    /// The pool entries the audio takes need (see [`ClipSnapshot::assets`]).
+    pub assets: BTreeMap<String, AssetMeta>,
+}
+
+impl TakeSnapshot {
+    /// Copies the takes `indices` (positions in the group's take list) of group `group`.
+    pub fn capture(doc: &RackDoc, group: u32, indices: &[usize]) -> Result<Self, ModelError> {
+        let (_, _, g) = doc
+            .song
+            .take_group(group)
+            .ok_or_else(|| ModelError::UnknownKey(format!("take group {group}")))?;
+        let chosen = picked(indices, g.takes.len(), "take")?;
+        let origin = chosen.iter().map(|i| g.takes[*i].start).min().unwrap_or(0);
+        let end = chosen
+            .iter()
+            .map(|i| g.takes[*i].end())
+            .max()
+            .unwrap_or(origin);
+        let takes: Vec<Clip> = chosen
+            .iter()
+            .map(|i| {
+                let c = &g.takes[*i];
+                Clip {
+                    id: ClipId(0),
+                    start: c.start - origin,
+                    ..c.clone()
+                }
+            })
+            .collect();
+        let hashes: BTreeSet<String> = takes
+            .iter()
+            .filter_map(|c| match &c.content {
+                ClipContent::Audio(a) => Some(a.asset.clone()),
+                _ => None,
+            })
+            .collect();
+        Ok(Self {
+            assets: pool_of(doc, &hashes),
+            takes,
+            span: end - origin,
+        })
+    }
+
+    /// Whether the takes are audio (else notes).
+    pub fn is_audio(&self) -> bool {
+        self.takes.first().is_some_and(|c| c.content.is_audio())
+    }
+
+    /// Every pool asset the audio takes reference.
+    pub fn required_assets(&self) -> BTreeSet<String> {
+        self.takes
+            .iter()
+            .filter_map(|c| match &c.content {
+                ClipContent::Audio(a) => Some(a.asset.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 /// Notes copied from a note clip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NoteSnapshot {

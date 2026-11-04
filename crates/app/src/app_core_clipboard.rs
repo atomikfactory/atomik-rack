@@ -381,6 +381,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::PasteDevicesAt { snapshot, .. } => Some(&snapshot.assets),
             WorkflowCommand::ApplyPatch { snapshot, .. } => Some(&snapshot.assets),
             WorkflowCommand::PasteClips { clips, .. } => Some(&clips.assets),
+            WorkflowCommand::PasteTakes { takes, .. } => Some(&takes.assets),
             _ => None,
         };
         if let Some(assets) = assets {
@@ -529,6 +530,8 @@ impl<S: EngineSink> AppCore<S> {
                 let n = ids.iter().collect::<BTreeSet<_>>().len();
                 self.select_new_clips(pre.next_clip, n);
             }
+            // The takes live in their group, not on the lane: nothing new to select.
+            WorkflowCommand::PasteTakes { .. } => self.after_view_change(),
             WorkflowCommand::MoveClips { moves, copy, .. } => {
                 // A copy takes the selection; a move keeps it (the ids stay).
                 if *copy {
