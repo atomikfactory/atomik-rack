@@ -575,6 +575,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::Console => "mixer",
         WindowKind::SpectrumEq => "spectrum-eq",
         WindowKind::Browser => "browser",
+        WindowKind::PianoKeys => "piano-keys",
     }
 }
 

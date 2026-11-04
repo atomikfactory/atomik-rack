@@ -315,6 +315,7 @@ fn window_name(kind: WindowKind) -> &'static str {
         WindowKind::Console => "console",
         WindowKind::SpectrumEq => "spectrum-eq",
         WindowKind::Browser => "browser",
+        WindowKind::PianoKeys => "piano-keys",
     }
 }
 
@@ -332,8 +333,9 @@ fn parse_window(name: Option<&str>) -> Result<WindowKind, String> {
         Some("console") => Ok(WindowKind::Console),
         Some("spectrum-eq") => Ok(WindowKind::SpectrumEq),
         Some("browser") => Ok(WindowKind::Browser),
+        Some("piano-keys") => Ok(WindowKind::PianoKeys),
         Some(other) => Err(format!(
-            "window must be main, rack, console, spectrum-eq or browser, not `{other}`"
+            "window must be main, rack, console, spectrum-eq, browser or piano-keys, not `{other}`"
         )),
     }
 }
@@ -1004,6 +1006,7 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
                 WindowKind::Rack => Pane::Rack,
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
                 WindowKind::Browser => Pane::FileBrowser,
+                WindowKind::PianoKeys => Pane::PianoKeys,
                 _ => Pane::Console,
             };
             let (_, rect) = session.shell().pane_rect(pane)?;
@@ -1285,7 +1288,7 @@ fn window_def() -> Value {
             (
                 "window",
                 "string",
-                "main, rack, console or spectrum-eq: the window to act on.",
+                "main, rack, console, spectrum-eq, browser or piano-keys: the window to act on.",
             ),
             ("width", "number", "resize: the logical width (200..8192)."),
             (

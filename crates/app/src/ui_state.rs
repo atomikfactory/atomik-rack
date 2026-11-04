@@ -27,7 +27,7 @@ use atomik_ui::arrangement::clamp_track_zoom;
 use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
 use atomik_ui::timeline::Snap;
-use atomik_ui::{AudioMode, FileBrowserView, SnapMode};
+use atomik_ui::{AudioMode, DEFAULT_OCTAVE, DEFAULT_VELOCITY, FileBrowserView, OCTAVES, SnapMode};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -127,6 +127,12 @@ pub struct UiState {
     /// Which keys the piano roll shows (`"off"`, `"scale"` or `"used"`). An absent key means
     /// every key.
     pub piano_roll_fold: Fold,
+    /// The octave of the Piano Keys strip (its lowest key is `12 * octave`). An absent key
+    /// means the default (5).
+    pub piano_keys_octave: u8,
+    /// The velocity of the Piano Keys' typed keys and clicks (1 to 127). An absent key means
+    /// the default (98). Whether the Piano Keys window is open is `windows.piano_keys`.
+    pub piano_keys_velocity: u8,
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
@@ -179,6 +185,8 @@ impl Default for UiState {
             snap_mode: SnapMode::default(),
             piano_roll_audition: true,
             piano_roll_fold: Fold::Off,
+            piano_keys_octave: DEFAULT_OCTAVE,
+            piano_keys_velocity: DEFAULT_VELOCITY,
             audio_editor_mode: AudioMode::Overview,
             console_notice_seen: false,
             file_browser_visible: false,
@@ -260,8 +268,12 @@ impl UiState {
         } else {
             KEY_HEIGHT
         };
+        let piano_keys_octave = self.piano_keys_octave.clamp(OCTAVES.0, OCTAVES.1);
+        let piano_keys_velocity = self.piano_keys_velocity.clamp(1, 127);
         Self {
             rack_split,
+            piano_keys_octave,
+            piano_keys_velocity,
             file_browser_width,
             file_browser_tree_fraction,
             track_zoom,

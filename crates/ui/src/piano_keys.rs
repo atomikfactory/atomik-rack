@@ -246,6 +246,11 @@ impl PianoKeysView {
         note_name(self.low())
     }
 
+    /// Puts the strip's lowest key at octave `octave` (clamped to the range).
+    pub fn set_octave(&mut self, octave: u8) {
+        self.octave = octave.clamp(OCTAVES.0, OCTAVES.1);
+    }
+
     /// Moves the strip by `by` octaves within the range. The notes sounding stay as they are.
     /// Returns whether it moved.
     pub fn shift_octave(&mut self, by: i8) -> bool {

@@ -3,8 +3,9 @@
 
 use super::*;
 use crate::session::NullBackend;
-use atomik_ui::KeysMode;
+use crate::windows::WindowKind;
 use atomik_ui::keymap::script::event_for;
+use atomik_ui::{KeysMode, PIANO_KEYS_HEIGHT};
 
 fn shell() -> Shell<NullBackend> {
     let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
@@ -27,11 +28,16 @@ fn shell() -> Shell<NullBackend> {
 
 fn press(s: &mut Shell<NullBackend>, chord: &str, pressed: bool) {
     let (key, modifiers) = event_for(Os::Windows, chord).unwrap();
-    s.handle(&UiEvent::Key {
-        key,
-        modifiers,
-        pressed,
-    });
+    // Keys arrive in the window that has the focus.
+    let window = s.focused_window();
+    s.handle_in(
+        window,
+        &UiEvent::Key {
+            key,
+            modifiers,
+            pressed,
+        },
+    );
 }
 
 fn tap(s: &mut Shell<NullBackend>, chord: &str) {
@@ -50,25 +56,87 @@ fn sounding(s: &Shell<NullBackend>) -> Vec<u8> {
 }
 
 #[test]
-fn f4_shows_the_strip_with_the_focus_and_f9_is_the_file_browser() {
+fn f4_opens_the_keys_window_with_the_focus_and_f9_is_the_file_browser() {
     let mut s = shell();
-    assert!(s.layout().piano_keys.is_none());
+    assert!(s.pane_rect(Pane::PianoKeys).is_none());
+    assert!(!s.windows_wanted().contains(&WindowKind::PianoKeys));
     tap(&mut s, "F4");
-    let strip = s.layout().piano_keys.expect("shown");
+    let (window, strip) = s.pane_rect(Pane::PianoKeys).expect("shown");
+    assert_eq!(window, WindowKind::PianoKeys);
+    assert!(s.windows_wanted().contains(&WindowKind::PianoKeys));
     assert_eq!(s.focus(), Pane::PianoKeys);
     assert!(s.core().piano_keys().is_focused());
-    assert_eq!(strip.height(), PIANO_KEYS_HEIGHT);
+    assert_eq!(
+        strip.height(),
+        PIANO_KEYS_HEIGHT,
+        "the window holds the strip alone"
+    );
     assert_eq!(s.core().piano_keys().bounds(), strip);
     assert!(s.menu_state().piano_keys);
-    assert!(
-        s.layout().song.is_some_and(|r| r.y1 <= strip.y0 + 0.5),
-        "the song area ends above the strip"
-    );
+    // The main window's layout gives it no room: the song area reaches the status bar.
+    let song = s.layout().song.expect("song area");
+    assert!(song.y1 > s.size().height - STATUS_BAR_HEIGHT - 1.0);
     assert!(!s.menu_state().file_browser);
     tap(&mut s, "F9");
     assert!(s.menu_state().file_browser);
     tap(&mut s, "F4");
-    assert!(s.layout().piano_keys.is_none());
+    assert!(s.pane_rect(Pane::PianoKeys).is_none());
+    assert!(!s.menu_state().piano_keys);
+}
+
+#[test]
+fn closing_the_window_from_the_os_closes_the_strip() {
+    let mut s = opened();
+    press(&mut s, "A", true);
+    s.window_closed(WindowKind::PianoKeys);
+    assert!(!s.menu_state().piano_keys);
+    assert!(!s.windows_wanted().contains(&WindowKind::PianoKeys));
+    assert!(sounding(&s).is_empty());
+}
+
+#[test]
+fn the_octave_the_velocity_and_whether_the_window_is_open_are_remembered() {
+    let dir = std::env::temp_dir().join(format!("atomik-keys-state-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let make = |path: &std::path::Path| {
+        let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
+        let mut s = Shell::new(
+            AppCore::new(session),
+            ShellOptions {
+                os: Some(Os::Windows),
+                profile: Some(Profile::Standard),
+                in_window_menu: true,
+                settings_path: None,
+                ui_state_path: Some(path.to_path_buf()),
+                library_path: None,
+                library_root: None,
+            },
+        );
+        s.handle(&UiEvent::ScaleChanged(1.0));
+        s.handle(&UiEvent::Resize(Size::new(1000.0, 800.0)));
+        s
+    };
+    let mut s = make(&path);
+    tap(&mut s, "F4");
+    tap(&mut s, "X");
+    tap(&mut s, "X");
+    tap(&mut s, "3");
+    let (octave, velocity) = (
+        s.core().piano_keys().octave(),
+        s.core().piano_keys().velocity(),
+    );
+    assert_ne!(octave, 5);
+    // Any event runs the check that saves the state; the write is flushed at once.
+    s.handle(&UiEvent::PointerLeave);
+    s.flush_ui_state();
+    let again = make(&path);
+    assert!(again.menu_state().piano_keys, "the window opens again");
+    assert!(again.windows_wanted().contains(&WindowKind::PianoKeys));
+    assert_eq!(again.core().piano_keys().octave(), octave);
+    assert_eq!(again.core().piano_keys().velocity(), velocity);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -159,22 +227,28 @@ fn mouse_mode_keeps_the_commands_of_the_letters() {
 #[test]
 fn a_press_on_a_key_plays_it_and_the_release_ends_it() {
     let mut s = opened();
-    let strip = s.layout().piano_keys.unwrap();
+    let (_, strip) = s.pane_rect(Pane::PianoKeys).unwrap();
     // The lowest white key, low on its face (loud).
     let pos = Point::new(strip.center().x - 7.0 * 49.0, strip.y1 - 6.0);
     let pos = Point::new(pos.x.max(strip.x0 + 20.0), pos.y);
-    s.handle(&UiEvent::PointerDown {
-        pos,
-        button: atomik_ui::PointerButton::Primary,
-        modifiers: Modifiers::NONE,
-        clicks: 1,
-    });
+    s.handle_in(
+        WindowKind::PianoKeys,
+        &UiEvent::PointerDown {
+            pos,
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+    );
     assert_eq!(sounding(&s).len(), 1);
-    s.handle(&UiEvent::PointerUp {
-        pos: Point::new(5.0, 5.0),
-        button: atomik_ui::PointerButton::Primary,
-        modifiers: Modifiers::NONE,
-    });
+    s.handle_in(
+        WindowKind::PianoKeys,
+        &UiEvent::PointerUp {
+            pos: Point::new(5.0, 5.0),
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        },
+    );
     assert!(sounding(&s).is_empty());
 }
 

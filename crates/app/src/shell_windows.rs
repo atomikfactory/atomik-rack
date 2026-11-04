@@ -26,6 +26,9 @@ const BROWSER_SIZE: Size = Size::new(420.0, 720.0);
 /// The size the Spectrum EQ window opens with when no geometry was saved.
 const SPECTRUM_EQ_SIZE: (f64, f64) = atomik_ui::spectrum_eq::DEFAULT_SIZE;
 
+/// The size the Piano Keys window opens with when no geometry was saved.
+const PIANO_KEYS_SIZE: Size = Size::new(900.0, atomik_ui::PIANO_KEYS_HEIGHT);
+
 /// The longest time between two writes of the window geometry caused by moving or resizing.
 const GEOM_SAVE_SECONDS: f64 = 2.0;
 
@@ -62,6 +65,7 @@ fn pane_of(kind: WindowKind) -> Pane {
         WindowKind::Console => Pane::Console,
         WindowKind::SpectrumEq => Pane::SpectrumEq,
         WindowKind::Browser => Pane::FileBrowser,
+        WindowKind::PianoKeys => Pane::PianoKeys,
         WindowKind::Main | WindowKind::Rack => Pane::Rack,
     }
 }
@@ -163,6 +167,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Rack if self.rack_detached() => WindowKind::Rack,
             Pane::Console if self.console_detached() => WindowKind::Console,
             Pane::SpectrumEq => WindowKind::SpectrumEq,
+            Pane::PianoKeys => WindowKind::PianoKeys,
             Pane::FileBrowser if self.browser_detached() => WindowKind::Browser,
             _ => WindowKind::Main,
         }
@@ -220,6 +225,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Console,
             WindowKind::SpectrumEq,
             WindowKind::Browser,
+            WindowKind::PianoKeys,
         ] {
             if self.detached(kind) {
                 self.open_window(kind);
@@ -251,6 +257,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Console => CONSOLE_SIZE,
             WindowKind::SpectrumEq => Size::new(SPECTRUM_EQ_SIZE.0, SPECTRUM_EQ_SIZE.1),
             WindowKind::Browser => BROWSER_SIZE,
+            WindowKind::PianoKeys => PIANO_KEYS_SIZE,
             WindowKind::Main | WindowKind::Rack => RACK_SIZE,
         });
         let scale = self.scale();
@@ -271,6 +278,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::Console => self.core.console_mut().set_scale(scale),
             WindowKind::SpectrumEq => self.core.spectrum_eq_mut().set_scale(scale),
             WindowKind::Browser => self.core.file_browser_mut().set_scale(scale),
+            WindowKind::PianoKeys => self.core.piano_keys_mut().set_scale(scale),
             WindowKind::Main => {
                 self.core.arrangement_mut().set_scale(scale);
                 self.core.piano_roll_mut().set_scale(scale);
@@ -389,6 +397,31 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
             return;
         }
+        if kind == WindowKind::PianoKeys {
+            // A floating window with no place in the main layout, like the Spectrum EQ: opening
+            // it gives it the keys, closing it lets go of the notes it was sounding.
+            if detached {
+                self.open_window(kind);
+            } else {
+                self.wins.remove(&kind);
+                let released = self.core.piano_keys_mut().release_all();
+                for action in released {
+                    self.core.handle_action(action);
+                }
+                if self.focus == pane {
+                    let back = self.live_pane(Pane::Arrangement);
+                    self.set_focus(back);
+                }
+            }
+            self.layout_view();
+            if detached {
+                self.set_focus(pane);
+            }
+            self.focused = self.window_of(self.focus);
+            self.write_ui_state();
+            self.repaint = true;
+            return;
+        }
         if detached {
             self.settle_detached_layout();
             self.open_window(kind);
@@ -400,7 +433,10 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui.show_song = true;
                     self.ui.show_console = true;
                 }
-                WindowKind::Main | WindowKind::SpectrumEq | WindowKind::Browser => {}
+                WindowKind::Main
+                | WindowKind::SpectrumEq
+                | WindowKind::PianoKeys
+                | WindowKind::Browser => {}
             }
             self.seq_only_prev = None;
             self.apply_scale(WindowKind::Main);
@@ -462,6 +498,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::Console => Pane::Console,
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
                 WindowKind::Browser => Pane::FileBrowser,
+                WindowKind::PianoKeys => Pane::PianoKeys,
             }
         };
         self.set_focus(pane);
@@ -621,6 +658,9 @@ impl<B: AudioBackend> Shell<B> {
         let Some((size, scale)) = self.win(window).map(|w| (w.size, w.scale)) else {
             return;
         };
+        if window == WindowKind::PianoKeys {
+            self.refresh_key_labels();
+        }
         self.core.paint_pane(pane_of(window), canvas);
         let theme = self.core.view().theme().clone();
         canvas.push_transform(Affine::scale(scale));
