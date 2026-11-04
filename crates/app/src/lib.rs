@@ -69,6 +69,7 @@ pub mod translate;
 pub mod ui_state;
 pub mod windows;
 pub mod workflow_tab;
+pub mod workspace;
 
 pub use crate::app_core::{AppCore, AppError};
 pub use crate::sink::EngineSink;

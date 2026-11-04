@@ -24,6 +24,17 @@ const FIT_MARGIN: f64 = 32.0;
 /// in desktop units.
 const STRIP: (f64, f64) = (64.0, 32.0);
 
+/// An open song. Every song has its own set of windows (a [`WindowKind::Main`] and the panes it
+/// detached); the id tells the platform layer which song a window belongs to. The first song of
+/// a run is [`DocId::FIRST`]; ids are not reused within a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct DocId(pub u32);
+
+impl DocId {
+    /// The song the app starts with.
+    pub const FIRST: Self = Self(0);
+}
+
 /// One of the windows of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

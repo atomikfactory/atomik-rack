@@ -20,7 +20,8 @@ use crate::stress::{
 };
 use crate::translate::{self, FileDrag};
 use crate::ui_state::ui_state_path;
-use crate::windows::{self, MonitorInfo, WindowHit, WindowKind, WindowRect, ZOrder};
+use crate::windows::{self, DocId, MonitorInfo, WindowHit, WindowKind, WindowRect, ZOrder};
+use crate::workspace::Workspace;
 use atomik_model::DeviceKey;
 use atomik_ui::TransportAction;
 use atomik_ui::keymap::Os;
@@ -37,6 +38,9 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{CustomCursor, Window, WindowId};
+
+/// A window of the app: the song it belongs to and its place in that song.
+type Key = (DocId, WindowKind);
 
 /// Redraw tick while audio runs (≈ 60 Hz, for meters and status).
 const FRAME: Duration = Duration::from_micros(16_667);
@@ -88,6 +92,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let (isolation, isolation_warning) =
         plugin_setup::plugin_isolation(plugin_settings_sandbox, exe.as_deref());
     plugin_config.isolation = Some(isolation);
+    // What a song opened later is built from (see `song_factory` below).
+    let song_runner = plugin_config.runner.clone();
+    let song_isolation = plugin_config.isolation.clone();
+    let song_config_dir = config.dir.clone();
+    let song_settings_path = settings_path.clone();
+    let song_library_root = cli.library.clone();
     if cli.stress_plugins
         && let Some(exe) = exe.as_deref()
     {
@@ -284,17 +294,61 @@ pub fn run(cli: Cli) -> Result<(), String> {
         .screenshot_after
         .filter(|s| s.is_finite() && *s >= 0.0)
         .map(|s| now + Duration::from_secs_f64(s));
-    let zoom_applied = shell.app_zoom();
+    // A song opened next to the first: a new song with its own plugin host, running without audio
+    // until it is focused. Its recovery copies live in a folder of its own and its plugins keep
+    // no crash journal (the first song's journal names what a crash lost).
+    let song_factory: crate::workspace::SongFactory<SystemBackend> =
+        Box::new(move |from: &Shell<SystemBackend>, id: DocId| {
+            let mut audio = from.audio_settings();
+            audio.surfaces.clear();
+            let session = LiveSession::new(SystemBackend, audio.clone(), false);
+            let mut core = AppCore::new(session);
+            if let Some(path) = song_settings_path
+                .as_deref()
+                .map(crate::recent::recent_path)
+            {
+                core.set_recent_path(path);
+            }
+            core.configure_plugins(plugin_setup::song_plugin_config(
+                audio.plugins.clone(),
+                Some(song_config_dir.as_path()),
+                id.0,
+                song_runner.clone(),
+                song_isolation.clone(),
+            ));
+            let mut song = Shell::new(
+                core,
+                ShellOptions {
+                    os: None,
+                    profile: None,
+                    in_window_menu: !cfg!(target_os = "macos"),
+                    ui_state_path: None,
+                    library_path: song_settings_path
+                        .as_deref()
+                        .map(crate::ui_state::library_path),
+                    library_root: song_library_root.clone(),
+                    settings_path: song_settings_path.clone(),
+                },
+            );
+            song.set_library_default(crate::settings::default_library_dir(
+                crate::settings::TargetOs::current(),
+                &|k| std::env::var_os(k),
+            ));
+            song.core_mut().set_plugin_load_paints_first(true);
+            song.core_mut().set_background_save(true);
+            song.start_with_default_song();
+            song
+        });
+    let shell = Workspace::new(shell, song_factory);
     let mut app = App {
         ime_on: false,
         shell,
-        zoom_applied,
         gpu: GpuContext::new(),
         windows: BTreeMap::new(),
         custom_cursors: BTreeMap::new(),
         ids: BTreeMap::new(),
-        zorder: ZOrder::default(),
-        last_focused: WindowKind::Main,
+        zorder: BTreeMap::new(),
+        last_focused: (DocId::FIRST, WindowKind::Main),
         drag_noted: false,
         text: TextEngine::new(),
         modifiers: Modifiers::NONE,
@@ -345,26 +399,26 @@ struct AppWindow {
     /// The cursor last set on the window, and the bitmap side it was made for.
     cursor: (CursorHint, u32),
     title: String,
+    /// The application zoom the window was last told (it is told again when it changes).
+    zoom: f64,
 }
 
 struct App {
     /// The input method is on for the windows (a text field has the keys).
     ime_on: bool,
-    shell: Shell<SystemBackend>,
+    shell: Workspace<SystemBackend>,
     gpu: GpuContext,
-    /// The open windows; the main window is created at start and lives to the end.
-    windows: BTreeMap<WindowKind, AppWindow>,
+    /// The open windows: the main window of every song and the panes it detached.
+    windows: BTreeMap<Key, AppWindow>,
     /// The drawn tool cursors made so far, by picture and bitmap side.
     custom_cursors: BTreeMap<(CursorArt, u32), CustomCursor>,
-    ids: BTreeMap<WindowId, WindowKind>,
-    /// The windows by focus, to find the one under the pointer during a drag.
-    zorder: ZOrder,
+    ids: BTreeMap<WindowId, Key>,
+    /// The windows of each song by focus, to find the one under the pointer during a drag.
+    zorder: BTreeMap<DocId, ZOrder>,
     /// The window that last had the focus: the parent of the dialogs.
-    last_focused: WindowKind,
+    last_focused: Key,
     /// The note about drags between windows was said for this drag.
     drag_noted: bool,
-    /// The application zoom the windows were last told (they are told again when it changes).
-    zoom_applied: f64,
     text: TextEngine,
     modifiers: Modifiers,
     /// Emits `UiEvent::ModifiersChanged` once per real modifier change.
@@ -458,16 +512,12 @@ impl App {
         }
         self.stopped = true;
         // The geometry the shell saves is the last one the windows had.
-        for kind in self.windows.keys().copied().collect::<Vec<_>>() {
-            self.report_geom(kind);
+        for key in self.windows.keys().copied().collect::<Vec<_>>() {
+            self.report_geom(key);
         }
-        self.shell.shutdown();
-        self.shell.poll_status();
-        log::info!("at exit: {}", self.shell.status_text());
-        // MIDI, stream, then the engine, all dropped here on the UI thread; then the plugins
-        // (editors closed, the crash journal removed: a clean exit).
-        self.shell.core_mut().sink_mut().shutdown();
-        self.shell.core_mut().shutdown_plugins();
+        // Every song: its state is written, then MIDI, stream and engine are dropped here on the
+        // UI thread, then its plugins (editors closed, the crash journal removed: a clean exit).
+        self.shell.shutdown_all();
     }
 
     /// Asks where to save the project (or the patch, with `export`); the chosen path, with the
@@ -502,7 +552,8 @@ impl App {
     fn parent_window(&self) -> Option<&Window> {
         self.windows
             .get(&self.last_focused)
-            .or_else(|| self.windows.get(&WindowKind::Main))
+            .or_else(|| self.windows.get(&(self.shell.routed(), WindowKind::Main)))
+            .or_else(|| self.windows.values().next())
             .map(|w| w.window.as_ref())
     }
 
@@ -512,21 +563,42 @@ impl App {
         if self.stopped {
             return;
         }
-        let open: Vec<_> = self.windows.keys().copied().collect();
-        let plan = windows::reconcile(&open, &self.shell.windows_wanted());
-        for kind in plan.close {
-            self.close_window(kind);
+        let routed = self.shell.routed();
+        let songs = self.shell.ids();
+        // The windows of a song that is closed go with it.
+        for key in self.windows.keys().copied().collect::<Vec<_>>() {
+            if !songs.contains(&key.0) {
+                self.close_window(key);
+            }
         }
-        for kind in plan.create {
-            if let Err(e) = self.create_window(event_loop, kind) {
-                log::error!("cannot create the {kind:?} window: {e}");
-                if kind == WindowKind::Main {
-                    event_loop.exit();
-                } else {
-                    self.shell.window_closed(kind);
+        for id in songs {
+            if !self.shell.select(id) {
+                continue;
+            }
+            let open: Vec<_> = self
+                .windows
+                .keys()
+                .filter(|k| k.0 == id)
+                .map(|k| k.1)
+                .collect();
+            let plan = windows::reconcile(&open, &self.shell.windows_wanted());
+            for kind in plan.close {
+                self.close_window((id, kind));
+            }
+            for kind in plan.create {
+                if let Err(e) = self.create_window(event_loop, (id, kind)) {
+                    log::error!("cannot create the {kind:?} window of song {}: {e}", id.0);
+                    if kind != WindowKind::Main {
+                        self.shell.window_closed(kind);
+                    } else if !self.shell.close_song(id) {
+                        // The only song has no window: nothing is left to show.
+                        event_loop.exit();
+                    }
+                    break;
                 }
             }
         }
+        self.shell.select(routed);
         self.pace_presentation();
     }
 
@@ -542,11 +614,9 @@ impl App {
 
     /// Opens the window of `kind`: placed from its saved geometry and the monitors of the
     /// moment, told its scale and size, with a surface.
-    fn create_window(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        kind: WindowKind,
-    ) -> Result<(), String> {
+    fn create_window(&mut self, event_loop: &ActiveEventLoop, key: Key) -> Result<(), String> {
+        let (doc, kind) = key;
+        self.shell.select(doc);
         let space = window_logic::desktop_space();
         let (monitors, primary) = monitors(event_loop);
         let default = match kind {
@@ -561,7 +631,7 @@ impl App {
             windows::place(saved.as_ref(), default, MIN_SIZE, &monitors, primary)
         } else {
             // A detached window with nothing saved goes to a monitor the app is not on yet.
-            let occupied = self.desktop_rects().unwrap_or_default();
+            let occupied = self.desktop_rects(doc).unwrap_or_default();
             windows::place_detached(
                 saved.as_ref(),
                 default,
@@ -605,10 +675,11 @@ impl App {
                 .core_mut()
                 .set_plugin_editor_owner(super::plugin_windows::owner_of(&window));
         }
-        self.ids.insert(window.id(), kind);
-        self.zorder.focus(kind);
+        self.ids.insert(window.id(), key);
+        self.zorder.entry(doc).or_default().focus(kind);
+        let zoom = self.shell.app_zoom();
         self.windows.insert(
-            kind,
+            key,
             AppWindow {
                 surface: Some(surface),
                 window: Arc::clone(&window),
@@ -618,28 +689,32 @@ impl App {
                 file_drag: FileDrag::new(),
                 cursor: (CursorHint::Default, 0),
                 title: self.shell.title_in(kind),
+                zoom,
             },
         );
-        self.report_geom(kind);
+        self.report_geom(key);
         window.request_redraw();
         Ok(())
     }
 
     /// Closes the window of `kind` (the shell attached its pane).
-    fn close_window(&mut self, kind: WindowKind) {
-        self.windows.remove(&kind);
-        self.ids.retain(|_, k| *k != kind);
-        self.zorder.remove(kind);
-        if self.last_focused == kind {
-            self.last_focused = WindowKind::Main;
+    fn close_window(&mut self, key: Key) {
+        self.windows.remove(&key);
+        self.ids.retain(|_, k| *k != key);
+        if let Some(order) = self.zorder.get_mut(&key.0) {
+            order.remove(key.1);
+        }
+        if self.last_focused == key {
+            self.last_focused = (self.shell.play_focus(), WindowKind::Main);
         }
     }
 
     /// Tells the shell where the window of `kind` is (it saves it).
-    fn report_geom(&mut self, kind: WindowKind) {
-        let Some(w) = self.windows.get(&kind) else {
+    fn report_geom(&mut self, key: Key) {
+        let Some(w) = self.windows.get(&key) else {
             return;
         };
+        let kind = key.1;
         let window = &w.window;
         if window.is_minimized() == Some(true) {
             return;
@@ -654,16 +729,20 @@ impl App {
             window.is_maximized(),
             window.current_monitor().and_then(|m| m.name()),
         );
-        if let Some(geom) = geom {
+        if let Some(geom) = geom
+            && self.shell.select(key.0)
+        {
             self.shell.window_moved(kind, geom);
         }
     }
 
-    /// Every window's rect on the desktop; `None` when the OS gives no positions (Wayland).
-    fn desktop_rects(&self) -> Option<Vec<WindowRect>> {
+    /// The rect on the desktop of every window of song `doc`; `None` when the OS gives no
+    /// positions (Wayland).
+    fn desktop_rects(&self, doc: DocId) -> Option<Vec<WindowRect>> {
         self.windows
             .iter()
-            .map(|(kind, w)| {
+            .filter(|(key, _)| key.0 == doc)
+            .map(|((_, kind), w)| {
                 let origin = w.window.inner_position().ok()?;
                 let size = w.window.inner_size();
                 Some(window_logic::window_rect(
@@ -679,13 +758,18 @@ impl App {
 
     /// The window under a pointer that is at `pos` in `kind`'s window, during a drag that
     /// can cross windows: the front window of the app that holds the point, or `None`.
-    fn window_under_pointer(&mut self, kind: WindowKind, pos: Point) -> Option<WindowHit> {
-        let rects = self.desktop_rects();
+    fn window_under_pointer(&mut self, key: Key, pos: Point) -> Option<WindowHit> {
+        let (doc, kind) = key;
+        self.shell.select(doc);
+        let rects = self.desktop_rects(doc);
         let Some(rects) = rects.filter(|r| r.iter().any(|r| r.kind == kind)) else {
             // No positions: the pointer is over its own window or over nothing of the app.
             let size = self.shell.window_size(kind)?;
             let hit = window_logic::local_hit(kind, pos, (size.width, size.height));
-            if hit.is_none() && self.windows.len() > 1 && !self.drag_noted {
+            if hit.is_none()
+                && self.windows.keys().filter(|k| k.0 == doc).count() > 1
+                && !self.drag_noted
+            {
                 self.drag_noted = true;
                 self.shell.notify(WAYLAND_DRAG_NOTE);
             }
@@ -701,25 +785,31 @@ impl App {
                 pos.y * own.scale * self.shell.app_zoom(),
             ),
         );
-        windows::window_under(&rects, point, &self.zorder)
+        windows::window_under(&rects, point, self.zorder.entry(doc).or_default())
     }
 
     /// Hands one event of `kind`'s window to the shell. During a drag of files the window under
     /// the pointer is worked out here, since the OS keeps sending the events to the window
     /// that got the press.
-    fn dispatch(&mut self, kind: WindowKind, event: &UiEvent) -> Vec<ShellRequest> {
+    fn dispatch(&mut self, key: Key, event: &UiEvent) -> Vec<ShellRequest> {
+        self.shell.select(key.0);
+        let kind = key.1;
         let Some(pos) = window_logic::pointer_of(event).filter(|_| self.shell.cross_window_drag())
         else {
             self.drag_noted = false;
             return self.shell.handle_in(kind, event);
         };
-        let under = self.window_under_pointer(kind, pos);
+        let under = self.window_under_pointer(key, pos);
         self.shell.handle_routed(kind, event, under)
     }
 
     /// Paints `kind`'s window into its scene.
-    fn paint_scene(&mut self, kind: WindowKind) {
-        let Some(w) = self.windows.get_mut(&kind) else {
+    fn paint_scene(&mut self, key: Key) {
+        let kind = key.1;
+        if !self.shell.select(key.0) {
+            return;
+        }
+        let Some(w) = self.windows.get_mut(&key) else {
             return;
         };
         w.scene.reset();
@@ -728,16 +818,17 @@ impl App {
         w.cache.trim();
     }
 
-    fn redraw(&mut self, kind: WindowKind) {
-        let Some(window) = self.windows.get(&kind).map(|w| Arc::clone(&w.window)) else {
+    fn redraw(&mut self, key: Key) {
+        let kind = key.1;
+        let Some(window) = self.windows.get(&key).map(|w| Arc::clone(&w.window)) else {
             return;
         };
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
             return; // minimized
         }
-        self.paint_scene(kind);
-        let Some(w) = self.windows.get_mut(&kind) else {
+        self.paint_scene(key);
+        let Some(w) = self.windows.get_mut(&key) else {
             return;
         };
         let result = match &mut w.surface {
@@ -769,15 +860,19 @@ impl App {
     /// Renders every open window offscreen: `base` for the main window, `base-rack` and
     /// `base-console` (before the extension) for the detached ones.
     fn take_screenshots(&mut self, base: &std::path::Path) {
-        for kind in self.windows.keys().copied().collect::<Vec<_>>() {
+        for key in self.windows.keys().copied().collect::<Vec<_>>() {
+            let kind = key.1;
+            if !self.shell.select(key.0) {
+                continue;
+            }
             let Some((w, h)) = self.shell.physical_size_in(kind) else {
                 continue;
             };
-            self.paint_scene(kind);
+            self.paint_scene(key);
             // The scene was painted, but the window has not shown it yet.
             self.shell.core_mut().view_mut().request_repaint();
-            let path = window_logic::screenshot_path(base, kind);
-            let Some(window) = self.windows.get(&kind) else {
+            let path = window_logic::song_screenshot_path(base, key.0, kind);
+            let Some(window) = self.windows.get(&key) else {
                 continue;
             };
             match render_offscreen(&window.scene, Color::BLACK, w, h)
@@ -791,9 +886,11 @@ impl App {
 
     /// Sets each window's title when it changed.
     fn update_titles(&mut self) {
-        let main = self.shell.title();
-        for (kind, w) in &mut self.windows {
-            if let Some(title) = window_logic::changed(&w.title, &kind.title(main.clone())) {
+        for ((doc, kind), w) in &mut self.windows {
+            let Some(song) = self.shell.song(*doc) else {
+                continue;
+            };
+            if let Some(title) = window_logic::changed(&w.title, &kind.title(song.title())) {
                 w.window.set_title(&title);
                 w.title = title;
             }
@@ -803,9 +900,12 @@ impl App {
     /// Shows the cursor the shell asks for in each window (set only when it changes). The tool
     /// cursors are drawn bitmaps, made once per size and kept.
     fn update_cursors(&mut self, event_loop: &ActiveEventLoop) {
-        for (kind, w) in &mut self.windows {
+        for ((doc, kind), w) in &mut self.windows {
+            let Some(song) = self.shell.song(*doc) else {
+                continue;
+            };
             let size = cursor_art::size_for(w.window.scale_factor());
-            let want = (self.shell.cursor_in(*kind), size);
+            let want = (song.cursor_in(*kind), size);
             let Some((hint, size)) = window_logic::changed(&w.cursor, &want) else {
                 continue;
             };
@@ -836,15 +936,22 @@ impl App {
 
     /// Paints and presents every window that has something to paint.
     fn paint_due_windows(&mut self) {
-        for kind in self.shell.windows_to_paint() {
-            self.redraw(kind);
+        for id in self.shell.ids() {
+            let due = self.shell.song(id).map(|s| s.windows_to_paint());
+            for kind in due.unwrap_or_default() {
+                self.redraw((id, kind));
+            }
         }
     }
 
     /// Asks for a redraw of every window that has something to paint.
     fn request_redraws(&self) {
-        for (kind, w) in &self.windows {
-            if self.shell.needs_repaint_in(*kind) {
+        for ((doc, kind), w) in &self.windows {
+            if self
+                .shell
+                .song(*doc)
+                .is_some_and(|s| s.needs_repaint_in(*kind))
+            {
                 w.window.request_redraw();
             }
         }
@@ -852,12 +959,15 @@ impl App {
 
     /// Tells every window its new scale and size when the application zoom changed.
     fn apply_zoom(&mut self) {
-        let zoom = self.shell.app_zoom();
-        if (zoom - self.zoom_applied).abs() < f64::EPSILON {
-            return;
-        }
-        self.zoom_applied = zoom;
-        for (kind, w) in &self.windows {
+        for ((doc, kind), w) in &mut self.windows {
+            let Some(zoom) = self.shell.song(*doc).map(|s| s.app_zoom()) else {
+                continue;
+            };
+            if (zoom - w.zoom).abs() < f64::EPSILON {
+                continue;
+            }
+            w.zoom = zoom;
+            self.shell.select(*doc);
             let scale = self.shell.ui_scale(w.window.scale_factor());
             let size = w.window.inner_size();
             self.shell.handle_in(*kind, &UiEvent::ScaleChanged(scale));
@@ -869,6 +979,7 @@ impl App {
     }
 
     fn after_event(&mut self, event_loop: &ActiveEventLoop, requests: Vec<ShellRequest>) {
+        self.shell.sync_preferences();
         self.apply_zoom();
         self.sync_windows(event_loop);
         self.handle_requests(event_loop, requests);
@@ -878,7 +989,10 @@ impl App {
         self.update_ime();
         #[cfg(target_os = "macos")]
         if let Some(native) = &mut self.native {
+            let routed = self.shell.routed();
+            self.shell.select(self.shell.play_focus());
             native.update(&self.shell.menu_model());
+            self.shell.select(routed);
         }
         self.request_redraws();
     }
@@ -886,7 +1000,11 @@ impl App {
     /// Switches the input method on while a text field has the keys and off otherwise, so the
     /// IME window only appears where text is typed.
     fn update_ime(&mut self) {
-        let want = self.shell.wants_text_input();
+        let want = self
+            .shell
+            .ids()
+            .into_iter()
+            .any(|id| self.shell.song(id).is_some_and(|s| s.wants_text_input()));
         if want == self.ime_on {
             return;
         }
@@ -897,8 +1015,8 @@ impl App {
     }
 
     /// Brings the window of `kind` forward and gives it the keyboard.
-    fn focus_window(&self, kind: WindowKind) {
-        if let Some(w) = self.windows.get(&kind) {
+    fn focus_window(&self, key: Key) {
+        if let Some(w) = self.windows.get(&key) {
             if w.window.is_minimized() == Some(true) {
                 w.window.set_minimized(false);
             }
@@ -1239,10 +1357,10 @@ Yes saves, No discards the changes, Cancel keeps the song open.",
                     };
                     self.handle_requests(event_loop, more);
                 }
-                ShellRequest::FocusWindow(kind) => self.focus_window(kind),
+                ShellRequest::FocusWindow(kind) => self.focus_window((self.shell.routed(), kind)),
                 ShellRequest::OpenUrl(url) => open_url(url),
                 ShellRequest::ToggleMaximise(kind) => {
-                    if let Some(w) = self.windows.get(&kind) {
+                    if let Some(w) = self.windows.get(&(self.shell.routed(), kind)) {
                         w.window.set_maximized(!w.window.is_maximized());
                     }
                 }
@@ -1256,23 +1374,23 @@ Yes saves, No discards the changes, Cancel keeps the song open.",
 
     /// Hands the file drag events collected for `kind`'s window to the shell (as one event, see
     /// [`FileDrag`]), at that window's pointer.
-    fn flush_files(&mut self, event_loop: &ActiveEventLoop, kind: WindowKind) {
-        let Some(w) = self.windows.get_mut(&kind) else {
+    fn flush_files(&mut self, event_loop: &ActiveEventLoop, key: Key) {
+        let Some(w) = self.windows.get_mut(&key) else {
             return;
         };
         if let Some(event) = w.file_drag.flush(w.pointer) {
-            self.ui(event_loop, kind, event);
+            self.ui(event_loop, key, event);
         }
     }
 
     fn flush_all_files(&mut self, event_loop: &ActiveEventLoop) {
-        for kind in self.windows.keys().copied().collect::<Vec<_>>() {
-            self.flush_files(event_loop, kind);
+        for key in self.windows.keys().copied().collect::<Vec<_>>() {
+            self.flush_files(event_loop, key);
         }
     }
 
-    fn ui(&mut self, event_loop: &ActiveEventLoop, kind: WindowKind, event: UiEvent) {
-        let requests = self.dispatch(kind, &event);
+    fn ui(&mut self, event_loop: &ActiveEventLoop, key: Key, event: UiEvent) {
+        let requests = self.dispatch(key, &event);
         self.after_event(event_loop, requests);
     }
 }
@@ -1284,11 +1402,12 @@ impl ApplicationHandler for App {
         }
         // The main window and the panes that were detached when the app last closed.
         self.sync_windows(event_loop);
-        if !self.windows.contains_key(&WindowKind::Main) {
+        if !self.windows.contains_key(&(DocId::FIRST, WindowKind::Main)) {
             return;
         }
         #[cfg(target_os = "macos")]
         {
+            self.shell.select(DocId::FIRST);
             self.native = super::native_menu::NativeMenus::attach(&self.shell.menu_model());
         }
         self.update_titles();
@@ -1302,39 +1421,43 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         // A plugin editor's own window: its resize and close go to the core.
-        if self.plugin_windows.owns(id) {
-            self.plugin_windows.event(id, event, self.shell.core_mut());
+        if let Some(doc) = self.plugin_windows.doc_of(id) {
+            if let Some(song) = self.shell.song_mut(doc) {
+                self.plugin_windows.event(id, event, song.core_mut());
+            }
             return;
         }
-        let Some(&kind) = self.ids.get(&id) else {
+        let Some(&key) = self.ids.get(&id) else {
             return;
         };
+        let kind = key.1;
         match &event {
             WindowEvent::HoveredFile(path) => {
-                if let Some(w) = self.windows.get_mut(&kind) {
+                if let Some(w) = self.windows.get_mut(&key) {
                     w.file_drag.hovered(path.clone());
                 }
                 return;
             }
             WindowEvent::HoveredFileCancelled => {
-                if let Some(w) = self.windows.get_mut(&kind) {
+                if let Some(w) = self.windows.get_mut(&key) {
                     w.file_drag.hover_cancelled();
                 }
                 return;
             }
             WindowEvent::DroppedFile(path) => {
-                if let Some(w) = self.windows.get_mut(&kind) {
+                if let Some(w) = self.windows.get_mut(&key) {
                     w.file_drag.dropped(path.clone());
                 }
                 return;
             }
             // Anything else ends the group: keep the order of events.
-            _ => self.flush_files(event_loop, kind),
+            _ => self.flush_files(event_loop, key),
         }
+        self.shell.select(key.0);
         let zoom = self.shell.app_zoom();
         let Some((scale, pointer)) = self
             .windows
-            .get(&kind)
+            .get(&key)
             .map(|w| (w.window.scale_factor() * zoom, w.pointer))
         else {
             return;
@@ -1351,22 +1474,22 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Resized(size) => {
-                if let Some(w) = self.windows.get_mut(&kind)
+                if let Some(w) = self.windows.get_mut(&key)
                     && let Some(surface) = &mut w.surface
                 {
                     self.gpu.resize(surface, size.width, size.height);
                 }
                 self.ui(
                     event_loop,
-                    kind,
+                    key,
                     UiEvent::Resize(translate::logical_size(size, scale)),
                 );
-                self.report_geom(kind);
+                self.report_geom(key);
             }
-            WindowEvent::Moved(_) => self.report_geom(kind),
+            WindowEvent::Moved(_) => self.report_geom(key),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let scale = self.shell.ui_scale(scale_factor);
-                self.ui(event_loop, kind, UiEvent::ScaleChanged(scale));
+                self.ui(event_loop, key, UiEvent::ScaleChanged(scale));
             }
             WindowEvent::ThemeChanged(theme) => {
                 self.shell
@@ -1376,21 +1499,21 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => {
                 self.modifiers = translate::modifiers(m.state());
                 if let Some(event) = self.mod_events.update(m.state()) {
-                    self.ui(event_loop, kind, event);
+                    self.ui(event_loop, key, event);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let pointer = translate::logical(position, scale);
-                if let Some(w) = self.windows.get_mut(&kind) {
+                if let Some(w) = self.windows.get_mut(&key) {
                     w.pointer = pointer;
                 }
                 let event = UiEvent::PointerMove {
                     pos: pointer,
                     modifiers: self.modifiers,
                 };
-                self.ui(event_loop, kind, event);
+                self.ui(event_loop, key, event);
             }
-            WindowEvent::CursorLeft { .. } => self.ui(event_loop, kind, UiEvent::PointerLeave),
+            WindowEvent::CursorLeft { .. } => self.ui(event_loop, key, UiEvent::PointerLeave),
             WindowEvent::MouseInput { state, button, .. } => {
                 let mapped = match state {
                     ElementState::Pressed => self.buttons.press(button, self.modifiers, self.os),
@@ -1415,7 +1538,7 @@ impl ApplicationHandler for App {
                         modifiers,
                     },
                 };
-                self.ui(event_loop, kind, event);
+                self.ui(event_loop, key, event);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let event = UiEvent::Wheel {
@@ -1423,27 +1546,27 @@ impl ApplicationHandler for App {
                     pos: pointer,
                     modifiers: self.modifiers,
                 };
-                self.ui(event_loop, kind, event);
+                self.ui(event_loop, key, event);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let key = translate::key_event(
+                let pressed = translate::key_event(
                     &event.logical_key,
                     &event.physical_key,
                     self.modifiers,
                     self.os,
                 );
                 let event = UiEvent::Key {
-                    key,
+                    key: pressed,
                     modifiers: self.modifiers,
                     pressed: event.state.is_pressed(),
                 };
-                self.ui(event_loop, kind, event);
+                self.ui(event_loop, key, event);
             }
             WindowEvent::Ime(ime) => {
                 let event = translate::ime(&ime);
-                self.ui(event_loop, kind, event);
+                self.ui(event_loop, key, event);
             }
-            WindowEvent::RedrawRequested => self.redraw(kind),
+            WindowEvent::RedrawRequested => self.redraw(key),
             WindowEvent::Focused(false) => {
                 // The releases of the keys held now will never arrive.
                 self.modifiers = Modifiers::NONE;
@@ -1451,18 +1574,20 @@ impl ApplicationHandler for App {
                 self.shell.focus_lost();
             }
             WindowEvent::Focused(true) => {
-                self.zorder.focus(kind);
-                self.last_focused = kind;
+                self.zorder.entry(key.0).or_default().focus(kind);
+                self.last_focused = key;
+                // The song this window belongs to takes the audio and the keys.
+                self.shell.focus(key.0);
                 self.shell.window_focused(kind);
                 self.shell.core_mut().view_mut().request_repaint();
                 self.after_event(event_loop, Vec::new());
-                if let Some(w) = self.windows.get(&kind) {
+                if let Some(w) = self.windows.get(&key) {
                     w.window.request_redraw();
                 }
             }
             WindowEvent::Occluded(false) => {
                 self.shell.core_mut().view_mut().request_repaint();
-                if let Some(w) = self.windows.get(&kind) {
+                if let Some(w) = self.windows.get(&key) {
                     w.window.request_redraw();
                 }
             }
@@ -1485,22 +1610,31 @@ impl ApplicationHandler for App {
                 .as_ref()
                 .map(super::native_menu::NativeMenus::poll)
                 .unwrap_or_default();
+            self.shell.select(self.shell.play_focus());
             for command in commands {
                 let requests = self.shell.execute(command);
                 self.after_event(event_loop, requests);
             }
         }
-        // The plugin editors the core asked for, and the requests the shell raised between events.
-        self.plugin_windows.pump(event_loop, self.shell.core_mut());
-        let requests = self.shell.take_requests();
-        if !requests.is_empty() {
-            self.handle_requests(event_loop, requests);
+        // The plugin editors each song's core asked for, and the requests its shell raised
+        // between events.
+        for id in self.shell.ids() {
+            if !self.shell.select(id) {
+                continue;
+            }
+            self.plugin_windows
+                .pump(event_loop, id, self.shell.core_mut());
+            let requests = self.shell.take_requests();
+            if !requests.is_empty() {
+                self.handle_requests(event_loop, requests);
+            }
         }
+        self.shell.select(self.shell.play_focus());
         // Engine garbage is dropped here, on the UI thread, every tick; the transport
         // position and recorded notes are read too.
         // Meters and their ballistics use the monotonic time since start.
         self.shell
-            .frame_at(now.saturating_duration_since(self.epoch).as_secs_f64());
+            .frame_all(now.saturating_duration_since(self.epoch).as_secs_f64());
         self.sync_windows(event_loop);
         if self.screenshot_at.is_some_and(|t| now >= t)
             && let Some(path) = self.screenshot.take()
@@ -1510,7 +1644,7 @@ impl ApplicationHandler for App {
         }
         if now >= self.next_status {
             self.next_status = now + STATUS_PERIOD;
-            self.shell.poll_status();
+            self.shell.poll_all();
         }
         // Only the windows with something new repaint: the meters redraw the console's window.
         // Every one of them is painted here, in turn. Leaving it to the OS's redraw requests
@@ -1518,15 +1652,22 @@ impl ApplicationHandler for App {
         // time and starve the others while it animates.
         self.paint_due_windows();
         // Audio imports and loads finish on worker threads: poll them even without a stream.
+        let songs: Vec<_> = self
+            .shell
+            .ids()
+            .into_iter()
+            .filter_map(|id| self.shell.song(id))
+            .collect();
         let wakers = window_logic::Wakers {
-            frames: self.shell.core().sink().is_running()
-                || self.shell.is_busy()
-                || self.shell.context_menu_pending()
-                || self.shell.tooltip_pending()
-                || self.shell.core().view().is_auto_scrolling()
-                || self.plugin_windows.any()
-                || !self.shell.core().plugins_ready(),
-            plugins: self.shell.core().plugin_instance_count() > 0,
+            frames: songs.iter().any(|s| {
+                s.core().sink().is_running()
+                    || s.is_busy()
+                    || s.context_menu_pending()
+                    || s.tooltip_pending()
+                    || s.core().view().is_auto_scrolling()
+                    || !s.core().plugins_ready()
+            }) || self.plugin_windows.any(),
+            plugins: songs.iter().any(|s| s.core().plugin_instance_count() > 0),
         };
         let mut deadline = window_logic::wake_after(wakers, FRAME).map(|d| now + d);
         for t in [self.quit_at, self.screenshot_at].into_iter().flatten() {

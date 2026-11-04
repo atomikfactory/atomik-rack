@@ -20,6 +20,7 @@
 
 use crate::app_core::{AppCore, PluginWindowInfo, PluginWindowRequest};
 use crate::session::{LiveSession, SystemBackend};
+use crate::windows::DocId;
 use atomik_model::DeviceKey;
 use atomik_plugin_host::NativeParent;
 use std::collections::BTreeMap;
@@ -32,11 +33,14 @@ use winit::window::{Window, WindowId};
 /// The app core the windows serve.
 type Core = AppCore<LiveSession<SystemBackend>>;
 
+/// A plugin editor: the song it belongs to and the device it edits.
+type Editor = (DocId, DeviceKey);
+
 /// The editor windows that are open.
 #[derive(Default)]
 pub(super) struct PluginWindows {
-    windows: BTreeMap<DeviceKey, Window>,
-    ids: BTreeMap<WindowId, DeviceKey>,
+    windows: BTreeMap<Editor, Window>,
+    ids: BTreeMap<WindowId, Editor>,
 }
 
 /// The size a window is created with before the plugin says what it wants (logical pixels).
@@ -78,9 +82,9 @@ pub(super) fn owner_of(window: &Window) -> Option<NativeParent> {
 }
 
 impl PluginWindows {
-    /// Whether `id` is one of the editor windows.
-    pub(super) fn owns(&self, id: WindowId) -> bool {
-        self.ids.contains_key(&id)
+    /// The song whose plugin editor window `id` is (`None` when it is not an editor window).
+    pub(super) fn doc_of(&self, id: WindowId) -> Option<DocId> {
+        self.ids.get(&id).map(|(doc, _)| *doc)
     }
 
     /// Whether any editor window is open.
@@ -88,8 +92,8 @@ impl PluginWindows {
         !self.windows.is_empty()
     }
 
-    /// Fulfils the core's window requests, in order.
-    pub(super) fn pump(&mut self, event_loop: &ActiveEventLoop, core: &mut Core) {
+    /// Fulfils the window requests of the core of song `doc`, in order.
+    pub(super) fn pump(&mut self, event_loop: &ActiveEventLoop, doc: DocId, core: &mut Core) {
         for request in core.take_plugin_window_requests() {
             match request {
                 PluginWindowRequest::Open {
@@ -97,9 +101,9 @@ impl PluginWindows {
                     title,
                     remembered,
                     at,
-                } => self.open(event_loop, core, device, &title, remembered, at),
+                } => self.open(event_loop, core, (doc, device), &title, remembered, at),
                 PluginWindowRequest::Resize { device, w, h } => {
-                    if let Some(window) = self.windows.get(&device) {
+                    if let Some(window) = self.windows.get(&(doc, device)) {
                         let _ = if cfg!(target_os = "macos") {
                             window.request_inner_size(LogicalSize::new(f64::from(w), f64::from(h)))
                         } else {
@@ -108,17 +112,17 @@ impl PluginWindows {
                     }
                 }
                 PluginWindowRequest::Show { device } => {
-                    if let Some(window) = self.windows.get(&device) {
+                    if let Some(window) = self.windows.get(&(doc, device)) {
                         window.set_visible(true);
                         window.focus_window();
                     }
                 }
                 PluginWindowRequest::Hide { device } => {
-                    if let Some(window) = self.windows.get(&device) {
+                    if let Some(window) = self.windows.get(&(doc, device)) {
                         window.set_visible(false);
                     }
                 }
-                PluginWindowRequest::Close { device } => self.remove(&device),
+                PluginWindowRequest::Close { device } => self.remove(&(doc, device)),
             }
         }
     }
@@ -127,11 +131,12 @@ impl PluginWindows {
         &mut self,
         event_loop: &ActiveEventLoop,
         core: &mut Core,
-        device: DeviceKey,
+        editor: Editor,
         title: &str,
         remembered: Option<(u32, u32)>,
         at: Option<(i32, i32)>,
     ) {
+        let device = editor.1.clone();
         let (w, h) = remembered.map_or(DEFAULT_SIZE, |(w, h)| (f64::from(w), f64::from(h)));
         let mut attributes = Window::default_attributes()
             .with_title(title)
@@ -167,25 +172,26 @@ impl PluginWindows {
         } else {
             window.scale_factor()
         };
-        self.ids.insert(window.id(), device.clone());
-        self.windows.insert(device.clone(), window);
+        self.ids.insert(window.id(), editor.clone());
+        self.windows.insert(editor, window);
         core.plugin_window_created(&device, PluginWindowInfo { parent, scale });
     }
 
-    fn remove(&mut self, device: &DeviceKey) {
-        if let Some(window) = self.windows.remove(device) {
+    fn remove(&mut self, editor: &Editor) {
+        if let Some(window) = self.windows.remove(editor) {
             self.ids.remove(&window.id());
         }
     }
 
     /// The window's own events: the user resizes or closes it.
     pub(super) fn event(&mut self, id: WindowId, event: WindowEvent, core: &mut Core) {
-        let Some(device) = self.ids.get(&id).cloned() else {
+        let Some(editor) = self.ids.get(&id).cloned() else {
             return;
         };
+        let device = editor.1.clone();
         match event {
             WindowEvent::CloseRequested => {
-                self.remove(&device);
+                self.remove(&editor);
                 core.plugin_window_closed(&device);
             }
             WindowEvent::Moved(p) => core.plugin_window_moved(&device, p.x, p.y),
@@ -193,7 +199,7 @@ impl PluginWindows {
                 let (w, h) = if cfg!(target_os = "macos") {
                     let scale = self
                         .windows
-                        .get(&device)
+                        .get(&editor)
                         .map_or(1.0, |window| window.scale_factor());
                     let logical: LogicalSize<f64> = size.to_logical(scale);
                     (logical.width.round() as u32, logical.height.round() as u32)

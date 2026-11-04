@@ -1,0 +1,498 @@
+//! `Workspace` tests: several songs under a backend that counts the streams it holds open.
+
+use super::*;
+use crate::app_core::AppCore;
+use crate::session::{AudioBackend, LiveSession, LiveStream, MidiPort};
+use crate::settings::AudioSettings;
+use crate::shell::ShellOptions;
+use atomik_audio_io::{HostInfo, IoError, StreamInfo, StreamSpec, Telemetry};
+use atomik_engine::{Engine, FrameClock};
+use atomik_midi_io::MidiError;
+use atomik_model::{Command, DeviceKey};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// A backend whose streams are counted: how many are open now and how many were ever started.
+#[derive(Clone, Default)]
+struct Counting {
+    open: Arc<AtomicUsize>,
+    started: Arc<AtomicUsize>,
+}
+
+struct CountedStream {
+    info: StreamInfo,
+    engine: Engine,
+    open: Arc<AtomicUsize>,
+}
+
+impl LiveStream for CountedStream {
+    fn telemetry(&self) -> Telemetry {
+        Telemetry::default()
+    }
+    fn info(&self) -> &StreamInfo {
+        &self.info
+    }
+    fn stop(self) -> Result<Engine, IoError> {
+        self.open.fetch_sub(1, Ordering::SeqCst);
+        Ok(self.engine)
+    }
+}
+
+struct NoMidi;
+
+impl MidiPort for NoMidi {
+    fn port_name(&self) -> &str {
+        ""
+    }
+    fn dropped(&self) -> u64 {
+        0
+    }
+    fn close(self) {}
+}
+
+impl AudioBackend for Counting {
+    type Stream = CountedStream;
+    type Midi = NoMidi;
+
+    fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
+        Ok(Vec::new())
+    }
+
+    fn list_midi(&self) -> Result<Vec<String>, MidiError> {
+        Ok(Vec::new())
+    }
+
+    fn start(
+        &self,
+        spec: &StreamSpec,
+        _input_device: Option<&str>,
+        engine: Engine,
+        _clock: Arc<FrameClock>,
+    ) -> Result<CountedStream, IoError> {
+        self.open.fetch_add(1, Ordering::SeqCst);
+        self.started.fetch_add(1, Ordering::SeqCst);
+        Ok(CountedStream {
+            info: StreamInfo {
+                host: spec.host,
+                output_device: "Speakers".into(),
+                input_device: None,
+                sample_rate: spec.sample_rate,
+                output_channels: spec.output_channels,
+                input_channels: 0,
+                sample_format: "f32",
+                requested_buffer_frames: Some(256),
+            },
+            engine,
+            open: Arc::clone(&self.open),
+        })
+    }
+
+    fn open_midi(&self, name: &str, _link: crate::midi::MidiLink) -> Result<NoMidi, MidiError> {
+        Err(MidiError::PortNotFound(name.to_string()))
+    }
+}
+
+fn song(backend: &Counting, enabled: bool) -> Shell<Counting> {
+    let session = LiveSession::new(backend.clone(), AudioSettings::default(), enabled);
+    let mut shell = Shell::new(
+        AppCore::new(session),
+        ShellOptions {
+            os: Some(atomik_ui::keymap::Os::Windows),
+            profile: None,
+            in_window_menu: true,
+            settings_path: None,
+            ui_state_path: None,
+            library_path: None,
+            library_root: None,
+        },
+    );
+    shell.handle(&UiEvent::ScaleChanged(2.0));
+    shell.handle(&UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 700.0)));
+    shell
+}
+
+fn workspace() -> (Workspace<Counting>, Counting) {
+    let backend = Counting::default();
+    let first = song(&backend, true);
+    let again = backend.clone();
+    let make: SongFactory<Counting> = Box::new(move |from, _id| {
+        let mut audio = from.audio_settings();
+        audio.surfaces.clear();
+        let session = LiveSession::new(again.clone(), audio, false);
+        Shell::new(
+            AppCore::new(session),
+            ShellOptions {
+                os: Some(atomik_ui::keymap::Os::Windows),
+                profile: None,
+                in_window_menu: true,
+                settings_path: None,
+                ui_state_path: None,
+                library_path: None,
+                library_root: None,
+            },
+        )
+    });
+    (Workspace::new(first, make), backend)
+}
+
+fn add_synth(shell: &mut Shell<Counting>, key: &str) {
+    shell
+        .core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(DeviceKey(key.into())),
+        })
+        .unwrap();
+}
+
+fn temp(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("atomik-app-workspace-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join(name)
+}
+
+/// The synths of the song (adding one also adds the channel that carries it).
+fn devices(shell: &Shell<Counting>) -> usize {
+    shell
+        .core()
+        .doc()
+        .devices
+        .iter()
+        .filter(|d| d.type_id == "atomik.poly-synth")
+        .count()
+}
+
+#[test]
+fn a_workspace_starts_with_one_song_that_has_the_audio() {
+    let (w, backend) = workspace();
+    assert_eq!(w.ids(), vec![DocId::FIRST]);
+    assert_eq!(w.play_focus(), DocId::FIRST);
+    assert_eq!(w.routed(), DocId::FIRST);
+    assert!(w.core().sink().is_running());
+    assert!(!w.is_silent());
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn the_last_song_cannot_be_closed() {
+    let (mut w, backend) = workspace();
+    assert!(!w.close_song(DocId::FIRST));
+    assert_eq!(w.len(), 1);
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_new_song_takes_the_audio_and_the_old_one_goes_silent() {
+    let (mut w, backend) = workspace();
+    let second = w.new_song();
+    assert_ne!(second, DocId::FIRST);
+    assert_eq!(w.ids(), vec![DocId::FIRST, second]);
+    assert_eq!(w.play_focus(), second);
+    assert_eq!(w.routed(), second);
+    // One stream is open at any time, and it is the new song's.
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    assert!(w.song(second).unwrap().core().sink().is_running());
+    let first = w.song(DocId::FIRST).unwrap();
+    assert!(!first.core().sink().is_running());
+    assert!(first.is_silent());
+    assert!(first.status_text().contains("another song has the audio"));
+}
+
+#[test]
+fn the_focus_moves_the_audio_back_and_forth_without_a_second_stream() {
+    let (mut w, backend) = workspace();
+    let second = w.new_song();
+    for _ in 0..3 {
+        assert!(w.focus(DocId::FIRST));
+        assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+        assert!(w.song(DocId::FIRST).unwrap().core().sink().is_running());
+        assert!(!w.song(second).unwrap().core().sink().is_running());
+        assert!(w.focus(second));
+        assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+        assert!(w.song(second).unwrap().core().sink().is_running());
+        assert!(!w.song(DocId::FIRST).unwrap().core().sink().is_running());
+    }
+    // Focusing the song that has the audio again restarts nothing.
+    let started = backend.started.load(Ordering::SeqCst);
+    assert!(w.focus(second));
+    assert_eq!(backend.started.load(Ordering::SeqCst), started);
+    assert!(!w.focus(DocId(99)));
+}
+
+#[test]
+fn the_transport_of_the_song_that_loses_the_audio_stops() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    w.execute(AppCommand::Transport(atomik_ui::TransportAction::Play));
+    assert!(w.core().is_playing());
+    let second = w.new_song();
+    assert!(!w.song(DocId::FIRST).unwrap().core().is_playing());
+    assert!(!w.song(second).unwrap().core().is_playing());
+}
+
+#[test]
+fn two_songs_edit_independently_with_separate_undo() {
+    let (mut w, _backend) = workspace();
+    let start = devices(&w);
+    add_synth(&mut w, "lead");
+    assert_eq!(devices(&w), start + 1);
+    let second = w.new_song();
+    assert_eq!(devices(&w), start, "the new song starts as a new song");
+    add_synth(&mut w, "bass");
+    add_synth(&mut w, "pad");
+    assert_eq!(devices(w.song(DocId::FIRST).unwrap()), start + 1);
+    assert_eq!(devices(w.song(second).unwrap()), start + 2);
+    // Undo in the second song leaves the first untouched.
+    assert!(w.song_mut(second).unwrap().core_mut().undo());
+    assert_eq!(devices(w.song(second).unwrap()), start + 1);
+    assert_eq!(devices(w.song(DocId::FIRST).unwrap()), start + 1);
+    // And the first song's own history is its own.
+    w.focus(DocId::FIRST);
+    assert!(w.core_mut().undo());
+    assert_eq!(devices(w.song(DocId::FIRST).unwrap()), start);
+    assert_eq!(devices(w.song(second).unwrap()), start + 1);
+    assert!(
+        !w.core_mut().undo(),
+        "the first song has nothing more to undo"
+    );
+}
+
+#[test]
+fn closing_a_song_gives_the_audio_to_its_neighbour_and_keeps_one_stream() {
+    let (mut w, backend) = workspace();
+    let second = w.new_song();
+    let third = w.new_song();
+    assert_eq!(w.play_focus(), third);
+    // A song that does not have the audio closes without touching it.
+    assert!(w.close_song(DocId::FIRST));
+    assert_eq!(w.ids(), vec![second, third]);
+    assert_eq!(w.play_focus(), third);
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    // The song that has it hands it on.
+    assert!(w.close_song(third));
+    assert_eq!(w.ids(), vec![second]);
+    assert_eq!(w.play_focus(), second);
+    assert_eq!(w.routed(), second);
+    assert!(w.core().sink().is_running());
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    assert!(!w.is_silent());
+}
+
+#[test]
+fn the_ids_of_closed_songs_are_not_reused() {
+    let (mut w, _backend) = workspace();
+    let second = w.new_song();
+    assert!(w.close_song(second));
+    let third = w.new_song();
+    assert_ne!(third, second);
+}
+
+#[test]
+fn select_routes_calls_without_moving_the_audio() {
+    let (mut w, backend) = workspace();
+    let second = w.new_song();
+    let started = backend.started.load(Ordering::SeqCst);
+    assert!(w.select(DocId::FIRST));
+    assert_eq!(w.routed(), DocId::FIRST);
+    assert_eq!(w.play_focus(), second);
+    assert_eq!(backend.started.load(Ordering::SeqCst), started);
+    assert!(!w.select(DocId(42)));
+    assert_eq!(w.routed(), DocId::FIRST);
+}
+
+#[test]
+fn every_song_knows_the_open_songs_and_its_place_in_the_list() {
+    let (mut w, _backend) = workspace();
+    let second = w.new_song();
+    let names = w.titles();
+    assert_eq!(names.len(), 2);
+    for (i, id) in [DocId::FIRST, second].into_iter().enumerate() {
+        let (list, at) = w.song(id).unwrap().song_list();
+        assert_eq!(list, names.as_slice());
+        assert_eq!(at, i);
+    }
+    w.close_song(DocId::FIRST);
+    assert_eq!(w.song(second).unwrap().song_list().0.len(), 1);
+}
+
+#[test]
+fn a_song_that_does_not_open_leaves_no_new_song() {
+    let (mut w, backend) = workspace();
+    let missing = temp("missing-song.atomik");
+    let _ = std::fs::remove_file(&missing);
+    assert_eq!(w.open_song(&missing), None);
+    assert_eq!(w.ids(), vec![DocId::FIRST]);
+    assert_eq!(w.play_focus(), DocId::FIRST);
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    assert!(w.core().sink().is_running());
+    assert!(w.core().last_rejection().is_some(), "the message is shown");
+}
+
+#[test]
+fn a_song_opens_in_a_window_of_its_own_and_the_first_one_is_left_alone() {
+    let (mut w, backend) = workspace();
+    let start = devices(&w);
+    add_synth(&mut w, "lead");
+    let path = temp("two-songs.atomik");
+    w.core_mut().save_as(&path).unwrap();
+    add_synth(&mut w, "bass");
+    let opened = w.open_song(&path).expect("the song opens");
+    assert_eq!(w.ids().len(), 2);
+    assert_eq!(w.play_focus(), opened);
+    assert_eq!(devices(w.song(opened).unwrap()), start + 1);
+    assert_eq!(w.song(opened).unwrap().core().file(), Some(path.as_path()));
+    // The first song keeps its unsaved second device.
+    assert_eq!(devices(w.song(DocId::FIRST).unwrap()), start + 2);
+    assert!(w.song(DocId::FIRST).unwrap().core().is_dirty());
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn quitting_asks_about_every_song_with_unsaved_changes() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let second = w.new_song();
+    add_synth(&mut w, "bass");
+    w.focus(DocId::FIRST);
+    let quit = PendingAction::Command(AppCommand::Quit);
+    // The first song asks...
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    // ...Don't Save moves on to the second, which gets the focus and the question...
+    assert_eq!(
+        w.discard_then(quit.clone()),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    assert_eq!(w.play_focus(), second);
+    assert_eq!(w.routed(), second);
+    // ...and with every answer given the app quits.
+    assert_eq!(w.discard_then(quit), vec![ShellRequest::Quit]);
+}
+
+#[test]
+fn a_cancelled_quit_asks_again_next_time() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let second = w.new_song();
+    add_synth(&mut w, "bass");
+    w.focus(DocId::FIRST);
+    let quit = PendingAction::Command(AppCommand::Quit);
+    w.execute(AppCommand::Quit);
+    // Don't Save for the first song, then Cancel at the second's question.
+    w.discard_then(quit.clone());
+    assert_eq!(w.routed(), second);
+    // A new quit starts over: the first song is asked again.
+    w.focus(DocId::FIRST);
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave { then: quit.clone() }]
+    );
+    assert_eq!(w.routed(), DocId::FIRST);
+}
+
+#[test]
+fn a_clean_song_quits_at_once_when_nothing_else_has_changes() {
+    let (mut w, _backend) = workspace();
+    w.new_song();
+    assert_eq!(w.execute(AppCommand::Quit), vec![ShellRequest::Quit]);
+}
+
+#[test]
+fn a_clean_song_still_asks_for_another_song_with_changes() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let second = w.new_song();
+    assert_eq!(w.routed(), second);
+    // The second song is clean; the first has changes, so it gets the question.
+    assert_eq!(
+        w.execute(AppCommand::Quit),
+        vec![ShellRequest::ConfirmSave {
+            then: PendingAction::Command(AppCommand::Quit)
+        }]
+    );
+    assert_eq!(w.routed(), DocId::FIRST);
+    assert_eq!(w.play_focus(), DocId::FIRST);
+}
+
+#[test]
+fn the_answer_goes_to_the_song_that_asked() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let second = w.new_song();
+    let quit = PendingAction::Command(AppCommand::Quit);
+    w.execute(AppCommand::Quit);
+    // Whatever the platform layer routed in between, the answer is for the first song.
+    w.select(second);
+    let path = temp("answered.atomik");
+    let again = w.save_to_then(&path, quit);
+    assert_eq!(again, vec![ShellRequest::Quit]);
+    assert_eq!(
+        w.song(DocId::FIRST).unwrap().core().file(),
+        Some(path.as_path())
+    );
+    assert!(w.song(second).unwrap().core().file().is_none());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn a_preference_changed_in_one_song_reaches_the_others() {
+    let (mut w, _backend) = workspace();
+    let second = w.new_song();
+    w.select(second);
+    let folder = temp("scratch-folder");
+    w.set_scratch_folder(folder);
+    assert_ne!(
+        w.song(DocId::FIRST).unwrap().shared_preferences(),
+        w.song(second).unwrap().shared_preferences()
+    );
+    w.sync_preferences();
+    assert_eq!(
+        w.song(DocId::FIRST).unwrap().shared_preferences(),
+        w.song(second).unwrap().shared_preferences()
+    );
+}
+
+#[test]
+fn a_new_song_opens_with_the_layout_of_the_song_it_came_from() {
+    let (mut w, _backend) = workspace();
+    w.execute(AppCommand::ToggleFileBrowser);
+    let shown = w.menu_state().file_browser;
+    let second = w.new_song();
+    assert_eq!(w.song(second).unwrap().menu_state().file_browser, shown);
+}
+
+#[test]
+fn background_songs_keep_working_between_frames() {
+    let (mut w, _backend) = workspace();
+    let _second = w.new_song();
+    // Frames and polls reach every song and do not start a stream for the silent one.
+    w.frame_all(0.5);
+    w.poll_all();
+    assert!(w.song(DocId::FIRST).unwrap().is_silent());
+    assert!(!w.any_busy());
+}
+
+#[test]
+fn neighbours_wrap_around() {
+    let (mut w, _backend) = workspace();
+    let second = w.new_song();
+    let third = w.new_song();
+    assert_eq!(w.neighbour(true), DocId::FIRST);
+    assert_eq!(w.neighbour(false), second);
+    w.focus(DocId::FIRST);
+    assert_eq!(w.neighbour(true), second);
+    assert_eq!(w.neighbour(false), third);
+}
+
+#[test]
+fn shutdown_closes_every_song() {
+    let (mut w, backend) = workspace();
+    w.new_song();
+    w.shutdown_all();
+    assert_eq!(backend.open.load(Ordering::SeqCst), 0);
+}
