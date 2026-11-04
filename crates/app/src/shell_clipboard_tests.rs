@@ -1116,7 +1116,8 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
             "edit.select_all",
             "editor.select_same_pitch",
             "editor.join_notes",
-            "editor.extract_notes"
+            "editor.extract_notes",
+            "editor.audition_toggle"
         ]
     );
     assert!(items.iter().find(|(c, _, _)| c == "edit.paste").unwrap().2);

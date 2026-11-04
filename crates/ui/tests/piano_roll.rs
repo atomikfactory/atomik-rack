@@ -712,3 +712,42 @@ fn a_dragged_note_ends_at_the_snapped_pointer_and_a_click_keeps_the_default_leng
         .unwrap();
     assert_eq!(n.length, PPQ);
 }
+
+#[test]
+fn note_audition_off_silences_drawing_and_moving_notes_but_not_the_keys() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    assert!(v.note_audition_on(), "on by default");
+    let a = v.command("editor.audition_toggle", None, &doc, &reg);
+    assert!(matches!(a, atomik_ui::keymap::CommandOutcome::Handled(_)));
+    assert!(!v.note_audition_on());
+    // Drawing a note changes the clip and plays nothing.
+    v.set_tool(Tool::Pencil);
+    v.set_snap(Snap::Sixteenth);
+    let p = grid_point(&v, 2 * PPQ + PPQ / 4 + 300, 50);
+    let a = v.handle(&down(p), &doc, &reg);
+    assert_eq!(contents(&a).len(), 1);
+    assert!(auditions(&a).is_empty());
+    let a = v.handle(&up(p), &doc, &reg);
+    assert!(auditions(&a).is_empty());
+    // Moving a note plays nothing either.
+    v.set_tool(Tool::Select);
+    let r = v.note_rect(0).unwrap();
+    let p = Point::new(r.center().x, r.center().y);
+    let to = Point::new(p.x, v.key_center_y(38));
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down(p), mv(p + Vec2::new(1.0, 0.0)), mv(to), up(to)],
+    );
+    assert!(auditions(&a).is_empty());
+    // The key strip still sounds.
+    let (p, q) = (v.keyboard_point(40), v.keyboard_point(42));
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(q), up(q)]);
+    assert_eq!(
+        auditions(&a),
+        vec![(40, true), (40, false), (42, true), (42, false)]
+    );
+    // Back on: notes sound again.
+    v.command("editor.audition_toggle", None, &doc, &reg);
+    assert!(v.note_audition_on());
+}

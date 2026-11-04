@@ -589,3 +589,26 @@ fn the_snap_settings_are_saved_and_the_next_session_starts_with_them() {
     assert_eq!(old.arrangement_snap, Snap::Sixteenth);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_notes_menu_turns_note_audition_off_and_the_choice_is_kept() {
+    let dir = std::env::temp_dir().join(format!("atomik-audition-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let (mut s, _) = roll_shell(Some(path.clone()));
+    assert!(s.core().piano_roll().note_audition_on());
+    choose(&mut s, &[], "editor.audition_toggle", "");
+    assert!(!s.core().piano_roll().note_audition_on());
+    assert!(!s.ui_state().piano_roll_audition);
+    s.flush_ui_state();
+    let (mut s2, _) = roll_shell(Some(path.clone()));
+    assert!(
+        !s2.core().piano_roll().note_audition_on(),
+        "kept for the next session"
+    );
+    // The menu shows it checked off, and choosing again turns it back on.
+    choose(&mut s2, &[], "editor.audition_toggle", "");
+    assert!(s2.core().piano_roll().note_audition_on());
+    let _ = std::fs::remove_dir_all(&dir);
+}

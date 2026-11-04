@@ -898,6 +898,13 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             v.extend(note_tool_menu("editor.note_tool", true));
             v.extend([
                 Spec::Separator,
+                Spec::Item {
+                    command: "editor.audition_toggle",
+                    arg: None,
+                    label: None,
+                    enabled: true,
+                    checked: Some(!t.audition_off),
+                },
                 Spec::submenu(
                     "Scale",
                     vec![

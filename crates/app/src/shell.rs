@@ -815,6 +815,7 @@ impl<B: AudioBackend> Shell<B> {
             roll.set_snap_to_scale(self.ui.piano_roll_snap_scale);
             roll.set_fold(self.ui.piano_roll_fold);
             roll.set_snap(self.ui.piano_roll_snap);
+            roll.set_note_audition(self.ui.piano_roll_audition);
             roll.set_snap_mode(self.ui.snap_mode);
         }
         {
@@ -4478,6 +4479,11 @@ impl<B: AudioBackend> Shell<B> {
         } else {
             roll_mode
         };
+        let audition = roll.note_audition_on();
+        if audition != self.ui.piano_roll_audition {
+            self.ui.piano_roll_audition = audition;
+            self.ui_changed();
+        }
         if arr_mode != snap_mode {
             self.core.arrangement_mut().set_snap_mode(snap_mode);
         }

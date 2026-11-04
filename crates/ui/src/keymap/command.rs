@@ -522,6 +522,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .decline(),
+    cmd(
+        "editor.audition_toggle",
+        "Audition Notes",
+        G::Editor,
+        C::Editor,
+    ),
     cmd("editor.chop", "Chop Notes", G::Editor, C::Editor)
         .arg(CHOP_NOTE_ARGS)
         .decline(),

@@ -122,6 +122,8 @@ pub struct UiState {
     /// Whether moves snap to grid lines or by whole steps, in both views. An absent key means
     /// grid lines.
     pub snap_mode: SnapMode,
+    /// Drawing, moving or stepping to a note in the piano roll plays it. An absent key means on.
+    pub piano_roll_audition: bool,
     /// Which keys the piano roll shows (`"off"`, `"scale"` or `"used"`). An absent key means
     /// every key.
     pub piano_roll_fold: Fold,
@@ -175,6 +177,7 @@ impl Default for UiState {
             arrangement_snap: Snap::default(),
             piano_roll_snap: Snap::default(),
             snap_mode: SnapMode::default(),
+            piano_roll_audition: true,
             piano_roll_fold: Fold::Off,
             audio_editor_mode: AudioMode::Overview,
             console_notice_seen: false,
