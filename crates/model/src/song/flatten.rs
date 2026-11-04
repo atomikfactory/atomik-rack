@@ -29,6 +29,9 @@
 //!   is still inside the window (a note the delay pushes past the clip end, the loop end or
 //!   the start of a later clip is dropped, like any note that starts outside the piece); it
 //!   is cut at the piece end as before.
+//! - **Live groove.** After all of the above, a track's [`Track::groove`] moves each flattened
+//!   note by the offset of the slot of the song-grid position nearest to it and scales its
+//!   velocity, both by the track's strength ([`flatten_track_notes`]); lengths stay.
 //! - **Automation.** Each piece emits a point at its start carrying the content value there
 //!   (interpolated if between points, the first value before the first point), then every
 //!   content point inside the piece. A ramp still running at the end of a piece gets a closing
@@ -157,6 +160,22 @@ pub fn flatten_notes_with(track: &Track, tails: bool) -> Vec<(i64, i64, u8, f32)
     // Stable: equal `(tick, key)` keep the lane order.
     out.sort_by_key(|&(t, _, k, _)| (t, k));
     out
+}
+
+/// What the engine plays on a track: [`flatten_notes_with`] with the song's tails switch and then
+/// the track's live groove ([`Track::groove`], applied by [`crate::groove::groove_notes`]; a
+/// groove that names nothing plays nothing different). The stored notes are not touched, so this
+/// is the one flattening the engine, the offline render and the MIDI export all use.
+pub fn flatten_track_notes(song: &Song, track: &Track) -> Vec<(i64, i64, u8, f32)> {
+    let notes = flatten_notes_with(track, song.tails);
+    match track
+        .groove
+        .as_ref()
+        .and_then(|g| Some((song.groove(&g.name)?, g.strength)))
+    {
+        Some((groove, strength)) => crate::groove::groove_notes(notes, &groove, strength),
+        None => notes,
+    }
 }
 
 /// The content value at content position `c` and the shape of the curve leaving it.

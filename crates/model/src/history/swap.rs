@@ -117,6 +117,11 @@ swaps! {
         track_mut(doc, device)?.direct_record = *new;
         Ok(vec![SyncOp::SongChanged])
     };
+    /// Track live groove.
+    TrackGroove { device: DeviceKey }: Option<crate::song::TrackGroove> => |doc, new| {
+        track_mut(doc, device)?.groove.clone_from(new);
+        Ok(vec![SyncOp::SongChanged])
+    };
     /// Where a track's notes enter (`None`: its own device).
     TrackEntry { device: DeviceKey }: Option<DeviceKey> => |doc, new| {
         track_mut(doc, device)?.notes_to.clone_from(new);

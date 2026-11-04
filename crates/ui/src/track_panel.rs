@@ -8,7 +8,10 @@
 //! * a player or insert row has a bypass button (the device's own `bypass` param), buttons that
 //!   move it one place up or down the stack and a remove button;
 //! * a send row switches the send on or off;
-//! * the fader row drags the channel fader (one undo step per drag) and has the channel mute.
+//! * the fader row drags the channel fader (one undo step per drag) and has the channel mute;
+//! * the groove rows (a note track) step the track's **live groove** through none, the built-in
+//!   grooves and the song's grooves, and a bar sets how much of it plays (one undo step per
+//!   drag, sent on release); see [`atomik_model::TrackGroove`].
 //!
 //! A move or a removal is planned on a scratch copy of the document when the panel syncs, and
 //! its button shows only when the model accepts the command and the order really changes, so
@@ -21,9 +24,10 @@ use crate::seq_paint::{self, SeqTheme};
 use crate::theme::{Theme, mix};
 use crate::tooltip::Help;
 use atomik_device_sdk::Registry;
+use atomik_model::groove::{GROOVE_STRENGTH_MAX, builtin_grooves};
 use atomik_model::{
-    Command, ConsoleCommand, DeviceKey, Document, FX_SLOTS, INSERT_SLOTS, RackDoc, WorkflowCommand,
-    insert_chain, player_stack,
+    Command, ConsoleCommand, DeviceKey, Document, FX_SLOTS, INSERT_SLOTS, RackDoc, SongCommand,
+    TrackGroove, WorkflowCommand, insert_chain, player_stack,
 };
 use vello::kurbo::{Point, Rect, RoundedRect};
 
@@ -94,6 +98,25 @@ pub enum Item {
         /// Whether the channel is muted.
         muted: bool,
     },
+    /// The track's live groove: its name (`None`: no groove) and the commands that choose the
+    /// previous and the next one (none, the built-in grooves, then the song's, round and round).
+    Groove {
+        /// The groove, if the track has one.
+        name: Option<String>,
+        /// Choose the previous groove.
+        prev: Command,
+        /// Choose the next groove.
+        next: Command,
+    },
+    /// How much of the live groove plays, in percent (shown only when the track has one).
+    GrooveAmount {
+        /// The track.
+        track: DeviceKey,
+        /// The groove.
+        name: String,
+        /// Percent, `0..=100`.
+        strength: u8,
+    },
     /// A line of explanation (a track without a channel).
     Note(String),
 }
@@ -108,6 +131,17 @@ enum Part {
     Send,
     Mute,
     Fader,
+    GroovePrev,
+    GrooveNext,
+    Amount,
+}
+
+/// A drag of the groove strength bar: the value is sent once, when the button is released.
+#[derive(Debug, Clone)]
+struct AmountDrag {
+    track: DeviceKey,
+    name: String,
+    value: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +160,7 @@ pub struct TrackPanelView {
     track_name: String,
     items: Vec<Item>,
     drag: Option<FaderDrag>,
+    amount: Option<AmountDrag>,
     hover: Option<(usize, Part)>,
     merges: u64,
     repaint: std::cell::Cell<bool>,
@@ -142,6 +177,7 @@ impl TrackPanelView {
             track_name: String::new(),
             items: Vec::new(),
             drag: None,
+            amount: None,
             hover: None,
             merges: 0,
             repaint: std::cell::Cell::new(true),
@@ -214,11 +250,12 @@ impl TrackPanelView {
     /// The button `part` of a row, counted from the right edge.
     fn button_rect(&self, row: Rect, part: Part) -> Rect {
         let slot = match part {
-            Part::Remove | Part::Mute | Part::Send => 0.0,
-            Part::Down => 1.0,
+            Part::Remove | Part::Mute | Part::Send | Part::GrooveNext => 0.0,
+            Part::Down | Part::GroovePrev => 1.0,
             Part::Up => 2.0,
             Part::Bypass => 3.0,
             Part::Fader => return self.fader_rect(row),
+            Part::Amount => return self.amount_rect(row),
         };
         let x1 = row.x1 - PAD - slot * (BUTTON + 2.0);
         Rect::new(
@@ -238,6 +275,16 @@ impl TrackPanelView {
         )
     }
 
+    /// The strength bar: the fader's track, with a little room for the percent at its end.
+    fn amount_rect(&self, row: Rect) -> Rect {
+        Rect::new(
+            row.x0 + 62.0,
+            row.center().y - 5.0,
+            row.x1 - PAD * 2.0 - 26.0,
+            row.center().y + 5.0,
+        )
+    }
+
     fn parts_of(item: &Item) -> &'static [Part] {
         match item {
             Item::Player { .. } | Item::Insert { .. } => {
@@ -245,6 +292,8 @@ impl TrackPanelView {
             }
             Item::Send { .. } => &[Part::Send],
             Item::Fader { .. } => &[Part::Fader, Part::Mute],
+            Item::Groove { .. } => &[Part::GroovePrev, Part::GrooveNext],
+            Item::GrooveAmount { .. } => &[Part::Amount],
             _ => &[],
         }
     }
@@ -275,6 +324,9 @@ impl TrackPanelView {
             Part::Send => "Switch the send on or off",
             Part::Mute => "Mute the channel",
             Part::Fader => "Channel fader",
+            Part::GroovePrev => "Previous groove: none, the built-in ones, then the song's",
+            Part::GrooveNext => "Next groove: none, the built-in ones, then the song's",
+            Part::Amount => "How much of the groove plays (the notes themselves stay as they are)",
         };
         Some(Help::new(self.button_rect(self.row_rect(i), part), text))
     }
@@ -292,6 +344,9 @@ impl TrackPanelView {
                 if self.drag.is_some() {
                     self.drag_to(pos.x, &mut out);
                 }
+                if self.amount.is_some() {
+                    self.amount_to(pos.x);
+                }
             }
             UiEvent::PointerDown {
                 pos,
@@ -305,6 +360,11 @@ impl TrackPanelView {
             UiEvent::PointerUp { .. } => {
                 if self.drag.take().is_some() {
                     out.push(UiAction::EndMerge);
+                }
+                if let Some(a) = self.amount.take() {
+                    self.repaint.set(true);
+                    let groove = Some((a.name, a.value));
+                    out.push(UiAction::Command(set_groove(&a.track, groove)));
                 }
             }
             UiEvent::PointerLeave => {
@@ -374,7 +434,46 @@ impl TrackPanelView {
                 });
                 self.drag_to_row(i, x, out);
             }
+            (Item::Groove { prev, next, .. }, Part::GroovePrev | Part::GrooveNext) => {
+                let c = if part == Part::GroovePrev { prev } else { next };
+                out.push(UiAction::Command(c.clone()));
+            }
+            (
+                Item::GrooveAmount {
+                    track,
+                    name,
+                    strength,
+                },
+                Part::Amount,
+            ) => {
+                self.amount = Some(AmountDrag {
+                    track: track.clone(),
+                    name: name.clone(),
+                    value: *strength,
+                });
+                self.amount_to(x);
+            }
             _ => {}
+        }
+    }
+
+    /// Moves the strength being dragged to the pointer's x.
+    fn amount_to(&mut self, x: f64) {
+        let Some(i) = self
+            .items
+            .iter()
+            .position(|it| matches!(it, Item::GrooveAmount { .. }))
+        else {
+            return;
+        };
+        let bar = self.amount_rect(self.row_rect(i));
+        let f = ((x - bar.x0) / bar.width().max(1.0)).clamp(0.0, 1.0);
+        let value = (f * f64::from(GROOVE_STRENGTH_MAX)).round() as u8;
+        if let Some(a) = &mut self.amount
+            && a.value != value
+        {
+            a.value = value;
+            self.repaint.set(true);
         }
     }
 
@@ -539,6 +638,38 @@ impl TrackPanelView {
                 );
                 self.button(c, i, row, Part::Mute, "M", *muted);
             }
+            Item::Groove { name, .. } => {
+                let shown = name.as_deref().unwrap_or("(none)");
+                let width = row.width() - 2.0 * (BUTTON + 2.0);
+                self.label(c, row, shown, width, name.is_none());
+                self.button(c, i, row, Part::GroovePrev, "<", false);
+                self.button(c, i, row, Part::GrooveNext, ">", false);
+            }
+            Item::GrooveAmount { strength, .. } => {
+                let strength = self.amount.as_ref().map_or(*strength, |a| a.value);
+                c.text(&TextRun::new(
+                    "Strength",
+                    pt(row.x0 + PAD * 2.0, row.center().y + 3.5),
+                    10.0,
+                    t.text,
+                ));
+                let bar = self.amount_rect(row);
+                let f = f64::from(strength) / f64::from(GROOVE_STRENGTH_MAX);
+                c.fill_with(RoundedRect::from_rect(bar, 3.0), t.lcd);
+                let x = bar.x0 + bar.width() * f;
+                c.fill_with(
+                    RoundedRect::from_rect(Rect::new(bar.x0, bar.y0, x, bar.y1), 3.0),
+                    mix(t.highlight, t.lcd, 0.35),
+                );
+                let knob = Rect::new(x - 2.0, bar.y0 - 3.0, x + 2.0, bar.y1 + 3.0);
+                c.fill_with(RoundedRect::from_rect(knob, 1.5), t.text);
+                c.text(&TextRun::new(
+                    format!("{strength}%"),
+                    pt(bar.x1 + 6.0, row.center().y + 3.5),
+                    9.5,
+                    t.text_muted,
+                ));
+            }
             Item::Note(text) => {
                 c.text(&TextRun::new(
                     text.clone(),
@@ -632,6 +763,51 @@ fn player_moves(
     (up, down)
 }
 
+/// The command that gives `track` the live groove `groove` (a name and a strength) or none.
+fn set_groove(track: &DeviceKey, groove: Option<(String, u8)>) -> Command {
+    Command::Song(SongCommand::SetTrackGroove {
+        device: track.clone(),
+        groove: groove.map(|(name, strength)| TrackGroove { name, strength }),
+    })
+}
+
+/// The groove rows of a note track: the choice, and the strength when there is one.
+fn groove_items(doc: &RackDoc, track: &DeviceKey) -> Vec<Item> {
+    let Some(song_track) = doc.song.track(track) else {
+        return Vec::new();
+    };
+    if song_track.is_audio() || song_track.is_automation_only() {
+        return Vec::new();
+    }
+    // None, the built-in grooves, then the song's, in one ring.
+    let mut ring: Vec<Option<String>> = vec![None];
+    ring.extend(builtin_grooves().into_iter().map(|g| Some(g.name)));
+    ring.extend(doc.song.grooves.iter().map(|g| Some(g.name.clone())));
+    let current = song_track.groove.as_ref();
+    let at = ring
+        .iter()
+        .position(|n| n.as_deref() == current.map(|g| g.name.as_str()))
+        .unwrap_or(0);
+    let strength = current.map_or(GROOVE_STRENGTH_MAX, |g| g.strength);
+    let to = |i: usize| set_groove(track, ring[i % ring.len()].clone().map(|n| (n, strength)));
+    let mut items = vec![
+        Item::Heading("Groove".to_owned()),
+        Item::Groove {
+            name: current.map(|g| g.name.clone()),
+            prev: to(at + ring.len() - 1),
+            next: to(at + 1),
+        },
+    ];
+    if let Some(g) = current {
+        items.push(Item::GrooveAmount {
+            track: track.clone(),
+            name: g.name.clone(),
+            strength: g.strength,
+        });
+    }
+    items
+}
+
 fn build_items(doc: &RackDoc, registry: &Registry, track: Option<&DeviceKey>) -> Vec<Item> {
     let Some(track_key) = track else {
         return Vec::new();
@@ -673,6 +849,7 @@ fn build_items(doc: &RackDoc, registry: &Registry, track: Option<&DeviceKey>) ->
     items.push(Item::Instrument {
         name: name_of(doc, track_key),
     });
+    items.extend(groove_items(doc, track_key));
     let Some(channel) = doc.console.channel_of(track_key).map(|c| c.channel.clone()) else {
         items.push(Item::Heading("Console".to_owned()));
         items.push(Item::Note("No console channel".to_owned()));

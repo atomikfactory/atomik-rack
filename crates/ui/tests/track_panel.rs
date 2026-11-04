@@ -253,3 +253,124 @@ fn an_empty_track_panel_matches_its_golden() {
     v.paint(&mut dl);
     check("track_panel_empty_1x.json", &dl.to_json());
 }
+
+// ---- the live groove rows ----
+
+fn press(v: &mut TrackPanelView, x: f64, y: f64) -> Vec<UiAction> {
+    v.handle(&UiEvent::PointerDown {
+        pos: Point::new(x, y),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    })
+}
+
+fn groove_row(v: &TrackPanelView) -> usize {
+    v.items()
+        .iter()
+        .position(|i| matches!(i, Item::Groove { .. }))
+        .expect("a note track has a groove row")
+}
+
+/// The y of the middle of item `i` (rows are 22 px, headings 20 px, from y 26).
+fn row_y(v: &TrackPanelView, i: usize) -> f64 {
+    let mut y = 26.0;
+    for item in &v.items()[..i] {
+        y += if matches!(item, Item::Heading(_)) {
+            20.0
+        } else {
+            22.0
+        };
+    }
+    y + if matches!(v.items()[i], Item::Heading(_)) {
+        10.0
+    } else {
+        11.0
+    }
+}
+
+#[test]
+fn the_groove_row_steps_through_none_the_built_in_grooves_and_the_songs() {
+    let reg = registry();
+    let mut d = chain_doc(&reg);
+    d.apply(
+        Command::Song(atomik_model::SongCommand::SetGroove(atomik_model::Groove {
+            name: "Mine".into(),
+            step: atomik_model::StepResolution::Sixteenth,
+            slots: vec![atomik_model::GrooveSlot::STRAIGHT],
+        })),
+        &reg,
+    )
+    .unwrap();
+    let mut v = panel(&d, &reg);
+    let at = groove_row(&v);
+    let Item::Groove { name, prev, next } = v.items()[at].clone() else {
+        unreachable!()
+    };
+    assert_eq!(name, None);
+    // Next from none is the first built-in groove; previous wraps to the song's last one.
+    let first = atomik_model::groove::builtin_grooves().remove(0).name;
+    let applied = |c: &Command| {
+        let mut scratch = d.clone();
+        scratch.apply(c.clone(), &reg).unwrap();
+        scratch.doc().song.tracks[0].groove.clone().map(|g| g.name)
+    };
+    assert_eq!(applied(&next), Some(first));
+    assert_eq!(applied(&prev).as_deref(), Some("Mine"));
+    // The buttons at the right edge of the row emit those commands.
+    let y = row_y(&v, at);
+    assert_eq!(press(&mut v, 236.0 - 15.0, y), [UiAction::Command(next)]);
+    assert_eq!(press(&mut v, 236.0 - 35.0, y), [UiAction::Command(prev)]);
+}
+
+#[test]
+fn the_strength_bar_sends_one_command_when_the_button_is_released() {
+    let reg = registry();
+    let mut d = chain_doc(&reg);
+    d.apply(
+        Command::Song(atomik_model::SongCommand::SetTrackGroove {
+            device: key("s1"),
+            groove: Some(atomik_model::TrackGroove {
+                name: "Swing 55%".into(),
+                strength: 100,
+            }),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let before = d.undo_depth();
+    let mut v = panel(&d, &reg);
+    let at = v
+        .items()
+        .iter()
+        .position(|i| matches!(i, Item::GrooveAmount { .. }))
+        .expect("the strength row shows with a groove");
+    let y = row_y(&v, at);
+    // The bar runs from x 62 to 236 - 12 - 26 = 198: its middle is half the strength.
+    assert!(
+        press(&mut v, 130.0, y).is_empty(),
+        "a press only starts the drag"
+    );
+    let moved = v.handle(&UiEvent::PointerMove {
+        pos: Point::new(130.0, y),
+        modifiers: Modifiers::NONE,
+    });
+    assert!(moved.is_empty(), "nothing is sent while dragging");
+    let up = v.handle(&UiEvent::PointerUp {
+        pos: Point::new(130.0, y),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    let [UiAction::Command(c)] = up.as_slice() else {
+        panic!("one command on release, got {up:?}");
+    };
+    d.apply(c.clone(), &reg).unwrap();
+    let g = d.doc().song.tracks[0].groove.clone().unwrap();
+    assert_eq!(g.name, "Swing 55%");
+    assert!((48..=52).contains(&g.strength), "{}", g.strength);
+    assert_eq!(
+        d.undo_depth(),
+        before + 1,
+        "one undo step for the whole drag"
+    );
+}

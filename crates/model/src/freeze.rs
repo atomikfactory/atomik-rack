@@ -111,6 +111,7 @@ impl Track {
             chase: false,
             notes_to: None,
             direct_record: false,
+            groove: None,
             frozen: None,
             lanes: vec![Lane::audio().with_clips(vec![frozen.clip()])],
         })

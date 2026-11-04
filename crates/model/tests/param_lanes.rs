@@ -70,7 +70,7 @@ fn flat(d: &Document) -> Vec<(i64, f32, Curve)> {
 
 #[test]
 fn the_project_format_is_still_forty_one() {
-    assert_eq!(PROJECT_VERSION, 42);
+    assert_eq!(PROJECT_VERSION, 43);
 }
 
 #[test]

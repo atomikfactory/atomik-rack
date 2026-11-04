@@ -45,6 +45,7 @@ fn doc_with(clips: Vec<Clip>) -> RackDoc {
         chase: true,
         notes_to: None,
         direct_record: false,
+        groove: None,
         frozen: None,
         lanes: vec![Lane::notes().with_clips(clips)],
     });

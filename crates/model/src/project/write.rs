@@ -203,7 +203,7 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
         let sep = if i == 0 { "" } else { "," };
         let _ = write!(
             w,
-            "{sep}\n      {{\n        \"device\": {}, \"muted\": {}, \"solo\": {}, \"armed\": {},{}{}{}{}{}{}{}\n        \"lanes\": [",
+            "{sep}\n      {{\n        \"device\": {}, \"muted\": {}, \"solo\": {}, \"armed\": {},{}{}{}{}{}{}{}{}\n        \"lanes\": [",
             json_str(&t.device.0),
             t.muted,
             t.solo,
@@ -214,6 +214,14 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
             } else {
                 ""
             },
+            t.groove.as_ref().map_or(String::new(), |g| {
+                let strength = if g.strength == GROOVE_STRENGTH_MAX {
+                    String::new()
+                } else {
+                    format!(" \"groove_strength\": {},", g.strength)
+                };
+                format!(" \"groove\": {},{strength}", json_str(&g.name))
+            }),
             t.notes_to
                 .as_ref()
                 .filter(|k| **k != t.device)

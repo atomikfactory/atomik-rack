@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Live groove per track.** A track can name a groove (one of the song's or a built-in one) and a strength,
+  saved on the track and applied when the song is flattened for the engine, the offline render and the MIDI
+  export, so the stored notes never change: editing a template re-times every track that uses it, and removing
+  the groove gives the original sound back bit for bit (the track's notes move by the offset of the nearest
+  grid slot, their velocity follows the slot's scale, both by the strength). The Track Panel has a Groove
+  section for a note track: arrows step through none, the built-in grooves and the song's, and a bar sets the
+  strength. New commands `SetTrackGroove` and `RenameGroove`; `DeleteGroove` takes the groove off the tracks
+  that used it, in the same undo step. The project inspector lists a track's groove. The project format is
+  now 43: a reader of 42 would play the notes ungrooved, so it refuses a file whose tracks have a groove
+  instead of ignoring it; a project without a live groove differs from its version 42 file in the version
+  line alone. Deferred: a groove per clip, controller points that move with their notes, a text field to
+  name a groove (the rename command exists), grooves from a MIDI file or an audio loop, and bar lines that
+  follow meter changes for the swing parity.
 - **Recovery and fault follow-ups.** A recovery snapshot now opens with its audio: the writer leaves a note
   next to each snapshot that has audio, naming the project folder it was taken in, and opening the snapshot
   copies that audio into the new unsaved song (an older snapshot without the note still shows its clips as

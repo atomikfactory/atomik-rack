@@ -71,6 +71,9 @@ enum WfOp {
     AddDevice(usize),
     Connect(usize, usize),
     Quantize(usize, u8, bool),
+    /// The groove family (kind 0..5): add a groove, give a track a live groove (a built-in or the
+    /// added one, a strength), clear it, rename the added groove, delete it.
+    Groove(u8, usize, u8),
     /// A note tool (kind 0..7) on a clip with a seed.
     NoteTool(usize, u8, u32),
     /// A note-lane workflow (kind 0..5): move or copy a lane (tracks a, b; lanes c, d), merge a
@@ -268,6 +271,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..3).prop_map(WfOp::Sort),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
+        (0u8..6, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
         (0u8..6, 0usize..12, 0usize..12, 0usize..6, 0usize..6)
             .prop_map(|(k, a, b, c, d)| WfOp::Lanes(k, a, b, c, d)),
@@ -824,6 +828,41 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 to: (*b % 3 == 0).then_some(*d),
             }),
         },
+        WfOp::Groove(kind, t, strength) => {
+            let song = |c| Command::Song(c);
+            let custom = |name: &str| atomik_model::Groove {
+                name: name.to_owned(),
+                step: atomik_model::StepResolution::Sixteenth,
+                slots: vec![
+                    atomik_model::GrooveSlot::STRAIGHT,
+                    atomik_model::GrooveSlot {
+                        offset: 0.25,
+                        velocity: 0.8,
+                    },
+                ],
+            };
+            match kind {
+                0 => song(SongCommand::SetGroove(custom("Custom"))),
+                1 | 2 => song(SongCommand::SetTrackGroove {
+                    device: tracks.get(*t % tracks.len().max(1))?.clone(),
+                    groove: Some(atomik_model::TrackGroove {
+                        name: if *kind == 1 { "Swing 55%" } else { "Custom" }.to_owned(),
+                        strength: *strength,
+                    }),
+                }),
+                3 => song(SongCommand::SetTrackGroove {
+                    device: tracks.get(*t % tracks.len().max(1))?.clone(),
+                    groove: None,
+                }),
+                4 => song(SongCommand::RenameGroove {
+                    from: "Custom".to_owned(),
+                    to: "Renamed".to_owned(),
+                }),
+                _ => song(SongCommand::DeleteGroove {
+                    name: if *t % 2 == 0 { "Custom" } else { "Renamed" }.to_owned(),
+                }),
+            }
+        }
         WfOp::Quantize(c, grid, ends) => sc(SongCommand::ApplyQuantize {
             clips: vec![pick(&ids, *c)?],
             quantize: QuantizeParams {

@@ -219,8 +219,8 @@ pub use song::{
     DEFAULT_TRACK_HEIGHT, FadeCurve, FrameClock, GainPoint, Lane, LaneKind, MAX_CLIP_NAME_CHARS,
     MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK,
     MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MetaChange, MeterEvent, Note, NoteList,
-    RangeMarker, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track, clip_name_ok,
-    empty_song,
+    RangeMarker, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track, TrackGroove,
+    clip_name_ok, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -813,7 +813,8 @@ pub enum Command {
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
-/// | the groove library (`SetGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged` |
+/// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track has a live groove |
+/// | a track's live groove (`SetTrackGroove`; also undo/redo) | `SongChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
 /// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveTracks`, `MoveGroup`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |

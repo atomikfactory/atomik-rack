@@ -24,6 +24,7 @@ fn track_of(lanes: Vec<Lane>) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        groove: None,
         frozen: None,
         lanes,
     }

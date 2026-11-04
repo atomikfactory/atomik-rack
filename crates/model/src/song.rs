@@ -597,6 +597,11 @@ pub struct Track {
     /// (what the instrument receives) instead of the notes played into the top of the stack. Off
     /// by default; written only when set (project format 39, an optional field).
     pub direct_record: bool,
+    /// A live groove: the track plays its notes moved and accented by a groove template of the
+    /// song, applied when the song is flattened (see [`crate::groove::groove_notes`]). The notes
+    /// stay as they are, and changing the template changes every track that names it. `None` is
+    /// the default, and the only value of a track written before project format 43.
+    pub groove: Option<TrackGroove>,
     /// The track is frozen: its instrument and the first effects of its channel's insert chain
     /// are rendered to the audio held here, which plays instead of them (see
     /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.
@@ -606,6 +611,17 @@ pub struct Track {
     /// automation track (a device without a Notes input) has automation lanes alone. All the
     /// note lanes play the track's device.
     pub lanes: Vec<Lane>,
+}
+
+/// The live groove of a track: which template and how much of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackGroove {
+    /// A groove of the song or a built-in one ([`Song::groove`]). Renaming the groove renames it
+    /// here; deleting the groove takes it off the tracks.
+    pub name: String,
+    /// How much of the template is applied, in percent: `0..=`[`crate::groove::GROOVE_STRENGTH_MAX`]
+    /// (0 plays the notes as they are).
+    pub strength: u8,
 }
 
 /// A tempo change at a tick: a step to `bpm`, or with `ramp` a linear ramp (in BPM, over ticks)
@@ -778,6 +794,14 @@ pub enum SongCommand {
         device: DeviceKey,
         /// Record the generated notes.
         on: bool,
+    },
+    /// Set or clear the live groove of a track (see [`Track::groove`]); a note track only, and the
+    /// groove must exist. One undo step; reports [`crate::SyncOp::SongChanged`].
+    SetTrackGroove {
+        /// Device (track).
+        device: DeviceKey,
+        /// The groove, or `None` to play the notes as they are.
+        groove: Option<TrackGroove>,
     },
     /// Add a note lane after the track's last note lane (before its automation lanes), with a
     /// name (trimmed; blank or `None` leaves it unnamed). One undo step. The track must exist,
@@ -1390,9 +1414,18 @@ pub enum SongCommand {
         tool: crate::NoteTool,
     },
     /// Add a groove to the song's library, or replace the one with the same name. One undo step;
-    /// reports [`crate::SyncOp::ViewChanged`] (a groove changes nothing until it is applied).
+    /// reports [`crate::SyncOp::ViewChanged`], and [`crate::SyncOp::SongChanged`] too when a track
+    /// uses a groove (it plays the new template at once).
     SetGroove(Groove),
-    /// Remove a groove from the song's library by name (not a built-in one). One undo step.
+    /// Rename a groove of the song's library; the tracks that use it follow. One undo step.
+    RenameGroove {
+        /// The groove's name now.
+        from: String,
+        /// Its new name (a valid, unused one that is not a built-in name).
+        to: String,
+    },
+    /// Remove a groove from the song's library by name (not a built-in one); the tracks that
+    /// use it play their notes as they are. One undo step.
     DeleteGroove {
         /// The groove's name.
         name: String,
@@ -1532,7 +1565,7 @@ pub use crate::automation_view::automation_value_at;
 pub use flatten::{
     AudioRegion, Crossfade, FlatParam, audible_spans, crossfades, effective_tracks, flatten_audio,
     flatten_automation, flatten_controllers, flatten_notes, flatten_notes_with,
-    flatten_param_lanes,
+    flatten_param_lanes, flatten_track_notes,
 };
 pub(crate) use flatten::{automation_piece, controller_piece};
 

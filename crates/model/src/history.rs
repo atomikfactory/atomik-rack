@@ -1034,7 +1034,12 @@ impl Edit {
             }
             Edit::Grooves { new, .. } => {
                 doc.song_mut().grooves.clone_from(new);
-                vec![SyncOp::ViewChanged]
+                // A live groove plays the library's template, so the song has changed too.
+                if doc.song.tracks.iter().any(|t| t.groove.is_some()) {
+                    vec![SyncOp::ViewChanged, SyncOp::SongChanged]
+                } else {
+                    vec![SyncOp::ViewChanged]
+                }
             }
             Edit::Ranges { new, .. } => {
                 doc.song_mut().ranges.clone_from(new);

@@ -1606,7 +1606,14 @@ closing, settings kept between openings, APPLY on selected clips and on selected
 as one undo step, EXTRACT choosing the new groove and DELETE; the MCP tests cover the inspection and
 the panel through `session_command`; `crates/render/tests/groove.rs` bounces swung, grooved and
 humanized songs (closed-form onset frames, the same bytes as hand-placed notes, any block and any
-worker count).
+worker count) and, for the live groove, a groove on a track that changes the bounce and gives the
+original bytes back when removed, the same bytes as notes written at the moved ticks, any block
+and worker count and a save and load. The live groove has its own model tests in
+`crates/model/tests/live_groove.rs` (the flattened notes, the strength, a template edit reaching
+every track, rename and delete following in one undo step, refusals, format 43 round trip and
+refusals), an op family in `doc_sequences.rs`, two app tests (the engine hears the groove and the
+stored notes stay; the MIDI file has it) and the Track Panel rows in
+`crates/ui/tests/track_panel.rs`.
 
 Checks of the plugin sandbox that need a real plugin and a real kill, by hand:
 
