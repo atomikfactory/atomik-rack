@@ -8,6 +8,7 @@
 
 mod asset_usage;
 mod audio_edit;
+mod audio_join;
 mod audio_notes;
 mod audition;
 pub mod automation_rec;
@@ -179,7 +180,7 @@ pub use zones::{
 pub use asset_usage::{AssetRemoval, AssetUse};
 use atomik_device_sdk::Registry;
 pub use audio_edit::{
-    NormaliseMode, NormaliseParams, StripParams, gain_to_level_db, leading_silence,
+    NormaliseMode, NormaliseParams, StripParams, gain_to_level_db, join_envelopes, leading_silence,
     normalise_gain_db, peak, rms_db, slice_envelope, split_envelope, strip_silence,
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};

@@ -5,7 +5,7 @@
 //! once.
 
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
-use crate::keymap_store::{WorkflowPrefs, ZOOM_STEPS};
+use crate::keymap_store::{ReverseMode, WorkflowPrefs, ZOOM_STEPS};
 use atomik_model::ThinLevel;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::widget::KnobRange;
@@ -32,6 +32,8 @@ pub struct UiPrefs {
     pub automation_thinning: ThinLevel,
     /// A new track takes the next colour of the palette.
     pub auto_color: bool,
+    /// What Reverse Clips does with notes when no mode is named.
+    pub reverse_mode: ReverseMode,
 }
 
 impl UiPrefs {
@@ -44,6 +46,7 @@ impl UiPrefs {
             value_tooltips: prefs.value_tooltips,
             automation_thinning: prefs.automation_thinning,
             auto_color: prefs.auto_color,
+            reverse_mode: prefs.reverse_mode,
         }
     }
 
@@ -55,6 +58,7 @@ impl UiPrefs {
         prefs.value_tooltips = self.value_tooltips;
         prefs.automation_thinning = self.automation_thinning;
         prefs.auto_color = self.auto_color;
+        prefs.reverse_mode = self.reverse_mode;
     }
 }
 
@@ -73,6 +77,8 @@ pub enum UiRow {
     AutomationThinning,
     /// New tracks take a palette colour (a switch).
     AutoColor,
+    /// What Reverse Clips does with notes (steps through the modes).
+    ReverseMode,
 }
 
 /// One row of the tab.
@@ -177,6 +183,13 @@ impl InterfaceTab {
                 String::new(),
                 self.prefs.auto_color,
             ),
+            (
+                UiRow::ReverseMode,
+                "Reverse clips",
+                "What Reverse Clips does with notes: mirror each as a bar, or only its start.",
+                self.prefs.reverse_mode.label().to_string(),
+                false,
+            ),
         ] {
             let rect = Rect::new(x0, y, x0 + inner, y + ROW);
             let button = if matches!(which, UiRow::ValueTooltips | UiRow::AutoColor) {
@@ -225,6 +238,7 @@ impl InterfaceTab {
             }
             UiRow::ValueTooltips => self.prefs.value_tooltips = !self.prefs.value_tooltips,
             UiRow::AutoColor => self.prefs.auto_color = !self.prefs.auto_color,
+            UiRow::ReverseMode => self.prefs.reverse_mode = self.prefs.reverse_mode.next(),
             UiRow::AutomationThinning => {
                 let all = ThinLevel::ALL;
                 let at = all

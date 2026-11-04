@@ -53,6 +53,7 @@ use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
 mod audio_edit;
+mod crossfade_drag;
 mod draw_series;
 mod folder_clips;
 mod ghost;
@@ -608,6 +609,21 @@ enum Drag {
         /// The tempo percentage of the last step sent.
         last: Option<f64>,
     },
+    /// The crossfade zone at the start of an audio clip dragged (`crossfade_drag.rs`): the cut
+    /// and the crossfade move together.
+    Crossfade {
+        start: Point,
+        /// The later clip as it was at the press.
+        clip: Clip,
+        /// The furthest the zone may move earlier and later, in ticks.
+        min: i64,
+        max: i64,
+        moved: bool,
+        /// The host holds a preview that the release accepts.
+        open: bool,
+        /// The distance of the last step sent.
+        last: Option<i64>,
+    },
     /// The speaker tool is held on an audio clip: the audition stops on the release.
     Audition,
     /// The razor dragged over a lane: the range is cut out on the release (a press without a
@@ -821,6 +837,9 @@ pub struct ArrangementView {
     next_merge: u64,
     /// Counts the uses of the random note tools: each run is its own take.
     tool_seed: u32,
+    /// What a Reverse Clips without an explicit mode does with notes: mirror them as bars (the
+    /// Workflow preference; default on), else mirror their starts.
+    reverse_graphical: bool,
     playhead: i64,
     recording: bool,
     /// The takes in progress, drawn as growing red clips.
@@ -955,6 +974,7 @@ impl ArrangementView {
             hover: None,
             next_merge: MERGE_BASE,
             tool_seed: 0,
+            reverse_graphical: true,
             playhead: 0,
             recording: false,
             ghosts: Vec::new(),
@@ -1326,6 +1346,12 @@ impl ArrangementView {
     /// Zoom in logical pixels per tick.
     pub fn px_per_tick(&self) -> f64 {
         self.axis.px_per_tick
+    }
+
+    /// Sets what a Reverse Clips without an explicit mode does with notes (the Workflow
+    /// preference): `true` mirrors them as bars, `false` mirrors only their starts.
+    pub fn set_reverse_graphical(&mut self, graphical: bool) {
+        self.reverse_graphical = graphical;
     }
 
     /// Sets the zoom (clamped), keeping the left edge.
@@ -3478,6 +3504,15 @@ impl ArrangementView {
             }
             return;
         }
+        // A plain press in the crossfade zone at the start of an audio clip drags the zone.
+        if primary
+            && part == ClipPart::Body
+            && id != FROZEN_CLIP
+            && self.vp.effective_tool(modifiers) == Tool::Select
+            && self.crossfade_press(id, pos, modifiers)
+        {
+            return;
+        }
         if primary {
             match self.vp.effective_tool(modifiers) {
                 Tool::Speaker => {
@@ -4188,6 +4223,10 @@ impl ArrangementView {
             self.stretch_move(pos, modifiers, out);
             return;
         }
+        if matches!(self.drag, Drag::Crossfade { .. }) {
+            self.crossfade_move(pos, modifiers, out);
+            return;
+        }
         let step = self.step(modifiers);
         let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
@@ -4217,6 +4256,7 @@ impl ArrangementView {
             | Drag::Audition
             | Drag::Comp { .. }
             | Drag::Stretch { .. }
+            | Drag::Crossfade { .. }
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
             | Drag::End { .. }
@@ -4619,6 +4659,7 @@ impl ArrangementView {
             | Drag::LoopEdge { .. }
             | Drag::End { .. }
             | Drag::Resize { .. }
+            | Drag::Crossfade { .. }
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
             Drag::Stretch { .. } => CursorHint::Stretch,
             Drag::Razor { .. } => CursorHint::Razor,
@@ -4700,7 +4741,7 @@ impl ArrangementView {
                 }
             }
             Drag::Mark => self.marker_drag_up(out),
-            Drag::Stretch { open: false, .. } => {}
+            Drag::Stretch { open: false, .. } | Drag::Crossfade { open: false, .. } => {}
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
             Drag::TrackMove => self.track_move_up(out),
@@ -4875,6 +4916,9 @@ impl ArrangementView {
                 }
             }
             Drag::Stretch { open: true, .. } => out.push(UiAction::StretchEnd { commit: true }),
+            Drag::Crossfade { open: true, .. } => {
+                out.push(UiAction::CrossfadeEnd { commit: true });
+            }
             Drag::Resize { emitted, .. }
             | Drag::Trim { emitted, .. }
             | Drag::Point { emitted, .. }
@@ -5661,6 +5705,9 @@ impl ArrangementView {
                 out.push(UiAction::EndMerge);
             }
             Drag::Stretch { open: true, .. } => out.push(UiAction::StretchEnd { commit: false }),
+            Drag::Crossfade { open: true, .. } => {
+                out.push(UiAction::CrossfadeEnd { commit: false });
+            }
             Drag::Marquee { base, .. } => self.selection.set(base),
             Drag::Resize {
                 clip,

@@ -342,10 +342,14 @@ pub enum WorkflowCommand {
     /// Joins note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
     /// window, notes cut at the window end); where two notes or points coincide the later
-    /// clip wins. A looped clip is unrolled (each repetition contributes what it plays). Audio
-    /// clips and clips of different lanes are rejected. Muted
+    /// clip wins. A looped clip is unrolled (each repetition contributes what it plays). Clips
+    /// of different lanes are rejected. Muted
     /// clips of a mixed selection are left alone (their notes must not become audible); muted
-    /// clips alone join into a muted clip.
+    /// clips alone join into a muted clip. Audio clips join when they are consecutive pieces
+    /// of one file (they touch or overlap, continue each other in the file and agree on gain,
+    /// warp and mute, with no fade at the join, none playing backwards or looped): the joined
+    /// clip sounds as they did. Pieces of different files, or of one file out of order, reject
+    /// the command with a message naming the clips and the file.
     JoinClips {
         /// At least two clips.
         ids: Vec<ClipId>,
@@ -422,6 +426,19 @@ pub enum WorkflowCommand {
         ids: Vec<ClipId>,
         /// The new tempo as a percentage of the old one.
         percent: f64,
+    },
+    /// Moves the crossfade of audio clip `later` with the clip before it (the overlap where
+    /// `later` starts over that clip's end) by `delta` ticks, in one undo step: `later` starts
+    /// `delta` ticks later (earlier for a negative delta) and the clip before ends the same
+    /// distance later, so the overlap keeps its length and both clips play the audio they
+    /// played at every tick outside it. The overlap has to stay inside both clips, and the clip
+    /// that grows needs audio left in its file. Clips that play backwards or loop reject the
+    /// command.
+    MoveCrossfade {
+        /// The clip that fades in.
+        later: ClipId,
+        /// Ticks to move the overlap by (not 0).
+        delta: i64,
     },
     /// Stretches the listed clips in time by one ratio, the gesture of an edge dragged with the
     /// stretch role: `percent` is the new tempo as for [`WorkflowCommand::ScaleTempo`] (50 makes
@@ -955,6 +972,9 @@ pub(crate) fn plan(
             percent,
             from_start,
         } => crate::clip_transform::stretch_clips(doc, &ids, percent, from_start),
+        WorkflowCommand::MoveCrossfade { later, delta } => {
+            crate::audio_join::move_crossfade(doc, later, delta)
+        }
         WorkflowCommand::ExtractNotes {
             clip,
             selection,
@@ -2002,7 +2022,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         return Err(bad_song("clips of different lanes cannot be joined"));
     }
     if kind.is_audio() {
-        return Err(bad_song("audio clips cannot be joined"));
+        return crate::audio_join::join_audio(doc, &clips);
     }
     // A muted clip is silent: folding its content into an audible clip would make it heard, so
     // a mixed selection joins only the audible clips and leaves the muted ones where they are.

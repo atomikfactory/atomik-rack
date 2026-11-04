@@ -106,8 +106,60 @@ pub struct WorkflowPrefs {
     /// The folder the session scratch bundle (the audio of a song that has no folder yet) is
     /// made in (`None`: the OS temporary folder).
     pub scratch_folder: Option<PathBuf>,
+    /// What Reverse Clips does with the notes of a clip when no mode is named (default: each
+    /// note mirrors as a bar).
+    pub reverse_mode: ReverseMode,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
+}
+
+/// How Reverse Clips treats notes when the command names no mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReverseMode {
+    /// Each note is mirrored as a bar on the piano roll: its end becomes its start.
+    #[default]
+    Bars,
+    /// Only the starts are mirrored and every note keeps its length.
+    Starts,
+}
+
+impl ReverseMode {
+    /// Every choice.
+    pub const ALL: [ReverseMode; 2] = [ReverseMode::Bars, ReverseMode::Starts];
+
+    /// The id used in `workflow.json`.
+    pub fn id(self) -> &'static str {
+        match self {
+            ReverseMode::Bars => "bars",
+            ReverseMode::Starts => "starts",
+        }
+    }
+
+    /// The choice with this id.
+    pub fn from_id(id: &str) -> Option<ReverseMode> {
+        ReverseMode::ALL.into_iter().find(|m| m.id() == id)
+    }
+
+    /// The text on the settings button.
+    pub fn label(self) -> &'static str {
+        match self {
+            ReverseMode::Bars => "Notes as bars",
+            ReverseMode::Starts => "Note starts",
+        }
+    }
+
+    /// Whether notes mirror as bars.
+    pub fn graphical(self) -> bool {
+        self == ReverseMode::Bars
+    }
+
+    /// The other choice.
+    pub fn next(self) -> ReverseMode {
+        match self {
+            ReverseMode::Bars => ReverseMode::Starts,
+            ReverseMode::Starts => ReverseMode::Bars,
+        }
+    }
 }
 
 /// The application zoom steps, in percent.
@@ -148,6 +200,7 @@ impl Default for WorkflowPrefs {
             midi_resolution: MidiResolution::default(),
             default_song: None,
             scratch_folder: None,
+            reverse_mode: ReverseMode::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -246,6 +299,11 @@ impl WorkflowPrefs {
                 .unwrap_or(defaults.midi_resolution),
             default_song: path_field(obj, "default_song"),
             scratch_folder: path_field(obj, "scratch_folder"),
+            reverse_mode: obj
+                .get("reverse_mode")
+                .and_then(Value::as_str)
+                .and_then(ReverseMode::from_id)
+                .unwrap_or(defaults.reverse_mode),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -275,6 +333,7 @@ impl WorkflowPrefs {
                             | "midi_resolution"
                             | "default_song"
                             | "scratch_folder"
+                            | "reverse_mode"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -341,6 +400,10 @@ impl WorkflowPrefs {
             Value::String(self.automation_thinning.id().into()),
         );
         map.insert("auto_color".into(), Value::Bool(self.auto_color));
+        map.insert(
+            "reverse_mode".into(),
+            Value::String(self.reverse_mode.id().into()),
+        );
         map.insert(
             "midi_resolution".into(),
             Value::String(self.midi_resolution.id().into()),
@@ -662,6 +725,25 @@ mod tests {
         let bad = WorkflowPrefs::from_json(r#"{"midi_resolution": "7680"}"#).unwrap();
         assert_eq!(bad.midi_resolution, MidiResolution::Native);
         assert!(!bad.extra.contains_key("midi_resolution"));
+    }
+
+    #[test]
+    fn the_reverse_mode_preference_round_trips_and_falls_back_to_bars() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(d.reverse_mode, ReverseMode::Bars);
+        assert!(d.reverse_mode.graphical());
+        let w = WorkflowPrefs {
+            reverse_mode: ReverseMode::Starts,
+            ..d
+        };
+        let text = w.to_json();
+        assert!(text.contains("\"reverse_mode\": \"starts\""), "{text}");
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
+        let bad = WorkflowPrefs::from_json(r#"{"reverse_mode": "sideways"}"#).unwrap();
+        assert_eq!(bad.reverse_mode, ReverseMode::Bars);
+        assert!(!bad.extra.contains_key("reverse_mode"));
+        assert_eq!(ReverseMode::Bars.next(), ReverseMode::Starts);
+        assert_eq!(ReverseMode::Starts.next(), ReverseMode::Bars);
     }
 
     #[test]

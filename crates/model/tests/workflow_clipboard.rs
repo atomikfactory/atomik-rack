@@ -552,7 +552,7 @@ fn join_needs_two_clips_of_one_lane_and_no_audio() {
     let other = d.doc().song.track(&key("pad")).unwrap().lanes[0].clips[0].id;
     let e = rejected(&mut d, &r, join(vec![notes[0], other]));
     assert!(matches!(e, ModelError::BadSong(_)), "{e:?}");
-    // Audio clips.
+    // Audio clips join only as pieces of one file: these play different ones or sit apart.
     let audio: Vec<ClipId> = d.doc().song.track(&key("audio-track")).unwrap().lanes[0]
         .clips
         .iter()
@@ -560,7 +560,7 @@ fn join_needs_two_clips_of_one_lane_and_no_audio() {
         .collect();
     let e = rejected(&mut d, &r, join(audio));
     assert!(
-        matches!(&e, ModelError::BadSong(m) if m.contains("audio")),
+        matches!(&e, ModelError::BadSong(m) if m.contains("file") || m.contains("touch")),
         "{e:?}"
     );
     let e = rejected(&mut d, &r, join(vec![ClipId(404), notes[1]]));

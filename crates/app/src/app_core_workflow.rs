@@ -348,15 +348,66 @@ impl<S: EngineSink> AppCore<S> {
     /// is exact however the pointer wandered. Nothing is recorded in the undo history until
     /// [`AppCore::end_stretch`] accepts the drag (one step), and the engine follows each step.
     pub(super) fn stretch_step(&mut self, ids: Vec<ClipId>, percent: f64, from_start: bool) {
-        self.rewind_stretch();
-        self.trial_next = true;
-        let _ = self.apply_command(Command::Workflow(WorkflowCommand::StretchClips {
+        self.trial_step(WorkflowCommand::StretchClips {
             ids,
             percent,
             from_start,
-        }));
+        });
+    }
+
+    /// One step of a crossfade zone dragged: the document is put back to what it was before
+    /// the drag and the crossfade of `later` moves by `delta` ticks from there (the same
+    /// preview rules as [`AppCore::stretch_step`]; [`AppCore::end_stretch`] ends the drag).
+    pub(super) fn crossfade_step(&mut self, later: ClipId, delta: i64) {
+        self.trial_step(WorkflowCommand::MoveCrossfade { later, delta });
+    }
+
+    /// Puts the document back to before the open preview, then applies `command` as a new one
+    /// that adds no undo step until it is accepted.
+    fn trial_step(&mut self, command: WorkflowCommand) {
+        self.rewind_stretch();
+        self.trial_next = true;
+        let _ = self.apply_command(Command::Workflow(command));
         self.trial_next = false;
         self.stretch_open = self.document.in_trial();
+    }
+
+    /// What the Scale Tempo panel says under its title (the selected clips), and whether there
+    /// is anything to apply it to.
+    pub fn scale_target(&self) -> (String, bool) {
+        match self.arrangement.selected_clips().len() {
+            0 => (String::new(), false),
+            1 => ("1 clip".to_owned(), true),
+            n => (format!("{n} clips"), true),
+        }
+    }
+
+    /// The Scale Tempo panel's preview: the selected clips shown at `percent` of their tempo
+    /// (`None`: as they were). Nothing is recorded in the undo history until
+    /// [`AppCore::scale_apply`] accepts it.
+    pub fn scale_preview(&mut self, percent: Option<f64>) {
+        match percent {
+            Some(percent) => {
+                let ids = self.arrangement.selected_clips();
+                if !ids.is_empty() {
+                    self.trial_step(WorkflowCommand::ScaleTempo { ids, percent });
+                }
+            }
+            None => self.end_stretch(false),
+        }
+    }
+
+    /// Makes `percent` the tempo of the selected clips as one undo step (a rejection says why
+    /// in a message and leaves the clips as they were).
+    pub fn scale_apply(&mut self, percent: f64) {
+        self.scale_preview(Some(percent));
+        self.commit_stretch();
+    }
+
+    /// Sets what Reverse Clips does with notes when no mode is named (the Interface
+    /// preference): `true` mirrors each note as a bar, `false` mirrors only the starts.
+    pub fn set_reverse_mode(&mut self, graphical: bool) {
+        self.arrangement.set_reverse_graphical(graphical);
     }
 
     /// The stretch drag ended: `commit` keeps what the last step made as one undo step, else the

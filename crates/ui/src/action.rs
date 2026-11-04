@@ -30,6 +30,21 @@ pub enum UiAction {
         /// The start edge was grabbed.
         from_start: bool,
     },
+    /// A step of a crossfade zone dragged: the host puts the document back to before the drag
+    /// and moves the crossfade of `later` by `delta` ticks (see
+    /// [`atomik_model::WorkflowCommand::MoveCrossfade`]) as a preview that adds no undo step.
+    CrossfadeStep {
+        /// The clip that fades in.
+        later: ClipId,
+        /// Ticks the zone moved by (not 0).
+        delta: i64,
+    },
+    /// The crossfade drag ended: `commit` keeps the last preview as one undo step, otherwise the
+    /// document goes back to what it was before the drag.
+    CrossfadeEnd {
+        /// Keep the move.
+        commit: bool,
+    },
     /// The stretch drag ended: `commit` keeps the last preview as one undo step, otherwise the
     /// document goes back to what it was before the drag.
     StretchEnd {
@@ -588,6 +603,9 @@ pub enum UiAction {
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),
+    /// The Scale Tempo panel ([`crate::ScaleView`]) asks for something: preview the selected
+    /// clips scaled by its percentage, make that their new tempo, or close.
+    ScaleTempo(crate::scale_panel::ScaleAction),
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),

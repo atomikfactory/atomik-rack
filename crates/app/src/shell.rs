@@ -137,7 +137,7 @@
 
 use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
-use crate::commands::{AppCommand, Menu, MenuState, SongList, menus_with_songs};
+use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -167,9 +167,9 @@ use atomik_ui::{
     MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
     NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
     Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
-    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, WarpAction,
-    WarpValues, WarpView,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
+    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
+    UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -515,6 +515,10 @@ pub struct Shell<B: AudioBackend> {
     quantize: Option<QuantizeView>,
     /// The panel's settings, kept between openings (view state, not in the project).
     quantize_values: QuantizeValues,
+    /// The Scale Tempo panel (Edit > Scale Tempo > Other) while it is open.
+    scale: Option<ScaleView>,
+    /// The percentage the panel opened with last time (view state, not in the project).
+    scale_percent: f64,
     /// The strip silence panel (Edit > Strip Silence) while it is open.
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
@@ -698,6 +702,8 @@ impl<B: AudioBackend> Shell<B> {
 
             quantize: None,
             quantize_values: QuantizeValues::default(),
+            scale: None,
+            scale_percent: 150.0,
             silence: None,
             song_info: None,
             color_picker: None,
@@ -1045,6 +1051,60 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Whether the Scale Tempo panel is open.
+    pub fn scale_open(&self) -> bool {
+        self.scale.is_some()
+    }
+
+    /// The Scale Tempo panel, while it is open.
+    pub fn scale_view(&self) -> Option<&ScaleView> {
+        self.scale.as_ref()
+    }
+
+    /// Opens the Scale Tempo panel with the percentage of the last time; the selected clips
+    /// show the result at once.
+    fn open_scale(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = ScaleView::new(theme, self.scale_percent);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        let (text, can_apply) = self.core.scale_target();
+        view.set_target(text, can_apply);
+        let actions = view.open_preview();
+        self.scale = Some(view);
+        self.scale_actions(actions);
+        self.repaint = true;
+    }
+
+    /// What the Scale Tempo panel asked for.
+    fn scale_actions(&mut self, actions: Vec<UiAction>) {
+        for action in actions {
+            if let UiAction::ScaleTempo(a) = action {
+                self.scale_action(a);
+            }
+        }
+    }
+
+    /// One request of the Scale Tempo panel: a preview, APPLY (one undo step, then the panel
+    /// closes) or CLOSE (the clips go back to how they were).
+    fn scale_action(&mut self, action: ScaleAction) {
+        match action {
+            ScaleAction::Preview(percent) => self.core.scale_preview(percent),
+            ScaleAction::Apply => {
+                if let Some(percent) = self.scale.as_ref().and_then(ScaleView::percent) {
+                    self.scale_percent = percent;
+                    self.core.scale_apply(percent);
+                }
+                self.scale = None;
+            }
+            ScaleAction::Close => {
+                self.core.scale_preview(None);
+                self.scale = None;
+            }
+        }
+        self.repaint = true;
+    }
+
     /// Whether the song information panel is open.
     pub fn song_info_open(&self) -> bool {
         self.song_info.is_some()
@@ -1053,7 +1113,10 @@ impl<B: AudioBackend> Shell<B> {
     /// Whether a text field has the keys, so the window system should offer its input method
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
-        self.song_info.is_some() || self.color_picker.is_some() || self.ime_target().is_some()
+        self.song_info.is_some()
+            || self.scale.is_some()
+            || self.color_picker.is_some()
+            || self.ime_target().is_some()
     }
 
     /// The pane an input-method event goes to: the focused pane while one of its editable text
@@ -1974,6 +2037,8 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .set_automation_thinning(self.workflow.automation_thinning.fraction());
         self.core.set_auto_color(self.workflow.auto_color);
+        self.core
+            .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core
             .view_mut()
@@ -2054,6 +2119,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.quantize {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.scale {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.silence {
@@ -2654,6 +2722,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.quantize.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.quantize {
+                v.set_bounds(rect);
+            }
+        }
+        if self.scale.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.scale {
                 v.set_bounds(rect);
             }
         }
@@ -3513,6 +3587,27 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_notes();
             return Vec::new();
         }
+        if self.scale.is_some() {
+            // The Scale Tempo panel takes every event (typed text included); Esc closes it and
+            // puts the clips back.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.scale_action(ScaleAction::Close);
+                return Vec::new();
+            }
+            let actions = self
+                .scale
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            self.scale_actions(actions);
+            return Vec::new();
+        }
         if self.song_info.is_some() {
             // The song information panel takes every event (typed text included); Esc closes it.
             self.repaint = true;
@@ -3955,6 +4050,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
+            ("sequencer.scale_tempo", Some("dialog")) => self.open_scale(),
             ("sequencer.audio_to_notes", None) => self.open_notes(),
             ("sequencer.audio_quantize", None) => self.quantize_audio(),
             ("sequencer.audio_warp_tempo", None) => self.core.warp_to_song_tempo(),
@@ -5258,6 +5354,11 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             // The Track menu: the arrangement's commands, whatever pane has the focus.
+            AppCommand::ScaleTempo(ScaleStep::Other) => {
+                self.open_scale();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::GroupTracks
             | AppCommand::UngroupTracks
             | AppCommand::ToggleFolder
@@ -5279,6 +5380,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::InsertBars
             | AppCommand::RemoveBars
             | AppCommand::ReverseClips(_)
+            | AppCommand::ReverseClipsDefault
             | AppCommand::ScaleTempo(_)
             | AppCommand::ChopClips(_)
             | AppCommand::CleanupAutomation(_)
@@ -7102,6 +7204,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.quantize {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.scale {
             view.paint(canvas);
         }
         if let Some(view) = &self.silence {

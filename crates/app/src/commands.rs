@@ -418,9 +418,12 @@ pub enum AppCommand {
     /// Edit ▸ Remove Bars at Locators: cuts the loop range out of the arrangement and closes the
     /// gap (one undo step).
     RemoveBars,
-    /// Edit ▸ Reverse Clips (`true`: notes mirror as bars) and Reverse Note Starts (`false`): the
-    /// selected note, automation and audio clips run backwards.
+    /// Edit ▸ Reverse Note Starts (`false`) and Reverse Notes as Bars (`true`, a key or a script
+    /// only): the selected note, automation and audio clips run backwards.
     ReverseClips(bool),
+    /// Edit ▸ Reverse Clips: the same, with the notes mirrored the way the Interface preference
+    /// says (as bars by default).
+    ReverseClipsDefault,
     /// Edit ▸ Scale Tempo: the selected clips play at a percentage of their tempo.
     ScaleTempo(ScaleStep),
     /// Edit ▸ Chop Clips To: the selected clips are cut into pieces of this length.
@@ -835,6 +838,7 @@ impl AppCommand {
             AppCommand::AudioReverse => ("sequencer.audio_reverse", None),
             AppCommand::InsertBars => ("sequencer.insert_bars", None),
             AppCommand::RemoveBars => ("sequencer.remove_bars", None),
+            AppCommand::ReverseClipsDefault => ("sequencer.reverse_clips", Some("default")),
             AppCommand::ReverseClips(true) => ("sequencer.reverse_clips", Some("bars")),
             AppCommand::ReverseClips(false) => ("sequencer.reverse_clips", Some("starts")),
             AppCommand::ScaleTempo(step) => ("sequencer.scale_tempo", Some(step.arg())),
@@ -1145,6 +1149,7 @@ impl AppCommand {
             ("sequencer.audio_reverse", None) => AppCommand::AudioReverse,
             ("sequencer.insert_bars", None) => AppCommand::InsertBars,
             ("sequencer.remove_bars", None) => AppCommand::RemoveBars,
+            ("sequencer.reverse_clips", None | Some("default")) => AppCommand::ReverseClipsDefault,
             ("sequencer.reverse_clips", Some("bars")) => AppCommand::ReverseClips(true),
             ("sequencer.reverse_clips", Some("starts")) => AppCommand::ReverseClips(false),
             ("sequencer.scale_tempo", Some(arg)) => {
@@ -1248,16 +1253,19 @@ pub enum ScaleStep {
     FiveQuarters,
     /// 75 %.
     ThreeQuarters,
+    /// Any percentage, typed in a panel.
+    Other,
 }
 
 impl ScaleStep {
     /// Every step, in menu order.
-    pub const ALL: [ScaleStep; 5] = [
+    pub const ALL: [ScaleStep; 6] = [
         ScaleStep::Double,
         ScaleStep::Halve,
         ScaleStep::ThreeHalves,
         ScaleStep::FiveQuarters,
         ScaleStep::ThreeQuarters,
+        ScaleStep::Other,
     ];
 
     /// The registry argument of `sequencer.scale_tempo`.
@@ -1268,6 +1276,7 @@ impl ScaleStep {
             ScaleStep::ThreeHalves => "150",
             ScaleStep::FiveQuarters => "125",
             ScaleStep::ThreeQuarters => "75",
+            ScaleStep::Other => "dialog",
         }
     }
 
@@ -1284,6 +1293,7 @@ impl ScaleStep {
             ScaleStep::ThreeHalves => "150 %",
             ScaleStep::FiveQuarters => "125 %",
             ScaleStep::ThreeQuarters => "75 %",
+            ScaleStep::Other => "Other\u{2026}",
         }
     }
 }
@@ -2141,7 +2151,7 @@ pub fn menus_with_songs(
                 item("Insert Bars at Locators", AppCommand::InsertBars),
                 item("Remove Bars at Locators", AppCommand::RemoveBars),
                 MenuEntry::Separator,
-                item("Reverse Clips", AppCommand::ReverseClips(true)),
+                item("Reverse Clips", AppCommand::ReverseClipsDefault),
                 item("Reverse Note Starts", AppCommand::ReverseClips(false)),
                 MenuEntry::Submenu(Submenu {
                     label: "Scale Tempo",
@@ -3327,6 +3337,7 @@ mod tests {
             AppCommand::RemoveBars,
             AppCommand::AutomationIntoClip,
             AppCommand::ClearParamLanes,
+            AppCommand::ReverseClipsDefault,
             AppCommand::ReverseClips(true),
             AppCommand::ReverseClips(false),
             AppCommand::AudioNormalise,
@@ -3875,6 +3886,7 @@ mod tests {
                 "150 %",
                 "125 %",
                 "75 %",
+                "Other\u{2026}",
                 "Bar",
                 "Half Bar",
                 "Beat",

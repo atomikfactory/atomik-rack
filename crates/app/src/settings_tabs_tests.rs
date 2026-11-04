@@ -946,11 +946,15 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             "Knob range",
             "Value tooltips",
             "Automation thinning",
-            "Colour new tracks"
+            "Colour new tracks",
+            "Reverse clips"
         ]
     );
     let values: Vec<&str> = l.rows.iter().map(|r| r.value.as_str()).collect();
-    assert_eq!(values, ["Dark", "100 %", "Normal", "", "Normal", ""]);
+    assert_eq!(
+        values,
+        ["Dark", "100 %", "Normal", "", "Normal", "", "Notes as bars"]
+    );
     assert!(!l.rows[3].on, "value tooltips start off");
     // The theme steps Dark, Light, System and back with the right button.
     down(&mut d, l.rows[0].button.center());
@@ -976,7 +980,9 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
     down(&mut d, l.rows[3].rect.center());
     down(&mut d, l.rows[4].button.center());
     down(&mut d, l.rows[5].rect.center());
+    down(&mut d, l.rows[6].button.center());
     let (_, wf) = d.preferences().unwrap();
+    assert_eq!(wf.reverse_mode, crate::keymap_store::ReverseMode::Starts);
     assert!(wf.value_tooltips);
     assert!(wf.auto_color);
     assert_eq!(wf.automation_thinning, atomik_model::ThinLevel::Heavy);
@@ -989,6 +995,7 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             value_tooltips: false,
             automation_thinning: atomik_model::ThinLevel::Normal,
             auto_color: false,
+            reverse_mode: crate::keymap_store::ReverseMode::Bars,
             ..wf.clone()
         },
         WorkflowPrefs::default()

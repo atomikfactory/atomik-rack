@@ -69,6 +69,70 @@ pub fn split_envelope(points: &[GainPoint], at: u64) -> (Vec<GainPoint>, Vec<Gai
     )
 }
 
+/// The envelope of the clip that two clips make when the second one starts `at` frames after the
+/// first: the first's envelope up to `at`, the second's from there on (shifted by `at`), each
+/// holding its own level where the other one begins, so both parts sound as they did. `None`
+/// when the result would have more than [`MAX_GAIN_POINTS`] points. Both empty stays empty; one
+/// empty counts as no gain change (0 dB).
+pub fn join_envelopes(left: &[GainPoint], right: &[GainPoint], at: u64) -> Option<Vec<GainPoint>> {
+    if left.is_empty() && right.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut out: Vec<GainPoint> = Vec::new();
+    if at > 0 {
+        if left.is_empty() {
+            out.push(GainPoint {
+                frame: 0,
+                gain_db: 0.0,
+            });
+        } else {
+            out.extend(left.iter().filter(|p| p.frame < at).copied());
+            if out.last().is_none_or(|p| p.frame < at - 1) {
+                out.push(GainPoint {
+                    frame: at - 1,
+                    gain_db: db_at(left, at - 1),
+                });
+            }
+        }
+    }
+    if right.is_empty() {
+        out.push(GainPoint {
+            frame: at,
+            gain_db: 0.0,
+        });
+    } else {
+        if right[0].frame > 0 {
+            out.push(GainPoint {
+                frame: at,
+                gain_db: right[0].gain_db,
+            });
+        }
+        out.extend(right.iter().map(|p| GainPoint {
+            frame: p.frame + at,
+            gain_db: p.gain_db,
+        }));
+    }
+    (out.len() <= crate::song::MAX_GAIN_POINTS).then_some(out)
+}
+
+/// The envelope of a clip whose start moves `by` frames earlier (it now begins `by` frames
+/// before the old start): the old points shifted later, with the first level held over the new
+/// part. An empty envelope stays empty; `None` when it would have too many points.
+pub fn extend_envelope_start(points: &[GainPoint], by: u64) -> Option<Vec<GainPoint>> {
+    if points.is_empty() || by == 0 {
+        return Some(points.to_vec());
+    }
+    let mut out = vec![GainPoint {
+        frame: 0,
+        gain_db: points[0].gain_db,
+    }];
+    out.extend(points.iter().map(|p| GainPoint {
+        frame: p.frame + by,
+        gain_db: p.gain_db,
+    }));
+    (out.len() <= crate::song::MAX_GAIN_POINTS).then_some(out)
+}
+
 /// The largest absolute sample over the frames `[from, to)` of every channel (frames past a
 /// channel's end count as silence).
 pub fn peak<C: AsRef<[f32]>>(channels: &[C], from: u64, to: u64) -> f32 {

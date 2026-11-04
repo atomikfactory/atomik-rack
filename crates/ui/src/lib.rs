@@ -273,6 +273,9 @@
 //!   or a folder (a saturation/value square, a hue strip, a hex text and the six palette colours
 //!   as quick picks); it emits [`UiAction::ColorPicker`] (`APPLY`, `CLOSE`), and the arrangement
 //!   asks for it with [`UiAction::PickColor`].
+//! - **Scale Tempo.** [`ScaleView`] is the modal panel of one free percentage for the selected
+//!   clips; it emits [`UiAction::ScaleTempo`] (`Preview` while the text changes, `APPLY`,
+//!   `CLOSE`) and the app feeds it with [`ScaleView::set_target`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
 //!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
@@ -368,6 +371,7 @@ pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
 pub mod sample_editor;
+pub mod scale_panel;
 pub mod scene_canvas;
 pub mod segment_field;
 pub mod seq_edit;
@@ -443,6 +447,7 @@ pub use rack::{
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use sample_editor::SampleEditorView;
+pub use scale_panel::{ScaleAction, ScaleView, parse_percent};
 pub use scene_canvas::{SceneCache, SceneCanvas};
 pub use seq_editor::SeqEditorView;
 pub use seq_paint::SeqTheme;

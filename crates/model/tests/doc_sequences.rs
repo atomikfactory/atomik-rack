@@ -69,7 +69,7 @@ enum WfOp {
     ClipLanes(u8, usize, usize),
     /// Trim (0), delete outside (1), split (2) or cut out (3, 4: copy) of the clips at a tick,
     /// insert (5) or remove (6) a bar of time there, reverse (7), scale to 200 % (8) or chop to
-    /// half bars (9).
+    /// half bars (9), stretch (11) or move the crossfade of the first clip (12).
     Gesture(u8, Vec<usize>, i64),
     PasteNotes(usize, Vec<usize>, i64),
     DuplicateNotes(usize, Vec<usize>),
@@ -280,7 +280,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
         (0u8..3, 0usize..12, 0usize..12).prop_map(|(k, a, b)| WfOp::ClipLanes(k, a, b)),
-        (0u8..12, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
+        (0u8..13, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
@@ -631,6 +631,10 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                     ids,
                     percent: if *t % 2 == 0 { 50.0 } else { 200.0 },
                     from_start: *t % 3 == 0,
+                },
+                12 => WorkflowCommand::MoveCrossfade {
+                    later: ids.first().copied().unwrap_or(ClipId(1)),
+                    delta: *t,
                 },
                 k => WorkflowCommand::CutOut {
                     ids,

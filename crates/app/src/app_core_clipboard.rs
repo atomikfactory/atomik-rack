@@ -744,6 +744,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ReverseClips { .. }
             | WorkflowCommand::ScaleTempo { .. }
             | WorkflowCommand::StretchClips { .. }
+            | WorkflowCommand::MoveCrossfade { .. }
             | WorkflowCommand::ChopClips { .. }
             | WorkflowCommand::CleanupAutomation { .. }
             | WorkflowCommand::InsertTime { .. }

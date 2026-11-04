@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Restructuring follow-ups: a percent panel for Scale Tempo, a Reverse Clips preference, joining audio clips and
+  draggable crossfade zones.** Edit > Scale Tempo > Other opens a panel with one text field for any percentage
+  from 10 to 1000 (a comma or a percent sign is understood): the selected clips show the result while you type,
+  Enter or APPLY makes it one undo step, and Esc or CLOSE puts the clips back. The panel opens on the last
+  percentage. Reverse Clips follows a new "Reverse clips" row of Settings > Interface (notes mirror as bars, the
+  default, or only their starts, saved in `workflow.json`); the explicit Reverse Note Starts item and the `bars` and
+  `starts` arguments of `sequencer.reverse_clips` do not follow it. Join Clips now works on audio: consecutive
+  pieces of one file that touch or overlap, continue each other in the file and agree on gain, warp and mute become
+  one clip that sounds exactly as the pieces did (the gain envelope is merged); pieces of different files, a gap, a
+  jump in the file, a fade at the join, a reversed or looped clip and warp markers are refused with a message that
+  names the clips and the files. Pressing in the crossfade zone at the start of an audio clip and dragging moves
+  the cut and the crossfade together: the later clip starts later or earlier and the earlier one ends later or
+  earlier by the same distance, with a live preview, snapping to the grid, one undo step, and Esc to cancel
+  (`MoveCrossfade` in the model). Dragging a clip edge with Alt, which scales each clip about its own fixed edge,
+  already covered edge-drag scaling. The project format stays 43.
 - **Six CV utilities: CV math, quantizer, sample and hold, slew limiter, gate processor and envelope follower.**
   CV Math adds, subtracts, multiplies, takes the minimum or maximum, or the absolute value of two CVs (the second
   is a knob until a cable is attached), then scales and offsets the result. The CV Quantizer snaps a pitch CV

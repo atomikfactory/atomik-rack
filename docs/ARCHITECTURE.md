@@ -4492,7 +4492,16 @@ creation chain in the **Creation chain** bullet.
   clip's own fixed edge: the gesture is an Alt+drag on a clip edge (`Drag::Stretch`), whose steps
   reach the app as `UiAction::StretchStep` and run as a `Document::apply_trial` preview
   (`AppCore::stretch_step`: the trial is cancelled and re-planned from the original at every
-  step, so no undo step exists until the release commits one). *Clipboard*
+  step, so no undo step exists until the release commits one). The same trial serves the Scale
+  Tempo panel (`ScaleView`, opened by `sequencer.scale_tempo` with `dialog`: every usable value
+  previews through `AppCore::scale_preview`, Enter commits with `AppCore::scale_apply`) and the
+  crossfade drag (`Drag::Crossfade`, `UiAction::CrossfadeStep`): `MoveCrossfade` (`audio_join` in
+  the model) moves the overlap of an audio clip with the clip before it, the later clip starting
+  and the earlier one ending the same number of ticks later, so both play what they played at
+  every tick outside it. `JoinClips` on an audio lane (`join_audio`) merges consecutive pieces of
+  one file that continue each other (`piece_from` gives the source frame the second piece must
+  start at) and merges their gain envelopes (`join_envelopes`); anything that would change the
+  sound is refused. *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of
