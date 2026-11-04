@@ -179,7 +179,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `SetParam`, a move is `MoveDevices` (players, routed) or `MoveInsert`, a removal is
   `RemoveDevices` or `SetInsert` with no effect, a send switch and the fader (one undo step per
   drag) are `SetParam`. Each move and removal is planned on a scratch document when the panel
-  syncs and its button shows only when the model accepts it. The panel is rebuilt only when the
+  syncs and its button shows only when the model accepts it. A note track also has a Groove
+  section: the arrows send `SetTrackGroove` to step through none, the built-in grooves and the
+  song's (see 2.14), and a strength bar sends one `SetTrackGroove` when the button is released. The panel is rebuilt only when the
   document revision or the selected track changes (`AppCore::sync_track_panel`). Adding and
   replacing a device from the panel is not built; the rack and the console do it.
 - **Rack columns in the view** ([ui/src/rack/columns.rs](../crates/ui/src/rack/columns.rs),
