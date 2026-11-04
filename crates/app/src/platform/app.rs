@@ -1102,7 +1102,7 @@ impl App {
                             atomik_ui::ExportScope::Loop => "Export loop as audio file",
                             _ => "Export song as audio file",
                         })
-                        .add_filter("WAV audio file", &["wav"])
+                        .add_filter("Audio file", &["wav", "aif", "aiff", "flac"])
                         .set_file_name(self.shell.export_audio_name(scope));
                     if let Some(dir) = self.shell.export_audio_dir() {
                         dialog = dialog.set_directory(dir);

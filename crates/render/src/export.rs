@@ -27,11 +27,15 @@
 //! quantisation noise is far below any recording's noise floor), or 32-bit float untouched. The
 //! dither is seeded ([`DITHER_SEED`]), so the same project exports the same bits every time.
 //!
+//! The report of a finished export carries the loudness of the audio that was written
+//! ([`crate::loudness`]: integrated loudness, loudness range, true peak).
+//!
 //! The file is written under a temporary name next to the target and renamed when it is
 //! complete: a cancelled or failed export leaves nothing behind, and an existing file is
 //! replaced only by a complete one. The render can be watched and stopped through a
 //! [`RenderControl`]; a stopped export returns `None`.
 
+use crate::loudness::{LoudnessReport, measure};
 use crate::plugin_pass::RenderControl;
 use crate::project::{Extra, PluginBounce, ProjectOptions, render_core};
 use crate::wav::{SampleFormat, write_wav_file_with};
@@ -110,6 +114,8 @@ pub enum ExportContainer {
     Wav,
     /// An AIFF file (AIFF-C for 32-bit float), see [`crate::aiff`].
     Aiff,
+    /// A FLAC file (16-bit and 24-bit only), see [`crate::flac`].
+    Flac,
 }
 
 impl ExportContainer {
@@ -118,6 +124,7 @@ impl ExportContainer {
         match self {
             Self::Wav => "wav",
             Self::Aiff => "aif",
+            Self::Flac => "flac",
         }
     }
 }
@@ -162,6 +169,8 @@ pub struct ExportReport {
     pub tail_frames: u64,
     /// What the render reported.
     pub warnings: Vec<Warning>,
+    /// The loudness of the audio that was written ([`crate::loudness`]).
+    pub loudness: LoudnessReport,
 }
 
 /// The audio of an export, before it is written.
@@ -290,6 +299,9 @@ pub fn write_audio_file(
         ExportContainer::Aiff => {
             crate::aiff::write_aiff_file(&partial, channels, rate, sample_format, dither)
         }
+        ExportContainer::Flac => {
+            crate::flac::write_flac_file(&partial, channels, rate, sample_format, dither)
+        }
     }
     .map_err(|source| RenderError::Write {
         path: path.to_path_buf(),
@@ -317,6 +329,11 @@ pub fn write_export(
     render: &ExportRender,
     format: &ExportFormat,
 ) -> Result<ExportReport, RenderError> {
+    if format.container == ExportContainer::Flac && format.bit_depth == BitDepth::Float32 {
+        return Err(RenderError::Project(
+            "FLAC holds 16-bit and 24-bit audio, not 32-bit float".to_owned(),
+        ));
+    }
     let project_rate = render.audio.sample_rate;
     let rate = format.sample_rate.unwrap_or(project_rate);
     if !(8_000..=192_000).contains(&rate) {
@@ -341,6 +358,7 @@ pub fn write_export(
         span_frames: render.span_frames,
         tail_frames: render.tail_frames,
         warnings: render.warnings.clone(),
+        loudness: measure(audio),
     })
 }
 

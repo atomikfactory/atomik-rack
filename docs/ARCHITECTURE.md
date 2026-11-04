@@ -901,7 +901,7 @@ while it runs; the live children are not reused, because the offline output must
 
 File > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
 (`file.export_song_audio`, `file.export_loop_audio`, `file.export_stems`, remappable, no default
-keys) write the project as a WAV or AIFF file, or one file per mixer strip.
+keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip.
 
 ```
  command ─► ShellRequest::PickExportAudio ─► native save dialog ─► Shell::export_audio_to ─► options panel (ExportView)
@@ -930,12 +930,29 @@ keys) write the project as a WAV or AIFF file, or one file per mixer strip.
   none (the dither applies to 16-bit in the panel). The dither is seeded (`DITHER_SEED`, one stream
   per channel from `Rng`), so the same project exports the same bytes. Silence is dithered too: a
   16-bit file has a noise floor of about -96 dBFS.
-- **Containers.** `ExportFormat::container` is WAV or AIFF. The AIFF writer
+- **Containers.** `ExportFormat::container` is WAV, AIFF or FLAC. The AIFF writer
   ([render/src/aiff.rs](../crates/render/src/aiff.rs)) writes 16-bit and 24-bit PCM as plain AIFF
   and 32-bit float as AIFF-C `fl32`, quantising through the same `Dither` as the WAV writer, so
   both containers hold the same codes for the same audio (a test decodes both and compares). The
-  file keeps the dialog's name with the extension of the container (`.wav`, `.aif`). FLAC, MP3
-  and tempo chunks are not written yet.
+  file keeps the dialog's name with the extension of the container (`.wav`, `.aif`, `.flac`).
+  The FLAC writer ([render/src/flac.rs](../crates/render/src/flac.rs)) is an in-house encoder
+  rather than a crate (the format is small, the decoder already ships through symphonia, and it
+  adds no licence or advisory): fixed blocks of 4096 frames, per block and channel the smallest of
+  a constant, a verbatim and the fixed predictors of order 0 to 4 with Rice-coded residuals over
+  the best partition order, stereo as left/right, left/side, side/right or mid/side, and the MD5
+  of the unencoded samples in the stream info. It takes the 16-bit and 24-bit codes of the same
+  `Dither`, so the decoded file equals the WAV's samples (a test decodes both through the project's
+  reader); every choice is a pure function of the codes, so the bytes are deterministic. There is
+  no 32-bit float FLAC (the panel and `write_export` refuse it). MP3 stays deferred until its
+  encoder licence is settled; tempo chunks are not written either.
+- **Loudness report.** `write_export` measures the audio it writes with
+  [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
+  (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
+  true peak and sample peak, using the K-weighting, gating and 4x true-peak detector of the
+  loudness meter device. `ExportReport::loudness` carries it, `StemsReport::loudness` has one per
+  file; the app puts it in the toast and the log, and `session_export` returns it.
+- **Range of stems.** `ExportValues::locators` makes a stems export use `ExportSpan::Loop`
+  (the frames between the locators, no tail) instead of the song with its tail.
 - **Stems** ([render/src/stems.rs](../crates/render/src/stems.rs),
   [model/src/stems.rs](../crates/model/src/stems.rs)). `stem_sources` lists the strips of the
   console in mixer order (channels, buses, FX returns, master) with the sockets that carry each

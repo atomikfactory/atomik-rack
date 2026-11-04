@@ -7,7 +7,7 @@
 //!   BIT DEPTH   [ 16-BIT ] [ 24-BIT ] [ 32-BIT FLOAT ]
 //!   DITHER      [ NONE ] [ TPDF ] [ SHAPED ]
 //!   SAMPLE RATE [ PROJECT ] [ 44.1 kHz ] [ 48 kHz ] [ 88.2 kHz ] [ 96 kHz ]
-//!   FILE FORMAT [ WAV ] [ AIFF ]
+//!   FILE FORMAT [ WAV ] [ AIFF ] [ FLAC ]
 //!   TAIL        [ KEEP EFFECT TAIL ]
 //!   Renders to the End marker, then keeps the tail while it is audible.
 //!                                                          [ EXPORT ] [ CANCEL ]
@@ -18,7 +18,9 @@
 //! holds; EXPORT emits [`ExportAction::Start`] with them and CANCEL (or Esc) emits
 //! [`ExportAction::Cancel`]. The dither applies to 16-bit files only, so its row is greyed at the
 //! other depths; the tail applies to a song and to stems (which also have a CHANNELS row: after the
-//! strip or dry). In the **progress** mode
+//! strip or dry, and a RANGE row: the whole song or only what lies between the locators). FLAC
+//! holds 16-bit and 24-bit audio, so the 32-bit float button is inert while FLAC is chosen (and
+//! choosing FLAC at 32-bit float moves the depth to 24-bit). In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
 //! [`ExportView::set_progress`], and CANCEL (or Esc) emits [`ExportAction::Cancel`] to stop the
 //! render. The view never closes itself: the app drops it when the export is over.
@@ -65,6 +67,8 @@ pub enum ExportFile {
     Wav,
     /// An AIFF file.
     Aiff,
+    /// A FLAC file (16-bit and 24-bit only).
+    Flac,
 }
 
 /// The bit depth of the file.
@@ -108,6 +112,8 @@ pub struct ExportValues {
     /// Stems only: take the channels before their strips (the source's own sound) instead of
     /// after them.
     pub dry: bool,
+    /// Stems only: export just the range between the locators (no tail) instead of the song.
+    pub locators: bool,
 }
 
 impl Default for ExportValues {
@@ -119,6 +125,7 @@ impl Default for ExportValues {
             tail: true,
             file: ExportFile::Wav,
             dry: false,
+            locators: false,
         }
     }
 }
@@ -141,6 +148,7 @@ enum Hit {
     File(ExportFile),
     Tail,
     Dry(bool),
+    Range(bool),
     Start,
     Cancel,
 }
@@ -269,7 +277,7 @@ impl ExportView {
     // ------------------------------------------------------------------ geometry
 
     /// The rows of the options, in order: bit depth, dither, sample rate and file format for
-    /// every scope, then the tail (songs and stems) and the strip (stems).
+    /// every scope, then the tail (songs and stems), the strip and the range (stems).
     fn row_names(&self) -> Vec<&'static str> {
         let mut rows = vec!["BIT DEPTH", "DITHER", "SAMPLE RATE", "FILE FORMAT"];
         if self.scope != ExportScope::Loop {
@@ -277,6 +285,7 @@ impl ExportView {
         }
         if self.scope == ExportScope::Stems {
             rows.push("CHANNELS");
+            rows.push("RANGE");
         }
         rows
     }
@@ -349,12 +358,14 @@ impl ExportView {
         .into_iter()
         .enumerate()
         {
+            // FLAC has no 32-bit float.
+            let enabled = !(v.file == ExportFile::Flac && depth == ExportDepth::Float32);
             out.push((
                 Hit::Depth(depth),
                 self.button(0, i, w),
                 label.to_owned(),
                 v.depth == depth,
-                true,
+                enabled,
             ));
         }
         let dither_on = v.depth == ExportDepth::Pcm16;
@@ -391,9 +402,13 @@ impl ExportView {
                 true,
             ));
         }
-        for (i, (file, label)) in [(ExportFile::Wav, "WAV"), (ExportFile::Aiff, "AIFF")]
-            .into_iter()
-            .enumerate()
+        for (i, (file, label)) in [
+            (ExportFile::Wav, "WAV"),
+            (ExportFile::Aiff, "AIFF"),
+            (ExportFile::Flac, "FLAC"),
+        ]
+        .into_iter()
+        .enumerate()
         {
             out.push((
                 Hit::File(file),
@@ -422,6 +437,18 @@ impl ExportView {
                     self.button(5, i, 110.0),
                     label.to_owned(),
                     v.dry == dry,
+                    true,
+                ));
+            }
+            for (i, (locators, label)) in [(false, "WHOLE SONG"), (true, "BETWEEN LOCATORS")]
+                .into_iter()
+                .enumerate()
+            {
+                out.push((
+                    Hit::Range(locators),
+                    self.button(6, i, if locators { 140.0 } else { 110.0 }),
+                    label.to_owned(),
+                    v.locators == locators,
                     true,
                 ));
             }
@@ -506,9 +533,15 @@ impl ExportView {
             Hit::Depth(d) => self.values.depth = d,
             Hit::Dither(d) => self.values.dither = d,
             Hit::Rate(r) => self.values.rate = r,
-            Hit::File(f) => self.values.file = f,
+            Hit::File(f) => {
+                self.values.file = f;
+                if f == ExportFile::Flac && self.values.depth == ExportDepth::Float32 {
+                    self.values.depth = ExportDepth::Pcm24;
+                }
+            }
             Hit::Tail => self.values.tail = !self.values.tail,
             Hit::Dry(d) => self.values.dry = d,
+            Hit::Range(r) => self.values.locators = r,
             Hit::Start => return Some(ExportAction::Start(self.values)),
             Hit::Cancel => return Some(ExportAction::Cancel),
         }
@@ -524,6 +557,9 @@ impl ExportView {
                 "16-bit integer file, as a compact disc: dither it to keep quiet detail"
             }
             Hit::Depth(ExportDepth::Pcm24) => "24-bit integer file: no dither is needed",
+            Hit::Depth(ExportDepth::Float32) if self.values.file == ExportFile::Flac => {
+                "FLAC holds 16-bit and 24-bit audio: pick WAV or AIFF for 32-bit float"
+            }
             Hit::Depth(ExportDepth::Float32) => "32-bit float file: the mix is written untouched",
             Hit::Dither(ExportDither::Off) => "Round to 16 bits without dither",
             Hit::Dither(ExportDither::Tpdf) => {
@@ -536,6 +572,9 @@ impl ExportView {
             Hit::Rate(Some(_)) => "Convert the render to this sample rate",
             Hit::File(ExportFile::Wav) => "Write WAV files",
             Hit::File(ExportFile::Aiff) => "Write AIFF files (AIFF-C for 32-bit float)",
+            Hit::File(ExportFile::Flac) => {
+                "Write FLAC files: lossless and smaller, at 16 or 24 bits"
+            }
             Hit::Tail => {
                 "Keep what rings out after the End marker (reverb, delay) while it is audible"
             }
@@ -545,6 +584,10 @@ impl ExportView {
             Hit::Dry(true) => {
                 "Each channel's source before its strip: no fader, pan, insert or send; buses, \
                  returns and the master are left out"
+            }
+            Hit::Range(false) => "Every strip from the start to the End marker, plus the tail",
+            Hit::Range(true) => {
+                "Only the range between the left and the right locator, with no tail"
             }
             Hit::Start if self.scope == ExportScope::Stems => "Render and write the files",
             Hit::Start => "Render and write the file",
@@ -672,6 +715,9 @@ impl ExportView {
                 "From the start to the End marker; the tail is kept while audible."
             }
             ExportScope::Loop => "Exactly from the left to the right locator, with no tail.",
+            ExportScope::Stems if self.values.locators => {
+                "One file per strip, exactly between the locators, lined up with the master."
+            }
             ExportScope::Stems => "One file per strip, in order, lined up with the master.",
         };
         let note = if self.values.depth == ExportDepth::Pcm16 {

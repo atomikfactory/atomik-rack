@@ -2,14 +2,15 @@
 //!
 //! ```json
 //! { "bit_depth": "24", "dither": "tpdf", "sample_rate": null, "tail": true, "file": "wav",
-//!   "dry": false, "folder": "D:/Music" }
+//!   "dry": false, "locators": false, "folder": "D:/Music" }
 //! ```
 //!
 //! `bit_depth` is `"16"`, `"24"` or `"32f"`, `dither` is `"none"`, `"tpdf"` or `"shaped"`
 //! (it applies to 16-bit files only), `sample_rate` is a rate in Hz or `null` for the project's,
-//! `tail` keeps the tail of a song, `file` is the container (`"wav"` or `"aiff"`), `dry` takes
-//! the channels of a stems export before their strips, and `folder` is where the last export
-//! went. Loading is
+//! `tail` keeps the tail of a song, `file` is the container (`"wav"`, `"aiff"` or `"flac"`; FLAC
+//! has no `"32f"`), `dry` takes the channels of a stems export before their strips, `locators`
+//! exports stems only between the locators, and `folder` is where the last export went. Loading
+//! is
 //! lenient: a missing or unreadable file, a missing field or a value this build does not know is
 //! the default. Saving is atomic ([`crate::keymap_store::write_atomic`]) and canonical, so an
 //! unchanged choice writes identical bytes. These are app preferences, not part of the project.
@@ -38,10 +39,12 @@ pub struct ExportPrefs {
     pub sample_rate: Option<u32>,
     /// Keep the tail of a song.
     pub tail: bool,
-    /// `"wav"` or `"aiff"`.
+    /// `"wav"`, `"aiff"` or `"flac"`.
     pub file: String,
     /// Stems only: the channels before their strips.
     pub dry: bool,
+    /// Stems only: just the range between the locators.
+    pub locators: bool,
     /// The folder the last export went to.
     pub folder: Option<String>,
 }
@@ -73,9 +76,11 @@ impl ExportPrefs {
             file: match values.file {
                 ExportFile::Wav => "wav",
                 ExportFile::Aiff => "aiff",
+                ExportFile::Flac => "flac",
             }
             .to_owned(),
             dry: values.dry,
+            locators: values.locators,
             folder: folder.map(|f| f.to_string_lossy().into_owned()),
         }
     }
@@ -83,11 +88,18 @@ impl ExportPrefs {
     /// The values the panel starts with: what this build does not know is the default.
     pub fn values(&self) -> ExportValues {
         let default = ExportValues::default();
+        let file = match self.file.as_str() {
+            "wav" => ExportFile::Wav,
+            "aiff" => ExportFile::Aiff,
+            "flac" => ExportFile::Flac,
+            _ => default.file,
+        };
         ExportValues {
             depth: match self.bit_depth.as_str() {
                 "16" => ExportDepth::Pcm16,
                 "24" => ExportDepth::Pcm24,
-                "32f" => ExportDepth::Float32,
+                // FLAC has no float: a file that says both gets 24-bit.
+                "32f" if file != ExportFile::Flac => ExportDepth::Float32,
                 _ => default.depth,
             },
             dither: match self.dither.as_str() {
@@ -98,12 +110,9 @@ impl ExportPrefs {
             },
             rate: self.sample_rate.filter(|r| EXPORT_RATES.contains(r)),
             tail: self.tail,
-            file: match self.file.as_str() {
-                "wav" => ExportFile::Wav,
-                "aiff" => ExportFile::Aiff,
-                _ => default.file,
-            },
+            file,
             dry: self.dry,
+            locators: self.locators,
         }
     }
 
@@ -169,6 +178,7 @@ mod tests {
             tail: false,
             file: ExportFile::Aiff,
             dry: true,
+            locators: true,
         };
         let prefs = ExportPrefs::from_values(&values, Some(Path::new("music")));
         prefs.save(&path).unwrap();
@@ -181,6 +191,25 @@ mod tests {
         back.save(&path).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), before);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn flac_is_remembered_and_never_with_float() {
+        let flac = ExportValues {
+            file: ExportFile::Flac,
+            depth: ExportDepth::Pcm16,
+            ..ExportValues::default()
+        };
+        let prefs = ExportPrefs::from_values(&flac, None);
+        assert_eq!(prefs.file, "flac");
+        assert_eq!(prefs.values(), flac);
+        let both = ExportPrefs {
+            file: "flac".to_owned(),
+            bit_depth: "32f".to_owned(),
+            ..ExportPrefs::default()
+        };
+        assert_eq!(both.values().depth, ExportDepth::Pcm24);
+        assert_eq!(both.values().file, ExportFile::Flac);
     }
 
     #[test]
