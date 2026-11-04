@@ -2485,10 +2485,11 @@ impl<S: EngineSink> AppCore<S> {
         self.apply_batch(commands)
     }
 
-    /// Mixer > Bypass All Inserts: the insert effects of the selected strips, in one undo step:
-    /// when every effect that can be bypassed already is, they switch back in, otherwise all are
-    /// bypassed. Each effect keeps its delay compensation. False, with a message, when nothing
-    /// is selected or the strips have nothing to bypass.
+    /// Mixer > Bypass All Inserts: the insert effects of the selected strips and their dynamics
+    /// and EQ sections that are in use, in one undo step: when every one that can be bypassed
+    /// already is, they switch back in, otherwise all are bypassed. Each effect keeps its delay
+    /// compensation, and so does a compressor with look-ahead. False, with a message, when
+    /// nothing is selected or the strips have nothing to bypass.
     pub fn bypass_all_inserts(&mut self, pane: Pane) -> bool {
         let strips = self.strips_for_vca(pane);
         if strips.is_empty() {
@@ -2501,7 +2502,9 @@ impl<S: EngineSink> AppCore<S> {
             .filter_map(|s| atomik_model::inserts_bypassed(doc, &self.registry, s))
             .collect();
         if states.is_empty() {
-            self.reject("The selected strips have no insert effects to bypass".into());
+            self.reject(
+                "The selected strips have no insert effects, dynamics or EQ to bypass".into(),
+            );
             return false;
         }
         let bypass = !states.iter().all(|on| *on);

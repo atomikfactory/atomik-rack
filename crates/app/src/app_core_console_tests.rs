@@ -851,6 +851,60 @@ fn bypass_all_inserts_needs_a_strip_with_inserts() {
     assert_eq!(bypass_of(&c, "fx1"), 1.0);
 }
 
+#[test]
+fn bypass_all_inserts_also_covers_the_dynamics_and_the_eq_of_the_strip() {
+    let (mut c, ka) = with_two_inserts();
+    let on = |c: &AppCore<RecordingSink>, p: &str| {
+        c.doc()
+            .device(&ka)
+            .and_then(|d| d.params.get(p).copied())
+            .unwrap_or(0.0)
+    };
+    for p in ["comp.on", "eq.on"] {
+        c.apply_command(Command::SetParam {
+            key: ka.clone(),
+            param: p.into(),
+            value: 1.0,
+            merge: None,
+        })
+        .unwrap();
+    }
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.bypass_all_inserts(Pane::Rack));
+    assert_eq!((bypass_of(&c, "fx1"), bypass_of(&c, "fx2")), (1.0, 1.0));
+    assert_eq!((on(&c, "dyn.bypass"), on(&c, "eq.bypass")), (1.0, 1.0));
+    assert_eq!(on(&c, "comp.on"), 1.0, "the section keeps its own switch");
+    assert!(c.undo());
+    assert_eq!(
+        (
+            on(&c, "dyn.bypass"),
+            on(&c, "eq.bypass"),
+            bypass_of(&c, "fx1")
+        ),
+        (0.0, 0.0, 0.0),
+        "one undo step for the effects and the sections"
+    );
+    // A strip with sections in use and no insert effects can be bypassed too.
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    assert!(!c.strip_menu(Pane::Rack).can_bypass);
+    let kb = channel_of(&c, "b");
+    c.apply_command(Command::SetParam {
+        key: kb.clone(),
+        param: "gate.on".into(),
+        value: 1.0,
+        merge: None,
+    })
+    .unwrap();
+    assert!(c.strip_menu(Pane::Rack).can_bypass);
+    assert!(c.bypass_all_inserts(Pane::Rack));
+    assert_eq!(
+        c.doc()
+            .device(&kb)
+            .and_then(|d| d.params.get("dyn.bypass").copied()),
+        Some(1.0)
+    );
+}
+
 // ------------------------------------------------------------------ channel settings
 
 fn fader_of(c: &AppCore<RecordingSink>, strip: &DeviceKey) -> Option<f32> {
