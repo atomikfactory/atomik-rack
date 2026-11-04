@@ -264,6 +264,10 @@ fn unrolled(
             .map(|(kind, points)| ControllerLane::new(kind, points))
             .collect(),
     );
+    let mut midi = crate::MidiData::default();
+    for &(from, to, cs) in &pieces {
+        midi.append(c.midi.window(cs, cs + (to - from), from - c.start));
+    }
     let param_lanes = c
         .param_lanes
         .iter()
@@ -287,6 +291,7 @@ fn unrolled(
         content,
         controllers,
         param_lanes,
+        midi: std::sync::Arc::new(midi),
         ..(*c).clone()
     };
     check_geometry(clip.start, clip.length, 0, None).map_err(range)?;

@@ -58,6 +58,7 @@ fn note_clip(start: i64, notes: &[(i64, u8)]) -> Clip {
         muted: false,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,
@@ -2351,6 +2352,7 @@ fn a_pattern_lane_converts_to_notes_that_follow_its_switches() {
                 grid: None,
                 scale: None,
                 param_lanes: Vec::new(),
+                midi: Default::default(),
                 controllers: Vec::new(),
                 content: ClipContent::Automation(vec![AutomationPoint {
                     tick: 0,
@@ -2637,7 +2639,12 @@ fn a_live_groove_is_in_the_exported_midi_notes() {
         }),
     );
     let doc = c.doc();
-    let bytes = crate::midi_file::track_file(&doc.song, &doc.song.tracks[0], "a");
+    let bytes = crate::midi_file::track_file(
+        &doc.song,
+        &doc.song.tracks[0],
+        "a",
+        crate::midi_file::MidiResolution::Native,
+    );
     let file = atomik_midi_io::smf::read(&bytes).expect("a valid file");
     let on = file
         .tracks

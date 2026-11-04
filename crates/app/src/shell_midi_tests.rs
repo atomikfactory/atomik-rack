@@ -279,6 +279,7 @@ fn shell_with_group(s: &mut Shell<NullBackend>) {
         muted: false,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,
@@ -336,4 +337,51 @@ fn import_file_as_take_asks_for_the_right_dialog_and_the_file_becomes_a_take() {
         2,
         "File > Import MIDI is not a take import"
     );
+}
+
+#[test]
+fn the_export_resolution_is_a_checked_submenu_that_changes_the_files_written() {
+    use crate::midi_file::MidiResolution;
+    let mut s = shell();
+    let submenu = |s: &Shell<NullBackend>| {
+        s.menu_model()
+            .into_iter()
+            .flat_map(|m| m.entries)
+            .find_map(|e| match e {
+                MenuEntry::Submenu(sub) if sub.label == "MIDI Export Resolution" => Some(sub),
+                _ => None,
+            })
+            .expect("File > MIDI Export Resolution")
+    };
+    let checked = |s: &Shell<NullBackend>| -> Vec<bool> {
+        submenu(s)
+            .entries
+            .iter()
+            .map(|e| matches!(e, MenuEntry::Item(i) if i.checked == Some(true)))
+            .collect()
+    };
+    assert_eq!(checked(&s), [true, false, false], "native by default");
+    assert_eq!(s.core().midi_resolution(), MidiResolution::Native);
+    let path = midi_file("resolution");
+    s.import_midi(&path, true);
+    let division = |out: &Path| {
+        let bytes = std::fs::read(out).unwrap();
+        u16::from_be_bytes([bytes[12], bytes[13]])
+    };
+    s.execute(AppCommand::SetMidiResolution(MidiResolution::Ppq480));
+    assert_eq!(checked(&s), [false, false, true]);
+    assert_eq!(s.workflow().midi_resolution, MidiResolution::Ppq480);
+    let out = path.with_file_name("coarse.mid");
+    s.export_midi_to(MidiExport::Song, &out);
+    assert_eq!(division(&out), 480);
+    s.execute(AppCommand::SetMidiResolution(MidiResolution::Native));
+    s.export_midi_to(MidiExport::Song, &out);
+    assert_eq!(division(&out), 15_360);
+    // The command round-trips through its id and argument.
+    for r in MidiResolution::ALL {
+        let c = AppCommand::SetMidiResolution(r);
+        let (id, arg) = c.command_id().unwrap();
+        assert_eq!(AppCommand::from_command(id, arg), Some(c));
+    }
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

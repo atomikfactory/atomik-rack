@@ -2062,6 +2062,12 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
     check_geometry(start, end - start, 0, None).map_err(ModelError::OutOfRange)?;
     let controllers = joined_controllers(&clips, start);
     let param_lanes = joined_param_lanes(&clips, start);
+    let mut midi = crate::MidiData::default();
+    for (_, _, c) in &clips {
+        for (from, to, cs) in content_pieces(c) {
+            midi.append(c.midi.window(cs, cs + (to - from), from - start));
+        }
+    }
     let first = clips[0].2;
     let joined = Clip {
         id: first.id,
@@ -2076,6 +2082,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         scale: first.scale,
         controllers,
         param_lanes,
+        midi: std::sync::Arc::new(midi),
         content,
     };
     let mut edits: Vec<Edit> = clips[1..]

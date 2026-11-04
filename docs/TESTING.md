@@ -680,7 +680,8 @@ by name, a folder search).
 ## MIDI files
 
 Each layer has its tests. `crates/midi-io/src/smf_tests.rs` reads hand-made files (running status,
-velocity 0, every channel message, meta events, SysEx and unknown meta skipped, RIFF-wrapped files,
+velocity 0, every channel message, meta events, whole SysEx messages read and packets or escapes
+skipped, unknown meta skipped, RIFF-wrapped files,
 truncated chunks), refuses the malformed ones with the right error (type 2, SMPTE, no header, no
 track, a data byte with no status, a five-byte delta) and runs property tests that feed random
 bytes, random track bodies and mutated or truncated valid files to the reader (it must never panic)
@@ -690,7 +691,13 @@ length that is not a bar) exported and imported back equal, loops and muted note
 overlapping notes of one key, a ramp as a staircase, a linear controller sampled, the type 0 split
 by channel with a different division, the note repairs (retrigger, zero length, hanging note, stray
 note-off), controller clean-up, tempo, meter and marker mapping, files with no notes, SMPTE and
-clamped huge ticks. `crates/model/tests/midi_import.rs` covers `ImportMidi` (one undo step, unarmed
+clamped huge ticks, and since the follow-ups the export resolution (the division written, ticks
+rounded, a note shorter than a file tick kept or a crowded one dropped, the conductor track scaled, a
+round trip of grid-aligned music at 960 and 480), range markers written as a start and an end marker,
+and program changes, bank selects (CC 0 and CC 32 lanes) and SysEx surviving a clip and a song round
+trip, with the last program of a tick winning and the limits of a clip. `crates/model/tests/midi_data.rs`
+covers the clip data (sorted on add, refusals, the optional project fields, flattening through offset,
+loop and hiding, join and loop conversion). `crates/model/tests/midi_import.rs` covers `ImportMidi` (one undo step, unarmed
 tracks and names, tempo, meter and markers, the song end, every rejection leaving the document
 alone). `crates/app/src/app_core_midi_tests.rs` and `shell_midi_tests.rs` run the commands on a
 headless core and `Shell`: what an export picks, a song written to a file and imported into a new
@@ -711,6 +718,10 @@ Hand checks, not automated (they need another program or a real window):
   responsive and that undo removes it in one step.
 - Try File > Import MIDI with a note track selected and with nothing selected, and the three Export
   MIDI entries with and without a selection, in the in-window menu and, on macOS, the native one.
+- Export a song at 960 and at 480 (File > MIDI Export Resolution) and open the files in a hardware
+  sequencer or a notation program that dislikes 15 360: the division, tempo and note positions must
+  match. Import a file with program changes and SysEx from another program and export it again: both
+  must be in the new file.
 
 ## Player stacks
 
@@ -1528,8 +1539,14 @@ host block size. `crates/devices/src/poly_synth.rs` checks the bend range and th
 frequency. `crates/app/src/record_tests.rs` and `app_core_song_tests.rs` record bends and CCs
 through a scripted transport (laps, bursts, only-controller takes, the engine's song input).
 `crates/ui/tests/piano_roll_controllers.rs` drives the area with the pointer through a real
-`Document` (chips, draw, drag, delete, curve, cancel, snap, painted text) and `seq_snapshot.rs`
-keeps a golden of it. `crates/mcp/tests/stateless.rs` checks the inspection.
+`Document` (chips, draw, drag, delete, curve, cancel, snap, painted text, Shift-click and rubber-band
+selection, a group drag as one undo step, Select All, Delete and Escape on the points, the THIN chip and
+the thin and toggle commands) and `seq_snapshot.rs` keeps a golden of it. The pure edits are in
+`crates/model/src/controller_edit.rs` (capture, paste with range mapping and clipping, group move,
+thinning of ramps and held values), the clipboard in `crates/app/src/app_core_clipboard_tests.rs`
+(copy, cut and paste of points, the playhead advance, the paste into another lane kind, points
+past the clip) and the sampler's wheel in `crates/devices/src/sampler/tests.rs` (bit-identical at rest,
+vibrato depth, cutoff) and the MIDI chart. `crates/mcp/tests/stateless.rs` checks the inspection.
 
 Automation recording has a test at each layer. `crates/model/tests/automation_rec.rs` covers the
 write modes, the pure `PassRecorder` and `thin_points` (a ramp, a trapezoid, a sine within the

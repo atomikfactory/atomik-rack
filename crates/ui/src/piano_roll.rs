@@ -34,10 +34,11 @@ mod inspector;
 pub use inspector::{NOTE_INSPECTOR_HEIGHT, NoteField};
 
 use atomik_device_sdk::Registry;
+use atomik_model::controller_edit;
 use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, ControllerKind, ControllerLane, Curve, DeviceKey, Note,
-    RackDoc, SongCommand, WorkflowCommand,
+    RackDoc, SongCommand, ThinLevel, WorkflowCommand,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{Affine, Point, Rect, RoundedRect};
@@ -282,9 +283,18 @@ enum Drag {
         current: Vec<ControllerLane>,
         kind: ControllerKind,
         grabbed: Option<usize>,
+        /// The selected points at the press (indices into `original`): a drag of one of them
+        /// moves them all.
+        group: Vec<usize>,
         start: Point,
         merge: u64,
         moved: bool,
+    },
+    /// A rubber band in the controller lane: the points inside join `base`.
+    CtlBand {
+        start: Point,
+        pos: Point,
+        base: BTreeSet<usize>,
     },
     /// Dragging the playhead: every new snapped tick is located.
     Playhead {
@@ -359,7 +369,13 @@ pub struct PianoRollView {
     hover: Hit,
     /// The controller area: its state and the point selected in the lane being edited.
     ctl: LaneEditor,
-    ctl_sel: Option<usize>,
+    /// The selected points of the lane being edited (indices into its points).
+    ctl_sel: BTreeSet<usize>,
+    /// The controller points own Select All, Delete, Copy and Cut: set by a press in the lane,
+    /// cleared by a press anywhere else.
+    ctl_focus: bool,
+    /// How hard the THIN chip and `editor.thin_controllers` thin (a fraction of the range).
+    ctl_thinning: f32,
     next_merge: u64,
     /// Counts the uses of the random note tools: each run is its own take.
     tool_seed: u32,
@@ -446,7 +462,9 @@ impl PianoRollView {
             drag: Drag::None,
             hover: Hit::None,
             ctl: LaneEditor::default(),
-            ctl_sel: None,
+            ctl_sel: BTreeSet::new(),
+            ctl_focus: false,
+            ctl_thinning: ThinLevel::Normal.fraction(),
             next_merge: MERGE_BASE,
             tool_seed: 0,
             key_labels: None,
@@ -465,6 +483,8 @@ impl PianoRollView {
     pub fn open(&mut self, id: ClipId) {
         if self.clip_id != Some(id) {
             self.selection.clear();
+            self.ctl_sel.clear();
+            self.ctl_focus = false;
             self.latent = None;
         }
         self.clip_id = Some(id);
@@ -484,6 +504,8 @@ impl PianoRollView {
         self.device = None;
         self.drag = Drag::None;
         self.selection.clear();
+        self.ctl_sel.clear();
+        self.ctl_focus = false;
         self.latent = None;
         self.repaint = true;
     }
@@ -584,7 +606,7 @@ impl PianoRollView {
             Drag::Move { .. } => return CursorHint::Move,
             Drag::Playhead { .. } => return CursorHint::ResizeHorizontal,
             Drag::Draw { .. } => return CursorHint::Pen,
-            Drag::Band { .. } => return CursorHint::Crosshair,
+            Drag::Band { .. } | Drag::CtlBand { .. } => return CursorHint::Crosshair,
             Drag::None => {}
             _ => return CursorHint::Default,
         }
@@ -774,7 +796,7 @@ impl PianoRollView {
     /// Chooses the controller to edit (the matching stepper follows the number).
     pub fn set_controller_kind(&mut self, kind: ControllerKind) {
         self.ctl.select(kind);
-        self.ctl_sel = None;
+        self.ctl_sel.clear();
         self.repaint = true;
     }
 
@@ -783,9 +805,56 @@ impl PianoRollView {
         self.ctl.curve
     }
 
-    /// The selected point of the controller lane being edited.
+    /// The selected point of the controller lane being edited, when exactly one is selected.
     pub fn controller_selection(&self) -> Option<usize> {
-        self.ctl_sel
+        if self.ctl_sel.len() == 1 {
+            self.ctl_sel.first().copied()
+        } else {
+            None
+        }
+    }
+
+    /// The selected points of the controller lane being edited (indices into its points, in
+    /// order).
+    pub fn selected_controller_points(&self) -> Vec<usize> {
+        self.ctl_sel.iter().copied().collect()
+    }
+
+    /// True while the controller points are what Select All, Delete, Copy and Cut act on: the
+    /// area is shown, a press in its lane made them the focus and some point is selected.
+    pub fn controller_focus(&self) -> bool {
+        self.ctl.open && self.ctl_focus && !self.ctl_sel.is_empty()
+    }
+
+    /// Selects `points` (indices into the lane shown) and makes the controller points the focus
+    /// of the clipboard keys (the app does this for what a paste laid in). Indices the lane does
+    /// not have are dropped at the next sync with a changed clip.
+    pub fn set_controller_selection(&mut self, points: &[usize]) {
+        self.ctl_sel = points.iter().copied().collect();
+        self.ctl_focus = !self.ctl_sel.is_empty();
+        self.repaint = true;
+    }
+
+    /// Sets how hard the THIN chip thins: a fraction of the range, as the automation thinning
+    /// preference.
+    pub fn set_controller_thinning(&mut self, fraction: f32) {
+        if fraction.is_finite() {
+            self.ctl_thinning = fraction.clamp(0.0, 0.25);
+        }
+    }
+
+    /// Forgets selected points that the lane shown no longer has.
+    fn prune_controller_selection(&mut self) {
+        let kind = self.ctl.kind;
+        let n = self
+            .clip
+            .as_ref()
+            .and_then(|c| cl::lane_of(&c.controllers, kind))
+            .map_or(0, |l| l.points.len());
+        self.ctl_sel.retain(|i| *i < n);
+        if self.ctl_sel.is_empty() {
+            self.ctl_focus = false;
+        }
     }
 
     /// Centre of a chip of the controller area's header row (tests click it).
@@ -1049,6 +1118,7 @@ impl PianoRollView {
             self.device = device;
             self.meter = meter;
             self.bars = Bars::single(meter);
+            self.prune_controller_selection();
             self.resolve_selection(before, touched);
             if let Some(s) = self.scale() {
                 self.root_pref = s.root;
@@ -1422,6 +1492,9 @@ impl PianoRollView {
                     Chip::Cc => "Show a CC lane: the arrows step the controller number",
                     Chip::Poly => "Show a poly aftertouch lane: the arrows step the key",
                     Chip::Curve => "Curve of new points: click to switch ramp and step",
+                    Chip::Thin => {
+                        "Thin the selected points, or the whole lane: drops points the line through                          their neighbours reproduces"
+                    }
                 };
                 Some(Help::new(rect, text))
             }
@@ -1665,6 +1738,11 @@ impl PianoRollView {
             Hit::Playhead if !primary || modifiers.shift || modifiers.command() => Hit::Grid,
             h => h,
         };
+        // A press outside the controller area hands the clipboard keys back to the notes.
+        if !matches!(hit, Hit::CtlBody | Hit::CtlChip(..)) {
+            self.ctl_sel.clear();
+            self.ctl_focus = false;
+        }
         match hit {
             Hit::Top(Some(TopItem::Tool(t))) if primary => self.set_tool(t),
             Hit::Top(Some(TopItem::Snap)) if primary => {
@@ -1692,9 +1770,14 @@ impl PianoRollView {
             Hit::Top(Some(TopItem::Controllers)) if primary => {
                 self.set_controllers_open(!self.ctl.open);
             }
+            Hit::CtlChip(Chip::Thin, _) if primary => {
+                if let Some(action) = self.thin_controllers(self.ctl_thinning) {
+                    out.extend(action);
+                }
+            }
             Hit::CtlChip(chip, part) if primary => {
                 self.ctl.press(chip, part);
-                self.ctl_sel = None;
+                self.ctl_sel.clear();
             }
             Hit::CtlBody => self.ctl_down(pos, button, modifiers, tool, out),
             Hit::Top(Some(TopItem::ScaleDetect)) if primary => self.detect_scale(out),
@@ -1996,6 +2079,14 @@ impl PianoRollView {
         )))
     }
 
+    /// The points of the lane being edited.
+    fn ctl_points(&self) -> &[atomik_model::AutomationPoint] {
+        self.clip
+            .as_ref()
+            .and_then(|c| cl::lane_of(&c.controllers, self.ctl.kind))
+            .map_or(&[], |l| l.points.as_slice())
+    }
+
     /// A press in the lane body (see the module docs of `controller_lane`).
     fn ctl_down(
         &mut self,
@@ -2010,6 +2101,7 @@ impl PianoRollView {
         let Some(lanes) = self.clip.as_ref().map(|c| c.controllers.clone()) else {
             return;
         };
+        self.ctl_focus = true;
         let (top, h) = self.ctl_range();
         let axis = self.axis;
         let hit = cl::lane_of(&lanes, kind).and_then(|l| {
@@ -2027,24 +2119,43 @@ impl PianoRollView {
         });
         match hit {
             Some(i) if !primary || tool == Tool::Eraser => {
-                self.ctl_sel = None;
+                self.ctl_sel.clear();
                 out.extend(self.ctl_command(cl::remove_point(&lanes, kind, i), None));
             }
             Some(i) if modifiers.command() => {
-                self.ctl_sel = Some(i);
+                self.ctl_sel = [i].into_iter().collect();
                 out.extend(self.ctl_command(cl::toggle_curve(&lanes, kind, i), None));
             }
+            // Shift-click adds the point to the selection, or takes it out again.
+            Some(i) if modifiers.shift => {
+                if !self.ctl_sel.remove(&i) {
+                    self.ctl_sel.insert(i);
+                }
+            }
             Some(i) => {
-                self.ctl_sel = Some(i);
+                // A press on a selected point keeps the selection (the group is dragged);
+                // on another point it selects only that one.
+                if !self.ctl_sel.contains(&i) {
+                    self.ctl_sel = [i].into_iter().collect();
+                }
                 let merge = self.merge_id();
                 self.drag = Drag::Ctl {
                     current: lanes.clone(),
                     original: lanes,
                     kind,
                     grabbed: Some(i),
+                    group: self.ctl_sel.iter().copied().collect(),
                     start: pos,
                     merge,
                     moved: false,
+                };
+            }
+            // Shift on empty space drags a rubber band that adds to the selection.
+            None if primary && modifiers.shift && matches!(tool, Tool::Select | Tool::Pencil) => {
+                self.drag = Drag::CtlBand {
+                    start: pos,
+                    pos,
+                    base: self.ctl_sel.clone(),
                 };
             }
             None if primary && matches!(tool, Tool::Select | Tool::Pencil) => {
@@ -2053,12 +2164,13 @@ impl PianoRollView {
                 let (next, idx) = cl::set_point(&lanes, kind, tick, value, self.ctl.new_curve());
                 let merge = self.merge_id();
                 out.extend(self.ctl_command(next.clone(), Some(merge)));
-                self.ctl_sel = Some(idx);
+                self.ctl_sel = [idx].into_iter().collect();
                 self.drag = Drag::Ctl {
                     original: lanes,
                     current: next,
                     kind,
                     grabbed: None,
+                    group: Vec::new(),
                     start: pos,
                     merge,
                     moved: true,
@@ -2068,8 +2180,9 @@ impl PianoRollView {
         }
     }
 
-    /// A pointer move during a controller drag: the grabbed point follows (time on the grid,
-    /// value at the MIDI resolution) or the stroke adds a point per grid step.
+    /// A pointer move during a controller drag: the grabbed point (or the whole selection it
+    /// belongs to) follows (time on the grid, value at the MIDI resolution) or the stroke adds a
+    /// point per grid step.
     fn ctl_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         let tick = self.ctl_tick(pos.x, modifiers);
         let (top, h) = self.ctl_range();
@@ -2080,6 +2193,7 @@ impl PianoRollView {
             current,
             kind,
             grabbed,
+            group,
             start,
             merge,
             moved,
@@ -2088,15 +2202,31 @@ impl PianoRollView {
             return;
         };
         let value = cl::value_at_y(*kind, pos.y, top, h);
-        let (next, idx) = match grabbed {
+        let (next, picked) = match grabbed {
             Some(g) => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
                 if !*moved {
                     return;
                 }
-                cl::move_point(original, *kind, *g, tick, value)
+                let anchor = cl::lane_of(original, *kind).and_then(|l| l.points.get(*g).copied());
+                match anchor {
+                    Some(a) if group.len() > 1 => controller_edit::move_points(
+                        original,
+                        *kind,
+                        group,
+                        tick - a.tick,
+                        value - a.value,
+                    ),
+                    _ => {
+                        let (lanes, idx) = cl::move_point(original, *kind, *g, tick, value);
+                        (lanes, vec![idx])
+                    }
+                }
             }
-            None => cl::set_point(current, *kind, tick, value, curve),
+            None => {
+                let (lanes, idx) = cl::set_point(current, *kind, tick, value, curve);
+                (lanes, vec![idx])
+            }
         };
         let mut sel = None;
         if next != *current {
@@ -2110,12 +2240,67 @@ impl PianoRollView {
                 )));
             }
             *current = next;
-            sel = Some(idx);
+            sel = Some(picked);
         }
-        if sel.is_some() {
-            self.ctl_sel = sel;
+        if let Some(sel) = sel {
+            self.ctl_sel = sel.into_iter().collect();
         }
         self.repaint = true;
+    }
+
+    /// A pointer move during the lane's rubber band: the selection is the base plus the points
+    /// inside the rectangle.
+    fn ctl_band_move(&mut self, pos: Point) {
+        let (top, h) = self.ctl_range();
+        let kind = self.ctl.kind;
+        let axis = self.axis;
+        let Drag::CtlBand {
+            start,
+            pos: end,
+            base,
+        } = &mut self.drag
+        else {
+            return;
+        };
+        *end = pos;
+        let rect = Rect::from_points(*start, pos);
+        let base = base.clone();
+        let inside = cl::points_in_rect(
+            self.ctl_points(),
+            |p| {
+                (
+                    axis.tick_to_x(p.tick),
+                    cl::y_of_value(kind, p.value, top, h),
+                )
+            },
+            rect,
+        );
+        self.ctl_sel = base.into_iter().chain(inside).collect();
+        self.repaint = true;
+    }
+
+    /// Thins the selected points of the lane shown (the whole lane when none is selected) with
+    /// `fraction` of the range; `None` when the lane has nothing to thin.
+    fn thin_controllers(&mut self, fraction: f32) -> Option<Vec<UiAction>> {
+        let kind = self.ctl.kind;
+        let lanes = self.clip.as_ref().map(|c| c.controllers.clone())?;
+        let count = cl::lane_of(&lanes, kind)?.points.len();
+        let whole = self.ctl_sel.is_empty();
+        let indices: Vec<usize> = if whole {
+            (0..count).collect()
+        } else {
+            self.ctl_sel.iter().copied().collect()
+        };
+        let (next, kept) = controller_edit::thin_selection(&lanes, kind, &indices, fraction);
+        if next == lanes {
+            return Some(Vec::new());
+        }
+        self.ctl_sel = if whole {
+            BTreeSet::new()
+        } else {
+            kept.into_iter().collect()
+        };
+        Some(self.ctl_command(next, None).into_iter().collect())
     }
 
     fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
@@ -2129,6 +2314,10 @@ impl PianoRollView {
         }
         if matches!(self.drag, Drag::Ctl { .. }) {
             self.ctl_move(pos, modifiers, out);
+            return;
+        }
+        if matches!(self.drag, Drag::CtlBand { .. }) {
+            self.ctl_band_move(pos);
             return;
         }
         if let Drag::Snap { steps } = &mut self.drag {
@@ -2186,7 +2375,11 @@ impl PianoRollView {
         self.repaint = true;
         let mut new_sel: Option<BTreeSet<usize>> = None;
         match &mut self.drag {
-            Drag::None | Drag::Ctl { .. } | Drag::Playhead { .. } | Drag::Snap { .. } => {}
+            Drag::None
+            | Drag::Ctl { .. }
+            | Drag::CtlBand { .. }
+            | Drag::Playhead { .. }
+            | Drag::Snap { .. } => {}
             Drag::Pan { last } => {
                 let d = *last - pos;
                 *last = pos;
@@ -2404,7 +2597,11 @@ impl PianoRollView {
     fn pointer_up(&mut self, out: &mut Vec<UiAction>) {
         self.repaint = true;
         match std::mem::replace(&mut self.drag, Drag::None) {
-            Drag::None | Drag::Pan { .. } | Drag::Band { .. } | Drag::Playhead { .. } => {}
+            Drag::None
+            | Drag::Pan { .. }
+            | Drag::Band { .. }
+            | Drag::CtlBand { .. }
+            | Drag::Playhead { .. } => {}
             Drag::Snap { steps } => {
                 if !steps.moved() {
                     self.snap = self.snap.cycle(true);
@@ -2467,6 +2664,9 @@ impl PianoRollView {
         if matches!(key, Key::Escape) {
             if !matches!(self.drag, Drag::None) {
                 self.cancel_drag(out);
+            } else if self.controller_focus() {
+                self.ctl_sel.clear();
+                self.ctl_focus = false;
             } else if !self.selection.is_empty() {
                 self.selection.clear();
             } else {
@@ -2507,8 +2707,45 @@ impl PianoRollView {
         let step = self.step(Modifiers::NONE).unwrap_or(OFF_LENGTH);
         match id {
             "edit.select_all" => {
-                self.selection.set(0..self.notes().len());
+                if self.ctl.open && self.ctl_focus {
+                    self.ctl_sel = (0..self.ctl_points().len()).collect();
+                } else {
+                    self.selection.set(0..self.notes().len());
+                }
                 CommandOutcome::Handled(Vec::new())
+            }
+            "edit.delete" if self.controller_focus() => {
+                let kind = self.ctl.kind;
+                let lanes = self
+                    .clip
+                    .as_ref()
+                    .map(|c| c.controllers.clone())
+                    .unwrap_or_default();
+                let indices: Vec<usize> = self.ctl_sel.iter().copied().collect();
+                self.ctl_sel.clear();
+                self.ctl_focus = false;
+                let next = controller_edit::remove_points(&lanes, kind, &indices);
+                CommandOutcome::Handled(self.ctl_command(next, None).into_iter().collect())
+            }
+            "editor.toggle_controllers" => {
+                self.set_controllers_open(!self.ctl.open);
+                CommandOutcome::Handled(Vec::new())
+            }
+            "editor.thin_controllers" => {
+                let fraction = match arg {
+                    None => self.ctl_thinning,
+                    Some(a) => match ThinLevel::from_id(a) {
+                        Some(level) => level.fraction(),
+                        None => return CommandOutcome::Declined,
+                    },
+                };
+                if !self.ctl.open || self.ctl_points().is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                match self.thin_controllers(fraction) {
+                    Some(out) => CommandOutcome::Handled(out),
+                    None => CommandOutcome::Declined,
+                }
             }
             "edit.duplicate" => {
                 let (Some(clip), false) = (self.clip_id, self.selection.is_empty()) else {
@@ -3584,7 +3821,7 @@ impl PianoRollView {
                 Chip::Poly => lanes
                     .iter()
                     .any(|l| matches!(l.kind, ControllerKind::PolyPressure(_))),
-                Chip::Curve => false,
+                Chip::Curve | Chip::Thin => false,
             };
             sp::lcd(
                 c,
@@ -3712,7 +3949,7 @@ impl PianoRollView {
             if x < body.x0 - 6.0 || x > body.x1 + 6.0 {
                 continue;
             }
-            let selected = self.ctl_sel == Some(i);
+            let selected = self.ctl_sel.contains(&i);
             let col = if selected { st.selection } else { self.accent };
             let r = Rect::new(x - 3.0, y - 3.0, x + 3.0, y + 3.0);
             if p.curve == Curve::Step {
@@ -3723,7 +3960,7 @@ impl PianoRollView {
                 c.fill_with(rr, col);
                 c.stroke_with(rr, 1.0, t.bevel_dark);
             }
-            if selected {
+            if selected && self.ctl_sel.len() == 1 {
                 sp::label(
                     c,
                     &cl::value_text(kind, p.value),
@@ -3734,6 +3971,11 @@ impl PianoRollView {
                     Align::Center,
                 );
             }
+        }
+        if let Drag::CtlBand { start, pos, .. } = &self.drag {
+            let r = Rect::from_points(*start, *pos);
+            c.fill_with(r, st.selection.with_alpha(0.12));
+            c.stroke_with(r, 1.0, st.selection.with_alpha(0.8));
         }
         if let Some(tick) = self
             .clip

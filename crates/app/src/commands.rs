@@ -5,6 +5,7 @@
 //! ([`AppCommand::command_id`]) and the shortcut text of a menu item is derived from the active
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
+use crate::midi_file::MidiResolution;
 use crate::record::InputQuantize;
 use crate::windows::WindowKind;
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
@@ -26,6 +27,9 @@ pub enum AppCommand {
     /// File ▸ Convert Sample Rate: moves the open project to this rate (resamples its audio, one
     /// undo step).
     ConvertRate(u32),
+    /// File ▸ MIDI Export Resolution: the ticks per quarter note of the MIDI files written from
+    /// now on (kept in the preferences).
+    SetMidiResolution(MidiResolution),
     /// Audio ▸ Input Channels: the host inputs the project asks for (0 to 32).
     InputChannels(u16),
     /// Audio ▸ Output Channels: the host outputs the project asks for (1 to 32).
@@ -615,6 +619,7 @@ impl AppCommand {
             AppCommand::New => ("file.new", None),
             AppCommand::NewAtRate(r) => ("file.new_rate", Some(arg_of(RATE_ARGS, *r)?)),
             AppCommand::ConvertRate(r) => ("file.convert_rate", Some(arg_of(RATE_ARGS, *r)?)),
+            AppCommand::SetMidiResolution(r) => ("file.midi_resolution", Some(r.id())),
             AppCommand::InputChannels(n) => (
                 "audio.input_channels",
                 Some(arg_of(INPUT_CHANNEL_ARGS, *n)?),
@@ -896,6 +901,9 @@ impl AppCommand {
             ("file.new", None) => AppCommand::New,
             ("file.new_rate", Some(a)) => AppCommand::NewAtRate(num_arg(RATE_ARGS, a)?),
             ("file.convert_rate", Some(a)) => AppCommand::ConvertRate(num_arg(RATE_ARGS, a)?),
+            ("file.midi_resolution", Some(a)) => {
+                AppCommand::SetMidiResolution(MidiResolution::from_id(a)?)
+            }
             ("audio.input_channels", Some(a)) => {
                 AppCommand::InputChannels(num_arg(INPUT_CHANNEL_ARGS, a)?)
             }
@@ -1531,6 +1539,8 @@ pub struct MenuState {
     pub follow_clock: bool,
     /// The project's sample rate in Hz.
     pub sample_rate: u32,
+    /// The resolution of the MIDI files File > Export MIDI writes.
+    pub midi_resolution: MidiResolution,
     /// The host inputs the project asks for.
     pub input_channels: u16,
     /// The host outputs the project asks for.
@@ -2032,6 +2042,26 @@ pub fn menus_with_songs(
                     AppCommand::ExportMidiSong,
                     state.midi_song,
                 ),
+                MenuEntry::Submenu(Submenu {
+                    label: "MIDI Export Resolution",
+                    entries: vec![
+                        check(
+                            "15360 per quarter (native)",
+                            AppCommand::SetMidiResolution(MidiResolution::Native),
+                            state.midi_resolution == MidiResolution::Native,
+                        ),
+                        check(
+                            "960 per quarter",
+                            AppCommand::SetMidiResolution(MidiResolution::Ppq960),
+                            state.midi_resolution == MidiResolution::Ppq960,
+                        ),
+                        check(
+                            "480 per quarter",
+                            AppCommand::SetMidiResolution(MidiResolution::Ppq480),
+                            state.midi_resolution == MidiResolution::Ppq480,
+                        ),
+                    ],
+                }),
                 enabled(
                     "Export Song as Audio File\u{2026}",
                     AppCommand::ExportSongAudio,
@@ -3081,6 +3111,7 @@ mod tests {
             clock_while_stopped: false,
             follow_clock: false,
             sample_rate: 48_000,
+            midi_resolution: MidiResolution::Native,
             input_channels: 2,
             output_channels: 2,
             quantize: InputQuantize::OFF,
@@ -3348,6 +3379,9 @@ mod tests {
         for rate in [44_100, 48_000, 96_000] {
             v.push(AppCommand::NewAtRate(rate));
             v.push(AppCommand::ConvertRate(rate));
+        }
+        for r in MidiResolution::ALL {
+            v.push(AppCommand::SetMidiResolution(r));
         }
         for n in [0, 1, 2, 4, 8, 16, 32] {
             v.push(AppCommand::InputChannels(n));
@@ -3797,6 +3831,10 @@ mod tests {
                 "Export MIDI Clip\u{2026}",
                 "Export MIDI Track\u{2026}",
                 "Export MIDI Song\u{2026}",
+                // The MIDI Export Resolution submenu.
+                "15360 per quarter (native)",
+                "960 per quarter",
+                "480 per quarter",
                 "Export Song as Audio File\u{2026}",
                 "Export Loop as Audio File\u{2026}",
                 "Export Stems as Audio Files\u{2026}",
@@ -4310,6 +4348,7 @@ mod tests {
             clock_while_stopped: false,
             follow_clock: false,
             sample_rate: 48_000,
+            midi_resolution: MidiResolution::Native,
             input_channels: 2,
             output_channels: 2,
             ..state()
@@ -4358,6 +4397,7 @@ mod tests {
                 clock_while_stopped: false,
                 follow_clock: false,
                 sample_rate: 48_000,
+                midi_resolution: MidiResolution::Native,
                 input_channels: 2,
                 output_channels: 2,
                 quantize: InputQuantize::EIGHTH,

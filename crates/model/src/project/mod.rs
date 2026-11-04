@@ -392,7 +392,10 @@
 //! or a built-in one (the file must hold it) and `"groove_strength"` is the percent of it applied
 //! (`0..=99`; 100, the usual value, is not written). Both are written only when the track has a groove,
 //! so a project without one differs from its version 42 file in the version line alone. A reader of 42
-//! would play the track's notes ungrooved, so the fields are not ignorable. Saving always writes
+//! would play the track's notes ungrooved, so the fields are not ignorable. Version 43 also adds, under
+//! the same version, a note clip's `"programs"` (`[tick, program]`) and `"sysex"` (`[tick, "7E 7F 09 01"]`,
+//! the hex bytes between `F0` and `F7`), written after the parameter lanes only when the clip has any (see
+//! [`crate::midi_data`]); they are ignorable, since nothing plays them. Saving always writes
 //! version 43.
 
 use crate::console::{

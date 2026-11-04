@@ -252,6 +252,124 @@ fn pressure_reaches_the_modulation_source() {
     assert_eq!(s.ctl.pressure(60), 0.0);
 }
 
+fn wheel(offset: u16, value: f32) -> NoteEvent {
+    NoteEvent {
+        offset,
+        kind: NoteKind::Cc {
+            controller: 1,
+            value,
+        },
+    }
+}
+
+/// Renders a sustained sine and noise note with the given wheel events and returns the left
+/// output (a looping sine gives the vibrato something to bend, noise gives the filter a spectrum).
+fn wheel_render(
+    wheel_events: &[NoteEvent],
+    setup: impl Fn(&mut DeviceHarness),
+    noisy: bool,
+) -> Vec<f32> {
+    let channel = if noisy {
+        noise(48_000, 9)
+    } else {
+        sine(48_000, 220.0, 0.5)
+    };
+    let mut z = zone(0, 48_000);
+    z.loop_mode = LoopMode::Forward;
+    z.loop_end = 48_000;
+    let (mut h, _) = with_map(&map(vec![buffer(vec![channel])], vec![z]));
+    h.set_param("lfo.rate", 6.0);
+    setup(&mut h);
+    h.push_note("notes_in", on(0, 69, 1.0));
+    for e in wheel_events {
+        h.push_note("notes_in", *e);
+    }
+    render(&mut h, seconds(0.4)).0
+}
+
+#[test]
+fn the_wheel_at_rest_changes_nothing_bit_for_bit() {
+    let none = wheel_render(&[], |_| {}, false);
+    let rest = wheel_render(&[wheel(0, 0.0)], |_| {}, false);
+    assert_eq!(bits(&none), bits(&rest));
+    // The routing params do nothing while the wheel is down.
+    let routed = wheel_render(
+        &[],
+        |h| {
+            h.set_param("wheel.to_pitch", 12.0);
+            h.set_param("wheel.to_cutoff", 4.0);
+        },
+        false,
+    );
+    assert_eq!(bits(&none), bits(&routed));
+}
+
+#[test]
+fn the_wheel_deepens_the_lfo_vibrato_by_its_amount() {
+    let flat = wheel_render(&[], |_| {}, false);
+    let up = wheel_render(&[wheel(0, 1.0)], |_| {}, false);
+    assert_ne!(bits(&flat), bits(&up), "a raised wheel bends the pitch");
+    let off = wheel_render(
+        &[wheel(0, 1.0)],
+        |h| h.set_param("wheel.to_pitch", 0.0),
+        false,
+    );
+    assert_eq!(bits(&flat), bits(&off), "routed to nothing");
+    // A shallow vibrato keeps the phase error small, so the deviation grows with the wheel.
+    let shallow = |h: &mut DeviceHarness| {
+        h.set_param("lfo.rate", 2.0);
+        h.set_param("wheel.to_pitch", 0.05);
+    };
+    let base = wheel_render(&[], shallow, false);
+    let deviation = |value: f32| -> f32 {
+        let r = wheel_render(&[wheel(0, value)], shallow, false);
+        base[..6000]
+            .iter()
+            .zip(&r)
+            .map(|(a, b)| (a - b).abs())
+            .sum()
+    };
+    let (quarter, half, full) = (deviation(0.25), deviation(0.5), deviation(1.0));
+    assert!(quarter < half && half < full, "{quarter} < {half} < {full}");
+}
+
+#[test]
+fn the_wheel_opens_the_cutoff_when_the_filter_is_on() {
+    let setup = |h: &mut DeviceHarness| {
+        h.set_param("filter.enabled", 1.0);
+        h.set_param("filter.cutoff", 400.0);
+        h.set_param("filter.resonance", 0.0);
+        h.set_param("filter.env_amount", 0.0);
+        h.set_param("filter.key_track", 0.0);
+        h.set_param("wheel.to_pitch", 0.0);
+    };
+    let closed = wheel_render(&[], setup, true);
+    let open = wheel_render(&[wheel(0, 1.0)], setup, true);
+    let (c, o) = (rms(&closed[6000..]), rms(&open[6000..]));
+    assert!(o > c * 1.3, "one octave up passes more noise: {c} -> {o}");
+    let none = |h: &mut DeviceHarness| {
+        setup(h);
+        h.set_param("wheel.to_cutoff", 0.0);
+    };
+    assert_eq!(
+        bits(&wheel_render(&[wheel(0, 1.0)], none, true)),
+        bits(&closed),
+        "routed to nothing"
+    );
+}
+
+#[test]
+fn a_reset_returns_the_wheel_to_rest() {
+    let mut s = Sampler::new();
+    s.handle(NoteKind::Cc {
+        controller: 1,
+        value: 0.8,
+    });
+    assert_eq!(s.shared.wheel, 0.8);
+    s.reset();
+    assert_eq!(s.shared.wheel, 0.0);
+}
+
 #[test]
 fn descriptor_validates() {
     assert_keys(
@@ -288,6 +406,8 @@ fn descriptor_validates() {
             "master.level_cv_trim",
             "pan_cv_trim",
             "bend.range",
+            "wheel.to_pitch",
+            "wheel.to_cutoff",
         ],
         &[
             "notes_in",

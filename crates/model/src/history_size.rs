@@ -122,6 +122,12 @@ fn clip_bytes(clip: Option<&Clip>) -> usize {
             .iter()
             .map(|l| l.points.len() * size_of::<crate::AutomationPoint>())
             .sum::<usize>()
+        + c.midi.programs.len() * size_of::<crate::ProgramChange>()
+        + c.midi
+            .sysex
+            .iter()
+            .map(|s| size_of::<crate::SysexEvent>() + s.data.len())
+            .sum::<usize>()
         + match &c.content {
             ClipContent::Notes(n) => n.len() * size_of::<crate::Note>(),
             ClipContent::Automation(p) => p.len() * size_of::<crate::AutomationPoint>(),

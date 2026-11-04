@@ -3,9 +3,10 @@
 //! [`read`] turns a file into an [`SmfFile`]: the header (format and pulses per quarter note)
 //! and each `MTrk` chunk as a list of [`SmfEvent`]s at absolute ticks. Only what a sequencer
 //! uses is kept: channel messages (notes, polyphonic and channel pressure, controllers, program
-//! change, pitch bend) and the meta events for tempo, time signature, markers and track names.
-//! Everything else (SysEx, sequencer-specific and unknown meta events, unknown chunks) is
-//! skipped, and a type 2 file or an SMPTE time division is refused with a message.
+//! change, pitch bend), complete SysEx messages and the meta events for tempo, time signature,
+//! markers and track names. Everything else (SysEx split into packets or with a data byte above
+//! 127, sequencer-specific and unknown meta events, unknown chunks) is skipped, and a type 2 file
+//! or an SMPTE time division is refused with a message.
 //!
 //! The reader is lenient where real files are sloppy and strict where a guess would be wrong:
 //! running status carries across meta events and SysEx, a note-on with velocity 0 stays a
@@ -121,6 +122,9 @@ pub enum SmfMessage {
         /// The beat unit as a power of two (2 is a quarter note).
         denominator_power: u8,
     },
+    /// A complete system exclusive message (`F0 ... F7`): the data bytes between the two, each
+    /// 0..=127. A message cut into packets is not kept.
+    SysEx(Vec<u8>),
     /// A marker (meta event 6).
     Marker(String),
     /// A track or sequence name (meta event 3).
@@ -368,8 +372,17 @@ fn read_track(data: &[u8], index: usize, base: usize) -> Result<SmfTrack, SmfErr
                     Ok(None) => break,
                     Err(reason) => return Err(bad(&c, reason)),
                 };
-                if c.take(len).is_none() {
-                    break;
+                let Some(payload) = c.take(len) else { break };
+                // Only a whole message (`F0 data F7`) is kept: a packet or an escape is skipped.
+                if status == 0xF0
+                    && let Some((&0xF7, data)) = payload.split_last()
+                    && !data.is_empty()
+                    && data.iter().all(|b| *b < 0x80)
+                {
+                    track.events.push(SmfEvent {
+                        tick,
+                        message: SmfMessage::SysEx(data.to_vec()),
+                    });
                 }
             }
             0xF1..=0xF6 | 0xF8..=0xFE => {
@@ -568,6 +581,12 @@ fn track_bytes(track: &SmfTrack) -> Vec<u8> {
                 numerator,
                 denominator_power,
             } => write_meta(&mut out, 0x58, &[*numerator, *denominator_power, 24, 8]),
+            SmfMessage::SysEx(data) => {
+                out.push(0xF0);
+                write_vlq(&mut out, u32::try_from(data.len() + 1).unwrap_or(u32::MAX));
+                out.extend(data.iter().map(|b| b & 0x7F));
+                out.push(0xF7);
+            }
             SmfMessage::Marker(text) => write_meta(&mut out, 0x06, text.as_bytes()),
             SmfMessage::TrackName(text) => write_meta(&mut out, 0x03, text.as_bytes()),
             _ => {}

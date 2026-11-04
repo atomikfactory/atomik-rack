@@ -51,6 +51,10 @@
 //!   already has a value there (an earlier point, or a ramp running through it); a point inside
 //!   the piece is emitted at its own tick. Lanes of the same kind in several clips of the lane
 //!   join into one list per kind. Between pieces the value holds.
+//! - **Program changes and SysEx.** [`flatten_midi_data`] windows each clip's `midi` data like a
+//!   controller lane (same pieces, offsets, loops and hiding): the program in force at the start
+//!   of a piece is repeated there, the messages inside the piece keep their place. Only a MIDI
+//!   file export reads it.
 //! - **Audio.** See [`flatten_audio`]: the same audible spans, converted from ticks to
 //!   frames with the tempo map, one [`AudioRegion`] per span.
 
@@ -392,6 +396,34 @@ fn lane_controllers(lane: &Lane) -> BTreeMap<ControllerKind, Vec<(i64, f32, Curv
         }
     }
     by_kind
+}
+
+/// What [`flatten_midi_data`] gathers: program changes `(song tick, program)` with strictly
+/// increasing ticks and SysEx messages `(song tick, data bytes)` sorted by tick.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FlatMidiData {
+    /// Program changes.
+    pub programs: Vec<(i64, u8)>,
+    /// SysEx messages (the bytes between `F0` and `F7`).
+    pub sysex: Vec<(i64, Vec<u8>)>,
+}
+
+/// The program changes and SysEx messages a track's unmuted note lanes carry (rules in the
+/// module docs). The lanes merge by tick, the later lane winning a program change at an equal
+/// tick. Empty when no clip carries any. Track mute and solo are not applied here.
+pub fn flatten_midi_data(track: &Track) -> FlatMidiData {
+    let mut all = crate::midi_data::MidiData::default();
+    for lane in track.note_lanes().filter(|l| !l.muted) {
+        for (clip, s, e, cs) in audible_pieces(lane) {
+            if !clip.midi.is_empty() {
+                all.append(clip.midi.window(cs, cs + (e - s), s));
+            }
+        }
+    }
+    FlatMidiData {
+        programs: all.programs.iter().map(|p| (p.tick, p.program)).collect(),
+        sysex: all.sysex.into_iter().map(|s| (s.tick, s.data)).collect(),
+    }
 }
 
 /// One parameter's flattened clip-lane points: `(device, param, [(song tick, value, curve)])`.

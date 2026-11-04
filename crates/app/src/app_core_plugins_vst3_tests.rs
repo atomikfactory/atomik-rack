@@ -184,6 +184,7 @@ fn a_vst3_effect_and_a_clap_effect_sound_the_same_on_a_console_insert() {
                     muted: false,
                     scale: None,
                     param_lanes: Vec::new(),
+                    midi: Default::default(),
                     controllers: Vec::new(),
                     name: None,
                     color: None,

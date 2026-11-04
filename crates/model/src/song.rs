@@ -12,6 +12,7 @@ use crate::automation_rec::WriteMode;
 use crate::controller::ControllerLane;
 use crate::freeze::Frozen;
 use crate::groove::{Groove, QuantizeParams, builtin_groove};
+use crate::midi_data::MidiData;
 use crate::organise::Organisation;
 use crate::param_lane::ParamLane;
 use crate::takes::TakeGroup;
@@ -412,6 +413,10 @@ pub struct Clip {
     /// [`crate::param_lane`]). Sorted by `(device, param)`, one lane per param. They follow the
     /// clip like its notes and controller lanes; a track lane of the same param overrides them.
     pub param_lanes: Vec<ParamLane>,
+    /// Program changes and SysEx messages a MIDI file import kept, in content ticks: non-empty
+    /// only on a note clip (see [`crate::midi_data`]). Nothing plays them; a MIDI file export
+    /// writes them back. Shared, so a clip without any costs one pointer.
+    pub midi: Arc<MidiData>,
     /// Content.
     pub content: ClipContent,
 }
@@ -1585,9 +1590,9 @@ mod flatten;
 
 pub use crate::automation_view::automation_value_at;
 pub use flatten::{
-    AudioRegion, Crossfade, FlatParam, audible_spans, crossfades, effective_tracks, flatten_audio,
-    flatten_automation, flatten_controllers, flatten_notes, flatten_notes_with,
-    flatten_param_lanes, flatten_track_notes,
+    AudioRegion, Crossfade, FlatMidiData, FlatParam, audible_spans, crossfades, effective_tracks,
+    flatten_audio, flatten_automation, flatten_controllers, flatten_midi_data, flatten_notes,
+    flatten_notes_with, flatten_param_lanes, flatten_track_notes,
 };
 pub(crate) use flatten::{automation_piece, controller_piece};
 

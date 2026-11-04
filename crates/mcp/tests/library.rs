@@ -100,6 +100,7 @@ fn clip(bars: i64, notes: i64) -> String {
         grid: None,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,

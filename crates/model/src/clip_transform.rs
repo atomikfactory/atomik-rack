@@ -333,6 +333,7 @@ fn scaled_clip(doc: &RackDoc, c: &Clip, percent: f64, anchor: i64) -> Result<Cli
                     )
                 })
                 .collect();
+            new.midi = std::sync::Arc::new(c.midi.map_ticks(|t| st(t, percent)));
         }
         ClipContent::Automation(points) => {
             new.content = ClipContent::Automation(scale_points(points, percent));

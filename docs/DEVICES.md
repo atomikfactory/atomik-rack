@@ -2350,7 +2350,7 @@ Source: [crates/devices/src/sampler.rs](../crates/devices/src/sampler.rs), playb
 
 | Key | Kind | Direction | Notes |
 |---|---|---|---|
-| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend, sustain (CC 64), volume (CC 7), expression (CC 11), pressure and RPN 0 (see "MIDI") |
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend, the mod wheel (CC 1), sustain (CC 64), volume (CC 7), expression (CC 11), pressure and RPN 0 (see "MIDI") |
 | `pitch_cv_in` | CV | in | Clamped to −1..+1. +1 raises the pitch by `cv.pitch_amount` semitones. Reads 0 when unconnected. |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves (only with the filter on). |
 | `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (only with the filter on). |
@@ -2394,6 +2394,15 @@ Source: [crates/devices/src/sampler.rs](../crates/devices/src/sampler.rs), playb
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
+| `wheel.to_pitch` | 0 to 12 | 1 | semitones | Linear | no |
+| `wheel.to_cutoff` | 0 to 4 | 1 | octaves | Linear | no |
+
+The **mod wheel** (CC 1, from a keyboard or a controller lane) adds `wheel` × `wheel.to_pitch` semitones of
+LFO vibrato (the LFO's wave and rate; the depth is the wheel's, so the LFO does nothing audible until the wheel
+moves) and `wheel` × `wheel.to_cutoff` octaves to the filter cutoff (with the filter on, a zone's own filter
+included). With the wheel at rest, or never sent, both terms are zero and the sound is bit for bit what it
+was; a stop or a locate returns the wheel to rest. The two params were appended, so a project saved before
+them plays the same until a wheel lane or a keyboard wheel is used on the sampler.
 
 ### Zones (the sample map)
 
@@ -3773,7 +3782,7 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
-| `atomik.sampler` | yes | yes | no | yes | yes | yes | yes |
+| `atomik.sampler` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.audio-track` | no | no | no | no | no | no | no |
 | `atomik.drum-machine` | no | no | no | no | no | no | no |
 | `atomik.loop-slicer` | no | no | no | no | no | no | no |
@@ -3810,7 +3819,8 @@ identically in each:
   frame of its event, so a render does not depend on how the engine cuts the blocks.
 
 The mod wheel (CC 1) and the other controllers keep the per-instrument meaning in each device's
-table. Controllers an instrument does not list are ignored.
+table; in the sampler the wheel deepens the LFO vibrato and opens the filter cutoff (see its
+params). Controllers an instrument does not list are ignored.
 
 ## Third-party plugin devices: `clap.<id>` and `vst3.<id>`
 

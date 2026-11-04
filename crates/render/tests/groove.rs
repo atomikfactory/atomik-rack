@@ -66,6 +66,7 @@ fn synth_doc(notes: Vec<Note>) -> Document {
                 grid: None,
                 scale: None,
                 param_lanes: Vec::new(),
+                midi: Default::default(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

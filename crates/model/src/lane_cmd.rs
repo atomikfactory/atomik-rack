@@ -235,6 +235,7 @@ fn merged_lane(doc: &RackDoc, track: &Track, next: &mut u64) -> Result<Lane, Mod
             grid: None,
             scale: None,
             param_lanes: Vec::new(),
+            midi: Default::default(),
             controllers: lanes,
             content: ClipContent::Notes(content.into()),
         });

@@ -318,6 +318,8 @@ pub struct AppCore<S: EngineSink> {
     join_next: bool,
     /// New tracks take the next colour of the palette (Interface > Colour new tracks).
     auto_color: bool,
+    /// The ticks per quarter note File > Export MIDI writes (File > MIDI Export Resolution).
+    midi_resolution: crate::midi_file::MidiResolution,
     /// The take group the file the import dialog returns becomes a take of (Import File as
     /// Take), until the dialog answers.
     take_import: Option<u32>,
@@ -581,6 +583,7 @@ impl<S: EngineSink> AppCore<S> {
             keep_pending: None,
             join_next: false,
             auto_color: false,
+            midi_resolution: crate::midi_file::MidiResolution::default(),
             take_import: None,
             trial_next: false,
             stretch_open: false,

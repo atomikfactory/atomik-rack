@@ -149,6 +149,37 @@ fn write_param_lanes(w: &mut String, c: &Clip, indent: &str) {
     );
 }
 
+/// Writes a note clip's `"programs"` and `"sysex"` after its parameter lanes (nothing for a clip
+/// without any). A SysEx message is `[tick, "7E 7F 09 01"]` (hex bytes between `F0` and `F7`). The
+/// clip file of the library leaves them out.
+fn write_midi_data(w: &mut String, c: &Clip, indent: &str) {
+    if !c.midi.programs.is_empty() {
+        let _ = write!(
+            w,
+            ",
+{indent}\"programs\": "
+        );
+        list_each(w, indent, &c.midi.programs, |w, p| {
+            let _ = write!(w, "[{}, {}]", p.tick, p.program);
+        });
+    }
+    if !c.midi.sysex.is_empty() {
+        let _ = write!(
+            w,
+            ",
+{indent}\"sysex\": "
+        );
+        list_each(w, indent, &c.midi.sysex, |w, s| {
+            let _ = write!(
+                w,
+                "[{}, \"{}\"]",
+                s.tick,
+                crate::midi_data::sysex_to_hex(&s.data)
+            );
+        });
+    }
+}
+
 /// Writes one clip object of a lane's `"clips"` (or of a take group's `"takes"`), after the
 /// separator `sep` of its list.
 pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
@@ -172,6 +203,7 @@ pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
         ClipContent::Notes(notes) => {
             write_note_clip_tail(w, c, notes, indent);
             write_param_lanes(w, c, indent);
+            write_midi_data(w, c, indent);
         }
         ClipContent::Automation(points) => {
             let _ = write!(w, "{indent}\"points\": ");

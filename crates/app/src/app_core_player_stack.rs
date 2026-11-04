@@ -218,6 +218,7 @@ impl<S: EngineSink> AppCore<S> {
             grid: None,
             scale: None,
             param_lanes: Vec::new(),
+            midi: Default::default(),
             controllers: Vec::new(),
             content: ClipContent::Notes(
                 notes

@@ -8,6 +8,7 @@ use atomik_device_sdk::Registry;
 use atomik_model::controller::{ControllerKind, ControllerLane};
 use atomik_model::{AutomationPoint, ClipId, Command, Curve, Document, SongCommand};
 use atomik_ui::controller_lane::{Chip, PRESETS};
+use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::Point;
 use atomik_ui::timeline::Snap;
 use atomik_ui::viewport::Tool;
@@ -380,6 +381,278 @@ fn the_painted_area_names_the_lane_and_draws_its_points() {
     v.paint(&mut closed, d.doc(), &reg);
     assert!(closed.texts().len() < texts.len());
     assert!(!closed.texts().contains(&"CTRL"));
+}
+
+fn shift_down(pos: Point) -> atomik_ui::UiEvent {
+    atomik_ui::UiEvent::PointerDown {
+        pos,
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: Modifiers::SHIFT,
+        clicks: 1,
+    }
+}
+
+fn run(
+    v: &mut PianoRollView,
+    d: &mut Document,
+    reg: &Registry,
+    id: &str,
+    arg: Option<&str>,
+) -> Option<Vec<UiAction>> {
+    match v.command(id, arg, d.doc(), reg) {
+        CommandOutcome::Handled(actions) => {
+            apply(v, d, reg, &actions);
+            Some(actions)
+        }
+        _ => None,
+    }
+}
+
+/// Five points of the mod wheel on the beats (values rising).
+fn five() -> Vec<ControllerLane> {
+    vec![ControllerLane::new(
+        MOD,
+        (0..5)
+            .map(|i| pt(PPQ * (i + 1), 0.1 + 0.2 * i as f32, Curve::Linear))
+            .collect(),
+    )]
+}
+
+fn five_at(v: &PianoRollView, i: i64) -> Point {
+    at(v, MOD, PPQ * (i + 1), 0.1 + 0.2 * i as f32)
+}
+
+#[test]
+fn shift_click_toggles_points_in_the_selection_and_a_plain_click_selects_one() {
+    let (mut v, mut d, reg) = setup(five());
+    v.set_controller_kind(MOD);
+    let before = d.doc().clone();
+    let click =
+        |v: &mut PianoRollView, d: &mut Document, e: &[atomik_ui::UiEvent]| gesture(v, d, &reg, e);
+    let p0 = five_at(&v, 0);
+    click(&mut v, &mut d, &[down(p0), up(p0)]);
+    assert_eq!(v.selected_controller_points(), [0]);
+    for i in [2, 4] {
+        let p = five_at(&v, i);
+        let a = click(&mut v, &mut d, &[shift_down(p), up(p)]);
+        assert!(song_commands(&a).is_empty(), "selecting changes nothing");
+    }
+    assert_eq!(v.selected_controller_points(), [0, 2, 4]);
+    assert_eq!(v.controller_selection(), None, "several: no single point");
+    assert!(v.controller_focus());
+    let p = five_at(&v, 2);
+    click(&mut v, &mut d, &[shift_down(p), up(p)]);
+    assert_eq!(v.selected_controller_points(), [0, 4], "toggled off");
+    // A plain click on an unselected point selects only it; on a selected one it keeps the rest.
+    let p = five_at(&v, 1);
+    click(&mut v, &mut d, &[down(p), up(p)]);
+    assert_eq!(v.selected_controller_points(), [1]);
+    assert_eq!(d.doc(), &before, "nothing was edited");
+}
+
+#[test]
+fn a_shift_drag_on_empty_space_is_a_rubber_band_that_adds_to_the_selection() {
+    let (mut v, mut d, reg) = setup(five());
+    v.set_controller_kind(MOD);
+    let before = d.doc().clone();
+    // The band takes the second to fourth points (their ticks and values are inside).
+    let (a, b) = (
+        at(&v, MOD, PPQ + PPQ / 2, 1.0),
+        at(&v, MOD, 4 * PPQ + PPQ / 2, 0.0),
+    );
+    let out = gesture(
+        &mut v,
+        &mut d,
+        &reg,
+        &[shift_down(a), mv_with(b, Modifiers::SHIFT), up(b)],
+    );
+    assert!(song_commands(&out).is_empty(), "no point was drawn");
+    assert_eq!(v.selected_controller_points(), [1, 2, 3]);
+    // A second band with Shift adds to it; the band itself is painted while it is dragged.
+    let (a, b) = (
+        at(&v, MOD, 4 * PPQ + PPQ / 2, 1.0),
+        at(&v, MOD, 5 * PPQ + PPQ / 2, 0.0),
+    );
+    gesture(
+        &mut v,
+        &mut d,
+        &reg,
+        &[shift_down(a), mv_with(b, Modifiers::SHIFT)],
+    );
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    gesture(&mut v, &mut d, &reg, &[up(b)]);
+    assert_eq!(v.selected_controller_points(), [1, 2, 3, 4]);
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn dragging_one_of_several_selected_points_moves_them_all_in_one_undo_step() {
+    let (mut v, mut d, reg) = setup(five());
+    v.set_controller_kind(MOD);
+    let before = d.doc().clone();
+    v.set_controller_selection(&[1, 2]);
+    let (from, to) = (five_at(&v, 1), at(&v, MOD, 2 * PPQ + PPQ, 0.3 + 0.1));
+    let a = gesture(&mut v, &mut d, &reg, &[down(from), mv(to), up(to)]);
+    let ids = merges(&a);
+    assert!(!ids.is_empty() && ids.iter().all(|m| *m == ids[0] && m.is_some()));
+    let pts = points(&d, MOD);
+    // The pair moved one beat to the right and a little up; the first and last stay.
+    let ticks: Vec<i64> = pts.iter().map(|p| p.tick).collect();
+    assert_eq!(ticks, [PPQ, 3 * PPQ, 4 * PPQ, 5 * PPQ]);
+    assert_eq!(pts.len(), 4, "the point it landed on was replaced");
+    assert_eq!(v.selected_controller_points(), [1, 2]);
+    assert!(
+        (pts[2].value - pts[1].value - 0.2).abs() < 0.02,
+        "the gap between the two is kept"
+    );
+    assert!(pts[1].value > 0.3 + 0.05);
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before, "one step");
+}
+
+#[test]
+fn select_all_delete_and_escape_act_on_the_points_while_the_lane_has_the_focus() {
+    let (mut v, mut d, reg) = setup(five());
+    v.set_controller_kind(MOD);
+    let before = d.doc().clone();
+    // Without a press in the lane, Select All is the notes'.
+    run(&mut v, &mut d, &reg, "edit.select_all", None).unwrap();
+    assert!(v.selected_controller_points().is_empty());
+    assert!(!v.selected_notes().is_empty());
+    // A press in the lane makes the points the focus: Select All takes them all.
+    let p = five_at(&v, 0);
+    gesture(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    run(&mut v, &mut d, &reg, "edit.select_all", None).unwrap();
+    assert_eq!(v.selected_controller_points(), [0, 1, 2, 3, 4]);
+    // Escape clears the points and leaves the notes alone.
+    v.handle(
+        &atomik_ui::UiEvent::Key {
+            key: Key::Escape,
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        },
+        d.doc(),
+        &reg,
+    );
+    assert!(v.selected_controller_points().is_empty());
+    assert!(!v.controller_focus());
+    // Delete removes the selected points in one step.
+    v.set_controller_selection(&[0, 3]);
+    let a = run(&mut v, &mut d, &reg, "edit.delete", None).unwrap();
+    assert_eq!(merges(&a), vec![None]);
+    let ticks: Vec<i64> = points(&d, MOD).iter().map(|p| p.tick).collect();
+    assert_eq!(ticks, [2 * PPQ, 3 * PPQ, 5 * PPQ]);
+    assert!(v.selected_controller_points().is_empty());
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before);
+    // With nothing selected in the lane, Delete is the notes' (Select All took them earlier).
+    run(&mut v, &mut d, &reg, "edit.delete", None).unwrap();
+    let left = match &d.doc().song.clip(ClipId(1)).unwrap().2.content {
+        atomik_model::ClipContent::Notes(n) => n.len(),
+        _ => unreachable!(),
+    };
+    assert_eq!(left, 0, "the notes went, the points stayed");
+    assert_eq!(points(&d, MOD).len(), 5);
+}
+
+#[test]
+fn a_press_outside_the_lane_hands_the_keys_back_to_the_notes() {
+    let (mut v, mut d, reg) = setup(five());
+    v.set_controller_kind(MOD);
+    v.set_controller_selection(&[1, 2]);
+    assert!(v.controller_focus());
+    let on_grid = Point::new(v.bounds().x0 + 400.0, v.bounds().y0 + 120.0);
+    gesture(&mut v, &mut d, &reg, &[down(on_grid), up(on_grid)]);
+    assert!(v.selected_controller_points().is_empty());
+    assert!(!v.controller_focus());
+    // Another lane or a new clip forgets points that are not there.
+    v.set_controller_selection(&[1, 4]);
+    v.set_controller_kind(BEND);
+    assert!(v.selected_controller_points().is_empty());
+    // Points that an edit took away are forgotten at the next sync.
+    v.set_controller_kind(MOD);
+    v.set_controller_selection(&[3, 4]);
+    let kept = vec![ControllerLane::new(MOD, five()[0].points[..3].to_vec())];
+    apply(
+        &mut v,
+        &mut d,
+        &reg,
+        &[UiAction::Command(Command::Song(
+            SongCommand::SetClipControllers {
+                clip: ClipId(1),
+                lanes: kept,
+                merge: None,
+            },
+        ))],
+    );
+    assert!(v.selected_controller_points().is_empty());
+    assert!(!v.controller_focus());
+}
+
+#[test]
+fn the_thin_chip_and_command_thin_the_selection_or_the_whole_lane() {
+    // A straight ramp of eleven points.
+    let ramp = vec![ControllerLane::new(
+        MOD,
+        (0..=10)
+            .map(|i| pt(PPQ * i / 2, i as f32 / 10.0, Curve::Linear))
+            .collect(),
+    )];
+    let (mut v, mut d, reg) = setup(ramp.clone());
+    v.set_controller_kind(MOD);
+    let before = d.doc().clone();
+    // The chip, nothing selected: the whole lane keeps its two ends.
+    let chip = v.controller_chip_center(Chip::Thin);
+    let a = gesture(&mut v, &mut d, &reg, &[down(chip), up(chip)]);
+    assert_eq!(merges(&a), vec![None], "one step");
+    assert_eq!(points(&d, MOD).len(), 2);
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before);
+    v.sync(d.doc(), &reg);
+    // The command with a selection thins only it; the level is an argument.
+    v.set_controller_selection(&[2, 3, 4, 5, 6]);
+    run(
+        &mut v,
+        &mut d,
+        &reg,
+        "editor.thin_controllers",
+        Some("maximum"),
+    )
+    .unwrap();
+    assert_eq!(points(&d, MOD).len(), 11 - 3);
+    assert_eq!(v.selected_controller_points(), [2, 3], "the survivors");
+    d.undo().unwrap();
+    // A bad level is declined; a closed area or an empty lane too.
+    assert!(
+        run(
+            &mut v,
+            &mut d,
+            &reg,
+            "editor.thin_controllers",
+            Some("extreme")
+        )
+        .is_none()
+    );
+    v.set_controller_kind(ControllerKind::Cc(7));
+    assert!(run(&mut v, &mut d, &reg, "editor.thin_controllers", None).is_none());
+    v.set_controller_kind(MOD);
+    v.set_controllers_open(false);
+    assert!(run(&mut v, &mut d, &reg, "editor.thin_controllers", None).is_none());
+}
+
+#[test]
+fn the_toggle_command_shows_and_hides_the_controller_area() {
+    let (mut v, mut d, reg) = setup(vec![]);
+    assert!(v.controllers_open());
+    run(&mut v, &mut d, &reg, "editor.toggle_controllers", None).unwrap();
+    assert!(!v.controllers_open());
+    assert_eq!(v.controller_area().height(), 0.0);
+    run(&mut v, &mut d, &reg, "editor.toggle_controllers", None).unwrap();
+    assert!(v.controllers_open());
+    // The key is bound in the roll's context (and nowhere else).
+    let map = atomik_ui::keymap::Registry::bundled();
+    assert!(map.get("editor.toggle_controllers").is_some());
 }
 
 /// Writes `target/preview/piano_roll_controllers.png`: the roll with a pitch bend lane (a ramp, a

@@ -27,6 +27,7 @@ fn notes(start: i64, length: i64) -> Clip {
         muted: false,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,
