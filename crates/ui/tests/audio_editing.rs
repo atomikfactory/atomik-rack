@@ -175,6 +175,7 @@ fn envelope_points_are_drawn_on_the_clip_and_follow_the_frames() {
 fn the_pencil_adds_a_point_and_drags_it() {
     let (doc, reg) = (audio_doc(), registry());
     let mut v = audio_arrangement(&doc, &reg);
+    v.set_snap(Snap::Off);
     v.set_tool(Tool::Pencil);
     let r = v.clip_rect(ClipId(10)).unwrap();
     let at = Point::new(r.x0 + 40.0, r.center().y);
@@ -183,7 +184,7 @@ fn the_pencil_adds_a_point_and_drags_it() {
     assert_eq!(cmds.len(), 1, "{a:?}");
     let content = last_content(&a);
     assert_eq!(content.envelope.len(), 1);
-    // 40 px from the clip start is 40000 frames (no snapping).
+    // 40 px from the clip start is 40000 frames (the grid is off).
     assert!((content.envelope[0].frame as i64 - 40_000).abs() <= 500);
     let to = at + Vec2::new(10.0, -8.0);
     let mut b = v.handle(&mv(Point::new(at.x + 5.0, at.y - 4.0)), &doc, &reg);
@@ -223,6 +224,198 @@ fn a_point_drags_with_the_select_tool_and_stays_between_its_neighbours() {
     assert!(content.envelope[1].gain_db > 0.0);
     assert!((content.gain_db + 3.0).abs() < 1e-6);
     assert_eq!(content.envelope[0], p(48_000, -12.0));
+}
+
+/// Four points 24000 frames apart on clip 10 (the view is 1 px per 1000 frames).
+fn env4_doc() -> RackDoc {
+    let mut doc = audio_doc();
+    edit_clip(&mut doc, 10, |a| {
+        a.envelope = vec![
+            p(24_000, -12.0),
+            p(48_000, -6.0),
+            p(72_000, -3.0),
+            p(96_000, 0.0),
+        ];
+    });
+    doc
+}
+
+fn shift() -> Modifiers {
+    Modifiers {
+        shift: true,
+        ..Modifiers::NONE
+    }
+}
+
+#[test]
+fn shift_click_selects_several_points_and_a_drag_moves_them_together() {
+    let (doc, reg) = (env4_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_snap(Snap::Off);
+    let pt = |v: &atomik_ui::ArrangementView, i| v.envelope_point_center(ClipId(10), i).unwrap();
+    // A plain click selects one point; Shift adds and removes.
+    v.handle(&down(pt(&v, 1)), &doc, &reg);
+    v.handle(&up(pt(&v, 1)), &doc, &reg);
+    assert_eq!(v.selected_envelope_points(), Some((ClipId(10), vec![1])));
+    let acts = v.handle(&down_mods(pt(&v, 2), shift(), 1), &doc, &reg);
+    v.handle(&up(pt(&v, 2)), &doc, &reg);
+    assert!(audio_cmds(&acts).is_empty(), "selecting changes nothing");
+    assert_eq!(v.selected_envelope_points(), Some((ClipId(10), vec![1, 2])));
+    v.handle(&down_mods(pt(&v, 3), shift(), 1), &doc, &reg);
+    v.handle(&up(pt(&v, 3)), &doc, &reg);
+    v.handle(&down_mods(pt(&v, 3), shift(), 1), &doc, &reg);
+    v.handle(&up(pt(&v, 3)), &doc, &reg);
+    assert_eq!(v.selected_envelope_points(), Some((ClipId(10), vec![1, 2])));
+    // Dragging one of them 10 px right moves both by 10000 frames; the others stay.
+    let from = pt(&v, 1);
+    let acts = drag_to(&mut v, &doc, &reg, from, from + Vec2::new(10.0, 0.0));
+    let env = last_content(&acts).envelope;
+    assert_eq!(env[0], p(24_000, -12.0));
+    assert_eq!(env[3], p(96_000, 0.0));
+    assert!((env[1].frame as i64 - 58_000).abs() <= 500, "{env:?}");
+    assert_eq!(env[2].frame - env[1].frame, 24_000, "the distance holds");
+    assert_eq!(v.selected_envelope_points(), Some((ClipId(10), vec![1, 2])));
+}
+
+#[test]
+fn a_group_stops_at_the_points_it_does_not_hold() {
+    let (doc, reg) = (env4_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_envelope_points(ClipId(10), &[1, 2]);
+    let from = v.envelope_point_center(ClipId(10), 1).unwrap();
+    let acts = drag_to(&mut v, &doc, &reg, from, from + Vec2::new(200.0, 0.0));
+    let env = last_content(&acts).envelope;
+    assert_eq!(env[2].frame, 95_999);
+    assert_eq!(env[1].frame, 71_999);
+    assert_eq!(env[3].frame, 96_000);
+}
+
+#[test]
+fn delete_removes_the_selected_points_together_and_other_presses_forget_them() {
+    let (doc, reg) = (env4_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_envelope_points(ClipId(10), &[0, 2]);
+    let out = v.command("edit.delete", None, &doc, &reg);
+    let CommandOutcome::Handled(acts) = out else {
+        panic!("{out:?}");
+    };
+    assert_eq!(
+        last_content(&acts).envelope,
+        vec![p(48_000, -6.0), p(96_000, 0.0)]
+    );
+    assert_eq!(v.selected_envelope_points(), None);
+    // A press on the clip body forgets the selection.
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_envelope_points(ClipId(10), &[1]);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let off = Point::new(r.x0 + 4.0, r.y1 - 4.0);
+    v.handle(&down(off), &doc, &reg);
+    v.handle(&up(off), &doc, &reg);
+    assert_eq!(v.selected_envelope_points(), None);
+    // The selection does not outlive its points.
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_envelope_points(ClipId(10), &[3]);
+    let mut shorter = doc.clone();
+    edit_clip(&mut shorter, 10, |a| a.envelope.truncate(2));
+    v.handle(&mv(Point::new(1.0, 1.0)), &shorter, &reg);
+    assert_eq!(v.selected_envelope_points(), None);
+}
+
+#[test]
+fn envelope_points_snap_to_the_grid_when_one_is_on() {
+    let (doc, reg) = (env_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    let a = v.envelope_point_center(ClipId(10), 0).unwrap();
+    // A beat is 0.5 s at 120 BPM: 24000 frames. Dropped near 70000 frames it lands on 72000.
+    let acts = drag_to(&mut v, &doc, &reg, a, a + Vec2::new(22.0, 0.0));
+    let frame = last_content(&acts).envelope[0].frame;
+    assert_eq!(frame % 24_000, 0, "{frame}");
+    assert_eq!(frame, 72_000);
+    // The pencil snaps the new point too.
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    v.set_tool(Tool::Pencil);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let acts = v.handle(&down(Point::new(r.x0 + 30.0, r.center().y)), &doc, &reg);
+    let frames: Vec<u64> = last_content(&acts)
+        .envelope
+        .iter()
+        .map(|q| q.frame)
+        .collect();
+    assert!(frames.contains(&24_000), "{frames:?}");
+}
+
+#[test]
+fn a_right_click_on_a_fade_handle_shapes_that_fade_alone() {
+    let mut doc = audio_doc();
+    edit_clip(&mut doc, 10, |a| {
+        a.fade_in = 24_000;
+        a.fade_out = 60_000;
+        a.fade_curve = FadeCurve::EqualPower;
+    });
+    let reg = registry();
+    let mut v = audio_arrangement(&doc, &reg);
+    let handle = v
+        .audio_handle_center(ClipId(10), atomik_ui::AudioHandle::FadeOut)
+        .unwrap();
+    let acts = v.handle(&down_with(handle, PointerButton::Secondary, 1), &doc, &reg);
+    assert!(
+        audio_cmds(&acts).is_empty(),
+        "the menu opens first: {acts:?}"
+    );
+    assert_eq!(v.menu_labels().len(), 4);
+    assert_eq!(
+        v.menu_current(),
+        Some(1),
+        "equal power is the current shape"
+    );
+    // Choose "Exponential" (the third row) for the fade-out.
+    let pos = v.param_menu_row_center(2).expect("a row");
+    let mut acts = v.handle(&down(pos), &doc, &reg);
+    acts.extend(v.handle(&up(pos), &doc, &reg));
+    let content = last_content(&acts);
+    assert_eq!(
+        content.fade_curve,
+        FadeCurve::EqualPower,
+        "the fade-in keeps its shape"
+    );
+    assert_eq!(content.out_curve(), FadeCurve::Exponential);
+}
+
+#[test]
+fn the_fade_shape_command_shapes_both_fades_again() {
+    let mut doc = audio_doc();
+    edit_clip(&mut doc, 10, |a| {
+        a.fade_curve = FadeCurve::EqualPower;
+        a.fade_out_curve = Some(FadeCurve::Exponential);
+    });
+    let reg = registry();
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_clips(&[ClipId(10)]);
+    let out = run(
+        &mut v,
+        &doc,
+        &reg,
+        "sequencer.audio_fade_shape",
+        Some("s_curve"),
+    );
+    let content = one_content(&out);
+    assert_eq!(content.fade_curve, FadeCurve::SCurve);
+    assert_eq!(content.fade_out_curve, None);
+    // Even the shape the fade-in already has is applied when the fade-out differs.
+    let out = run(
+        &mut v,
+        &doc,
+        &reg,
+        "sequencer.audio_fade_shape",
+        Some("equal_power"),
+    );
+    let content = one_content(&out);
+    assert_eq!(
+        (content.fade_curve, content.out_curve()),
+        (FadeCurve::EqualPower, FadeCurve::EqualPower)
+    );
 }
 
 #[test]

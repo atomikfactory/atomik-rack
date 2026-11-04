@@ -124,6 +124,7 @@ impl<S: EngineSink> AppCore<S> {
                     || self.arrangement.lane_range().is_some()
                     || self.arrangement.take_focus().is_some()
                     || self.arrangement.selected_points().is_some()
+                    || self.arrangement.selected_envelope_points().is_some()
                     || self.arrangement.selected_track().is_some()
             }
             Pane::PianoRoll => {
