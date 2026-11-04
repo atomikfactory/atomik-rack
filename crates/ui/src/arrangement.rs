@@ -767,7 +767,21 @@ enum Drag {
         moved: bool,
         emitted: bool,
         last: (i64, i64, AudioClipContent),
+        /// The other selected audio clips of a start trim: each trims by the same distance
+        /// (as far as its own file allows).
+        others: Vec<AudioOther>,
     },
+}
+
+/// A selected audio clip that follows the start trim of the grabbed one.
+#[derive(Debug, Clone)]
+struct AudioOther {
+    clip: Clip,
+    content: AudioClipContent,
+    rate: u32,
+    asset_frames: u64,
+    /// What the clip was last given.
+    last: (i64, i64, AudioClipContent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3801,6 +3815,28 @@ impl ArrangementView {
                 };
                 let merge = self.merge_id();
                 let last = (clip.start, clip.length, content.clone());
+                let others = if grab == AudioGrab::TrimStart {
+                    self.song_clips()
+                        .filter(|c| c.id != id && self.selection.contains(&c.id))
+                        .filter_map(|c| {
+                            let ClipContent::Audio(a) = &c.content else {
+                                return None;
+                            };
+                            Some(AudioOther {
+                                clip: c.clone(),
+                                content: a.clone(),
+                                rate: self.asset_rate(&a.asset),
+                                asset_frames: self
+                                    .assets
+                                    .get(&a.asset)
+                                    .map_or(u64::MAX >> 2, |m| m.frames),
+                                last: (c.start, c.length, a.clone()),
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 self.drag = Drag::Audio {
                     start: pos,
                     rate: self.asset_rate(&content.asset),
@@ -3815,6 +3851,7 @@ impl ArrangementView {
                     moved: false,
                     emitted: false,
                     last,
+                    others,
                 };
             }
             ClipPart::Edge if primary => {
@@ -4460,6 +4497,7 @@ impl ArrangementView {
                 moved,
                 emitted,
                 last,
+                others,
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
                 if !*moved {
@@ -4504,55 +4542,42 @@ impl ArrangementView {
                     AudioGrab::TrimStart => {
                         let wanted =
                             snap_round(clip.start + axis.dx_to_ticks(pos.x - start.x), step);
-                        let orig = (clip.start, clip.length, content.source_offset);
-                        let mut markers = None;
-                        let t = if content.warp.enabled {
-                            let (t, m) = audio::trim_left_warped(
-                                *rate,
-                                (clip.start, clip.length, content),
-                                *asset_frames,
-                                wanted,
-                                min,
-                            );
-                            markers = Some(m);
-                            t
-                        } else if content.reverse {
-                            audio::trim_left_reversed(
-                                tempo,
-                                *rate,
-                                orig,
-                                *asset_frames,
-                                wanted,
-                                min,
-                            )
-                        } else {
-                            audio::trim_left(tempo, *rate, orig, *asset_frames, wanted, min)
-                        };
-                        let frames = clip_frames(tempo, t.start, t.length, *rate);
-                        let (fade_in, fade_out) =
-                            audio::clamp_fades(content.fade_in, content.fade_out, frames);
-                        // The envelope stays on the sound it was drawn on.
-                        let moved = i128::from(tempo.frame_at(t.start, *rate))
-                            - i128::from(tempo.frame_at(clip.start, *rate));
-                        let mut trimmed = content.clone();
-                        if let Some(m) = markers {
-                            trimmed.warp.markers = m;
-                        }
-                        new = (
-                            t.start,
-                            t.length,
-                            AudioClipContent {
-                                source_offset: t.source_offset,
-                                fade_in,
-                                fade_out,
-                                envelope: audio::envelope_after_trim(
-                                    &content.envelope,
-                                    moved.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
-                                ),
-                                ..trimmed
-                            },
+                        new = trim_start_audio(
+                            tempo,
+                            *rate,
+                            *asset_frames,
+                            (clip.start, clip.length, content),
+                            wanted,
+                            min,
                         );
                     }
+                }
+                // The other selected audio clips trim by the distance the grabbed one did.
+                let dt = new.0 - clip.start;
+                let mut followed = false;
+                for o in others.iter_mut() {
+                    let moved = trim_start_audio(
+                        tempo,
+                        o.rate,
+                        o.asset_frames,
+                        (o.clip.start, o.clip.length, &o.content),
+                        o.clip.start + dt,
+                        min,
+                    );
+                    if moved != o.last {
+                        out.push(audio_clip_cmd(
+                            &o.clip,
+                            moved.0,
+                            moved.1,
+                            moved.2.clone(),
+                            *merge,
+                        ));
+                        o.last = moved;
+                        followed = true;
+                    }
+                }
+                if followed {
+                    *emitted = true;
                 }
                 if new != *last {
                     out.push(audio_clip_cmd(clip, new.0, new.1, new.2.clone(), *merge));
@@ -5796,8 +5821,18 @@ impl ArrangementView {
                 content,
                 merge,
                 emitted: true,
+                others,
                 ..
             } => {
+                for o in &others {
+                    out.push(audio_clip_cmd(
+                        &o.clip,
+                        o.clip.start,
+                        o.clip.length,
+                        o.content.clone(),
+                        merge,
+                    ));
+                }
                 out.push(audio_clip_cmd(
                     &clip,
                     clip.start,
@@ -7621,6 +7656,52 @@ fn clip_frames(tempo: &TempoMap, start: i64, length: i64, rate: u32) -> u64 {
     tempo
         .frame_at(start + length, rate)
         .saturating_sub(tempo.frame_at(start, rate))
+}
+
+/// The geometry and content an audio clip gets when its start is trimmed to song tick
+/// `wanted`: the source offset follows (warped and reversed clips by their own rules), the
+/// fades are clamped to the new length and the envelope stays on the sound it was drawn on.
+fn trim_start_audio(
+    tempo: &TempoMap,
+    rate: u32,
+    asset_frames: u64,
+    (start, length, content): (i64, i64, &AudioClipContent),
+    wanted: i64,
+    min: i64,
+) -> (i64, i64, AudioClipContent) {
+    let orig = (start, length, content.source_offset);
+    let mut markers = None;
+    let t = if content.warp.enabled {
+        let (t, m) =
+            audio::trim_left_warped(rate, (start, length, content), asset_frames, wanted, min);
+        markers = Some(m);
+        t
+    } else if content.reverse {
+        audio::trim_left_reversed(tempo, rate, orig, asset_frames, wanted, min)
+    } else {
+        audio::trim_left(tempo, rate, orig, asset_frames, wanted, min)
+    };
+    let frames = clip_frames(tempo, t.start, t.length, rate);
+    let (fade_in, fade_out) = audio::clamp_fades(content.fade_in, content.fade_out, frames);
+    let moved = i128::from(tempo.frame_at(t.start, rate)) - i128::from(tempo.frame_at(start, rate));
+    let mut trimmed = content.clone();
+    if let Some(m) = markers {
+        trimmed.warp.markers = m;
+    }
+    (
+        t.start,
+        t.length,
+        AudioClipContent {
+            source_offset: t.source_offset,
+            fade_in,
+            fade_out,
+            envelope: audio::envelope_after_trim(
+                &content.envelope,
+                moved.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
+            ),
+            ..trimmed
+        },
+    )
 }
 
 fn audio_clip_cmd(
