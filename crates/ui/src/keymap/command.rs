@@ -324,7 +324,8 @@ pub const CROSSFADE_ARGS: &[&str] = &[
 ];
 /// The values of `sequencer.chop_clips`: the length of the pieces.
 pub const CHOP_ARGS: &[&str] = &["bar", "half_bar", "beat", "eighth", "sixteenth"];
-/// The values of `sequencer.cleanup_automation`: how hard the points are thinned.
+/// The values of `sequencer.cleanup_automation` and `editor.thin_controllers`: how hard the
+/// points are thinned.
 pub const CLEANUP_ARGS: &[&str] = &["normal", "heavy", "maximum"];
 /// The values of `sequencer.reverse_clips`: notes mirror as bars (the default) or by their starts.
 pub const REVERSE_ARGS: &[&str] = &["bars", "starts"];
@@ -703,6 +704,20 @@ const COMMANDS: &[CommandDef] = &[
         .arg(STEP_SHIFT_ARGS)
         .decline(),
     cmd("editor.strum", "Strum Selection", G::Editor, C::Editor),
+    cmd(
+        "editor.thin_controllers",
+        "Thin Controller Points",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(CLEANUP_ARGS)
+    .decline(),
+    cmd(
+        "editor.toggle_controllers",
+        "Show Controller Lanes",
+        G::Editor,
+        C::Editor,
+    ),
     cmd(
         "editor.toggle_note_mute",
         "Mute Notes",

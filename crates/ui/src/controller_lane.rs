@@ -12,6 +12,14 @@
 //! value to the MIDI resolution), with the eraser or the secondary button it deletes the point,
 //! with Ctrl or Cmd it toggles the point's curve (ramp or step); a press on empty space adds a
 //! point and the drag draws freehand, one point per grid step the pointer crosses.
+//!
+//! **Several points.** Shift-click toggles a point in the selection; a press on empty space with
+//! Shift held drags a rubber band that adds the points inside it ([`points_in_rect`]); Select All
+//! selects the whole lane. Dragging a selected point moves the whole selection together (time on
+//! the grid, value at the MIDI resolution, the shape kept: `controller_edit::move_points`),
+//! Delete removes it, Copy and Cut put the points on the clipboard (Paste lays them into the lane
+//! shown at the playhead) and the THIN chip simplifies the selection, or the whole lane when
+//! nothing is selected.
 
 use atomik_model::controller::{ControllerKind, ControllerLane, canonical};
 use atomik_model::{AutomationPoint, Curve};
@@ -50,6 +58,8 @@ pub enum Chip {
     Poly,
     /// New points ramp to the next one, or hold (the curve of the points the pencil adds).
     Curve,
+    /// Thin the selected points, or the whole lane when none is selected.
+    Thin,
 }
 
 /// Which part of a stepper chip a press landed on.
@@ -123,6 +133,8 @@ impl LaneEditor {
                     Curve::Step => Curve::Linear,
                 };
             }
+            // An action, not a state: the roll sends the command.
+            Chip::Thin => {}
         }
     }
 
@@ -133,6 +145,7 @@ impl LaneEditor {
             Chip::Cc => self.kind == ControllerKind::Cc(self.cc) && !PRESETS.contains(&self.kind),
             Chip::Poly => matches!(self.kind, ControllerKind::PolyPressure(_)),
             Chip::Curve => self.curve == Curve::Step,
+            Chip::Thin => false,
         }
     }
 
@@ -176,6 +189,7 @@ pub fn chip_label(chip: Chip, ed: &LaneEditor) -> String {
             Curve::Linear | Curve::Bend(_) => "RAMP".to_owned(),
             Curve::Step => "STEP".to_owned(),
         },
+        Chip::Thin => "THIN".to_owned(),
     }
 }
 
@@ -193,7 +207,7 @@ pub fn kind_name(kind: ControllerKind) -> String {
 pub fn chips() -> impl Iterator<Item = Chip> {
     (0..PRESETS.len())
         .map(Chip::Preset)
-        .chain([Chip::Cc, Chip::Poly, Chip::Curve])
+        .chain([Chip::Cc, Chip::Poly, Chip::Curve, Chip::Thin])
 }
 
 /// The rectangle of a chip in a header row that starts at `x0` and is `y0` from the top.
@@ -203,6 +217,7 @@ pub fn chip_rect(x0: f64, y0: f64, chip: Chip) -> Rect {
         Chip::Cc => (PRESETS.len() as f64 * 56.0 + 6.0, 70.0),
         Chip::Poly => (PRESETS.len() as f64 * 56.0 + 82.0, 78.0),
         Chip::Curve => (PRESETS.len() as f64 * 56.0 + 170.0, 46.0),
+        Chip::Thin => (PRESETS.len() as f64 * 56.0 + 222.0, 46.0),
     };
     Rect::new(
         x0 + 6.0 + offset,
@@ -279,6 +294,24 @@ pub fn value_text(kind: ControllerKind, value: f32) -> String {
         }
         _ => format!("{}", (value * 127.0).round().clamp(0.0, 127.0) as i32),
     }
+}
+
+/// The indices of the points whose position `at` returns lies inside `rect`: what a rubber band
+/// selects.
+pub fn points_in_rect(
+    points: &[AutomationPoint],
+    at: impl Fn(&AutomationPoint) -> (f64, f64),
+    rect: Rect,
+) -> Vec<usize> {
+    points
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            let (x, y) = at(p);
+            x >= rect.x0 && x <= rect.x1 && y >= rect.y0 && y <= rect.y1
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// The lane of `kind` in `lanes`.
@@ -506,6 +539,29 @@ mod tests {
     }
 
     #[test]
+    fn a_rubber_band_takes_the_points_inside_its_rectangle() {
+        let pts = [
+            pt(0, 0.0, Curve::Step),
+            pt(10, 0.0, Curve::Step),
+            pt(20, 0.0, Curve::Step),
+        ];
+        let at = |p: &AutomationPoint| (p.tick as f64, 5.0);
+        assert_eq!(
+            points_in_rect(&pts, at, Rect::new(5.0, 0.0, 25.0, 10.0)),
+            [1, 2]
+        );
+        assert_eq!(
+            points_in_rect(&pts, at, Rect::new(0.0, 6.0, 25.0, 10.0)),
+            Vec::<usize>::new()
+        );
+        // A rectangle dragged backwards is normalised by the caller; the edges count.
+        assert_eq!(
+            points_in_rect(&pts, at, Rect::new(10.0, 5.0, 10.0, 5.0)),
+            [1]
+        );
+    }
+
+    #[test]
     fn nearest_point_prefers_the_closest_within_reach() {
         let pts = [pt(0, 0.0, Curve::Step), pt(10, 0.0, Curve::Step)];
         let at = |p: &AutomationPoint| (p.tick as f64, 0.0);
@@ -552,7 +608,7 @@ mod tests {
     #[test]
     fn chips_do_not_overlap_and_are_found_by_position() {
         let all: Vec<Chip> = chips().collect();
-        assert_eq!(all.len(), 10);
+        assert_eq!(all.len(), 11);
         for (i, a) in all.iter().enumerate() {
             let ra = chip_rect(100.0, 500.0, *a);
             for b in &all[i + 1..] {

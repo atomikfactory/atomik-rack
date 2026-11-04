@@ -20,6 +20,7 @@ editor.nudge_right_tick | editor | Opt+Right
 editor.octave_down | editor | Shift+Down
 editor.octave_up | editor | Shift+Up
 editor.quantize | editor | Q, Shift+Q
+editor.toggle_controllers | editor | Shift+L
 editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Down
 editor.transpose_up | editor | Up
