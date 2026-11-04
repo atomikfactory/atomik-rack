@@ -36,6 +36,36 @@ use atomik_engine::{
 use atomik_plugin_host::ManagerEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+type RenderGuard = fn(&mut dyn FnMut());
+
+thread_local! {
+    static RENDER_GUARD: std::cell::Cell<Option<RenderGuard>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with `guard` around every engine render call of the project bounce loops on this
+/// thread: the seam that lets a test prove the render path of a whole project bounce makes no
+/// heap operation (`|render| assert_no_alloc(render)`). Without a guard (always, outside such a
+/// test) the loops call the engine directly. The guard sees only this thread: the work of the
+/// engine's own workers is not covered.
+pub fn with_render_guard<R>(guard: RenderGuard, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<RenderGuard>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RENDER_GUARD.with(|g| g.set(self.0));
+        }
+    }
+    let _restore = Restore(RENDER_GUARD.with(|g| g.replace(Some(guard))));
+    f()
+}
+
+/// One `Engine::render`, through the guard of [`with_render_guard`] when there is one.
+fn render_batch(engine: &mut Engine, ins: &[&[f32]], outs: &mut [&mut [f32]]) {
+    match RENDER_GUARD.with(std::cell::Cell::get) {
+        Some(guard) => guard(&mut || engine.render(ins, outs)),
+        None => engine.render(ins, outs),
+    }
+}
+
 /// Batches in a row without a restart or a latency change that end the pre-roll (a restart takes
 /// about four batches from the request to the aligned routing).
 pub const QUIET_BATCHES: usize = 8;
@@ -212,7 +242,7 @@ pub fn render_song_with_plugins(
         let ins: Vec<&[f32]> = ins.iter().map(Vec::as_slice).collect();
         let mut outs = vec![vec![0.0f32; BATCH]; channels];
         let mut outs: Vec<&mut [f32]> = outs.iter_mut().map(Vec::as_mut_slice).collect();
-        engine.render(&ins, &mut outs);
+        render_batch(engine, &ins, &mut outs);
         handle.collect_garbage();
         if let Some(device) = engine.fault() {
             return Err(OfflineError::DeviceFaulted(device));
@@ -340,7 +370,7 @@ fn song_in_batches(
         }
         let ins: Vec<&[f32]> = block_in.iter().map(|b| &b[..n]).collect();
         let mut outs: Vec<&mut [f32]> = out.iter_mut().map(|o| &mut o[pos..pos + n]).collect();
-        engine.render(&ins, &mut outs);
+        render_batch(engine, &ins, &mut outs);
         handle.collect_garbage();
         if let Some(device) = engine.fault() {
             return Err(OfflineError::DeviceFaulted(device));

@@ -2,6 +2,9 @@
 //! tick it says (and not before), the lane-free project does not bend,
 //! the bounce does not depend on the host block size or the workers, and a saved and loaded
 //! project bounces the same.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::controller::{ControllerKind, ControllerLane};
@@ -10,7 +13,7 @@ use atomik_model::{
     SongCommand, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use atomik_testkit::signal::dominant_frequency;
 use std::num::NonZeroUsize;
 
@@ -88,7 +91,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

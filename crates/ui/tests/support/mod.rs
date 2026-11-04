@@ -7,6 +7,7 @@ pub mod container;
 pub mod cpu;
 pub mod drum;
 pub mod fx;
+pub mod pixel;
 pub mod plugin;
 pub mod sampler;
 pub mod seq;

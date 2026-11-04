@@ -2,6 +2,9 @@
 //!
 //! Each test builds its project in memory and bounces it through the shared renderer, so the
 //! engine path (track input, note cable, device batching) is covered, not just the device.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -9,7 +12,7 @@ use atomik_model::{
     SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BAR: i64 = 4 * PPQ;
@@ -120,7 +123,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
         workers,
         loop_count: None,
     };
-    let r = render_doc_in(doc, &default_registry(), &options, None).unwrap();
+    let r = common::render_guarded_in(doc, &default_registry(), &options, None).unwrap();
     r.channels.iter().flatten().map(|x| x.to_bits()).collect()
 }
 
@@ -362,7 +365,8 @@ fn bounce_in_bundle(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
         workers,
         loop_count: None,
     };
-    let r = render_doc_in(doc, &default_registry(), &options, Some(&demo_root())).unwrap();
+    let r =
+        common::render_guarded_in(doc, &default_registry(), &options, Some(&demo_root())).unwrap();
     r.channels.iter().flatten().map(|x| x.to_bits()).collect()
 }
 

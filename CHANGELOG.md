@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Manual release test protocol.** `docs/RELEASE-TESTING.md` lists the checks that need a device, a real plugin, a
+  display or an installer (audio devices and unplugging, MIDI in, out, clock and control surfaces, plugins and the
+  sandbox on each OS, detached windows and mixed-scale monitors, the listening check, installers), each with a
+  stable id, its steps, the expected result and the automated test it complements. `scripts/release/test-report.sh
+  <version>` writes the report skeleton with the environment captured, refuses a protocol with a repeated id, and
+  verifies a filled report per operating system. The release workflow does not require the report yet.
+- **Pixel goldens, view properties and a wider allocation guard.** The transport bar, arrangement, piano roll,
+  console, rack, a context menu, cut labels and a CJK string have PNG goldens at 1x and 2x (the transport bar and
+  the piano roll also at 1.25x), compared by a perceptual tolerance with a per-OS pin and a diff image that CI
+  uploads when one fails. Random gesture scripts on the arrangement and the piano roll check that no emitted command
+  is refused, that selections stay valid, that a view told the document revision draws what an always-syncing view
+  draws and that undoing everything restores the document. Twenty-seven more render test files bounce under the
+  allocation guard through one helper, and a test lists every render test that still does not, with its reason.
+  Fixed: a double click on an audio lane no longer tries to draw a note clip, dragging a gain envelope point can no
+  longer leave its clip, and a note moved onto another note of the same key and tick now replaces it instead of
+  producing a note list the model refuses. No saved field changes (the project format is still 42).
 - **UI widgets.** The arrangement, console, plugin parameter and container lists that offer rows to pick from
   (input and parameter lists, bus and source lists, take commands, plugin presets, macro and CV lists) now share one
   pick-list widget for geometry, scrolling, hover and frame, so a new list costs its rows only. The file browser's

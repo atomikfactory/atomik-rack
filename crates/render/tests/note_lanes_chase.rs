@@ -1,6 +1,9 @@
 //! Chase from a second note lane, through the real engine: a note on lane 2 that spans the loop
 //! start is started again at the loop wrap exactly like the same note on lane 1, and a track
 //! with chase off keeps it silent.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::song::ClipId;
@@ -8,7 +11,7 @@ use atomik_model::{
     Clip, ClipContent, Command, CreateOptions, CreateSource, DeviceKey, Document, Note, RackDoc,
     SongCommand, WorkflowCommand, new_project_doc,
 };
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use atomik_render::{Rendered, default_registry};
 use std::num::NonZeroUsize;
 
@@ -106,7 +109,7 @@ fn bounce_two_passes(doc: &RackDoc, block: usize) -> Rendered {
         workers: 0,
         loop_count: Some(2),
     };
-    render_doc(doc, &default_registry(), &options).unwrap()
+    common::render_guarded(doc, &default_registry(), &options).unwrap()
 }
 
 /// The largest sample of the left channel over the second half of the second pass.

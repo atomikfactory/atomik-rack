@@ -2,6 +2,9 @@
 //! params, a VCA level, the tempo, a transport key, the selected strip), saved, loaded, edited and
 //! undone, bounces bit for bit like the same project without them, for any block size and worker
 //! count, and a version 27 file (no mappings) bounces as it always did.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -10,7 +13,7 @@ use atomik_model::{
     TransportTarget, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 fn key(k: &str) -> DeviceKey {
@@ -73,7 +76,7 @@ fn bounce_with(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

@@ -2,6 +2,9 @@
 //! between two takes of an audio comp does not click where the comp fades (and a plain splice
 //! does), a comp bounces exactly like the plain clips it compiles to and like the flattened
 //! group, and the bounce does not depend on the host block or the workers.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_audio_file::{AudioData, Bundle};
 use atomik_core::PPQ;
@@ -9,7 +12,7 @@ use atomik_model::{
     AssetMeta, Clip, ClipContent, ClipId, Command, DeviceKey, Document, FadeCurve, Note, RackDoc,
     SongCommand, empty_doc, load_project, save_project,
 };
-use atomik_render::project::{ProjectOptions, render_doc, render_doc_in};
+use atomik_render::project::{ProjectOptions, render_doc_in};
 use atomik_render::{Rendered, default_registry};
 use atomik_testkit::signal::dominant_frequency;
 use std::num::NonZeroUsize;
@@ -357,7 +360,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

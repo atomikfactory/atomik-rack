@@ -1,5 +1,8 @@
 //! The rack sorting mode is view data: a project bounces to the same bits in every mode, and
 //! changing the mode back and forth leaves the bounce alone.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::song::ClipId;
@@ -8,7 +11,7 @@ use atomik_model::{
     Note, RackDoc, RackSort, SongCommand, WorkflowCommand, new_project_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BAR: i64 = 4 * PPQ;
@@ -95,7 +98,7 @@ fn bounce(doc: &RackDoc) -> Vec<Vec<u32>> {
         workers: 1,
         loop_count: None,
     };
-    let r = render_doc_in(doc, &default_registry(), &options, None).unwrap();
+    let r = common::render_guarded_in(doc, &default_registry(), &options, None).unwrap();
     r.channels
         .iter()
         .map(|c| c.iter().map(|x| x.to_bits()).collect())

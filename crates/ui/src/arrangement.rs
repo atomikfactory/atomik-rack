@@ -3104,6 +3104,10 @@ impl ArrangementView {
                 self.selected_track = None;
                 self.point_sel = None;
                 self.pick_note_lane(track, lane);
+                // Audio lanes hold recordings and imported files: nothing is drawn on them.
+                if self.song.tracks[track].is_audio() {
+                    return;
+                }
                 let t = self.axis.x_to_tick(pos.x);
                 let device = self.song.tracks[track].device.clone();
                 let automation = self.is_automation_lane(track, lane);
@@ -4386,7 +4390,14 @@ impl ArrangementView {
                         let start_frame = tempo.frame_at_tick(clip.start as f64, *rate);
                         let frame = (at(pos.x) - start_frame).round() as i64;
                         let db = audio::y_to_gain(pos.y, *top, *top + *height);
-                        new.2.envelope = audio::envelope_move(&last.2.envelope, *index, frame, db);
+                        let moved = audio::envelope_move(&last.2.envelope, *index, frame, db);
+                        // A point cannot leave the clip: past its end the drag stays where it was.
+                        let span = clip.loop_length.map_or(clip.length, |l| l.min(clip.length));
+                        let end = tempo.frame_at_tick((clip.start + span) as f64, *rate);
+                        let limit = (end - start_frame).round().max(0.0) as u64;
+                        if moved.iter().all(|p| p.frame <= limit) {
+                            new.2.envelope = moved;
+                        }
                     }
                     AudioGrab::TrimStart => {
                         let wanted =

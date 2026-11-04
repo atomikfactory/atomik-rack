@@ -3,6 +3,9 @@
 //! lane of the same param, and the bounce does not depend on the block size or the worker count;
 //! the value a control shows is the value the engine applies; a bent segment follows the power
 //! curve it names; a saved project plays the same.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::{PPQ, Ticks};
 use atomik_engine::{DeviceInstanceId, SongCurve, SongPoint, lane_value};
@@ -12,7 +15,7 @@ use atomik_model::{
     ParamLane, RackDoc, SongCommand, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc, song_input};
+use atomik_render::project::{ProjectOptions, song_input};
 use std::num::NonZeroUsize;
 
 const CUTOFF: &str = "filter.cutoff";
@@ -104,7 +107,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

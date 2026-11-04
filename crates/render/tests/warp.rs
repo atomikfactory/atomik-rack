@@ -1,6 +1,9 @@
 //! Bounces of warped audio clips: they follow the song tempo (also across a tempo change),
 //! transpose without changing length, are bit-identical from run to run and across blocks and
 //! workers, and a project that does not warp bounces as it always did.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_audio_file::{AudioData, Bundle};
 use atomik_core::PPQ;
@@ -10,7 +13,7 @@ use atomik_model::{
     WarpSettings, load_project, save_project,
 };
 use atomik_render::project::{
-    ProjectOptions, render_doc_in, song_input_live, song_input_with_assets, song_input_with_warps,
+    ProjectOptions, song_input_live, song_input_with_assets, song_input_with_warps,
 };
 use atomik_render::warp::{pool_key, render_warps};
 use atomik_render::{Rendered, default_registry};
@@ -154,7 +157,7 @@ fn put(d: &mut Document, asset: &str, start: i64, length: i64, warp: WarpSetting
 }
 
 fn render(s: &Song, block: usize, workers: u16) -> Rendered {
-    render_doc_in(
+    common::render_guarded_in(
         &s.doc,
         &default_registry(),
         &options(block, workers),

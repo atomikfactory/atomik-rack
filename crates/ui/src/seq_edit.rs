@@ -274,7 +274,9 @@ pub fn clamp_note(n: Note) -> Note {
 }
 
 /// Clamps every note and sorts by (tick, key, length), keeping track of where the notes at
-/// `tracked` indices end up.
+/// `tracked` indices end up. Two notes on the same key at the same tick cannot both stay (the
+/// model refuses a list with one): the tracked note (the one just moved or drawn) replaces the
+/// note it landed on, and of two untracked notes the longer one stays.
 pub fn normalize_notes(
     notes: Vec<Note>,
     tracked: &BTreeSet<usize>,
@@ -285,6 +287,19 @@ pub fn normalize_notes(
         .map(|(i, n)| (clamp_note(n), tracked.contains(&i)))
         .collect();
     tagged.sort_by_key(|(n, _)| (n.tick, n.key, n.length));
+    let mut kept: Vec<(Note, bool)> = Vec::with_capacity(tagged.len());
+    for entry in tagged {
+        match kept.last_mut() {
+            Some(last) if (last.0.tick, last.0.key) == (entry.0.tick, entry.0.key) => {
+                // Sorted by length: the later entry is the longer one.
+                if entry.1 || !last.1 {
+                    *last = entry;
+                }
+            }
+            _ => kept.push(entry),
+        }
+    }
+    let tagged = kept;
     let sel = tagged
         .iter()
         .enumerate()

@@ -2,6 +2,9 @@
 //! to an inner synth's cutoff CV, sounds bit for bit like the same patch built without a
 //! container (the expansion theorem), whatever the host block and worker count; a container
 //! without CV cabling bounces as it always did.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -9,7 +12,7 @@ use atomik_model::{
     Document, Note, RackDoc, SocketRef, SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const SYNTH: &str = "atomik.poly-synth";
@@ -157,7 +160,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
         workers,
         loop_count: None,
     };
-    let r = render_doc_in(doc, &default_registry(), &options, None).unwrap();
+    let r = common::render_guarded_in(doc, &default_registry(), &options, None).unwrap();
     r.channels.iter().flatten().map(|x| x.to_bits()).collect()
 }
 

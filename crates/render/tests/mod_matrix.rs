@@ -1,6 +1,9 @@
 //! The modulation matrix through a bounce: a poly synth with slots renders the same bits for every
 //! block size and worker count, a project saved and loaded again bounces the same, a project whose
 //! slots were all cleared bounces like one that never had any, and a slot is audible.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -8,7 +11,7 @@ use atomik_model::{
     WorkflowCommand, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BAR: i64 = 4 * PPQ;
@@ -133,7 +136,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
         workers,
         loop_count: None,
     };
-    let r = render_doc_in(doc, &default_registry(), &options, None).unwrap();
+    let r = common::render_guarded_in(doc, &default_registry(), &options, None).unwrap();
     r.channels.iter().flatten().map(|x| x.to_bits()).collect()
 }
 

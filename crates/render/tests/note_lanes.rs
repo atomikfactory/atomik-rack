@@ -1,6 +1,9 @@
 //! Note lanes in the offline render: two lanes bounce like one lane holding every clip, a muted
 //! lane is silent (bounce and freeze), and bouncing chosen clips in place renders the clips of a
 //! muted lane too.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::song::ClipId;
@@ -10,7 +13,7 @@ use atomik_model::{
 };
 use atomik_render::freeze::{FreezeRender, FreezeRequest, render_freeze};
 use atomik_render::plugin_pass::RenderControl;
-use atomik_render::project::{PluginBounce, ProjectOptions, render_doc};
+use atomik_render::project::{PluginBounce, ProjectOptions};
 use atomik_render::{Rendered, default_registry};
 use std::num::NonZeroUsize;
 
@@ -122,7 +125,7 @@ const FIRST: &[(i64, i64, u8)] = &[(0, PPQ, 60), (PPQ, PPQ, 64)];
 const SECOND: &[(i64, i64, u8)] = &[(0, 2 * PPQ, 67), (2 * PPQ, PPQ, 72)];
 
 fn bounce(doc: &RackDoc, block: usize) -> Rendered {
-    render_doc(doc, &default_registry(), &options(block)).unwrap()
+    common::render_guarded(doc, &default_registry(), &options(block)).unwrap()
 }
 
 fn peak(r: &Rendered) -> f32 {

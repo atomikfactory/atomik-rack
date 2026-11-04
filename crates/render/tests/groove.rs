@@ -3,6 +3,9 @@
 //! the closed-form number of frames, humanize is reproducible (a second run, a save and load, any
 //! host block and any worker count) and another seed gives another bounce, and the groove library
 //! itself does not change what a project sounds like.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -10,7 +13,7 @@ use atomik_model::{
     QuantizeParams, RackDoc, SongCommand, StepResolution, empty_doc, load_project, save_project,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BAR: i64 = 4 * PPQ;
@@ -100,7 +103,7 @@ fn bounce_with(doc: &RackDoc, block: usize, workers: u16) -> Vec<f32> {
         workers,
         loop_count: None,
     };
-    render_doc(doc, &default_registry(), &options)
+    common::render_guarded(doc, &default_registry(), &options)
         .unwrap()
         .channels
         .remove(0)

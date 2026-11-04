@@ -63,11 +63,17 @@ section is active.
 - **Install it once per test binary** with `atomik_testkit::install_alloc_guard!();`, after any
   `//!` docs. The unit-test binaries of `atomik-engine`, `atomik-devices`, `atomik-audio-io`,
   `atomik-midi-io`, `atomik-plugin-sandbox` and `atomik-testkit` install it in their `lib.rs`, and
-  almost every integration-test file of the engine does. Most render and QA-server integration
-  tests render in-process **without** it, so a regression that allocates in a render path is not
-  caught there. `crates/testkit/tests/guard_inventory.rs` lists the files of `atomik-render` and
-  `atomik-mcp` that have no guard and fails when a file gains or loses its guard without the list
-  changing; guarding them is open work.
+  almost every integration-test file of the engine does. In `atomik-render`, the tests that bounce a project
+  through `render_doc` or `render_doc_in` take the helpers of
+  [crates/render/tests/common/mod.rs](../crates/render/tests/common/mod.rs) (`render_guarded`,
+  `render_guarded_in`): the bounce loop runs every `Engine::render` call through the guard that
+  `atomik_render::plugin_pass::with_render_guard` sets, so the whole project render path of the test is under
+  `assert_no_alloc`. The guard sees only the test's own thread, not the engine's workers. Some of the
+  in-process render tests still render without it (QA-server tests, plugin tests, and bounces through the project
+  file, the CLI, freeze, stems and export, which the seam does not wrap yet). Every one of them is listed with its
+  reason in `crates/testkit/tests/guard_inventory.rs`, which scans `crates/*/tests/*.rs` for render calls and fails
+  when a file renders without the guard and has no entry, when an entry no longer applies (the file gained the
+  guard, stopped rendering or went away), and when a render test installs the guard but never opens a section.
 - **Guard a section** with `atomik_testkit::no_alloc::assert_no_alloc(|| ...)`. The call panics with
   `HI-1 violated: N heap operation(s) inside a no-alloc section` if the closure allocated,
   reallocated or freed memory on this thread. It panics with a different message if the guard was
@@ -145,8 +151,8 @@ A few tests keep the documents honest; each one names what to update when it fai
   the architecture, devices or testing guide past 120 columns (a table row or one long code span
   excepted) and on a relative link or `#anchor` of any tracked Markdown file that does not
   resolve. The `hygiene` job of the continuous integration runs these three files too.
-- [guard_inventory.rs](../crates/testkit/tests/guard_inventory.rs) lists the render and QA-server
-  test files without the allocation guard (see above).
+- [guard_inventory.rs](../crates/testkit/tests/guard_inventory.rs) lists the in-process render test
+  files without the allocation guard, each with its reason (see above).
 
 ## Determinism tests (HI-2)
 
@@ -257,6 +263,43 @@ rewrites one.
   fails when `atomik-v<PROJECT_VERSION>.atomik` is missing. Run
   `sh scripts/format-corpus.sh 42 42` after the example project is saved at the new version, then
   regenerate the two summary goldens above.
+
+## Pixel goldens and view properties
+
+The display-list goldens fix what a view draws; the pixel goldens fix what the CPU rasteriser makes of it.
+[crates/ui/tests/pixel_goldens.rs](../crates/ui/tests/pixel_goldens.rs) renders the transport bar, the
+arrangement (clips and automation), the piano roll, the console, the rack, a context menu, labels cut by width and
+a CJK string at 1x and 2x (the transport bar and the piano roll also at 1.25x, where one pixel lines fall between
+pixels). The PNGs are crops of 20 to 75 KB in `crates/ui/tests/pixel/`, named `<pane>_<scale>.png`. The comparison
+(`crates/ui/tests/support/pixel.rs`) is perceptual: a pixel differs when a channel moves by more than a threshold,
+and the image fails when too many pixels differ or when the luminance SSIM (8 by 8 blocks) is under a floor.
+
+- **Tolerance.** The reference PNGs were made on Windows. There they are compared with `Tolerance::SAME_OS` (a
+  threshold of 12, at most 0.2 percent of the pixels, SSIM 0.995). On another OS the shapes are the same but the
+  text comes from other fonts, so `Tolerance::OTHER_OS` applies (40, 4 percent, 0.90): it still refuses a pane
+  shifted by one pixel and a clipped label, which the negative tests of the file prove. A PNG named
+  `<pane>_<scale>.<os>.png` (`linux`, `macos`, `windows`) pins that OS exactly. The CJK goldens are compared only
+  where the reference was made or an OS-pinned PNG exists, because the fallback font is the machine's own; other
+  machines only check that the render draws something.
+- **Regenerate** after an intentional visual change, and look at the images before committing:
+  `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-ui --test pixel_goldens`. The display-list goldens and the
+  keymap goldens regenerate the same way with `--test` and the file that owns them (`keymap_goldens`,
+  `workflow_snapshot`, `console_snapshot`, ...); a change to a view usually needs both kinds.
+- **A failure** writes `<name>.actual.png`, `<name>.golden.png` and `<name>.diff.png` (differing pixels in red) to
+  `target/pixel-diff/`. The `test` job of the continuous integration uploads that folder as an artefact
+  (`pixel-diff-<os>-<profile>`) when it fails.
+- **Size.** No golden may pass 300 KB (`the_goldens_are_small`); the repository limit is 5 MB a file.
+
+[crates/ui/tests/view_properties.rs](../crates/ui/tests/view_properties.rs) runs 256 random gesture scripts per
+property on the arrangement (with and without audio clips) and the piano roll: pointer down, move and up with
+modifiers, double and right clicks, keys, wheel scroll and zoom, and undo and redo of the document. After every
+step the view answers like a view that syncs on every call (the gated sync of `set_doc_revision` against the
+always-sync reference, actions and display list), every command it emitted was accepted by the model, the
+selection names clips or notes that exist, and a pointer move that changes nothing asks for no repaint once the
+hover has settled; at the end undoing every step restores the first document. `PROPTEST_CASES=2000` is the long
+run. The properties found three bugs that are fixed and have a named test in the file (a double click on an audio
+lane, an envelope drag past the clip end, a note dropped on another note; `normalize_notes` now lets the moved
+note replace the one it lands on). The regressions file next to the test is committed.
 
 ## Real-time factor test (ignored by default)
 
@@ -1430,6 +1473,9 @@ in CI. Run them by hand, one binary at a time, on a machine where playing sound 
   a real third-party plugin named by `ATOMIK_REAL_VST3` (and the other `ATOMIK_REAL_*` variables
   documented at the top of each file).
 - Listening to a render for clicks, zipper noise and aliasing is a manual check; no automated test replaces it.
+
+The checks to run by hand before a release, with stable ids and a report, are in
+[RELEASE-TESTING.md](RELEASE-TESTING.md); the hardware tests above are part of it.
 
 A normal `cargo test --workspace` reports these as ignored.
 

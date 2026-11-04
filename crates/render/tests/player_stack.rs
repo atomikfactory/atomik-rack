@@ -1,6 +1,9 @@
 //! Player stacks through the offline render: a track whose notes enter at the top of its players
 //! sends its notes there and its automation to the instrument, a bounce and a freeze play through
 //! the stack, and a stale entry plays the track's own device.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::song::ClipId;
@@ -11,9 +14,7 @@ use atomik_model::{
 use atomik_render::default_registry;
 use atomik_render::freeze::{FreezeRequest, render_freeze};
 use atomik_render::plugin_pass::RenderControl;
-use atomik_render::project::{
-    PluginBounce, ProjectOptions, expanded_ids, render_doc_in, song_input,
-};
+use atomik_render::project::{PluginBounce, ProjectOptions, expanded_ids, song_input};
 use std::num::NonZeroUsize;
 
 const BAR: i64 = 4 * PPQ;
@@ -151,7 +152,8 @@ fn project(notes: &[(i64, i64, u8, f32)], stack: Option<f32>) -> RackDoc {
 }
 
 fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<Vec<u32>> {
-    let r = render_doc_in(doc, &default_registry(), &options(block, workers), None).unwrap();
+    let r = common::render_guarded_in(doc, &default_registry(), &options(block, workers), None)
+        .unwrap();
     r.channels
         .iter()
         .map(|c| c.iter().map(|x| x.to_bits()).collect())

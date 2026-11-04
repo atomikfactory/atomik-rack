@@ -4,6 +4,9 @@
 //!
 //! The devices here draw no random numbers: a device that draws from the project seed gets its
 //! seed from its place in the flat device list, which a container's `~split` moves by one.
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -11,7 +14,7 @@ use atomik_model::{
     InsertEffect, Note, RackDoc, SocketRef, SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc_in};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BAR: i64 = 4 * PPQ;
@@ -201,7 +204,7 @@ fn options(block: usize, workers: u16) -> ProjectOptions {
 }
 
 fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
-    render_doc_in(doc, &default_registry(), &options(block, workers), None)
+    common::render_guarded_in(doc, &default_registry(), &options(block, workers), None)
         .unwrap()
         .channels
         .iter()
@@ -211,7 +214,7 @@ fn bounce(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
 }
 
 fn peak(doc: &RackDoc) -> f32 {
-    render_doc_in(doc, &default_registry(), &options(512, 0), None)
+    common::render_guarded_in(doc, &default_registry(), &options(512, 0), None)
         .unwrap()
         .channels
         .iter()

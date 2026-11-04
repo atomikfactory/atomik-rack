@@ -8,6 +8,9 @@
 //! constant) and, as zero-latency controls, the EQ, the reverb and the modulation at `mix` 0.
 //! With compensation on both clicks start at the same frame; with it off Click B starts later by
 //! exactly the effect's latency (so the test is sensitive to a missing or wrong delay).
+atomik_testkit::install_alloc_guard!();
+
+mod common;
 
 use atomik_core::PPQ;
 use atomik_model::{
@@ -15,7 +18,7 @@ use atomik_model::{
     SongCommand, empty_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::project::{ProjectOptions, render_doc};
+use atomik_render::project::ProjectOptions;
 use std::num::NonZeroUsize;
 
 const BEAT: usize = 24_000;
@@ -146,7 +149,7 @@ fn options(block: usize, workers: u16) -> ProjectOptions {
 }
 
 fn render(doc: &RackDoc, block: usize, workers: u16) -> Vec<Vec<f32>> {
-    render_doc(doc, &default_registry(), &options(block, workers))
+    common::render_guarded(doc, &default_registry(), &options(block, workers))
         .unwrap()
         .channels
 }
