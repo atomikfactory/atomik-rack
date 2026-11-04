@@ -495,7 +495,11 @@ fn the_window_menu_brings_the_main_window_forward_and_a_detached_pane_when_there
     let model = s.menu_model();
     let window = model.iter().find(|m| m.title == "Window").unwrap();
     let enabled: Vec<bool> = window.items().map(|i| i.enabled).collect();
-    assert_eq!(enabled, [true, true, false]);
+    // The windows, then the song commands (the ones that need a second song are off).
+    assert_eq!(
+        enabled,
+        [true, true, false, true, true, false, false, false]
+    );
 }
 
 #[test]

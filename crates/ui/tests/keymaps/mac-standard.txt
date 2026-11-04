@@ -219,3 +219,8 @@ view.zoom_out | global | Cmd+-, Cmd+Opt+-
 view.zoom_out | sequencer | G
 view.zoom_out | editor | G
 view.zoom_reset | global | Cmd+0
+window.close_song | global | Cmd+Shift+W
+window.new_song | global | Cmd+Shift+N
+window.next_song | global | Cmd+Shift+PageDown
+window.open_song | global | Cmd+Shift+O
+window.previous_song | global | Cmd+Shift+PageUp

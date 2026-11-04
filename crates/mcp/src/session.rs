@@ -406,6 +406,14 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_midi_file",
             "a file dialog: a headless session cannot show it (the MIDI file import and export are covered by the app tests)",
         ),
+        ShellRequest::NewSong
+        | ShellRequest::PickOpenSong
+        | ShellRequest::CloseSong
+        | ShellRequest::ShowSong(_)
+        | ShellRequest::FocusSong(_) => (
+            "song_windows",
+            "a session holds one song: opening, closing and switching songs is the app's Window menu",
+        ),
         _ => (
             "dialog",
             "a native dialog, which a headless session cannot show",

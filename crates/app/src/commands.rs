@@ -11,7 +11,7 @@ use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, OUTPUT_CHANNEL_ARGS, RATE_ARGS,
-    RECENT_ARGS, TEMPLATE_ARGS,
+    RECENT_ARGS, SONG_ARGS, TEMPLATE_ARGS,
 };
 use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
 use std::borrow::Cow;
@@ -495,6 +495,19 @@ pub enum AppCommand {
     AppZoom(ZoomChange),
     /// Window ▸ a window: bring it forward.
     FocusWindow(WindowKind),
+    /// Window ▸ New Song Window: a new song in a window of its own, which takes the audio.
+    NewSongWindow,
+    /// Window ▸ Open Song in New Window…: a project or patch opened as a song of its own.
+    OpenSongWindow,
+    /// Window ▸ Close Song Window: ends this song and closes its windows (asks about unsaved
+    /// changes). The last song cannot be closed this way: closing it quits.
+    CloseSongWindow,
+    /// Window ▸ Next Song: the song after this one takes the audio and the keys.
+    NextSong,
+    /// Window ▸ Previous Song.
+    PreviousSong,
+    /// Window ▸ a song: the song at this place of the list of open songs (0 is the first).
+    ActivateSong(usize),
 }
 
 /// What View ▸ Application Zoom does to the zoom of every window.
@@ -867,6 +880,12 @@ impl AppCommand {
             AppCommand::SetTheme(t) => ("view.theme", Some(t.id())),
             AppCommand::AppZoom(z) => ("view.app_zoom", Some(z.arg()?)),
             AppCommand::FocusWindow(k) => ("view.focus_window", Some(window_arg(*k))),
+            AppCommand::NewSongWindow => ("window.new_song", None),
+            AppCommand::OpenSongWindow => ("window.open_song", None),
+            AppCommand::CloseSongWindow => ("window.close_song", None),
+            AppCommand::NextSong => ("window.next_song", None),
+            AppCommand::PreviousSong => ("window.previous_song", None),
+            AppCommand::ActivateSong(i) => ("window.song", Some(SONG_ARGS.get(*i)?)),
         })
     }
 
@@ -1181,6 +1200,14 @@ impl AppCommand {
             ("view.focus_window", Some("main")) => AppCommand::FocusWindow(WindowKind::Main),
             ("view.focus_window", Some("rack")) => AppCommand::FocusWindow(WindowKind::Rack),
             ("view.focus_window", Some("mixer")) => AppCommand::FocusWindow(WindowKind::Console),
+            ("window.new_song", None) => AppCommand::NewSongWindow,
+            ("window.open_song", None) => AppCommand::OpenSongWindow,
+            ("window.close_song", None) => AppCommand::CloseSongWindow,
+            ("window.next_song", None) => AppCommand::NextSong,
+            ("window.previous_song", None) => AppCommand::PreviousSong,
+            ("window.song", Some(n)) => {
+                AppCommand::ActivateSong(SONG_ARGS.iter().position(|a| *a == n)?)
+            }
             _ => return None,
         })
     }
@@ -1828,6 +1855,27 @@ pub fn menus_with_lists(
     keymap: &Keymap,
     recent: &[String],
     templates: &[String],
+) -> Vec<Menu> {
+    menus_with_songs(state, keymap, recent, templates, &SongList::default())
+}
+
+/// The open songs the Window menu lists: their names in the order they were opened, and the place
+/// of the one the menu belongs to.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SongList<'a> {
+    /// The name of each open song (at most [`SONG_ARGS`]'s length are listed).
+    pub names: &'a [String],
+    /// The place of the song with the audio in `names`.
+    pub current: usize,
+}
+
+/// [`menus_with_lists`], with the Window menu listing the open songs `songs`.
+pub fn menus_with_songs(
+    state: &MenuState,
+    keymap: &Keymap,
+    recent: &[String],
+    templates: &[String],
+    songs: &SongList<'_>,
 ) -> Vec<Menu> {
     let make = |label: &'static str, command: AppCommand, checked, enabled| {
         MenuEntry::Item(MenuItem {
@@ -2929,7 +2977,48 @@ pub fn menus_with_lists(
                     AppCommand::FocusWindow(WindowKind::Console),
                     state.console_detached,
                 ),
-            ],
+                MenuEntry::Separator,
+                item("New Song Window", AppCommand::NewSongWindow),
+                item(
+                    "Open Song in New Window\u{2026}",
+                    AppCommand::OpenSongWindow,
+                ),
+                enabled(
+                    "Close Song Window",
+                    AppCommand::CloseSongWindow,
+                    songs.names.len() > 1,
+                ),
+                MenuEntry::Separator,
+                enabled("Next Song", AppCommand::NextSong, songs.names.len() > 1),
+                enabled(
+                    "Previous Song",
+                    AppCommand::PreviousSong,
+                    songs.names.len() > 1,
+                ),
+            ]
+            .into_iter()
+            .chain(
+                // One song needs no list: the entries are the songs and nothing to pick from.
+                (songs.names.len() > 1)
+                    .then(|| {
+                        std::iter::once(MenuEntry::Separator).chain(
+                            songs.names.iter().take(SONG_ARGS.len()).enumerate().map(
+                                |(i, name)| {
+                                    MenuEntry::Item(MenuItem {
+                                        label: Cow::Owned(name.clone()),
+                                        command: AppCommand::ActivateSong(i),
+                                        shortcut: None,
+                                        checked: Some(i == songs.current),
+                                        enabled: true,
+                                    })
+                                },
+                            ),
+                        )
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+            .collect(),
         },
         Menu {
             title: "Help",
@@ -3235,6 +3324,13 @@ mod tests {
             AppCommand::FocusWindow(WindowKind::Main),
             AppCommand::FocusWindow(WindowKind::Rack),
             AppCommand::FocusWindow(WindowKind::Console),
+            AppCommand::NewSongWindow,
+            AppCommand::OpenSongWindow,
+            AppCommand::CloseSongWindow,
+            AppCommand::NextSong,
+            AppCommand::PreviousSong,
+            AppCommand::ActivateSong(0),
+            AppCommand::ActivateSong(8),
         ];
         for t in ThemeChoice::ALL {
             v.push(AppCommand::SetTheme(t));
@@ -3389,7 +3485,12 @@ mod tests {
         let keymap = legacy(Os::Windows);
         let recent: Vec<String> = (0..8).map(|i| format!("song {i}")).collect();
         let templates: Vec<String> = (0..16).map(|i| format!("template {i}")).collect();
-        let model = menus_with_lists(&state(), &keymap, &recent, &templates);
+        let songs: Vec<String> = (0..9).map(|i| format!("open song {i}")).collect();
+        let list = SongList {
+            names: &songs,
+            current: 0,
+        };
+        let model = menus_with_songs(&state(), &keymap, &recent, &templates, &list);
         let in_menu: Vec<AppCommand> = model
             .iter()
             .flat_map(Menu::items)
@@ -3975,8 +4076,17 @@ mod tests {
         );
         assert_eq!(
             labels(9),
-            ["Main Window", "Rack Window", "Mixer Window"],
-            "the Window menu lists the windows"
+            [
+                "Main Window",
+                "Rack Window",
+                "Mixer Window",
+                "New Song Window",
+                "Open Song in New Window\u{2026}",
+                "Close Song Window",
+                "Next Song",
+                "Previous Song"
+            ],
+            "the Window menu lists the windows and the song commands"
         );
         assert_eq!(
             labels(10),
@@ -3999,10 +4109,82 @@ mod tests {
             let window = m.iter().find(|m| m.title == "Window").unwrap();
             window.items().map(|i| i.enabled).collect::<Vec<_>>()
         };
-        assert_eq!(enabled(&on), [true, false, false]);
+        assert_eq!(
+            enabled(&on),
+            [true, false, false, true, true, false, false, false],
+            "one song: the song commands that need a second one are off"
+        );
         on.rack_detached = true;
         on.console_detached = true;
-        assert_eq!(enabled(&on), [true, true, true]);
+        assert_eq!(
+            enabled(&on),
+            [true, true, true, true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn the_window_menu_lists_the_open_songs() {
+        let names = ["Untitled".to_string(), "Verse.atomik *".to_string()];
+        let songs = SongList {
+            names: &names,
+            current: 1,
+        };
+        let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
+        let window = m.iter().find(|m| m.title == "Window").unwrap();
+        let rows: Vec<_> = window
+            .items()
+            .filter(|i| matches!(i.command, AppCommand::ActivateSong(_)))
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label.as_ref(), "Untitled");
+        assert_eq!(rows[1].label.as_ref(), "Verse.atomik *");
+        assert_eq!(rows[0].checked, Some(false));
+        assert_eq!(rows[1].checked, Some(true));
+        for command in [
+            AppCommand::CloseSongWindow,
+            AppCommand::NextSong,
+            AppCommand::PreviousSong,
+        ] {
+            assert!(
+                window
+                    .items()
+                    .find(|i| i.command == command)
+                    .unwrap()
+                    .enabled,
+                "{command:?}"
+            );
+        }
+        // More songs than the list has places: the first nine are listed.
+        let many: Vec<String> = (0..12).map(|i| format!("Song {i}")).collect();
+        let songs = SongList {
+            names: &many,
+            current: 0,
+        };
+        let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
+        let window = m.iter().find(|m| m.title == "Window").unwrap();
+        let listed = window
+            .items()
+            .filter(|i| matches!(i.command, AppCommand::ActivateSong(_)))
+            .count();
+        assert_eq!(listed, SONG_ARGS.len());
+    }
+
+    #[test]
+    fn the_song_commands_have_ids() {
+        assert_eq!(
+            AppCommand::NewSongWindow.command_id(),
+            Some(("window.new_song", None))
+        );
+        assert_eq!(
+            AppCommand::ActivateSong(2).command_id(),
+            Some(("window.song", Some("2")))
+        );
+        assert_eq!(
+            AppCommand::from_command("window.song", Some("8")),
+            Some(AppCommand::ActivateSong(8))
+        );
+        assert_eq!(AppCommand::from_command("window.song", Some("9")), None);
+        assert_eq!(AppCommand::ActivateSong(9).command_id(), None);
     }
 
     #[test]

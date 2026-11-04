@@ -4,7 +4,9 @@
 //! `app.rs` converts winit's types at the edge and calls these; everything here is plain data
 //! and unit-tested. See [`crate::windows`] for the model they feed.
 
-use crate::windows::{DesktopSpace, MonitorInfo, WindowGeom, WindowHit, WindowKind, WindowRect};
+use crate::windows::{
+    DesktopSpace, DocId, MonitorInfo, WindowGeom, WindowHit, WindowKind, WindowRect,
+};
 use atomik_ui::UiEvent;
 use atomik_ui::kurbo::Point;
 use std::path::{Path, PathBuf};
@@ -141,6 +143,22 @@ pub(super) fn pointer_of(event: &UiEvent) -> Option<Point> {
         | UiEvent::Wheel { pos, .. } => Some(*pos),
         _ => None,
     }
+}
+
+/// The screenshot file of a window of song `doc`: [`screenshot_path`] for the first song, the
+/// same with `-song<n>` before the window's own suffix for the songs opened later.
+pub(super) fn song_screenshot_path(base: &Path, doc: DocId, kind: WindowKind) -> PathBuf {
+    if doc == DocId::FIRST {
+        return screenshot_path(base, kind);
+    }
+    let stem = base
+        .file_stem()
+        .map_or_else(|| "screenshot".into(), |s| s.to_string_lossy());
+    let name = match base.extension() {
+        Some(ext) => format!("{stem}-song{}.{}", doc.0, ext.to_string_lossy()),
+        None => format!("{stem}-song{}", doc.0),
+    };
+    screenshot_path(&base.with_file_name(name), kind)
 }
 
 /// The file a window's screenshot goes to: `base` for the main window, `base` with `-rack` or

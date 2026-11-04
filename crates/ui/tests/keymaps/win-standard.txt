@@ -219,3 +219,8 @@ view.zoom_out | global | Ctrl+-, Ctrl+Alt+-
 view.zoom_out | sequencer | G
 view.zoom_out | editor | G
 view.zoom_reset | global | Ctrl+0
+window.close_song | global | Ctrl+Shift+W
+window.new_song | global | Ctrl+Shift+N
+window.next_song | global | Ctrl+Shift+PageDown
+window.open_song | global | Ctrl+Shift+O
+window.previous_song | global | Ctrl+Shift+PageUp

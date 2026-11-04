@@ -2533,7 +2533,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The recovery folder, when the app has one (where the session markers live too).
-    pub(super) fn recovery_folder(&self) -> Option<PathBuf> {
+    pub(crate) fn recovery_folder(&self) -> Option<PathBuf> {
         self.plugins
             .recovery
             .as_ref()

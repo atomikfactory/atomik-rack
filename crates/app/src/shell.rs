@@ -137,7 +137,7 @@
 
 use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
-use crate::commands::{AppCommand, Menu, MenuState, menus_with_lists};
+use crate::commands::{AppCommand, Menu, MenuState, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -148,7 +148,7 @@ use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
-use crate::windows::{WindowHit, WindowKind};
+use crate::windows::{DocId, WindowHit, WindowKind};
 use atomik_audio_io::StreamState;
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
 use atomik_ui::ContextTarget;
@@ -313,6 +313,30 @@ pub enum ShellRequest {
     ToggleMaximise(WindowKind),
     /// Close the window and exit.
     Quit,
+    /// A new song in a window of its own ([`crate::workspace::Workspace::new_song`]). Only a
+    /// workspace answers it.
+    NewSong,
+    /// Show an open-file dialog (projects and patches), then call
+    /// [`crate::workspace::Workspace::open_song`]: the file opens in a song of its own.
+    PickOpenSong,
+    /// End this song and close its windows ([`crate::workspace::Workspace::close_song`]); the last
+    /// song asks to quit instead. Only a workspace answers it.
+    CloseSong,
+    /// Move the audio and the keys to another song (the workspace answers it).
+    ShowSong(SongTarget),
+    /// Bring the main window of a song to the front and give it the keyboard focus.
+    FocusSong(DocId),
+}
+
+/// Which song [`ShellRequest::ShowSong`] asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SongTarget {
+    /// The song after the one with the audio.
+    Next,
+    /// The song before it.
+    Previous,
+    /// The song at this place of the list of open songs.
+    Place(usize),
 }
 
 /// What waits for the answer to the question about unsaved changes.
@@ -540,6 +564,12 @@ pub struct Shell<B: AudioBackend> {
     file_drag: Option<FileDrag>,
     /// The help tooltip: what the pointer rests on and whether it shows yet.
     tips: Tips,
+    /// Another song of the workspace has the audio: this one runs without a stream, a MIDI
+    /// input or a control surface until it is focused ([`Self::claim_audio`]).
+    silent: bool,
+    /// The names of the open songs and this one's place in the list (the Window menu).
+    songs: Vec<String>,
+    song_at: usize,
 }
 
 /// The layout flags F7 remembers.
@@ -695,6 +725,9 @@ impl<B: AudioBackend> Shell<B> {
             piano_keys_visible: false,
             file_drag: None,
             tips: Tips::default(),
+            silent: false,
+            songs: Vec::new(),
+            song_at: 0,
         };
         shell.core.set_roles(&shell.roles);
         shell.configure_surface();
@@ -704,42 +737,7 @@ impl<B: AudioBackend> Shell<B> {
         shell.restore_file_browser();
         shell.restore_windows();
         shell.apply_workflow_to_views();
-        // The rack's console display preferences (shown unless the user
-        // switched them off).
-        {
-            let view = shell.core.view_mut();
-            view.set_show_console_devices(shell.ui.show_console_devices);
-            view.set_show_console_links(shell.ui.show_console_links);
-            view.set_navigator_visible(shell.ui.show_rack_navigator);
-        }
-        {
-            let arrangement = shell.core.arrangement_mut();
-            arrangement.set_tempo_lane(shell.ui.show_tempo_lane);
-            arrangement.set_marker_strip(shell.ui.show_marker_strip);
-            arrangement.set_inspector(shell.ui.show_inspector);
-            arrangement.set_marker_list(shell.ui.show_marker_list);
-        }
-        shell
-            .core
-            .piano_roll_mut()
-            .set_inspector(shell.ui.show_inspector);
-        shell
-            .core
-            .audio_editor_mut()
-            .set_mode(shell.ui.audio_editor_mode);
-        shell
-            .core
-            .arrangement_mut()
-            .set_track_zoom(shell.ui.track_zoom);
-        shell
-            .core
-            .piano_roll_mut()
-            .set_key_height(shell.ui.piano_roll_key_height);
-        {
-            let roll = shell.core.piano_roll_mut();
-            roll.set_snap_to_scale(shell.ui.piano_roll_snap_scale);
-            roll.set_fold(shell.ui.piano_roll_fold);
-        }
+        shell.apply_ui_state_to_views();
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
         }
@@ -771,6 +769,42 @@ impl<B: AudioBackend> Shell<B> {
         shell.layout_view();
         shell.poll_status();
         shell
+    }
+
+    /// Hands the saved window state to the views: the rack's console display preferences
+    /// (shown unless the user switched them off), the arrangement, piano roll and audio editor
+    /// flags, and the input quantize.
+    fn apply_ui_state_to_views(&mut self) {
+        {
+            let view = self.core.view_mut();
+            view.set_show_console_devices(self.ui.show_console_devices);
+            view.set_show_console_links(self.ui.show_console_links);
+            view.set_navigator_visible(self.ui.show_rack_navigator);
+        }
+        {
+            let arrangement = self.core.arrangement_mut();
+            arrangement.set_tempo_lane(self.ui.show_tempo_lane);
+            arrangement.set_marker_strip(self.ui.show_marker_strip);
+            arrangement.set_inspector(self.ui.show_inspector);
+            arrangement.set_marker_list(self.ui.show_marker_list);
+        }
+        self.core
+            .piano_roll_mut()
+            .set_inspector(self.ui.show_inspector);
+        self.core
+            .audio_editor_mut()
+            .set_mode(self.ui.audio_editor_mode);
+        self.core
+            .arrangement_mut()
+            .set_track_zoom(self.ui.track_zoom);
+        self.core
+            .piano_roll_mut()
+            .set_key_height(self.ui.piano_roll_key_height);
+        {
+            let roll = self.core.piano_roll_mut();
+            roll.set_snap_to_scale(self.ui.piano_roll_snap_scale);
+            roll.set_fold(self.ui.piano_roll_fold);
+        }
     }
 
     /// The core.
@@ -2093,11 +2127,15 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|t| t.name.clone())
             .collect();
-        menus_with_lists(
+        menus_with_songs(
             &self.menu_state(),
             self.router.keymap(),
             &recent,
             &templates,
+            &SongList {
+                names: &self.songs,
+                current: self.song_at,
+            },
         )
     }
 
@@ -4989,6 +5027,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::NewFromTemplate(_)
             | AppCommand::Open
             | AppCommand::Close
+            | AppCommand::CloseSongWindow
             | AppCommand::Quit
             | AppCommand::StressRack
             | AppCommand::StressSong => {
@@ -5827,6 +5866,13 @@ impl<B: AudioBackend> Shell<B> {
                     Vec::new()
                 }
             }
+            AppCommand::NewSongWindow => vec![ShellRequest::NewSong],
+            AppCommand::OpenSongWindow => vec![ShellRequest::PickOpenSong],
+            AppCommand::NextSong => vec![ShellRequest::ShowSong(SongTarget::Next)],
+            AppCommand::PreviousSong => vec![ShellRequest::ShowSong(SongTarget::Previous)],
+            AppCommand::ActivateSong(place) => {
+                vec![ShellRequest::ShowSong(SongTarget::Place(place))]
+            }
             AppCommand::PluginSettings => {
                 let theme = self.core.view().theme().clone();
                 let mut view = PluginSettingsView::new(theme);
@@ -5886,6 +5932,11 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::Open => vec![ShellRequest::PickOpenFile],
+            AppCommand::CloseSongWindow => {
+                // A save still writing must reach the disk before the song goes.
+                self.core.settle_save();
+                vec![ShellRequest::CloseSong]
+            }
             AppCommand::Quit => {
                 // A save still writing must reach the disk before the process ends.
                 self.core.settle_save();
@@ -6325,6 +6376,151 @@ impl<B: AudioBackend> Shell<B> {
         self.poll_status();
     }
 
+    /// The name the Window menu lists the song under: the window title without the app's name.
+    pub fn song_name(&self) -> String {
+        let title = self.core.title();
+        title
+            .strip_prefix("Atomik Rack \u{2014} ")
+            .unwrap_or(&title)
+            .to_string()
+    }
+
+    /// The names of the open songs and the place of this one in the list (what the Window menu
+    /// lists), as the workspace last told it.
+    pub fn song_list(&self) -> (&[String], usize) {
+        (&self.songs, self.song_at)
+    }
+
+    /// Sets the list of open songs (the workspace calls it when songs open, close or are
+    /// renamed).
+    pub(crate) fn set_song_list(&mut self, songs: Vec<String>, at: usize) {
+        if self.songs != songs || self.song_at != at {
+            self.songs = songs;
+            self.song_at = at;
+            self.repaint = true;
+        }
+    }
+
+    /// Opens the project or patch `path` into this song (the error comes back to the caller).
+    pub(crate) fn open_song_file(&mut self, path: &Path) -> Result<(), AppError> {
+        let opened = self.core.open(path);
+        self.repaint = true;
+        opened
+    }
+
+    /// Hands the window state file over to another song (the first song to have it is gone).
+    pub(crate) fn take_ui_state_path(&mut self) -> Option<PathBuf> {
+        self.ui_state_path.take()
+    }
+
+    /// Where this song saves the window state, when nobody else does.
+    pub(crate) fn set_ui_state_path(&mut self, path: PathBuf) {
+        if self.ui_state_path.is_none() {
+            self.ui_state_path = Some(path);
+            self.geom_dirty = true;
+        }
+    }
+
+    /// The audio settings the song runs with (the devices, MIDI inputs and control surfaces that
+    /// move to the song that takes the audio next).
+    pub fn audio_settings(&self) -> AudioSettings {
+        self.core.sink().settings().clone()
+    }
+
+    /// Whether another song has the audio.
+    pub fn is_silent(&self) -> bool {
+        self.silent
+    }
+
+    /// Gives the audio up: the stream, the MIDI inputs and the control surfaces close, the
+    /// transport stops and the song goes on without a sound until it is focused again. Plugin
+    /// instances stay loaded.
+    pub(crate) fn release_audio(&mut self) {
+        let mut settings = self.core.sink().settings().clone();
+        // The surfaces are hardware ports: only the song that has the audio holds them.
+        settings.surfaces.clear();
+        let session = self.core.sink_mut();
+        session.set_settings(settings);
+        session.set_enabled(false);
+        self.silent = true;
+        self.configure_surface();
+        self.core.rebuild_engine();
+        self.poll_status();
+        self.repaint = true;
+    }
+
+    /// Takes the audio over with `settings` (the ones the song that gave it up ran with): the
+    /// engine is rebuilt on a new stream, as a change of the devices does.
+    pub(crate) fn claim_audio(&mut self, settings: AudioSettings) {
+        let gain = settings.metronome_gain;
+        let pre_count = settings.pre_count_bars;
+        let tune = settings.master_tune_cents;
+        let session = self.core.sink_mut();
+        session.set_settings(settings);
+        session.set_enabled(true);
+        self.silent = false;
+        self.configure_surface();
+        self.core.rebuild_engine();
+        if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
+            self.core.set_metronome_gain(gain);
+        }
+        if pre_count != self.core.pre_count_bars() {
+            self.core.set_pre_count_bars(pre_count);
+        }
+        self.core.set_default_tune(tune);
+        if let Some(notice) = self.core.sink_mut().take_notice() {
+            self.notify(notice);
+        }
+        self.poll_status();
+        self.repaint = true;
+    }
+
+    /// Marks the song as running without audio from the start (a song opened while another one
+    /// has the audio): the devices and surfaces of its session stay closed.
+    pub(crate) fn start_silent(&mut self) {
+        self.silent = true;
+        let mut settings = self.core.sink().settings().clone();
+        settings.surfaces.clear();
+        let session = self.core.sink_mut();
+        session.set_settings(settings);
+        session.set_enabled(false);
+        self.configure_surface();
+        self.poll_status();
+    }
+
+    /// The preferences every song shares (the keyboard shortcuts, the workflow preferences and
+    /// the layout of the window): `self` takes them from `from`, so a song window opens looking
+    /// like the one it was opened from and a change made in one song reaches the others.
+    pub(crate) fn adopt_preferences(&mut self, from: &Shell<B>) {
+        if from.user_keymap != self.user_keymap {
+            self.set_user_keymap(from.user_keymap.clone(), false);
+        }
+        if from.workflow != self.workflow {
+            self.workflow = from.workflow.clone();
+            self.apply_workflow_to_views();
+            self.sync_library_root();
+        }
+        self.export_prefs = from.export_prefs.clone();
+        self.system_dark = from.system_dark;
+        self.repaint = true;
+    }
+
+    /// Takes the layout of the window from `from` (the panes shown and the zoom of the views),
+    /// without the windows it detached.
+    pub(crate) fn adopt_layout(&mut self, from: &Shell<B>) {
+        let mut ui = from.ui.clone();
+        ui.windows = crate::windows::WindowsState::default();
+        self.ui = ui;
+        self.apply_ui_state_to_views();
+        self.core.set_input_quantize(self.ui.input_quantize);
+        self.layout_view();
+    }
+
+    /// The preferences [`Self::adopt_preferences`] shares, for comparing two songs'.
+    pub(crate) fn shared_preferences(&self) -> (&WorkflowPrefs, &UserKeymap) {
+        (&self.workflow, &self.user_keymap)
+    }
+
     /// The overload counters of the last status poll.
     pub fn overload(&self) -> OverloadStats {
         self.overload
@@ -6458,6 +6654,9 @@ impl<B: AudioBackend> Shell<B> {
             status = self.core.sink().status().clone();
         }
         status.notes_target = target;
+        if self.silent && !status.running {
+            status.error = Some("another song has the audio".to_string());
+        }
         status.plugin_mode = self.core.plugin_mode();
         status.streaming = self.core.song_assets().values().any(|a| a.is_stream());
         status.faulted_name = status

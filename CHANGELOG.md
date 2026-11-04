@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Several open songs.** Window > New Song Window and Open Song in New Window open a song in a window of its
+  own (Ctrl+Shift+N and Ctrl+Shift+O, Cmd on macOS); each song has its own undo history, panes, plugins,
+  autosave and recovery snapshots, and the Window menu lists the open songs (Next Song and Previous Song,
+  Ctrl+Shift+PageDown and PageUp, switch between them). Closing a song's window (Window > Close Song Window,
+  Ctrl+Shift+W, or the window's close button) runs that song's own question about unsaved changes and ends its
+  plugin instances; quitting asks about every song with changes. The audio device stays unique: only the song
+  you are working in has the audio stream, the MIDI keyboard and the control surfaces; clicking another song's
+  window moves them to it, and the song that lost them is silent ("another song has the audio") with its
+  transport stopped until it is focused again. A song opened next to the first keeps its recovery copies in
+  `recovery/song-<n>` and writes no plugin crash journal. With one song open nothing changes, and the MCP
+  server still hosts one song. Not done yet: moving clips, devices, channels and patches between open songs,
+  separate Input Focus and Play Focus, and recovery of a second song after a crash. No saved field changes (the
+  project format is still 42).
 - **Manual release test protocol.** `docs/RELEASE-TESTING.md` lists the checks that need a device, a real plugin, a
   display or an installer (audio devices and unplugging, MIDI in, out, clock and control surfaces, plugins and the
   sandbox on each OS, detached windows and mixed-scale monitors, the listening check, installers), each with a

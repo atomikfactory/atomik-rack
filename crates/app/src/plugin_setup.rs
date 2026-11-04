@@ -122,6 +122,35 @@ pub fn plugin_config(
     }
 }
 
+/// The plugin config of a song opened next to the first one: the same settings, scan cache,
+/// scanner and isolation, with a recovery folder of its own (`recovery/song-<n>`, so the songs
+/// snapshots never prune each other) and no crash journal (the journal of the first song names
+/// the plugins a crash lost; a second writer would clobber it).
+pub fn song_plugin_config(
+    settings: PluginSettings,
+    config_dir: Option<&Path>,
+    song: u32,
+    runner: Option<Arc<dyn ScanRunner>>,
+    isolation: Option<PluginIsolation>,
+) -> PluginConfig {
+    let mut paths = config_dir.map(PluginPaths::in_dir).unwrap_or_default();
+    paths.journal = None;
+    paths.recovery = paths.recovery.map(|dir| dir.join(format!("song-{song}")));
+    let cache = paths
+        .cache
+        .as_deref()
+        .map(|p| PluginCache::load(p).0)
+        .unwrap_or_default();
+    PluginConfig {
+        settings,
+        cache,
+        paths,
+        runner,
+        previous_crash: None,
+        isolation,
+    }
+}
+
 /// The in-repo CLAP test plugin library built next to the executable
 /// (`cargo build -p atomik-test-clap`), installed as `<exe dir>/clap-plugins/atomik_test_clap.clap`
 /// so a scanner finds it. `None` when the library has not been built.
@@ -261,6 +290,30 @@ mod tests {
     use crate::plugin_test_support::{PKG, cache_of, temp};
     use atomik_device_sdk::PluginFormat;
     use atomik_plugin_host::{FailureKind, ScanFailure, ScanResult};
+
+    #[test]
+    fn a_song_opened_later_has_its_own_recovery_folder_and_no_crash_journal() {
+        let dir = temp("setup-song");
+        let first = plugin_config(PluginSettings::default(), Some(&dir), None);
+        let second = song_plugin_config(PluginSettings::default(), Some(&dir), 2, None, None);
+        let third = song_plugin_config(PluginSettings::default(), Some(&dir), 3, None, None);
+        assert_eq!(first.paths.recovery, Some(dir.join("recovery")));
+        assert_eq!(
+            second.paths.recovery,
+            Some(dir.join("recovery").join("song-2"))
+        );
+        assert_eq!(
+            third.paths.recovery,
+            Some(dir.join("recovery").join("song-3"))
+        );
+        // The first song's journal names the plugins a crash lost; the others write none.
+        assert!(first.paths.journal.is_some());
+        assert_eq!(second.paths.journal, None);
+        assert_eq!(second.previous_crash, None);
+        // The scan cache is the same file.
+        assert_eq!(second.paths.cache, first.paths.cache);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn the_scanner_is_found_beside_the_executable() {
