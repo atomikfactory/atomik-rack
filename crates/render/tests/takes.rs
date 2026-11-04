@@ -116,6 +116,7 @@ fn audio_take(asset: &str) -> Clip {
             fade_in: 0,
             fade_out: 0,
             fade_curve: FadeCurve::Linear,
+            fade_out_curve: None,
             reverse: false,
             envelope: Vec::new(),
             xfade: None,

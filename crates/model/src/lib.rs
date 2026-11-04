@@ -180,8 +180,9 @@ pub use zones::{
 pub use asset_usage::{AssetRemoval, AssetUse};
 use atomik_device_sdk::Registry;
 pub use audio_edit::{
-    NormaliseMode, NormaliseParams, StripParams, gain_to_level_db, join_envelopes, leading_silence,
-    normalise_gain_db, peak, rms_db, slice_envelope, split_envelope, strip_silence,
+    NormaliseMode, NormaliseParams, StripParams, StripScan, gain_to_level_db, join_envelopes,
+    leading_silence, normalise_gain_db, peak, rms_db, slice_envelope, split_envelope,
+    strip_silence,
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use audition::{AuditionSpan, audition_span};

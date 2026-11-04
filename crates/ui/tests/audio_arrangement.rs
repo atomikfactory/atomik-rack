@@ -256,6 +256,7 @@ fn content10(
         fade_in,
         fade_out,
         fade_curve: atomik_model::FadeCurve::Linear,
+        fade_out_curve: None,
         reverse: false,
         envelope: Vec::new(),
         xfade: None,

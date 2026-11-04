@@ -464,6 +464,17 @@ pub enum WorkflowCommand {
         /// Ticks to move the overlap by (not 0).
         delta: i64,
     },
+    /// Changes the length of the crossfade of audio clip `later` with the clip before it by
+    /// `delta` ticks (shorter for a negative one), in one undo step: `later` stays where it is
+    /// and the clip before ends `delta` ticks later, so both clips play the audio they played at
+    /// every tick outside the overlap. The overlap has to stay inside `later`, and a clip that
+    /// grows needs audio left in its file. Clips that play backwards or loop reject the command.
+    ResizeCrossfade {
+        /// The clip that fades in.
+        later: ClipId,
+        /// Ticks to add to the overlap (not 0).
+        delta: i64,
+    },
     /// Stretches the listed clips in time by one ratio, the gesture of an edge dragged with the
     /// stretch role: `percent` is the new tempo as for [`WorkflowCommand::ScaleTempo`] (50 makes
     /// every clip twice as long). Each clip scales about its own fixed edge: its start stays
@@ -1004,6 +1015,9 @@ pub(crate) fn plan(
         } => crate::clip_transform::stretch_clips(doc, &ids, percent, from_start),
         WorkflowCommand::MoveCrossfade { later, delta } => {
             crate::audio_join::move_crossfade(doc, later, delta)
+        }
+        WorkflowCommand::ResizeCrossfade { later, delta } => {
+            crate::audio_join::resize_crossfade(doc, later, delta)
         }
         WorkflowCommand::ExtractNotes {
             clip,

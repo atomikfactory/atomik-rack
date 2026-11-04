@@ -113,6 +113,80 @@ fn audio_documents_round_trip_bit_exactly_and_canonically() {
 }
 
 #[test]
+fn a_separate_fade_out_curve_is_written_only_when_set_and_round_trips() {
+    let reg = audio_registry();
+    let mut d = with_audio_track(&reg);
+    d.apply(register(3, 77), &reg).unwrap();
+    let plain = AudioClipContent {
+        fade_in: 480,
+        fade_out: 480,
+        fade_curve: FadeCurve::SCurve,
+        ..audio(1)
+    };
+    let shaped = AudioClipContent {
+        fade_out_curve: Some(FadeCurve::Exponential),
+        ..plain.clone()
+    };
+    d.apply(add_audio_clip_with("audio-track", 0, BAR, plain), &reg)
+        .unwrap();
+    d.apply(
+        add_audio_clip_with("audio-track", BAR, BAR, shaped.clone()),
+        &reg,
+    )
+    .unwrap();
+    let id = last(&d);
+    set_audio_content(&mut d, &reg, id, shaped);
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let clips = &v["song"]["tracks"][0]["lanes"][0]["clips"];
+    assert!(clips[0]["audio"].get("fade_out_curve").is_none());
+    assert_eq!(clips[1]["audio"]["fade_out_curve"], "exponential");
+    assert_eq!(clips[1]["audio"]["fade_curve"], "s_curve");
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(&loaded, d.doc());
+    assert_eq!(save_project(&loaded), text, "canonical");
+    // A reader of this version sees what was written: the two shapes.
+    let kinds: Vec<_> = loaded.song.tracks[0].lanes[0]
+        .clips
+        .iter()
+        .map(|c| match &c.content {
+            atomik_model::ClipContent::Audio(a) => (a.fade_curve, a.out_curve()),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (FadeCurve::SCurve, FadeCurve::SCurve),
+            (FadeCurve::SCurve, FadeCurve::Exponential)
+        ]
+    );
+}
+
+#[test]
+fn shaping_one_fade_leaves_the_other_alone() {
+    let a = audio(1).with_fade_curve(FadeCurve::EqualPower);
+    assert_eq!(a.out_curve(), FadeCurve::EqualPower);
+    // The fade-out alone.
+    let b = a.clone().with_fade_shape(true, FadeCurve::Exponential);
+    assert_eq!(
+        (b.fade_curve, b.out_curve()),
+        (FadeCurve::EqualPower, FadeCurve::Exponential)
+    );
+    // The fade-in alone: the fade-out keeps its own shape.
+    let c = b.clone().with_fade_shape(false, FadeCurve::SCurve);
+    assert_eq!(
+        (c.fade_curve, c.out_curve()),
+        (FadeCurve::SCurve, FadeCurve::Exponential)
+    );
+    // A fade-out shaped like the fade-in follows it again.
+    let d = c.with_fade_shape(true, FadeCurve::SCurve);
+    assert_eq!(d.fade_out_curve, None);
+    // Both at once.
+    assert_eq!(b.with_fade_curve(FadeCurve::Linear).fade_out_curve, None);
+}
+
+#[test]
 fn negative_zero_gain_and_huge_frames_survive() {
     let reg = audio_registry();
     let mut d = with_audio_track(&reg);
@@ -552,6 +626,7 @@ proptest! {
                 fade_in: fi,
                 fade_out: fo,
                 fade_curve: if eq { FadeCurve::EqualPower } else { FadeCurve::Linear },
+                fade_out_curve: None,
                 reverse: false,
                 envelope: Vec::new(),
                 xfade: None,

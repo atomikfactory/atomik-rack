@@ -549,6 +549,11 @@ pub(super) fn load_audio(
     } else {
         FadeCurve::Linear
     };
+    let fade_out_curve = if a.contains_key("fade_out_curve") {
+        Some(curve("fade_out_curve")?).filter(|c| *c != fade_curve)
+    } else {
+        None
+    };
     let reverse = match a.get("reverse") {
         None => false,
         Some(Value::Bool(b)) => *b,
@@ -609,6 +614,7 @@ pub(super) fn load_audio(
         fade_in: frames("fade_in")?,
         fade_out: frames("fade_out")?,
         fade_curve,
+        fade_out_curve,
         reverse,
         envelope,
         xfade,

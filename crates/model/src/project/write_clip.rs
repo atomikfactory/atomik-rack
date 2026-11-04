@@ -16,6 +16,9 @@ pub(super) fn audio_json(a: &AudioClipContent) -> String {
             .collect();
         let _ = write!(extra, ", \"envelope\": [{}]", points.join(", "));
     }
+    if let Some(c) = a.fade_out_curve {
+        let _ = write!(extra, ", \"fade_out_curve\": \"{}\"", c.id());
+    }
     if a.xfade != Some(FadeCurve::EqualPower) {
         let _ = write!(
             extra,

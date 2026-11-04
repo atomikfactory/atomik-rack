@@ -456,7 +456,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
                 WorkflowCommand::DuplicateLoopInstance { id, .. }
                 | WorkflowCommand::RenderLoop { id, .. } => clip_frozen(id),
-                WorkflowCommand::MoveCrossfade { later, .. } => clip_frozen(later),
+                WorkflowCommand::MoveCrossfade { later, .. }
+                | WorkflowCommand::ResizeCrossfade { later, .. } => clip_frozen(later),
                 WorkflowCommand::AutomationIntoClip { automation, into } => {
                     clip_frozen(automation).or_else(|| clip_frozen(into))
                 }

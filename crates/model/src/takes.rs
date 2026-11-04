@@ -392,6 +392,7 @@ pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
                 }
                 if cut_in || cut_out {
                     audio.fade_curve = FadeCurve::EqualPower;
+                    audio.fade_out_curve = None;
                 }
                 // The crossfade is the fade at a crossfaded edge: no dip on top of it.
                 if k == 0 && xin[i] > 0 {

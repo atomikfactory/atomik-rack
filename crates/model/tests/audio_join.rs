@@ -366,3 +366,86 @@ fn a_crossfade_move_needs_audio_in_the_file() {
     let err = move_xfade(&mut d, &reg, later, -(PPQ / 2)).unwrap_err();
     assert!(err.to_string().contains("no audio"), "{err}");
 }
+
+fn resize_xfade(
+    d: &mut Document,
+    reg: &atomik_device_sdk::Registry,
+    later: ClipId,
+    delta: i64,
+) -> Result<(), ModelError> {
+    d.apply(wf(WorkflowCommand::ResizeCrossfade { later, delta }), reg)
+        .map(|_| ())
+}
+
+#[test]
+fn resizing_a_crossfade_moves_the_end_of_the_earlier_clip_only() {
+    let (reg, mut d) = setup();
+    let (earlier, later) = crossfade_pair(&mut d, &reg);
+    let before_later = doc_clip(d.doc(), later).clone();
+    let steps_before = d.undo_depth();
+    // Longer: the overlap now ends half a beat later.
+    resize_xfade(&mut d, &reg, later, PPQ / 2).unwrap();
+    let (e, l) = (doc_clip(d.doc(), earlier), doc_clip(d.doc(), later));
+    assert_eq!((e.start, e.end()), (0, 3 * PPQ + PPQ / 2));
+    assert_eq!(*l, before_later, "the later clip does not change");
+    let zone = crossfades(&d.doc().song.tracks[0].lanes[0])[0];
+    assert_eq!((zone.start, zone.end), (2 * PPQ, 3 * PPQ + PPQ / 2));
+    // Shorter again, and then shorter than it began.
+    resize_xfade(&mut d, &reg, later, -(PPQ / 2) - PPQ / 4).unwrap();
+    let zone = crossfades(&d.doc().song.tracks[0].lanes[0])[0];
+    assert_eq!((zone.start, zone.end), (2 * PPQ, 3 * PPQ - PPQ / 4));
+    // The frames outside the overlap play what they did.
+    assert_eq!(playing_at(&d, BEAT_F / 2), vec![(hash(1), BEAT_F / 2)]);
+    assert_eq!(playing_at(&d, 4 * BEAT_F), vec![(hash(1), 4 * BEAT_F)]);
+    // Each resize is one undo step.
+    assert_eq!(d.undo_depth(), steps_before + 2);
+    d.undo().unwrap();
+    d.undo().unwrap();
+    assert_eq!(doc_clip(d.doc(), earlier).end(), 3 * PPQ);
+}
+
+#[test]
+fn a_crossfade_resize_that_does_not_fit_is_refused_and_changes_nothing() {
+    let (reg, mut d) = setup();
+    let (earlier, later) = crossfade_pair(&mut d, &reg);
+    let before = d.doc().song.clone();
+    assert!(resize_xfade(&mut d, &reg, later, 0).is_err());
+    // Past the end of the later clip (beat 5; the overlap ends at beat 3).
+    assert!(resize_xfade(&mut d, &reg, later, 2 * PPQ).is_err());
+    // Down to nothing, or below.
+    assert!(resize_xfade(&mut d, &reg, later, -PPQ).is_err());
+    assert!(resize_xfade(&mut d, &reg, later, -2 * PPQ).is_err());
+    // A clip with nothing before it has no crossfade.
+    assert!(resize_xfade(&mut d, &reg, earlier, PPQ / 4).is_err());
+    assert_eq!(*d.doc().song, *before);
+}
+
+#[test]
+fn a_longer_crossfade_needs_audio_in_the_file() {
+    let (reg, mut d) = setup();
+    // File 2 is four beats long: the earlier clip already plays up to its end.
+    put(
+        &mut d,
+        &reg,
+        0,
+        3 * PPQ,
+        AudioClipContent {
+            source_offset: BEAT_F,
+            ..audio(2)
+        },
+    );
+    let later = put(
+        &mut d,
+        &reg,
+        2 * PPQ,
+        2 * PPQ,
+        AudioClipContent {
+            source_offset: 0,
+            ..audio(1)
+        },
+    );
+    let err = resize_xfade(&mut d, &reg, later, PPQ / 2).unwrap_err();
+    assert!(err.to_string().contains("no audio"), "{err}");
+    // Shorter needs nothing from the file.
+    resize_xfade(&mut d, &reg, later, -(PPQ / 2)).unwrap();
+}

@@ -63,6 +63,7 @@
 //!                                                  | "audio": { "asset", "offset" (frames),
 //!                                                      "gain_db", "fade_in", "fade_out" (frames),
 //!                                                      "fade_curve": "linear"|"equal_power"|…,
+//!                                                      "fade_out_curve"? (v43),
 //!                                                      "reverse"?, "envelope"?, "xfade"? (v23),
 //!                                                      "warp"? (v24) }
 //!                                               }…] }…] }…] } }
@@ -236,7 +237,9 @@
 //! frames from the clip start, strictly increasing, at most 512, each `gain_db` in `-120..=24`)
 //! and `"xfade": "off" | "linear" | "equal_power" | "exponential" | "s_curve"` (the crossfade
 //! with the clip it overlaps at its start); `"fade_curve"` also takes `"exponential"` and
-//! `"s_curve"`. `reverse` and `envelope` are omitted when unused; a file of version 23 or later
+//! `"s_curve"`; a clip written at version 43 or later may carry `"fade_out_curve"` (the same
+//! names, written only when the fade-out is shaped differently from `"fade_curve"`, which then
+//! shapes the fade-in alone). `reverse` and `envelope` are omitted when unused; a file of version 23 or later
 //! without `"xfade"` crossfades with `"equal_power"` (the default of a new clip), while an older
 //! file loads with every clip at `"off"`, so a project written before crossfades keeps its hard
 //! cuts and its bounce. **Version 23** files have no warp: from version 24 the `"audio"` object

@@ -518,8 +518,10 @@ pub struct AudioRegion {
     pub fade_in: u64,
     /// Fade-out length in frames of the original clip (at most `clip_frames`).
     pub fade_out: u64,
-    /// Fade shape.
+    /// Shape of the fade-in.
     pub fade_curve: FadeCurve,
+    /// Shape of the fade-out (the clip's `out_curve`).
+    pub fade_out_curve: FadeCurve,
     /// Frames from the original clip's start to the region's start (0 for an uncut clip).
     pub clip_pos: u64,
     /// Length in frames of the original clip (`frame_at(end) - frame_at(start)`).
@@ -549,8 +551,8 @@ impl AudioRegion {
     /// With `n = clip_pos + i` the frame within the original clip: the fade-in gives
     /// `curve(n / fade_in)` for `n < fade_in`, the fade-out gives
     /// `curve((clip_frames - n) / fade_out)` for `n >= clip_frames - fade_out`, and both
-    /// multiply (they overlap only when `fade_in + fade_out > clip_frames`). `curve` is
-    /// [`FadeCurve::eval`]. This is the reference definition; the engine evaluates the same
+    /// multiply (they overlap only when `fade_in + fade_out > clip_frames`); each fade has its
+    /// own `curve`. A curve is [`FadeCurve::eval`]. This is the reference definition; the engine evaluates the same
     /// curves with platform-independent arithmetic.
     pub fn fade_gain(&self, i: u64) -> f32 {
         let n = self.clip_pos + i;
@@ -560,7 +562,7 @@ impl AudioRegion {
         }
         if n + self.fade_out >= self.clip_frames && self.fade_out > 0 {
             g *= self
-                .fade_curve
+                .fade_out_curve
                 .eval((self.clip_frames - n) as f64 / self.fade_out as f64);
         }
         g as f32
@@ -729,6 +731,7 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             fade_in: audio.fade_in.min(clip_frames),
             fade_out: audio.fade_out.min(clip_frames),
             fade_curve: audio.fade_curve,
+            fade_out_curve: audio.out_curve(),
             clip_pos,
             clip_frames,
             reverse: audio.reverse,

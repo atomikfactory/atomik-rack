@@ -767,6 +767,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ScaleTempo { .. }
             | WorkflowCommand::StretchClips { .. }
             | WorkflowCommand::MoveCrossfade { .. }
+            | WorkflowCommand::ResizeCrossfade { .. }
             | WorkflowCommand::ChopClips { .. }
             | WorkflowCommand::CleanupAutomation { .. }
             | WorkflowCommand::InsertTime { .. }

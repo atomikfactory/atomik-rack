@@ -34,6 +34,7 @@ fn audio_take(start: i64, length: i64, asset: &str, offset: u64) -> Clip {
             fade_in: 7,
             fade_out: 9,
             fade_curve: FadeCurve::Linear,
+            fade_out_curve: None,
             reverse: false,
             envelope: Vec::new(),
             xfade: None,

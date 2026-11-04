@@ -472,6 +472,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Audio, "fade_in", 1),
     field(Audio, "fade_out", 1),
     field(Audio, "fade_curve", 1),
+    field(Audio, "fade_out_curve", 43).ignorable(),
     field(Audio, "reverse", 23),
     field(Audio, "envelope", 23),
     field(Audio, "xfade", 23),

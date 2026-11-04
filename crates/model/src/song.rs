@@ -197,8 +197,10 @@ pub struct AudioClipContent {
     pub fade_in: u64,
     /// Fade-out length in frames, ending at the clip end.
     pub fade_out: u64,
-    /// Shape of both fades.
+    /// Shape of the fade-in, and of the fade-out too unless `fade_out_curve` is set.
     pub fade_curve: FadeCurve,
+    /// Shape of the fade-out when it differs from `fade_curve`; `None` follows `fade_curve`.
+    pub fade_out_curve: Option<FadeCurve>,
     /// Plays the clip's span of the asset backwards.
     pub reverse: bool,
     /// Gain breakpoints in clip time: strictly increasing frames, at most
@@ -225,11 +227,37 @@ impl AudioClipContent {
             fade_in: 0,
             fade_out: 0,
             fade_curve: FadeCurve::Linear,
+            fade_out_curve: None,
             reverse: false,
             envelope: Vec::new(),
             xfade: Some(FadeCurve::EqualPower),
             warp: WarpSettings::default(),
         }
+    }
+
+    /// The shape of the fade-out: its own curve, else the fade-in's.
+    pub fn out_curve(&self) -> FadeCurve {
+        self.fade_out_curve.unwrap_or(self.fade_curve)
+    }
+
+    /// The clip with both fades shaped `curve`.
+    pub fn with_fade_curve(mut self, curve: FadeCurve) -> Self {
+        self.fade_curve = curve;
+        self.fade_out_curve = None;
+        self
+    }
+
+    /// The clip with the fade-in or the fade-out (`out`) shaped `curve`, the other fade keeping
+    /// its shape. A fade-out that ends up shaped like the fade-in follows it again.
+    pub fn with_fade_shape(mut self, out: bool, curve: FadeCurve) -> Self {
+        let keep_out = self.out_curve();
+        if out {
+            self.fade_out_curve = (curve != self.fade_curve).then_some(curve);
+        } else {
+            self.fade_curve = curve;
+            self.fade_out_curve = (keep_out != curve).then_some(keep_out);
+        }
+        self
     }
 
     /// The envelope's linear gain at clip frame `n`, or `None` without an envelope. This is
