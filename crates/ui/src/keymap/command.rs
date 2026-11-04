@@ -330,11 +330,13 @@ pub const CHOP_ARGS: &[&str] = &["bar", "half_bar", "beat", "eighth", "sixteenth
 /// The values of `sequencer.cleanup_automation` and `editor.thin_controllers`: how hard the
 /// points are thinned.
 pub const CLEANUP_ARGS: &[&str] = &["normal", "heavy", "maximum"];
-/// The values of `sequencer.reverse_clips`: notes mirror as bars (the default) or by their starts.
-pub const REVERSE_ARGS: &[&str] = &["bars", "starts"];
+/// The values of `sequencer.reverse_clips`: notes mirror as bars or by their starts; `default`
+/// (also no value) does what the Workflow preference says.
+pub const REVERSE_ARGS: &[&str] = &["default", "bars", "starts"];
 /// The values of `sequencer.scale_tempo`: `double` and `halve` change the tempo of the selection
-/// by 200 % and 50 %; a number is the new tempo in percent of the old one.
-pub const SCALE_TEMPO_ARGS: &[&str] = &["double", "halve", "150", "125", "75"];
+/// by 200 % and 50 %; a number is the new tempo in percent of the old one; `dialog` opens the
+/// panel where any percentage is typed.
+pub const SCALE_TEMPO_ARGS: &[&str] = &["double", "halve", "150", "125", "75", "dialog"];
 /// The values of `sequencer.audio_normalise_to`: peak -1 dBFS, RMS -18 dBFS, integrated loudness
 /// -23 or -14 LUFS.
 pub const AUDIO_NORMALISE_ARGS: &[&str] = &["peak-1", "rms-18", "lufs-23", "lufs-14"];

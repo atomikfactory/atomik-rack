@@ -562,6 +562,40 @@ fn reverse_scale_and_chop_work_on_the_selected_clips_in_time_order() {
             graphical: false
         })
     );
+    // Without a mode, or with `default`, the preference decides (bars until it is changed).
+    for arg in [None, Some("default")] {
+        assert_eq!(
+            v.command("sequencer.reverse_clips", arg, &doc, &reg),
+            workflow(WorkflowCommand::ReverseClips {
+                ids: ids.clone(),
+                graphical: true
+            })
+        );
+    }
+    v.set_reverse_graphical(false);
+    for arg in [None, Some("default"), Some("starts")] {
+        assert_eq!(
+            v.command("sequencer.reverse_clips", arg, &doc, &reg),
+            workflow(WorkflowCommand::ReverseClips {
+                ids: ids.clone(),
+                graphical: false
+            })
+        );
+    }
+    // An explicit mode wins over the preference.
+    assert_eq!(
+        v.command("sequencer.reverse_clips", Some("bars"), &doc, &reg),
+        workflow(WorkflowCommand::ReverseClips {
+            ids: ids.clone(),
+            graphical: true
+        })
+    );
+    v.set_reverse_graphical(true);
+    // The percent panel is the application's: the view says where to find it.
+    assert!(matches!(
+        v.command("sequencer.scale_tempo", Some("dialog"), &doc, &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
     assert_eq!(
         v.command("sequencer.scale_tempo", Some("double"), &doc, &reg),
         workflow(WorkflowCommand::ScaleTempo {

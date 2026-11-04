@@ -29,7 +29,8 @@ impl ArrangementView {
             }
             "sequencer.reverse_clips" => {
                 let graphical = match arg {
-                    None | Some("bars") => true,
+                    None | Some("default") => self.reverse_graphical,
+                    Some("bars") => true,
                     Some("starts") => false,
                     Some(_) => return Some(CommandOutcome::Declined),
                 };
@@ -41,6 +42,12 @@ impl ArrangementView {
                 let percent = match arg? {
                     "double" => 200.0,
                     "halve" => 50.0,
+                    // The percent panel is the application's: a view cannot open it.
+                    "dialog" => {
+                        return Some(CommandOutcome::NotApplicable(
+                            "Scale Tempo with a percentage opens from the Edit menu".into(),
+                        ));
+                    }
                     other => match other.parse::<f64>() {
                         Ok(p) => p,
                         Err(_) => return Some(CommandOutcome::Declined),
