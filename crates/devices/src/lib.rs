@@ -4,8 +4,9 @@
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! The utility devices [`gain_tool`], [`stereo_tool`], [`gate`], [`dynamics`] (gate then
-//! compressor), [`duck`] (the sidechain tool), [`env_filter`], [`auto_filter`], [`transient_shaper`], [`de_esser`], [`tuner`], [`pitch_shifter`] and the two cable mergers in
-//! [`spider`] share the descriptor builders of the private `tool_support` module.
+//! compressor), [`duck`] (the sidechain tool), [`env_filter`], [`auto_filter`], [`transient_shaper`], [`de_esser`], [`tuner`], [`pitch_shifter`], the
+//! CV utilities [`cv_math`], [`cv_quantizer`], [`sample_hold`], [`slew_limiter`], [`gate_processor`] and
+//! [`envelope_follower`], and the two cable mergers in [`spider`] share the descriptor builders of the private `tool_support` module.
 //!
 //! The effects are wrapped in [`bypass::Bypassable`], which adds their `bypass` param.
 //!
@@ -27,6 +28,8 @@ pub mod container;
 pub mod controller_state;
 pub mod convolver;
 mod cv_in;
+pub mod cv_math;
+pub mod cv_quantizer;
 pub mod cv_sequencer;
 pub mod de_esser;
 pub mod distortion;
@@ -37,10 +40,12 @@ pub mod duck;
 pub mod dynamics;
 pub mod echo;
 pub mod env_filter;
+pub mod envelope_follower;
 pub mod eq;
 pub mod fm_synth;
 pub mod gain_tool;
 pub mod gate;
+pub mod gate_processor;
 pub mod granular;
 pub mod guitar_amp;
 pub mod key_chord;
@@ -66,8 +71,10 @@ pub mod pitch_shifter;
 pub mod poly_synth;
 mod recent_peak;
 pub mod reverb;
+pub mod sample_hold;
 pub mod sampler;
 pub mod semi_modular;
+pub mod slew_limiter;
 pub mod space_reverb;
 pub mod spectrum;
 pub mod spider;
@@ -164,15 +171,19 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(auto_filter::factory())?;
     registry.register(compressor::factory())?;
     registry.register(container::factory())?;
+    registry.register(cv_math::factory())?;
+    registry.register(cv_quantizer::factory())?;
     registry.register(de_esser::factory())?;
     registry.register(distortion::factory())?;
     registry.register(duck::factory())?;
     registry.register(echo::factory())?;
     registry.register(dynamics::factory())?;
     registry.register(env_filter::factory())?;
+    registry.register(envelope_follower::factory())?;
     registry.register(eq::factory())?;
     registry.register(gain_tool::factory())?;
     registry.register(gate::factory())?;
+    registry.register(gate_processor::factory())?;
     registry.register(guitar_amp::factory())?;
     registry.register(macro_bank::factory())?;
     registry.register(mastering::factory())?;
@@ -189,6 +200,8 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(channel::factory())?;
     registry.register(character::factory())?;
     registry.register(master::factory())?;
+    registry.register(sample_hold::factory())?;
+    registry.register(slew_limiter::factory())?;
     registry.register(spectrum::factory())?;
     registry.register(spider::audio_factory())?;
     registry.register(spider::cv_factory())?;
@@ -206,7 +219,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 56] = [
+    const TYPE_IDS: [&str; 62] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -216,6 +229,8 @@ mod tests {
         "atomik.compressor",
         "atomik.container",
         "atomik.convolver",
+        "atomik.cv-math",
+        "atomik.cv-quantizer",
         "atomik.cv-sequencer",
         "atomik.de-esser",
         "atomik.distortion",
@@ -226,10 +241,12 @@ mod tests {
         "atomik.dynamics",
         "atomik.echo",
         "atomik.env-filter",
+        "atomik.envelope-follower",
         "atomik.eq",
         "atomik.fm-synth",
         "atomik.gain-tool",
         "atomik.gate",
+        "atomik.gate-processor",
         "atomik.granular",
         "atomik.guitar-amp",
         "atomik.key-chord",
@@ -250,8 +267,10 @@ mod tests {
         "atomik.pitch-shifter",
         "atomik.poly-synth",
         "atomik.reverb",
+        "atomik.sample-hold",
         "atomik.sampler",
         "atomik.semi-modular",
+        "atomik.slew-limiter",
         "atomik.space-reverb",
         "atomik.spectrum",
         "atomik.spider-audio",
@@ -266,7 +285,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all fifty-six devices.
+    // Name kept; it now covers all sixty-two devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -301,13 +320,19 @@ mod tests {
         let doc = include_str!("../../../docs/DEVICES.md");
         for id in [
             "atomik.auto-filter",
+            "atomik.cv-math",
+            "atomik.cv-quantizer",
             "atomik.de-esser",
             "atomik.duck",
             "atomik.dynamics",
             "atomik.env-filter",
+            "atomik.envelope-follower",
             "atomik.gain-tool",
             "atomik.gate",
+            "atomik.gate-processor",
             "atomik.pitch-shifter",
+            "atomik.sample-hold",
+            "atomik.slew-limiter",
             "atomik.spider-audio",
             "atomik.spider-cv",
             "atomik.stereo-tool",

@@ -120,6 +120,53 @@ fn check_bounded(id: &str, s: &Scene) -> Result<(), TestCaseError> {
     Ok(())
 }
 
+/// Plays `scene` through a CV utility for one second with loud random signals on every audio and
+/// CV input (a CV input is random too, so gates and triggers chatter) and checks every output
+/// socket, audio and CV alike.
+fn check_cv_bounded(id: &str, s: &Scene) -> Result<(), TestCaseError> {
+    let sr = [44_100.0, 48_000.0, 96_000.0][s.sr_index];
+    let mut r = Registry::new();
+    crate::register_all(&mut r).unwrap();
+    let mut h = DeviceHarness::with_options(r.create(id).unwrap(), sr, s.bpm, s.seed);
+    let d = h.device().descriptor();
+    for (p, n) in d.params.iter().zip(&s.norms) {
+        h.set_param(p.key, p.from_normalized(*n));
+    }
+    let outs: Vec<&str> = d
+        .sockets
+        .iter()
+        .filter(|k| k.direction == Direction::Output && k.kind != SocketKind::Notes)
+        .map(|k| k.key)
+        .collect();
+    let ins: Vec<&str> = d
+        .sockets
+        .iter()
+        .filter(|k| k.direction.is_input() && k.kind != SocketKind::Notes)
+        .map(|k| k.key)
+        .collect();
+    let mut rng = Rng::new(s.seed);
+    let batches = (sr / BATCH as f64).ceil() as usize; // 1 s
+    for _ in 0..batches {
+        for key in &ins {
+            let mut x = [0.0f32; BATCH];
+            for v in &mut x {
+                *v = rng.next_bipolar() * s.amp * 4.0;
+            }
+            *h.input_mut(key) = x;
+        }
+        h.process();
+        for key in &outs {
+            for v in h.output(key) {
+                prop_assert!(
+                    v.is_finite() && v.abs() <= BOUND,
+                    "{id} {sr} Hz, {key}: {v}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(12))]
 
@@ -204,5 +251,36 @@ proptest! {
     #[test]
     fn qa_tuner_any_params_bounded_at_every_sample_rate(s in scene()) {
         check_bounded("atomik.tuner", &s)?;
+    }
+
+    /// The CV utilities: any params and loud random signals on every input.
+    #[test]
+    fn qa_cv_math_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_cv_bounded("atomik.cv-math", &s)?;
+    }
+
+    #[test]
+    fn qa_cv_quantizer_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_cv_bounded("atomik.cv-quantizer", &s)?;
+    }
+
+    #[test]
+    fn qa_sample_hold_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_cv_bounded("atomik.sample-hold", &s)?;
+    }
+
+    #[test]
+    fn qa_slew_limiter_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_cv_bounded("atomik.slew-limiter", &s)?;
+    }
+
+    #[test]
+    fn qa_gate_processor_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_cv_bounded("atomik.gate-processor", &s)?;
+    }
+
+    #[test]
+    fn qa_envelope_follower_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_cv_bounded("atomik.envelope-follower", &s)?;
     }
 }
