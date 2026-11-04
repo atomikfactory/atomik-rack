@@ -192,6 +192,8 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::ExplodeNotes { .. } => "Explode Notes",
         WorkflowCommand::DuplicateLoopInstance { .. } => "Make Loop Instance Independent",
         WorkflowCommand::TrimClips { .. } => "Trim Clips",
+        WorkflowCommand::ExtendClips { next: true, .. } => "Extend to Next Clip",
+        WorkflowCommand::ExtendClips { next: false, .. } => "Extend to Previous Clip",
         WorkflowCommand::ReverseClips { .. } => "Reverse Clips",
         WorkflowCommand::ScaleTempo { .. } => "Scale Tempo",
         WorkflowCommand::StretchClips { .. } => "Stretch Clips",

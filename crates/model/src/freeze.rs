@@ -444,6 +444,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | WorkflowCommand::JoinClips { ids }
                 | WorkflowCommand::ConvertLoop { ids, .. }
                 | WorkflowCommand::TrimClips { ids, .. }
+                | WorkflowCommand::ExtendClips { ids, .. }
                 | WorkflowCommand::DeleteOutsideEvents { ids }
                 | WorkflowCommand::SplitClips { ids, .. }
                 | WorkflowCommand::ReverseClips { ids, .. }

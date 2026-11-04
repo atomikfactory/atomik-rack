@@ -280,7 +280,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
         (0u8..3, 0usize..12, 0usize..12).prop_map(|(k, a, b)| WfOp::ClipLanes(k, a, b)),
-        (0u8..13, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
+        (0u8..15, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
@@ -635,6 +635,10 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 12 => WorkflowCommand::MoveCrossfade {
                     later: ids.first().copied().unwrap_or(ClipId(1)),
                     delta: *t,
+                },
+                13 | 14 => WorkflowCommand::ExtendClips {
+                    ids,
+                    next: *kind == 13,
                 },
                 k => WorkflowCommand::CutOut {
                     ids,

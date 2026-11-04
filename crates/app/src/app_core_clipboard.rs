@@ -742,6 +742,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::AutomationIntoClip { .. }
             | WorkflowCommand::SetClipsMuted { .. }
             | WorkflowCommand::TrimClips { .. }
+            | WorkflowCommand::ExtendClips { .. }
             | WorkflowCommand::DeleteOutsideEvents { .. }
             | WorkflowCommand::SplitClips { .. }
             | WorkflowCommand::CutOut { .. }

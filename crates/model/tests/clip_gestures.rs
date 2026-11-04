@@ -409,3 +409,74 @@ fn set_clip_geometry_batches_still_work_next_to_the_new_commands() {
         .collect();
     one_step(&mut d, &r, Command::Batch(moves));
 }
+
+// ---------------------------------------------------------------- extend
+
+fn extend(ids: &[u64], next: bool) -> Command {
+    wf(WorkflowCommand::ExtendClips {
+        ids: ids.iter().copied().map(ClipId).collect(),
+        next,
+    })
+}
+
+#[test]
+fn extending_to_the_next_clip_grows_the_end_to_its_start_in_one_step() {
+    let (mut d, r) = doc_with(vec![
+        (0, notes_clip(BAR, BAR, vec![note(0, PPQ, 60, 0.8)])),
+        (0, notes_clip(4 * BAR, BAR, vec![note(0, PPQ, 62, 0.8)])),
+        (0, notes_clip(7 * BAR, BAR, vec![note(0, PPQ, 64, 0.8)])),
+    ]);
+    // Clips 1 and 2 are selected: each reaches the clip after it; clip 3 has none.
+    one_step(&mut d, &r, extend(&[1, 2, 3], true));
+    let (a, b, c) = (clip_of(&d, 1), clip_of(&d, 2), clip_of(&d, 3));
+    assert_eq!((a.start, a.end(), a.offset), (BAR, 4 * BAR, 0));
+    assert_eq!((b.start, b.end()), (4 * BAR, 7 * BAR));
+    assert_eq!(
+        (c.start, c.end()),
+        (7 * BAR, 8 * BAR),
+        "no next clip: untouched"
+    );
+    assert_eq!(flat(&d).len(), 3, "the notes keep their song ticks");
+    d.undo().unwrap();
+    assert_eq!(clip_of(&d, 1).end(), 2 * BAR);
+    assert_eq!(clip_of(&d, 2).end(), 5 * BAR);
+}
+
+#[test]
+fn extending_to_the_previous_clip_moves_the_start_back_and_keeps_the_content_in_place() {
+    let (mut d, r) = doc_with(vec![
+        (0, notes_clip(0, BAR, vec![note(0, PPQ, 60, 0.8)])),
+        (
+            0,
+            notes_clip(
+                3 * BAR,
+                BAR,
+                vec![note(0, PPQ, 62, 0.8), note(PPQ, PPQ, 63, 0.8)],
+            ),
+        ),
+    ]);
+    let before = flat(&d);
+    one_step(&mut d, &r, extend(&[2], false));
+    let c = clip_of(&d, 2);
+    assert_eq!((c.start, c.end()), (BAR, 4 * BAR));
+    let moved: Vec<i64> = flat(&d).iter().map(|n| n.0).collect();
+    let want: Vec<i64> = before.iter().map(|n| n.0).collect();
+    assert_eq!(moved, want, "every note plays where it did");
+}
+
+#[test]
+fn an_extend_that_changes_nothing_is_refused() {
+    let (mut d, r) = doc_with(vec![
+        (0, notes_clip(0, BAR, vec![note(0, PPQ, 60, 0.8)])),
+        (0, notes_clip(BAR, BAR, vec![note(0, PPQ, 62, 0.8)])),
+    ]);
+    // Touching clips, the first clip has no previous one and the last no next one.
+    for (ids, next) in [
+        (&[1u64][..], true),
+        (&[2][..], false),
+        (&[1][..], false),
+        (&[2][..], true),
+    ] {
+        assert!(d.apply(extend(ids, next), &r).is_err(), "{ids:?} {next}");
+    }
+}
