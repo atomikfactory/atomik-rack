@@ -355,52 +355,79 @@ pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
         let Some((a, cut_b)) = played(group, seg) else {
             continue;
         };
-        // The clip runs on past its cut while the next segment crossfades in over it.
         let ahead = xin.get(i + 1).copied().unwrap_or(0);
-        let b = cut_b + ahead;
-        let shift = take.offset + (a - take.start);
-        let mut clip = Clip {
-            id: ClipId(0),
-            start: a,
-            length: b - a,
-            offset: take.loop_length.map_or(shift, |n| shift.rem_euclid(n)),
-            ..take.clone()
-        };
-        if let ClipContent::Audio(src) = &take.content {
-            let clock = clock.get_or_init(|| song.frame_clock(rate));
-            let delta = clock.at(a) - clock.at(take.start);
-            let asset_frames = doc.assets.get(&src.asset).map_or(u64::MAX, |m| m.frames);
-            let frames = clock.at(b) - clock.at(a);
-            let (cut_in, cut_out) = (a > take.start, b < take.end());
-            let cap = (frames / 2).max(1);
-            let (source_offset, markers) =
-                src.piece_from(song, rate, take.start, a, delta, asset_frames);
-            let mut audio = AudioClipContent {
-                source_offset,
-                ..src.clone()
+        let passes = repetitions(take, a, cut_b);
+        let last = passes.len().saturating_sub(1);
+        for (k, &(rs, re, sa, sb)) in passes.iter().enumerate() {
+            let shift = take.offset + (sa - take.start);
+            // The clip runs on past its cut while the next segment crossfades in over it, but
+            // not past the end of the repetition it is in.
+            let b = if k == last { (sb + ahead).min(re) } else { sb };
+            let mut clip = Clip {
+                id: ClipId(0),
+                start: sa,
+                length: b - sa,
+                offset: take.loop_length.map_or(shift, |n| shift.rem_euclid(n)),
+                ..take.clone()
             };
-            audio.warp.markers = markers;
-            if cut_in {
-                audio.fade_in = COMP_FADE_FRAMES.min(cap);
+            if let ClipContent::Audio(src) = &take.content {
+                let clock = clock.get_or_init(|| song.frame_clock(rate));
+                let delta = clock.at(sa) - clock.at(rs);
+                let asset_frames = doc.assets.get(&src.asset).map_or(u64::MAX, |m| m.frames);
+                let frames = clock.at(b) - clock.at(sa);
+                let (cut_in, cut_out) = (sa > rs, b < re);
+                let cap = (frames / 2).max(1);
+                let (source_offset, markers) =
+                    src.piece_from(song, rate, rs, sa, delta, asset_frames);
+                let mut audio = AudioClipContent {
+                    source_offset,
+                    ..src.clone()
+                };
+                audio.warp.markers = markers;
+                if cut_in {
+                    audio.fade_in = COMP_FADE_FRAMES.min(cap);
+                }
+                if cut_out {
+                    audio.fade_out = COMP_FADE_FRAMES.min(cap);
+                }
+                if cut_in || cut_out {
+                    audio.fade_curve = FadeCurve::EqualPower;
+                }
+                // The crossfade is the fade at a crossfaded edge: no dip on top of it.
+                if k == 0 && xin[i] > 0 {
+                    audio.fade_in = 0;
+                    audio.xfade = Some(FadeCurve::EqualPower);
+                }
+                if k == last && ahead > 0 && cut_out {
+                    audio.fade_out = 0;
+                }
+                clip.offset = 0;
+                clip.loop_length = None;
+                clip.content = ClipContent::Audio(audio);
             }
-            if cut_out {
-                audio.fade_out = COMP_FADE_FRAMES.min(cap);
-            }
-            if cut_in || cut_out {
-                audio.fade_curve = FadeCurve::EqualPower;
-            }
-            // The crossfade is the fade at a crossfaded edge: no dip on top of it.
-            if xin[i] > 0 {
-                audio.fade_in = 0;
-                audio.xfade = Some(FadeCurve::EqualPower);
-            }
-            if ahead > 0 && cut_out {
-                audio.fade_out = 0;
-            }
-            clip.offset = 0;
-            clip.content = ClipContent::Audio(audio);
+            out.push(clip);
         }
-        out.push(clip);
+    }
+    out
+}
+
+/// The pieces of `[a, b)` (inside the take's extent) a take plays, `(repetition start,
+/// repetition end, piece start, piece end)`. A take that does not loop, and a note or automation
+/// take (which keeps its loop in the compiled clip), is one piece. A looped audio take is one
+/// piece per repetition: each repetition plays its source again as a clip of its own, so the
+/// compiled clips are plain and a cut inside a repetition fades like a cut in any audio take.
+fn repetitions(take: &Clip, a: i64, b: i64) -> Vec<(i64, i64, i64, i64)> {
+    let Some(n) = take.loop_length.filter(|_| take.content.is_audio()) else {
+        return vec![(take.start, take.end(), a, b)];
+    };
+    let mut out = Vec::new();
+    let mut s = a;
+    while s < b {
+        let rs = take.start + (s - take.start).div_euclid(n) * n;
+        let re = (rs + n).min(take.end());
+        let e = re.min(b);
+        out.push((rs, re, s, e));
+        s = e;
     }
     out
 }

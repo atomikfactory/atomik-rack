@@ -1567,7 +1567,7 @@ fn track_mut<'d>(
     }
 }
 
-fn lane_mut<'d>(
+pub(super) fn lane_mut<'d>(
     doc: &'d mut RackDoc,
     device: &DeviceKey,
     lane: usize,

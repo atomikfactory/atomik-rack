@@ -303,8 +303,8 @@ pub const MARKER_COLOR_ARGS: &[&str] =
 pub const TRACK_COLOR_ARGS: &[&str] = &[
     "none", "red", "orange", "yellow", "green", "blue", "purple", "custom",
 ];
-/// The values of `sequencer.clip_color`: the palette names, and `track` for the colour of the
-/// clip's track.
+/// The values of `sequencer.clip_color` and `sequencer.lane_color`: the palette names, and
+/// `track` for the colour of the clip's (or the lane's) track.
 pub const CLIP_COLOR_ARGS: &[&str] = &[
     "track", "red", "orange", "yellow", "green", "blue", "purple",
 ];
@@ -1717,6 +1717,14 @@ const COMMANDS: &[CommandDef] = &[
     .decline(),
     cmd("sequencer.join", "Join", G::Sequencer, C::Sequencer),
     cmd(
+        "sequencer.lane_color",
+        "Lane Colour",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(CLIP_COLOR_ARGS)
+    .decline(),
+    cmd(
         "sequencer.locator_left_here",
         "Set Left Locator Here",
         G::Sequencer,
@@ -2123,6 +2131,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .menu()
+    .decline(),
+    cmd(
+        "sequencer.toggle_lane_solo",
+        "Solo Lane",
+        G::Sequencer,
+        C::Sequencer,
+    )
     .decline(),
     cmd(
         "sequencer.toggle_mute",

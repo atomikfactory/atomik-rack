@@ -395,7 +395,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::RemoveAutomationLane { device, .. }
                 | SongCommand::SetLaneStatic { device, .. }
                 | SongCommand::RenameLane { device, .. }
-                | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
+                | SongCommand::SetLaneMuted { device, .. }
+                | SongCommand::SetLaneSolo { device, .. }
+                | SongCommand::SetLaneColor { device, .. } => track_frozen(device),
                 SongCommand::MoveTracks { devices, .. }
                 | SongCommand::MergeNoteLanes { devices } => devices.iter().find_map(track_frozen),
                 SongCommand::MoveNoteLane {
@@ -407,7 +409,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::DeleteUnusedTakes { group }
                 | SongCommand::SetCompXfade { group, .. }
                 | SongCommand::SetCompSilence { group, .. }
-                | SongCommand::SetTake { group, .. } => doc
+                | SongCommand::SetTake { group, .. }
+                | SongCommand::SetTakeLoop { group, .. } => doc
                     .song
                     .take_group(*group)
                     .and_then(|(t, _, _)| track_frozen(&t.device)),
@@ -449,7 +452,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | WorkflowCommand::ChopClips { ids, .. }
                 | WorkflowCommand::CleanupAutomation { ids, .. }
                 | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
-                WorkflowCommand::DuplicateLoopInstance { id, .. } => clip_frozen(id),
+                WorkflowCommand::DuplicateLoopInstance { id, .. }
+                | WorkflowCommand::RenderLoop { id, .. } => clip_frozen(id),
                 WorkflowCommand::MoveCrossfade { later, .. } => clip_frozen(later),
                 WorkflowCommand::AutomationIntoClip { automation, into } => {
                     clip_frozen(automation).or_else(|| clip_frozen(into))

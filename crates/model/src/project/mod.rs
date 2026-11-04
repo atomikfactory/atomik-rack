@@ -46,6 +46,7 @@
 //!                          "group"?, "color"?, "comment"? (v22), "frozen"? (v25),
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio",
 //!                                      "name"?, "muted"? (v30, notes lanes, after "kind"),
+//!                                      "solo"? and "color"? (v43, notes lanes, after "muted"),
 //!                                      "param"?,
 //!                                      "write"? (v18, automation lanes: "overwrite" | "latch"),
 //!                                      "take_groups"? (v20, notes and audio lanes, after "clips"),
@@ -395,8 +396,9 @@
 //! would play the track's notes ungrooved, so the fields are not ignorable. Version 43 also adds, under
 //! the same version, a note clip's `"programs"` (`[tick, program]`) and `"sysex"` (`[tick, "7E 7F 09 01"]`,
 //! the hex bytes between `F0` and `F7`), written after the parameter lanes only when the clip has any (see
-//! [`crate::midi_data`]); they are ignorable, since nothing plays them. Saving always writes
-//! version 43.
+//! [`crate::midi_data`]); they are ignorable, since nothing plays them. A notes lane may also carry
+//! `"solo": true` and `"color": "#rrggbb"` after its `"muted"` (only while set; both ignorable: a reader
+//! that drops them plays every lane in the track's colour). Saving always writes version 43.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,

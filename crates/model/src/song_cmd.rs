@@ -1140,6 +1140,40 @@ pub(crate) fn plan(
                 lane,
             }
         }
+        SongCommand::SetLaneSolo { device, lane, solo } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            if note_lane_of(t, lane)?.solo == solo {
+                return Err(bad(format!(
+                    "lane {lane} of {device} is already {}",
+                    if solo { "soloed" } else { "not soloed" }
+                )));
+            }
+            Edit::Swap(Swap::LaneSolo {
+                device,
+                lane,
+                old: !solo,
+                new: solo,
+            })
+        }
+        SongCommand::SetLaneColor {
+            device,
+            lane,
+            color,
+        } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            let old = note_lane_of(t, lane)?.color;
+            if old == color {
+                return Err(bad(format!(
+                    "lane {lane} of {device} already has that colour"
+                )));
+            }
+            Edit::Swap(Swap::LaneColor {
+                device,
+                lane,
+                old,
+                new: color,
+            })
+        }
         SongCommand::RemoveAutomationLane { device, param } => {
             let ti = track_index(doc, &device)?;
             let t = &song.tracks[ti];
@@ -1248,6 +1282,7 @@ pub(crate) fn plan(
         | SongCommand::SetCompXfade { .. }
         | SongCommand::SetCompSilence { .. }
         | SongCommand::SetTake { .. }
+        | SongCommand::SetTakeLoop { .. }
         | SongCommand::FlattenTakes { .. } => crate::takes_cmd::plan(doc, registry, command)?,
         SongCommand::GroupTracks { .. }
         | SongCommand::Ungroup { .. }

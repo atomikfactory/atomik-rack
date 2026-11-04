@@ -293,7 +293,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0u8..6, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
-        (0u8..6, 0usize..12, 0usize..12, 0usize..6, 0usize..6)
+        (0u8..10, 0usize..12, 0usize..12, 0usize..6, 0usize..6)
             .prop_map(|(k, a, b, c, d)| WfOp::Lanes(k, a, b, c, d)),
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::NotesCable(a, b)),
@@ -867,6 +867,21 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             }),
             3 => Command::Workflow(atomik_model::WorkflowCommand::ExplodeNotes {
                 clip: pick(&ids, *a)?,
+            }),
+            5 => sc(SongCommand::SetLaneSolo {
+                device: pick(&tracks, *a)?,
+                lane: *c,
+                solo: *d % 2 == 0,
+            }),
+            6 => sc(SongCommand::SetLaneColor {
+                device: pick(&tracks, *a)?,
+                lane: *c,
+                color: (*d % 3 != 0).then_some([10 * (*d as u8), 40, 90]),
+            }),
+            7 | 8 => sc(SongCommand::SetTakeLoop {
+                group: (*b % 3) as u32 + 1,
+                take: *c,
+                repeats: (*d as u32 % 4) + 1,
             }),
             _ => Command::Workflow(atomik_model::WorkflowCommand::ExtractNotes {
                 clip: pick(&ids, *a)?,

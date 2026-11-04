@@ -403,6 +403,8 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(NotesLane, "kind", 1).req(),
     field(NotesLane, "name", 30),
     field(NotesLane, "muted", 30),
+    field(NotesLane, "solo", 43).ignorable(),
+    field(NotesLane, "color", 43).ignorable(),
     field(NotesLane, "clips", 1).req(),
     field(NotesLane, "take_groups", 20),
     field(AudioLane, "kind", 1).req(),

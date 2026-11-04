@@ -662,6 +662,13 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                     if l.muted {
                         lane["muted"] = json!(true);
                     }
+                    // A soloed note lane and the colour of a note lane (`#rrggbb`).
+                    if l.solo {
+                        lane["solo"] = json!(true);
+                    }
+                    if let Some([r, g, b]) = l.color {
+                        lane["color"] = json!(format!("#{r:02x}{g:02x}{b:02x}"));
+                    }
                     if let Some(v) = l.static_value {
                         lane["static"] = json!(v);
                     }

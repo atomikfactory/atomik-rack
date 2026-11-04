@@ -187,7 +187,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::SplitClips { .. } => "Split Clips",
         WorkflowCommand::JoinClips { .. } => "Join Clips",
         WorkflowCommand::AutomationIntoClip { .. } => "Move Automation into Clip",
-        WorkflowCommand::ConvertLoop { .. } => "Convert Loop",
+        WorkflowCommand::ConvertLoop { .. } | WorkflowCommand::RenderLoop { .. } => "Convert Loop",
         WorkflowCommand::ExtractNotes { .. } => "Extract Notes",
         WorkflowCommand::ExplodeNotes { .. } => "Explode Notes",
         WorkflowCommand::DuplicateLoopInstance { .. } => "Make Loop Instance Independent",

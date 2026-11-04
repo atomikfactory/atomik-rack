@@ -31,11 +31,6 @@ pub(super) fn load_take_groups(
                 song,
                 clip_first,
             )?;
-            if clip.loop_length.is_some() && clip.content.is_audio() {
-                return Err(tp
-                    .field("loop_length")
-                    .error("an audio take cannot loop (convert the loop to clips first)"));
-            }
             clip_first.insert(clip.id.0, tp.field("id"));
             takes.push(clip);
         }

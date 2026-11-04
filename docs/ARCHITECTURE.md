@@ -1194,8 +1194,13 @@ model, the engine, the bounce and the UI call it instead of keeping copies.
   per repetition (`Separate`: each piece keeps its content window as its offset; the first keeps
   the id). `DuplicateLoopInstance { id, index }` makes one repetition a clip of its own and leaves
   the ones before and after it looped. All three keep what the lane plays, which the flatten
-  equivalence tests check; the cases that could not (a clip with swing for `Single`, an audio
-  clip for `Single`, another clip overlapping the looped one) are refused. The arrangement offers
+  equivalence tests check; the cases that could not (a clip with swing for `Single`, another clip
+  overlapping the looped one) are refused. A looped audio clip has no content to unroll, so the
+  model refuses `Single` for it and the app renders it instead: `AppCore::apply_command` sends the
+  looped audio clips of a `Single` conversion to the freeze worker as dry renders of the clip
+  alone (`Kind::Loop` in `app_core_freeze.rs`), and the finished render comes back as
+  `WorkflowCommand::RenderLoop { id, audio }`, which replaces the clip by one plain clip of the
+  render (same id, place, name, colour and crossfade) in one undo step. The arrangement offers
   them in the clip context menu (`sequencer.convert_loop`, `sequencer.loop_instance` for the
   repetition under the playhead), a loop handle in the upper right corner of a clip's body
   (dragging it repeats what the clip shows), `sequencer.clip_color` and `sequencer.rename_clip`
@@ -1397,7 +1402,13 @@ recording are unchanged: a track with one pass still gets one plain clip.
   does not change), `DeleteUnusedTakes` drops the takes no segment names, `SetCompSilence` cuts a gap
   out of the comp, `SetCompXfade { group, at, xfade }` sets the crossfade of the cut at tick `at`
   and `SetTake { group, take, gain_db, source_offset_delta }` sets the level of an audio take and
-  moves its audio inside the asset (the take keeps its start). Take clips count as referenced
+  moves its audio inside the asset (the take keeps its start). `SetTakeLoop { group, take, repeats }`
+  repeats a take: its extent (or its loop length) becomes the loop and the take runs `repeats`
+  repetitions, the comp segments that ended at its end run on to the new end, and 1 plays it once
+  again. A looped note take keeps its loop in the compiled clips; a looped audio take is compiled
+  to one plain clip per repetition (`takes::repetitions`), each restarting the source and keeping
+  the fades and warp of a clip of its own, so the lane plays what the looped take played and a cut
+  inside a repetition fades like a cut in any audio take. Take clips count as referenced
   assets (the bundle keeps their files and undo finds them) and `RelinkAsset` swaps them too.
 - **Takes clipboard** ([workflow.rs](../crates/model/src/workflow.rs) `TakeSnapshot`). Copy Take and
   Copy All Takes capture takes of a group with their layout relative to the earliest copied take and
@@ -2203,13 +2214,18 @@ engine, the audio thread and the file format are untouched.
 
 A track holds one or more note lanes that feed its device together: lane `i` for `i < Track::note_lane_count()` is `lanes[i]`, the note lanes come first, then
 the automation lanes; an audio track keeps its single audio lane. A lane has an optional `name` and
-a `muted` flag (fields of the lane, not part of `LaneKind`, whose equality decides which lane a move
-or paste matches). `Track::lane_label` is what the headers show: the name, else "Notes", "Notes 2",
-...
+a `muted` flag, a `solo` flag and an optional `color` (fields of the lane, not part of `LaneKind`,
+whose equality decides which lane a move or paste matches). `Track::lane_label` is what the headers
+show: the name, else "Notes", "Notes 2", ...
 
 - **Commands.** `AddNoteLane` (inserted after the last note lane, up to `MAX_NOTE_LANES` = 64),
   `RemoveNoteLane` (never the last one), `RenameLane` (blank resets, `MAX_LANE_NAME_CHARS` = 32) and
-  `SetLaneMuted`: each one undo step, refused on frozen and audio tracks. `ClipMove.lane` and
+  `SetLaneMuted`, `SetLaneSolo` and `SetLaneColor`: each one undo step, refused on frozen and audio
+  tracks. While any note lane of a track is soloed only the soloed ones play (`Track::
+  played_note_lanes`, which every flatten function, the merge and the render use, so the engine and
+  the offline render agree; a mute still silences a soloed lane); a bounce in place of chosen clips
+  plays them whatever the other lanes' solo says. The solo and the colour are the optional,
+  ignorable lane fields `"solo"` and `"color"` of project format 43. `ClipMove.lane` and
   `PasteClips.lane` name the target note lane; without one a move keeps the source lane (same track)
   or the note-lane ordinal clamped to the target track, and a paste uses the ordinal each clip had
   when it was copied.
@@ -2225,7 +2241,7 @@ or paste matches). `Track::lane_label` is what the headers show: the name, else 
   `explode_refusal` and `extract_refusal` let the views draw only what the model takes. Moving a
   lane only reorders ties; merge, explode and extract-move keep the flattened events, which
   `note_lane_workflows.rs` checks with proptests.
-- **Merge.** `flatten_notes` runs its usual body over each unmuted note lane in lane order and sorts
+- **Merge.** `flatten_notes` runs its usual body over each played note lane in lane order and sorts
   the result by `(tick, key)`; `flatten_controllers` builds each lane's controllers per kind and
   merges them by tick. The tie rule: at an equal tick, or an equal start of the same key, the later
   lane wins (the engine plays one lane per controller kind with strictly increasing ticks, and a
@@ -2246,7 +2262,9 @@ or paste matches). `Track::lane_label` is what the headers show: the name, else 
   holds `(track, lane)`; a note clip follows the change of track and of note lane, clamped), and a
   double-click on a lane's label (or `sequencer.rename_note_lane`) types its name with the
   folder-name editor. The Track menu and the track header menu have Add Note Lane, Rename Note
-  Lane..., Delete Note Lane (two lanes or more), Mute Lane, Merge Note Lanes (Ctrl+R) and Explode
+  Lane..., Delete Note Lane (two lanes or more), Mute Lane, Solo Lane (`sequencer.toggle_lane_solo`,
+  also an S button on each lane header after the first), a Lane Colour submenu
+  (`sequencer.lane_color`, in the track header menu), Merge Note Lanes (Ctrl+R) and Explode
   Notes to Lanes (also in the clip menu); the piano roll's Notes menu has Extract Notes to a New
   Lane. A press on a lane's label and a drag (`Drag::LaneMove`, [lane_move.rs](../crates/ui/src/arrangement/lane_move.rs))
   picks an insertion line between note lane rows, also on other tracks; Ctrl (the copy role) copies.
@@ -3277,7 +3295,8 @@ start and length stay in ticks; audio is not stretched. `flatten_audio` turns a 
 (later clips win, except where a crossfade lets two overlap; fades are measured inside the original
 clip).
 
-An audio clip may loop (`Clip::loop_length`, never together with `reverse`, never as a take):
+An audio clip may loop (`Clip::loop_length`, never together with `reverse`; a take may loop too, see
+the takes section):
 `flatten_audio` emits one region per repetition, cut at the repetition's boundary ticks and so
 frame-exact through the tempo map. Each repetition restarts the source at the clip's source offset
 and carries its own fades, envelope and warp job (warp buffers of repetitions of one length share a
@@ -4170,7 +4189,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (436) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (438) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

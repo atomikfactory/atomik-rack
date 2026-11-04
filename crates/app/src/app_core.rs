@@ -752,6 +752,10 @@ impl<S: EngineSink> AppCore<S> {
             self.commit_patch_browse();
             self.commit_stretch();
         }
+        // Converting the loop of an audio clip to one clip is a render, then a command.
+        let Some(command) = self.render_audio_loops(command) else {
+            return Ok(());
+        };
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
         // Muting an automation lane holds the value it gave.
@@ -3475,6 +3479,10 @@ mod export_tests;
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]
 mod freeze_tests;
+
+#[cfg(test)]
+#[path = "app_core_loops_tests.rs"]
+mod loops_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugins_tests.rs"]

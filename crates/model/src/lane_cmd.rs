@@ -2,7 +2,7 @@
 //! onto its top lane ([`merge_note_lanes`]) and pulling notes out of a clip into lanes of their
 //! own ([`extract_notes`], [`explode_notes`]).
 //!
-//! What a track plays is the merge of its unmuted note lanes (see [`crate::song::flatten_notes`]),
+//! What a track plays is the merge of its played note lanes (see [`crate::song::flatten_notes`]),
 //! and every plan here keeps it:
 //!
 //! * **Merge** reads the audible notes and controller points of the track and writes them back
@@ -162,12 +162,11 @@ pub(crate) fn move_note_lane(
     Ok(Edit::Compound(edits))
 }
 
-/// A track's connected stretches of audible sound: the union of the audible spans of its unmuted
+/// A track's connected stretches of audible sound: the union of the audible spans of its played
 /// note lanes, touching spans joined, in song order.
 fn sounding_intervals(track: &Track) -> Vec<(i64, i64)> {
     let mut spans: Vec<(i64, i64)> = track
-        .note_lanes()
-        .filter(|l| !l.muted)
+        .played_note_lanes()
         .flat_map(audible_spans)
         .map(|(_, a, b)| (a, b))
         .collect();
@@ -380,6 +379,10 @@ pub(crate) fn extract_notes(
             let key = moved[0].key;
             l.name = moved.iter().all(|n| n.key == key).then(|| key_name(key));
             l.muted = track.lanes[lane].muted;
+            l.solo = track.lanes[lane].solo;
+            l.color = track.lanes[lane].color;
+            l.solo = track.lanes[lane].solo;
+            l.color = track.lanes[lane].color;
             edits.push(lane_edit(&device, count, None, Some(l)));
             count
         }

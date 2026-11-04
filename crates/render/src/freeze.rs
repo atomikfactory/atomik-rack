@@ -147,8 +147,10 @@ pub fn render_freeze(
             let keep: BTreeSet<ClipId> = keep.iter().copied().collect();
             for lane in &mut t.lanes {
                 lane.clips.retain(|c| keep.contains(&c.id));
-                // The clips were chosen on purpose: a muted lane that holds one still plays.
+                // The clips were chosen on purpose: a muted lane that holds one still plays, and a
+                // solo on another lane does not silence it.
                 lane.muted &= lane.clips.is_empty();
+                lane.solo = false;
             }
         }
     }

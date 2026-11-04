@@ -245,6 +245,8 @@ impl CornerButton {
 pub enum LaneButton {
     /// Mute the note lane, or unmute it.
     Mute,
+    /// Solo the note lane, or unsolo it.
+    Solo,
     /// Fold the lane to a thin strip, or unfold it (the chevron at the left of the header).
     Fold,
     /// Arm the lane for automation recording.
@@ -1172,10 +1174,11 @@ impl ArrangementView {
             // arm fit there (the menu and the lane picker do the rest).
             (LaneButton::Mode, true) => at(134.0, 168.0),
             (LaneButton::Arm, true) => at(174.0, 194.0),
-            (LaneButton::Mute | LaneButton::Delete, true) => Rect::ZERO,
+            (LaneButton::Mute | LaneButton::Solo | LaneButton::Delete, true) => Rect::ZERO,
             (LaneButton::Mode, false) => at(115.0, 145.0),
             (LaneButton::Arm, false) => at(148.0, 166.0),
             (LaneButton::Mute, false) => at(169.0, 187.0),
+            (LaneButton::Solo, false) => Rect::ZERO,
             (LaneButton::Delete, false) => at(190.0, 204.0),
         }
     }
@@ -3315,6 +3318,10 @@ impl ArrangementView {
             self.lane_mute_button(track, lane, out);
             return;
         }
+        if b == LaneButton::Solo {
+            self.lane_solo_button(track, lane, out);
+            return;
+        }
         let Some((device, param)) = self.lane_id(track, lane) else {
             return;
         };
@@ -3343,7 +3350,7 @@ impl ArrangementView {
                     }));
                 }
             }
-            LaneButton::Mute => {}
+            LaneButton::Mute | LaneButton::Solo => {}
             LaneButton::Arm => out.push(UiAction::ToggleLaneArm { device, param }),
             LaneButton::Mode => {
                 let mode = self.song.write_mode(&device, &param).next();
@@ -5115,6 +5122,9 @@ impl ArrangementView {
         if let Some(outcome) = self.org_command(id, arg) {
             return outcome;
         }
+        if id == "sequencer.lane_color" {
+            return self.lane_color_command(arg);
+        }
         if let Some(outcome) = self.lane_command(id) {
             return outcome;
         }
@@ -5989,7 +5999,11 @@ impl ArrangementView {
                 }
                 continue;
             }
-            let muted = t.muted || t.lanes[lane].muted;
+            let muted = t.muted || t.lanes[lane].muted || t.silenced_by_lane_solo(lane);
+            // A note lane with a colour of its own draws its clips in it.
+            let accent = t.lanes[lane]
+                .color
+                .map_or(accent, |[r, g, b]| Color::from_rgb8(r, g, b));
             for clip in &t.lanes[lane].clips {
                 let r = self.clip_rect_in(rr, clip);
                 if r.x1 < tl.x0 - 2.0 || r.x0 > tl.x1 + 2.0 {

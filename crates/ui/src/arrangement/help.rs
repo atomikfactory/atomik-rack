@@ -35,6 +35,11 @@ fn lane_button(b: LaneButton, rect: Rect) -> Help {
             "Mute this lane (an automation lane holds the value its parameter has)",
         )
         .with_command("sequencer.toggle_lane_mute"),
+        LaneButton::Solo => Help::new(
+            rect,
+            "Solo this lane: while a lane is soloed, only the soloed lanes of the track play",
+        )
+        .with_command("sequencer.toggle_lane_solo"),
         LaneButton::Delete => help("Delete this automation lane and its clips"),
         LaneButton::Fold => help("Fold the lane to a thin strip, or unfold it"),
         LaneButton::Arm => help("Arm this lane for automation recording"),
@@ -109,6 +114,9 @@ impl ArrangementView {
                 let rect = if b == LaneButton::Mute && self.is_note_lane(track, lane) {
                     let hr = Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1);
                     self.lane_mute_rect(hr, lane)
+                } else if b == LaneButton::Solo && self.is_note_lane(track, lane) {
+                    let hr = Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1);
+                    self.lane_solo_rect(hr, lane)
                 } else {
                     self.lane_button_rect(rr, track, lane, b)
                 };

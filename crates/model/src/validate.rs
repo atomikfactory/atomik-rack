@@ -190,6 +190,12 @@ impl RackDoc {
                         "a static value is a finite number on an automation lane only",
                     );
                 }
+                if (lane.solo || lane.color.is_some()) && !lane.kind.is_notes() {
+                    found.add(
+                        format!("{at}.lanes[{l}]"),
+                        "only a note lane can be soloed or have a colour",
+                    );
+                }
                 if lane.muted && lane.kind.is_audio() {
                     found.add(format!("{at}.lanes[{l}]"), "an audio lane cannot be muted");
                 }

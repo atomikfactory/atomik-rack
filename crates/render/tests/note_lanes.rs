@@ -216,3 +216,62 @@ fn bouncing_a_clip_of_a_muted_lane_in_place_renders_it() {
     set_muted(&mut d, 1, false);
     assert_eq!(render.audio, freeze_render_of(d.doc(), &req).audio);
 }
+
+fn set_solo(d: &mut Document, lane: usize, solo: bool) {
+    apply(
+        d,
+        song_cmd(SongCommand::SetLaneSolo {
+            device: key("lead"),
+            lane,
+            solo,
+        }),
+    );
+}
+
+#[test]
+fn a_soloed_note_lane_is_the_only_one_in_the_bounce_and_the_freeze() {
+    let mut d = project(2);
+    add_clip(&mut d, 0, notes_clip(0, FIRST));
+    add_clip(&mut d, 1, notes_clip(0, SECOND));
+    let mut alone = project(2);
+    add_clip(&mut alone, 1, notes_clip(0, SECOND));
+    let mut first_only = project(2);
+    add_clip(&mut first_only, 0, notes_clip(0, FIRST));
+    let both = bounce(d.doc(), 512);
+    assert_ne!(
+        both,
+        bounce(alone.doc(), 512),
+        "the lanes sound differently"
+    );
+    set_solo(&mut d, 1, true);
+    assert_eq!(bounce(d.doc(), 512), bounce(alone.doc(), 512));
+    assert_eq!(
+        bounce(d.doc(), 64),
+        bounce(alone.doc(), 512),
+        "any block size"
+    );
+    let req = request(None, (0, BAR));
+    assert_eq!(
+        freeze_render_of(d.doc(), &req).audio,
+        freeze_render_of(alone.doc(), &req).audio
+    );
+    // Soloing the other lane as well plays both again; unsoloing brings the first back.
+    set_solo(&mut d, 0, true);
+    assert_eq!(bounce(d.doc(), 512), both);
+    set_solo(&mut d, 0, false);
+    set_solo(&mut d, 1, false);
+    assert_eq!(bounce(d.doc(), 512), both);
+    assert_ne!(bounce(d.doc(), 512), bounce(first_only.doc(), 512));
+}
+
+#[test]
+fn bouncing_a_clip_in_place_ignores_a_solo_on_another_lane() {
+    let mut d = project(2);
+    let held = add_clip(&mut d, 0, notes_clip(0, FIRST));
+    add_clip(&mut d, 1, notes_clip(0, SECOND));
+    let req = request(Some(vec![held]), (0, BAR));
+    let before = freeze_render_of(d.doc(), &req);
+    assert!(before.audio.channels[0].iter().any(|x| x.abs() > 0.01));
+    set_solo(&mut d, 1, true);
+    assert_eq!(freeze_render_of(d.doc(), &req).audio, before.audio);
+}
