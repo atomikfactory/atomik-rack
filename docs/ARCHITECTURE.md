@@ -174,7 +174,7 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
 - **Track Panel** ([ui/src/track_panel.rs](../crates/ui/src/track_panel.rs)). View, Track Panel
   docks a column on the right of the window (`Pane::TrackPanel`, `Layout::track_panel`; the choice
   is not saved) that lists the track selected in the arrangement: its note players, its
-  instrument, the four insert slots of its console channel, the sends and the fader with its mute.
+  instrument, the insert slots of its console channel, the sends and the fader with its mute.
   It stores nothing and edits through the commands the rack and the console use: a bypass is a
   `SetParam`, a move is `MoveDevices` (players, routed) or `MoveInsert`, a removal is
   `RemoveDevices` or `SetInsert` with no effect, a send switch and the fader (one undo step per
@@ -2030,7 +2030,7 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
 
 - **The chain** ([model/src/freeze.rs](../crates/model/src/freeze.rs)). A track's chain is its
   instrument (or an audio track's player) and the effects of its console channel's insert loop
-  ([`insert_chain`], at most four, a container effect ends it). A freeze goes *through* the first
+  ([`insert_chain`], at most sixteen, a container effect ends it). A freeze goes *through* the first
   `n` of them (`0..=len`): the render is the signal at the output of the last of them, and the
   effects after it stay live on the frozen audio. The channel strip (fader, pan, width, sends, mute,
   solo, output) is never frozen, nor are send effects; the strip's input section (gain, filters,
@@ -2673,6 +2673,16 @@ planned on a scratch copy.
   and strip menu) is `WorkflowCommand::RemoveDevices` on the device behind each strip, so an
   instrument's strip goes with the instrument and its track, which asks first when the track holds
   clips.
+- **Strip clipboard.** Copy, Cut, Paste and Duplicate in the console are app-core work
+  ([crates/app/src/app_core_strips.rs](../crates/app/src/app_core_strips.rs)), with no model command of
+  their own. A `StripSnapshot` holds a `DeviceSnapshot` (taken with tracks) of the devices that feed the
+  selected channels plus each channel's `ChannelSettingsClip` of every section, because a device
+  snapshot leaves console devices out and a pasted instrument gets a fresh channel. A paste is
+  `PasteDevices`, then `MoveChannel` to put the new channels after the selected strip and
+  `PasteSettings` onto each, the later two joined into the paste's undo step. Buses, the master and
+  channels with no source are not copied. Ctrl-drag of a name plate emits `UiAction::CopyStrips`, which
+  runs the same paste at the drop position. A chain holds up to `INSERT_SLOTS` (16) effects; the
+  console draws four rows and scrolls the rest.
 - **Parallel channel.** Every channel and bus has `parallel_out_l/r`, the signal after the width,
   before the fader and the pan, with the mute. `CreateParallel { strip }` makes a source-less channel
   named `P<n>: <strip name>` fed from those sockets and routed where the strip is routed (the master,
