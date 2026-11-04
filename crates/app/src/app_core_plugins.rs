@@ -2471,7 +2471,13 @@ impl<S: EngineSink> AppCore<S> {
                 path: path.to_path_buf(),
                 source,
             })?;
-        self.open_str(&text, None)?;
+        // The audio the snapshot was taken with: the bundle it noted is copied into the new
+        // session's own bundle, like a template's (the snapshot never owns a bundle itself).
+        self.audio.adopt_from = RecoveryDir::bundle_of(path);
+        let opened = self.open_str(&text, None);
+        // `audio_opened` takes it; an open that failed before that must not leave it behind.
+        self.audio.adopt_from = None;
+        opened?;
         // Not clean: the user has not saved it anywhere.
         self.set_saved(atomik_model::empty_doc());
         Ok(())
@@ -2488,6 +2494,7 @@ impl<S: EngineSink> AppCore<S> {
         );
         // The frame only clones the document; the writer thread serialises and writes it.
         let doc: RackDoc = self.document.doc().clone();
+        let bundle = self.bundle_root().map(Path::to_path_buf);
         let Some(recovery) = self.plugins.recovery.as_mut() else {
             return;
         };
@@ -2502,6 +2509,7 @@ impl<S: EngineSink> AppCore<S> {
                 name,
                 recovery.sequence,
                 RECOVERY_KEEP,
+                bundle,
             );
         }
     }

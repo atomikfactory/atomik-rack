@@ -147,6 +147,77 @@ impl Device for Panicker {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Brittle
+// ---------------------------------------------------------------------------------------------
+
+/// Descriptor of [`Brittle`]: `audio_out` (Audio out), params `break_param` and `break_meter`.
+pub static BRITTLE: DeviceDescriptor = DeviceDescriptor {
+    stages: &[],
+    type_id: "testkit.brittle",
+    name: "Brittle",
+    kind: DeviceKind::Utility,
+    version: 1,
+    params: &[
+        linear_param(0, "break_param", 0.0, 1.0, 0.0),
+        linear_param(1, "break_meter", 0.0, 1.0, 0.0),
+    ],
+    sockets: &[socket(0, "audio_out", SocketKind::Audio, Direction::Output)],
+};
+
+/// A device that renders a steady 0.25 and panics outside `process` on demand: `break_param`
+/// above 0.5 panics in `set_param` itself, `break_meter` above 0.5 makes the next read of its
+/// meter values panic. For tests of the per-device containment of control-side panics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Brittle {
+    meter_armed: bool,
+}
+
+impl Brittle {
+    /// Audio output socket.
+    pub const AUDIO_OUT: SocketId = SocketId(0);
+    /// The param whose change panics.
+    pub const BREAK_PARAM: ParamId = ParamId(0);
+    /// The param that arms a panic in the meter read.
+    pub const BREAK_METER: ParamId = ParamId(1);
+    /// What it renders while healthy.
+    pub const LEVEL: f32 = 0.25;
+
+    /// Boxed instance.
+    pub fn boxed() -> Box<dyn Device> {
+        Box::new(Self::default())
+    }
+}
+
+impl Device for Brittle {
+    fn descriptor(&self) -> &'static DeviceDescriptor {
+        &BRITTLE
+    }
+    fn prepare(&mut self, _: &PrepareInfo) {}
+    fn reset(&mut self) {}
+    fn set_param(&mut self, id: ParamId, plain: f32) {
+        if id == Self::BREAK_PARAM && plain > 0.5 {
+            panic!("param failure");
+        }
+        if id == Self::BREAK_METER {
+            self.meter_armed = plain > 0.5;
+        }
+    }
+    fn process(&mut self, ctx: &mut ProcessContext<'_>) {
+        ctx.output(Self::AUDIO_OUT).fill(Self::LEVEL);
+    }
+    fn has_meter_values(&self) -> bool {
+        true
+    }
+    fn meter_values(&self, out: &mut [f32]) -> usize {
+        if self.meter_armed {
+            panic!("meter failure");
+        }
+        out[0] = 1.0;
+        1
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Locker
 // ---------------------------------------------------------------------------------------------
 

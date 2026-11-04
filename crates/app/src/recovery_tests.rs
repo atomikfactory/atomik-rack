@@ -57,7 +57,7 @@ fn twenty_back_to_back_snapshots_keep_the_newest_three() {
     let recovery = RecoveryDir::new(&d);
     let writer = RecoveryWriter::new().unwrap();
     for sequence in 1..=20 {
-        writer.submit(empty_doc(), recovery.clone(), "p".into(), sequence, 3);
+        writer.submit(empty_doc(), recovery.clone(), "p".into(), sequence, 3, None);
     }
     writer.wait();
     let mut names: Vec<String> = std::fs::read_dir(&d)

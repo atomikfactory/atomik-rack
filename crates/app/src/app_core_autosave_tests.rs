@@ -2,6 +2,7 @@
 //! the unclean-exit banner and the recovery of unfinished recordings.
 
 use super::*;
+use crate::recovery::RecoveryWriter;
 use crate::sink::RecordingSink;
 use atomik_model::{DeviceKey, empty_doc, save_project};
 use atomik_ui::BannerKind;
@@ -148,14 +149,92 @@ fn an_unfinished_recording_comes_back_as_a_recovered_track() {
     // The same file is not taken twice in a run.
     assert_eq!(core.recover_orphan_recordings(), 0);
 
-    // Undo removes the track (the clip, then the track); the file is still there.
-    while core.undo() {}
+    // One undo step removes the whole recovered track; the file is still there.
+    assert!(core.undo());
     assert!(core.doc().song.tracks.is_empty());
-    while core.redo() {}
+    assert!(!core.undo(), "a recovered recording is one undo step");
+    assert!(core.redo());
+    assert!(!core.redo());
+    assert_eq!(core.doc().song.tracks[0].lanes[0].clips.len(), 1);
     assert_eq!(core.doc().song.tracks.len(), 1);
     assert!(audio.join("rec-4000000000-0-0.wav").exists());
 
     // Saving puts the audio in the project and removes the file.
     core.save().unwrap();
     assert!(!audio.join("rec-4000000000-0-0.wav").exists());
+}
+
+#[test]
+fn a_recovered_snapshot_opens_with_the_audio_of_its_bundle() {
+    let base = temp("snapshot-audio");
+    let project = base.join("song");
+    let audio = project.join("Audio");
+    orphan(&audio, "rec-4000000000-0-0.wav", 48_000);
+    let file = project.join("song.atomik");
+    std::fs::write(&file, save_project(&empty_doc())).unwrap();
+
+    // A project with an audio clip, never saved after the recovery: only a snapshot has it.
+    let recovery = base.join("recovery");
+    let mut core = core_in(&recovery);
+    core.open(&file).unwrap();
+    core.wait_background();
+    assert!(core.missing_assets().is_empty());
+    core.plugin_tick(0.0);
+    core.plugin_tick(1_000.0);
+    core.wait_recovery_writes();
+    let newest = atomik_plugin_host::RecoveryDir::new(&recovery)
+        .newest()
+        .unwrap();
+    assert_eq!(
+        atomik_plugin_host::RecoveryDir::bundle_of(&newest).as_deref(),
+        Some(project.as_path())
+    );
+
+    // The next start opens it: the audio is found, copied into the new song, and loaded.
+    let mut next = core_in(&base.join("recovery-next"));
+    next.open_recovery(&newest).unwrap();
+    next.wait_background();
+    assert!(
+        next.missing_assets().is_empty(),
+        "{:?}",
+        next.missing_assets()
+    );
+    assert!(next.is_dirty());
+    assert_eq!(next.song_assets().len(), 1);
+    assert_eq!(next.doc().song.tracks.len(), 1);
+
+    // Without the note (a snapshot from an older version) the clips show as missing, as before.
+    std::fs::remove_file(atomik_plugin_host::RecoveryDir::bundle_note_path(&newest)).unwrap();
+    let mut bare = core_in(&base.join("recovery-bare"));
+    bare.open_recovery(&newest).unwrap();
+    assert_eq!(bare.missing_assets().len(), 1);
+}
+
+#[test]
+fn a_snapshot_without_audio_writes_no_bundle_note_and_old_notes_are_pruned() {
+    let dir = temp("note-prune");
+    let recovery = atomik_plugin_host::RecoveryDir::new(&dir);
+    let writer = RecoveryWriter::new().unwrap();
+    writer.submit(
+        empty_doc(),
+        recovery.clone(),
+        "p".into(),
+        1,
+        1,
+        Some(dir.clone()),
+    );
+    writer.wait();
+    let first = recovery.newest().unwrap();
+    assert!(!atomik_plugin_host::RecoveryDir::bundle_note_path(&first).exists());
+
+    // A note is removed with the snapshot it belongs to.
+    std::fs::write(
+        atomik_plugin_host::RecoveryDir::bundle_note_path(&first),
+        dir.to_string_lossy().as_bytes(),
+    )
+    .unwrap();
+    writer.submit(empty_doc(), recovery.clone(), "p".into(), 2, 1, None);
+    writer.wait();
+    assert!(!first.exists());
+    assert!(!atomik_plugin_host::RecoveryDir::bundle_note_path(&first).exists());
 }

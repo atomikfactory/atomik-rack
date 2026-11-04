@@ -2,8 +2,10 @@
 //!
 //! A device that panics in `process` is caught where it runs (the audio thread or a worker),
 //! its node is marked faulted (silent from then on) and the first such device is recorded
-//! here with one atomic store. Nothing allocates or locks; the UI side polls
-//! [`EngineHandle::fault`](crate::EngineHandle::fault).
+//! here with one atomic store. A panic outside `process` (taking a param, a sample or pattern
+//! hand-off, or a read of the device's meters or latency) is contained the same way
+//! (`Node::contain`): only that device is silenced and named. Nothing allocates or locks; the
+//! UI side polls [`EngineHandle::fault`](crate::EngineHandle::fault).
 
 use crate::graph::DeviceInstanceId;
 use std::sync::atomic::{AtomicU64, Ordering};

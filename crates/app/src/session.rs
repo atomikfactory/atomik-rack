@@ -14,7 +14,7 @@ use crate::audio_record::record_offset_frames;
 use crate::midi::{MidiConnection, MidiLink};
 use crate::midi_control::ControlHub;
 use crate::record::{RecordTap, RecordedNote};
-use crate::settings::{AudioSettings, LastGood, MidiInputRole};
+use crate::settings::{AudioSettings, HostChoice, LastGood, MidiInputRole};
 use crate::sink::EngineSink;
 use crate::status::{AudioStatus, SyncStatus};
 use crate::target::{NoteTarget, Target};
@@ -281,6 +281,21 @@ struct ClockIn {
 /// out.
 const SYNC_RELEASE_AFTER: Duration = Duration::from_millis(500);
 
+/// How often the device list is read while the session runs on a fallback, to see whether the
+/// device the user chose is back.
+const PREFERRED_POLL: Duration = Duration::from_secs(3);
+
+/// The devices the user chose while a fallback runs in their place.
+#[derive(Debug, Clone)]
+struct Preferred {
+    devices: LastGood,
+    /// When the device list was last read for it.
+    polled: Option<Instant>,
+    /// The device was missing from the list at some read: only a device that went away can
+    /// return (one that is listed but does not open is not tried again).
+    gone: bool,
+}
+
 /// An open MIDI port and the setting it was opened for.
 struct OpenInput<M> {
     /// The name in the settings (the port's full name is the port's).
@@ -288,6 +303,12 @@ struct OpenInput<M> {
     /// What the port was opened as.
     role: MidiInputRole,
     port: M,
+}
+
+/// Whether a listed device is the one the settings name (exact or case-insensitive substring,
+/// like the stream's device lookup).
+fn device_named(listed: &str, wanted: &str) -> bool {
+    listed == wanted || listed.to_lowercase().contains(&wanted.to_lowercase())
 }
 
 /// Engine, stream and MIDI input for the app.
@@ -327,6 +348,15 @@ pub struct LiveSession<B: AudioBackend> {
     clock_receiving: bool,
     /// When the clock's route leaves the output thread (after clock out was switched off).
     sync_release_at: Option<Instant>,
+    /// The devices the user chose, while a fallback (the last working configuration, or the
+    /// host defaults after a loss) runs instead. Cleared when the user picks devices.
+    preferred: Option<Preferred>,
+    /// The chosen devices are back and the settings name them again: the app restarts the audio
+    /// when it is safe ([`Self::take_switch_back`]).
+    switch_back: bool,
+    /// The restart that follows is the one try at the chosen devices: a failure of it does not
+    /// make them the preferred ones again.
+    switching_back: bool,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
@@ -370,6 +400,9 @@ impl<B: AudioBackend> LiveSession<B> {
             clock_seen: 0,
             clock_receiving: false,
             sync_release_at: None,
+            preferred: None,
+            switch_back: false,
+            switching_back: false,
         }
     }
 
@@ -428,6 +461,9 @@ impl<B: AudioBackend> LiveSession<B> {
             || old.workers != self.settings.workers
             || old.worker_linger_spins != self.settings.worker_linger_spins;
         if audio_changed {
+            // Devices that are picked now are the user's choice: nothing to go back to.
+            self.preferred = None;
+            self.switch_back = false;
             self.status.host = self.settings.host.label().to_string();
             SettingsChange::RestartAudio
         } else if old.midi_inputs != self.settings.midi_inputs {
@@ -502,6 +538,7 @@ impl<B: AudioBackend> LiveSession<B> {
             }
         }
         self.poll_sync(at);
+        self.watch_preferred(at);
         // Pushes that found the engine's queue full, and control messages (MIDI to
         // parameters, surfaces) the inbox had no room for.
         self.status.overload.control_stalled = self
@@ -634,6 +671,10 @@ impl<B: AudioBackend> LiveSession<B> {
         let mut fallback = self.settings.clone();
         fallback.use_devices(&good);
         let opened = self.open_stream(&fallback, config).ok()?;
+        // The device that did not open is the one to go back to when it can.
+        if self.settings.output_device != fallback.output_device {
+            self.prefer(LastGood::of(&self.settings));
+        }
         let named = |d: &Option<String>| d.clone().unwrap_or_else(|| "the host default".into());
         self.notice = Some(format!(
             "Audio could not open {} ({failure}); using the last working configuration, {}",
@@ -642,6 +683,100 @@ impl<B: AudioBackend> LiveSession<B> {
         ));
         self.settings = fallback;
         Some(opened)
+    }
+
+    /// Switches to the host's default devices after the chosen ones were lost (the chosen devices
+    /// are kept in memory to go back to when they return: see [`Self::take_switch_back`]).
+    /// Returns what [`Self::set_settings`] returns for the change.
+    pub fn fall_back_to_defaults(&mut self) -> SettingsChange {
+        let chosen = LastGood::of(&self.settings);
+        let mut settings = self.settings.clone();
+        settings.output_device = None;
+        settings.input_device = None;
+        let change = self.set_settings(settings);
+        if chosen.output_device.is_some() {
+            self.prefer(chosen);
+        }
+        change
+    }
+
+    /// Remembers `devices` as the ones to go back to.
+    fn prefer(&mut self, devices: LastGood) {
+        // A restart that goes back to them is the one try: it must not make them wanted again.
+        if !self.switching_back {
+            self.preferred = Some(Preferred {
+                devices,
+                polled: None,
+                gone: false,
+            });
+        }
+    }
+
+    /// While a fallback runs, reads the device list every few seconds; when the chosen output
+    /// device is listed again the settings name it again, a notice says so and
+    /// [`Self::take_switch_back`] asks for the restart. One try: the chosen devices are not
+    /// wanted again after it, whatever it does.
+    fn watch_preferred(&mut self, at: Instant) {
+        if self.running.is_none() {
+            return;
+        }
+        let Some(wanted) = &mut self.preferred else {
+            return;
+        };
+        if wanted
+            .polled
+            .is_some_and(|last| at.saturating_duration_since(last) < PREFERRED_POLL)
+        {
+            return;
+        }
+        wanted.polled = Some(at);
+        let devices = wanted.devices.clone();
+        let Some(name) = devices.output_device.clone() else {
+            self.preferred = None;
+            return;
+        };
+        if LastGood::of(&self.settings) == devices {
+            self.preferred = None;
+            return;
+        }
+        let Ok(hosts) = self.backend.list_audio() else {
+            return;
+        };
+        let back = hosts
+            .iter()
+            .filter(|h| devices.host == HostChoice::Default || h.kind == devices.host.kind())
+            .flat_map(|h| &h.devices)
+            .any(|d| d.max_outputs > 0 && device_named(&d.name, &name));
+        if let Some(wanted) = &mut self.preferred {
+            if !back {
+                wanted.gone = true;
+            }
+            if !(back && wanted.gone) {
+                return;
+            }
+        }
+        log::info!("audio device {name} is back: switching to it");
+        self.settings.use_devices(&devices);
+        self.status.host = self.settings.host.label().to_string();
+        self.preferred = None;
+        self.switch_back = true;
+        self.notice = Some(format!("Audio device {name} is back; switching to it."));
+    }
+
+    /// True once when the chosen devices are back and the settings name them again: the caller
+    /// restarts the audio ([`EngineSink::reset`]) at a moment that suits it (not while playing or
+    /// recording), and the restart is the one try.
+    pub fn take_switch_back(&mut self) -> bool {
+        let due = std::mem::take(&mut self.switch_back);
+        if due {
+            self.switching_back = true;
+        }
+        due
+    }
+
+    /// Whether a switch back to the chosen devices is waiting for its restart.
+    pub fn switch_back_pending(&self) -> bool {
+        self.switch_back
     }
 
     /// The message about a fallback to the last working configuration, once.
@@ -888,15 +1023,20 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             return;
         }
         let wanted = config.input_channels;
-        let (started, input_error) = match self.open_stream(&self.settings, config) {
-            Ok(opened) => opened,
+        let opened = match self.open_stream(&self.settings, config) {
+            Ok(opened) => Some(opened),
             Err(e) => match self.fall_back_to_last_good(config, &e) {
-                Some(opened) => opened,
+                Some(opened) => Some(opened),
                 None => {
                     self.status.error = Some(e.to_string());
-                    return;
+                    None
                 }
             },
+        };
+        // The one try at the chosen devices is over, whichever way it went.
+        self.switching_back = false;
+        let Some((started, input_error)) = opened else {
+            return;
         };
         let (stream, handle, sender, clock) = started;
         // This configuration opened a stream: it is the one to fall back to. (An input that

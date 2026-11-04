@@ -2342,6 +2342,12 @@ callback sets `Telemetry::device_lost` when cpal reports the device gone or the 
 toast that names Audio > Restart Audio, shows `AUDIO STOPPED` or `AUDIO DEVICE LOST` in the status
 bar, and, when `device_loss.reset_to_default` is on in the settings, reopens the host's default
 devices (a lost device at once, a stalled one after two seconds of silence) without saving them.
+`LiveSession` keeps the devices that were chosen (`fall_back_to_defaults`, or the configuration that did
+not open and was replaced by the last working one) and, while the fallback plays, reads the device list
+every 3 s; once the chosen output device is listed again, after it had been missing from the list, the
+settings name it again, a notice says so and `take_switch_back` asks the shell for the restart, which waits
+while the song plays or records. It is one try (a failed one does not make the device wanted again), and
+picking devices in the dialog forgets it.
 Input that the capture ring could not hold, or that the render callback discarded to bound the
 latency, is `Telemetry::input_overruns` (frames; the first discard, of what was captured before the
 output started, is not counted). The Audio Settings dialog warns when the open input and output are
@@ -3869,7 +3875,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   every 60 s whatever changed, and after a plugin state capture). The frame only clones the
   document; one `RecoveryWriter` thread serialises, writes
   `<config>/recovery/<project>-<sequence>.recover.atomik` through a temporary file and a rename, and
-  prunes to the newest three, so two snapshots never prune each other. A session marker
+  prunes to the newest three, so two snapshots never prune each other. A snapshot of a project with audio
+  has a note `<snapshot>.bundle` (`RecoveryDir::bundle_note_path`) with the bundle folder, written and
+  pruned with it; `open_recovery` hands that folder to the open like a template's, so the audio is copied
+  into the session's own bundle and loaded (no note, or a folder that is gone: the clips show as missing).
+  A session marker
   `session-<pid>-<n>.lock` in the same folder stays locked by the running process (the operating
   system drops the lock when the process ends in any way); a clean quit (`shutdown_plugins`) removes
   it, so a marker that can be locked at start belongs to a run that ended unexpectedly and shows the
@@ -3883,8 +3893,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   (the scratch scan also skips files touched in the last minute: that folder is shared by every
   Atomik of the user). Each file goes through the import path as a track `Recovered take N` with one
   clip at the start of the song, so the frames up to the last header refresh come back (at most
-  about a second is lost); undo removes it, and the `rec-` file is deleted only after the project is
-  saved.
+  about a second is lost); one undo removes track and clip, and the `rec-` file is deleted only after the
+  project is saved.
 - **The sandbox** ([plugin-sandbox](../crates/plugin-sandbox/src),
   [plugin-ipc](../crates/plugin-ipc/src), [plugin-hostd](../crates/plugin-hostd/src)).
   `SandboxBackend` is a `PluginBackend` like the format backends: `instantiate` starts one
@@ -5240,11 +5250,14 @@ A bug in a device must cost that device, not the session. The rules:
   `catch_unwind`, on the audio thread and on a worker alike. A panic marks the node faulted: its
   outputs are zeroed and it is skipped from then on, the engine stores the device's instance id in a
   sticky atomic ([fault.rs](../crates/engine/src/fault.rs)) and keeps rendering everything else.
-  Nothing is re-raised. `Engine::fault` and `EngineHandle::fault` report it; the audio callback
+  Nothing is re-raised. The calls a device gets outside `process` (a parameter, a sample map or
+  pattern data hand-off, the reads of its meter values and latency) go through `Node::contain`, the
+  same guard: a panic there faults only that node, and `Arena::settle_faults` records it once per
+  batch (a bool test while nothing happened). `Engine::fault` and `EngineHandle::fault` report it; the audio callback
   publishes it in `Telemetry::faulted`/`faulted_device`, the status line shows
   `ENGINE FAULTED: <device>` and a toast points at Audio > Restart Audio, which rebuilds the engine.
   The callback also wraps the whole render in `catch_unwind` as a last line: a panic outside any
-  device silences the stream and sets `Telemetry::faulted`.
+  device (the engine's own code) silences the stream and sets `Telemetry::faulted`.
 - `catch_unwind` costs nothing while nothing panics, so HI-1 holds. The panic path allocates (the
   payload, the default hook's message); it runs once per faulted device and is a documented
   exception. The panic hook ([§6n](#6n-logs-crash-reports-and-diagnostics)) does no file I/O on the

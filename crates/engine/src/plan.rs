@@ -73,6 +73,9 @@ pub(crate) struct Node {
     pub(crate) variable_latency: bool,
     /// Set when the device panicked in `process`: the node is silent and skipped from then on.
     pub(crate) faulted: bool,
+    /// Set when the device panicked outside `process` (a param, a hand-off, a read of its
+    /// meters) and the engine has not recorded it in the fault state yet.
+    pub(crate) fresh_fault: bool,
     /// Nanoseconds spent in `process` while the timing was on (see [`crate::timing`]). Written
     /// only by the thread that runs the node, read by the audio thread between batches.
     pub(crate) busy_ns: u64,
@@ -204,6 +207,7 @@ impl Node {
             playback: [[0.0; BATCH]; 2],
             playback_on: false,
             faulted: false,
+            fresh_fault: false,
             busy_ns: 0,
             note_tap: None,
         }
@@ -212,10 +216,33 @@ impl Node {
 
 /// Real-time side of a node. Nothing here allocates, frees, locks or blocks.
 impl Node {
-    /// Sets a param (clamped through the descriptor). Unknown params are ignored.
+    /// Runs `call` on the device, outside `process`: a param, a hand-off, a read of its meters.
+    /// A panic is caught here, like in [`Node::run`] (`catch_unwind` costs nothing while nothing
+    /// panics): the node is marked faulted and silenced, `fresh_fault` asks the engine to record
+    /// it, and `None` comes back. A node that already faulted is not called. What `call` moved
+    /// into the device is dropped by the unwind, which only happens on this fault path.
+    pub(crate) fn contain<R>(&mut self, call: impl FnOnce(&mut dyn Device) -> R) -> Option<R> {
+        if self.faulted {
+            return None;
+        }
+        let device = self.device.as_mut();
+        match catch_unwind(AssertUnwindSafe(|| call(device))) {
+            Ok(r) => Some(r),
+            Err(_) => {
+                self.faulted = true;
+                self.fresh_fault = true;
+                self.silence();
+                None
+            }
+        }
+    }
+
+    /// Sets a param (clamped through the descriptor). Unknown params are ignored. A device that
+    /// panics while taking it is contained (see [`Node::contain`]).
     pub(crate) fn set_param(&mut self, param: ParamId, plain: f32) {
         if let Some(desc) = self.device.descriptor().params.get(param.0 as usize) {
-            self.device.set_param(param, desc.clamp(plain));
+            let value = desc.clamp(plain);
+            let _ = self.contain(|device| device.set_param(param, value));
         }
     }
 

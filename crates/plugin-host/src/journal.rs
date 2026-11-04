@@ -185,6 +185,8 @@ pub struct RecoveryDir {
 }
 
 const RECOVERY_SUFFIX: &str = ".recover.atomik";
+/// Appended to a snapshot's file name for the note that says where its audio lives.
+const BUNDLE_NOTE_SUFFIX: &str = ".bundle";
 
 impl RecoveryDir {
     /// The folder `dir` (created by the first snapshot's writer).
@@ -231,6 +233,20 @@ impl RecoveryDir {
         out
     }
 
+    /// The file that holds the bundle folder of `snapshot`'s audio (next to the snapshot).
+    pub fn bundle_note_path(snapshot: &Path) -> PathBuf {
+        let mut name = snapshot.as_os_str().to_owned();
+        name.push(BUNDLE_NOTE_SUFFIX);
+        PathBuf::from(name)
+    }
+
+    /// The bundle folder noted for `snapshot`, when there is a note and the folder still exists.
+    pub fn bundle_of(snapshot: &Path) -> Option<PathBuf> {
+        let text = std::fs::read_to_string(Self::bundle_note_path(snapshot)).ok()?;
+        let root = PathBuf::from(text.trim_end());
+        (!root.as_os_str().is_empty() && root.is_dir()).then_some(root)
+    }
+
     /// The newest snapshot, if any.
     pub fn newest(&self) -> Option<PathBuf> {
         self.snapshots().pop().map(|(_, p)| p)
@@ -244,6 +260,7 @@ impl RecoveryDir {
         let all = self.snapshots();
         let drop = all.len().saturating_sub(keep);
         for (_, p) in all.into_iter().take(drop) {
+            let _ = std::fs::remove_file(Self::bundle_note_path(&p));
             std::fs::remove_file(p)?;
         }
         Ok(())

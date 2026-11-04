@@ -1027,6 +1027,8 @@ impl<S: EngineSink> AppCore<S> {
                 },
             },
         )?;
+        // A recovered recording is one undo step: its track and its clip.
+        let one_step = matches!(target, ImportTarget::NewTracks) && renamed.is_some();
         let (device, start) = match target {
             ImportTarget::ExistingTrack(key) => {
                 if !self.doc().is_audio_track(&key, &self.registry) {
@@ -1071,7 +1073,8 @@ impl<S: EngineSink> AppCore<S> {
             Some(w) => w.length,
             None => ticks_for_frames(&self.doc().song, start, info.frames, rate),
         };
-        run(
+        self.join_next = one_step;
+        let added = run(
             self,
             Command::Song(SongCommand::AddAudioClip {
                 device,
@@ -1084,7 +1087,9 @@ impl<S: EngineSink> AppCore<S> {
                 fade_out: 0,
                 fade_curve: atomik_model::FadeCurve::Linear,
             }),
-        )?;
+        );
+        self.join_next = false;
+        added?;
         if let Some(w) = warp {
             self.warp_new_clip(w.source_bpm, length);
         }
