@@ -368,6 +368,13 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   no history. The defaults are a working assumption
   ([DECISIONS.md](DECISIONS.md#k-undo-history-budget)). Undo runs on the step itself
   (`Edit::invert` swaps old and new in place, then back), so it copies none of the step.
+- **A big note clip's edit is sparse.** `SetClipContent` on a note clip of `SPARSE_MIN_NOTES` (2,048) or more
+  notes that keeps the list's length and changes at most an eighth of its positions is stored as
+  `Edit::Notes` (the changed positions with the note before and after, `content_edit` in
+  [song_cmd.rs](../crates/model/src/song_cmd.rs)) instead of the clip twice over; every other change still
+  replaces the clip. A sparse edit is a barrier for `fold_clip_edit`, so a drag's merged steps stay in order,
+  and `approx_bytes` counts only the changed notes. A test on a 50,000-note clip checks that forty inspector
+  steps fit a 1 MiB budget and undo and redo walk the notes exactly.
 - **A swap edit is one table entry.** An edit that only replaces one value (a device's name, colour,
   fold or patch name, the column count, the song information, the master tune, a track's chase,
   Direct Record or note entry) is an entry of `Swap` (`history/swap.rs`): its name, what it is keyed
@@ -5052,6 +5059,13 @@ items are ordinary project texts, plus one small new file type.
   same code; `validate` and `project_inspect` accept the item files.
 
 ## 6m. Windows: the platform side
+
+The Piano Keys strip is a window of its own like the Spectrum EQ: `WindowKind::PianoKeys` holds the pane while
+the window is open (`DetachState::detached` means open), the main layout gives it no room, and the
+octave and velocity are `ui-state.json` fields applied at start and saved by `save_zoom_state`. The question
+about unsaved changes (`ShellRequest::ConfirmSave`) is a message box with the buttons in `SAVE_BUTTONS` on every
+platform (`save_answer` reads the result); on Windows rfd makes it a task dialog, which needs Common Controls 6, so
+the build scripts of the app and of the MCP server embed `windows/atomik.manifest` in every program they link.
 
 The rack and the console (the mixer) can leave the main window (View > Detach Rack, Detach Mixer, or
 `--detach rack,console`). A `Shell` is one song: one document, one view per pane and its undo history; the
