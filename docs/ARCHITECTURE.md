@@ -2990,8 +2990,8 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
   are the first two params of the strip and its first stage: the gain is a multiplier on the input,
   the polarity a sign, both through one 5 ms smoother (a flip is a ramp through zero, not a click).
   They are ordinary params, so they are automatable, undoable and visible in the rack's channel
-  panel (a knob with its dB value, a toggle) and in the console's INPUT section (GAIN knob, Ø
-  button; the value in dB shows while the knob is dragged). `mixer.toggle_polarity` flips the
+  panel (a knob with its dB value, a toggle) and in the console's INPUT section (the trim knob
+  with its value in dB under it, Ø and Ø R buttons). `mixer.toggle_polarity` flips the
   selected strips. A strip with the polarity inverted and its normal twin cancel exactly.
 - **Parallel compressor.** `pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`,
   `pcomp.release`, `pcomp.makeup` and `pcomp.mix` are appended after the existing params (no id
@@ -3000,7 +3000,7 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
   second `atomik_dsp::Compressor`, the one of the strip's dynamics section (RMS detector, soft
   knee), followed by the makeup, and is blended with the dry signal,
   `out = dry (1 - mix) + compressed makeup mix`: mix 1 is the compressor alone (the test compares it
-  with a standalone compressor render). It has no lookahead, so it adds no latency and the dry and
+  with a standalone compressor render). It has no look-ahead, so it adds no latency and the dry and
   compressed paths are sample aligned; there is nothing to match and the strip reports no latency
   for it. The blend is `pcomp.mix` while `pcomp.on`, else 0, through the 5 ms smoother; when it is 0
   and settled the stage is skipped (no CPU) and the signal is untouched bit for bit; switching it on
@@ -3021,6 +3021,22 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
   effect. Without a chain the button is the strip's own switch as before, and a project that has
   `insert.bypass` set keeps it (reads as bypassed, cleared by the next click). An effect without a
   bypass is skipped by BYP ALL and has no B; a container on the chain has the switch of 6e.
+- **Look-ahead.** `comp.lookahead` (0 to 10 ms, appended after `internal.tap_live`) puts a delay line of
+  that length in the audio path of the dynamics section (gate and compressor) while the side-chain still
+  reads the early signal, so the gain is already down when the peak leaves the line. `latency_frames` reports
+  it with the phantom latency of a negative `latency.adjust`, so the routing delays the other channels
+  by the same amount (section 5, PDC). The line runs whenever the look-ahead is above 0, with the section on,
+  off or bypassed, so the strip's timing never depends on a switch; changing the amount re-reads the line from
+  another point, a click like `latency.adjust`. At 0 nothing runs and the strip is bit-identical.
+- **Polarity of each side.** `input.phase_r` is appended too and inverts the right side on top of `input.phase`,
+  through a second input smoother, so old projects (where `input.phase` flipped both sides) read the same.
+- **Section bypass.** `dyn.bypass` and `eq.bypass` set the dynamics or EQ section's own on/off crossfade to
+  off while keeping its settings. `bypass_inserts_commands` adds them to the batch of the BYP ALL switch for a
+  section in use (`section_bypass_states`: `comp.on` or `gate.on`, `eq.on`), `inserts_bypassed` reads them with
+  the effects, and the console keeps them out of MORE (`console_layout::RACK_ONLY`); the master has none.
+- **Console readouts.** The trim knob (`input.gain`) writes its value in dB at rest where the label goes,
+  and the gain-reduction bar writes the reduction in dB while it moves. The parallel compressor's detector
+  is `pcomp.peak` (a PEAK button in the PARALLEL section).
 - **Commands and tools.** `mixer.toggle_polarity` and `mixer.bypass_all_inserts` are registry
   commands in the Mixer menu without default keys; they act on the strips of the focused pane like
   the VCA commands (`AppCore::strips_for_vca`), flip all inverted strips back or invert all, and
