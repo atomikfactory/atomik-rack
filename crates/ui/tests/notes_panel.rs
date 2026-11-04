@@ -5,8 +5,8 @@ mod support;
 
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::{
-    DisplayList, Modifiers, NotesAction, NotesMode, NotesRow, NotesValues, NotesView, Theme,
-    UiAction, UiEvent,
+    DisplayList, Modifiers, NotesAction, NotesMode, NotesProgress, NotesRow, NotesValues,
+    NotesView, Theme, UiAction, UiEvent,
 };
 use support::down;
 
@@ -27,6 +27,7 @@ fn the_rows_read_their_defaults_and_step() {
     assert_eq!(v.value_text(NotesRow::Lowest), "C2");
     assert_eq!(v.value_text(NotesRow::Highest), "C7");
     assert_eq!(v.value_text(NotesRow::Drift), "70 cents");
+    assert_eq!(v.value_text(NotesRow::Bend), "On");
     assert_eq!(v.value_text(NotesRow::Timing), "Free");
     assert_eq!(v.value_text(NotesRow::Target), "New track");
     let plus = v.plus_rect(NotesRow::Sensitivity).center();
@@ -206,4 +207,79 @@ fn dragging_a_value_steps_it_in_the_notes_silence_and_warp_panels() {
     let up_to = w.values().bpm_tenths;
     drag_value(&mut |e| drop(w.handle(e)), at, 10.0);
     assert!(w.values().bpm_tenths < up_to);
+}
+
+#[test]
+fn the_bend_row_is_for_pitched_notes_and_the_kit_and_key_rows_for_drums() {
+    let mut v = view();
+    assert_eq!(v.value_text(NotesRow::Kit), "n/a");
+    assert_eq!(v.value_text(NotesRow::Keys), "n/a");
+    v.step(NotesRow::Kit, 1);
+    v.step(NotesRow::Keys, 1);
+    assert_eq!(
+        v.values(),
+        &NotesValues::default(),
+        "not changed while pitched"
+    );
+    v.step(NotesRow::Bend, 1);
+    assert!(!v.values().keep_bend);
+    assert_eq!(v.value_text(NotesRow::Bend), "Off");
+    v.step(NotesRow::Mode, 1);
+    assert_eq!(v.value_text(NotesRow::Bend), "n/a");
+    v.step(NotesRow::Bend, 1);
+    assert!(!v.values().keep_bend, "not changed while drums");
+    assert_eq!(v.value_text(NotesRow::Kit), "Kick, snare, hats");
+    assert_eq!(v.value_text(NotesRow::Keys), "General MIDI");
+    v.step(NotesRow::Kit, 1);
+    v.step(NotesRow::Keys, -1);
+    assert_eq!(v.value_text(NotesRow::Kit), "With toms and crash");
+    assert!(
+        v.value_text(NotesRow::Keys)
+            .starts_with("Drum machine pads")
+    );
+    v.step(NotesRow::Kit, -1);
+    assert_eq!(v.value_text(NotesRow::Kit), "Kick, snare, hats");
+    // Every row is inside the panel and the rows do not overlap.
+    let panel = v.panel();
+    let mut last = f64::MIN;
+    for row in NotesRow::ALL {
+        let r = v.row_rect(row);
+        assert!(r.y0 >= last && r.y1 <= panel.y1, "{row:?}");
+        last = r.y1;
+    }
+    assert!(v.apply_rect().y1 <= panel.y1);
+}
+
+#[test]
+fn while_an_extraction_runs_the_button_cancels_and_the_bar_shows_how_far_it_is() {
+    let paint = |v: &NotesView| {
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl);
+        dl.to_json()
+    };
+    let mut v = view();
+    v.set_target("an extraction is running".into(), false);
+    let idle = paint(&v);
+    assert!(idle.contains("EXTRACT") && !idle.contains("CANCEL"));
+    let apply = v.apply_rect().center();
+    assert!(click(&mut v, apply).is_empty(), "no target, no extraction");
+    v.set_progress(Some(NotesProgress {
+        text: "Extracting notes: 40 %".into(),
+        fraction: 0.4,
+    }));
+    let busy = paint(&v);
+    assert!(busy.contains("CANCEL") && !busy.contains("EXTRACT"));
+    assert!(busy.contains("Extracting notes: 40 %"));
+    assert_ne!(busy, idle);
+    assert_eq!(
+        click(&mut v, apply),
+        vec![UiAction::AudioToNotes(NotesAction::Cancel)]
+    );
+    v.set_progress(Some(NotesProgress {
+        text: "Extracting notes: 90 %".into(),
+        fraction: 0.9,
+    }));
+    assert_ne!(paint(&v), busy, "the bar moves");
+    v.set_progress(None);
+    assert_eq!(paint(&v), idle);
 }

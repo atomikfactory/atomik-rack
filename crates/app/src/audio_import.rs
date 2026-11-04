@@ -169,8 +169,6 @@ pub(crate) enum Msg {
 pub(crate) struct NotesFound {
     /// The notes, in frames from the start of the analysed audio.
     pub notes: Vec<atomik_model::FoundNote>,
-    /// True when the clip is longer than the analysis reads (only its start was analysed).
-    pub truncated: bool,
 }
 
 /// What a transient-detection worker was asked for: carried through the

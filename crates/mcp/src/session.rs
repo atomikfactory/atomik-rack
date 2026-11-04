@@ -1515,7 +1515,7 @@ fn midi(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
 fn audio_notes_def() -> Value {
     definition(
         "session_audio_notes",
-        "Runs Audio > Audio to Notes... on the first selected audio clip (select one with session_pointer first) with the given settings, waits for the worker and returns what it said. Anything left out takes the panel's default. The result is one undo step: a note clip that starts and ends with the audio clip, on a new poly synth track or on the note track selected in the rack. Returns `started`, `message` (the toast), `document_changed`, `can_undo`, and for a result the new clip's `notes` (`tick`, `length`, `key`, `velocity`, at most 500) with their `count`.",
+        "Runs Audio > Audio to Notes... on every selected audio clip (select them with session_pointer first) with the given settings, one after the other, waits for the workers and returns what it said. Anything left out takes the panel's default. Each result is one undo step: a note clip that starts and ends with its audio clip, on a new poly synth track or on the note track selected in the rack. Returns `started`, `message` (the toast), `document_changed`, `can_undo`, and for the last clip's result the new clip's `notes` (`tick`, `length`, `key`, `velocity`, at most 500) with their `count`, and `bend_points` (the points of its pitch-bend lane).",
         &[
             ("mode", "string", "pitched (one voice, default) or drums."),
             ("sensitivity", "integer", "0 to 100 (default 50)."),
@@ -1540,9 +1540,24 @@ fn audio_notes_def() -> Value {
                 "Pitched: pitch drift inside one note, in cents (default 70).",
             ),
             (
+                "keep_bend",
+                "boolean",
+                "Pitched: keep how the pitch moves inside a note as a pitch-bend lane (default true), else round it to the key.",
+            ),
+            (
                 "open_hats",
                 "boolean",
                 "Drums: tell open hats from closed ones (default true).",
+            ),
+            (
+                "kit",
+                "string",
+                "Drums: basic (kick, snare, hats; default) or full (also toms and a crash).",
+            ),
+            (
+                "drum_keys",
+                "string",
+                "Drums: general-midi (default) or pads (the classes in a row from the first pad of a drum machine, key 36).",
             ),
             (
                 "grid",
@@ -1579,6 +1594,18 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             NotesMode::from_id(id).ok_or_else(|| format!("mode {id:?} is not pitched or drums"))?
         }
     };
+    let kit = match args.opt_str("kit")? {
+        None => defaults.kit,
+        Some("basic") => atomik_ui::DrumKit::Basic,
+        Some("full") => atomik_ui::DrumKit::Full,
+        Some(other) => return Err(format!("kit {other:?} is not basic or full")),
+    };
+    let drum_map = match args.opt_str("drum_keys")? {
+        None => defaults.drum_map,
+        Some("general-midi") => atomik_ui::DrumMap::GeneralMidi,
+        Some("pads") => atomik_ui::DrumMap::Pads,
+        Some(other) => return Err(format!("drum_keys {other:?} is not general-midi or pads")),
+    };
     let grid = int("grid", defaults.grid)?;
     if ![0, 4, 8, 16, 32].contains(&grid) {
         return Err("grid is not 0, 4, 8, 16 or 32".to_owned());
@@ -1590,7 +1617,10 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         key_lo: key("key_lo", defaults.key_lo)?,
         key_hi: key("key_hi", defaults.key_hi)?,
         drift_cents: int("drift_cents", defaults.drift_cents)?,
+        keep_bend: args.opt_bool("keep_bend")?.unwrap_or(defaults.keep_bend),
         open_hats: args.opt_bool("open_hats")?.unwrap_or(defaults.open_hats),
+        kit,
+        drum_map,
         grid,
         new_track: args.opt_bool("new_track")?.unwrap_or(defaults.new_track),
     };
@@ -1633,6 +1663,15 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         Some(atomik_model::ClipContent::Notes(n)) if core.doc() != &before => n.len(),
         _ => 0,
     };
+    let bend_points = core
+        .arrangement()
+        .selected_clips()
+        .first()
+        .and_then(|id| core.doc().song.clip(*id))
+        .filter(|_| core.doc() != &before)
+        .map_or(0, |(_, _, c)| {
+            c.controllers.iter().map(|l| l.points.len()).sum()
+        });
     Ok(ToolOutput::json(&json!({
         "started": started,
         "message": core.last_rejection(),
@@ -1640,6 +1679,7 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "tracks": core.doc().song.tracks.len(),
         "count": count,
         "notes": notes,
+        "bend_points": bend_points,
         "dirty": core.is_dirty(),
         "can_undo": core.document().can_undo(),
     })))

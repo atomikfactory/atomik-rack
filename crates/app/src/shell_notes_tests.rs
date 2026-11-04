@@ -198,3 +198,36 @@ fn the_headless_entry_runs_with_given_values_and_remembers_them() {
     assert_eq!(note_keys(&s), vec![57, 64]);
     assert_eq!(s.notes_values().min_note_ms, 200);
 }
+
+#[test]
+fn the_status_line_shows_the_progress_and_the_reopened_panel_cancels() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    let values = NotesValues::default();
+    let before = s.core().doc().clone();
+    assert!(s.audio_to_notes(&values));
+    assert!(s.core().notes_busy());
+    s.poll_status();
+    assert!(
+        s.status_text().contains("Extracting notes"),
+        "{}",
+        s.status_text()
+    );
+    // The panel opened meanwhile says so, and its button stops the work.
+    s.execute(AppCommand::AudioToNotes);
+    let mut dl = atomik_ui::DisplayList::new();
+    s.paint(&mut dl);
+    assert!(dl.texts().contains(&"CANCEL"));
+    let cancel = s.notes_view().unwrap().apply_rect().center();
+    click(&mut s, cancel);
+    s.core_mut().wait_background();
+    assert!(!s.core().notes_busy());
+    assert_eq!(s.core().doc(), &before, "a stopped extraction adds nothing");
+    s.poll_status();
+    assert!(!s.status_text().contains("Extracting notes"));
+    // With nothing running the panel offers EXTRACT again.
+    let mut dl = atomik_ui::DisplayList::new();
+    s.paint(&mut dl);
+    assert!(dl.texts().contains(&"EXTRACT"));
+}

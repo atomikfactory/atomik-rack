@@ -1254,8 +1254,10 @@ impl<B: AudioBackend> Shell<B> {
             return;
         }
         let (text, can_apply) = self.core.audio_notes_target();
+        let progress = self.core.notes_progress();
         if let Some(view) = &mut self.notes {
             view.set_target(text, can_apply);
+            view.set_progress(progress);
             if view.needs_repaint() {
                 self.repaint = true;
             }
@@ -1267,6 +1269,9 @@ impl<B: AudioBackend> Shell<B> {
     fn notes_action(&mut self, action: NotesAction) {
         match action {
             NotesAction::Close => self.close_notes(),
+            NotesAction::Cancel => {
+                self.core.cancel_notes();
+            }
             NotesAction::Apply => {
                 let values = self.notes_values().clone();
                 if self.core.audio_to_notes(&values) {
@@ -6973,6 +6978,10 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(progress) = self.core.import_progress() {
             text = format!("{progress} \u{b7} {text}");
         }
+        if let Some(progress) = self.core.notes_progress() {
+            text = format!("{} \u{b7} {text}", progress.text);
+        }
+        self.sync_notes();
         if let Some(loading) = self.core.plugin_loading_text() {
             text = format!("{loading} \u{b7} {text}");
         }

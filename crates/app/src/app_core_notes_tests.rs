@@ -463,22 +463,262 @@ fn a_clip_that_changed_meanwhile_drops_the_result() {
     assert_eq!(c.doc(), &after_edit, "nothing was added");
 }
 
+/// Sine notes `(key, from, to)` in seconds at `rate`, `seconds` long.
+fn sines_at(rate: u32, seconds: f64, notes: &[(u8, f64, f64)]) -> Vec<f32> {
+    let r = f64::from(rate);
+    let mut x = vec![0.0f32; (seconds * r) as usize];
+    for &(key, from, to) in notes {
+        let (a, b) = ((from * r) as usize, (to * r) as usize);
+        for (i, v) in x[a..b].iter_mut().enumerate() {
+            let env = (i as f64 / 40.0).min(((b - a - i) as f64) / 40.0).min(1.0);
+            *v += (0.5 * env * (std::f64::consts::TAU * hz(key) * (i as f64 / r)).sin()) as f32;
+        }
+    }
+    x
+}
+
+fn secs(frames: u64, rate: u32) -> f64 {
+    frames as f64 / f64::from(rate)
+}
+
 #[test]
-fn a_long_clip_is_read_only_up_to_the_cap() {
-    let melody = sines(4.0, &[(60, 0.1, 0.5), (64, 0.6, 1.0), (67, 3.0, 3.5)]);
-    let asset = SongAsset::memory(std::sync::Arc::from(vec![melody]));
-    let v = pitched();
-    let all = analyse(&asset, (0, frames(4.0) as u64), false, (SR, 10), &v);
-    assert!(!all.truncated);
-    assert_eq!(all.notes.len(), 3);
-    let cut = analyse(&asset, (0, frames(4.0) as u64), false, (SR, 2), &v);
-    assert!(cut.truncated);
-    assert_eq!(cut.notes.len(), 2, "only the first two seconds were read");
-    // A reversed clip reads the end of its span first.
-    let rev = analyse(&asset, (0, frames(4.0) as u64), true, (SR, 2), &v);
-    assert!(rev.truncated);
-    assert_eq!(rev.notes.len(), 1);
-    assert_eq!(rev.notes[0].key, 67);
+fn a_clip_longer_than_the_old_ten_minute_cap_is_read_to_its_end() {
+    // 11 minutes at 8 kHz, with a note near each end.
+    const R: u32 = 8_000;
+    let asset = SongAsset::memory(std::sync::Arc::from(vec![sines_at(
+        R,
+        660.0,
+        &[(60, 5.0, 6.0), (64, 330.0, 331.0), (67, 650.0, 651.0)],
+    )]));
+    let shared = Shared::default();
+    let n = 660 * u64::from(R);
+    let found = analyse(&asset, (0, n), false, R, &pitched(), &shared).expect("not stopped");
+    let got: Vec<(u8, u64)> = found
+        .notes
+        .iter()
+        .map(|n| (n.key, secs(n.start, R).round() as u64))
+        .collect();
+    assert_eq!(got, vec![(60, 5), (64, 330), (67, 650)]);
+    assert_eq!(
+        shared.done.load(Ordering::Relaxed),
+        n,
+        "progress reached the end"
+    );
+}
+
+#[test]
+fn a_reversed_long_clip_is_read_in_play_order() {
+    const R: u32 = 16_000;
+    let asset = SongAsset::memory(std::sync::Arc::from(vec![sines_at(
+        R,
+        150.0,
+        &[(60, 5.0, 6.0), (67, 140.0, 141.0)],
+    )]));
+    let n = 150 * u64::from(R);
+    let found = analyse(&asset, (0, n), true, R, &pitched(), &Shared::default()).unwrap();
+    let got: Vec<(u8, u64)> = found
+        .notes
+        .iter()
+        .map(|n| (n.key, secs(n.start, R).round() as u64))
+        .collect();
+    // The note at 140 s of the file plays first, 9 s into the reversed clip; the one at 5 s plays
+    // last, at 144 s.
+    assert_eq!(got, vec![(67, 9), (60, 144)]);
+}
+
+#[test]
+fn a_stopped_analysis_gives_nothing() {
+    const R: u32 = 16_000;
+    let asset = SongAsset::memory(std::sync::Arc::from(vec![sines_at(
+        R,
+        150.0,
+        &[(60, 5.0, 6.0)],
+    )]));
+    let shared = Shared::default();
+    shared.cancel.store(true, Ordering::Relaxed);
+    let n = 150 * u64::from(R);
+    assert!(analyse(&asset, (0, n), false, R, &pitched(), &shared).is_none());
+}
+
+#[test]
+fn several_selected_clips_each_get_a_note_clip_on_a_new_track() {
+    let t = Tmp::new("several");
+    let mut c = core();
+    let first = import(&mut c, write(&t, "One.wav", sines(2.0, &MELODY)));
+    c.import_audio(
+        vec![write(
+            &t,
+            "Two.wav",
+            sines(2.0, &[(72, 0.2, 0.8), (65, 1.0, 1.6)]),
+        )],
+        ImportTarget::NewTracks,
+        0,
+    );
+    c.wait_background();
+    let second = c.doc().song.tracks[1].lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[first, second]);
+    let (text, ok) = c.audio_notes_target();
+    assert!(
+        ok && text.contains("One") && text.contains("1 more"),
+        "{text}"
+    );
+    let tracks = c.doc().song.tracks.len();
+    let before = c.doc().clone();
+    assert!(c.audio_to_notes(&pitched()));
+    assert!(c.notes_busy());
+    let progress = c.notes_progress().unwrap();
+    assert!(progress.text.contains("clip 1 of 2"), "{}", progress.text);
+    c.wait_background();
+    assert!(!c.notes_busy());
+    assert_eq!(
+        c.doc().song.tracks.len(),
+        tracks + 2,
+        "a track for each clip"
+    );
+    let keys = |track: usize| -> Vec<u8> {
+        let ClipContent::Notes(n) = &c.doc().song.tracks[track].lanes[0].clips[0].content else {
+            panic!("not a note clip")
+        };
+        n.iter().map(|n| n.key).collect()
+    };
+    assert_eq!(keys(tracks), vec![60, 64, 67]);
+    assert_eq!(keys(tracks + 1), vec![72, 65]);
+    let said = c.last_rejection().unwrap();
+    assert!(said.contains("5 notes from 2 clips"), "{said}");
+    // Each clip is one undo step.
+    c.undo();
+    assert_eq!(c.doc().song.tracks.len(), tracks + 1);
+    c.undo();
+    assert_eq!(c.doc(), &before);
+}
+
+#[test]
+fn a_clip_that_cannot_be_read_does_not_stop_the_others() {
+    let t = Tmp::new("skipped");
+    let mut c = core();
+    let first = import(&mut c, write(&t, "One.wav", sines(2.0, &MELODY)));
+    c.import_audio(
+        vec![write(&t, "Two.wav", sines(2.0, &MELODY))],
+        ImportTarget::NewTracks,
+        0,
+    );
+    c.wait_background();
+    let second = c.doc().song.tracks[1].lanes[0].clips[0].id;
+    let mut a = audio(&c, first);
+    a.warp = WarpSettings {
+        enabled: true,
+        mode: atomik_model::WarpMode::Repitch,
+        ..WarpSettings::default()
+    };
+    set_audio(&mut c, first, a);
+    c.arrangement_mut().set_selected_clips(&[first, second]);
+    let tracks = c.doc().song.tracks.len();
+    assert!(c.audio_to_notes(&pitched()));
+    c.wait_background();
+    assert_eq!(c.doc().song.tracks.len(), tracks + 1);
+    let said = c.last_rejection().unwrap();
+    assert!(
+        said.contains("3 notes from 1 clip") && said.contains("1 clip could not be read"),
+        "{said}"
+    );
+}
+
+#[test]
+fn stopping_an_extraction_adds_nothing_and_drops_the_queue() {
+    let t = Tmp::new("stop");
+    let mut c = core();
+    let first = import(&mut c, write(&t, "One.wav", sines(2.0, &MELODY)));
+    c.import_audio(
+        vec![write(&t, "Two.wav", sines(2.0, &MELODY))],
+        ImportTarget::NewTracks,
+        0,
+    );
+    c.wait_background();
+    let second = c.doc().song.tracks[1].lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[first, second]);
+    assert!(!c.cancel_notes(), "nothing runs yet");
+    let before = c.doc().clone();
+    assert!(c.audio_to_notes(&pitched()));
+    let progress = c.notes_progress().unwrap();
+    assert!((0.0..=1.0).contains(&progress.fraction));
+    assert!(c.cancel_notes());
+    c.wait_background();
+    assert!(!c.notes_busy());
+    assert_eq!(
+        c.doc(),
+        &before,
+        "no notes, and the second clip never started"
+    );
+    assert!(c.last_rejection().unwrap().contains("stopped"));
+    assert!(c.notes_progress().is_none());
+    assert!(
+        c.audio_to_notes(&pitched()),
+        "a new request starts normally"
+    );
+    c.wait_background();
+    assert_eq!(c.doc().song.tracks.len(), before.song.tracks.len() + 2);
+}
+
+/// A note of E4 that glides up by 0.6 semitone, 0.1 s to 1.2 s.
+fn glide() -> Vec<f32> {
+    let mut x = vec![0.0f32; frames(1.5)];
+    let mut phase = 0.0f64;
+    for (i, v) in x.iter_mut().enumerate().take(frames(1.2)).skip(frames(0.1)) {
+        let t = (i - frames(0.1)) as f64 / f64::from(SR);
+        let semis = 0.6 * (t / 0.15).min(1.0);
+        phase += std::f64::consts::TAU * hz(64) * (semis / 12.0).exp2() / f64::from(SR);
+        *v = 0.5 * phase.sin() as f32;
+    }
+    x
+}
+
+#[test]
+fn the_pitch_bend_of_a_note_is_kept_as_a_lane_unless_asked_not_to() {
+    let t = Tmp::new("bend");
+    let mut c = core();
+    let id = import(&mut c, write(&t, "Glide.wav", glide()));
+    assert!(c.audio_to_notes(&pitched()));
+    c.wait_background();
+    let clip = c.doc().song.tracks.last().unwrap().lanes[0].clips[0].clone();
+    assert_eq!(clip.controllers.len(), 1, "a pitch-bend lane");
+    let lane = &clip.controllers[0];
+    assert_eq!(lane.kind, atomik_model::ControllerKind::PitchBend);
+    assert!(lane.points.len() >= 3);
+    // The key plus the bend (2 semitones each way) is where the voice was: 64.6 at the end.
+    let ClipContent::Notes(n) = &clip.content else {
+        panic!()
+    };
+    let key = f32::from(n[0].key);
+    let held = lane.points[lane.points.len() - 2].value * atomik_model::BEND_RANGE_SEMITONES;
+    assert!((key + held - 64.6).abs() < 0.15, "{key} {held}");
+    c.undo();
+    c.arrangement_mut().set_selected_clips(&[id]);
+    // Without the option the same clip has no lane and the same notes.
+    let values = NotesValues {
+        keep_bend: false,
+        ..pitched()
+    };
+    assert!(c.audio_to_notes(&values));
+    c.wait_background();
+    let plain = &c.doc().song.tracks.last().unwrap().lanes[0].clips[0];
+    assert!(plain.controllers.is_empty());
+    assert_eq!(plain.content, clip.content);
+}
+
+#[test]
+fn drum_keys_follow_the_chosen_map() {
+    let t = Tmp::new("map");
+    let mut c = core();
+    import(&mut c, write(&t, "Drums.wav", drums()));
+    let values = NotesValues {
+        mode: NotesMode::Drums,
+        drum_map: atomik_ui::DrumMap::Pads,
+        ..pitched()
+    };
+    assert!(c.audio_to_notes(&values));
+    c.wait_background();
+    let keys: Vec<u8> = last_notes(&c).iter().map(|n| n.2).collect();
+    assert_eq!(keys, vec![36, 37, 38]);
 }
 
 #[test]

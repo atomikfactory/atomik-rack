@@ -1614,6 +1614,9 @@ fn audio_to_notes_validates_its_arguments_and_reports_nothing_found() {
         json!({"key_lo": 200}),
         json!({"key_lo": 90, "key_hi": 40}),
         json!({"sensitivity": "high"}),
+        json!({"kit": "huge"}),
+        json!({"drum_keys": "mpc"}),
+        json!({"keep_bend": "yes"}),
     ] {
         let r = call(&mut s, "session_audio_notes", args.clone());
         assert!(r.is_error, "{args}");
@@ -1637,6 +1640,19 @@ fn audio_to_notes_validates_its_arguments_and_reports_nothing_found() {
         json!({"mode": "drums", "grid": 16}),
     );
     assert_eq!(r["started"], true);
+    // The full kit, the pads key map and the bend option are accepted (a result selects its own
+    // clip, so the audio clip is selected again first).
+    select_audio_clip(&mut s);
+    let r = ok(
+        &mut s,
+        "session_audio_notes",
+        json!({"mode": "drums", "kit": "full", "drum_keys": "pads"}),
+    );
+    assert_eq!(r["started"], true);
+    select_audio_clip(&mut s);
+    let r = ok(&mut s, "session_audio_notes", json!({"keep_bend": false}));
+    assert_eq!(r["started"], true);
+    assert_eq!(r["bend_points"], 0, "{r}");
     ok(&mut s, "session_close", json!({}));
 }
 
