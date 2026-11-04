@@ -28,7 +28,7 @@ mod rec_input;
 pub use cluster::{ClusterPart, REPEAT_DELAY, REPEAT_EVERY, repeat_step};
 use cluster::{ClusterState, Readout};
 use inspector::Inspector;
-pub use inspector::{InspClip, InspectorField, InspectorSource};
+pub use inspector::{FadeUnit, InspClip, InspectorField, InspectorSource};
 use rec_input::RecInputState;
 pub use rec_input::{RecInput, RecInputPart};
 
@@ -742,6 +742,8 @@ impl TransportBar {
                     self.begin_meter_edit();
                 } else if let Some(part) = self.rec_hit(*pos) {
                     out.extend(self.rec_press(part, *clicks, pos.y));
+                } else if self.inspector_unit_press(*pos) {
+                    // The unit tag switched the fades' unit.
                 } else if let Some(field) = self.inspector_field_at(*pos) {
                     out.extend(self.inspector_press(field, *clicks, pos.y));
                 } else if let Some(field) = self.field_at(*pos) {

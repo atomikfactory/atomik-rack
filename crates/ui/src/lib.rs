@@ -462,8 +462,8 @@ pub use theme::{Theme, ThemeChoice};
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use track_panel::{TRACK_PANEL_WIDTH, TrackPanelView};
 pub use transport::{
-    ClusterPart, InspClip, InspectorField, InspectorSource, REPEAT_DELAY, REPEAT_EVERY, RecInput,
-    RecInputPart, TransportBar, TransportButton, TransportState, transport_shortcut,
+    ClusterPart, FadeUnit, InspClip, InspectorField, InspectorSource, REPEAT_DELAY, REPEAT_EVERY,
+    RecInput, RecInputPart, TransportBar, TransportButton, TransportState, transport_shortcut,
 };
 pub use vello;
 pub use vello::{kurbo, peniko};
