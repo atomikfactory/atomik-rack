@@ -853,6 +853,9 @@ impl<S: EngineSink> AppCore<S> {
             } => self.stretch_step(ids, percent, from_start),
             UiAction::StretchEnd { commit } => self.end_stretch(commit),
             UiAction::CrossfadeStep { later, delta } => self.crossfade_step(later, delta),
+            UiAction::CrossfadeLengthStep { later, delta } => {
+                self.crossfade_length_step(later, delta);
+            }
             UiAction::CrossfadeEnd { commit } => self.end_stretch(commit),
             UiAction::EndMerge => {
                 if let Some(id) = self.keep_pending.take() {

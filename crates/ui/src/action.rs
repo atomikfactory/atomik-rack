@@ -39,6 +39,16 @@ pub enum UiAction {
         /// Ticks the zone moved by (not 0).
         delta: i64,
     },
+    /// A step of a crossfade length handle dragged: the host puts the document back to before
+    /// the drag and makes the crossfade of `later` `delta` ticks longer (shorter when negative,
+    /// see [`atomik_model::WorkflowCommand::ResizeCrossfade`]) as a preview that adds no undo
+    /// step. [`UiAction::CrossfadeEnd`] ends it.
+    CrossfadeLengthStep {
+        /// The clip that fades in.
+        later: ClipId,
+        /// Ticks added to the overlap (not 0).
+        delta: i64,
+    },
     /// The crossfade drag ended: `commit` keeps the last preview as one undo step, otherwise the
     /// document goes back to what it was before the drag.
     CrossfadeEnd {

@@ -16,8 +16,8 @@ use super::*;
 use atomik_devices::mastering::loudness::{FLOOR_DB, LoudnessMeter};
 use atomik_engine::SongAsset;
 use atomik_model::{
-    AudioClipContent, ClipContent, NormaliseMode, NormaliseParams, StripParams, gain_to_level_db,
-    normalise_gain_db, peak, strip_silence,
+    AudioClipContent, ClipContent, NormaliseMode, NormaliseParams, StripParams, StripScan,
+    gain_to_level_db, normalise_gain_db, peak,
 };
 use atomik_ui::SilenceValues;
 
@@ -251,12 +251,6 @@ impl<S: EngineSink> AppCore<S> {
             };
             let from = s.content.source_offset;
             let n = s.frames;
-            let mut planes: Vec<Vec<f32>> = vec![Vec::new(); usize::from(asset.channels())];
-            for_each_chunk(asset, from, from + n, |chunk| {
-                for (dst, src) in planes.iter_mut().zip(chunk) {
-                    dst.extend_from_slice(src);
-                }
-            });
             // The detector walks the source forwards; a reversed clip plays it backwards, so
             // what comes before a piece in time is above it in the source.
             let (before, after) = if s.content.reverse {
@@ -270,7 +264,10 @@ impl<S: EngineSink> AppCore<S> {
                 pad_before: ms(before),
                 pad_after: ms(after),
             };
-            let kept = strip_silence(&planes, 0, n, &params);
+            // The audio is read in blocks as it is scanned: a long clip never sits in memory.
+            let mut scan = StripScan::new(n, &params);
+            for_each_chunk(asset, from, from + n, |chunk| scan.push(chunk));
+            let kept = scan.finish();
             if kept.is_empty() {
                 silent += 1;
                 continue;

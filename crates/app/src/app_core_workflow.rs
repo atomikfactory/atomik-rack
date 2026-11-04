@@ -362,6 +362,13 @@ impl<S: EngineSink> AppCore<S> {
         self.trial_step(WorkflowCommand::MoveCrossfade { later, delta });
     }
 
+    /// One step of a crossfade length handle dragged: the crossfade of `later` is `delta` ticks
+    /// longer than it was before the drag (the same preview rules as
+    /// [`AppCore::crossfade_step`]).
+    pub(super) fn crossfade_length_step(&mut self, later: ClipId, delta: i64) {
+        self.trial_step(WorkflowCommand::ResizeCrossfade { later, delta });
+    }
+
     /// Puts the document back to before the open preview, then applies `command` as a new one
     /// that adds no undo step until it is accepted.
     fn trial_step(&mut self, command: WorkflowCommand) {

@@ -297,6 +297,9 @@ fn audio_summary(lane: &Lane) -> Vec<Value> {
                 "fade_curve": a.fade_curve.id(),
                 "crossfade": a.xfade.map_or("off", atomik_model::FadeCurve::id),
             });
+            if let Some(curve) = a.fade_out_curve {
+                v["fade_out_curve"] = json!(curve.id());
+            }
             if a.reverse {
                 v["reverse"] = json!(true);
             }

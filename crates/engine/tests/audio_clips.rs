@@ -58,6 +58,7 @@ fn faded(curve: SongFadeCurve) -> SongAudioRegion {
     r.fade_in = 300;
     r.fade_out = 400;
     r.fade_curve = curve;
+    r.fade_out_curve = curve;
     r.gain = 0.8;
     r
 }
