@@ -113,6 +113,8 @@ enum TakeOp {
     Move(usize, usize, usize),
     Unused(usize),
     Silence(usize, i64, i64),
+    /// A clip command on a take (what a clip editor open on it sends).
+    EditTake(usize, usize, u8),
 }
 
 fn take_op() -> impl Strategy<Value = TakeOp> {
@@ -131,6 +133,7 @@ fn take_op() -> impl Strategy<Value = TakeOp> {
         (0usize..4, 0usize..4, 0usize..4).prop_map(|(g, t, to)| TakeOp::Move(g, t, to)),
         (0usize..4).prop_map(TakeOp::Unused),
         (0usize..4, span()).prop_map(|(g, (s, l))| TakeOp::Silence(g, s, s + l)),
+        (0usize..4, 0usize..4, 0u8..100).prop_map(|(g, t, k)| TakeOp::EditTake(g, t, k)),
     ]
 }
 
@@ -229,6 +232,15 @@ fn resolve_take(op: &TakeOp, doc: &RackDoc) -> Option<SongCommand> {
             start: *start,
             end: *end,
         },
+        TakeOp::EditTake(g, t, key) => {
+            let (group, takes) = pick(&all, *g)?;
+            let (_, _, g) = doc.song.take_group(group)?;
+            SongCommand::SetClipContent {
+                id: g.takes[t % takes.max(1)].id,
+                content: atomik_model::ClipContent::Notes(vec![note(0, PPQ / 4, *key, 0.5)].into()),
+                merge: None,
+            }
+        }
     })
 }
 

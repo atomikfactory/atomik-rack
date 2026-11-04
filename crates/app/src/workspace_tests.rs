@@ -680,3 +680,50 @@ fn song_windows_have_keys() {
     let requests = w.handle(&press);
     assert_eq!(w.len(), 2, "{requests:?}");
 }
+
+#[test]
+fn a_copy_in_one_song_pastes_in_the_song_the_calls_are_routed_to_next() {
+    use crate::clipboard::ClipboardKind;
+    use atomik_model::{Clip, ClipContent, ClipId, Note, SongCommand};
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let core = w.core_mut();
+    core.apply_command(Command::Song(SongCommand::AddTrack {
+        device: DeviceKey("lead".into()),
+    }))
+    .unwrap();
+    let take = |key: u8| Clip {
+        id: ClipId(0),
+        start: 0,
+        length: 4 * atomik_core::PPQ,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        scale: None,
+        param_lanes: Vec::new(),
+        controllers: Vec::new(),
+        name: None,
+        color: None,
+        grid: None,
+        content: ClipContent::Notes(vec![Note::new(0, atomik_core::PPQ, key, 0.8)].into()),
+    };
+    core.apply_command(Command::Song(SongCommand::NewTakeGroup {
+        device: DeviceKey("lead".into()),
+        lane: 0,
+        takes: vec![take(60), take(62)],
+    }))
+    .unwrap();
+    core.copy_takes(1, &[0, 1]);
+    assert_eq!(core.clipboard().kind(), Some(ClipboardKind::Takes));
+    // A new song takes the focus and sees the same clipboard.
+    let second = w.new_song();
+    assert_eq!(
+        w.song(second).unwrap().core().clipboard().kind(),
+        Some(ClipboardKind::Takes)
+    );
+    // An empty clipboard in the song the focus leaves does not wipe the other one.
+    w.focus(DocId::FIRST);
+    w.core_mut().clipboard_mut().clear();
+    w.focus(second);
+    assert_eq!(w.core().clipboard().get().map(|d| d.len()), Some(2));
+}

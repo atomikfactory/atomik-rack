@@ -326,8 +326,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
     };
     let clip_frozen = |id: &ClipId| {
         doc.song
-            .clip(*id)
-            .and_then(|(t, _, _)| track_frozen(&t.device))
+            .clip_or_take(*id)
+            .and_then(|(t, _)| track_frozen(&t.device))
     };
     let omitted = frozen_devices(doc);
     let device_frozen =
@@ -458,6 +458,13 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                     .iter()
                     .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),
                 WorkflowCommand::PasteClips { track, .. } => track.as_ref().and_then(track_frozen),
+                WorkflowCommand::PasteTakes { target, .. } => match target {
+                    crate::TakeTarget::Group(group) => doc
+                        .song
+                        .take_group(*group)
+                        .and_then(|(t, _, _)| track_frozen(&t.device)),
+                    crate::TakeTarget::Lane { device, .. } => track_frozen(device),
+                },
                 WorkflowCommand::LayerRecording { clip, .. } => clip_frozen(clip),
                 WorkflowCommand::EngulfRecording { device, .. } => track_frozen(device),
                 WorkflowCommand::PasteNotes { clip, .. }

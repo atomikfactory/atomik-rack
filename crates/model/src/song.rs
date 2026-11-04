@@ -1620,6 +1620,29 @@ impl Song {
         })
     }
 
+    /// A take (a clip kept inside a take group, outside the lane's clip list) by its clip id:
+    /// its track, lane index, group and index in the group.
+    pub fn take_clip(&self, id: ClipId) -> Option<(&Track, usize, &TakeGroup, usize)> {
+        self.tracks.iter().find_map(|t| {
+            t.lanes.iter().enumerate().find_map(|(lane, l)| {
+                l.take_groups.iter().find_map(|g| {
+                    g.takes
+                        .iter()
+                        .position(|c| c.id == id)
+                        .map(|i| (t, lane, g, i))
+                })
+            })
+        })
+    }
+
+    /// A clip of a lane or a take by id, with its track: what the clip editors open.
+    pub fn clip_or_take(&self, id: ClipId) -> Option<(&Track, &Clip)> {
+        match self.clip(id) {
+            Some((t, _, c)) => Some((t, c)),
+            None => self.take_clip(id).map(|(t, _, g, i)| (t, &g.takes[i])),
+        }
+    }
+
     /// A take group by id, with its track and lane index.
     pub fn take_group(&self, id: u32) -> Option<(&Track, usize, &TakeGroup)> {
         self.tracks.iter().find_map(|t| {

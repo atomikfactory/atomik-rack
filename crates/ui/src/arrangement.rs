@@ -409,8 +409,8 @@ enum MenuKind {
     Param,
     /// Choose the audio input; row `i` selects `options[i]`.
     Input(Vec<InputSel>),
-    /// Run the command of row `i` on a take group (the menu of a take row or comp strip).
-    Takes(Vec<SongCommand>),
+    /// Do the action of row `i` (the menu of a take row or comp strip, or the pattern menu).
+    Takes(Vec<UiAction>),
 }
 
 impl Menu {
@@ -2851,7 +2851,7 @@ impl ArrangementView {
                     }
                     MenuKind::Takes(commands) => {
                         if let Some(cmd) = commands.get(i) {
-                            out.push(song_cmd(cmd.clone()));
+                            out.push(cmd.clone());
                         }
                     }
                     MenuKind::Input(options) => {
@@ -5173,6 +5173,9 @@ impl ArrangementView {
             "sequencer.select_prev_track" => self.select_track(-1),
             "sequencer.extend_track_selection_down" => self.extend_track_selection(1),
             "sequencer.extend_track_selection_up" => self.extend_track_selection(-1),
+            "sequencer.take_next" => self.step_take(1),
+            "sequencer.take_prev" => self.step_take(-1),
+            "sequencer.take_pick" => self.pick_focused_take(),
             "sequencer.split_at_playhead" => {
                 let at = self.playhead;
                 let only: Option<Vec<ClipId>> = (!self.selection.is_empty())
@@ -5217,7 +5220,14 @@ impl ArrangementView {
                         CommandOutcome::Handled(vec![UiAction::OpenAudioEditor(c.id)])
                     }
                     Some(c) => CommandOutcome::Handled(vec![UiAction::OpenPianoRoll(c.id)]),
-                    None => CommandOutcome::Declined,
+                    // No clip is selected: a take row with the focus opens its take.
+                    None => match self.focused_take_clip() {
+                        Some(id) if self.focused_take_is_audio() => {
+                            CommandOutcome::Handled(vec![UiAction::OpenAudioEditor(id)])
+                        }
+                        Some(id) => CommandOutcome::Handled(vec![UiAction::OpenPianoRoll(id)]),
+                        None => CommandOutcome::Declined,
+                    },
                 }
             }
             "sequencer.select_next_clip" => self.select_neighbour(true),

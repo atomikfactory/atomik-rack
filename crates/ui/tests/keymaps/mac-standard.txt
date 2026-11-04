@@ -147,6 +147,9 @@ sequencer.select_prev_track | sequencer | Up
 sequencer.snap_toggle | sequencer | S
 sequencer.snap_toggle | editor | S
 sequencer.split_at_playhead | sequencer | Opt+X
+sequencer.take_next | sequencer | Opt+Down
+sequencer.take_pick | sequencer | Opt+P
+sequencer.take_prev | sequencer | Opt+Up
 sequencer.toggle_mute | sequencer | M
 sequencer.track_height fit | sequencer | Opt+M
 sequencer.track_height minimise | sequencer | Opt+Shift+M

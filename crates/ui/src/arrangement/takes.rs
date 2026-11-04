@@ -24,7 +24,10 @@
 //! once). The rows are laid out below the row of the lane that holds the group, before the row
 //! of the next lane.
 
-use super::{ArrangementView, Drag, Hit, Rect, Row, RowKind, TRACK_LIST_WIDTH, song_cmd};
+use super::{
+    ArrangementView, CommandOutcome, Drag, Hit, Rect, Row, RowKind, TRACK_LIST_WIDTH, song_cmd,
+};
+use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, pt};
 use crate::event::Modifiers;
 use crate::seq_paint as sp;
@@ -88,6 +91,10 @@ pub(super) enum CompDrag {
 pub(super) struct TakesUi {
     /// The groups whose take rows are shown.
     pub open: BTreeSet<u32>,
+    /// The take row that has the keyboard focus (group id and take number): the keys that step
+    /// between take rows move it, and Copy, Paste and Open work on it. It counts only while no
+    /// clip is selected ([`ArrangementView::take_focus`]).
+    pub focus: Option<(u32, usize)>,
 }
 
 impl ArrangementView {
@@ -106,6 +113,78 @@ impl ArrangementView {
         if changed {
             self.synced = false;
             self.repaint = true;
+        }
+    }
+
+    /// The take row that has the keyboard focus (group id and take number), when it still exists
+    /// and no clip is selected: a clip selection takes the keys back.
+    pub fn take_focus(&self) -> Option<(u32, usize)> {
+        let (group, take) = self.tk.focus?;
+        if !self.selection.items().is_empty() {
+            return None;
+        }
+        (take < self.group(group)?.takes.len()).then_some((group, take))
+    }
+
+    /// Gives take row `take` of group `group` the keyboard focus; the clip selection is dropped.
+    pub fn set_take_focus(&mut self, group: u32, take: usize) {
+        self.selection.clear();
+        self.tk.focus = Some((group, take));
+        self.repaint = true;
+    }
+
+    /// The clip id of the focused take, which the clip editors open.
+    pub fn focused_take_clip(&self) -> Option<atomik_model::ClipId> {
+        let (group, take) = self.take_focus()?;
+        self.group(group)?.takes.get(take).map(|c| c.id)
+    }
+
+    /// Whether the focused take is an audio take.
+    pub fn focused_take_is_audio(&self) -> bool {
+        self.take_focus()
+            .and_then(|(group, take)| self.group(group)?.takes.get(take))
+            .is_some_and(|c| c.content.is_audio())
+    }
+
+    /// Moves the take focus `delta` rows (the keys that step between take rows) through the
+    /// take rows that are shown, top to bottom across all open groups. With no focus the first
+    /// (or last) row takes it. At either end it stays.
+    pub(super) fn step_take(&mut self, delta: i64) -> CommandOutcome {
+        let rows: Vec<(u32, usize)> = self
+            .rows
+            .iter()
+            .filter_map(|r| match r.kind {
+                RowKind::Take { group, take, .. } => Some((group, take)),
+                _ => None,
+            })
+            .collect();
+        if rows.is_empty() {
+            return CommandOutcome::NotApplicable(
+                "Open a take group (its arrow in the track list) to step between takes".into(),
+            );
+        }
+        let at = self
+            .tk
+            .focus
+            .and_then(|f| rows.iter().position(|r| *r == f))
+            .filter(|_| self.take_focus().is_some());
+        let to = match at {
+            Some(i) => (i as i64 + delta).clamp(0, rows.len() as i64 - 1) as usize,
+            None if delta > 0 => 0,
+            None => rows.len() - 1,
+        };
+        let (group, take) = rows[to];
+        self.set_take_focus(group, take);
+        CommandOutcome::Handled(Vec::new())
+    }
+
+    /// Alt+P: the focused take plays the whole range of its group alone.
+    pub(super) fn pick_focused_take(&self) -> CommandOutcome {
+        match self.take_focus() {
+            Some((group, take)) => {
+                CommandOutcome::Handled(vec![song_cmd(SongCommand::PickTake { group, take })])
+            }
+            None => CommandOutcome::Declined,
         }
     }
 
@@ -315,6 +394,7 @@ impl ArrangementView {
                 out.push(song_cmd(SongCommand::FlattenTakes { group: *group }));
             }
             Hit::TakePick(group, take) => {
+                self.set_take_focus(*group, *take);
                 out.push(song_cmd(SongCommand::PickTake {
                     group: *group,
                     take: *take,
@@ -327,6 +407,7 @@ impl ArrangementView {
                 }));
             }
             Hit::TakeSpan(group, take) => {
+                self.set_take_focus(*group, *take);
                 let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
                 self.drag = Drag::Comp {
                     start: pos,
@@ -600,17 +681,71 @@ impl ArrangementView {
                 SongCommand::DeleteUnusedTakes { group },
             ));
         }
-        if rows.is_empty() {
+        let mut all = self.take_clipboard_rows(group, take);
+        all.extend(rows.into_iter().map(|(l, c)| (l, song_cmd(c))));
+        if all.is_empty() {
             return;
         }
-        let items = rows
+        let items = all
             .iter()
             .enumerate()
             .map(|(i, (label, _))| (i.to_string(), label.clone()))
             .collect();
-        let commands = rows.into_iter().map(|(_, c)| c).collect();
+        let commands = all.into_iter().map(|(_, c)| c).collect();
         let menu = super::Menu::new(device, super::MenuKind::Takes(commands), items, pos, 0);
         self.open_menu(menu);
+    }
+
+    /// The rows of a take menu that work on the takes clipboard, a file or a take editor: copy
+    /// the take (or all takes of the group), paste, import a file as a take, open the take.
+    fn take_clipboard_rows(&mut self, group: u32, take: Option<usize>) -> Vec<(String, UiAction)> {
+        let Some(g) = self.group(group) else {
+            return Vec::new();
+        };
+        let n = g.takes.len();
+        let audio = Self::audio_group(g);
+        let open = take.and_then(|t| g.takes.get(t)).map(|c| c.id);
+        let mut rows: Vec<(String, UiAction)> = Vec::new();
+        if let Some(t) = take {
+            // The menu names the row, so Copy and the keys that follow work on it.
+            self.set_take_focus(group, t);
+            rows.push((
+                "Copy Take".into(),
+                UiAction::CopyTakes {
+                    group,
+                    takes: vec![t],
+                },
+            ));
+        }
+        if n > 1 || take.is_none() {
+            rows.push((
+                "Copy All Takes".into(),
+                UiAction::CopyTakes {
+                    group,
+                    takes: (0..n).collect(),
+                },
+            ));
+        }
+        rows.push(("Paste Takes".into(), UiAction::PasteTakes { group }));
+        rows.push((
+            if audio {
+                "Import Audio File as Take...".into()
+            } else {
+                "Import MIDI File as Take...".into()
+            },
+            UiAction::ImportTake {
+                group,
+                notes: !audio,
+            },
+        ));
+        if let Some(id) = open {
+            rows.push(if audio {
+                ("Open in Audio Editor".into(), UiAction::OpenAudioEditor(id))
+            } else {
+                ("Open in Piano Roll".into(), UiAction::OpenPianoRoll(id))
+            });
+        }
+        rows
     }
 
     /// The cut nearest to x `x` within a few pixels: `(index, tick, left take, right take)`.
@@ -893,6 +1028,9 @@ impl ArrangementView {
                 let Some(g) = self.group(*group) else { return };
                 let col = take_color(*take);
                 let playing = g.comp.iter().any(|s| s.take == *take);
+                if self.take_focus() == Some((*group, *take)) {
+                    sp::rect(c, Rect::new(hr.x0, hr.y0, hr.x0 + 3.0, hr.y1), t.highlight);
+                }
                 sp::rect(
                     c,
                     Rect::new(hr.x0 + 16.0, hr.y0 + 5.0, hr.x0 + 21.0, hr.y1 - 5.0),

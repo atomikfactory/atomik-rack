@@ -316,6 +316,9 @@ pub struct AppCore<S: EngineSink> {
     keep_pending: Option<ClipId>,
     /// The next applied command is folded into the undo step before it (a follow-up).
     join_next: bool,
+    /// The take group the file the import dialog returns becomes a take of (Import File as
+    /// Take), until the dialog answers.
+    take_import: Option<u32>,
     /// The next applied command is a step of the open patch trial: no undo entry (see
     /// `Document::apply_trial`).
     trial_next: bool,
@@ -575,6 +578,7 @@ impl<S: EngineSink> AppCore<S> {
             warp_imports: crate::import_warp::WarpImports::default(),
             keep_pending: None,
             join_next: false,
+            take_import: None,
             trial_next: false,
             stretch_open: false,
             take: None,
@@ -901,6 +905,8 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::OpenSliceEditor(key) => self.open_slice_editor(key),
             UiAction::CloseSliceEditor => self.close_slice_editor(),
             UiAction::OpenAudioEditor(id) => self.open_audio_editor(id),
+            UiAction::CopyTakes { group, takes } => self.copy_takes(group, &takes),
+            UiAction::PasteTakes { group } => self.paste_takes(group),
             UiAction::CloseAudioEditor => self.close_audio_editor(),
             UiAction::ClipToSlicer(id) => self.clip_to_slicer(id),
             UiAction::DetectTransients { clip, sensitivity } => {
@@ -1754,7 +1760,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.push_monitor_live();
         if let Some(id) = self.piano_clip
-            && self.doc().song.clip(id).is_none()
+            && self.doc().song.clip_or_take(id).is_none()
         {
             self.close_piano_roll();
         }
@@ -2620,8 +2626,8 @@ impl<S: EngineSink> AppCore<S> {
         let is_notes = self
             .doc()
             .song
-            .clip(id)
-            .is_some_and(|(_, _, c)| c.content.is_notes());
+            .clip_or_take(id)
+            .is_some_and(|(_, c)| c.content.is_notes());
         if is_notes {
             self.close_sample_editor();
             self.close_step_editor();
@@ -3309,6 +3315,8 @@ mod setups;
 mod dub_ops;
 #[path = "app_core_player_stack.rs"]
 mod player_stack_ops;
+#[path = "app_core_takes.rs"]
+mod takes_ops;
 
 #[path = "app_core_mix.rs"]
 mod mix_ops;
@@ -3421,6 +3429,10 @@ mod sample_edit_tests;
 #[cfg(test)]
 #[path = "app_core_sampling_tests.rs"]
 mod sampling_tests;
+
+#[cfg(test)]
+#[path = "app_core_takes_tests.rs"]
+mod takes_tests;
 
 #[cfg(test)]
 #[path = "app_core_spectrum_eq_tests.rs"]

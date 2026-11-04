@@ -2019,6 +2019,27 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     ),
     cmd(
+        "sequencer.take_next",
+        "Next Take Row",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
+        "sequencer.take_pick",
+        "Play Take Row Alone",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.take_prev",
+        "Previous Take Row",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
         "sequencer.tempo_add_point",
         "Add Tempo Point",
         G::Sequencer,

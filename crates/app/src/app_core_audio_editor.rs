@@ -112,8 +112,8 @@ impl<S: EngineSink> AppCore<S> {
         let is_audio = self
             .doc()
             .song
-            .clip(id)
-            .is_some_and(|(_, _, c)| c.content.is_audio());
+            .clip_or_take(id)
+            .is_some_and(|(_, c)| c.content.is_audio());
         if !is_audio {
             return;
         }
@@ -129,7 +129,10 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.audio_editor
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
-        self.arrangement.set_selected_clips(&[id]);
+        // A take is not on the lane: there is no clip to select for it.
+        if self.doc().song.clip(id).is_some() {
+            self.arrangement.set_selected_clips(&[id]);
+        }
         self.audio_editor.sync(self.document.doc(), &self.registry);
         if self.audio_editor.mode() == AudioMode::Slice {
             self.detect_transients(id, self.audio_editor.sensitivity());

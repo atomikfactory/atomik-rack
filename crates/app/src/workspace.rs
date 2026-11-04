@@ -160,10 +160,29 @@ impl<B: AudioBackend> Workspace<B> {
     /// song is open: the routing is then unchanged.
     pub fn select(&mut self, id: DocId) -> bool {
         if self.has(id) {
+            self.carry_clipboard(self.routed, id);
             self.routed = id;
             true
         } else {
             false
+        }
+    }
+
+    /// The clipboard is the application's, not one song's: what was last copied in the song the
+    /// calls were routed to is what the song they are routed to next pastes (a copy of takes,
+    /// clips or devices crosses to another open song). An empty clipboard leaves the other as
+    /// it was.
+    fn carry_clipboard(&mut self, from: DocId, to: DocId) {
+        let (a, b) = (self.index_of(from), self.index_of(to));
+        if a == b || !self.has(from) {
+            return;
+        }
+        let Some(data) = self.songs[a].shell.core().clipboard().get().cloned() else {
+            return;
+        };
+        let target = self.songs[b].shell.core_mut().clipboard_mut();
+        if target.get() != Some(&data) {
+            target.set(data);
         }
     }
 
@@ -187,6 +206,7 @@ impl<B: AudioBackend> Workspace<B> {
         if !self.has(id) {
             return false;
         }
+        self.carry_clipboard(self.routed, id);
         self.routed = id;
         if self.play == id {
             return true;

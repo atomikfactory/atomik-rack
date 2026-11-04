@@ -1026,12 +1026,8 @@ impl PianoRollView {
             return;
         }
         self.clip_rev = revision.map(|rev| (rev, Some(id)));
-        let found = doc.song.tracks.iter().find_map(|t| {
-            t.lanes
-                .iter()
-                .find_map(|l| l.clips.iter().find(|c| c.id == id))
-                .map(|c| (t, c))
-        });
+        // A take of a take group opens like a clip (its edits go to the take).
+        let found = doc.song.clip_or_take(id);
         // The clip grid counts content ticks from the clip start: the meter in effect there.
         let meter = Meter::at(&doc.song, found.map_or(0, |(_, c)| c.start));
         // Compared in place: the clip (every note and controller lane) is cloned only when it

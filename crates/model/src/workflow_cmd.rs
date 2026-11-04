@@ -25,7 +25,7 @@ use crate::song::{
 use crate::song_cmd::{
     check_audio, check_content, check_geometry, has_notes_input, is_audio_track_type,
 };
-use crate::workflow::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot};
+use crate::workflow::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot};
 use crate::workflow_create::{self, CreateOptions, CreateSource, CreateTarget};
 use crate::{
     Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, RackSlot, SocketRef,
@@ -216,6 +216,18 @@ pub enum WorkflowCommand {
         at_tick: i64,
         /// What to paste.
         clips: ClipSnapshot,
+    },
+    /// Pastes takes (the takes clipboard): into a take group they join it as new takes on top,
+    /// each playing over its extent like a new recording; on a lane without a group they become
+    /// the takes of a new group. The earliest pasted take starts at `at_tick`. The takes must
+    /// be of the kind the target holds (notes or audio). One undo step.
+    PasteTakes {
+        /// Where the takes go.
+        target: TakeTarget,
+        /// Song tick of the earliest pasted take.
+        at_tick: i64,
+        /// What to paste.
+        takes: TakeSnapshot,
     },
     /// Copies the clips right after the selection, keeping their layout: the earliest copy
     /// starts where the selection ends.
@@ -673,6 +685,20 @@ pub enum WorkflowCommand {
     ImportMidi(crate::MidiImport),
 }
 
+/// Where [`WorkflowCommand::PasteTakes`] puts the takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TakeTarget {
+    /// An existing take group (by id).
+    Group(u32),
+    /// A lane of a track that has no group there yet: the takes start a new one.
+    Lane {
+        /// The track's instrument.
+        device: DeviceKey,
+        /// The lane (a note lane or the audio lane).
+        lane: usize,
+    },
+}
+
 /// Where [`WorkflowCommand::MoveClips`] puts one clip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipMove {
@@ -702,6 +728,15 @@ pub(crate) fn plan(
     command: WorkflowCommand,
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
     let plain = |edit: Result<Edit, ModelError>| edit.map(|e| (e, None));
+    // The piano roll open on a take pastes notes into the take.
+    if let Some(id) = crate::takes_cmd::take_target_workflow(doc, &command) {
+        return plain(crate::takes_cmd::plan_take_edit(
+            doc,
+            registry,
+            id,
+            |scratch, registry| plan(scratch, registry, command).map(|(edit, _)| edit),
+        ));
+    }
     match command {
         WorkflowCommand::RemoveDevices { keys } => {
             plain(remove_devices(doc, registry, &keys, false))
@@ -870,6 +905,13 @@ pub(crate) fn plan(
             at_tick,
             clips,
         } => paste_clips(doc, registry, (track.as_ref(), lane), at_tick, &clips),
+        WorkflowCommand::PasteTakes {
+            target,
+            at_tick,
+            takes,
+        } => plain(crate::takes_cmd::paste(
+            doc, registry, &target, at_tick, &takes,
+        )),
         WorkflowCommand::DuplicateClips { ids } => {
             let s = ClipSnapshot::capture(doc, &ids)?;
             paste_clips(

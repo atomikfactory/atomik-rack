@@ -253,3 +253,87 @@ fn a_midi_file_dropped_below_the_tracks_makes_new_tracks_at_the_drop_position() 
     assert!(song.tracks[1].lanes[0].clips[0].start > 0);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// Synth `lead` with a track and a group of one note take (id 1 of the group numbering).
+fn shell_with_group(s: &mut Shell<NullBackend>) {
+    use atomik_model::{Clip, ClipContent, ClipId, Command, DeviceKey, Note, SongCommand};
+    let key = DeviceKey("lead".into());
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(key.clone()),
+        })
+        .unwrap();
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddTrack {
+            device: key.clone(),
+        }))
+        .unwrap();
+    let take = Clip {
+        id: ClipId(0),
+        start: 0,
+        length: 4 * PPQ,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        scale: None,
+        param_lanes: Vec::new(),
+        controllers: Vec::new(),
+        name: None,
+        color: None,
+        grid: None,
+        content: ClipContent::Notes(vec![Note::new(0, PPQ, 60, 0.8)].into()),
+    };
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::NewTakeGroup {
+            device: key,
+            lane: 0,
+            takes: vec![take],
+        }))
+        .unwrap();
+}
+
+#[test]
+fn import_file_as_take_asks_for_the_right_dialog_and_the_file_becomes_a_take() {
+    let mut s = shell();
+    shell_with_group(&mut s);
+    // A note group asks for a MIDI file; the next file the dialog returns is its take.
+    s.pane_actions(&[UiAction::ImportTake {
+        group: 1,
+        notes: true,
+    }]);
+    assert_eq!(
+        s.take_requests(),
+        vec![ShellRequest::PickImportMidi { as_song: false }]
+    );
+    let path = midi_file("take");
+    s.import_midi(&path, false);
+    let (_, _, group) = s.core().doc().song.take_groups().next().unwrap();
+    assert_eq!(group.takes.len(), 2, "the file became a take");
+    assert_eq!(s.core().doc().song.tracks.len(), 1, "and made no track");
+    // The request is used up: the next file imports as a clip.
+    s.import_midi(&path, false);
+    let (_, _, group) = s.core().doc().song.take_groups().next().unwrap();
+    assert_eq!(group.takes.len(), 2);
+    // An audio group asks for the audio dialog.
+    s.pane_actions(&[UiAction::ImportTake {
+        group: 1,
+        notes: false,
+    }]);
+    assert_eq!(s.take_requests(), vec![ShellRequest::PickImportFiles]);
+    // A plain Import MIDI forgets a request that was never answered.
+    s.pane_actions(&[UiAction::ImportTake {
+        group: 1,
+        notes: true,
+    }]);
+    let _ = s.take_requests();
+    s.execute(AppCommand::ImportMidi);
+    s.import_midi(&path, false);
+    let (_, _, group) = s.core().doc().song.take_groups().next().unwrap();
+    assert_eq!(
+        group.takes.len(),
+        2,
+        "File > Import MIDI is not a take import"
+    );
+}

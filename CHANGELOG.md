@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Takes follow-ups.** Takes copy between take groups and between songs: Copy Take and Copy All Takes in a take
+  row's menu (or Edit > Copy on a take row) put the takes on the clipboard, and Paste Takes (or Edit > Paste)
+  adds them to a group as new takes on top, each playing over its extent like a new recording, or starts a
+  group on the selected lane at the playhead. The clipboard survives New and Open and follows you to another
+  open song. Import File as Take adds an audio file (an audio group) or a MIDI file (a note group) to a group
+  as a new take that starts where the group starts. Alt+Down and Alt+Up step between the take rows that are
+  shown, Alt+P plays the focused take alone and Enter opens it. A take opens in the piano roll or the audio
+  editor (Open in Piano Roll and Open in Audio Editor in its menu), and what you change there edits the take,
+  one undo step each, with the comp compiled again. New command ids `sequencer.take_next`,
+  `sequencer.take_prev` and `sequencer.take_pick`; the project format is unchanged. Deferred: a razor tool on
+  takes, comping several tracks at once and takes for automation passes.
 - **Live groove per track.** A track can name a groove (one of the song's or a built-in one) and a strength,
   saved on the track and applied when the song is flattened for the engine, the offline render and the MIDI
   export, so the stored notes never change: editing a template re-times every track that uses it, and removing

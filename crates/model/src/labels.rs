@@ -177,6 +177,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
             (_, Some(_)) => "Copy Tracks",
         },
         WorkflowCommand::PasteClips { .. } => "Paste Clips",
+        WorkflowCommand::PasteTakes { .. } => "Paste Takes",
         WorkflowCommand::DuplicateClips { .. } => "Duplicate Clips",
         WorkflowCommand::MoveClips { copy: true, .. } => "Copy Clips",
         WorkflowCommand::MoveClips { .. } => "Move Clips",
