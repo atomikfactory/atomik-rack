@@ -11,7 +11,7 @@ The version lives in one place, `[workspace.package]` in the root `Cargo.toml`; 
 ## Checklist
 
 1. Make sure `main` is green: formatting, clippy, tests on all three operating systems, `cargo deny check`, the coverage gate and `sh scripts/check-public.sh` (see [TESTING.md](TESTING.md)).
-2. Run the manual and hardware checks that apply to the release (see [TESTING.md](TESTING.md)).
+2. Run the manual and hardware checks that apply to the release: the protocol of [RELEASE-TESTING.md](RELEASE-TESTING.md) on Windows (a release candidate) or on Windows, macOS and Linux (a final release), recorded with `sh scripts/release/test-report.sh <version>`. Attach the finished `release-test-report-v<version>.md` to the draft release (the workflow does not require it yet); other manual checks are in [TESTING.md](TESTING.md).
 3. Signing secrets present: open Settings, Environments, `release-signing` and check that the secrets of every platform you want signed are there (see [Signing](#signing)). With none the release is still built, unsigned, and the release notes say so. Check that the certificates have not expired.
 4. Update [CHANGELOG.md](../CHANGELOG.md): move the entries under `[Unreleased]` into a new `[X.Y.Z]` section dated with the release date, keep the Keep a Changelog headings, and start a fresh empty `[Unreleased]`.
 5. Bump `version` in `[workspace.package]` in `Cargo.toml` and refresh the lock file with `cargo update --workspace` (this only rewrites the workspace crate versions).

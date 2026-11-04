@@ -198,6 +198,10 @@ jobs:
         with:
           persist-credentials: false
       - run: sh scripts/check-public.sh
+      # The manual release protocol: unique ids and the report script that reads them.
+      - run: |
+          sh scripts/release/test-report-test.sh
+          sh scripts/release/test-report.sh --check
       # The documents: the long guides are hard-wrapped, every Markdown link and anchor resolves,
       # the crate table of ARCHITECTURE.md matches the Cargo.toml files and the functions the
       # guides cite exist.
