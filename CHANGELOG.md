@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Six CV utilities: CV math, quantizer, sample and hold, slew limiter, gate processor and envelope follower.**
+  CV Math adds, subtracts, multiplies, takes the minimum or maximum, or the absolute value of two CVs (the second
+  is a knob until a cable is attached), then scales and offsets the result. The CV Quantizer snaps a pitch CV
+  (the one of the sequencers: 24 semitones per unit, 0 at middle C) to the nearest note of any of the piano
+  roll's 16 scales on a root, with a transpose and a trigger at every change of note. Sample and Hold keeps the
+  CV (or seeded noise, so a bounce repeats) it saw at each trigger, free-running tick or note value of the
+  tempo, the last locked to the song position while playing. The Slew Limiter has its own rise and fall time,
+  linear or exponential, from 0.1 ms to 10 s. The Gate Processor combines two gates with and, or, xor, nand or
+  nor, divides, delays by up to two seconds and sets the length, with a trigger output at every rise. The
+  Envelope Follower turns the level of an audio signal (peak or RMS, attack and release, linear or dB curve)
+  into a CV and a gate while passing the audio through. All six are in the device browser, bounded under any
+  parameters and signals, and documented in the device reference. The project format stays 43.
 - **Five new effects: transient shaper, de-esser, auto-filter, tuner and pitch shifter.** The Transient Shaper
   raises or lowers the attack and the sustain of a signal whatever its level (two followers of the stereo power,
   their difference in dB decides), with `attack` and `sustain` CV inputs and a transient CV output. The De-esser
