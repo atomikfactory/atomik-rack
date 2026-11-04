@@ -306,6 +306,7 @@ impl RackView {
         if !self.rack_area().contains(self.pointer) {
             return;
         }
+        self.set_insert(None);
         // Dropped in the frame of an unfolded container the device is added inside it.
         let rp = self.view_to_rack(self.pointer);
         if let Some(container) = self.frame_at(rp, &[]).map(|f| f.container.clone()) {
@@ -396,7 +397,7 @@ impl RackView {
     }
 
     /// The slot version of [`Self::add_row_action`] (top level only).
-    fn add_row_slot_action(
+    pub(super) fn add_row_slot_action(
         &self,
         row: &BrowserRow,
         slot: RackSlot,
@@ -551,10 +552,15 @@ impl RackView {
     /// the middle of the panel of a top-level device of the same kind (the edges of a panel are
     /// the gaps between devices, which insert). Only the top level, never the interface strip.
     pub(super) fn replace_target(&self, row: &BrowserRow, rp: Point) -> Option<usize> {
+        let family = self.row_family(row)?;
+        self.replace_target_of(family, rp)
+    }
+
+    /// [`Self::replace_target`] for a device of kind `family` (not a browser row).
+    fn replace_target_of(&self, family: &str, rp: Point) -> Option<usize> {
         if !self.scope.is_empty() {
             return None;
         }
-        let family = self.row_family(row)?;
         self.inner_range().find(|&i| {
             let d = &self.devices[i];
             let r = d.rect();
@@ -587,6 +593,46 @@ impl RackView {
                 source,
             },
         )))
+    }
+
+    /// The type of device the patch file `path` holds when it holds exactly one (read once per
+    /// file while it hovers).
+    pub(super) fn patch_type_of(&mut self, path: &std::path::Path) -> Option<String> {
+        if self.patch_peek.as_ref().is_none_or(|(p, _)| p != path) {
+            self.patch_peek = Some((
+                path.to_path_buf(),
+                crate::library_drop::patch_device_type(path),
+            ));
+        }
+        self.patch_peek.as_ref()?.1.clone()
+    }
+
+    /// The device a library item dropped at view position `pos` replaces, with the item: a
+    /// device row or a one-device patch over the middle of a top-level device of the same
+    /// kind that the model accepts to replace (a patch of the device's own type is applied
+    /// instead, which the caller tries first).
+    pub(super) fn library_replace(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        pos: Point,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> Option<(std::path::PathBuf, usize)> {
+        if !self.rack_area().contains(pos) || self.in_browser(pos) {
+            return None;
+        }
+        let path = crate::library_drop::replacement_item(paths)?;
+        let type_id = match atomik_library::device_type_of(path) {
+            Some(t) => t.to_string(),
+            None => self.patch_type_of(path)?,
+        };
+        let family = replace_family(registry.descriptor(&type_id)?)?;
+        let target = self.replace_target_of(family, self.view_to_rack(pos))?;
+        let key = self.devices[target].key.clone();
+        let source = CreateSource::Type(type_id);
+        atomik_model::replace_reason(self.host(doc), registry, &key, &source)
+            .is_none()
+            .then(|| (path.clone(), target))
     }
 
     // ------------------------------------------------------------------ painting

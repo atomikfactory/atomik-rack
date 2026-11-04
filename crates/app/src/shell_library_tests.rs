@@ -243,6 +243,41 @@ fn file_event_a_device_row_dropped_on_the_rack_adds_the_device() {
 }
 
 #[test]
+fn file_event_a_device_row_dropped_on_a_device_of_its_kind_replaces_it() {
+    let dir = config("drop-replace");
+    let mut s = shell_with(&dir, Some(dir.join("Library")));
+    s.core_mut()
+        .apply_command(atomik_model::Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.stereo-delay".to_string(),
+            key: Some(key("a")),
+        })
+        .unwrap();
+    s.core_mut().after_view_change();
+    let before = device_count(&s);
+    let l = s.layout();
+    let centre = {
+        let v = s.core().view();
+        v.rack_to_view(v.device_rect(&key("a")).unwrap().center())
+    };
+    let at = Point::new(centre.x + l.rack.x0, centre.y + l.rack.y0);
+    s.handle(&UiEvent::FileDrop {
+        pos: at,
+        paths: vec![atomik_library::device_uri("atomik.reverb")],
+    });
+    assert_eq!(device_count(&s), before, "nothing was added");
+    assert_eq!(
+        s.core().doc().device(&key("a")).unwrap().type_id,
+        "atomik.reverb"
+    );
+    assert!(s.core_mut().undo());
+    assert_eq!(
+        s.core().doc().device(&key("a")).unwrap().type_id,
+        "atomik.stereo-delay"
+    );
+}
+
+#[test]
 fn file_event_library_paths_never_import_at_playhead() {
     let (mut s, dir, patch) = shell_with_patch("never-import");
     let clip = clip_item(&dir);

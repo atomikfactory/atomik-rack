@@ -47,6 +47,7 @@ mod device_drag;
 mod device_maps;
 mod drum_input;
 mod fx_input;
+mod handles;
 mod help;
 mod inline;
 mod io_input;
@@ -555,6 +556,12 @@ pub struct RackView {
     context_slot: Option<RackSlot>,
     /// The clock of the last auto-scroll tick, while one is running.
     tick_clock: Option<f64>,
+    /// The slot a "+" handle was pressed on: the browser opened by it adds there.
+    insert_at: Option<RackSlot>,
+    /// The "+" handle the pointer is on.
+    plus: Option<handles::Seam>,
+    /// The folded device a cable is dragged over, and when the pointer came to rest on it.
+    unfold: Option<(DeviceKey, f64)>,
     /// The rack navigator is switched on (see [`NAVIGATOR_WIDTH`]).
     navigator: bool,
     /// The pointer is over the navigator strip.
@@ -821,6 +828,9 @@ impl RackView {
             column_target: 0,
             context_slot: None,
             tick_clock: None,
+            insert_at: None,
+            plus: None,
+            unfold: None,
             navigator: false,
             nav_hover: false,
             nav_layout: 0,
@@ -1640,9 +1650,14 @@ impl RackView {
         self.synced = true;
         self.prune_selection();
         // Indices may have shifted: drop transient state tied to them.
-        if !matches!(self.drag, Drag::Pad { .. }) {
+        // A cable is held by its sockets' names, which a re-layout does not change (a device
+        // unfolded under it must not end the drag).
+        if !matches!(self.drag, Drag::Pad { .. } | Drag::Cable { .. }) {
             self.drag = Drag::None;
         }
+        self.set_insert(None);
+        self.plus = None;
+        self.unfold = None;
         self.hover = None;
         self.drop_hover = None;
         self.drop_pad = None;
@@ -2479,6 +2494,7 @@ impl RackView {
         self.browser.visible = visible;
         self.browser.focused = visible;
         self.browser.create = None;
+        self.set_insert(None);
         self.clamp_scroll();
         self.repaint = true;
     }
@@ -2490,6 +2506,7 @@ impl RackView {
         self.browser.visible = true;
         self.browser.focused = true;
         self.browser.create = Some(kind);
+        self.set_insert(None);
         self.browser.query.clear();
         self.browser.scroll = 0.0;
         self.browser.highlighted = Browser::first_selectable(&self.browser.list(registry));
@@ -2931,6 +2948,7 @@ impl RackView {
             UiEvent::PointerLeave => {
                 self.nav_hover = false;
                 self.hover = None;
+                self.plus = None;
                 self.hover_cable = None;
                 self.browser.hover = None;
                 self.repaint = true;
@@ -2952,7 +2970,14 @@ impl RackView {
             UiEvent::FileHover { pos, paths } => {
                 let library = paths.iter().any(|p| library_drop::is_library(p));
                 let into = self.patch_target(paths, *pos);
+                let replace = if into.is_none() {
+                    self.library_replace(paths, *pos, doc, registry)
+                        .map(|(_, i)| i)
+                } else {
+                    None
+                };
                 let line = into.is_none()
+                    && replace.is_none()
                     && library_drop::rack_item(paths).is_some()
                     && self.rack_area().contains(*pos);
                 if line {
@@ -2961,8 +2986,8 @@ impl RackView {
                 self.set_lib_drop(line);
                 // A library item is never a sample: the sampler panel does not light up. A
                 // patch over a device of its own type outlines that device instead of the line.
-                let target = if into.is_some() {
-                    into
+                let target = if into.is_some() || replace.is_some() {
+                    into.or(replace)
                 } else if paths.is_empty() || library {
                     None
                 } else {
@@ -3003,6 +3028,15 @@ impl RackView {
                     {
                         out.push(UiAction::ApplyLibraryPatch {
                             path: path.clone(),
+                            device: self.devices[i].key.clone(),
+                        });
+                        return out;
+                    }
+                    // A device row or a patch over the middle of a device of its kind replaces
+                    // that device in place.
+                    if let Some((path, i)) = self.library_replace(paths, *pos, doc, registry) {
+                        out.push(UiAction::ReplaceWithLibrary {
+                            path,
                             device: self.devices[i].key.clone(),
                         });
                         return out;
@@ -3207,6 +3241,7 @@ impl RackView {
                 }
             }
         }
+        self.update_plus(pos);
         let rows = self.browser.hover;
         self.browser.hover = None;
         if old_hover != (self.hover, self.hover_cable.clone()) || rows != self.browser.hover {
@@ -3362,7 +3397,11 @@ impl RackView {
             {
                 self.browser.highlighted = i;
                 if clicks >= 2 && button == PointerButton::Primary {
+                    let inserting = self.insert_at.is_some();
                     out.extend(self.add_row_action(&rows[i], doc, modifiers));
+                    if inserting {
+                        self.set_browser_visible(false);
+                    }
                 } else if button == PointerButton::Primary {
                     // A press that travels past the threshold drags the device out.
                     self.drag = Drag::Browser {
@@ -3381,6 +3420,9 @@ impl RackView {
         self.cancel_rename();
         if button == PointerButton::Middle {
             self.drag = Drag::Pan { last: pos };
+            return;
+        }
+        if button == PointerButton::Primary && self.handle_press(pos, doc, registry, out) {
             return;
         }
         let Some(hit) = self.hit(pos) else { return };
@@ -4074,6 +4116,10 @@ impl RackView {
         doc: &RackDoc,
         modifiers: Modifiers,
     ) -> Option<UiAction> {
+        // A browser opened by a "+" handle inserts at the handle's slot.
+        if let Some(slot) = self.insert_at.filter(|_| self.scope.is_empty()) {
+            return self.add_row_slot_action(row, slot, modifiers);
+        }
         match self.add_place(self.host(doc)) {
             (Some(container), index) => self.add_row_inside(row, &container, index),
             (None, index) => self.add_row_action_at(row, index, modifiers),
@@ -4170,7 +4216,9 @@ impl RackView {
                     self.browser.query_changed(registry);
                 }
                 // Create mode: Esc cancels and closes, nothing is removed.
-                Key::Escape if self.browser.create.is_some() => self.set_browser_visible(false),
+                Key::Escape if self.browser.create.is_some() || self.insert_at.is_some() => {
+                    self.set_browser_visible(false)
+                }
                 Key::Escape if self.browser.query.is_empty() => self.browser.focused = false,
                 Key::Escape => {
                     self.browser.query.clear();
@@ -4188,8 +4236,9 @@ impl RackView {
                     if let Some(row) = rows.get(self.browser.highlighted)
                         && row.selectable()
                     {
+                        let inserting = self.insert_at.is_some();
                         out.extend(self.add_row_action(row, doc, modifiers));
-                        if self.browser.create.is_some() && !self.browser.keep_open {
+                        if inserting || (self.browser.create.is_some() && !self.browser.keep_open) {
                             self.set_browser_visible(false);
                         }
                     }
@@ -4653,6 +4702,7 @@ impl RackView {
         self.paint_macro_menu(c);
         self.paint_plugin_menu(c);
         self.paint_drag_feedback(c);
+        self.paint_handle(c);
     }
 }
 

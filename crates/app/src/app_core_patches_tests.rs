@@ -587,3 +587,94 @@ fn a_new_document_ends_the_browse() {
     assert!(c.patch_browse_device().is_none());
     assert_eq!(c.file_browser().patch_target(), None);
 }
+
+// ------------------------------------------------------------------ replace by drop
+
+const REVERB: &str = "atomik.reverb";
+const BASS: &str = "atomik.mono-bass";
+
+fn type_of(c: &AppCore<RecordingSink>, k: &str) -> String {
+    c.doc().device(&key(k)).unwrap().type_id.clone()
+}
+
+#[test]
+fn a_device_row_replaces_a_device_of_its_kind_in_one_undo_step() {
+    let lib = Tmp::new("replace-row");
+    let mut c = core(&lib);
+    add(&mut c, SYNTH, "a");
+    add(&mut c, DELAY, "fx");
+    let before = save_project(c.doc());
+    c.load_library_item(&device_uri(BASS), LoadTarget::Replace(key("a")));
+    assert_eq!(type_of(&c, "a"), BASS, "the new device keeps the key");
+    c.load_library_item(&device_uri(REVERB), LoadTarget::Replace(key("fx")));
+    assert_eq!(type_of(&c, "fx"), REVERB);
+    assert!(c.undo() && c.undo(), "each replacement is one undo step");
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn a_device_row_of_another_kind_says_why_and_changes_nothing() {
+    let lib = Tmp::new("replace-kind");
+    let mut c = core(&lib);
+    add(&mut c, DELAY, "fx");
+    let before = save_project(c.doc());
+    c.load_library_item(&device_uri(SYNTH), LoadTarget::Replace(key("fx")));
+    let message = c.last_rejection().expect("a message").to_string();
+    assert!(message.contains("effect"), "{message}");
+    assert_eq!(save_project(c.doc()), before);
+    // A file that is neither a device row nor a patch cannot replace anything.
+    c.load_library_item(Path::new("clip.atomikclip"), LoadTarget::Replace(key("fx")));
+    assert!(c.last_rejection().unwrap().contains("cannot replace"));
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn a_patch_of_another_type_replaces_the_device_and_loads_its_sound_as_one_step() {
+    let lib = Tmp::new("replace-patch");
+    let mut c = core(&lib);
+    add(&mut c, DELAY, "d");
+    add(&mut c, REVERB, "r");
+    set(&mut c, "d", "feedback", 0.31);
+    c.save_device_patch(&key("d"), &patch_path(&lib, "Slap"));
+    let before = save_project(c.doc());
+    c.load_library_item(&patch_path(&lib, "Slap"), LoadTarget::Replace(key("r")));
+    assert_eq!(type_of(&c, "r"), DELAY);
+    assert_eq!(param(&c, "r", "feedback"), Some(0.31));
+    assert_eq!(c.doc().device(&key("r")).unwrap().patch_name, "Slap");
+    assert!(c.undo(), "one undo step");
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn a_patch_of_the_devices_own_type_only_changes_its_sound() {
+    let lib = Tmp::new("replace-same");
+    let mut c = two_synths(&lib, 1234.0);
+    c.save_device_patch(&key("a"), &patch_path(&lib, "Warm"));
+    c.load_library_item(&patch_path(&lib, "Warm"), LoadTarget::Replace(key("b")));
+    assert_eq!(type_of(&c, "b"), SYNTH);
+    assert_eq!(param(&c, "b", "filter.cutoff"), Some(1234.0));
+}
+
+#[test]
+fn a_patch_that_cannot_replace_the_device_changes_nothing() {
+    let lib = Tmp::new("replace-refused");
+    let mut c = two_synths(&lib, 900.0);
+    add(&mut c, DELAY, "fx");
+    c.save_device_patch(&key("a"), &patch_path(&lib, "Lead"));
+    let before = save_project(c.doc());
+    // A synth patch cannot become an effect.
+    c.load_library_item(&patch_path(&lib, "Lead"), LoadTarget::Replace(key("fx")));
+    assert!(c.last_rejection().is_some());
+    assert_eq!(save_project(c.doc()), before);
+    // Several devices in one file is not a device patch.
+    c.after_view_change();
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    c.save_selection_to_library();
+    c.load_library_item(
+        &patch_path(&lib, "Poly Synth+1"),
+        LoadTarget::Replace(key("b")),
+    );
+    assert!(c.last_rejection().unwrap().contains("exactly one"));
+    assert_eq!(save_project(c.doc()), before);
+}

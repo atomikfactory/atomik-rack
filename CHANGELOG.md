@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rack editing follow-ups: "+" handles, a Create submenu, unfolding under a cable and replacing a device by
+  dropping a library item.** Resting the pointer on the seam between two devices of a rack column, or at the top or
+  foot of a column, shows a small "+": pressing it opens the device browser (titled INSERT DEVICE) and the row
+  chosen, with Enter or a double click, is added at that slot, wired as a device dropped there is; Esc cancels. The
+  rack and device context menus keep Create Instrument, Create Effect and Create Player in one Create submenu.
+  A cable dragged over a folded device unfolds it after 0.7 seconds of rest, so a jack on its back can be reached
+  (an ordinary fold edit, and the cable drag goes on over the new layout). A device row or a one-device patch from
+  the library dropped on the middle of a device of the same kind, or on a track header, replaces that device in
+  place as one undo step, routed like the browser's replace: the track, clips, channel and the cables that fit
+  stay, the device keeps its key. A patch of another device type loads its sound inside the same step; a patch of
+  the device's own type only changes its sound, and what the model refuses (another kind, a console device, a
+  frozen track) is told in the status line. The project format stays 43.
 - **Restructuring follow-ups: a percent panel for Scale Tempo, a Reverse Clips preference, joining audio clips and
   draggable crossfade zones.** Edit > Scale Tempo > Other opens a panel with one text field for any percentage
   from 10 to 1000 (a comma or a percent sign is understood): the selected clips show the result while you type,

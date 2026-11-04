@@ -127,7 +127,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// [`Self::apply_patch_file`], as a trial step (no undo entry) or as an undo step.
-    fn apply_patch_with(
+    pub(super) fn apply_patch_with(
         &mut self,
         path: &Path,
         device: &DeviceKey,

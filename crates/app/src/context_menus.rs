@@ -473,6 +473,18 @@ fn arp_strum_options(t: &NoteTools) -> Vec<Spec> {
     ]
 }
 
+/// The Create submenu of the rack menus: one row per device family.
+fn create_submenu() -> Spec {
+    Spec::submenu(
+        "Create",
+        vec![
+            item("create.instrument", true),
+            item("create.effect", true),
+            item("create.player", true),
+        ],
+    )
+}
+
 /// The items of the menu opened on `target`.
 pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
     let edit = |label: Option<(&'static str, &'static str)>| {
@@ -495,9 +507,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             let mut v = edit(None);
             v.extend([
                 Spec::Separator,
-                item("create.instrument", true),
-                item("create.effect", true),
-                item("create.player", true),
+                create_submenu(),
                 item("rack.auto_route", e.selection),
                 item("rack.assign_send", e.assign_send),
                 item("rack.disconnect", e.selection),
@@ -529,9 +539,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
         ContextTarget::Rack => vec![
             item("edit.paste", e.paste),
             Spec::Separator,
-            item("create.instrument", true),
-            item("create.effect", true),
-            item("create.player", true),
+            create_submenu(),
             Spec::Separator,
             item(
                 "rack.add_column",
@@ -1194,9 +1202,6 @@ mod tests {
                 "edit.paste",
                 "edit.duplicate",
                 "edit.delete",
-                "create.instrument",
-                "create.effect",
-                "create.player",
                 "rack.auto_route",
                 "rack.assign_send",
                 "rack.disconnect",
@@ -1311,7 +1316,7 @@ mod tests {
         let on = |id: &str| list.iter().find(|(c, _)| *c == id).unwrap().1;
         assert!(!on("edit.cut") && !on("edit.copy") && !on("edit.paste"));
         assert!(!on("rack.disconnect") && !on("rack.go_to_track"));
-        assert!(on("create.instrument") && on("create.effect"));
+        assert_eq!(create_rows(ContextTarget::Device).map(|r| r.len()), Some(3));
         assert!(!on("rack.auto_route"), "nothing selected, nothing to route");
         let some = MenuEnable {
             selection: true,
@@ -1340,14 +1345,44 @@ mod tests {
             got,
             [
                 "edit.paste",
-                "create.instrument",
-                "create.effect",
-                "create.player",
                 "rack.add_column",
                 "rack.remove_column",
                 "edit.select_all"
             ]
         );
+    }
+
+    /// The commands of the Create submenu of `target`'s menu, if it has one.
+    fn create_rows(target: ContextTarget) -> Option<Vec<&'static str>> {
+        specs(target, &MenuEnable::default())
+            .into_iter()
+            .find_map(|s| match s {
+                Spec::Submenu {
+                    label: "Create",
+                    items,
+                    ..
+                } => Some(
+                    items
+                        .into_iter()
+                        .filter_map(|i| match i {
+                            Spec::Item { command, .. } => Some(command),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn the_rack_and_device_menus_hold_the_device_families_in_a_create_submenu() {
+        let families = ["create.instrument", "create.effect", "create.player"];
+        for target in [ContextTarget::Rack, ContextTarget::Device] {
+            assert_eq!(create_rows(target).as_deref(), Some(&families[..]));
+        }
+        // No other menu has one.
+        assert_eq!(create_rows(ContextTarget::TrackHeader), None);
+        assert_eq!(create_rows(ContextTarget::Lane), None);
     }
 
     #[test]

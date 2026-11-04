@@ -696,3 +696,76 @@ fn escape_during_a_device_browser_drag_reaches_the_rack_and_cancels_with_no_comm
         );
     }
 }
+
+#[test]
+fn a_cable_resting_on_a_folded_device_unfolds_it_on_the_frame_clock_and_the_drag_goes_on() {
+    use atomik_model::SocketRef;
+    use atomik_ui::Flip;
+    let mut s = shell_for(Os::Windows);
+    for k in ["a", "b"] {
+        s.core_mut()
+            .apply_command(Command::AddDevice {
+                index: usize::MAX,
+                type_id: DELAY.to_string(),
+                key: Some(key(k)),
+            })
+            .unwrap();
+    }
+    s.core_mut()
+        .apply_command(Command::SetFolded {
+            key: key("b"),
+            folded: true,
+        })
+        .unwrap();
+    s.core_mut().after_view_change();
+    s.core_mut().view_mut().set_flip(Flip::Back);
+    let l = s.layout();
+    let shell_pos = |p: Point| Point::new(p.x + l.rack.x0, p.y + l.rack.y0);
+    let jack = |s: &Shell<NullBackend>, device: &str, socket: &str| {
+        s.core().view().socket_center(&SocketRef {
+            device: key(device),
+            socket: socket.to_string(),
+        })
+    };
+    let from = shell_pos(jack(&s, "a", "out_l").expect("a jack"));
+    let at = |p: Point| UiEvent::PointerMove {
+        pos: p,
+        modifiers: Modifiers::NONE,
+    };
+    s.handle(&UiEvent::PointerDown {
+        pos: from,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    let over = {
+        let v = s.core().view();
+        shell_pos(v.rack_to_view(v.device_rect(&key("b")).unwrap().center()))
+    };
+    s.handle(&at(over));
+    assert!(s.core().view().unfold_pending());
+    // Not before the delay.
+    s.frame_at(10.0);
+    s.frame_at(10.3);
+    assert!(s.core().doc().device(&key("b")).unwrap().folded);
+    s.frame_at(10.8);
+    assert!(!s.core().doc().device(&key("b")).unwrap().folded);
+    // The cable is still in hand: it lands on a socket of the unfolded device.
+    s.handle(&at(over));
+    let to = shell_pos(jack(&s, "b", "in_l").expect("b jack"));
+    s.handle(&at(to));
+    s.handle(&UiEvent::PointerUp {
+        pos: to,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    assert!(
+        s.core()
+            .doc()
+            .cables
+            .iter()
+            .any(|c| c.to.device == key("b") && c.to.socket == "in_l"),
+        "{:?}",
+        s.core().doc().cables
+    );
+}

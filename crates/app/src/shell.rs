@@ -3087,7 +3087,9 @@ impl<B: AudioBackend> Shell<B> {
         let inserted = actions.iter().any(|a| {
             matches!(
                 a,
-                UiAction::InsertLibrary { .. } | UiAction::InsertLibraryClip { .. }
+                UiAction::InsertLibrary { .. }
+                    | UiAction::InsertLibraryClip { .. }
+                    | UiAction::ReplaceWithLibrary { .. }
             )
         });
         if !inserted {
@@ -6466,6 +6468,13 @@ impl<B: AudioBackend> Shell<B> {
         self.frame();
         // A device dragged to an edge of the rack scrolls it.
         if self.core.view_mut().tick(now_seconds) {
+            self.repaint = true;
+        }
+        // A cable that rested on a folded device unfolds it (an edit like the fold button's).
+        if let Some(key) = self.core.view_mut().hover_unfold(now_seconds) {
+            let _ = self
+                .core
+                .apply_command(Command::SetFolded { key, folded: false });
             self.repaint = true;
         }
         self.core.transport_frame(now_seconds);

@@ -21,6 +21,14 @@ pub(crate) fn rack_item(paths: &[PathBuf]) -> Option<&PathBuf> {
     })
 }
 
+/// The first item that can replace a device in place: a device URI, else a patch.
+pub(crate) fn replacement_item(paths: &[PathBuf]) -> Option<&PathBuf> {
+    paths
+        .iter()
+        .find(|p| device_type_of(p).is_some())
+        .or_else(|| patch_item(paths))
+}
+
 /// The first patch item (a `.atomikpatch` file).
 pub(crate) fn patch_item(paths: &[PathBuf]) -> Option<&PathBuf> {
     paths
@@ -90,6 +98,15 @@ mod tests {
             None
         );
         assert_eq!(rack_item(&[]), None);
+    }
+
+    #[test]
+    fn a_device_row_is_preferred_to_a_patch_as_a_replacement() {
+        let both = paths(&["a.atomikpatch", "atomik-device:atomik.delay"]);
+        assert_eq!(replacement_item(&both), Some(&both[1]));
+        let patch = paths(&["x.atomikclip", "a.atomikpatch"]);
+        assert_eq!(replacement_item(&patch), Some(&patch[1]));
+        assert_eq!(replacement_item(&paths(&["d.atomikcontainer"])), None);
     }
 
     #[test]

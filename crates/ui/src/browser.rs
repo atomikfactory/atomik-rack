@@ -127,6 +127,8 @@ pub struct Browser {
     /// In create mode, the browser stays open after a device was created (the Workflow
     /// setting "Create keeps the browser open").
     pub keep_open: bool,
+    /// The browser was opened by a "+" handle: the row chosen is inserted at that place.
+    pub insert: bool,
     /// Shown.
     pub visible: bool,
     /// Search text.
@@ -467,7 +469,11 @@ impl Browser {
         );
         c.text(
             &TextRun::new(
-                self.create.map_or("DEVICES", CreateKind::title),
+                if self.insert {
+                    "INSERT DEVICE"
+                } else {
+                    self.create.map_or("DEVICES", CreateKind::title)
+                },
                 pt(14.0, 24.0),
                 9.0,
                 theme.text_muted,
