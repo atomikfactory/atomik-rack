@@ -26,6 +26,8 @@ struct Fake {
     targets: RefCell<Vec<Arc<NoteTarget>>>,
     /// The input device name of every start.
     input_devices: RefCell<Vec<Option<String>>>,
+    /// The output devices the host lists right now.
+    plugged: RefCell<Vec<String>>,
     /// Fail every start that asks for input channels.
     fail_input: Cell<bool>,
     /// The host opens at most this many input channels.
@@ -153,7 +155,23 @@ impl AudioBackend for &Fake {
     type Midi = FakeMidi;
 
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
-        Ok(vec![])
+        let devices = self
+            .plugged
+            .borrow()
+            .iter()
+            .map(|name| atomik_audio_io::DeviceInfo {
+                name: name.clone(),
+                max_inputs: 0,
+                max_outputs: 2,
+                sample_rates: vec![48_000],
+                buffer_range: None,
+                is_default_output: false,
+            })
+            .collect();
+        Ok(vec![HostInfo {
+            kind: HostKind::Wasapi,
+            devices,
+        }])
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
@@ -1452,4 +1470,150 @@ fn a_restarted_engine_follows_again() {
     assert_eq!(fake.clock_opened.borrow().len(), 2);
     assert!(fake.clock_cell.borrow().as_ref().unwrap().following());
     assert_eq!(fake.clock_closes.load(Ordering::Relaxed), 1);
+}
+
+/// A session that opened "Virtual Cable Input" and then was asked for "Headset", which is
+/// unplugged: it fell back, and wants to go back to the headset.
+fn fallen_back(fake: &Fake) -> LiveSession<&Fake> {
+    let mut s = LiveSession::new(fake, settings(), true);
+    s.reset(&config(48_000.0));
+    s.set_settings(AudioSettings {
+        output_device: Some("Headset".into()),
+        ..settings()
+    });
+    *fake.broken_device.borrow_mut() = Some("Headset".into());
+    s.reset(&config(48_000.0));
+    assert!(s.is_running());
+    assert_eq!(s.status().device, "Virtual Cable Input");
+    assert!(s.take_notice().is_some());
+    s
+}
+
+#[test]
+fn the_chosen_device_is_taken_back_once_it_is_listed_again() {
+    let fake = Fake::default();
+    fake.plugged.borrow_mut().push("Virtual Cable Input".into());
+    let mut s = fallen_back(&fake);
+    let t0 = clock_now();
+
+    // Unplugged: nothing to do, however often it is looked at.
+    s.poll_at(t0);
+    s.poll_at(t0 + Duration::from_secs(4));
+    assert!(!s.switch_back_pending());
+    assert_eq!(
+        s.settings().output_device.as_deref(),
+        Some("Virtual Cable Input")
+    );
+
+    // Plugged in: the list is read every few seconds, not every poll.
+    fake.plugged.borrow_mut().push("USB Headset".into());
+    *fake.broken_device.borrow_mut() = None;
+    s.poll_at(t0 + Duration::from_secs(5));
+    assert!(!s.switch_back_pending(), "read again only after the period");
+    s.poll_at(t0 + Duration::from_secs(8));
+    assert!(s.switch_back_pending());
+    assert_eq!(s.settings().output_device.as_deref(), Some("Headset"));
+    let notice = s.take_notice().expect("the return is told");
+    assert!(
+        notice.contains("Headset") && notice.contains("back"),
+        "{notice}"
+    );
+
+    assert!(s.take_switch_back());
+    assert!(!s.take_switch_back(), "once");
+    s.reset(&config(48_000.0));
+    assert!(s.is_running());
+    assert_eq!(s.status().device, "Headset");
+    assert_eq!(s.take_notice(), None);
+    // Nothing more to wait for.
+    s.poll_at(t0 + Duration::from_secs(20));
+    assert!(!s.switch_back_pending());
+}
+
+#[test]
+fn a_return_that_does_not_open_is_tried_once() {
+    let fake = Fake::default();
+    let mut s = fallen_back(&fake);
+    let t0 = clock_now();
+    s.poll_at(t0);
+    // It shows in the list but still cannot be opened.
+    fake.plugged.borrow_mut().push("Headset".into());
+    s.poll_at(t0 + Duration::from_secs(4));
+    assert!(s.take_switch_back());
+    s.reset(&config(48_000.0));
+    assert!(s.is_running(), "the fallback opened again");
+    assert_eq!(s.status().device, "Virtual Cable Input");
+    let notice = s.take_notice().expect("the failure is told");
+    assert!(notice.contains("Headset"), "{notice}");
+    for k in 1..6 {
+        s.poll_at(t0 + Duration::from_secs(4 + 4 * k));
+        assert!(!s.switch_back_pending(), "no endless retries");
+    }
+}
+
+#[test]
+fn a_device_that_never_left_the_list_is_not_switched_back_to() {
+    let fake = Fake::default();
+    fake.plugged.borrow_mut().push("Headset".into());
+    let mut s = fallen_back(&fake);
+    let t0 = clock_now();
+    for k in 0..4 {
+        s.poll_at(t0 + Duration::from_secs(4 * k));
+    }
+    assert!(!s.switch_back_pending());
+}
+
+#[test]
+fn picking_devices_in_the_dialog_forgets_the_one_to_go_back_to() {
+    let fake = Fake::default();
+    let mut s = fallen_back(&fake);
+    let t0 = clock_now();
+    s.poll_at(t0);
+    s.set_settings(AudioSettings {
+        output_device: Some("Speakers".into()),
+        ..settings()
+    });
+    fake.plugged.borrow_mut().push("Headset".into());
+    s.poll_at(t0 + Duration::from_secs(10));
+    assert!(!s.switch_back_pending());
+    assert_eq!(s.settings().output_device.as_deref(), Some("Speakers"));
+}
+
+#[test]
+fn the_default_devices_after_a_loss_go_back_to_the_chosen_ones_when_they_return() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(s.fall_back_to_defaults(), SettingsChange::RestartAudio);
+    s.reset(&config(48_000.0));
+    assert_eq!(s.settings().output_device, None);
+    let t0 = clock_now();
+    s.poll_at(t0);
+    fake.plugged.borrow_mut().push("Virtual Cable Input".into());
+    s.poll_at(t0 + Duration::from_secs(4));
+    assert!(s.take_switch_back());
+    s.reset(&config(48_000.0));
+    assert_eq!(s.status().device, "Virtual Cable Input");
+    assert_eq!(
+        s.settings().output_device.as_deref(),
+        Some("Virtual Cable Input")
+    );
+}
+
+#[test]
+fn defaults_chosen_by_the_user_have_nothing_to_go_back_to() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(
+        &fake,
+        AudioSettings {
+            output_device: None,
+            ..settings()
+        },
+        true,
+    );
+    s.reset(&config(48_000.0));
+    s.fall_back_to_defaults();
+    s.poll_at(clock_now());
+    s.poll_at(clock_now() + Duration::from_secs(10));
+    assert!(!s.switch_back_pending());
 }

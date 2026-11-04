@@ -22,6 +22,9 @@ struct World {
     starts: RefCell<Vec<Option<String>>>,
     /// The MIDI input ports that are plugged in.
     midi: RefCell<Vec<String>>,
+    /// The output devices the host lists, and the host that lists them.
+    plugged: RefCell<Vec<String>>,
+    host: Cell<Option<atomik_audio_io::HostKind>>,
 }
 
 #[derive(Clone, Default)]
@@ -50,7 +53,28 @@ impl AudioBackend for Fake {
     type Midi = MidiConnection;
 
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
-        Ok(Vec::new())
+        let devices = self
+            .0
+            .plugged
+            .borrow()
+            .iter()
+            .map(|name| atomik_audio_io::DeviceInfo {
+                name: name.clone(),
+                max_inputs: 0,
+                max_outputs: 2,
+                sample_rates: vec![48_000],
+                buffer_range: None,
+                is_default_output: false,
+            })
+            .collect();
+        Ok(vec![HostInfo {
+            kind: self
+                .0
+                .host
+                .get()
+                .unwrap_or(atomik_audio_io::HostKind::Default),
+            devices,
+        }])
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
@@ -334,6 +358,85 @@ fn with_the_setting_a_lost_device_switches_to_the_default_devices_without_saving
     world.0.telemetry.set(running_telemetry(5));
     s.poll_status_at(crate::session::clock_now());
     assert!(!s.stream_reset);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Polls the status `secs` seconds after `t0` with a stream that keeps calling back.
+fn poll_alive(s: &mut Shell<Fake>, world: &Fake, t0: std::time::Instant, secs: u64) {
+    world.0.telemetry.set(running_telemetry(100 + secs));
+    s.poll_status_at(t0 + Duration::from_secs(secs));
+}
+
+#[test]
+fn the_chosen_device_comes_back_by_itself_when_it_returns_after_a_loss() {
+    let dir = scratch("lost-return");
+    let world = Fake::default();
+    let settings = saved("Interface", true);
+    world.0.host.set(Some(settings.host.kind()));
+    let mut s = shell(&world, &settings, &dir);
+    world.0.telemetry.set(Telemetry {
+        device_lost: true,
+        ..running_telemetry(10)
+    });
+    let t0 = crate::session::clock_now();
+    s.poll_status_at(t0);
+    assert_eq!(
+        *world.0.starts.borrow(),
+        vec![Some("Interface".to_string()), None]
+    );
+    poll_alive(&mut s, &world, t0, 1);
+
+    // The interface is gone from the list for a while, then listed again: the app goes back
+    // to it on its own, once, and says so.
+    poll_alive(&mut s, &world, t0, 5);
+    assert_eq!(world.0.starts.borrow().len(), 2, "still unplugged");
+    world.0.plugged.borrow_mut().push("Interface".into());
+    poll_alive(&mut s, &world, t0, 9);
+    assert_eq!(
+        *world.0.starts.borrow(),
+        vec![
+            Some("Interface".to_string()),
+            None,
+            Some("Interface".to_string())
+        ]
+    );
+    let message = s.core().last_rejection().unwrap();
+    assert!(
+        message.contains("Interface") && message.contains("back"),
+        "{message}"
+    );
+    assert_eq!(s.core().sink().status().device, "Interface");
+    poll_alive(&mut s, &world, t0, 20);
+    poll_alive(&mut s, &world, t0, 30);
+    assert_eq!(world.0.starts.borrow().len(), 3, "no more restarts");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_return_waits_while_the_song_plays() {
+    let dir = scratch("lost-return-playing");
+    let world = Fake::default();
+    let settings = saved("Interface", true);
+    world.0.host.set(Some(settings.host.kind()));
+    let mut s = shell(&world, &settings, &dir);
+    world.0.telemetry.set(Telemetry {
+        device_lost: true,
+        ..running_telemetry(10)
+    });
+    let t0 = crate::session::clock_now();
+    s.poll_status_at(t0);
+    poll_alive(&mut s, &world, t0, 4);
+    world.0.plugged.borrow_mut().push("Interface".into());
+    s.core_mut()
+        .transport_action(atomik_ui::TransportAction::Play);
+    assert!(s.core().is_playing());
+    poll_alive(&mut s, &world, t0, 8);
+    assert_eq!(world.0.starts.borrow().len(), 2, "not while playing");
+    s.core_mut()
+        .transport_action(atomik_ui::TransportAction::Stop);
+    assert!(!s.core().is_playing());
+    poll_alive(&mut s, &world, t0, 9);
+    assert_eq!(world.0.starts.borrow().len(), 3, "once it stopped");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -6601,13 +6601,27 @@ impl<B: AudioBackend> Shell<B> {
     /// Opens the host's default devices instead of the chosen ones. The chosen devices stay in
     /// the settings file until the settings are applied again.
     fn reset_to_default_devices(&mut self) {
-        let mut settings = self.core.sink().settings().clone();
-        settings.output_device = None;
-        settings.input_device = None;
         let session = self.core.sink_mut();
-        session.set_settings(settings);
+        session.fall_back_to_defaults();
         session.set_enabled(true);
         self.core.rebuild_engine();
+    }
+
+    /// Goes back to the chosen devices once they are listed again (see
+    /// [`LiveSession::take_switch_back`]): at a moment that suits the song, not while it plays
+    /// or records. The notice of the session ("back, switching") or of a failed try is told.
+    fn switch_back_to_chosen_devices(&mut self) {
+        if self.silent || self.core.is_playing() || self.core.is_recording() {
+            return;
+        }
+        if !self.core.sink_mut().take_switch_back() {
+            return;
+        }
+        self.core.sink_mut().set_enabled(true);
+        self.core.rebuild_engine();
+        if let Some(notice) = self.core.sink_mut().take_notice() {
+            self.notify(notice);
+        }
     }
 
     /// While the Audio Settings dialog is open, lists the MIDI ports again once a second so a
@@ -6646,8 +6660,15 @@ impl<B: AudioBackend> Shell<B> {
         self.relist_ports(at);
         let target = self.core.notes_target_device().map(|d| d.name.clone());
         let mut status = self.core.sink_mut().poll_at(at).clone();
-        if let Some(notice) = self.core.sink_mut().take_notice() {
+        let back = self.core.sink().switch_back_pending();
+        // The notice that the chosen devices are back is told together with the restart; the
+        // restart's own notice (it did not open) replaces it.
+        if !back && let Some(notice) = self.core.sink_mut().take_notice() {
             self.notify(notice);
+        }
+        if back {
+            self.switch_back_to_chosen_devices();
+            status = self.core.sink().status().clone();
         }
         if self.watch_stream(&status) {
             // The stream was replaced: show what is true now.
