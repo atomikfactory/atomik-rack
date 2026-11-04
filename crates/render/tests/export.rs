@@ -7,8 +7,8 @@ use atomik_core::PPQ;
 use atomik_model::{RackDoc, load_project};
 use atomik_render::default_registry;
 use atomik_render::export::{
-    BitDepth, DEFAULT_TAIL_SECONDS, ExportFormat, ExportRequest, ExportSpan, TAIL_FLOOR,
-    export_audio_file, partial_path, render_export, write_export,
+    BitDepth, DEFAULT_TAIL_SECONDS, ExportContainer, ExportFormat, ExportRequest, ExportSpan,
+    TAIL_FLOOR, export_audio_file, partial_path, render_export, write_export,
 };
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::project::{PluginBounce, ProjectOptions, render_doc};
@@ -371,4 +371,95 @@ fn progress_is_reported_while_the_export_renders() {
     assert!(seen.len() > 3, "{seen:?}");
     assert!(seen.windows(2).all(|w| w[0] <= w[1]));
     assert!(seen.iter().all(|p| (0.0..=1.0).contains(p)));
+}
+
+#[test]
+fn a_flac_file_holds_the_codes_a_wav_file_does_and_is_the_same_bytes_every_time() {
+    let doc = demo();
+    let dir = TempDir::new("flac");
+    let export = render(&doc, &song(0.0));
+    for depth in [BitDepth::Pcm16, BitDepth::Pcm24] {
+        let wav = ExportFormat::new(depth);
+        let flac = ExportFormat {
+            container: ExportContainer::Flac,
+            ..wav
+        };
+        let (a, b, c) = (dir.path("a.wav"), dir.path("b.flac"), dir.path("c.flac"));
+        write_export(&a, &export, &wav).unwrap();
+        let report = write_export(&b, &export, &flac).unwrap();
+        write_export(&c, &export, &flac).unwrap();
+        assert_eq!(report.frames as usize, END_FRAMES);
+        let (x, y) = (
+            atomik_audio_file::decode_file(&a).unwrap(),
+            atomik_audio_file::decode_file(&b).unwrap(),
+        );
+        assert_eq!(y.sample_rate, 48_000, "{depth:?}");
+        assert_eq!(x.channels, y.channels, "{depth:?}");
+        assert_eq!(
+            std::fs::read(&b).unwrap(),
+            std::fs::read(&c).unwrap(),
+            "{depth:?}"
+        );
+        let (wav_size, flac_size) = (
+            std::fs::metadata(&a).unwrap().len(),
+            std::fs::metadata(&b).unwrap().len(),
+        );
+        assert!(flac_size < wav_size, "{flac_size} against {wav_size}");
+        assert!(!partial_path(&b).exists());
+    }
+    // Rate conversion happens before the encoder, as for the other containers.
+    let converted = ExportFormat {
+        container: ExportContainer::Flac,
+        sample_rate: Some(44_100),
+        ..ExportFormat::new(BitDepth::Pcm24)
+    };
+    let report = write_export(&dir.path("d.flac"), &export, &converted).unwrap();
+    assert_eq!(report.sample_rate, 44_100);
+    let d = atomik_audio_file::decode_file(&dir.path("d.flac")).unwrap();
+    assert_eq!((d.sample_rate, d.frames() as u64), (44_100, report.frames));
+    // 32-bit float has no FLAC form: refused before anything is written.
+    let float = ExportFormat {
+        container: ExportContainer::Flac,
+        ..ExportFormat::new(BitDepth::Float32)
+    };
+    let refused = write_export(&dir.path("e.flac"), &export, &float).unwrap_err();
+    assert!(refused.to_string().contains("FLAC"), "{refused}");
+    assert!(!dir.path("e.flac").exists());
+    assert_eq!(ExportContainer::Flac.extension(), "flac");
+}
+
+#[test]
+fn the_report_carries_the_loudness_of_what_was_written() {
+    let doc = demo();
+    let dir = TempDir::new("loudness");
+    let export = render(&doc, &song(0.0));
+    let report = write_export(
+        &dir.path("l.wav"),
+        &export,
+        &ExportFormat::new(BitDepth::Pcm24),
+    )
+    .unwrap();
+    let loudness = report.loudness;
+    assert_eq!(loudness, atomik_render::loudness::measure(&export.audio));
+    let lufs = loudness.integrated_lufs.expect("the demo is audible");
+    let true_peak = loudness.true_peak_dbtp.expect("the demo is audible");
+    let sample_peak = loudness.sample_peak_dbfs.unwrap();
+    assert!((-60.0..0.0).contains(&lufs), "{lufs}");
+    assert!(
+        true_peak >= sample_peak,
+        "{true_peak} against {sample_peak}"
+    );
+    assert!(loudness.range_lu.is_some(), "16 seconds have a range");
+    // The loudness is of the converted audio: a quiet repeat is as loud, give or take.
+    let converted = write_export(
+        &dir.path("m.wav"),
+        &export,
+        &ExportFormat {
+            sample_rate: Some(44_100),
+            ..ExportFormat::new(BitDepth::Pcm24)
+        },
+    )
+    .unwrap();
+    let again = converted.loudness.integrated_lufs.unwrap();
+    assert!((again - lufs).abs() < 0.3, "{again} against {lufs}");
 }

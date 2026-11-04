@@ -32,8 +32,10 @@ pub mod build;
 pub mod bundle;
 pub mod cli;
 pub mod export;
+pub mod flac;
 pub mod flat;
 pub mod freeze;
+pub mod loudness;
 pub mod patch;
 pub mod players;
 pub mod plugin_pass;
@@ -127,8 +129,8 @@ pub enum RenderError {
     /// panicked). No audio file is written.
     #[error("the render failed: {0}")]
     Engine(#[from] atomik_engine::OfflineError),
-    /// The WAV file could not be written.
-    #[error("{}: cannot write the WAV file: {source}", path.display())]
+    /// The audio file could not be written.
+    #[error("{}: cannot write the audio file: {source}", path.display())]
     Write {
         /// The output file.
         path: std::path::PathBuf,

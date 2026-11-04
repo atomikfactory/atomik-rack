@@ -330,3 +330,71 @@ fn an_aiff_file_holds_the_codes_a_wav_file_does() {
         let _ = atomik_audio_file::decode_bytes(&bytes[..cut], Some("aif"));
     }
 }
+
+#[test]
+fn flac_stems_hold_the_codes_of_the_wav_ones_and_report_their_loudness() {
+    let doc = clicks();
+    let dir = TempDir::new("flac");
+    let mut written = Vec::new();
+    for container in [ExportContainer::Wav, ExportContainer::Flac] {
+        let folder = dir.path(&format!("{container:?}"));
+        let format = ExportFormat {
+            container,
+            ..ExportFormat::new(BitDepth::Pcm16)
+        };
+        let report = export_stems(
+            &doc,
+            &default_registry(),
+            (&options(512, 0), None),
+            &mut PluginBounce::default(),
+            (&request(&doc, StemStrip::Full), &format),
+            (&folder, RenderControl::default()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(report.loudness.len(), report.files.len());
+        written.push(report);
+    }
+    let (wav, flac) = (&written[0], &written[1]);
+    assert_eq!(wav.loudness, flac.loudness);
+    for ((a, _), (b, _)) in wav.files.iter().zip(&flac.files) {
+        assert_eq!(b.extension().unwrap(), "flac");
+        let (x, y) = (
+            atomik_audio_file::decode_file(a).unwrap(),
+            atomik_audio_file::decode_file(b).unwrap(),
+        );
+        assert_eq!(x.channels, y.channels);
+    }
+    // The master is audible: it has a peak.
+    assert!(flac.loudness[2].true_peak_dbtp.is_some());
+}
+
+#[test]
+fn stems_of_a_range_are_the_same_frames_of_the_whole_song_stems() {
+    let mut doc = clicks();
+    let whole = stems(&doc, &request(&doc, StemStrip::Full), &options(512, 0));
+    let total = whole[0].audio.frames();
+    // Take the second half of the song by its locators.
+    let end = doc.song.end_tick();
+    doc.song_mut().loop_range = (end / 2, end);
+    let from = doc.song.frame_at(end / 2, doc.sample_rate) as usize;
+    let to = doc.song.frame_at(end, doc.sample_rate) as usize;
+    let part = stems(
+        &doc,
+        &StemRequest {
+            span: ExportSpan::Loop,
+            ..request(&doc, StemStrip::Full)
+        },
+        &options(512, 0),
+    );
+    assert!(to <= total && from < to);
+    for (p, w) in part.iter().zip(&whole) {
+        assert_eq!(p.audio.frames(), to - from, "{}", p.source.name);
+        assert_eq!(
+            p.audio.channels[0],
+            w.audio.channels[0][from..to],
+            "{}",
+            p.source.name
+        );
+    }
+}

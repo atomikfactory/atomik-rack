@@ -33,6 +33,7 @@
 use crate::export::{
     ExportFormat, ExportRender, ExportSpan, TAIL_FLOOR, span_frames, write_export,
 };
+use crate::loudness::LoudnessReport;
 use crate::plugin_pass::RenderControl;
 use crate::project::{Core, Extra, PluginBounce, ProjectOptions, render_core};
 use crate::{RenderError, Warning};
@@ -318,13 +319,15 @@ fn alignment_delays(
         .collect()
 }
 
-/// A finished export of stems.
+/// A finished export of stems (the loudness of every file is measured like an export's).
 #[derive(Debug, Clone, PartialEq)]
 pub struct StemsReport {
     /// The folder the files were written to.
     pub folder: PathBuf,
     /// The files, in the order of the request, with the strip each holds.
     pub files: Vec<(PathBuf, StemSource)>,
+    /// The loudness of each file's audio ([`crate::loudness`]), in the order of `files`.
+    pub loudness: Vec<LoudnessReport>,
     /// Frames of each file at its sample rate.
     pub frames: u64,
     /// The sample rate of the files in Hz.
@@ -367,6 +370,7 @@ pub fn export_stems(
     let names = stem_file_names(&request.sources);
     let extension = format.container.extension();
     let mut files: Vec<(PathBuf, StemSource)> = Vec::new();
+    let mut loudness: BTreeMap<PathBuf, LoudnessReport> = BTreeMap::new();
     let mut last: Option<(u64, u32)> = None;
     let mut write = |stem: Stem| -> Result<(), RenderError> {
         let path = folder.join(format!("{}.{extension}", names[stem.index]));
@@ -378,6 +382,7 @@ pub fn export_stems(
         };
         let report = write_export(&path, &render, format)?;
         last = Some((report.frames, report.sample_rate));
+        loudness.insert(path.clone(), report.loudness);
         files.push((path, stem.source));
         Ok(())
     };
@@ -417,9 +422,14 @@ pub fn export_stems(
             .position(|o| o == s)
             .unwrap_or(usize::MAX)
     });
+    let loudness = files
+        .iter()
+        .map(|(path, _)| loudness.get(path).copied().unwrap_or_default())
+        .collect();
     Ok(Some(StemsReport {
         folder: folder.to_path_buf(),
         files,
+        loudness,
         frames,
         sample_rate,
         span_frames: rendered.span_frames,
