@@ -8,7 +8,7 @@ use atomik_core::PPQ;
 use atomik_model::{
     Clip, ClipContent, CreateOptions, CreateSource, Note, WorkflowCommand, new_project_doc,
 };
-use atomik_render::export::BitDepth;
+use atomik_render::export::{BitDepth, ExportSpan};
 use atomik_ui::{EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportScope, ExportValues};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -295,4 +295,93 @@ fn the_dry_bounce_of_a_clip_is_a_new_track_without_the_strip() {
     let name = &c.doc().device(&new.device).unwrap().name;
     assert!(name.ends_with("(dry bounce)"), "{name}");
     assert!(c.last_rejection().unwrap().contains("Bounced"));
+}
+
+#[test]
+fn a_flac_export_is_a_flac_file_that_says_how_loud_it_is() {
+    let t = Tmp::new();
+    let mut c = core();
+    let flac = ExportValues {
+        file: ExportFile::Flac,
+        ..values(ExportDepth::Pcm16)
+    };
+    // The extension follows the container, as for the others.
+    c.start_audio_export(ExportScope::Song, t.file("mix.wav"), flac)
+        .unwrap();
+    c.wait_background();
+    let path = t.file("mix.flac");
+    assert!(path.is_file() && !t.file("mix.wav").exists());
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(&bytes[..4], b"fLaC");
+    let decoded = atomik_audio_file::decode_file(&path).unwrap();
+    assert!(decoded.channels[0].iter().any(|x| x.abs() > 1e-3));
+    // The toast carries the loudness of what was written.
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported mix.flac")
+            && message.contains("LUFS")
+            && message.contains("dBTP"),
+        "{message}"
+    );
+    // 32-bit float has no FLAC form: refused before anything runs.
+    let float = ExportValues {
+        file: ExportFile::Flac,
+        ..values(ExportDepth::Float32)
+    };
+    let why = c
+        .start_audio_export(ExportScope::Song, t.file("float.wav"), float)
+        .unwrap_err();
+    assert!(why.contains("FLAC"), "{why}");
+    assert!(!c.audio_export_busy());
+}
+
+#[test]
+fn stems_can_be_exported_between_the_locators_without_a_tail() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.apply_command(Command::Song(SongCommand::SetLoop {
+        range: (BAR, BAR + BAR / 2),
+        enabled: false,
+    }))
+    .unwrap();
+    c.sink_mut().take();
+    let folder = t.file("Bounced range");
+    let range = ExportValues {
+        file: ExportFile::Flac,
+        locators: true,
+        tail: true,
+        ..values(ExportDepth::Pcm24)
+    };
+    assert_eq!(
+        export_request(ExportScope::Stems, &range).span,
+        ExportSpan::Loop
+    );
+    assert!(
+        export_request(ExportScope::Stems, &range)
+            .tail_seconds
+            .abs()
+            < f64::EPSILON
+    );
+    c.start_audio_export(ExportScope::Stems, folder.clone(), range)
+        .unwrap();
+    c.wait_background();
+    let mut files: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 2, "{files:?}");
+    for file in &files {
+        assert_eq!(file.extension().unwrap(), "flac");
+        // Half a bar at 120 BPM and 48 kHz.
+        let decoded = atomik_audio_file::decode_file(file).unwrap();
+        assert_eq!(decoded.frames(), 48_000, "{}", file.display());
+    }
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported 2 stems") && message.contains("Master"),
+        "{message}"
+    );
+    // The whole song is still exportable as stems.
+    assert!(c.can_export_audio(ExportScope::Stems));
 }

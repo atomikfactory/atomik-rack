@@ -261,3 +261,57 @@ fn preview_export_png() {
         println!("wrote {}", path.display());
     }
 }
+
+#[test]
+fn flac_has_no_float_and_choosing_it_moves_float_to_24_bit() {
+    let mut v = view(ExportScope::Song);
+    assert!(has(&texts(&v), "FLAC"));
+    click(&mut v, "32-BIT FLOAT");
+    assert_eq!(v.values().depth, ExportDepth::Float32);
+    click(&mut v, "FLAC");
+    assert_eq!(v.values().file, atomik_ui::ExportFile::Flac);
+    assert_eq!(v.values().depth, ExportDepth::Pcm24);
+    // The float button is inert while FLAC is chosen.
+    assert!(click(&mut v, "32-BIT FLOAT").is_empty());
+    assert_eq!(v.values().depth, ExportDepth::Pcm24);
+    click(&mut v, "16-BIT");
+    assert_eq!(v.values().depth, ExportDepth::Pcm16);
+    // Back to WAV, float works again.
+    click(&mut v, "WAV");
+    click(&mut v, "32-BIT FLOAT");
+    assert_eq!(v.values().depth, ExportDepth::Float32);
+    for label in ["FLAC", "32-BIT FLOAT"] {
+        let p = center(&v, label);
+        assert!(v.help_at(p).is_some(), "{label}");
+    }
+}
+
+#[test]
+fn stems_alone_choose_between_the_whole_song_and_the_locators() {
+    for scope in [ExportScope::Song, ExportScope::Loop] {
+        assert!(view(scope).button_rect("BETWEEN LOCATORS").is_none());
+    }
+    let mut v = view(ExportScope::Stems);
+    let t = texts(&v);
+    for want in ["RANGE", "WHOLE SONG", "BETWEEN LOCATORS"] {
+        assert!(has(&t, want), "{want} in {t:?}");
+    }
+    assert!(!v.values().locators);
+    click(&mut v, "BETWEEN LOCATORS");
+    assert!(v.values().locators);
+    assert!(has(&texts(&v), "exactly between the locators"));
+    let started = click(&mut v, "EXPORT");
+    assert_eq!(
+        started,
+        vec![ExportAction::Start(ExportValues {
+            locators: true,
+            ..ExportValues::default()
+        })]
+    );
+    click(&mut v, "WHOLE SONG");
+    assert_eq!(v.values(), ExportValues::default());
+    for label in ["WHOLE SONG", "BETWEEN LOCATORS"] {
+        let p = center(&v, label);
+        assert!(v.help_at(p).is_some(), "{label}");
+    }
+}

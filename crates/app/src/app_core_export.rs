@@ -9,8 +9,13 @@
 //!
 //! **Export Stems as Audio Files** ([`ExportScope::Stems`]) is the same export with one file per
 //! strip of the console ([`atomik_render::stems`]): the path is the folder the files go into, and
-//! the panel's values say the container, depth, dither, rate, tail and whether the channels are
-//! taken before their strips.
+//! the panel's values say the container, depth, dither, rate, tail, whether the channels are
+//! taken before their strips and whether only the range between the locators is exported (the
+//! same range as Export Loop, with no tail).
+//!
+//! A finished export says how loud it is: the toast (and the log) carry the integrated loudness,
+//! the true peak and the loudness range of the audio that was written
+//! ([`atomik_render::loudness`]); for stems the toast has the master's and the log every file's.
 //!
 //! The shell asks for the file, then for the options (its panel), then calls
 //! [`AppCore::start_audio_export`]; progress and **Cancel** are [`AppCore::audio_export_progress`]
@@ -56,9 +61,11 @@ impl ExportState {
     }
 }
 
-fn span_of(scope: ExportScope) -> ExportSpan {
+fn span_of(scope: ExportScope, values: &ExportValues) -> ExportSpan {
     match scope {
-        ExportScope::Song | ExportScope::Stems => ExportSpan::Song,
+        ExportScope::Song => ExportSpan::Song,
+        ExportScope::Stems if values.locators => ExportSpan::Loop,
+        ExportScope::Stems => ExportSpan::Song,
         ExportScope::Loop => ExportSpan::Loop,
     }
 }
@@ -83,6 +90,7 @@ pub fn export_format(values: &ExportValues) -> ExportFormat {
         container: match values.file {
             ExportFile::Wav => ExportContainer::Wav,
             ExportFile::Aiff => ExportContainer::Aiff,
+            ExportFile::Flac => ExportContainer::Flac,
         },
         bit_depth,
         dither,
@@ -92,9 +100,10 @@ pub fn export_format(values: &ExportValues) -> ExportFormat {
 
 /// The render request the panel's values mean: a loop has no tail.
 pub fn export_request(scope: ExportScope, values: &ExportValues) -> ExportRequest {
+    let span = span_of(scope, values);
     ExportRequest {
-        span: span_of(scope),
-        tail_seconds: if scope != ExportScope::Loop && values.tail {
+        span,
+        tail_seconds: if span == ExportSpan::Song && values.tail {
             DEFAULT_TAIL_SECONDS
         } else {
             0.0
@@ -117,7 +126,7 @@ fn depth_label(values: &ExportValues) -> &'static str {
 }
 
 /// The toast of a finished export of stems: "Exported 5 stems to Bounced song: 24-bit, 48 kHz,
-/// 1:05.3".
+/// 1:05.3; Master -14.2 LUFS, -0.8 dBTP".
 fn describe_stems(
     report: &atomik_render::stems::StemsReport,
     values: &ExportValues,
@@ -141,8 +150,17 @@ fn describe_stems(
         0 => String::new(),
         n => format!(" ({n} warning{})", if n == 1 { "" } else { "s" }),
     };
+    // The master's loudness when there is one.
+    let loud = report
+        .files
+        .iter()
+        .zip(&report.loudness)
+        .find(|((_, s), _)| s.kind == atomik_model::StemKind::Master)
+        .map_or_else(String::new, |((_, s), l)| {
+            format!("; {} {}", s.name, l.summary())
+        });
     format!(
-        "Exported {n} stem{} to {folder}: {}, {}, {}{tail}{warnings}",
+        "Exported {n} stem{} to {folder}: {}, {}, {}{tail}{warnings}{loud}",
         if n == 1 { "" } else { "s" },
         depth_label(values),
         rate_label(report.sample_rate),
@@ -150,7 +168,8 @@ fn describe_stems(
     )
 }
 
-/// The toast of a finished export: "Exported song.wav: 24-bit, 48 kHz, 1:05.3".
+/// The toast of a finished export: "Exported song.wav: 24-bit, 48 kHz, 1:05.3; -14.2 LUFS,
+/// -0.8 dBTP, range 6.3 LU".
 fn describe(report: &ExportReport, values: &ExportValues, project_rate: u32) -> String {
     let file = report
         .path
@@ -171,9 +190,10 @@ fn describe(report: &ExportReport, values: &ExportValues, project_rate: u32) -> 
         n => format!(" ({n} warning{})", if n == 1 { "" } else { "s" }),
     };
     format!(
-        "Exported {file}: {depth}, {}, {}{tail}{warnings}",
+        "Exported {file}: {depth}, {}, {}{tail}{warnings}; {}",
         rate_label(report.sample_rate),
-        clock(seconds)
+        clock(seconds),
+        report.loudness.summary()
     )
 }
 
@@ -198,7 +218,7 @@ impl<S: EngineSink> AppCore<S> {
         if scope == ExportScope::Stems && self.doc().console.channels.is_empty() {
             return Some("There are no mixer strips to export as stems".to_owned());
         }
-        span_frames(self.doc(), span_of(scope))
+        span_frames(self.doc(), span_of(scope, &ExportValues::default()))
             .err()
             .map(|e| e.to_string())
     }
@@ -233,7 +253,16 @@ impl<S: EngineSink> AppCore<S> {
         path: PathBuf,
         values: ExportValues,
     ) -> Result<(), String> {
-        if let Some(why) = self.export_audio_refusal(scope) {
+        let refusal = self.export_audio_refusal(scope).or_else(|| {
+            if values.file == ExportFile::Flac && values.depth == ExportDepth::Float32 {
+                return Some("FLAC holds 16-bit and 24-bit audio, not 32-bit float".to_owned());
+            }
+            // Stems between the locators need a range of their own.
+            span_frames(self.doc(), span_of(scope, &values))
+                .err()
+                .map(|e| e.to_string())
+        });
+        if let Some(why) = refusal {
             self.reject(why.clone());
             return Err(why);
         }
@@ -319,8 +348,19 @@ impl<S: EngineSink> AppCore<S> {
             Ok(Some(done)) => {
                 let rate = self.doc().sample_rate;
                 let message = match done {
-                    Done::File(report) => describe(&report, &running.values, rate),
-                    Done::Stems(report) => describe_stems(&report, &running.values, rate),
+                    Done::File(report) => {
+                        log::info!("exported {}: {}", running.file, report.loudness.summary());
+                        describe(&report, &running.values, rate)
+                    }
+                    Done::Stems(report) => {
+                        for ((path, _), loudness) in report.files.iter().zip(&report.loudness) {
+                            let name = path
+                                .file_name()
+                                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                            log::info!("exported stem {name}: {}", loudness.summary());
+                        }
+                        describe_stems(&report, &running.values, rate)
+                    }
                 };
                 self.reject(message);
             }
