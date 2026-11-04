@@ -2883,10 +2883,10 @@ of the channel strip. A **VCA group** is one fader, one mute and one solo over s
 strips (channels and buses). It has no audio of its own and no cables: it is console state
 (`Console::vcas`), so the routing, the plan and the bounce of a project without groups are
 untouched. It is not a track folder (folders organise the arrangement and change nothing in the
-mix), and a folder does not drive a group; "Create VCA from Selection" with a folder selected makes
-a group of the channels of its tracks.
+mix). "Create VCA from Selection" with a folder selected makes a group of the channels of its
+tracks, and a group can also **follow** a folder (below).
 
-- **Model.** `VcaGroup { id, name, color, level_db, mute, solo, members }`: ids count from 1
+- **Model.** `VcaGroup { id, name, color, level_db, mute, solo, members, follows }`: ids count from 1
   (`max + 1`), a name is trimmed, 1 to 32 characters and unique ignoring case, at most 64 groups,
   `level_db` within `VCA_MIN_DB..=VCA_MAX_DB` (-60 to +12,
   [atomik-core](../crates/core/src/param.rs)); a new group takes the colour `VCA_PALETTE` holds for
@@ -2900,6 +2900,19 @@ a group of the channels of its tracks.
   `ConsoleChanged`; `ClearSolos` and `ClearMutes` also clear the groups' flags in their one step.
   The level is not an automation target (a group is not a device; see the follow-ups in the
   roadmap).
+- **Following a folder.** `follows: Option<u32>` is the id of a track folder: the members are then
+  the console channels of the folder's tracks, sub-folders included (`RackDoc::folder_strips`), and
+  `follow_sync` brings them in line after **every** command, inside the same undo step as the command
+  that moved a track in or out, added or deleted one, or dissolved the folder (the edit joins the
+  command's `Edit::Compound`, so one undo takes both back). A strip of the folder joins the group
+  even from another group; where two followed folders are nested the later group takes the strips
+  they share. `CreateVcaForFolder { folder, name }` makes the group and `SetVcaFollow { vca, folder }`
+  turns following on or off (off keeps the members); one group follows a given folder. The members
+  of a following group are not edited by hand: `AssignToVca` into it or out of it, and `CreateVca`
+  over its members, are refused with a message saying to unfollow first. A group whose folder is
+  dissolved or loses its last track (a folder with no track is not saved) stops following and keeps
+  its members. The Mixer menu's Create VCA from Folder (and the folder row's context menu) names the
+  group after the folder; the VCA strip's menu has Stop following folder.
 - **Gain.** A member plays at **its own fader plus the group's offset**: the offset is a multiplier
   on the fader gain (`atomik_dsp::fader_gain_vca`), so with a member at -3 dB and the group at -6 dB
   the strip is at -9 dB, and the member's own fader keeps its position. The bottom of the range (-60
@@ -2931,7 +2944,9 @@ a group of the channels of its tracks.
   when empty (a project without groups differs from its version 25 file in the version line alone)
   and refused before version 26. The loader names the JSON path of a duplicate id or name, an
   out-of-range level, a member that is no console strip or is in two groups; members may come in any
-  order and load in console order.
+  order and load in console order. `"follows"` (a folder id, written only when set) is an optional
+  field of format 43; a reader that does not know it ignores it and keeps the members, and a file
+  that names a folder the song does not have loads as an ordinary group.
 - **Console view.** The VCA strips follow the buses, one slot each, with the strip height: a plate
   filled with the group's colour (name, `VCA n`, member count), M and S, the offset readout and a
   tall fader. A click on the plate selects the members, a double-click renames, a right-click opens
@@ -2942,14 +2957,24 @@ a group of the channels of its tracks.
   the selection, when the strip is in it). A member's plate carries the group's colour as a chip,
   its fader keeps its own position with a marker where it plays, and its readout shows that level.
   The arrangement draws a slim bar in the group's colour at the right edge of the header of a track
-  whose channel is in a group.
+  whose channel is in a group; a track header (or several selected ones) dragged onto the bar of
+  another track in a group joins that group when released there (`AssignToVca`; the bars light up
+  and the insertion line is hidden while it hovers). **Link Faders** (Mixer menu, kept in
+  `ui-state.json`, not in the project): while on, a fader or send level of a strip in a group that is
+  not part of a multiple selection moves the levels of every member of its group by the same dB
+  (`console_gang`, one `Batch` and one undo step per drag, the offsets between the strips kept); a
+  multiple selection still takes its own strips along.
 - **Commands.** `mixer.create_vca` (Create VCA from Selection), `mixer.add_to_vca`,
   `mixer.remove_from_vca` and `mixer.delete_vca` are registry commands in the Mixer menu, without a
   default key. They act on the strips of the focused pane (the console's selection; the
   arrangement's tracks through their channels; the rack's selection as for Route to New Output Bus);
   `mixer.add_to_vca` and `mixer.delete_vca` take the id of a group as their argument (otherwise the
   last group, and the groups of the selected strips). `session_command` takes it as `arg`, and
-  `session_status` lists the groups under `console.vcas`.
+  `session_status` lists the groups under `console.vcas`. `mixer.create_vca_for_folder` (Create VCA
+  from Folder) and `mixer.link_faders` (a check item) are in the Mixer menu too; once the song has
+  groups, Add to Group and Delete Group submenus follow Delete VCA with a row that names each group
+  (`AddToVca(Some(id))`, `DeleteVca(Some(id))`). The track header and folder row context menus
+  have Create VCA (and the folder row Create VCA that Follows).
 
 ### Channel strip upgrades
 
@@ -4279,7 +4304,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (443) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (445) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

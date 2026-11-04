@@ -229,6 +229,9 @@ pub enum AppCommand {
     /// Mixer > Sends Follow Bus (on/off, undoable): post-fader sends scale with the bus fader and
     /// mute.
     ToggleSendFollow,
+    /// Mixer > Link Faders (on/off, kept with the window state): a fader or send level of a strip
+    /// in a VCA group moves the levels of the whole group by the same dB.
+    LinkFaders,
     /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
@@ -269,6 +272,9 @@ pub enum AppCommand {
     /// Mixer > Create VCA from Selection: a VCA group over the selected channels (the console's
     /// selection, the arrangement's tracks or the rack's devices, whichever has the focus).
     CreateVca,
+    /// Mixer > Create VCA from Folder: a VCA group that follows the selected track folder (its
+    /// members are the channels of the folder's tracks and stay so as tracks move in and out).
+    CreateVcaForFolder,
     /// Mixer > Add to VCA: the selected strips join the VCA group `id` (`mixer.add_to_vca` with
     /// the id as its argument), or the last group when there is none.
     AddToVca(Option<u32>),
@@ -758,6 +764,8 @@ impl AppCommand {
             AppCommand::RemoveChannel => ("mixer.remove_channel", None),
             AppCommand::CreateParallel => ("mixer.create_parallel", None),
             AppCommand::ToggleSendFollow => ("mixer.toggle_send_follow", None),
+            AppCommand::LinkFaders => ("mixer.link_faders", None),
+            AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
             AppCommand::CreateVca => ("mixer.create_vca", None),
             AppCommand::AddToVca(None) => ("mixer.add_to_vca", None),
             AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
@@ -1042,6 +1050,8 @@ impl AppCommand {
             ("mixer.remove_channel", None) => AppCommand::RemoveChannel,
             ("mixer.create_parallel", None) => AppCommand::CreateParallel,
             ("mixer.toggle_send_follow", None) => AppCommand::ToggleSendFollow,
+            ("mixer.link_faders", None) => AppCommand::LinkFaders,
+            ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
             ("mixer.create_vca", None) => AppCommand::CreateVca,
             ("mixer.add_to_vca", None) => AppCommand::AddToVca(None),
             ("mixer.add_to_vca", Some(id)) => {
@@ -1577,6 +1587,8 @@ pub struct MenuState {
     pub align_returns: bool,
     /// Send follow is on (document switch).
     pub send_follow: bool,
+    /// Link faders is on (a level of a strip in a VCA group moves the group's levels).
+    pub link_faders: bool,
     /// Console devices are shown in the rack.
     pub console_devices: bool,
     /// The console links are drawn as cables.
@@ -1768,6 +1780,8 @@ pub struct VcaMenu {
     pub can_remove: bool,
     /// A group exists: Delete VCA works (on the selected strips' groups, or the last one).
     pub can_delete: bool,
+    /// A track folder is selected and no group follows it yet: Create VCA from Folder works.
+    pub can_folder: bool,
 }
 
 /// What the Track menu and the context menus need to know to freeze, unfreeze and bounce.
@@ -1902,7 +1916,13 @@ pub struct SongList<'a> {
     pub names: &'a [String],
     /// The place of the song with the audio in `names`.
     pub current: usize,
+    /// The VCA groups of the song the menu belongs to: id and name (at most
+    /// [`MAX_NAMED_VCAS`] are listed), for the Mixer menu's items that name a group.
+    pub vcas: &'a [(u32, String)],
 }
+
+/// Most groups the Mixer menu's Add to Group and Delete Group submenus list.
+pub const MAX_NAMED_VCAS: usize = 32;
 
 /// [`menus_with_lists`], with the Window menu listing the open songs `songs`.
 pub fn menus_with_songs(
@@ -1996,7 +2016,7 @@ pub fn menus_with_songs(
             ])
             .collect(),
     });
-    vec![
+    let mut menus = vec![
         Menu {
             title: "File",
             entries: vec![
@@ -2431,6 +2451,11 @@ pub fn menus_with_songs(
                     AppCommand::CreateVca,
                     state.vca.can_create,
                 ),
+                enabled(
+                    "Create VCA from Folder",
+                    AppCommand::CreateVcaForFolder,
+                    state.vca.can_folder,
+                ),
                 enabled("Add to VCA", AppCommand::AddToVca(None), state.vca.can_add),
                 enabled(
                     "Remove from VCA",
@@ -2442,6 +2467,7 @@ pub fn menus_with_songs(
                     AppCommand::DeleteVca(None),
                     state.vca.can_delete,
                 ),
+                check("Link Faders", AppCommand::LinkFaders, state.link_faders),
                 MenuEntry::Separator,
                 enabled(
                     "Toggle Polarity",
@@ -3101,7 +3127,50 @@ pub fn menus_with_songs(
                 item("About Atomik Rack", AppCommand::About),
             ],
         },
-    ]
+    ];
+    name_vca_items(&mut menus, state, songs.vcas);
+    menus
+}
+
+/// The Mixer menu's items that name a group: with groups in the song, Add to Group and Delete
+/// Group submenus with a row per group follow Delete VCA.
+fn name_vca_items(menus: &mut [Menu], state: &MenuState, vcas: &[(u32, String)]) {
+    if vcas.is_empty() {
+        return;
+    }
+    let rows = |command: fn(u32) -> AppCommand, on: bool| -> Vec<MenuEntry> {
+        vcas.iter()
+            .take(MAX_NAMED_VCAS)
+            .map(|(id, name)| {
+                MenuEntry::Item(MenuItem {
+                    label: Cow::Owned(name.clone()),
+                    command: command(*id),
+                    shortcut: None,
+                    checked: None,
+                    enabled: on,
+                })
+            })
+            .collect()
+    };
+    let named = [
+        MenuEntry::Submenu(Submenu {
+            label: "Add to Group",
+            entries: rows(|id| AppCommand::AddToVca(Some(id)), state.vca.can_add),
+        }),
+        MenuEntry::Submenu(Submenu {
+            label: "Delete Group",
+            entries: rows(|id| AppCommand::DeleteVca(Some(id)), true),
+        }),
+    ];
+    if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer")
+        && let Some(at) = menu.entries.iter().position(
+            |e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::DeleteVca(None)),
+        )
+    {
+        for (k, entry) in named.into_iter().enumerate() {
+            menu.entries.insert(at + 1 + k, entry);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3155,6 +3224,7 @@ mod tests {
             compensation: true,
             align_returns: true,
             send_follow: true,
+            link_faders: false,
             console_devices: false,
             console_links: false,
             cpu_meters: false,
@@ -3304,6 +3374,8 @@ mod tests {
             AppCommand::ToggleCompensation,
             AppCommand::ToggleReturnAlignment,
             AppCommand::ToggleSendFollow,
+            AppCommand::LinkFaders,
+            AppCommand::CreateVcaForFolder,
             AppCommand::MidiLearn,
             AppCommand::MidiMappings,
             AppCommand::LockSurfaces,
@@ -3561,6 +3633,7 @@ mod tests {
         let list = SongList {
             names: &songs,
             current: 0,
+            vcas: &[],
         };
         let model = menus_with_songs(&state(), &keymap, &recent, &templates, &list);
         let in_menu: Vec<AppCommand> = model
@@ -3992,9 +4065,11 @@ mod tests {
                 "Create Parallel Channel",
                 "Delete Channel",
                 "Create VCA from Selection",
+                "Create VCA from Folder",
                 "Add to VCA",
                 "Remove from VCA",
                 "Delete VCA",
+                "Link Faders",
                 "Toggle Polarity",
                 "Bypass All Inserts",
                 "Clear Inserts",
@@ -4207,6 +4282,7 @@ mod tests {
         let songs = SongList {
             names: &names,
             current: 1,
+            vcas: &[],
         };
         let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
         let window = m.iter().find(|m| m.title == "Window").unwrap();
@@ -4238,6 +4314,7 @@ mod tests {
         let songs = SongList {
             names: &many,
             current: 0,
+            vcas: &[],
         };
         let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
         let window = m.iter().find(|m| m.title == "Window").unwrap();
@@ -4447,6 +4524,7 @@ mod tests {
                 compensation: false,
                 align_returns: false,
                 send_follow: false,
+                link_faders: false,
                 console_devices: true,
                 console_links: false,
                 cpu_meters: false,

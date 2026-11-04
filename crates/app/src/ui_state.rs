@@ -136,6 +136,9 @@ pub struct UiState {
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
+    /// Link faders in the console: a level of a strip in a VCA group moves the group's levels.
+    /// An absent key means off.
+    pub link_faders: bool,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -188,6 +191,7 @@ impl Default for UiState {
             piano_keys_octave: DEFAULT_OCTAVE,
             piano_keys_velocity: DEFAULT_VELOCITY,
             audio_editor_mode: AudioMode::Overview,
+            link_faders: false,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,

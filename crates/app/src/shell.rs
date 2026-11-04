@@ -791,6 +791,7 @@ impl<B: AudioBackend> Shell<B> {
             view.set_show_console_links(self.ui.show_console_links);
             view.set_navigator_visible(self.ui.show_rack_navigator);
         }
+        self.core.console_mut().set_link_faders(self.ui.link_faders);
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
@@ -2284,6 +2285,14 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|t| t.name.clone())
             .collect();
+        let vcas: Vec<(u32, String)> = self
+            .core
+            .doc()
+            .console
+            .vcas
+            .iter()
+            .map(|v| (v.id, v.name.clone()))
+            .collect();
         menus_with_songs(
             &self.menu_state(),
             self.router.keymap(),
@@ -2292,6 +2301,7 @@ impl<B: AudioBackend> Shell<B> {
             &SongList {
                 names: &self.songs,
                 current: self.song_at,
+                vcas: &vcas,
             },
         )
     }
@@ -2431,6 +2441,7 @@ impl<B: AudioBackend> Shell<B> {
             compensation: self.core.doc().console.compensation,
             align_returns: self.core.doc().console.align_returns,
             send_follow: self.core.doc().console.send_follow,
+            link_faders: self.core.console().link_faders(),
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
             cpu_meters: self.core.cpu_meters_on(),
@@ -5915,6 +5926,18 @@ impl<B: AudioBackend> Shell<B> {
                 // A refusal is already reported (rack and console).
                 self.core
                     .create_vca_from_selection(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::CreateVcaForFolder => {
+                // A refusal is already reported.
+                self.core.create_vca_for_folder(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::LinkFaders => {
+                let on = !self.core.console().link_faders();
+                self.core.console_mut().set_link_faders(on);
+                self.ui.link_faders = on;
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::AddToVca(id) => {

@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[102.00,1314.00,426.80,2168.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[100.00,1311.00,424.80,2165.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[100.00,1311.00,424.80,2165.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[102.00,1314.00,426.80,2192.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[100.00,1311.00,424.80,2189.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[100.00,1311.00,424.80,2189.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[132.00,1331.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+X","at":[410.80,1331.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[132.00,1355.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -47,12 +47,13 @@
 {"text":"Ctrl+Alt+Shift+Down","at":[410.80,1976.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Rename Track...","at":[132.00,2000.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Track Comment...","at":[132.00,2024.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Delete Track and Device","at":[132.00,2048.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"fill":{"rect":[110.00,2060.00,414.80,2061.00]},"brush":"#ffffff1c"},
-{"text":"Colour","at":[132.00,2081.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"▸","at":[410.80,2081.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
-{"text":"Height","at":[132.00,2105.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Create VCA","at":[132.00,2048.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Delete Track and Device","at":[132.00,2072.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rect":[110.00,2084.00,414.80,2085.00]},"brush":"#ffffff1c"},
+{"text":"Colour","at":[132.00,2105.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"▸","at":[410.80,2105.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
-{"text":"Fold Automation Lanes","at":[132.00,2129.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Unfold Automation Lanes","at":[132.00,2153.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
+{"text":"Height","at":[132.00,2129.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"▸","at":[410.80,2129.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
+{"text":"Fold Automation Lanes","at":[132.00,2153.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Unfold Automation Lanes","at":[132.00,2177.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
 ]}

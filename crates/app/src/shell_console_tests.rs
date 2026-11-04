@@ -201,9 +201,11 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Create Parallel Channel", None),
             ("Delete Channel", None),
             ("Create VCA from Selection", None),
+            ("Create VCA from Folder", None),
             ("Add to VCA", None),
             ("Remove from VCA", None),
             ("Delete VCA", None),
+            ("Link Faders", None),
             ("Toggle Polarity", None),
             ("Bypass All Inserts", None),
             ("Clear Inserts", None),
@@ -1507,4 +1509,173 @@ fn sorting_the_rack_from_the_view_menu_is_one_undo_step_and_the_menu_follows() {
     assert!(s.core().view().single_column());
     assert_eq!(s.core().document().revision(), rev);
     assert_eq!(checked(&s, "Single Column"), Some(true));
+}
+
+// ---------------------------------------------------------------- groups: follow, link, names
+
+fn menu_row(s: &Shell<NullBackend>, command: AppCommand) -> Option<crate::commands::MenuItem> {
+    s.menu_model()
+        .iter()
+        .flat_map(|m| m.items())
+        .find(|i| i.command == command)
+        .cloned()
+}
+
+/// Three synths `a`, `b`, `c` with tracks, and the folder 1 over `a` and `b`.
+fn folder_shell() -> Shell<NullBackend> {
+    let mut s = shell();
+    for k in ["a", "b", "c"] {
+        add_synth(&mut s, k);
+    }
+    for k in ["a", "b", "c"] {
+        s.core_mut()
+            .apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+                device: DeviceKey(k.into()),
+            }))
+            .unwrap();
+    }
+    s.core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::GroupTracks {
+            devices: vec![DeviceKey("a".into()), DeviceKey("b".into())],
+            name: "Strings".into(),
+        }))
+        .unwrap();
+    s
+}
+
+#[test]
+fn link_faders_is_a_mixer_menu_check_that_persists_in_ui_state() {
+    let path = temp("ui-state-link.json");
+    let _ = std::fs::remove_file(&path);
+    let mut s = shell_at(Some(path.clone()));
+    assert!(!s.menu_state().link_faders && !s.core().console().link_faders());
+    let item = menu_row(&s, AppCommand::LinkFaders).expect("Link Faders is in the Mixer menu");
+    assert_eq!(
+        (item.label.as_ref(), item.checked),
+        ("Link Faders", Some(false))
+    );
+    assert_eq!(item.shortcut, None, "no default key");
+    assert_eq!(
+        AppCommand::LinkFaders.command_id(),
+        Some(("mixer.link_faders", None))
+    );
+    s.execute(AppCommand::LinkFaders);
+    assert!(s.core().console().link_faders() && s.menu_state().link_faders);
+    assert_eq!(
+        menu_row(&s, AppCommand::LinkFaders).unwrap().checked,
+        Some(true)
+    );
+    s.flush_ui_state();
+    assert!(UiState::load(&path).link_faders);
+    // A new start reads it back; an old file without the key means off.
+    let s2 = shell_at(Some(path.clone()));
+    assert!(s2.core().console().link_faders());
+    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+    assert!(!shell_at(Some(path.clone())).core().console().link_faders());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn create_vca_from_folder_makes_a_group_that_follows_the_selected_folder() {
+    let mut s = folder_shell();
+    assert_eq!(
+        menu_row(&s, AppCommand::CreateVcaForFolder).map(|i| i.enabled),
+        Some(false),
+        "no folder is selected"
+    );
+    s.core_mut().arrangement_mut().set_selected_group(Some(1));
+    s.set_focus(Pane::Arrangement);
+    assert_eq!(
+        menu_row(&s, AppCommand::CreateVcaForFolder).map(|i| i.enabled),
+        Some(true)
+    );
+    s.execute(AppCommand::CreateVcaForFolder);
+    let doc = s.core().doc();
+    let group = &doc.console.vcas[0];
+    assert_eq!(group.name, "Strings", "named after the folder");
+    assert_eq!(group.follows, Some(1));
+    assert_eq!(group.members.len(), 2);
+    // A group already follows it: the item is off.
+    assert_eq!(
+        menu_row(&s, AppCommand::CreateVcaForFolder).map(|i| i.enabled),
+        Some(false)
+    );
+    // A track moved into the folder joins the group in the same step.
+    s.core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::MoveTracks {
+            devices: vec![DeviceKey("c".into())],
+            place: atomik_model::TrackPlace {
+                to_index: 2,
+                into: Some(1),
+            },
+        }))
+        .unwrap();
+    assert_eq!(s.core().doc().console.vcas[0].members.len(), 3);
+    s.core_mut().undo();
+    assert_eq!(s.core().doc().console.vcas[0].members.len(), 2);
+}
+
+#[test]
+fn the_mixer_menu_names_each_group_in_add_to_group_and_delete_group() {
+    let mut s = folder_shell();
+    let submenus = |s: &Shell<NullBackend>| -> Vec<(String, Vec<String>)> {
+        s.menu_model()
+            .iter()
+            .find(|m| m.title == "Mixer")
+            .unwrap()
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                MenuEntry::Submenu(sub) => Some((
+                    sub.label.to_string(),
+                    sub.items().map(|i| i.label.to_string()).collect(),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+    assert!(
+        submenus(&s).iter().all(|(l, _)| l != "Add to Group"),
+        "no group, no submenus"
+    );
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[DeviceKey("a".into())], Some(&DeviceKey("a".into())));
+    s.execute(AppCommand::CreateVca);
+    s.core_mut()
+        .apply_command(Command::Console(ConsoleCommand::CreateVca {
+            name: "Pads".into(),
+            members: Vec::new(),
+        }))
+        .unwrap();
+    let subs = submenus(&s);
+    let add = subs
+        .iter()
+        .find(|(l, _)| l == "Add to Group")
+        .expect("Add to Group");
+    let del = subs
+        .iter()
+        .find(|(l, _)| l == "Delete Group")
+        .expect("Delete Group");
+    assert_eq!(add.1, ["VCA 1", "Pads"]);
+    assert_eq!(del.1, ["VCA 1", "Pads"]);
+    // The rows run the commands that name the group.
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[DeviceKey("b".into())], Some(&DeviceKey("b".into())));
+    let row = menu_row(&s, AppCommand::AddToVca(Some(2))).expect("a row for Pads");
+    assert_eq!(row.label, "Pads");
+    assert!(row.enabled);
+    s.execute(AppCommand::AddToVca(Some(2)));
+    assert_eq!(s.core().doc().console.vca(2).unwrap().members.len(), 1);
+    s.execute(AppCommand::DeleteVca(Some(2)));
+    assert!(s.core().doc().console.vca(2).is_none());
+    assert_eq!(
+        submenus(&s)
+            .iter()
+            .find(|(l, _)| l == "Add to Group")
+            .unwrap()
+            .1,
+        ["VCA 1"]
+    );
 }
