@@ -347,3 +347,37 @@ fn a_command_a_take_cannot_take_is_refused_and_changes_nothing() {
     );
     rejects(&mut d, sc(SongCommand::SplitClip { id, at: BAR }), &reg);
 }
+
+#[test]
+fn notes_paste_into_a_take_the_piano_roll_has_open() {
+    let reg = registry();
+    let mut d = two_groups(&reg);
+    let id = group_of(&d, 1).takes[2].id;
+    let before = group_of(&d, 1).takes[2].clone();
+    let ClipContent::Notes(old) = &before.content else {
+        panic!("notes")
+    };
+    let snapshot = atomik_model::NoteSnapshot {
+        notes: vec![note(0, PPQ, 80, 0.7)],
+        span: PPQ,
+    };
+    step(
+        &mut d,
+        wf(WorkflowCommand::PasteNotes {
+            clip: id,
+            at_tick: PPQ,
+            notes: snapshot,
+        }),
+        &reg,
+    );
+    let ClipContent::Notes(now) = &group_of(&d, 1).takes[2].content else {
+        panic!("notes")
+    };
+    assert_eq!(now.len(), old.len() + 1);
+    assert!(now.iter().any(|n| n.key == 80));
+    // The lane plays the top take, so the compiled clip has the note too.
+    let ClipContent::Notes(played) = &d.doc().song.tracks[0].lanes[0].clips[0].content else {
+        panic!("notes")
+    };
+    assert!(played.iter().any(|n| n.key == 80));
+}

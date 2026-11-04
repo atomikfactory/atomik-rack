@@ -10,7 +10,7 @@ use crate::takes::{
     comp_with_take_moved, comp_within, comp_without_take, layered_comp, set_segment,
 };
 use crate::workflow::TakeSnapshot;
-use crate::workflow_cmd::TakeTarget;
+use crate::workflow_cmd::{TakeTarget, WorkflowCommand};
 use crate::{DeviceKey, ModelError, RackDoc};
 use atomik_device_sdk::Registry;
 
@@ -598,18 +598,33 @@ pub(crate) fn take_target(doc: &RackDoc, command: &SongCommand) -> Option<ClipId
         | SongCommand::SetClipScale { clip, .. } => *clip,
         _ => return None,
     };
-    (doc.song.clip(id).is_none() && doc.song.take_clip(id).is_some()).then_some(id)
+    is_take(doc, id).then_some(id)
 }
 
-/// Plans a clip-editing command on take `id`: the command is planned on a scratch document where
-/// the take is a clip of its lane, and the clip it comes out as replaces the take in its group
-/// (the comp is compiled again, so the lane plays the edit). One undo step, the same as the
-/// command makes on a plain clip.
+/// The take a note paste or duplicate (the piano roll's clipboard) names, when its clip id is a
+/// take.
+pub(crate) fn take_target_workflow(doc: &RackDoc, command: &WorkflowCommand) -> Option<ClipId> {
+    match command {
+        WorkflowCommand::PasteNotes { clip, .. } | WorkflowCommand::DuplicateNotes { clip, .. } => {
+            is_take(doc, *clip).then_some(*clip)
+        }
+        _ => None,
+    }
+}
+
+fn is_take(doc: &RackDoc, id: ClipId) -> bool {
+    doc.song.clip(id).is_none() && doc.song.take_clip(id).is_some()
+}
+
+/// Plans a clip-editing command on take `id`: `plan` is the command's planner, run on a scratch
+/// document where the take is a clip of its lane, and the clip it comes out as replaces the
+/// take in its group (the comp is compiled again, so the lane plays the edit). One undo step,
+/// the same as the command makes on a plain clip.
 pub(crate) fn plan_take_edit(
     doc: &RackDoc,
     registry: &Registry,
-    command: SongCommand,
     id: ClipId,
+    plan: impl FnOnce(&RackDoc, &Registry) -> Result<Edit, ModelError>,
 ) -> Result<Edit, ModelError> {
     let (track, lane, group, at) = doc
         .song
@@ -621,7 +636,7 @@ pub(crate) fn plan_take_edit(
     scratch.song_mut().tracks[ti].lanes[lane]
         .clips
         .push(group.takes[at].clone());
-    let (edit, _) = crate::song_cmd::plan(&scratch, registry, command)?;
+    let edit = plan(&scratch, registry)?;
     let Edit::Clip {
         new: Some(clip), ..
     } = edit

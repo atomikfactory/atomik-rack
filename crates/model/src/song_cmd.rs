@@ -960,10 +960,10 @@ pub(crate) fn plan(
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
     // A clip editor open on a take sends the commands of a plain clip: they edit the take.
     if let Some(id) = crate::takes_cmd::take_target(doc, &command) {
-        return Ok((
-            crate::takes_cmd::plan_take_edit(doc, registry, command, id)?,
-            None,
-        ));
+        let edit = crate::takes_cmd::plan_take_edit(doc, registry, id, |scratch, registry| {
+            plan(scratch, registry, command).map(|(edit, _)| edit)
+        })?;
+        return Ok((edit, None));
     }
     let song = &doc.song;
     let edit = match command {

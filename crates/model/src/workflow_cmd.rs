@@ -728,6 +728,15 @@ pub(crate) fn plan(
     command: WorkflowCommand,
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
     let plain = |edit: Result<Edit, ModelError>| edit.map(|e| (e, None));
+    // The piano roll open on a take pastes notes into the take.
+    if let Some(id) = crate::takes_cmd::take_target_workflow(doc, &command) {
+        return plain(crate::takes_cmd::plan_take_edit(
+            doc,
+            registry,
+            id,
+            |scratch, registry| plan(scratch, registry, command).map(|(edit, _)| edit),
+        ));
+    }
     match command {
         WorkflowCommand::RemoveDevices { keys } => {
             plain(remove_devices(doc, registry, &keys, false))
