@@ -319,6 +319,28 @@ pub enum UiAction {
     /// [`crate::AudioEditorView::open`] and show it in place of the arrangement. Opening another
     /// clip while the editor is open keeps its mode.
     OpenAudioEditor(ClipId),
+    /// Copy takes of take group `group` (positions in the group's take list) to the takes
+    /// clipboard: the take menu's Copy Take and Copy All Takes. Session state of the app, not
+    /// an undo step.
+    CopyTakes {
+        /// The take group.
+        group: u32,
+        /// The takes to copy.
+        takes: Vec<usize>,
+    },
+    /// Paste the takes clipboard into take group `group` as new takes (one undo step).
+    PasteTakes {
+        /// The take group.
+        group: u32,
+    },
+    /// Import a file as a new take of take group `group`: the app asks for the file (an audio
+    /// file for an audio group, a MIDI file when `notes`), then adds it as one undo step.
+    ImportTake {
+        /// The take group.
+        group: u32,
+        /// The group holds note takes (a MIDI file), not audio.
+        notes: bool,
+    },
     /// Close the audio clip editor and show the arrangement again.
     CloseAudioEditor,
     /// Make a Loop Slicer from the audio clip: a new device that slices the clip's span of its

@@ -766,10 +766,11 @@ impl AudioEditorView {
     /// Reads the clip from the document.
     pub fn sync(&mut self, doc: &RackDoc, _registry: &Registry) {
         let Some(id) = self.clip else { return };
+        // A take of a take group opens like a clip (its edits go to the take).
         let found = doc
             .song
-            .clip(id)
-            .and_then(|(track, _, clip)| match &clip.content {
+            .clip_or_take(id)
+            .and_then(|(track, clip)| match &clip.content {
                 ClipContent::Audio(a) => Some((track, clip, a)),
                 _ => None,
             });

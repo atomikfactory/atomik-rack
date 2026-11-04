@@ -131,13 +131,13 @@ impl ArrangementView {
             }
         };
         let mut items: Vec<(String, String)> = Vec::new();
-        let mut commands: Vec<SongCommand> = Vec::new();
+        let mut commands: Vec<UiAction> = Vec::new();
         for n in 1..=count {
             items.push((n.to_string(), format!("Pattern {n}")));
-            commands.push(set(n as f32));
+            commands.push(super::song_cmd(set(n as f32)));
         }
         items.push(("delete".into(), "Delete Clip".into()));
-        commands.push(SongCommand::RemoveClip { id: clip.id });
+        commands.push(super::song_cmd(SongCommand::RemoveClip { id: clip.id }));
         let current = points.get(index).map(|p| number(&param, p.value) - 1);
         let device = self.song.tracks[track].device.clone();
         let scroll = current

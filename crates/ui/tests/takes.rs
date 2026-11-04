@@ -619,6 +619,11 @@ fn the_take_row_menu_duplicates_and_reorders_in_one_step_each() {
     assert_eq!(
         labels,
         [
+            "Copy Take",
+            "Copy All Takes",
+            "Paste Takes",
+            "Import MIDI File as Take...",
+            "Open in Piano Roll",
             "Duplicate Take",
             "Move Take Up",
             "Move Take Down",
@@ -683,4 +688,155 @@ fn the_strip_menu_silences_a_segment_and_offers_no_crossfade_for_notes() {
     );
     apply(&mut d, &reg, &actions);
     assert_eq!(group(&d).take_at(5 * BAR + 1), None);
+}
+
+// ------------------------------------------------------------------ take keys, clipboard rows
+
+fn keys(
+    d: &Document,
+    reg: &atomik_device_sdk::Registry,
+    v: &mut ArrangementView,
+    id: &str,
+) -> atomik_ui::keymap::CommandOutcome {
+    v.command(id, None, d.doc(), reg)
+}
+
+#[test]
+fn the_take_keys_step_between_the_take_rows_and_stop_at_the_ends() {
+    let (d, reg, mut v) = setup();
+    // Closed: there are no rows to step through, and the key says why.
+    assert!(matches!(
+        keys(&d, &reg, &mut v, "sequencer.take_next"),
+        atomik_ui::keymap::CommandOutcome::NotApplicable(_)
+    ));
+    open(&d, &reg, &mut v);
+    assert_eq!(v.take_focus(), None);
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    assert_eq!(
+        v.take_focus(),
+        Some((1, 0)),
+        "the first row takes the focus"
+    );
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    assert_eq!(v.take_focus(), Some((1, 2)));
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    assert_eq!(v.take_focus(), Some((1, 2)), "it stops at the last row");
+    keys(&d, &reg, &mut v, "sequencer.take_prev");
+    assert_eq!(v.take_focus(), Some((1, 1)));
+    keys(&d, &reg, &mut v, "sequencer.take_prev");
+    keys(&d, &reg, &mut v, "sequencer.take_prev");
+    assert_eq!(v.take_focus(), Some((1, 0)), "and at the first");
+}
+
+#[test]
+fn the_focused_take_is_picked_and_opened_from_the_keyboard() {
+    let (d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    assert_eq!(
+        keys(&d, &reg, &mut v, "sequencer.take_pick"),
+        atomik_ui::keymap::CommandOutcome::Declined,
+        "with no focus the key is not this view's"
+    );
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    let picked = keys(&d, &reg, &mut v, "sequencer.take_pick");
+    assert_eq!(
+        song_commands(picked.actions()),
+        [SongCommand::PickTake { group: 1, take: 1 }]
+    );
+    // Return opens the focused take in the piano roll (a note take), by its own clip id.
+    let id = group(&d).takes[1].id;
+    let opened = keys(&d, &reg, &mut v, "sequencer.open_clip");
+    assert_eq!(opened.actions(), [UiAction::OpenPianoRoll(id)]);
+}
+
+#[test]
+fn selecting_a_clip_takes_the_keys_back_from_the_take_focus() {
+    let (d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    keys(&d, &reg, &mut v, "sequencer.take_next");
+    assert!(v.take_focus().is_some());
+    let comp = d.doc().song.tracks[0].lanes[0].clips[0].id;
+    v.set_selected_clips(&[comp]);
+    assert_eq!(v.take_focus(), None);
+    // And a click on a take row drops the clip selection.
+    let at = v.take_label_center(1, 2).unwrap();
+    click(&d, &reg, &mut v, at);
+    assert_eq!(v.take_focus(), Some((1, 2)));
+    assert!(v.selected_clips().is_empty());
+}
+
+#[test]
+fn the_take_menu_offers_the_clipboard_rows_and_names_what_they_act_on() {
+    let (d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    let at = v.take_point(1, 2, 4 * BAR + PPQ).unwrap();
+    right_click(&d, &reg, &mut v, at);
+    assert_eq!(v.take_focus(), Some((1, 2)), "the menu focuses its row");
+    let copy = pick_row(&d, &reg, &mut v, "Copy Take");
+    assert_eq!(
+        copy,
+        [UiAction::CopyTakes {
+            group: 1,
+            takes: vec![2]
+        }]
+    );
+    right_click(&d, &reg, &mut v, at);
+    let all = pick_row(&d, &reg, &mut v, "Copy All Takes");
+    assert_eq!(
+        all,
+        [UiAction::CopyTakes {
+            group: 1,
+            takes: vec![0, 1, 2]
+        }]
+    );
+    right_click(&d, &reg, &mut v, at);
+    assert_eq!(
+        pick_row(&d, &reg, &mut v, "Paste Takes"),
+        [UiAction::PasteTakes { group: 1 }]
+    );
+    right_click(&d, &reg, &mut v, at);
+    assert_eq!(
+        pick_row(&d, &reg, &mut v, "Import MIDI File as Take..."),
+        [UiAction::ImportTake {
+            group: 1,
+            notes: true
+        }]
+    );
+    right_click(&d, &reg, &mut v, at);
+    let id = group(&d).takes[2].id;
+    assert_eq!(
+        pick_row(&d, &reg, &mut v, "Open in Piano Roll"),
+        [UiAction::OpenPianoRoll(id)]
+    );
+    // The strip offers the group-wide rows only.
+    let strip = v.take_strip_point(1, 5 * BAR).unwrap();
+    right_click(&d, &reg, &mut v, strip);
+    let labels = v.menu_labels();
+    assert!(labels.iter().any(|l| l == "Copy All Takes"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "Copy Take"), "{labels:?}");
+    assert!(
+        !labels.iter().any(|l| l.starts_with("Open in")),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn the_piano_roll_opens_a_take_and_reads_its_notes() {
+    let (d, reg, _v) = setup();
+    let take = group(&d).takes[2].clone();
+    assert!(
+        d.doc().song.clip(take.id).is_none(),
+        "a take is not a lane clip"
+    );
+    let mut roll = atomik_ui::PianoRollView::new(atomik_ui::Theme::dark());
+    roll.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1000.0, 560.0));
+    roll.open(take.id);
+    roll.sync(d.doc(), &reg);
+    let atomik_model::ClipContent::Notes(notes) = &take.content else {
+        panic!("a note take")
+    };
+    assert_eq!(roll.notes(), notes.as_slice());
+    assert_eq!(roll.track_device(), Some(&key("keys")));
 }
