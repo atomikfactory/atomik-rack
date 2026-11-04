@@ -51,7 +51,7 @@ pub fn new_bus_key(doc: &RackDoc) -> DeviceKey {
 pub const FX_SLOTS: usize = 8;
 
 /// Most effects in one insert chain (a channel's or the master's).
-pub const INSERT_SLOTS: usize = 4;
+pub const INSERT_SLOTS: usize = 16;
 
 /// Type id of a channel strip device.
 pub const CHANNEL_TYPE: &str = "atomik.channel";
@@ -514,7 +514,7 @@ pub enum ConsoleCommand {
     /// lower slot **replaces** that effect. `None` removes the slot and closes the chain. A
     /// removed or replaced effect loses its chain cables but **stays in the rack**. The whole
     /// chain is re-cabled in order in one undo step. Rejected (nothing changes) for a slot
-    /// past the end or beyond 4, a device that is not a console channel or the master, an
+    /// past the end or beyond 16, a device that is not a console channel or the master, an
     /// effect that is not a stereo effect, a console device, a return effect, a channel
     /// source, already in this or another chain (use `MoveInsert` within a chain), or when
     /// a cable would be rejected (cycle, insert return already fed by something else).
