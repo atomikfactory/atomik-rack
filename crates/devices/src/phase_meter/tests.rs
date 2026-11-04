@@ -82,7 +82,11 @@ fn descriptor_validates_and_follows_the_effect_conventions() {
     assert_eq!((view.default, view.max as usize), (0.0, 1));
     assert_eq!(LOUDNESS_VIEW_NAMES.len(), 2);
     let target = DESCRIPTOR.param_by_key("target").unwrap();
-    assert!(target.min < -23.0 && target.max > -14.0 && target.default.to_bits() == (-14.0f32).to_bits());
+    assert!(
+        target.min < -23.0
+            && target.max > -14.0
+            && target.default.to_bits() == (-14.0f32).to_bits()
+    );
     assert_eq!(
         DESCRIPTOR.param_by_key("loudness").unwrap().default as i32,
         1
