@@ -24,6 +24,7 @@ fn vca_doc() -> RackDoc {
             mute: false,
             solo: false,
             members: vec![key("ch-bass"), key("ch-lead")],
+            follows: None,
         },
         VcaGroup {
             id: 2,
@@ -33,6 +34,7 @@ fn vca_doc() -> RackDoc {
             mute: true,
             solo: false,
             members: vec![key("ch-keys")],
+            follows: None,
         },
     ];
     doc
@@ -574,6 +576,7 @@ fn a_track_whose_channel_is_in_a_group_gets_the_groups_colour_bar() {
         mute: false,
         solo: false,
         members: vec![key("ch-bass")],
+        follows: None,
     });
     assert!(paint(&doc).contains(chip), "the bar shows the colour");
     // A group without a colour still marks its tracks (neutral), and leaving it removes the bar.

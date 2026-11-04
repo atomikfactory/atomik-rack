@@ -1460,6 +1460,23 @@ impl Document {
             }
             None => edit,
         };
+        // A VCA group that follows a track folder is brought in line with the folder in the same
+        // step (a track moved in or out, added, deleted, or the folder dissolved).
+        let edit = match console_vca::follow_sync(&self.doc) {
+            Some(sync) => match sync.perform(&mut self.doc) {
+                Ok(more) => {
+                    ops.extend(more);
+                    Edit::Compound(vec![edit, sync])
+                }
+                Err(fault) => {
+                    let mut back = edit;
+                    back.invert();
+                    back.perform(&mut self.doc)?;
+                    return Err(fault.into());
+                }
+            },
+            None => edit,
+        };
         self.redo.clear();
         self.labels.redo.clear();
         let merged = merge.is_some() && merge == self.merge;

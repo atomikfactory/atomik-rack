@@ -126,6 +126,12 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
         ConsoleCommand::CreateBus { .. } => "Create Bus",
         ConsoleCommand::DeleteBus { .. } => "Delete Bus",
         ConsoleCommand::SetOutput { .. } => "Set Output",
+        ConsoleCommand::CreateVca { .. } | ConsoleCommand::CreateVcaForFolder { .. } => {
+            "Create VCA"
+        }
+        ConsoleCommand::SetVcaFollow { .. } => "Follow Folder",
+        ConsoleCommand::AssignToVca { .. } => "Assign to VCA",
+        ConsoleCommand::DeleteVca { .. } => "Delete VCA",
         _ => DEFAULT_LABEL,
     }
 }

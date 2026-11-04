@@ -784,6 +784,8 @@ pub(crate) fn plan(
             crate::console_vca::clear_flags(&mut p, "mute")?;
         }
         vca_command @ (ConsoleCommand::CreateVca { .. }
+        | ConsoleCommand::CreateVcaForFolder { .. }
+        | ConsoleCommand::SetVcaFollow { .. }
         | ConsoleCommand::RenameVca { .. }
         | ConsoleCommand::SetVcaColor { .. }
         | ConsoleCommand::SetVcaLevel { .. }

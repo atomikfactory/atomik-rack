@@ -5,7 +5,9 @@ use super::*;
 /// Reads the console's VCA groups (version 26): ids from 1 and unique, a trimmed name of at
 /// most 32 characters unique ignoring case, an optional colour, a `level_db` within the VCA
 /// range (default 0), optional mute and solo flags, members that are console channels or buses,
-/// none in two groups (listed in any order, kept in console order). At most 64 groups.
+/// none in two groups (listed in any order, kept in console order). At most 64 groups. A
+/// `follows` (version 43) is the id of a track folder; one that no folder has is dropped when the
+/// song is known (the group keeps its members), see `drop_stale_follows`.
 pub(super) fn load_vcas(
     v: &Value,
     path: &JsonPath,
@@ -60,6 +62,17 @@ pub(super) fn load_vcas(
             }
             None => 0.0,
         };
+        let follows = match g.get("follows") {
+            Some(f) => {
+                let fp = p.field("follows");
+                let id = uint(f, &fp, u64::from(u32::MAX))? as u32;
+                if id == 0 {
+                    return Err(fp.error("track folder ids count from 1"));
+                }
+                Some(id)
+            }
+            None => None,
+        };
         let members_path = p.field("members");
         let mut members = Vec::new();
         for (j, m) in array(&g["members"], &members_path)?.iter().enumerate() {
@@ -83,6 +96,7 @@ pub(super) fn load_vcas(
             mute: flag(g, &p, "mute")?,
             solo: flag(g, &p, "solo")?,
             members,
+            follows,
         });
     }
     Ok(())

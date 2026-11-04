@@ -25,6 +25,16 @@
 //! level drag carries a merge id like a fader drag.
 //!
 //! The group ids count from 1 and are never reused while the group lives (`max + 1`).
+//!
+//! **Following a folder.** A group can follow a track folder ([`VcaGroup::follows`]): its
+//! members are then the console channels of the tracks in the folder, sub-folders included, and
+//! the model keeps them so after every command, in the same undo step as the command that moved
+//! a track in or out, added or deleted one, or dissolved the folder ([`follow_sync`]). A strip
+//! of the folder joins the group even if it was in another one. While a group follows, its
+//! members are not edited by hand (assigning to it, or taking a member out of it, is refused);
+//! unfollowing keeps the members and makes them an ordinary group again. A group whose folder
+//! is dissolved, or loses its last track (a folder with no track is not saved), stops following and
+//! keeps its members. One group follows a given folder.
 
 use crate::console::{Console, ConsoleCommand};
 use crate::console_cmd::{Planner, bad};
@@ -68,6 +78,10 @@ pub struct VcaGroup {
     pub solo: bool,
     /// The member strips (console channels and buses), in console order, none in another group.
     pub members: Vec<DeviceKey>,
+    /// The id of the track folder whose tracks' channels are the members (see the module
+    /// documentation), or none for a group whose members are chosen by hand. Written only when
+    /// set (an optional field of project format 43).
+    pub follows: Option<u32>,
 }
 
 /// What the engine strip of a member is fed from its group (`internal.vca_*`); all at their
@@ -165,6 +179,23 @@ impl Console {
 }
 
 impl RackDoc {
+    /// The console channels of the tracks in the folder `folder`, sub-folders included, in console
+    /// order (empty for an unknown folder or a folder with no track that has a channel).
+    pub fn folder_strips(&self, folder: u32) -> Vec<DeviceKey> {
+        let wanted: Vec<DeviceKey> = self
+            .song
+            .group_tracks(folder)
+            .into_iter()
+            .filter_map(|i| self.console.channel_of(&self.song.tracks[i].device))
+            .map(|c| c.channel.clone())
+            .collect();
+        self.console
+            .strip_keys()
+            .filter(|k| wanted.contains(k))
+            .cloned()
+            .collect()
+    }
+
     /// The derived `internal.vca_*` feed of every console strip, channels then buses (the order
     /// of [`RackDoc::solo_silence`]), including the strips outside any group (they get
     /// [`VcaFeed::NONE`], which is how a strip that left a group is reset). The app pushes
@@ -208,6 +239,38 @@ pub(crate) fn leave_edit(console: &Console, key: &DeviceKey) -> Option<Edit> {
     let mut new = old.clone();
     new.iter_mut().for_each(|v| v.members.retain(|m| m != key));
     Some(Edit::ConsoleVcas { old, new })
+}
+
+/// The edit that brings every group that follows a folder in line with the folder, or none when
+/// they already are (and for a console with no following group, without looking at the song).
+/// The model applies it right after any command, as part of the same undo step. A strip of a
+/// followed folder joins the group (leaving another one); a group whose folder is gone stops
+/// following and keeps its members. Where two followed folders are nested, the group later in the
+/// list takes the strips they share.
+pub(crate) fn follow_sync(doc: &RackDoc) -> Option<Edit> {
+    if doc.console.vcas.iter().all(|g| g.follows.is_none()) {
+        return None;
+    }
+    let old = doc.console.vcas.clone();
+    let mut new = old.clone();
+    for i in 0..new.len() {
+        let Some(folder) = new[i].follows else {
+            continue;
+        };
+        if doc.song.group_tracks(folder).is_empty() {
+            new[i].follows = None;
+            continue;
+        }
+        let want = doc.folder_strips(folder);
+        for (j, g) in new.iter_mut().enumerate() {
+            if j != i {
+                g.members.retain(|m| !want.contains(m));
+            }
+        }
+        new[i].members = want;
+    }
+    canonical(&doc.console, &mut new);
+    (new != old).then_some(Edit::ConsoleVcas { old, new })
 }
 
 /// A group name checked for the group `except` (none for a new group), trimmed.
@@ -271,6 +334,15 @@ fn edit_groups(
     Ok(())
 }
 
+/// The refusal of a hand edit of the members of a group that follows a folder.
+fn followed(g: &VcaGroup) -> ModelError {
+    bad(format!(
+        "the VCA \"{}\" follows a track folder, so its members come from the folder; \
+         unfollow it first",
+        g.name
+    ))
+}
+
 fn group_mut(groups: &mut [VcaGroup], id: u32) -> Result<&mut VcaGroup, ModelError> {
     groups
         .iter_mut()
@@ -288,6 +360,13 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             }
             let name = checked_name(console, &name, None)?;
             let members = checked_strips(console, &members)?;
+            if let Some(g) = members
+                .iter()
+                .filter_map(|m| console.vca_of(m))
+                .find(|g| g.follows.is_some())
+            {
+                return Err(followed(g));
+            }
             let id = console.next_vca_id();
             edit_groups(p, |groups| {
                 groups
@@ -301,7 +380,89 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                     mute: false,
                     solo: false,
                     members,
+                    follows: None,
                 });
+                Ok(())
+            })
+        }
+        ConsoleCommand::CreateVcaForFolder { folder, name } => {
+            let console = &p.doc().console;
+            if console.vcas.len() >= MAX_VCAS {
+                return Err(bad(format!("a console has at most {MAX_VCAS} VCA groups")));
+            }
+            if p.doc().song.group_tracks(folder).is_empty() {
+                return Err(bad(format!(
+                    "there is no track folder {folder} with tracks"
+                )));
+            }
+            if let Some(other) = console.vcas.iter().find(|g| g.follows == Some(folder)) {
+                return Err(bad(format!(
+                    "the VCA \"{}\" already follows that folder",
+                    other.name
+                )));
+            }
+            let name = checked_name(console, &name, None)?;
+            let members = p.doc().folder_strips(folder);
+            let id = console.next_vca_id();
+            edit_groups(p, |groups| {
+                groups
+                    .iter_mut()
+                    .for_each(|g| g.members.retain(|m| !members.contains(m)));
+                groups.push(VcaGroup {
+                    id,
+                    name,
+                    color: Some(VCA_PALETTE[(id as usize - 1) % VCA_PALETTE.len()]),
+                    level_db: 0.0,
+                    mute: false,
+                    solo: false,
+                    members,
+                    follows: Some(folder),
+                });
+                Ok(())
+            })
+        }
+        ConsoleCommand::SetVcaFollow { vca, folder } => {
+            let doc = p.doc();
+            let Some(group) = doc.console.vca(vca) else {
+                return Err(bad(format!("there is no VCA group {vca}")));
+            };
+            let members = match folder {
+                Some(f) => {
+                    if doc.song.group_tracks(f).is_empty() {
+                        return Err(bad(format!("there is no track folder {f} with tracks")));
+                    }
+                    if let Some(other) = doc
+                        .console
+                        .vcas
+                        .iter()
+                        .find(|g| g.id != vca && g.follows == Some(f))
+                    {
+                        return Err(bad(format!(
+                            "the VCA \"{}\" already follows that folder",
+                            other.name
+                        )));
+                    }
+                    Some(doc.folder_strips(f))
+                }
+                None => None,
+            };
+            if group.follows == folder {
+                return Err(bad(match folder {
+                    Some(_) => "that VCA already follows that folder",
+                    None => "that VCA does not follow a folder",
+                }));
+            }
+            edit_groups(p, |groups| {
+                if let Some(members) = &members {
+                    groups
+                        .iter_mut()
+                        .for_each(|g| g.members.retain(|m| !members.contains(m)));
+                }
+                let g = group_mut(groups, vca)?;
+                g.follows = folder;
+                if let Some(members) = members {
+                    g.members = members;
+                }
                 Ok(())
             })
         }
@@ -336,6 +497,18 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                 return Err(bad(format!("there is no VCA group {id}")));
             }
             let strips = checked_strips(console, &strips)?;
+            if let Some(id) = vca
+                && let Some(g) = console.vca(id).filter(|g| g.follows.is_some())
+            {
+                return Err(followed(g));
+            }
+            if let Some(g) = strips
+                .iter()
+                .filter_map(|s| console.vca_of(s))
+                .find(|g| g.follows.is_some())
+            {
+                return Err(followed(g));
+            }
             let before = console.vcas.clone();
             edit_groups(p, |groups| {
                 groups

@@ -26,6 +26,12 @@ pub enum ConsoleOp {
     ClearInserts(usize),
     /// Paste a fixed set of settings on a channel.
     PasteSettings(usize),
+    /// A VCA group that follows a folder (the folders wrap around).
+    VcaForFolder(usize),
+    /// A group starts or stops following a folder.
+    FollowFolder(usize, Option<usize>),
+    /// A strip joins a group or leaves its group.
+    AssignVca(usize, Option<usize>),
 }
 
 pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
@@ -46,6 +52,9 @@ pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
         1 => (i(), any::<bool>()).prop_map(|(c, k)| ConsoleOp::ResetStrip(c, k)),
         1 => i().prop_map(ConsoleOp::ClearInserts),
         1 => i().prop_map(ConsoleOp::PasteSettings),
+        2 => i().prop_map(ConsoleOp::VcaForFolder),
+        1 => (i(), proptest::option::of(i())).prop_map(|(v, f)| ConsoleOp::FollowFolder(v, f)),
+        2 => (i(), proptest::option::of(i())).prop_map(|(c, v)| ConsoleOp::AssignVca(c, v)),
     ]
 }
 
@@ -94,6 +103,35 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
                 inserts: Vec::new(),
             },
         }),
+        ConsoleOp::VcaForFolder(f) => {
+            let groups = &doc.song.org.groups;
+            let folder = groups.get(f % groups.len().max(1))?.id;
+            c(ConsoleCommand::CreateVcaForFolder {
+                folder,
+                name: format!("Folder {}", doc.console.next_vca_id()),
+            })
+        }
+        ConsoleOp::FollowFolder(v, f) => {
+            let vcas = &doc.console.vcas;
+            let vca = vcas.get(v % vcas.len().max(1))?.id;
+            let groups = &doc.song.org.groups;
+            let folder = match f {
+                Some(f) => Some(groups.get(f % groups.len().max(1))?.id),
+                None => None,
+            };
+            c(ConsoleCommand::SetVcaFollow { vca, folder })
+        }
+        ConsoleOp::AssignVca(ch, v) => {
+            let vcas = &doc.console.vcas;
+            let vca = match v {
+                Some(v) => Some(vcas.get(v % vcas.len().max(1))?.id),
+                None => None,
+            };
+            c(ConsoleCommand::AssignToVca {
+                vca,
+                strips: vec![chan(*ch)?],
+            })
+        }
         ConsoleOp::Flag(ch, solo, on) => Command::SetParam {
             key: chan(*ch)?,
             param: if *solo { "solo" } else { "mute" }.into(),
@@ -112,6 +150,23 @@ pub fn assert_console_invariants(doc: &RackDoc) {
             .type_id
             .clone()
     };
+    // A group that follows a folder holds only channels of that folder's tracks.
+    for g in console.vcas.iter().filter(|g| g.follows.is_some()) {
+        let folder = g.follows.unwrap();
+        assert!(
+            doc.song.org.group(folder).is_some(),
+            "{} follows {folder}",
+            g.name
+        );
+        let of_folder = doc.folder_strips(folder);
+        for m in &g.members {
+            assert!(
+                of_folder.contains(m),
+                "{} holds {m} outside folder {folder}",
+                g.name
+            );
+        }
+    }
     let mut seen = Vec::new();
     for ch in &console.channels {
         assert_eq!(type_of(&ch.channel), CHANNEL, "{}", ch.channel);
