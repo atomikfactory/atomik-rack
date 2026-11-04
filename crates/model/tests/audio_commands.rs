@@ -1067,13 +1067,17 @@ fn a_transpose_batch_over_two_clips_is_one_undo_step() {
 }
 
 #[test]
-fn a_reversed_clip_refuses_a_transposition() {
+fn a_reversed_clip_takes_a_transposition() {
     let reg = audio_registry();
     let (mut d, a, _) = two_clips(&reg);
     let cmd = set_audio(&d, a, |c| c.reverse = true, None);
     d.apply(cmd, &reg).unwrap();
     let cmd = set_audio(&d, a, |c| c.warp.transpose_cents = 100, None);
-    rejects(&mut d, cmd, &reg);
+    d.apply(cmd, &reg).unwrap();
+    match &doc_clip(d.doc(), a).content {
+        ClipContent::Audio(c) => assert!(c.reverse && c.warp.transpose_cents == 100),
+        _ => panic!("not audio"),
+    }
 }
 
 // ---- warp markers, split at markers, asset names ---------------------------------------------

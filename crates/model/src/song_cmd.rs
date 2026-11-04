@@ -358,9 +358,6 @@ pub(crate) fn check_audio(doc: &RackDoc, a: &AudioClipContent) -> Result<(), Mod
         }
     }
     a.warp.validate().map_err(range)?;
-    if a.reverse && a.warp.active() {
-        return Err(range("a reversed clip cannot be warped or transposed"));
-    }
     check_envelope(&a.envelope)
 }
 

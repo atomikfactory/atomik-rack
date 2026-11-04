@@ -171,16 +171,9 @@ pub(crate) fn reverse_clips(
                             c.id.0
                         )));
                     }
-                    // A reversed clip cannot be warped or transposed, so reversing a warped
-                    // clip switches the warp off (its mode, tempo and markers stay).
-                    let mut warp = a.warp.clone();
-                    if to_reverse {
-                        warp.enabled = false;
-                        warp.transpose_cents = 0;
-                    }
+                    // A warped clip keeps its warp: the stretched span plays backwards.
                     new.content = ClipContent::Audio(AudioClipContent {
                         reverse: to_reverse,
-                        warp,
                         ..a.clone()
                     });
                 }
@@ -239,12 +232,6 @@ fn scale_audio(
     a: &AudioClipContent,
     percent: f64,
 ) -> Result<AudioClipContent, ModelError> {
-    if a.reverse {
-        return Err(bad(format!(
-            "clip {} plays backwards and cannot be warped: un-reverse it first",
-            c.id.0
-        )));
-    }
     let mut out = a.clone();
     // The asset keeps its place in the clip: the clip gets shorter by the factor, so the
     // source tempo drops by it, which is how a warped clip plays that much faster.

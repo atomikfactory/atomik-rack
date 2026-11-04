@@ -337,7 +337,7 @@ fn scaling_moves_clips_relative_to_the_earliest_start_and_scales_the_loop() {
 }
 
 #[test]
-fn scaling_audio_warps_it_and_a_reversed_clip_is_refused() {
+fn scaling_audio_warps_it_and_a_reversed_clip_keeps_playing_backwards() {
     let r = audio_registry();
     let mut d = with_audio_track(&r);
     run(&mut d, &r, [add_audio_clip("audio-track", BAR, 2 * BAR, 1)]);
@@ -357,8 +357,17 @@ fn scaling_audio_warps_it_and_a_reversed_clip_is_refused() {
     );
     d.undo().unwrap();
     one_step(&mut d, &r, reverse(vec![id], false));
-    let e = rejected(&mut d, &r, scale(vec![id], 200.0));
-    assert!(matches!(e, ModelError::BadSong(_)), "{e:?}");
+    one_step(&mut d, &r, scale(vec![id], 200.0));
+    let ClipContent::Audio(a) = &doc_clip(d.doc(), id).content else {
+        panic!("audio")
+    };
+    assert!(a.reverse && a.warp.enabled);
+    // Reversing a warped clip keeps its warp, and reversing it back does too.
+    one_step(&mut d, &r, reverse(vec![id], false));
+    let ClipContent::Audio(a) = &doc_clip(d.doc(), id).content else {
+        panic!("audio")
+    };
+    assert!(!a.reverse && a.warp.enabled);
 }
 
 #[test]

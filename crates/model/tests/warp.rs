@@ -188,20 +188,60 @@ fn set_audio_clip_takes_warp_and_undo_restores_it() {
 }
 
 #[test]
-fn a_reversed_clip_cannot_be_warped_or_transposed() {
+fn a_reversed_clip_can_be_warped_and_transposed_and_a_warped_clip_reversed() {
     let (reg, mut d) = setup();
     let id = put(&mut d, &reg, 0, 2 * PPQ, audio(1));
     set(&mut d, &reg, id, |a| a.reverse = true).unwrap();
-    assert!(set(&mut d, &reg, id, |a| a.warp.enabled = true).is_err());
-    assert!(set(&mut d, &reg, id, |a| a.warp.transpose_cents = 100).is_err());
-    // Repitch cannot transpose, so a transpose stored there is inactive and allowed.
-    set(&mut d, &reg, id, |a| {
-        a.warp.mode = WarpMode::Repitch;
-        a.warp.transpose_cents = 100;
+    set(&mut d, &reg, id, |a| a.warp.enabled = true).unwrap();
+    set(&mut d, &reg, id, |a| a.warp.transpose_cents = 100).unwrap();
+    let id2 = put(&mut d, &reg, 4 * PPQ, 2 * PPQ, warped(120.0));
+    set(&mut d, &reg, id2, |a| a.reverse = true).unwrap();
+    let a = audio_of(&d, id2);
+    assert!(a.reverse && a.warp.enabled);
+}
+
+#[test]
+fn a_reversed_warped_clip_makes_a_reversed_job_with_the_forward_time_map() {
+    let (reg, mut d) = setup();
+    let fwd = put(&mut d, &reg, 0, 2 * PPQ, warped(100.0));
+    let back = put(&mut d, &reg, 4 * PPQ, 2 * PPQ, warped(100.0));
+    set(&mut d, &reg, back, |a| a.reverse = true).unwrap();
+    let _ = fwd;
+    let song = &d.doc().song;
+    let r = flatten_audio(song.track(&key("audio-track")).unwrap(), song, SR);
+    let (f, b) = (&r[0], &r[1]);
+    let (fj, bj) = (f.warp.as_ref().unwrap(), b.warp.as_ref().unwrap());
+    assert!(!fj.reverse && bj.reverse);
+    // The same stretch, turned around by the renderer: same knots and length, another key.
+    assert_eq!((&fj.knots, fj.frames), (&bj.knots, bj.frames));
+    assert_ne!(fj.key(), bj.key());
+    // The real-time fallback plays the asset backwards, unwarped, from the span's top.
+    assert!(b.reverse);
+    assert_eq!(warp_jobs(d.doc()).len(), 2);
+    // A transposed clip that does not follow the tempo warps when reversed too.
+    let t = put(&mut d, &reg, 8 * PPQ, PPQ, audio(1));
+    set(&mut d, &reg, t, |a| {
+        a.reverse = true;
+        a.warp.transpose_cents = 200;
     })
     .unwrap();
-    let id2 = put(&mut d, &reg, 4 * PPQ, 2 * PPQ, warped(120.0));
-    assert!(set(&mut d, &reg, id2, |a| a.reverse = true).is_err());
+    assert_eq!(warp_jobs(d.doc()).len(), 3);
+}
+
+#[test]
+fn a_reversed_warped_clip_round_trips_the_format() {
+    let (reg, mut d) = setup();
+    let id = put(&mut d, &reg, 0, 2 * PPQ, warped(93.0));
+    set(&mut d, &reg, id, |a| {
+        a.reverse = true;
+        a.warp.transpose_cents = -300;
+    })
+    .unwrap();
+    let text = save_project(d.doc());
+    assert!(text.contains("\"reverse\": true") && text.contains("\"transpose\": -300"));
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(&loaded, d.doc());
+    assert_eq!(save_project(&loaded), text, "canonical");
 }
 
 #[test]
@@ -295,13 +335,16 @@ fn bad_warp_fields_name_their_json_path_and_old_files_refuse_warp() {
         panic!()
     };
     assert_eq!(a.warp, WarpSettings::default());
-    // A reversed and warped clip is refused on load.
+    // A reversed and warped clip loads.
     let (reg2, mut d2) = setup();
     put(&mut d2, &reg2, 0, PPQ, warped(100.0));
     let mut v: Value = serde_json::from_str(&save_project(d2.doc())).unwrap();
     v["song"]["tracks"][0]["lanes"][0]["clips"][0]["audio"]["reverse"] = json!(true);
-    let e = load_project(&v.to_string(), &reg2).unwrap_err().to_string();
-    assert!(e.contains("reversed"), "{e}");
+    let loaded = load_project(&v.to_string(), &reg2).unwrap();
+    let ClipContent::Audio(a) = &loaded.song.tracks[0].lanes[0].clips[0].content else {
+        panic!()
+    };
+    assert!(a.reverse && a.warp.enabled);
 }
 
 #[test]

@@ -247,8 +247,9 @@
 //! ±2400 and changes pitch without changing length (Beats and Tonal), and `"markers"` pin a
 //! source frame (from the clip's `"offset"`) to a tick from the clip start, at most 512, strictly
 //! increasing in both. The object is omitted for the default (not enabled, `"beats"`, 120 BPM, no
-//! transpose, no markers), a reversed clip cannot be warped or transposed, and a file written
-//! before version 24 plays every clip in real time as it did. **Version 24** files have no frozen
+//! transpose, no markers), a reversed clip may be warped and transposed (the stretched span plays
+//! backwards; a project saved that way does not load in a version that refuses the combination),
+//! and a file written before version 24 plays every clip in real time as it did. **Version 24** files have no frozen
 //! tracks: from version 25 a track may carry `"frozen": {"start": tick, "length": ticks,
 //! "effects"?: [device key…], "audio": {…}}` after its `"comment"` (see [`crate::freeze`]):
 //! its instrument and the listed effects, which must be the first effects of the insert chain of

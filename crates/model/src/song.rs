@@ -209,8 +209,8 @@ pub struct AudioClipContent {
     /// [`flatten_audio`]): `Some(curve)` crossfades, `None` is a hard cut.
     pub xfade: Option<FadeCurve>,
     /// Warp: follow the song tempo and transpose without changing length (see
-    /// [`crate::warp`]). The default plays the asset in real time. A reversed clip cannot be
-    /// warped.
+    /// [`crate::warp`]). The default plays the asset in real time. A reversed clip can be
+    /// warped: the stretched span plays backwards.
     pub warp: WarpSettings,
 }
 
