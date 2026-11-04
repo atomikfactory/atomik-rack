@@ -176,6 +176,8 @@ pub const APP_ZOOM_ARGS: &[&str] = &[
 ];
 /// The values of `view.focus_window`: the window to bring forward.
 pub const WINDOW_ARGS: &[&str] = &["main", "rack", "mixer"];
+/// The values of `window.song`: the place in the list of open songs, 0 the first.
+pub const SONG_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8"];
 /// The values of `transport.input_quantize`.
 pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 /// The values of `transport.loop_move`: the loop moves by bars or its length changes by bars.
@@ -2473,6 +2475,20 @@ const COMMANDS: &[CommandDef] = &[
         .rep()
         .menu(),
     cmd("view.zoom_reset", "Actual Size", G::View, C::Global).menu(),
+    cmd("window.close_song", "Close Song Window", G::View, C::Global).menu(),
+    cmd("window.new_song", "New Song Window", G::View, C::Global).menu(),
+    cmd("window.next_song", "Next Song", G::View, C::Global).menu(),
+    cmd(
+        "window.open_song",
+        "Open Song in New Window",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd("window.previous_song", "Previous Song", G::View, C::Global).menu(),
+    cmd("window.song", "Show Song", G::View, C::Global)
+        .arg(SONG_ARGS)
+        .menu(),
 ];
 
 /// The command registry.
@@ -2544,7 +2560,7 @@ mod tests {
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help"],
                 Group::Transport => &["transport", "sync"],
-                Group::View => &["view"],
+                Group::View => &["view", "window"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack"],
                 Group::Sequencer => &["sequencer"],

@@ -1358,6 +1358,26 @@ Yes saves, No discards the changes, Cancel keeps the song open.",
                     self.handle_requests(event_loop, more);
                 }
                 ShellRequest::FocusWindow(kind) => self.focus_window((self.shell.routed(), kind)),
+                ShellRequest::FocusSong(id) => self.focus_window((id, WindowKind::Main)),
+                ShellRequest::PickOpenSong => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Open project or patch in a new window")
+                        .add_filter("Atomik Rack project or patch", &["atomik", "json"])
+                        .add_filter("Atomik Rack project", &["atomik"])
+                        .add_filter("Atomik Rack patch", &["json"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file()
+                        && let Some(id) = self.shell.open_song(&path)
+                    {
+                        // The window of the new song opens next, and the song has the focus.
+                        self.sync_windows(event_loop);
+                        self.focus_window((id, WindowKind::Main));
+                    }
+                }
+                // The workspace answers these before they get here.
+                ShellRequest::NewSong | ShellRequest::CloseSong | ShellRequest::ShowSong(_) => {}
                 ShellRequest::OpenUrl(url) => open_url(url),
                 ShellRequest::ToggleMaximise(kind) => {
                     if let Some(w) = self.windows.get(&(self.shell.routed(), kind)) {
@@ -1465,7 +1485,14 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => {
                 if kind == WindowKind::Main {
-                    let requests = self.shell.execute(AppCommand::Quit);
+                    // The window of one song closes that song (after its own question about
+                    // unsaved changes); the last window closing is quitting.
+                    let command = if self.shell.len() > 1 {
+                        AppCommand::CloseSongWindow
+                    } else {
+                        AppCommand::Quit
+                    };
+                    let requests = self.shell.execute(command);
                     self.after_event(event_loop, requests);
                 } else {
                     // Closing a detached window attaches its pane again.

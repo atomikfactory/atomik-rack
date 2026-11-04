@@ -496,3 +496,187 @@ fn shutdown_closes_every_song() {
     w.shutdown_all();
     assert_eq!(backend.open.load(Ordering::SeqCst), 0);
 }
+
+#[test]
+fn the_new_song_window_command_opens_a_song_and_asks_for_its_window() {
+    let (mut w, backend) = workspace();
+    let requests = w.execute(AppCommand::NewSongWindow);
+    let ids = w.ids();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(requests, vec![ShellRequest::FocusSong(ids[1])]);
+    assert_eq!(w.play_focus(), ids[1]);
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn the_open_song_window_command_asks_for_a_file() {
+    let (mut w, _backend) = workspace();
+    assert_eq!(
+        w.execute(AppCommand::OpenSongWindow),
+        vec![ShellRequest::PickOpenSong]
+    );
+    assert_eq!(w.len(), 1, "the song opens when the file is picked");
+}
+
+#[test]
+fn next_previous_and_a_listed_song_move_the_audio() {
+    let (mut w, backend) = workspace();
+    let second = w.new_song();
+    let third = w.new_song();
+    assert_eq!(
+        w.execute(AppCommand::NextSong),
+        vec![ShellRequest::FocusSong(DocId::FIRST)]
+    );
+    assert_eq!(w.play_focus(), DocId::FIRST);
+    assert_eq!(
+        w.execute(AppCommand::PreviousSong),
+        vec![ShellRequest::FocusSong(third)]
+    );
+    assert_eq!(w.play_focus(), third);
+    assert_eq!(
+        w.execute(AppCommand::ActivateSong(1)),
+        vec![ShellRequest::FocusSong(second)]
+    );
+    assert_eq!(w.play_focus(), second);
+    assert_eq!(w.routed(), second);
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    // A place beyond the list does nothing.
+    assert_eq!(w.execute(AppCommand::ActivateSong(8)), Vec::new());
+    assert_eq!(w.play_focus(), second);
+}
+
+#[test]
+fn closing_a_clean_song_window_needs_no_question() {
+    let (mut w, backend) = workspace();
+    let second = w.new_song();
+    assert_eq!(w.execute(AppCommand::CloseSongWindow), Vec::new());
+    assert_eq!(w.ids(), vec![DocId::FIRST]);
+    assert_eq!(w.play_focus(), DocId::FIRST);
+    assert!(w.core().sink().is_running());
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    assert!(w.song(second).is_none());
+}
+
+#[test]
+fn closing_a_song_window_with_changes_runs_its_own_save_prompt() {
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let second = w.new_song();
+    add_synth(&mut w, "bass");
+    w.focus(DocId::FIRST);
+    // The prompt is for the song whose window is closed, the other song's changes stay put.
+    w.select(second);
+    let close = PendingAction::Command(AppCommand::CloseSongWindow);
+    assert_eq!(
+        w.execute(AppCommand::CloseSongWindow),
+        vec![ShellRequest::ConfirmSave {
+            then: close.clone()
+        }]
+    );
+    assert_eq!(w.ids().len(), 2, "nothing closes before the answer");
+    assert_eq!(w.discard_then(close), Vec::new());
+    assert_eq!(w.ids(), vec![DocId::FIRST]);
+    assert!(
+        w.song(DocId::FIRST).unwrap().core().is_dirty(),
+        "the other song keeps its changes and its question for later"
+    );
+}
+
+#[test]
+fn saving_in_the_close_prompt_keeps_the_file_and_closes_the_song() {
+    let (mut w, _backend) = workspace();
+    let second = w.new_song();
+    add_synth(&mut w, "bass");
+    let path = temp("closed-song.atomik");
+    let close = PendingAction::Command(AppCommand::CloseSongWindow);
+    w.execute(AppCommand::CloseSongWindow);
+    assert_eq!(w.save_to_then(&path, close), Vec::new());
+    assert!(path.exists(), "the song was saved before it closed");
+    assert!(w.song(second).is_none());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn closing_the_last_song_window_quits() {
+    let (mut w, _backend) = workspace();
+    assert_eq!(
+        w.execute(AppCommand::CloseSongWindow),
+        vec![ShellRequest::Quit]
+    );
+    assert_eq!(w.len(), 1);
+}
+
+#[test]
+fn the_window_menu_lists_the_open_songs_and_checks_the_one_with_the_audio() {
+    let (mut w, _backend) = workspace();
+    let menu_of = |w: &Workspace<Counting>| {
+        w.menu_model()
+            .into_iter()
+            .find(|m| m.title == "Window")
+            .expect("a Window menu")
+    };
+    let single = menu_of(&w);
+    assert!(
+        single
+            .items()
+            .all(|i| !matches!(i.command, AppCommand::ActivateSong(_))),
+        "one song needs no list"
+    );
+    let second = w.new_song();
+    w.focus(DocId::FIRST);
+    let menu = menu_of(&w);
+    let songs: Vec<_> = menu
+        .items()
+        .filter(|i| matches!(i.command, AppCommand::ActivateSong(_)))
+        .collect();
+    assert_eq!(songs.len(), 2);
+    assert_eq!(songs[0].command, AppCommand::ActivateSong(0));
+    assert_eq!(songs[0].checked, Some(true));
+    assert_eq!(songs[1].checked, Some(false));
+    assert_eq!(songs[1].label.as_ref(), w.song(second).unwrap().song_name());
+    for command in [
+        AppCommand::CloseSongWindow,
+        AppCommand::NextSong,
+        AppCommand::PreviousSong,
+    ] {
+        let item = menu.items().find(|i| i.command == command).unwrap();
+        assert!(item.enabled, "{command:?} works with two songs");
+    }
+    // The menu belongs to the song it is shown in: the second song checks the second entry.
+    w.select(second);
+    let own = menu_of(&w);
+    let checked: Vec<_> = own
+        .items()
+        .filter(|i| matches!(i.command, AppCommand::ActivateSong(_)))
+        .map(|i| i.checked)
+        .collect();
+    assert_eq!(checked, vec![Some(false), Some(true)]);
+}
+
+#[test]
+fn song_windows_have_keys() {
+    let (mut w, _backend) = workspace();
+    let keys = |w: &Workspace<Counting>, c: AppCommand| {
+        w.keymap().shortcut_text(c.command_id().unwrap().0, None)
+    };
+    for command in [
+        AppCommand::NewSongWindow,
+        AppCommand::OpenSongWindow,
+        AppCommand::CloseSongWindow,
+        AppCommand::NextSong,
+        AppCommand::PreviousSong,
+    ] {
+        assert!(keys(&w, command).is_some(), "{command:?} has a key");
+    }
+    // The key of New Song Window does what the menu item does.
+    let (key, modifiers) =
+        atomik_ui::keymap::script::event_for(atomik_ui::keymap::Os::Windows, "Cmd+Shift+N")
+            .unwrap();
+    let press = UiEvent::Key {
+        key,
+        modifiers,
+        pressed: true,
+    };
+    let requests = w.handle(&press);
+    assert_eq!(w.len(), 2, "{requests:?}");
+}

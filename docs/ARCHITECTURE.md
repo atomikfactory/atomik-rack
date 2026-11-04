@@ -4012,7 +4012,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (424) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (430) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4851,9 +4851,11 @@ items are ordinary project texts, plus one small new file type.
 ## 6m. Windows: the platform side
 
 The rack and the console (the mixer) can leave the main window (View > Detach Rack, Detach Mixer, or
-`--detach rack,console`). There is still one `Shell`, one document and one view per pane; the shell
-owns each open window's size and scale and says which windows should exist
-([`Shell::windows_wanted`](../crates/app/src/shell_windows.rs)). This section is what
+`--detach rack,console`). A `Shell` is one song: one document, one view per pane and its undo history; the
+shell owns each open window's size and scale and says which windows should exist
+([`Shell::windows_wanted`](../crates/app/src/shell_windows.rs)). Any number of songs can be open, each
+with windows of its own; the layer above the songs is described under "Several songs" at the end of this
+section. This section is what
 [crates/app/src/platform](../crates/app/src/platform) does with that. The pure model (kinds, saved
 geometry, placement, drag routing, reconcile) is
 [crates/app/src/windows.rs](../crates/app/src/windows.rs); the decisions of the platform code that
@@ -4877,9 +4879,10 @@ winit and GPU code is not (it needs a window and a GPU).
   marker strip, tempo lane, scrollbar, overlays and menus are drawn live in the same order as
   before, so the recorded op stream does not change (`ArrangementView::layer_records` counts the
   recordings; the test `arrangement_layers` compares the cached paint with an uncached one).
-- **Windows are reconciled.** `App.windows` maps each `WindowKind` to an `AppWindow` (window,
-  surface, scene, cache, pointer, file drag, cursor, title) and `ids` maps winit's `WindowId` back.
-  After every call into the shell `sync_windows` compares the open windows with `windows_wanted()`
+- **Windows are reconciled.** `App.windows` maps each window, a song (`DocId`) and a `WindowKind`, to an
+  `AppWindow` (window, surface, scene, cache, pointer, file drag, cursor, title, zoom) and `ids` maps
+  winit's `WindowId` back. After every call into the shell `sync_windows` goes through the songs, closes the
+  windows of a song that is gone and compares the open windows of each song with its `windows_wanted()`
   (`windows::reconcile`): it closes the extra ones and creates the missing ones. A detached window
   is placed with `windows::place_detached` (the main window with `windows::place`): a usable saved
   geometry goes through `place`; with none, the window opens maximised on the first monitor the
@@ -4887,15 +4890,17 @@ winit and GPU code is not (it needs a window and a GPU).
   left to right from the one after the main window's and wrapping (so the rack takes the first free
   monitor and the console the next), its restored bounds the default size centred there; when every
   monitor is used, or there is one, it is cascaded 32 desktop units down and right from the main
-  window at the default size, clamped onto the monitor. Either way it is placed from
+  window of its own song at the default size, clamped onto the monitor. Either way it is placed from
   `Shell::saved_geom` and the monitors of the moment (`MonitorInfo`, converted at the edge by
   `window_logic::monitor_info`), opened with a position only when `place` gives one (no monitor, as
   on Wayland, leaves it to the OS), maximised when saved so, and then told `ScaleChanged` and
   `Resize` with `handle_in`. The main window is placed and restored the same way. A window that
   cannot be created is attached again (`window_closed`).
 - **Closing.** The close button of a detached window calls `window_closed(kind)` (the pane returns
-  to the main window); closing the main window quits and keeps the detached flags, so the windows
-  reopen at the next start. `ShellRequest::FocusWindow` raises a window (and un-minimises it);
+  to the main window); closing the main window of the only song quits and keeps the detached flags, so
+  the windows reopen at the next start; closing the main window of one of several songs runs
+  Window > Close Song Window for that song (its own question about unsaved changes, then its windows
+  and plugin instances go). `ShellRequest::FocusWindow` raises a window (and un-minimises it);
   `ToggleMaximise` maximises or restores it. File dialogs are parented to the window that last had
   the focus.
 - **Geometry.** `Moved` and `Resized` of every window, the main one included, call
@@ -4908,9 +4913,11 @@ winit and GPU code is not (it needs a window and a GPU).
   recomputed from `inner_position`, `inner_size` and `scale_factor` when it is needed, so it is
   never stale. Each window's `ScaleFactorChanged` goes only to that window: monitors with different
   scales are independent.
-- **Input routing.** Each event goes to the shell with its window: `handle_in(kind, event)`. Keys,
-  modifiers and focus are global: `Focused(true)` calls `window_focused(kind)` (the keys go to the
-  pane that last had them in that window) and moves the window to the front of the `ZOrder`;
+- **Input routing.** Each event goes to the song its window belongs to
+  (`Workspace::select`), with its window: `handle_in(kind, event)`. Keys,
+  modifiers and focus are global: `Focused(true)` gives the song the focus (`Workspace::focus`), calls
+  `window_focused(kind)` (the keys go to the
+  pane that last had them in that window) and moves the window to the front of the `ZOrder` of its song;
   `Focused(false)` calls `focus_lost()`, which is idempotent, so the order of the two events when
   hopping between windows does not matter. The pointer and the OS file drag are per window.
 - **A drag across windows.** The OS keeps delivering a drag's events to the window that got the
@@ -4936,11 +4943,51 @@ winit and GPU code is not (it needs a window and a GPU).
   other on one thread, so a wait for one monitor's blank would stall the others, and monitors with
   different refresh rates would drag each other down; the 60 Hz tick sets the pace. A lone window
   keeps vsync.
-- **Invariants.** There is always a main window, and it is the owner of the editors of sandboxed
+- **Invariants.** Every song has a main window, and it is the owner of the editors of that song's sandboxed
   plugins (`set_plugin_editor_owner`), whichever pane is detached; plugin editor windows are
-  separate top-level windows and are not touched by any of this. Nothing here reaches the engine,
+  separate top-level windows (kept per song) and are not touched by any of this. Nothing here reaches the engine,
   the render path or the sink, so HI-1 and HI-2 are unaffected. A surface is dropped before its
   window. The shell's state, not the platform's, decides which panes are detached.
+
+### Several songs
+
+[`Workspace`](../crates/app/src/workspace.rs) is the application layer above the shells. It holds the open
+songs (`DocId`, ids are not reused in a run), the one calls are routed to (`Workspace::select`; everything that
+is not a workspace method reaches that song's `Shell` through `Deref`, so the platform layer reads like the
+single-song app) and the one with the **play focus**.
+
+- **Audio is unique.** Only the song with the play focus has a running stream, MIDI inputs and control surfaces;
+  every other song runs on a `LiveSession` that is switched off (the state of a song whose stream failed to
+  open: sink calls are accepted and ignored, the status line says "another song has the audio"). `Workspace::focus`
+  gives the audio to another song: `Shell::release_audio` shuts the old song's stream, inputs and surfaces and
+  stops its transport, then `Shell::claim_audio` hands the new song the settings the old one ran with, enables its
+  session and rebuilds its engine (`AppCore::rebuild_engine`), as a change of the devices does. The old stream is
+  closed before the new one opens, so a device that cannot be shared works and no song leaks a note into the
+  other. Plugin instances stay loaded in the song that owns them; closing a song shuts its plugin host down.
+- **What a click does.** Giving a window the OS focus gives its song the play focus, so the keys, the MIDI
+  keyboard and the audio follow the window being used. The input focus and the play focus are one for now.
+- **Commands.** Window > New Song Window (`window.new_song`), Open Song in New Window (`window.open_song`), Close
+  Song Window, Next Song, Previous Song and the list of open songs (`window.song`, at most nine) are shell
+  requests (`ShellRequest::NewSong`, `PickOpenSong`, `CloseSong`, `ShowSong`) that only a workspace answers
+  (`ShellRequest::FocusSong` tells the platform layer which window to raise). Every request-returning shell
+  call (`execute`, `handle_in`, `confirmed`, `save_then`, `discard_then`...) has a workspace version that does
+  this.
+- **Questions that span the songs.** Close Song Window runs the closed song's own Save, Don't Save, Cancel
+  question (`ShellRequest::ConfirmSave` names the song through the workspace, so the answer reaches it even
+  when the platform routed elsewhere in between). Quit asks about every song with unsaved changes, one after the
+  other, focusing each; a Don't Save is remembered until the quit ends or a new quit starts.
+- **Shared and per song.** Each song has its own document, undo history, panes, panels, plugin host, autosave and
+  recovery snapshots (`recovery/song-<n>` for a song opened next to the first, `plugin_setup::song_plugin_config`,
+  with no crash journal: the first song's names what a crash lost). The keymap, the workflow preferences and the
+  layout of the window are copied into a new song, and `Workspace::sync_preferences` carries a change made in one
+  song to the others. Settings, the library, the recent list and the scan cache are files each song reads and
+  writes itself; a change made in one song's Settings reaches another one when it takes the audio, which carries
+  the audio settings along. The window state file (`ui-state.json`) belongs to the first song to hold it and
+  passes to the next one when that song closes.
+- **Not done yet.** Moving clips, devices, channels and patches between open songs (the library is the way for
+  now), separate Input Focus and Play Focus buttons on the interface panel, recovery that offers the snapshots
+  of a second song after a crash, a library and recent list shared live between songs, and a session of the
+  MCP server with several songs (it stays one song).
 
 ## 6n. Logs, crash reports and diagnostics
 

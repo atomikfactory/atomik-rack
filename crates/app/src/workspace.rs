@@ -30,7 +30,7 @@
 
 use crate::commands::AppCommand;
 use crate::session::AudioBackend;
-use crate::shell::{PendingAction, Shell, ShellRequest};
+use crate::shell::{PendingAction, Shell, ShellRequest, SongTarget};
 use crate::windows::{DocId, WindowHit, WindowKind};
 use atomik_ui::UiEvent;
 use std::ops::{Deref, DerefMut};
@@ -369,6 +369,29 @@ impl<B: AudioBackend> Workspace<B> {
         for request in requests {
             match request {
                 ShellRequest::Quit => out.extend(self.quit_step()),
+                ShellRequest::NewSong => {
+                    let id = self.new_song();
+                    out.push(ShellRequest::FocusSong(id));
+                }
+                ShellRequest::CloseSong => {
+                    // The question about unsaved changes was answered. The last song cannot
+                    // be closed on its own: closing it is quitting.
+                    if !self.close_song(self.routed) {
+                        out.extend(self.quit_step());
+                    }
+                }
+                ShellRequest::ShowSong(target) => {
+                    let id = match target {
+                        SongTarget::Next => self.neighbour(true),
+                        SongTarget::Previous => self.neighbour(false),
+                        SongTarget::Place(place) => match self.songs.get(place) {
+                            Some(song) => song.id,
+                            None => continue,
+                        },
+                    };
+                    self.focus(id);
+                    out.push(ShellRequest::FocusSong(id));
+                }
                 ShellRequest::ConfirmSave { then } => {
                     self.asking = Some(self.routed);
                     if fresh && then == PendingAction::Command(AppCommand::Quit) {

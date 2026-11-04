@@ -137,7 +137,7 @@
 
 use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
-use crate::commands::{AppCommand, Menu, MenuState, menus_with_lists};
+use crate::commands::{AppCommand, Menu, MenuState, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -148,7 +148,7 @@ use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
-use crate::windows::{WindowHit, WindowKind};
+use crate::windows::{DocId, WindowHit, WindowKind};
 use atomik_audio_io::StreamState;
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
 use atomik_ui::ContextTarget;
@@ -313,6 +313,30 @@ pub enum ShellRequest {
     ToggleMaximise(WindowKind),
     /// Close the window and exit.
     Quit,
+    /// A new song in a window of its own ([`crate::workspace::Workspace::new_song`]). Only a
+    /// workspace answers it.
+    NewSong,
+    /// Show an open-file dialog (projects and patches), then call
+    /// [`crate::workspace::Workspace::open_song`]: the file opens in a song of its own.
+    PickOpenSong,
+    /// End this song and close its windows ([`crate::workspace::Workspace::close_song`]); the last
+    /// song asks to quit instead. Only a workspace answers it.
+    CloseSong,
+    /// Move the audio and the keys to another song (the workspace answers it).
+    ShowSong(SongTarget),
+    /// Bring the main window of a song to the front and give it the keyboard focus.
+    FocusSong(DocId),
+}
+
+/// Which song [`ShellRequest::ShowSong`] asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SongTarget {
+    /// The song after the one with the audio.
+    Next,
+    /// The song before it.
+    Previous,
+    /// The song at this place of the list of open songs.
+    Place(usize),
 }
 
 /// What waits for the answer to the question about unsaved changes.
@@ -2103,11 +2127,15 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|t| t.name.clone())
             .collect();
-        menus_with_lists(
+        menus_with_songs(
             &self.menu_state(),
             self.router.keymap(),
             &recent,
             &templates,
+            &SongList {
+                names: &self.songs,
+                current: self.song_at,
+            },
         )
     }
 
@@ -4999,6 +5027,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::NewFromTemplate(_)
             | AppCommand::Open
             | AppCommand::Close
+            | AppCommand::CloseSongWindow
             | AppCommand::Quit
             | AppCommand::StressRack
             | AppCommand::StressSong => {
@@ -5837,6 +5866,13 @@ impl<B: AudioBackend> Shell<B> {
                     Vec::new()
                 }
             }
+            AppCommand::NewSongWindow => vec![ShellRequest::NewSong],
+            AppCommand::OpenSongWindow => vec![ShellRequest::PickOpenSong],
+            AppCommand::NextSong => vec![ShellRequest::ShowSong(SongTarget::Next)],
+            AppCommand::PreviousSong => vec![ShellRequest::ShowSong(SongTarget::Previous)],
+            AppCommand::ActivateSong(place) => {
+                vec![ShellRequest::ShowSong(SongTarget::Place(place))]
+            }
             AppCommand::PluginSettings => {
                 let theme = self.core.view().theme().clone();
                 let mut view = PluginSettingsView::new(theme);
@@ -5896,6 +5932,11 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::Open => vec![ShellRequest::PickOpenFile],
+            AppCommand::CloseSongWindow => {
+                // A save still writing must reach the disk before the song goes.
+                self.core.settle_save();
+                vec![ShellRequest::CloseSong]
+            }
             AppCommand::Quit => {
                 // A save still writing must reach the disk before the process ends.
                 self.core.settle_save();
