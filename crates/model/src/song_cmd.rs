@@ -704,8 +704,15 @@ pub(crate) fn check_new_clip(
     if !clip.param_lanes.is_empty() && !kind.is_notes() {
         return Err(bad("only a note clip can have parameter lanes"));
     }
+    if !clip.midi.is_empty() && !kind.is_notes() {
+        return Err(bad(
+            "only a note clip can carry program changes and SysEx messages",
+        ));
+    }
     let controllers = canonical(clip.controllers.clone());
     check_lanes(&controllers, MAX_TICK).map_err(range)?;
+    let midi = clip.midi.clone().canonical();
+    midi.check(MAX_TICK).map_err(range)?;
     // Targets are not checked here: a clip pasted from another project keeps lanes whose device
     // is missing, and they play nothing (see the module docs of `param_lane`).
     let param_lanes = canonical_params(clip.param_lanes.clone());
@@ -722,6 +729,7 @@ pub(crate) fn check_new_clip(
         scale,
         controllers,
         param_lanes,
+        midi,
         ..clip
     })
 }
@@ -1557,6 +1565,7 @@ pub(crate) fn plan(
                 grid: None,
                 scale: None,
                 param_lanes: Vec::new(),
+                midi: Default::default(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

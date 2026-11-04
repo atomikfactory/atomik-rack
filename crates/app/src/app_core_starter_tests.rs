@@ -313,6 +313,7 @@ fn lead_with_a_clip<S: EngineSink>(c: &mut AppCore<S>) {
             muted: false,
             scale: None,
             param_lanes: Vec::new(),
+            midi: Default::default(),
             controllers: Vec::new(),
             name: None,
             color: None,

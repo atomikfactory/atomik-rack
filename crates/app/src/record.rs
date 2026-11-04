@@ -597,6 +597,7 @@ impl Take {
                     scale: None,
                     controllers,
                     param_lanes: Vec::new(),
+                    midi: Default::default(),
                     grid: None,
                     content: ClipContent::Notes(content),
                 },

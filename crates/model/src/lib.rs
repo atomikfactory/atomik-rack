@@ -27,6 +27,7 @@ mod container_cmd;
 mod container_io;
 mod container_move;
 pub mod controller;
+pub mod controller_edit;
 mod curves;
 mod curves_cmd;
 mod device_patch;
@@ -45,6 +46,7 @@ mod loop_convert;
 mod macros;
 mod macros_io;
 mod master_tune;
+pub mod midi_data;
 mod midi_import;
 mod midi_map;
 mod midi_map_io;
@@ -205,6 +207,7 @@ use history::{Edit, Swap, song_end_growth};
 pub use labels::DEFAULT_LABEL;
 use labels::Labels;
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
+pub use midi_data::{MidiData, ProgramChange, SysexEvent};
 pub use note_tools::NoteTool;
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,

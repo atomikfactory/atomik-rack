@@ -65,6 +65,21 @@ impl ControllerKind {
         }
     }
 
+    /// The smallest step of the kind's value: the MIDI resolution (pitch bend 14 bit, the rest
+    /// 7 bit).
+    pub fn step(self) -> f32 {
+        match self {
+            ControllerKind::PitchBend => 1.0 / 8192.0,
+            _ => 1.0 / 127.0,
+        }
+    }
+
+    /// `value` rounded to the MIDI resolution and clamped to the kind's range.
+    pub fn quantize(self, value: f32) -> f32 {
+        let step = self.step();
+        self.clamp((value / step).round() * step)
+    }
+
     /// The note event that sets the controller to `value` (clamped).
     pub fn note_kind(self, value: f32) -> NoteKind {
         let value = self.clamp(value);

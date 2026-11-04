@@ -139,6 +139,7 @@ pub(super) fn load_clip(
             grid: None,
             scale: None,
             param_lanes: Vec::new(),
+            midi: Default::default(),
             controllers: Vec::new(),
             name,
             color,
@@ -196,8 +197,48 @@ pub(super) fn load_clip(
             Some(c) => load_controllers(c, &path.field("controllers"))?,
             None => Vec::new(),
         },
+        midi: load_midi_data(obj, path)?,
         content,
     })
+}
+
+/// Reads a note clip's optional `"programs"` (`[tick, program]`) and `"sysex"` (`[tick, "hex"]`)
+/// lists (see [`crate::midi_data`]).
+fn load_midi_data(
+    obj: &serde_json::Map<String, Value>,
+    path: &JsonPath,
+) -> Result<crate::MidiData, ModelError> {
+    let mut data = crate::MidiData::default();
+    if let Some(v) = obj.get("programs") {
+        let list = path.field("programs");
+        for (i, item) in array(v, &list)?.iter().enumerate() {
+            let q = list.index(i);
+            let a = tuple(item, &q, 2, "a program change [tick, program]")?;
+            data.programs.push(crate::ProgramChange {
+                tick: tick(&a[0], &q.index(0))?,
+                program: uint(&a[1], &q.index(1), 127)? as u8,
+            });
+        }
+    }
+    if let Some(v) = obj.get("sysex") {
+        let list = path.field("sysex");
+        for (i, item) in array(v, &list)?.iter().enumerate() {
+            let q = list.index(i);
+            let a = tuple(item, &q, 2, "a SysEx message [tick, \"hex bytes\"]")?;
+            let text = string(&a[1], &q.index(1))?;
+            let bytes = crate::midi_data::sysex_from_hex(text).ok_or_else(|| {
+                q.index(1)
+                    .error("expected hex bytes such as \"7E 7F 09 01\"".to_string())
+            })?;
+            data.sysex.push(crate::SysexEvent {
+                tick: tick(&a[0], &q.index(0))?,
+                data: bytes,
+            });
+        }
+    }
+    data.check(crate::song::MAX_TICK)
+        .map_err(|m| path.error(m))?;
+    Ok(data)
 }
 
 /// One point of an automation clip, checked on its own. `pd` is the automated param, `None` for a

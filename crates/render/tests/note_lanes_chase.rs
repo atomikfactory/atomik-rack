@@ -83,6 +83,7 @@ fn project(lanes: usize, lane: usize, chase: bool) -> RackDoc {
                 muted: false,
                 scale: None,
                 param_lanes: Vec::new(),
+                midi: Default::default(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

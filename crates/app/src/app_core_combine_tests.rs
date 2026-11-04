@@ -91,6 +91,7 @@ fn core() -> AppCore<OfflineSink> {
                 muted: false,
                 scale: None,
                 param_lanes: Vec::new(),
+                midi: Default::default(),
                 controllers: Vec::new(),
                 name: None,
                 color: None,

@@ -239,17 +239,12 @@ pub fn chip_at(x0: f64, y0: f64, x: f64, y: f64) -> Option<(Chip, Part)> {
 
 /// The smallest step of a kind's value: the MIDI resolution (pitch bend 14 bit, the rest 7 bit).
 pub fn value_step(kind: ControllerKind) -> f32 {
-    match kind {
-        ControllerKind::PitchBend => 1.0 / 8192.0,
-        _ => 1.0 / 127.0,
-    }
+    kind.step()
 }
 
 /// Rounds `v` to the kind's MIDI resolution inside its range.
 pub fn quantize_value(kind: ControllerKind, v: f32) -> f32 {
-    let (lo, hi) = kind.range();
-    let step = value_step(kind);
-    ((v / step).round() * step).clamp(lo, hi)
+    kind.quantize(v)
 }
 
 /// The value at logical `y` in a body whose value range spans `[top, top + height]` (the top is

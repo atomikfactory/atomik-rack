@@ -361,6 +361,7 @@ fn a_double_click_on_a_drum_clip_opens_the_step_editor_and_a_synth_clip_the_pian
         muted: false,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,

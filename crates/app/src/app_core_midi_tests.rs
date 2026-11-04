@@ -87,6 +87,7 @@ fn add_clip(c: &mut AppCore<RecordingSink>, k: &str, start: i64, notes: Vec<Note
         grid: None,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: vec![ControllerLane::new(
             ControllerKind::Cc(1),
             vec![point(0, vel(64)), point(PPQ, 1.0)],
@@ -432,6 +433,7 @@ fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
         grid: None,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,

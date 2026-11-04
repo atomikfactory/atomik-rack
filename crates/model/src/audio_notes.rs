@@ -108,6 +108,7 @@ pub fn notes_clip(
         grid: None,
         scale: None,
         param_lanes: Vec::new(),
+        midi: Default::default(),
         controllers: Vec::new(),
         name: None,
         color: None,

@@ -855,6 +855,7 @@ fn opening_the_editor_replaces_the_piano_roll_and_a_new_document_closes_it() {
             muted: false,
             scale: None,
             param_lanes: Vec::new(),
+            midi: Default::default(),
             controllers: Vec::new(),
             name: None,
             color: None,
