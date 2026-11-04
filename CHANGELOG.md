@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Five new effects: transient shaper, de-esser, auto-filter, tuner and pitch shifter.** The Transient Shaper
+  raises or lowers the attack and the sustain of a signal whatever its level (two followers of the stereo power,
+  their difference in dB decides), with `attack` and `sustain` CV inputs and a transient CV output. The De-esser
+  turns sibilance down in its own band (the band is subtracted by the share that is turned down, so nothing
+  else moves) or across the whole signal, with a listen switch and a CV input for the centre frequency. The
+  Auto-Filter sweeps a 12 or 24 dB low-pass, band-pass, high-pass or notch filter with an LFO (five shapes,
+  free or at a note value of the tempo and locked to the song position while playing, a stereo spread) and with
+  the level of the input, with CV inputs for cutoff, depth and rate and an LFO CV output. The Tuner passes the
+  audio through, optionally muted, and shows the note, the deviation in cents and the frequency on a needle
+  scale like the audio track's tuner, against its own A4 shifted by the project's master tune. The Pitch Shifter
+  moves a signal up to an octave either way with a correlation-aligned cross-fade, keeps the stereo image, takes
+  a pitch CV input and reports its latency exactly (the delay at a shift of zero, where the output is the
+  input delayed bit for bit; 7.6, 15.1 or 25.1 ms at 48 kHz for the three quality settings) so the delay
+  compensation lines it up. All five are in the device browser, bypassable, bounded under any parameters, and
+  documented in the device reference. The rotary speaker is still to come. The project format stays 43.
 - **FLAC export, stems between the locators and a loudness report.** The export panel has a FLAC choice next to
   WAV and AIFF, for Export Song, Export Loop and Export Stems, at 16 or 24 bits (FLAC has no 32-bit float, so
   that button is inert while FLAC is chosen). The encoder is our own, with no new dependency: fixed predictors,
