@@ -94,6 +94,8 @@ pub struct WorkflowPrefs {
     pub value_tooltips: bool,
     /// How hard recorded and drawn automation is thinned (default Normal, 0.5 % of the range).
     pub automation_thinning: ThinLevel,
+    /// A new track takes the next colour of the palette (default off).
+    pub auto_color: bool,
     /// The project File > New opens instead of the starter project (set by File > New from
     /// Template > Use Song as Default Song; `None`: the starter project).
     pub default_song: Option<PathBuf>,
@@ -138,6 +140,7 @@ impl Default for WorkflowPrefs {
             knob_range: KnobRange::default(),
             value_tooltips: false,
             automation_thinning: ThinLevel::default(),
+            auto_color: false,
             default_song: None,
             scratch_folder: None,
             extra: BTreeMap::new(),
@@ -230,6 +233,7 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(ThinLevel::from_id)
                 .unwrap_or(defaults.automation_thinning),
+            auto_color: flag("auto_color", defaults.auto_color),
             default_song: path_field(obj, "default_song"),
             scratch_folder: path_field(obj, "scratch_folder"),
             extra: obj
@@ -257,6 +261,7 @@ impl WorkflowPrefs {
                             | "knob_range"
                             | "value_tooltips"
                             | "automation_thinning"
+                            | "auto_color"
                             | "default_song"
                             | "scratch_folder"
                     )
@@ -324,6 +329,7 @@ impl WorkflowPrefs {
             "automation_thinning".into(),
             Value::String(self.automation_thinning.id().into()),
         );
+        map.insert("auto_color".into(), Value::Bool(self.auto_color));
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),

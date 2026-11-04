@@ -442,13 +442,16 @@ pub fn flatten_param_lanes(track: &Track) -> Vec<FlatParam> {
 
 /// The tracks that play: unmuted tracks, and if any track is soloed, only the soloed ones
 /// among them, and the automation tracks (a solo is about what is heard from notes and audio:
-/// it never stops the fader or effect automation, only the track's own mute does). Display
-/// order is kept.
+/// it never stops the fader or effect automation, only a mute does). A mute or solo on a folder
+/// counts for each track in it ([`Song::played_flags`]). Display order is kept.
 pub fn effective_tracks(song: &Song) -> Vec<&Track> {
-    let any_solo = song.tracks.iter().any(|t| t.solo);
+    let flags = song.played_flags();
+    let any_solo = flags.iter().any(|f| f.1);
     song.tracks
         .iter()
-        .filter(|t| !t.muted && (!any_solo || t.solo || t.is_automation_only()))
+        .zip(flags)
+        .filter(|(t, (muted, solo))| !muted && (!any_solo || *solo || t.is_automation_only()))
+        .map(|(t, _)| t)
         .collect()
 }
 

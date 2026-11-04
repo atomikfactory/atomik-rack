@@ -216,6 +216,8 @@ pub(super) fn load_groups(
             parent,
             collapsed: flag(e, &p, "collapsed")?,
             color: marker_color(e, &p)?,
+            muted: flag(e, &p, "muted")?,
+            solo: flag(e, &p, "solo")?,
         });
     }
     let org = Organisation {

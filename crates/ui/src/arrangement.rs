@@ -56,6 +56,7 @@ mod audio_edit;
 mod draw_series;
 mod folder_clips;
 mod ghost;
+mod header_band;
 mod heights;
 mod help;
 mod inspector;
@@ -522,6 +523,8 @@ enum Drag {
     TrackMove,
     /// A note lane header is dragged to another place among the note lanes (`OrgUi::lane_mv`).
     LaneMove,
+    /// A rubber band is dragged over the track headers (`OrgUi::band`).
+    HeaderBand,
     /// The bottom edge of a track header is dragged (`HeightUi::drag` has the state).
     Height,
     Move {
@@ -3090,6 +3093,16 @@ impl ArrangementView {
             {
                 self.start_marquee(pos, true);
             }
+            // Below the last track, in the header column, the drag is a band over the headers.
+            Hit::Empty
+                if primary
+                    && tool == Tool::Select
+                    && self.bounds.contains(pos)
+                    && pos.x < self.timeline_rect().x0
+                    && pos.y >= self.lanes_top() =>
+            {
+                self.begin_header_band(pos, modifiers.shift || modifiers.command());
+            }
             // Below the last track the plain drag is the rubber band.
             Hit::Empty
                 if primary
@@ -3145,6 +3158,14 @@ impl ArrangementView {
         out: &mut Vec<UiAction>,
     ) {
         let device = self.song.tracks[track].device.clone();
+        if button == PointerButton::Primary
+            && modifiers.alt
+            && !(modifiers.shift || modifiers.command())
+        {
+            // Alt starts a rubber band over the headers.
+            self.begin_header_band(pos, false);
+            return;
+        }
         if button == PointerButton::Primary && (modifiers.shift || modifiers.command()) {
             // Shift or Ctrl adds the track to the selection.
             self.toggle_selected_track(&device);
@@ -4119,6 +4140,10 @@ impl ArrangementView {
             self.track_move_move(pos, modifiers);
             return;
         }
+        if matches!(self.drag, Drag::HeaderBand) {
+            self.header_band_move(pos);
+            return;
+        }
         if matches!(self.drag, Drag::Mark) {
             let actions = self.marker_drag_move(pos, modifiers);
             out.extend(actions);
@@ -4186,6 +4211,7 @@ impl ArrangementView {
             | Drag::TempoPoint { .. }
             | Drag::Height
             | Drag::TrackMove
+            | Drag::HeaderBand
             | Drag::LaneMove
             | Drag::Meter { .. }
             | Drag::Audition
@@ -4678,6 +4704,7 @@ impl ArrangementView {
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
             Drag::TrackMove => self.track_move_up(out),
+            Drag::HeaderBand => self.header_band_up(),
             Drag::LaneMove => self.lane_move_up(out),
             Drag::Comp {
                 group,
@@ -5613,6 +5640,9 @@ impl ArrangementView {
         }
         if matches!(self.drag, Drag::TrackMove) {
             return self.track_move_cancel();
+        }
+        if matches!(self.drag, Drag::HeaderBand) {
+            return self.header_band_cancel();
         }
         if matches!(self.drag, Drag::Mark) {
             self.drag = Drag::None;
@@ -7050,6 +7080,11 @@ impl ArrangementView {
         }
         let hovered = |b| self.hover == Some(Hit::Button(track, b));
         let automation = tr.is_automation_only();
+        // A mute or solo that comes from a folder shows dimmed on the track's own button.
+        let by_folder = (
+            self.song.muted_by_folder(&tr.device),
+            self.song.soloed_by_folder(&tr.device),
+        );
         for (b, label, on, lit) in [
             (TrackButton::Mute, "M", tr.muted, st.mute),
             (TrackButton::Solo, "S", tr.solo, st.solo),
@@ -7058,12 +7093,24 @@ impl ArrangementView {
             if automation && b != TrackButton::Mute {
                 continue;
             }
+            let inherited = match b {
+                TrackButton::Mute => by_folder.0,
+                TrackButton::Solo => by_folder.1,
+                _ => false,
+            };
+            let fill = if on {
+                Some(lit)
+            } else if inherited {
+                Some(lit.with_alpha(0.4))
+            } else {
+                None
+            };
             sp::button(
                 c,
                 st,
                 self.track_button_rect(hr, track, b),
                 label,
-                on.then_some(lit),
+                fill,
                 hovered(b),
             );
         }

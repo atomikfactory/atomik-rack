@@ -134,7 +134,7 @@ pub fn render_freeze(
 
     // The document to render: the track audible, and only the chosen clips on it.
     let mut rendered_doc = doc.clone();
-    let any_solo = rendered_doc.song.tracks.iter().any(|t| t.solo);
+    let any_solo = rendered_doc.song.played_flags().iter().any(|f| f.1);
     if let Some(t) = rendered_doc
         .song_mut()
         .tracks
@@ -151,6 +151,10 @@ pub fn render_freeze(
                 lane.muted &= lane.clips.is_empty();
             }
         }
+    }
+    // The folders' own mutes and solos are applied above (the track plays whatever they say).
+    for g in &mut rendered_doc.song_mut().org.groups {
+        (g.muted, g.solo) = (false, false);
     }
     let expanded = rendered_doc.expand(registry);
     let Some(tap) = atomik_model::freeze_tap(

@@ -378,6 +378,8 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Group, "parent", 1),
     field(Group, "collapsed", 1),
     field(Group, "color", 1),
+    field(Group, "muted", 43),
+    field(Group, "solo", 43),
     // A track and its frozen audio.
     field(Track, "device", 1).req(),
     field(Track, "muted", 1),

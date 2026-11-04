@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Track organisation follow-ups.** A folder mutes and solos by itself: the M and S buttons of a folder row set
+  the folder's own flags, every track in it (and in its sub-folders) plays as muted or soloed with it, the
+  tracks keep their own flags, and a track's button shows dimmed while a folder holds it. A folder is dragged by
+  its header into and out of other folders, with its tracks and sub-folders, in one undo step. A track with no
+  colour of its own shows the colour of the folder it is in. Colour > Custom... in the track and folder menus
+  opens a colour picker (a saturation and value square, a hue strip, a hex text and the six palette colours as
+  quick picks). Interface > Colour new tracks (off by default) gives each new track the palette colour the
+  fewest tracks use. A rubber band over the track headers (drag from the empty part of the header column below
+  the last track, or Alt and drag from a header; Shift or Ctrl keeps the selection) selects the tracks it
+  touches. The project format stays 43: a folder's `"muted"` and `"solo"` are written only when set, and an
+  older reader refuses them. Deferred: stacked bars for clips in tracks under 32 px, routing the tracks of a
+  folder to an output bus with a folder fader, a comment of several lines, and folding the controller lanes in
+  the piano roll.
 - **Takes follow-ups.** Takes copy between take groups and between songs: Copy Take and Copy All Takes in a take
   row's menu (or Edit > Copy on a take row) put the takes on the clipboard, and Paste Takes (or Edit > Paste)
   adds them to a group as new takes on top, each playing over its extent like a new recording, or starts a

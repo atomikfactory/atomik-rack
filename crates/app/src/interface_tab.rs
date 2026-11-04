@@ -30,6 +30,8 @@ pub struct UiPrefs {
     pub value_tooltips: bool,
     /// How hard recorded and drawn automation is thinned.
     pub automation_thinning: ThinLevel,
+    /// A new track takes the next colour of the palette.
+    pub auto_color: bool,
 }
 
 impl UiPrefs {
@@ -41,6 +43,7 @@ impl UiPrefs {
             knob_range: prefs.knob_range,
             value_tooltips: prefs.value_tooltips,
             automation_thinning: prefs.automation_thinning,
+            auto_color: prefs.auto_color,
         }
     }
 
@@ -51,6 +54,7 @@ impl UiPrefs {
         prefs.knob_range = self.knob_range;
         prefs.value_tooltips = self.value_tooltips;
         prefs.automation_thinning = self.automation_thinning;
+        prefs.auto_color = self.auto_color;
     }
 }
 
@@ -67,6 +71,8 @@ pub enum UiRow {
     ValueTooltips,
     /// How hard recorded and drawn automation is thinned (steps through the levels).
     AutomationThinning,
+    /// New tracks take a palette colour (a switch).
+    AutoColor,
 }
 
 /// One row of the tab.
@@ -164,9 +170,16 @@ impl InterfaceTab {
                 self.prefs.automation_thinning.label().to_string(),
                 false,
             ),
+            (
+                UiRow::AutoColor,
+                "Colour new tracks",
+                "A new track takes the palette colour the fewest tracks use, going round the six.",
+                String::new(),
+                self.prefs.auto_color,
+            ),
         ] {
             let rect = Rect::new(x0, y, x0 + inner, y + ROW);
-            let button = if which == UiRow::ValueTooltips {
+            let button = if matches!(which, UiRow::ValueTooltips | UiRow::AutoColor) {
                 Rect::new(rect.x0 + 8.0, rect.y0 + 6.0, rect.x0 + 24.0, rect.y0 + 22.0)
             } else {
                 Rect::new(rect.x1 - BUTTON_W, y + 8.0, rect.x1, y + 36.0)
@@ -211,6 +224,7 @@ impl InterfaceTab {
                 };
             }
             UiRow::ValueTooltips => self.prefs.value_tooltips = !self.prefs.value_tooltips,
+            UiRow::AutoColor => self.prefs.auto_color = !self.prefs.auto_color,
             UiRow::AutomationThinning => {
                 let all = ThinLevel::ALL;
                 let at = all
@@ -243,7 +257,7 @@ impl InterfaceTab {
             } => {
                 let back = *button == PointerButton::Secondary;
                 let hit = self.layout(panel).rows.into_iter().find(|r| match r.which {
-                    UiRow::ValueTooltips => r.rect.contains(*pos),
+                    UiRow::ValueTooltips | UiRow::AutoColor => r.rect.contains(*pos),
                     _ => r.button.contains(*pos),
                 });
                 if let Some(r) = hit {
@@ -259,7 +273,7 @@ impl InterfaceTab {
     pub fn paint(&self, canvas: &mut dyn Canvas, theme: &Theme, panel: Rect) {
         let l = self.layout(panel);
         for row in &l.rows {
-            let switch = row.which == UiRow::ValueTooltips;
+            let switch = matches!(row.which, UiRow::ValueTooltips | UiRow::AutoColor);
             if switch && self.hover.is_some_and(|p| row.rect.contains(p)) {
                 canvas.fill_with(RoundedRect::from_rect(row.rect, 6.0), theme.browser_row);
             }

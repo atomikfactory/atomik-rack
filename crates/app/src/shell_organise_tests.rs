@@ -279,11 +279,14 @@ fn a_folder_row_collapses_and_its_menu_item_says_so() {
         .folder_button_center(1, FolderButton::Mute)
         .unwrap();
     press(&mut s, mute, PointerButton::Primary, Modifiers::NONE);
+    // The mute is the folder's own: its tracks keep their flags and play as muted with it.
     let song = &s.core().doc().song;
-    assert!(song.track(&key("a")).unwrap().muted && song.track(&key("b")).unwrap().muted);
-    assert!(!song.track(&key("c")).unwrap().muted);
+    assert!(song.org.group(1).unwrap().muted);
+    assert!(song.muted_by_folder(&key("a")) && song.muted_by_folder(&key("b")));
+    assert!(!song.muted_by_folder(&key("c")));
+    assert!(!song.track(&key("a")).unwrap().muted);
     assert!(s.core_mut().undo(), "the folder mute is one undo step");
-    assert!(!s.core().doc().song.track(&key("a")).unwrap().muted);
+    assert!(!s.core().doc().song.org.group(1).unwrap().muted);
 }
 
 #[test]
@@ -643,4 +646,102 @@ fn clicking_a_track_name_after_a_folder_header_moves_the_track_not_the_folder() 
     pick(&mut s, "c");
     tap(&mut s, "Ctrl+Shift+Alt+Up");
     assert_eq!(rows(&s), ["a", "[folder]", "c", "b", "d"]);
+}
+
+/// Opens the Colour submenu of the header menu of track `k` and presses Custom.
+fn pick_custom_colour(s: &mut Shell<NullBackend>, k: &str) {
+    let at = header(s, k);
+    press(s, at, PointerButton::Secondary, Modifiers::NONE);
+    let sub = s.context_menu().unwrap().submenu_center("Colour").unwrap();
+    s.handle(&UiEvent::PointerMove {
+        pos: sub,
+        modifiers: Modifiers::NONE,
+    });
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center_with("sequencer.track_color", "custom")
+        .unwrap();
+    press(s, item, PointerButton::Primary, Modifiers::NONE);
+}
+
+fn type_in_picker(s: &mut Shell<NullBackend>, text: &str) {
+    for c in text.chars() {
+        s.handle(&UiEvent::Key {
+            key: atomik_ui::Key::Char(c),
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        });
+    }
+}
+
+#[test]
+fn the_custom_colour_item_opens_the_picker_and_enter_colours_the_track_and_its_device() {
+    let mut s = shell();
+    pick_custom_colour(&mut s, "b");
+    assert!(s.color_picker_open());
+    assert!(s.wants_text_input(), "the hex text takes input methods");
+    type_in_picker(&mut s, "#102030");
+    s.handle(&UiEvent::Key {
+        key: atomik_ui::Key::Enter,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(!s.color_picker_open());
+    let doc = s.core().doc();
+    assert_eq!(doc.song.track_color(&key("b")), Some([0x10, 0x20, 0x30]));
+    assert_eq!(
+        doc.device(&key("b")).unwrap().color,
+        Some([0x10, 0x20, 0x30])
+    );
+    assert_eq!(doc.song.track_color(&key("a")), None);
+    assert!(s.core_mut().undo(), "one undo step");
+    assert_eq!(s.core().doc().song.track_color(&key("b")), None);
+    assert_eq!(s.core().doc().device(&key("b")).unwrap().color, None);
+}
+
+#[test]
+fn escape_closes_the_picker_without_changing_anything() {
+    let mut s = shell();
+    pick_custom_colour(&mut s, "b");
+    type_in_picker(&mut s, "#ffffff");
+    s.handle(&UiEvent::Key {
+        key: atomik_ui::Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(!s.color_picker_open());
+    assert_eq!(s.core().doc().song.track_color(&key("b")), None);
+}
+
+#[test]
+fn the_picker_colours_a_folder_from_the_folder_menu_item() {
+    let mut s = shell();
+    select_ab(&mut s);
+    s.execute(AppCommand::GroupTracks);
+    let at = s.core().arrangement().folder_header_center(1).unwrap();
+    press(&mut s, at, PointerButton::Secondary, Modifiers::NONE);
+    let sub = s.context_menu().unwrap().submenu_center("Colour").unwrap();
+    s.handle(&UiEvent::PointerMove {
+        pos: sub,
+        modifiers: Modifiers::NONE,
+    });
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center_with("sequencer.track_color", "custom")
+        .unwrap();
+    press(&mut s, item, PointerButton::Primary, Modifiers::NONE);
+    assert!(s.color_picker_open());
+    type_in_picker(&mut s, "#abcdef");
+    s.handle(&UiEvent::Key {
+        key: atomik_ui::Key::Enter,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    let song = &s.core().doc().song;
+    assert_eq!(song.org.group(1).unwrap().color, Some([0xab, 0xcd, 0xef]));
+    // The tracks without a colour of their own show the folder's.
+    assert_eq!(song.shown_color(&key("a")), Some([0xab, 0xcd, 0xef]));
+    assert_eq!(song.track_color(&key("a")), None);
 }

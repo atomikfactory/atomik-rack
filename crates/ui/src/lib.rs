@@ -269,6 +269,10 @@
 //! - **Strip silence.** [`SilenceView`] is the modal panel of threshold, minimum silence, padding
 //!   and fade settings; it emits [`UiAction::StripSilence`] (`APPLY`, `CLOSE`) and the app feeds it
 //!   with [`SilenceView::set_target`].
+//! - **Colour picker.** [`ColorPickerView`] is the modal panel that picks any colour for a track
+//!   or a folder (a saturation/value square, a hue strip, a hex text and the six palette colours
+//!   as quick picks); it emits [`UiAction::ColorPicker`] (`APPLY`, `CLOSE`), and the arrangement
+//!   asks for it with [`UiAction::PickColor`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
 //!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
@@ -309,6 +313,7 @@ pub mod character_panel;
 pub mod character_screen;
 pub mod chord_edit;
 pub mod clipboard;
+pub mod color_picker;
 pub mod console;
 mod console_gang;
 pub mod console_layout;
@@ -405,6 +410,7 @@ pub use arrangement::{
 pub use audio_editor::{AudioEditorView, AudioMode};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
+pub use color_picker::{ColorPickerAction, ColorPickerView, ColorTarget};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
 pub use console_meter::ChannelMeters;
 pub use console_vca::VcaPart;

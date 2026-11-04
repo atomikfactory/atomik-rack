@@ -140,6 +140,85 @@ fn place_layout(
     })
 }
 
+/// The track order and organisation after moving the folder `group`, with its tracks and
+/// sub-folders, to `place` (see [`SongCommand::MoveGroupTo`]).
+pub(crate) fn moved_group_layout(
+    song: &Song,
+    group: u32,
+    place: TrackPlace,
+) -> Result<MovedLayout, ModelError> {
+    let order = order_of(song);
+    let org = song.normalised_org();
+    let mut asked = org.clone();
+    let parent_of = |org: &Organisation| org.group(group).map(|g| g.parent);
+    if parent_of(&org).is_none() {
+        return Err(ModelError::UnknownKey(format!("folder {group}")));
+    }
+    let TrackPlace { to_index, into } = place;
+    if let Some(g) = into {
+        if org.group(g).is_none() {
+            return Err(ModelError::UnknownKey(format!("folder {g}")));
+        }
+        if org.chain(Some(g)).contains(&group) {
+            return Err(bad("a folder cannot go into itself"));
+        }
+    }
+    // The levels the folder and its sub-folders take below the new parent.
+    let own_depth = org
+        .groups
+        .iter()
+        .filter(|g| org.chain(Some(g.id)).contains(&group))
+        .map(|g| org.chain(Some(g.id)).len() - org.chain(Some(group)).len() + 1)
+        .max()
+        .unwrap_or(1);
+    if org.chain(into).len() + own_depth > MAX_GROUP_DEPTH {
+        return Err(bad(format!(
+            "folders nest at most {MAX_GROUP_DEPTH} levels deep"
+        )));
+    }
+    let inside: Vec<usize> = song.group_tracks(group);
+    if inside.is_empty() {
+        return Err(bad("the folder has no tracks"));
+    }
+    let moved: Vec<DeviceKey> = inside.iter().map(|i| order[*i].clone()).collect();
+    let stay: Vec<DeviceKey> = order
+        .iter()
+        .filter(|d| !moved.contains(d))
+        .cloned()
+        .collect();
+    if to_index > stay.len() {
+        return Err(crate::song_cmd::range(format!(
+            "place {to_index} is past the {} tracks that stay",
+            stay.len()
+        )));
+    }
+    let mut new_order = stay;
+    new_order.splice(to_index..to_index, moved.iter().cloned());
+    if let Some(g) = asked.groups.iter_mut().find(|g| g.id == group) {
+        g.parent = into;
+    }
+    // As for tracks: a place that the outline would repair is inside a folder the folder does
+    // not belong to.
+    let cleaned = normalise(song, &new_order, &asked);
+    let parents = |o: &Organisation| {
+        o.groups
+            .iter()
+            .map(|g| (g.id, g.parent))
+            .collect::<Vec<_>>()
+    };
+    if cleaned.members != asked.members || parents(&cleaned) != parents(&asked) {
+        return Err(bad(
+            "that place is inside a folder the folder does not belong to",
+        ));
+    }
+    let changed = new_order != order || parent_of(&asked) != parent_of(&org);
+    Ok(MovedLayout {
+        order: new_order,
+        org: asked,
+        changed,
+    })
+}
+
 /// The result of [`moved_layout`].
 pub(crate) struct MovedLayout {
     /// The new track order.
@@ -156,6 +235,11 @@ impl Song {
     /// are checked by the command, not here.
     pub fn moves_tracks(&self, devices: &[DeviceKey], place: TrackPlace) -> bool {
         moved_layout(self, devices, place).is_ok_and(|m| m.changed)
+    }
+
+    /// Whether [`SongCommand::MoveGroupTo`] with these arguments would move the folder.
+    pub fn moves_group(&self, group: u32, place: TrackPlace) -> bool {
+        moved_group_layout(self, group, place).is_ok_and(|m| m.changed)
     }
 
     /// Whether copies of tracks (as [`crate::WorkflowCommand::DuplicateTracks`] with a place)
@@ -243,6 +327,8 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                 parent,
                 collapsed: false,
                 color: None,
+                muted: false,
+                solo: false,
             });
             for d in moved {
                 org.members.insert(d, id);
@@ -349,6 +435,21 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             let moved = moved_layout(song, &devices, place)?;
             if !moved.changed {
                 return Err(bad("the tracks are already there"));
+            }
+            Ok(layout_edit(song, moved.order, &moved.org))
+        }
+        SongCommand::SetGroupFlags { group, muted, solo } => {
+            let g = group_mut(&mut org, group)?;
+            if g.muted == muted && g.solo == solo {
+                return Err(bad("the folder already has those flags"));
+            }
+            (g.muted, g.solo) = (muted, solo);
+            Ok(layout_edit(song, order, &org))
+        }
+        SongCommand::MoveGroupTo { group, place } => {
+            let moved = moved_group_layout(song, group, place)?;
+            if !moved.changed {
+                return Err(bad("the folder is already there"));
             }
             Ok(layout_edit(song, moved.order, &moved.org))
         }

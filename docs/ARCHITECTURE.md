@@ -259,7 +259,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 43 (older versions still load; version 43
   adds a track's `"groove"` and `"groove_strength"` (the live groove, written only when a track has one;
-  a reader of 42 refuses them, since it would play the notes ungrooved; see 2.14); version 42
+  a reader of 42 refuses them, since it would play the notes ungrooved; see 2.14) and a folder's
+  `"muted": true` and `"solo": true` (each written only when set, with the same refusal; see 2.16); version 42
   adds the root's `"rack_sort"` after `"tune_cents"` (written only when the rack is sorted, ignorable;
   see "Rack sorting") and, to a container's `"inner"`, a macro's `"kind": "switch"`, macros 9 to 16
   (the list has 16
@@ -824,8 +825,8 @@ track, goes with the device when the device is removed (`Planner`), and is copie
   (`AUTOMATION_BUTTONS`: the lane picker is a small `+`; no solo or arm button) and carries that
   lane's param name, write mode and arm buttons on its second line
   (`lane_button_rect(.., lane 0, ..)`; a short row shows none of them); that lane cannot fold away
-  (`is_lane_folded`), the others collapse and fold as on any track. A folder's solo and arm buttons
-  skip such tracks, the Chase Notes and note-lane menu items are off for them, and the console's
+  (`is_lane_folded`), the others collapse and fold as on any track. A folder's arm button skips
+  such tracks, the Chase Notes and note-lane menu items are off for them, and the console's
   master strip draws the automation mark like the channel strips (`paint_master_marks`).
 - **App.** `AppCore::lane_host` allows every device but an audio track (a path key, a device inside
   a container, has no top-level device and so no lane), so Edit Automation, the follow-the-selection
@@ -1641,11 +1642,11 @@ of them touching the engine or the audio thread.
 
 Folders of tracks, track colours and comments, folded automation lanes and the track height presets.
 All of it is view state saved with the project; none of it reaches the engine, the routing or a
-bounce.
+bounce, except the mute and solo of a folder, which decide which tracks play.
 
 - **Model** ([organise.rs](../crates/model/src/organise.rs),
   [organise_cmd.rs](../crates/model/src/organise_cmd.rs)). `Song::org` (`Organisation`) holds the
-  folders (`TrackGroup { id, name, parent, collapsed, color }`, at most 256, nested up to 8 deep),
+  folders (`TrackGroup { id, name, parent, collapsed, color, muted, solo }`, at most 256, nested up to 8 deep),
   the innermost folder of each track, the track colours and comments, the automation lanes that are
   folded (`(device, param)`) and the take groups whose rows are open, all keyed by device like
   `track_heights`. A folder is not a track and has no device. **Invariant:** the tracks of a folder,
@@ -1667,23 +1668,41 @@ bounce.
   to one place: `TrackPlace { to_index, into }` counts the places among the tracks that stay and
   names the folder they join; a place in the middle of another folder, a frozen track and a move
   that changes nothing are refused, and `Song::moves_tracks` and `accepts_copies_at` say whether
-  a drop would be taken), `SetTrackColor`,
+  a drop would be taken), `MoveGroupTo` (a folder with its tracks and sub-folders to a
+  `TrackPlace`, into or out of another folder; it cannot go into itself or past the depth limit, and
+  `Song::moves_group` says whether a drop would be taken), `SetGroupFlags`, `SetTrackColor`,
   `SetTrackComment`, `SetLaneFolded` and `SetTakesOpen`. Each is one undo step on one
   `Edit::Organise` that swaps the track order and the organisation, reporting `ViewChanged`
-  (`SongChanged` when tracks changed place); `SetTrackColor`, `SetGroupCollapsed` and `SetLaneFolded` can be
+  (`SongChanged` when tracks changed place or what plays changed); `SetTrackColor`, `SetGroupCollapsed` and `SetLaneFolded` can be
   batched (Alt on a folder chevron collapses or expands every folder in one step).
-  **Mute, solo and arm on a folder** are the same flags on its tracks: the arrangement sends one
-  `Command::Batch` of `SetTrackFlags` for every track of the folder (`Song::group_tracks`), so the
-  engine's mute and solo rules apply unchanged and one undo step reverts them. Folders do not change
-  the routing, and there is no group bus: routing the tracks of a folder to an output bus stays what
+  **Mute and solo on a folder** are the folder's own flags (`SetGroupFlags`): its tracks keep theirs.
+  `Song::played_flags` gives every track's mute and solo as played, a track counting as muted or
+  soloed when it or a folder above it is, and `effective_tracks` (so the engine, the bounce, the
+  warp pass and the automation view) reads them, so a mute still beats a solo and the automation
+  tracks are never stopped by a solo; a track's own M and S button shows dimmed while a folder holds
+  it (`Song::muted_by_folder`, `soloed_by_folder`). Freeze renders a track whatever its folders
+  say. **Arm on a folder** is still the flag on each track: the arrangement sends one
+  `Command::Batch` of `SetTrackFlags` for every track of the folder (`Song::group_tracks`). Folders
+  do not change the routing, and there is no group bus: routing the tracks of a folder to an output bus stays what
   the console already offers per channel. `WorkflowCommand::DuplicateTracks` copies several tracks
   (devices, channels, clips, not armed) in one step and keeps the copies together after the last
   original, or at a `TrackPlace` (the drop of a copy drag). A track colour is the batch of
   `SetTrackColor` and `SetColor`, so the track, its device in the rack and its console strip agree
-  and one undo restores both.
+  and one undo restores both. A track without a colour of its own shows the colour of the nearest
+  folder above it that has one (`Song::shown_color`, `inherited_color`); that colour is the
+  arrangement's (header accent, clips), the device and its strip keep theirs. Colour > Custom...
+  in the header and folder menus (`sequencer.track_color` with the argument `custom`) emits
+  `UiAction::PickColor`, and the shell opens `ColorPickerView`
+  ([ui/src/color_picker.rs](../crates/ui/src/color_picker.rs)): a modal panel with a
+  saturation/value square, a hue strip, a hex text (a `TextField`) and the six palette colours as
+  quick picks; APPLY gives the colour to the folder or to the tracks and their devices in one undo
+  step. Interface > Colour new tracks (`auto_color` in `workflow.json`, off by default;
+  `AppCore::set_auto_color`) gives a track that a command made, and that has no colour of its own, the
+  palette colour the fewest tracks use, in the undo step of that command.
 - **File.** Project format 22: a song's `"groups"`, a track's `"group"`, `"color"` and `"comment"`,
   an automation lane's `"folded": true` and a take group's `"open": true`, each omitted when unused,
-  so a project without organisation differs from its version 21 file only in the version line. The
+  so a project without organisation differs from its version 21 file only in the version line.
+  Format 43 adds a folder's `"muted": true` and `"solo": true`, omitted when unset. The
   loader refuses an unknown or looping parent, more than 8 levels, an empty folder and a folder
   whose tracks are not one block, naming the JSON path.
 - **Dragging** ([arrangement/track_move.rs](../crates/ui/src/arrangement/track_move.rs)). A press
@@ -1692,7 +1711,12 @@ bounce.
   half of a track's first row is before it, the rest after it, in its folder; the upper half of a
   folder row is before the folder, the lower half its start) and an accent line, indented by the
   folder depth, shows it. A place the model would refuse shows no line. The release sends one
-  `MoveTracks` (or, with the copy role, one `DuplicateTracks` with the place); Escape cancels. The
+  `MoveTracks` (or, with the copy role, one `DuplicateTracks` with the place); Escape cancels. A
+  press on the name part of a folder row drags the folder the same way, with the same places and
+  line, and the release sends one `MoveGroupTo`. A rubber band over the headers
+  ([arrangement/header_band.rs](../crates/ui/src/arrangement/header_band.rs)) starts from a press
+  on the empty part of the header column below the last track, or from Alt on any header: the
+  tracks it touches are selected (Shift or Ctrl keeps the selection), Escape restores it. The
   bottom edge of a header resizes every selected track by the same factor (Alt gives them all one
   height) in one merge group, and Track Height > Minimise sets the shortest height
   (`MIN_TRACK_HEIGHT`) and, pressed again, brings back the heights the view remembers.

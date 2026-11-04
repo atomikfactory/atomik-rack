@@ -583,6 +583,11 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The colour menu's Custom item: the app opens the colour picker
+    /// ([`crate::ColorPickerView`]) for this target, from the colour it has now.
+    PickColor(crate::color_picker::ColorTarget),
+    /// The colour picker asks for something: give its colour to the target, or close.
+    ColorPicker(crate::color_picker::ColorPickerAction),
     /// The Audio to Notes panel ([`crate::NotesView`]) asks for something: extract the notes of
     /// the selected audio clip with its settings, or close.
     AudioToNotes(crate::notes_panel::NotesAction),

@@ -188,8 +188,13 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
                 } else {
                     ""
                 };
+                let flags = format!(
+                    "{}{}",
+                    if g.muted { ", \"muted\": true" } else { "" },
+                    if g.solo { ", \"solo\": true" } else { "" }
+                );
                 format!(
-                    "{{\"id\": {}, \"name\": {}{parent}{collapsed}{}}}",
+                    "{{\"id\": {}, \"name\": {}{parent}{collapsed}{}{flags}}}",
                     g.id,
                     json_str(&g.name),
                     color(g.color)

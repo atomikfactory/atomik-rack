@@ -314,41 +314,51 @@ fn double_clicking_the_timeline_part_of_a_folder_row_collapses_it() {
 // ------------------------------------------------------------------ mute, solo, arm
 
 #[test]
-fn folder_buttons_set_the_flag_on_every_track_in_one_batch() {
+fn folder_mute_and_solo_are_the_folders_own_flags_and_arm_sets_every_track() {
     let (mut d, reg, mut v) = grouped();
     let m = v.folder_button_center(1, FolderButton::Mute).unwrap();
     let actions = click(&d, &reg, &mut v, m);
+    assert_eq!(
+        song_cmds(&actions),
+        [SongCommand::SetGroupFlags {
+            group: 1,
+            muted: true,
+            solo: false
+        }]
+    );
+    let before: Vec<_> = d.doc().song.tracks.iter().map(|t| t.muted).collect();
+    apply(&mut d, &reg, &mut v, &actions);
+    let song = &d.doc().song;
+    assert!(song.org.group(1).unwrap().muted);
+    assert_eq!(
+        song.tracks.iter().map(|t| t.muted).collect::<Vec<_>>(),
+        before,
+        "the tracks keep their own mute"
+    );
+    assert!(song.muted_by_folder(&key("bass")) && song.muted_by_folder(&key("lead")));
+    assert!(!song.muted_by_folder(&key("keys")), "outside the folder");
+    // The next press clears it, and one undo brings it back.
+    let actions = click(&d, &reg, &mut v, m);
+    apply(&mut d, &reg, &mut v, &actions);
+    assert!(!d.doc().song.org.group(1).unwrap().muted);
+    d.undo().unwrap();
+    assert!(d.doc().song.org.group(1).unwrap().muted);
+    // Solo is the folder's too and keeps its mute; arm sets the flag on every track in one batch.
+    let s = v.folder_button_center(1, FolderButton::Solo).unwrap();
+    let actions = click(&d, &reg, &mut v, s);
+    apply(&mut d, &reg, &mut v, &actions);
+    let group = d.doc().song.org.group(1).unwrap();
+    assert!(group.muted && group.solo);
+    let a = v.folder_button_center(1, FolderButton::Arm).unwrap();
+    let actions = click(&d, &reg, &mut v, a);
     let Some(Command::Batch(batch)) = commands(&actions).into_iter().next() else {
         panic!("one batch: {actions:?}");
     };
     assert_eq!(batch.len(), 2, "bass and lead");
     apply(&mut d, &reg, &mut v, &actions);
-    let song = &d.doc().song;
-    assert!(song.track(&key("bass")).unwrap().muted);
-    assert!(song.track(&key("lead")).unwrap().muted);
-    assert!(
-        !song.track(&key("keys")).unwrap().muted,
-        "outside the folder"
-    );
-    // Lead was muted already: a press sets all (bass was the odd one), the next clears all.
-    let actions = click(&d, &reg, &mut v, m);
-    apply(&mut d, &reg, &mut v, &actions);
-    assert!(!d.doc().song.track(&key("bass")).unwrap().muted);
-    assert!(!d.doc().song.track(&key("lead")).unwrap().muted);
-    // One undo step each.
-    d.undo().unwrap();
-    assert!(d.doc().song.track(&key("bass")).unwrap().muted);
-    // Solo and arm keep the other flags of each track.
-    let s = v.folder_button_center(1, FolderButton::Solo).unwrap();
-    let a = v.folder_button_center(1, FolderButton::Arm).unwrap();
-    for at in [s, a] {
-        let actions = click(&d, &reg, &mut v, at);
-        apply(&mut d, &reg, &mut v, &actions);
+    for k in ["bass", "lead"] {
+        assert!(d.doc().song.track(&key(k)).unwrap().armed);
     }
-    let bass = d.doc().song.track(&key("bass")).unwrap();
-    assert!(bass.muted && bass.solo && bass.armed);
-    let lead = d.doc().song.track(&key("lead")).unwrap();
-    assert!(lead.muted && lead.solo && lead.armed);
 }
 
 // ------------------------------------------------------------------ names and comments

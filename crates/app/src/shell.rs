@@ -162,13 +162,14 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BrowseAction, Canvas, CanvasExt, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip,
-    Key, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView,
-    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT,
-    ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView, PointerButton,
-    QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView,
-    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
-    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
+    BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
+    ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, MacrosAction, MacrosView,
+    MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
+    NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
+    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, WarpAction,
+    WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -518,6 +519,8 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
+    color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
     notes: Option<NotesView>,
     /// Its settings, kept between openings.
@@ -697,6 +700,7 @@ impl<B: AudioBackend> Shell<B> {
             quantize_values: QuantizeValues::default(),
             silence: None,
             song_info: None,
+            color_picker: None,
             notes: None,
             notes_values: NotesValues::default(),
             warp: None,
@@ -1049,7 +1053,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Whether a text field has the keys, so the window system should offer its input method
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
-        self.song_info.is_some() || self.ime_target().is_some()
+        self.song_info.is_some() || self.color_picker.is_some() || self.ime_target().is_some()
     }
 
     /// The pane an input-method event goes to: the focused pane while one of its editable text
@@ -1090,6 +1094,68 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.song_info = None;
+        self.repaint = true;
+    }
+
+    /// Whether the colour picker is open.
+    pub fn color_picker_open(&self) -> bool {
+        self.color_picker.is_some()
+    }
+
+    /// The colour picker, while it is open.
+    pub fn color_picker_view(&self) -> Option<&ColorPickerView> {
+        self.color_picker.as_ref().map(|(v, _)| v)
+    }
+
+    /// Opens the colour picker for `target`, from the colour it shows now.
+    fn open_color_picker(&mut self, target: ColorTarget) {
+        let song = &self.core.doc().song;
+        let current = match &target {
+            ColorTarget::Folder(group) => song.org.group(*group).and_then(|g| g.color),
+            ColorTarget::Tracks(devices) => devices.first().and_then(|d| song.shown_color(d)),
+        };
+        let theme = self.core.view().theme().clone();
+        let mut view = ColorPickerView::new(theme, current.unwrap_or([0x3f, 0x8f, 0xd2]));
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.color_picker = Some((view, target));
+        self.repaint = true;
+    }
+
+    /// What the colour picker asked for: APPLY gives its colour to the folder, or to the tracks
+    /// and the devices that play them (one undo step), and closes it.
+    fn color_picker_action(&mut self, action: ColorPickerAction) {
+        if let (ColorPickerAction::Apply, Some((view, target))) = (action, &self.color_picker) {
+            let color = Some(view.color());
+            let command = match target {
+                ColorTarget::Folder(group) => {
+                    Command::Song(atomik_model::SongCommand::SetGroupColor {
+                        group: *group,
+                        color,
+                    })
+                }
+                ColorTarget::Tracks(devices) => Command::Batch(
+                    devices
+                        .iter()
+                        .flat_map(|device| {
+                            [
+                                Command::Song(atomik_model::SongCommand::SetTrackColor {
+                                    device: device.clone(),
+                                    color,
+                                }),
+                                Command::SetColor {
+                                    key: device.clone(),
+                                    color,
+                                },
+                            ]
+                        })
+                        .collect(),
+                ),
+            };
+            // A rejection (a track that went away) is reported by the core.
+            let _ = self.core.apply_command(command);
+        }
+        self.color_picker = None;
         self.repaint = true;
     }
 
@@ -1907,6 +1973,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.set_knob_range(self.workflow.knob_range);
         self.core
             .set_automation_thinning(self.workflow.automation_thinning.fraction());
+        self.core.set_auto_color(self.workflow.auto_color);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
@@ -1992,6 +2059,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.song_info {
+            v.set_theme(theme.clone());
+        }
+        if let Some((v, _)) = &mut self.color_picker {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.notes {
@@ -2594,6 +2664,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.song_info.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.song_info {
+                v.set_bounds(rect);
+            }
+        }
+        if self.color_picker.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some((v, _)) = &mut self.color_picker {
                 v.set_bounds(rect);
             }
         }
@@ -3455,6 +3531,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::SongInfo(a) = action {
                     self.song_info_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.color_picker.is_some() {
+            // The colour picker takes every event (typed text included); Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.color_picker = None;
+                return Vec::new();
+            }
+            let actions = self
+                .color_picker
+                .as_mut()
+                .map(|(v, _)| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::ColorPicker(a) = action {
+                    self.color_picker_action(a);
                 }
             }
             return Vec::new();
@@ -4726,6 +4826,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui.input_quantize = q;
                     self.ui_changed();
                 }
+                UiAction::PickColor(target) => self.open_color_picker(target.clone()),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {
@@ -6999,6 +7100,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.song_info {
+            view.paint(canvas);
+        }
+        if let Some((view, _)) = &self.color_picker {
             view.paint(canvas);
         }
         if let Some(view) = &self.notes {

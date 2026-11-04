@@ -293,7 +293,8 @@ fn events_are_plain_values() {
 }
 
 #[test]
-fn folder_solo_and_arm_leave_an_automation_track_alone_and_mute_includes_it() {
+fn folder_arm_leaves_an_automation_track_alone_and_the_folders_mute_includes_it() {
+    use atomik_ui::arrangement::FolderButton;
     let (mut d, reg, mut v) = setup();
     d.apply(
         Command::Song(SongCommand::GroupTracks {
@@ -304,29 +305,36 @@ fn folder_solo_and_arm_leave_an_automation_track_alone_and_mute_includes_it() {
     )
     .unwrap();
     v.sync(d.doc(), &reg);
-    for (button, check) in [
-        (
-            atomik_ui::arrangement::FolderButton::Arm,
-            (|t: &atomik_model::Track| t.armed) as fn(&atomik_model::Track) -> bool,
-        ),
-        (atomik_ui::arrangement::FolderButton::Solo, |t| t.solo),
-        (atomik_ui::arrangement::FolderButton::Mute, |t| t.muted),
-    ] {
+    let press = |d: &mut Document, v: &mut atomik_ui::ArrangementView, button| {
         let p = v.folder_button_center(1, button).unwrap();
-        let a = click(&d, &reg, &mut v, p);
+        let a = click(d, &reg, v, p);
         for c in commands(&a) {
             d.apply(c, &reg)
                 .unwrap_or_else(|e| panic!("{button:?}: {e}"));
         }
         v.sync(d.doc(), &reg);
-        let song = &d.doc().song;
-        assert!(check(song.track(&key("bass")).unwrap()), "{button:?}");
-        assert_eq!(
-            check(song.track(&delay()).unwrap()),
-            button == atomik_ui::arrangement::FolderButton::Mute,
-            "{button:?}"
-        );
-    }
+    };
+    // Arm is a flag on each track, and an automation track has none.
+    press(&mut d, &mut v, FolderButton::Arm);
+    let song = &d.doc().song;
+    assert!(song.track(&key("bass")).unwrap().armed);
+    assert!(!song.track(&delay()).unwrap().armed);
+    // Solo is the folder's own: the automation track keeps playing, as under any solo.
+    press(&mut d, &mut v, FolderButton::Solo);
+    let names = |d: &Document| -> Vec<_> {
+        atomik_model::song::effective_tracks(&d.doc().song)
+            .iter()
+            .map(|t| t.device.clone())
+            .collect()
+    };
+    assert!(d.doc().song.org.group(1).unwrap().solo);
+    assert!(names(&d).contains(&delay()));
+    // Mute is the folder's own and includes the automation track.
+    press(&mut d, &mut v, FolderButton::Solo);
+    press(&mut d, &mut v, FolderButton::Mute);
+    assert!(d.doc().song.org.group(1).unwrap().muted);
+    assert!(!names(&d).contains(&delay()));
+    assert!(!names(&d).contains(&key("bass")));
 }
 
 #[test]
