@@ -145,3 +145,49 @@ fn other_messages_are_ignored_and_nothing_panics() {
     f.on_message(&[0xFE], t);
     assert_eq!(cell.read(), ExternalState::default());
 }
+
+#[test]
+fn the_position_count_starts_at_a_start_and_moves_a_clock_at_a_time() {
+    let (mut f, cell) = follower();
+    let t0 = base();
+    let mut t = 0.0;
+    // Clocks before the sender says where it is do not count.
+    clocks_at(&mut f, t0, &mut t, 3, 120.0);
+    assert_eq!(cell.read().phase, None);
+    f.on_message(&[START], t0 + Duration::from_secs_f64(t));
+    assert_eq!(cell.read().phase, Some(0));
+    clocks_at(&mut f, t0, &mut t, 5, 120.0);
+    assert_eq!(cell.read().phase, Some(5 * TICKS_PER_CLOCK));
+}
+
+#[test]
+fn a_song_position_pointer_sets_the_count_and_a_stop_freezes_it() {
+    let (mut f, cell) = follower();
+    let t0 = base();
+    let mut t = 0.0;
+    f.on_message(&[0xF2, 8, 0], t0); // eight sixteenths: two beats
+    assert_eq!(cell.read().phase, Some(2 * atomik_core::PPQ));
+    // Stopped, clocks may keep coming: the count stays.
+    clocks_at(&mut f, t0, &mut t, 4, 120.0);
+    assert_eq!(cell.read().phase, Some(2 * atomik_core::PPQ));
+    f.on_message(&[0xFB], t0 + Duration::from_secs_f64(t));
+    clocks_at(&mut f, t0, &mut t, 24, 120.0);
+    assert_eq!(cell.read().phase, Some(3 * atomik_core::PPQ));
+    f.on_message(&[0xFC], t0 + Duration::from_secs_f64(t));
+    clocks_at(&mut f, t0, &mut t, 24, 120.0);
+    assert_eq!(cell.read().phase, Some(3 * atomik_core::PPQ));
+}
+
+#[test]
+fn the_count_does_not_wander_with_the_tempo() {
+    let (mut f, cell) = follower();
+    let t0 = base();
+    let mut t = 0.0;
+    f.on_message(&[START], t0);
+    // A tempo that swings between 90 and 150 BPM: 96 clocks are four beats whatever the pace.
+    for k in 0..96 {
+        let bpm = if (k / 12) % 2 == 0 { 90.0 } else { 150.0 };
+        clocks_at(&mut f, t0, &mut t, 1, bpm);
+    }
+    assert_eq!(cell.read().phase, Some(4 * atomik_core::PPQ));
+}

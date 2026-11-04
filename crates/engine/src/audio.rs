@@ -462,6 +462,8 @@ pub(crate) struct AudioRt {
     pub(crate) pb: [Batch; 2],
     pub(crate) stream: Option<StreamLaneRt>,
     pub(crate) handoff: Option<Handoff>,
+    /// The regions playing while the player follows an external clock.
+    pub(crate) follow: crate::audio_follow::FollowRt,
 }
 
 impl Clone for AudioRt {
@@ -472,6 +474,7 @@ impl Clone for AudioRt {
             pb: self.pb,
             stream: None,
             handoff: None,
+            follow: Default::default(),
         }
     }
 }
@@ -482,6 +485,7 @@ impl AudioRt {
             pb: [[0.0; BATCH]; 2],
             stream: None,
             handoff: None,
+            follow: Default::default(),
         }
     }
 }
@@ -643,6 +647,7 @@ impl Renderer<'_> {
             pb,
             stream,
             handoff,
+            ..
         } = rt;
         let n_seg = (b - a) as usize;
         let live = data.regions[data.regions.partition_point(|r| r.end() <= a)..]
@@ -696,80 +701,96 @@ fn memory_regions(
         .iter()
         .take_while(|r| r.song_start_frame < b)
     {
-        let SongAsset::Memory {
-            data: planes,
-            frames: asset_frames,
-            ..
-        } = &data.assets[r.asset.0 as usize]
-        else {
-            continue;
-        };
         let lo = a.max(r.song_start_frame);
         let hi = b.min(r.end());
         let n = (hi - lo) as usize;
         let i0 = lo - r.song_start_frame;
-        let l = &planes[0];
-        let rr = &planes[planes.len().min(2) - 1];
         let at = off + (lo - a) as usize;
         let added = (written.saturating_sub(lo)).min(n as u64) as usize;
-        if let Some(w) = r.warp {
-            // An interim warp reads the asset through its time map for every region frame
-            // (frames outside the asset are silent).
-            let mut g = [0.0f32; BATCH];
-            r.gains(data.envelope(r), i0, &mut g[..n]);
-            let map = &data.warp_maps[w as usize];
-            let mut seg = 0usize;
-            for k in 0..n {
-                let clip_frame = (r.clip_pos + i0 + k as u64) as f64;
-                let s = map_source(map, clip_frame, &mut seg);
-                let (vl, vr) = (hermite_at(l, s) * g[k], hermite_at(rr, s) * g[k]);
-                if k < added {
-                    pb[0][at + k] += vl;
-                    pb[1][at + k] += vr;
-                } else {
-                    pb[0][at + k] = vl;
-                    pb[1][at + k] = vr;
-                }
-            }
+        if render_region(data, r, pb, i0, n, at, added) {
             written = written.max(hi);
-            continue;
         }
-        // The region frames `k0..k1` that read inside the asset, and their source index.
-        let (k0, k1, s0) = if r.reverse {
-            let s0 = r.source_offset - i0;
-            let lead = if *asset_frames == 0 {
-                n as u64
+    }
+}
+
+/// Renders `n` frames of region `r`, from its frame `i0`, into `pb` at batch offset `at`: the
+/// first `added` of them add to what is there and the rest assign. Returns false for a region
+/// of a streamed asset (nothing is rendered). A frame outside the asset is silent.
+pub(crate) fn render_region(
+    data: &LaneData,
+    r: &SongAudioRegion,
+    pb: &mut [Batch; 2],
+    i0: u64,
+    n: usize,
+    at: usize,
+    added: usize,
+) -> bool {
+    let SongAsset::Memory {
+        data: planes,
+        frames: asset_frames,
+        ..
+    } = &data.assets[r.asset.0 as usize]
+    else {
+        return false;
+    };
+    let l = &planes[0];
+    let rr = &planes[planes.len().min(2) - 1];
+    if let Some(w) = r.warp {
+        // An interim warp reads the asset through its time map for every region frame
+        // (frames outside the asset are silent).
+        let mut g = [0.0f32; BATCH];
+        r.gains(data.envelope(r), i0, &mut g[..n]);
+        let map = &data.warp_maps[w as usize];
+        let mut seg = 0usize;
+        for k in 0..n {
+            let clip_frame = (r.clip_pos + i0 + k as u64) as f64;
+            let s = map_source(map, clip_frame, &mut seg);
+            let (vl, vr) = (hermite_at(l, s) * g[k], hermite_at(rr, s) * g[k]);
+            if k < added {
+                pb[0][at + k] += vl;
+                pb[1][at + k] += vr;
             } else {
-                s0.saturating_sub(asset_frames - 1).min(n as u64)
-            };
-            (lead as usize, n, s0)
-        } else {
-            let s0 = r.source_offset + i0;
-            let valid = (n as u64).min(asset_frames.saturating_sub(s0)) as usize;
-            (0, valid, s0)
-        };
-        if k1 > k0 {
-            let mut g = [0.0f32; BATCH];
-            r.gains(data.envelope(r), i0 + k0 as u64, &mut g[..k1 - k0]);
-            for k in k0..k1 {
-                let s = if r.reverse {
-                    (s0 - k as u64) as usize
-                } else {
-                    s0 as usize + k
-                };
-                let gk = g[k - k0];
-                let (vl, vr) = (l[s] * gk, rr[s] * gk);
-                if k < added {
-                    pb[0][at + k] += vl;
-                    pb[1][at + k] += vr;
-                } else {
-                    pb[0][at + k] = vl;
-                    pb[1][at + k] = vr;
-                }
+                pb[0][at + k] = vl;
+                pb[1][at + k] = vr;
             }
         }
-        written = written.max(hi);
+        return true;
     }
+    // The region frames `k0..k1` that read inside the asset, and their source index.
+    let (k0, k1, s0) = if r.reverse {
+        let s0 = r.source_offset - i0;
+        let lead = if *asset_frames == 0 {
+            n as u64
+        } else {
+            s0.saturating_sub(asset_frames - 1).min(n as u64)
+        };
+        (lead as usize, n, s0)
+    } else {
+        let s0 = r.source_offset + i0;
+        let valid = (n as u64).min(asset_frames.saturating_sub(s0)) as usize;
+        (0, valid, s0)
+    };
+    if k1 > k0 {
+        let mut g = [0.0f32; BATCH];
+        r.gains(data.envelope(r), i0 + k0 as u64, &mut g[..k1 - k0]);
+        for k in k0..k1 {
+            let s = if r.reverse {
+                (s0 - k as u64) as usize
+            } else {
+                s0 as usize + k
+            };
+            let gk = g[k - k0];
+            let (vl, vr) = (l[s] * gk, rr[s] * gk);
+            if k < added {
+                pb[0][at + k] += vl;
+                pb[1][at + k] += vr;
+            } else {
+                pb[0][at + k] = vl;
+                pb[1][at + k] = vr;
+            }
+        }
+    }
+    true
 }
 
 /// The asset frame a warp map reads at clip frame `c`: linear between knots, continuing the

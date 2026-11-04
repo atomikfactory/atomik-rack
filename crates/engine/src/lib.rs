@@ -5,6 +5,7 @@
 //!
 mod arena;
 mod audio;
+mod audio_follow;
 mod console;
 mod controllers;
 mod engine;
@@ -13,6 +14,7 @@ mod graph;
 mod interface;
 mod live;
 mod offline;
+mod phase_lock;
 mod plan;
 mod player;
 mod preview;

@@ -1394,6 +1394,7 @@ fn following_opens_the_clock_port_once_and_closing_it_ends_the_following() {
         position: 0,
         locates: 1,
         clocks: 10,
+        phase: Some(0),
     });
     s.poll();
     assert!(s.status().sync.receiving);

@@ -84,15 +84,24 @@
 //! * **Following.** While the [`crate::ExternalClock`] is followed, the player replaces every
 //!   tempo map with one constant segment at the clock's tempo (the position keeps its musical
 //!   place when the tempo moves: the tick is kept, the frame recomputed), starts, stops and
-//!   locates as the clock does, ignores the transport commands and the count-in, leaves the audio
-//!   clips out (they are placed on the song's own tempo) and stops the transport, releasing every
-//!   held note, when the clock count stops moving for half a second. The phase of the clock is
-//!   not tracked: the song runs on the tempo measured, from the start the clock gave.
+//!   locates as the clock does, plays the audio clips from their own starts at their own rate
+//!   (`audio_follow`: they are placed on the song's own tempo), ignores the transport commands
+//!   and the count-in, and stops the transport, releasing every held note, when the clock count
+//!   stops moving for half a second. The
+//!   measured tempo lags a sender whose tempo wanders, so the player also tracks the sender's
+//!   *position* (the clock count the
+//!   clock input publishes as `ExternalState::phase`) with the phase lock of `phase_lock`: once
+//!   per batch it moves the position a few frames towards the sender's, bounded and
+//!   deterministic, and locates to it when the two are a beat apart. A Start or a Song
+//!   Position Pointer is the hard anchor: the position jumps there and the lock starts afresh.
+//!   Without a count (a sender that has not said where it is) the song runs on the tempo alone.
 
 use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
+use crate::audio_follow;
 use crate::console::DelayLine;
 use crate::graph::DeviceInstanceId;
+use crate::phase_lock::{Correction, PhaseLock, error_ticks, expected_tick};
 use crate::seq::{
     ChaseNote, CompiledTrack, PreRoll, SongCurve, SongPoint, SongSnapshot, TrackCursor,
     TransportCommand, TransportState,
@@ -565,6 +574,8 @@ struct Follow {
     /// The clock count at the last batch, and the frames since it last moved.
     clocks: u64,
     quiet_frames: u64,
+    /// The phase lock: the remainder of the corrections too small for a whole frame.
+    lock: PhaseLock,
 }
 
 /// The clock may be silent this long (in seconds) while the sender runs before the transport
@@ -608,6 +619,9 @@ pub(crate) struct Player {
     /// Set when something other than the lanes may have changed a device's parameters (a
     /// control message, a transport command, a loop wrap): the next batch applies every lane.
     lanes_dirty: bool,
+    /// The audio clips played while following start afresh at the next stretch: set by a
+    /// locate, a transport change, a loop wrap or a new song.
+    audio_reseek: bool,
     /// MIDI clock out.
     sync: ClockOut,
     /// The clock source the player follows while the cell says so.
@@ -650,6 +664,7 @@ impl Player {
             shared: Arc::new(TransportCell::default()),
             hold: Arc::new(AutomationHold::new()),
             lanes_dirty: true,
+            audio_reseek: true,
             sync: ClockOut::new(),
             external: ExternalClock::new(),
             follow: None,
@@ -774,6 +789,7 @@ impl Player {
             .map_or(TempoMap::new(tempo), |e| TempoMap::new(e));
         seek(map, sr, tracks, cursors, self.pos);
         self.song = Some(new);
+        self.audio_reseek = true;
         old
     }
 
@@ -808,6 +824,7 @@ impl Player {
         sr: f64,
         dropped: &AtomicU64,
     ) {
+        self.audio_reseek = true;
         let constant = [TempoSegment::constant(engine_tempo)];
         let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
         let Self {
@@ -945,6 +962,7 @@ impl Player {
             locates: state.locates,
             clocks: state.clocks,
             quiet_frames: 0,
+            lock: PhaseLock::default(),
         });
         // The same musical position on the clock's tempo, with the cursors moved to it.
         self.apply_command(
@@ -992,6 +1010,9 @@ impl Player {
             f.quiet_frames = 0;
         }
         let silent = f.quiet_frames as f64 > CLOCK_LOST_SECONDS * sr;
+        if locate.is_some() {
+            f.lock.reset();
+        }
         self.follow = Some(f);
         if let Some(position) = locate {
             self.apply_command(
@@ -1008,8 +1029,54 @@ impl Player {
             self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
         } else if !running && s.running && !silent {
             self.apply_command(TransportCommand::Play, engine_tempo, sr, dropped);
+        } else if running
+            && locate.is_none()
+            && let Some(phase) = s.phase
+        {
+            self.lock_phase(&mut f, phase, sr, engine_tempo, dropped);
         }
         self.follow = Some(f);
+    }
+
+    /// The phase lock (see `phase_lock`): moves the position a few frames towards the sender's
+    /// count, or locates to it when the two are a beat apart.
+    fn lock_phase(
+        &mut self,
+        f: &mut Follow,
+        phase: i64,
+        sr: f64,
+        engine_tempo: Tempo,
+        dropped: &AtomicU64,
+    ) {
+        if !self.playing {
+            return;
+        }
+        let map = [TempoSegment::constant(f.tempo)];
+        let map = TempoMap::new(&map);
+        let looped = (self.loop_enabled && self.loop_end > self.loop_start)
+            .then_some((self.loop_start, self.loop_end));
+        let expected = expected_tick(phase, looped);
+        let tick = map.tick(self.pos as f64, sr);
+        let tpf = map.ticks_per_frame(tick, sr);
+        match f.lock.step(error_ticks(expected, tick, looped), tpf) {
+            Correction::Frames(n) => {
+                let mut pos = (self.pos as i64).saturating_add(n).max(0) as u64;
+                if looped.is_some() {
+                    // Never past the loop end: the wrap is found by comparing with it.
+                    let end = map.song_frame(self.loop_end, sr);
+                    if self.pos <= end {
+                        pos = pos.min(end);
+                    }
+                }
+                self.pos = pos;
+            }
+            Correction::Relocate => self.apply_command(
+                TransportCommand::Locate(Ticks(expected.round() as i64)),
+                engine_tempo,
+                sr,
+                dropped,
+            ),
+        }
     }
 
     /// The engine tempo changed: a song-less transport keeps its tick.
@@ -1056,21 +1123,26 @@ impl Player {
             pre_roll,
             counting,
             sync,
+            audio_reseek,
             ..
         } = self;
         let four_four = [MeterSegment::FOUR_FOUR];
-        let (map, meters, (lanes, lane_last), mut parts, mut aud) = match song.as_deref_mut() {
+        let following = ext.is_some();
+        // The song's own tempo map: the audio clips of a followed song are placed on it.
+        let (map, own, meters, (lanes, lane_last), mut parts, mut aud) = match song.as_deref_mut() {
             Some(s) => (
                 ext.as_ref()
                     .map_or(TempoMap::new(&s.tempo), |e| TempoMap::new(e)),
+                TempoMap::new(&s.tempo),
                 MeterMap::new(&s.meter),
                 (&s.lanes[..], &mut s.lane_last[..]),
                 Some((&s.tracks[..], &mut s.cursors[..])),
-                ext.is_none().then_some((&s.audio[..], &mut s.audio_rt[..])),
+                Some((&s.audio[..], &mut s.audio_rt[..])),
             ),
             None => (
                 ext.as_ref()
                     .map_or(TempoMap::new(&constant), |e| TempoMap::new(e)),
+                TempoMap::new(&constant),
                 MeterMap::new(&four_four),
                 (&[][..], &mut [][..]),
                 None,
@@ -1087,7 +1159,8 @@ impl Player {
             seq,
             dropped,
         };
-        if let Some((tracks, rts)) = aud.as_mut() {
+        // The streamer reads in the song's own order: it has nothing to do while following.
+        if let Some((tracks, rts)) = aud.as_mut().filter(|_| !following) {
             for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
                 if let Some(lane) = rt.stream.as_mut().filter(|_| t.streams) {
                     lane.sync(*pos, lp, requests, stats);
@@ -1113,6 +1186,7 @@ impl Player {
             *pos = ls;
             *loop_count += 1;
             *lanes_dirty = true;
+            *audio_reseek = true;
             sync.wrapped(frame, self.loop_start, sync_cfg);
         }
         self.shared.publish(&TransportState {
@@ -1177,6 +1251,7 @@ impl Player {
             return time;
         }
         if !*playing {
+            *audio_reseek = true;
             return time;
         }
         // A lane is applied when its value changed since the last batch, or when anything else
@@ -1217,8 +1292,20 @@ impl Player {
             if b > a
                 && let Some((tracks, rts)) = aud.as_mut()
             {
-                for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
-                    renderer.segment(t, rt, a, b, off);
+                if following {
+                    // The clips are on the song's own timeline: where this stretch lies on it.
+                    let u = (
+                        own.frame(map.tick(a as f64, sr), sr),
+                        own.frame(map.tick(b as f64, sr), sr),
+                    );
+                    let reseek = std::mem::take(audio_reseek);
+                    for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
+                        audio_follow::render_segment(t, rt, u, (b - a) as usize, off, reseek);
+                    }
+                } else {
+                    for (t, rt) in tracks.iter().zip(rts.iter_mut()) {
+                        renderer.segment(t, rt, a, b, off);
+                    }
                 }
             }
             // Beats are >= 480 frames apart, so a segment holds at most one onset.
@@ -1245,6 +1332,7 @@ impl Player {
                 wrap(map, sr, &mut parts, &mut em, off, ls);
                 *pos = ls;
                 *loop_count += 1;
+                *audio_reseek = true;
                 sync.wrapped(frame + off as u64, self.loop_start, sync_cfg);
                 if time.loop_wrap.is_none() && parts.is_some() && off < BATCH {
                     time.loop_wrap = Some(LoopWrap {

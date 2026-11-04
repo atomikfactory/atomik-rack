@@ -2302,7 +2302,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
 | `atomik-midi-out` | MIDI output: drains the taps of the MIDI Out devices and the engine's clock tap, converts engine frames to wall-clock times, sends each message to its port when due (polls every millisecond, spins for the last 0.3 ms); releases the notes of a source that goes away | Yes, but never waits for the audio thread |
-| MIDI clock callback (midir) | measures the tempo of a followed clock and publishes it, with Start, Stop, Continue and the position, in a lock-free cell the audio thread reads at the batch boundary | Yes, a few atomic stores |
+| MIDI clock callback (midir) | measures the tempo of a followed clock and counts its position, and publishes both, with Start, Stop, Continue and the locates, in a lock-free cell the audio thread reads at the batch boundary | Yes, a few atomic stores |
 | Control surface callback (midir) | queues the raw bytes of the surface (SysEx included); the UI thread polls, decodes and answers | Yes (a short mutex) |
 
 The engine is created as two halves by `new_engine(cfg)` or `new_engine_with_options(..)`:
@@ -2426,13 +2426,32 @@ the player reads it at every batch boundary: the clock's tempo replaces every te
 constant segment (the position keeps its musical place when the tempo moves: the tick is kept and
 the frame recomputed), Start locates to 0 and plays, Continue plays, Stop stops and releases the
 held notes, a position locates (chase included). The transport commands and the count-in are
-ignored meanwhile (the app also refuses the buttons and says why), the audio clips are not
-played (they are placed on the song's own tempo), and a clock count that does not move for half a
-second stops the transport like a Stop, then continues it when the clocks return. Following
+ignored meanwhile (the app also refuses the buttons and says why), and a clock count that does not move
+for half a second stops the transport like a Stop, then continues it when the clocks return. Following
 changes nothing when it is off, and a bounce never follows a clock; live following is outside the
-determinism contract by nature. Not done: the phase of the clock is not tracked (the song runs on
-the measured tempo from the start the clock gave, so it can drift from a sender whose tempo is
-not steady), and the audio clips and warped clips do not play while following.
+determinism contract by nature.
+
+The measured tempo lags a sender whose tempo wanders, so the player also locks its phase (`phase_lock.rs`).
+The `ClockFollower` counts the sender's position in whole clocks (`ExternalState::phase`: the last Start or
+Song Position Pointer plus 640 ticks for each clock that arrived while the sender ran; a count, so it does
+not wander with the tempo). Once per batch the player compares the middle of the clock being counted with
+its own tick (folded into the loop when one plays, the shortest way round) and closes the error over an
+eighth of a beat, at most 10 % of the ticks of the batch, in whole frames with the remainder carried, so the
+same clock always gives the same positions and no batch moves the song by more than a couple of frames. An
+error beyond a beat is no drift (clocks lost on the cable, or a sender that moved without saying so) and
+locates to the count; a Start or a Song Position Pointer is the hard anchor, a locate that restarts the
+lock. A sender that has not said where it is (clocks and Continue only) gives no count and the song runs
+on the tempo alone.
+
+Audio clips play while following (`audio_follow.rs`). They are placed on the song's own tempo map, which the
+followed tempo replaces, so a clip is played like a note: it starts at the player's frame where the song
+reaches its first frame (through the followed tempo and back through the song's own map) and runs at its
+own rate to its end. A locate, the transport starting, a loop wrap and a new song re-seek: the clips
+underway start from the frame the position is inside. A warped clip is its finished, stretched buffer, so
+it keeps the stretch of the song's own tempo; it is not stretched to the followed one. Up to four clips of
+a track play at once; streamed assets are silent while following. The state is a small array in the
+track's RT scratch: nothing allocates. Not done: stretching clips to the followed tempo, and a re-sync
+inside a clip that runs for many bars (it drifts by the share the two tempos differ).
 
 **Master keyboard.** Workflow, **Master keyboard**
  (`MasterKeyboard`, in `workflow.json`): in
