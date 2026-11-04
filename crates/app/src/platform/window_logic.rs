@@ -13,6 +13,35 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
 
+/// The words of the question about unsaved changes: the same on every platform.
+pub(super) const SAVE_BUTTONS: (&str, &str, &str) = ("Save", "Don't Save", "Cancel");
+
+/// What the person answered to the question about unsaved changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SaveAnswer {
+    /// Save, then carry on.
+    Save,
+    /// Carry on without saving.
+    Discard,
+    /// Leave everything as it is.
+    Cancel,
+}
+
+/// The answer a message box with [`SAVE_BUTTONS`] returned. A box that could only offer Yes,
+/// No and Cancel (they mean the same, in that order) is understood too; anything else, a closed
+/// box included, is Cancel.
+pub(super) fn save_answer(result: &rfd::MessageDialogResult) -> SaveAnswer {
+    use rfd::MessageDialogResult as R;
+    let (save, discard, _) = SAVE_BUTTONS;
+    match result {
+        R::Yes => SaveAnswer::Save,
+        R::No => SaveAnswer::Discard,
+        R::Custom(text) if text == save => SaveAnswer::Save,
+        R::Custom(text) if text == discard => SaveAnswer::Discard,
+        _ => SaveAnswer::Cancel,
+    }
+}
+
 /// The icon of every app window (taskbar, Alt-Tab, title bar), from the embedded logo. `None`
 /// leaves the system's default. macOS ignores it: the Dock icon comes from the bundle.
 pub(super) fn window_icon() -> Option<winit::window::Icon> {
@@ -226,6 +255,21 @@ pub(super) fn wake_after(w: Wakers, frame: Duration) -> Option<Duration> {
 mod tests {
     use super::*;
     use crate::windows::{ZOrder, to_desktop, window_under};
+
+    #[test]
+    fn the_save_box_answers_in_its_own_words_on_every_platform() {
+        use rfd::MessageDialogResult as R;
+        let (save, discard, cancel) = SAVE_BUTTONS;
+        assert_eq!((save, discard, cancel), ("Save", "Don't Save", "Cancel"));
+        assert_eq!(save_answer(&R::Custom(save.into())), SaveAnswer::Save);
+        assert_eq!(save_answer(&R::Custom(discard.into())), SaveAnswer::Discard);
+        assert_eq!(save_answer(&R::Custom(cancel.into())), SaveAnswer::Cancel);
+        // A box that only had Yes / No / Cancel means the same, and a closed box is Cancel.
+        assert_eq!(save_answer(&R::Yes), SaveAnswer::Save);
+        assert_eq!(save_answer(&R::No), SaveAnswer::Discard);
+        assert_eq!(save_answer(&R::Cancel), SaveAnswer::Cancel);
+        assert_eq!(save_answer(&R::Custom("other".into())), SaveAnswer::Cancel);
+    }
 
     #[test]
     fn the_window_icon_is_built_from_the_embedded_logo() {
