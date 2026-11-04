@@ -1951,16 +1951,23 @@ the audio.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `size` | 0 to 3: 1024, 2048, 4096, 8192 points | 2 (4096) | choice | Linear | yes |
+| `size` | 0 to 4: 1024, 2048, 4096, 8192, 16384 points | 2 (4096) | choice | Linear | yes |
 | `window` | 0 to 1: Hann, B-Harris (Blackman-Harris) | 0 | choice | Linear | yes |
 | `channel` | 0 to 4: Left, Right, Mid, Side, Sum | 4 (Sum) | choice | Linear | yes |
-| `mode` | 0 to 1: Fine (log-frequency trace), 1/3 oct (31 bands) | 0 | choice | Linear | yes |
+| `mode` | 0 to 2: Fine (log-frequency trace), 1/3 oct (31 bands), Spectrogram | 0 | choice | Linear | yes |
 | `averaging` | 0 to 2000 | 150 | ms | Linear | no |
 | `hold` | 0 to 5000 (0 = no peak hold) | 1000 | ms | Linear | no |
 | `decay` | 1 to 60 (how fast a released peak falls) | 15 | dB per second | Linear | no |
 | `range` | 30 to 120 (dB shown below 0 dB) | 90 | dB | Linear | no |
 | `tilt` | 0 to 2: 0 dB, 3 dB, 4.5 dB per octave about 1 kHz | 0 | choice | Linear | yes |
+| `smoothing` | 0 to 3: Off, 1/12, 1/6, 1/3 octave (the fine trace averaged across bins) | 0 | choice | Linear | yes |
+| `weighting` | 0 to 1: Flat, K-weighted | 0 | choice | Linear | yes |
+| `reference` | 0 to 2: Off, Stored, Stored with its level matched to the signal | 0 | choice | Linear | yes |
+| `reference.capture` | momentary toggle: a rising edge stores the bands on screen as the reference curve | 0 | toggle | Linear | yes |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+Params added later were put before `bypass`, which moved from id 9 to id 13. A project stores
+params by key, so older projects load as they were, with the new ones at their defaults.
 
 ### Behaviour (as built)
 
@@ -1982,6 +1989,31 @@ the audio.
   inside its edges, a straddling bin in proportion, divided by the window's noise bandwidth). Peaks
   keep each column's highest value for `hold` and then fall `decay` dB per second; `tilt` adds
   `tilt * log2(f / 1 kHz)` dB to the display.
+- **Larger transform and smoothing.** `size` goes up to 16384 points (2.9 Hz per bin at 48 kHz),
+  which reads a bass tone to a fraction of a bin but shows ragged noise. `smoothing` averages the
+  power of the bins over a twelfth, a sixth or a third of an octave around each bin before the
+  fine trace is drawn (a window that grows with the frequency, so the bass keeps its detail and the
+  treble is smooth); the bands and the loudest-bin readout are never smoothed.
+- **K-weighting.** `weighting` K multiplies every bin by the response of the BS.1770-4
+  K-weighting (about -20 dB at 20 Hz, +4 dB above 4 kHz; the filter is the loudness meters' own,
+  `atomik_dsp::k_weighting`), so the display shows what the loudness meter hears. It applies to the
+  trace, the bands, the peaks and the readout.
+- **Spectrogram.** With `mode` 2 the plot shows the fine trace as a scrolling image: frequency
+  across on the same log axis, time downwards with the newest row on top, one row for every 75 ms
+  of audio and 80 rows (6 seconds), brighter for louder, over the dB `range`. It scrolls with the
+  audio, not with the display, so a paused engine stops it. The image is 120 columns by 80 rows of
+  8-bit levels (`atomik_dsp::spectrogram`) and is drawn as runs of equal colour.
+- **Reference curve.** A rising edge of `reference.capture` stores the 31 one-third-octave band
+  levels on screen (with the weighting in force, without the tilt) as the reference curve. It is
+  kept in `spectrum-reference.json` beside the library file, not in the project, so every spectrum
+  device of every project can compare against it; a damaged file is ignored until the next
+  capture and a file from a newer version is never overwritten. `reference` Stored draws it as an
+  orange line through the band centres over the trace or the bands (with the current tilt), and
+  Stored, level matched shifts it so that its mean equals the mean of the bands now, to compare
+  shapes rather than levels. Capturing silence stores nothing and says so in the status line. The
+  curve is not drawn on the spectrogram. Comparing against a second device is not built.
+- **Presets.** The display settings are params like any other, so the patch strip of the device
+  saves them as a user patch and applies it to another spectrum (and a reset puts them back).
 - **Calibration.** 0 dB is a full-scale sine; a sine on a bin reads its own level, a sine between
   bins reads up to 1.4 dB (Hann) or 0.8 dB (Blackman-Harris) low (scalloping), white noise reads 3
   dB above its RMS (the sine convention). The loudest-bin readout (`PEAK 1.00 kHz  -20.1 dB`) is the
@@ -1993,6 +2025,7 @@ the audio.
   The panel shows `BYPASSED` and the app stops updating it, so it keeps the last picture.
 - **Meter values** (2): the peak of the last 16 batches (about 21 ms) of `in_l` and `in_r`, linear;
   the panel draws them as the two bars next to the plot.
+- **Panel height.** The new controls make the panel 5 U tall (it was 4 U).
 
 ---
 
@@ -2018,7 +2051,12 @@ width, peak and RMS bars with hold, and BS.1770 loudness. Source:
 | `scope_gain` | -12 to 24 | 0 | dB | Linear | no |
 | `loudness` | 0 or 1 (K-weighted loudness and true peak) | 1 | toggle | Linear | yes |
 | `meter.reset` | momentary toggle: a rising edge clears the integrated loudness, the loudness windows, the peak maxima and the holds | 0 | toggle | Linear | yes |
+| `loudness_view` | 0 to 1: Readouts (the numbers), History (the graph) | 0 | choice | Linear | yes |
+| `target` | -36 to -6 (the line of the history graph) | -14 | LUFS | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+`loudness_view` and `target` are display settings (the device stores them and does not use them)
+and were put before `bypass`, which moved from id 6 to id 8.
 
 ### Behaviour (as built)
 
@@ -2040,6 +2078,17 @@ width, peak and RMS bars with hold, and BS.1770 loudness. Source:
   oversampled, unrefined, as in Annex 2) since the last reset in dBTP. A stereo 1 kHz sine at -23
   dBFS peak reads -22.99 LUFS (tested to 0.15 dB, and through the headless meter probe). Off, they
   read -120 and cost nothing.
+- **Loudness history.** With `loudness_view` History the loudness box shows the short-term loudness
+  of the last five minutes (one value a second, newest at the right, -70 LUFS and below left as a
+  gap) over a span of 12 LU above the `target` line to 30 LU below it, with the line in orange,
+  the short-term loudness now, the integrated loudness, and the loudness range (LRA) of the
+  programme since the last reset. The range is EBU Tech 3342: the short-term values above -70
+  LUFS go into a histogram of 0.1 LU bins, the relative gate is 20 LU below their mean energy, and
+  the range is the 95th minus the 10th percentile of what passes (a steady tone reads 0 LU). The
+  UI keeps the history (`atomik_dsp::loudness_history`) from the published short-term values by
+  the audio's own clock, skips the first three seconds after a start or a reset while the meter's
+  windows fill, and starts over when the integrated loudness falls back to silence (a reset). The
+  last ten minutes are kept; the range covers everything.
 - **Scope.** The panel draws the goniometer from the newest 2048 frames of the tap, every second
   one: mid up and side across (`M/S`: mono is a vertical line, the left channel alone a line up and
   to the left), or the plain Lissajous figure (`L/R`: left across, right up), `scope_gain` dB larger
