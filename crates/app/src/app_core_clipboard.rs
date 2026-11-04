@@ -127,7 +127,9 @@ impl<S: EngineSink> AppCore<S> {
                     || self.arrangement.selected_track().is_some()
             }
             Pane::PianoRoll => {
-                !self.piano_roll.selected_notes().is_empty() || self.piano_roll.controller_focus()
+                !self.piano_roll.selected_notes().is_empty()
+                    || self.piano_roll.controller_focus()
+                    || self.piano_roll.message_focus()
             }
             _ => false,
         }

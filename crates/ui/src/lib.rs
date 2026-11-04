@@ -351,6 +351,7 @@ pub mod macro_marks;
 pub mod macros_panel;
 pub mod marker_edit;
 pub mod master_panel;
+pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
 pub mod mod_matrix_panel;
