@@ -934,7 +934,10 @@ fn project_inspect_lists_the_note_lanes_with_index_label_name_and_mute() {
         1,
         json!({"kind": "notes", "name": "Strings", "muted": true, "clips": []}),
     );
-    lanes.insert(2, json!({"kind": "notes", "clips": []}));
+    lanes.insert(
+        2,
+        json!({"kind": "notes", "solo": true, "color": "#c81e1e", "clips": []}),
+    );
     let path = tmp("note-lanes.atomik");
     std::fs::write(&path, v.to_string()).unwrap();
     let r = call(&mut s, "project_inspect", json!({"path": path}));
@@ -956,6 +959,11 @@ fn project_inspect_lists_the_note_lanes_with_index_label_name_and_mute() {
     assert_eq!(lanes[1]["muted"], true);
     assert_eq!(lanes[2]["label"], "Notes 3");
     assert!(lanes[2].get("name").is_none() && lanes[2].get("muted").is_none());
+    assert_eq!(
+        (lanes[2]["solo"].as_bool(), lanes[2]["color"].as_str()),
+        (Some(true), Some("#c81e1e"))
+    );
+    assert!(lanes[1].get("solo").is_none() && lanes[1].get("color").is_none());
 }
 
 #[test]
