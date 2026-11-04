@@ -316,6 +316,8 @@ pub struct AppCore<S: EngineSink> {
     keep_pending: Option<ClipId>,
     /// The next applied command is folded into the undo step before it (a follow-up).
     join_next: bool,
+    /// New tracks take the next colour of the palette (Interface > Colour new tracks).
+    auto_color: bool,
     /// The take group the file the import dialog returns becomes a take of (Import File as
     /// Take), until the dialog answers.
     take_import: Option<u32>,
@@ -578,6 +580,7 @@ impl<S: EngineSink> AppCore<S> {
             warp_imports: crate::import_warp::WarpImports::default(),
             keep_pending: None,
             join_next: false,
+            auto_color: false,
             take_import: None,
             trial_next: false,
             stretch_open: false,
@@ -766,6 +769,7 @@ impl<S: EngineSink> AppCore<S> {
         let merge = param_merge(&command);
         let hint = self.snapshot_hint_after(&command);
         let joined = std::mem::take(&mut self.join_next);
+        let tracks_before = self.tracks_before_command();
         let note_edit = if joined || self.keep_events == KeepEvents::Keep {
             None
         } else {
@@ -809,6 +813,7 @@ impl<S: EngineSink> AppCore<S> {
                 if let Some((w, pre)) = workflow {
                     self.workflow_post(&w, pre);
                 }
+                self.colour_new_tracks(tracks_before);
                 if !moved_notes.is_empty() {
                     self.report(moved_notes.join(" "));
                 }
@@ -3374,6 +3379,9 @@ pub use midi_ops::{IMPORT_INSTRUMENT, MidiExport};
 #[path = "app_core_create.rs"]
 mod create_ops;
 
+#[path = "app_core_track_color.rs"]
+mod track_color_ops;
+
 #[path = "app_core_io.rs"]
 mod io_ops;
 
@@ -3577,6 +3585,10 @@ mod master_keyboard_tests;
 #[cfg(test)]
 #[path = "app_core_create_tests.rs"]
 mod create_tests;
+
+#[cfg(test)]
+#[path = "app_core_track_color_tests.rs"]
+mod track_color_tests;
 
 #[cfg(test)]
 #[path = "app_core_starter_tests.rs"]

@@ -945,11 +945,12 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             "Application zoom",
             "Knob range",
             "Value tooltips",
-            "Automation thinning"
+            "Automation thinning",
+            "Colour new tracks"
         ]
     );
     let values: Vec<&str> = l.rows.iter().map(|r| r.value.as_str()).collect();
-    assert_eq!(values, ["Dark", "100 %", "Normal", "", "Normal"]);
+    assert_eq!(values, ["Dark", "100 %", "Normal", "", "Normal", ""]);
     assert!(!l.rows[3].on, "value tooltips start off");
     // The theme steps Dark, Light, System and back with the right button.
     down(&mut d, l.rows[0].button.center());
@@ -974,8 +975,10 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
     );
     down(&mut d, l.rows[3].rect.center());
     down(&mut d, l.rows[4].button.center());
+    down(&mut d, l.rows[5].rect.center());
     let (_, wf) = d.preferences().unwrap();
     assert!(wf.value_tooltips);
+    assert!(wf.auto_color);
     assert_eq!(wf.automation_thinning, atomik_model::ThinLevel::Heavy);
     // The Workflow preferences are untouched, and Apply hands everything over.
     assert_eq!(
@@ -985,6 +988,7 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             knob_range: KnobRange::Normal,
             value_tooltips: false,
             automation_thinning: atomik_model::ThinLevel::Normal,
+            auto_color: false,
             ..wf.clone()
         },
         WorkflowPrefs::default()

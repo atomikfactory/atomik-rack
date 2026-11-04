@@ -1907,6 +1907,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.set_knob_range(self.workflow.knob_range);
         self.core
             .set_automation_thinning(self.workflow.automation_thinning.fraction());
+        self.core.set_auto_color(self.workflow.auto_color);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
