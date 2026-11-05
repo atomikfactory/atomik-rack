@@ -1679,6 +1679,37 @@ fn link_faders_is_a_mixer_menu_check_that_persists_in_ui_state() {
 }
 
 #[test]
+fn the_morph_time_persists_in_ui_state() {
+    let path = temp("ui-state-morph.json");
+    let _ = std::fs::remove_file(&path);
+    let mut s = shell_at(Some(path.clone()));
+    assert_eq!(s.core().snapshot_menu().morph_seconds, 2, "two by default");
+    s.execute(AppCommand::MorphTime(8));
+    s.flush_ui_state();
+    assert_eq!(UiState::load(&path).morph_seconds, 8);
+    let s2 = shell_at(Some(path.clone()));
+    assert_eq!(s2.core().snapshot_menu().morph_seconds, 8);
+    // A value outside the choices still clamps, and an absent key means two seconds.
+    std::fs::write(&path, r#"{"morph_seconds": 90}"#).unwrap();
+    assert_eq!(
+        shell_at(Some(path.clone()))
+            .core()
+            .snapshot_menu()
+            .morph_seconds,
+        8
+    );
+    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+    assert_eq!(
+        shell_at(Some(path.clone()))
+            .core()
+            .snapshot_menu()
+            .morph_seconds,
+        2
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn meter_mode_is_a_mixer_submenu_that_persists_in_ui_state() {
     use atomik_ui::big_meter::MeterMode;
     let path = temp("ui-state-meters.json");
