@@ -226,9 +226,10 @@ pub fn run(cli: Cli) -> Result<(), String> {
         shell.use_keymap_file(path);
     }
     // With the preference on, a start that names no project continues with the last song.
-    // Otherwise the default song, when one is chosen, takes the place of the starter project.
-    if cli.starts_empty() && !shell.restore_last_project() {
-        shell.start_with_default_song();
+    // Otherwise the default song, when one is chosen, takes the place of the starter project,
+    // and the start screen offers the new song, the templates and the recent songs.
+    if cli.starts_empty() {
+        shell.start_without_project();
     }
     let no_config = config
         .fallback

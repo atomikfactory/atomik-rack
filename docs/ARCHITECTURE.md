@@ -4435,7 +4435,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (451) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (452) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4501,7 +4501,15 @@ creation chain in the **Creation chain** bullet.
   draws a flyout beside the row (hover, click, Right and Left, Enter) and the macOS native menu
   rebuilds the submenu when its entries change (muda cannot relabel an item). The Workflow switch
   `open_last_project` (`workflow.json`) makes the platform call `Shell::restore_last_project` at
-  start-up when the command line names no project (`Cli::starts_empty`).
+  start-up when the command line names no project (`Cli::starts_empty`). The platform's start-up
+  path is `Shell::start_without_project`: the last song, else the default song and the start
+  screen. The start screen ([app/src/start_screen.rs](../crates/app/src/start_screen.rs),
+  `StartScreen`) is a shell modal like the About box; it lists New, Open, up to eight templates
+  and the recent songs (name, folder, day of the file), and a pick returns the `AppCommand` of the
+  File menu row (`New`, `Open`, `NewFromTemplate`, `OpenRecent`), so the question about unsaved
+  changes and the missing-file messages are the menu's own. The `show_start_screen` flag
+  (`workflow.json`, default on) is the box's check box; File > Start Screen opens it at any time.
+  The headless and MCP sessions never call `start_without_project`, so they never show it.
 - **Settings tabs** ([app/src/settings_dialog.rs](../crates/app/src/settings_dialog.rs),
   `keyboard_tab.rs`, `workflow_tab.rs`). Audio (unchanged), Keyboard (a `KeymapEditor`: list by
   area, search, learn by pressing, add, clear, reset one or all, the conflict box with Swap,

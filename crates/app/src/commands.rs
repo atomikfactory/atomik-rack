@@ -54,6 +54,8 @@ pub enum AppCommand {
     ResetDefaultSong,
     /// File ▸ Song Information…: the title, author, notes, address and e-mail of the song.
     SongInfo,
+    /// File ▸ Start Screen…: the box with a new song, the templates and the recent songs.
+    StartScreen,
     /// File ▸ Export Project Archive…: the project and its audio as one `.atomikz` file.
     ExportArchive,
     /// File ▸ Import Project Archive…: unpack an archive beside itself and open the project.
@@ -664,6 +666,7 @@ impl AppCommand {
             AppCommand::SetDefaultSong => ("file.default_song_set", None),
             AppCommand::ResetDefaultSong => ("file.default_song_reset", None),
             AppCommand::SongInfo => ("file.song_info", None),
+            AppCommand::StartScreen => ("file.start_screen", None),
             AppCommand::ExportArchive => ("file.export_archive", None),
             AppCommand::ImportArchive => ("file.import_archive", None),
             AppCommand::CancelArchive => ("file.cancel_archive", None),
@@ -961,6 +964,7 @@ impl AppCommand {
             ("file.default_song_set", None) => AppCommand::SetDefaultSong,
             ("file.default_song_reset", None) => AppCommand::ResetDefaultSong,
             ("file.song_info", None) => AppCommand::SongInfo,
+            ("file.start_screen", None) => AppCommand::StartScreen,
             ("file.export_archive", None) => AppCommand::ExportArchive,
             ("file.import_archive", None) => AppCommand::ImportArchive,
             ("file.cancel_archive", None) => AppCommand::CancelArchive,
@@ -2068,6 +2072,7 @@ pub fn menus_with_songs(
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Song Information\u{2026}", AppCommand::SongInfo),
+                item("Start Screen\u{2026}", AppCommand::StartScreen),
                 MenuEntry::Submenu(Submenu {
                     label: "New at Sample Rate",
                     entries: vec![
@@ -3369,6 +3374,7 @@ mod tests {
             AppCommand::SetDefaultSong,
             AppCommand::ResetDefaultSong,
             AppCommand::SongInfo,
+            AppCommand::StartScreen,
             AppCommand::ExportArchive,
             AppCommand::ImportArchive,
             AppCommand::CancelArchive,
@@ -4023,6 +4029,7 @@ mod tests {
                 "Save",
                 "Save As\u{2026}",
                 "Song Information\u{2026}",
+                "Start Screen\u{2026}",
                 // New at Sample Rate, then Convert Sample Rate: three rates each.
                 "44.1 kHz",
                 "48 kHz",

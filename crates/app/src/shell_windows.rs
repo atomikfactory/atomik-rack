@@ -509,6 +509,7 @@ impl<B: AudioBackend> Shell<B> {
     pub(super) fn modal_open(&self) -> bool {
         self.dialog.is_some()
             || self.about.is_some()
+            || self.start_screen.is_some()
             || self.plugin_settings.is_some()
             || self.relink.is_some()
             || self.export.is_some()
