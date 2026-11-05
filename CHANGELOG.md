@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Quantize follow-ups: controllers that follow, a grid per note and a groove from a MIDI file.** A quantize
+  now carries the controller lane points of a note clip (pitch bend, aftertouch and CC) along with the notes it
+  moves. The rule: a point between a note's old start (included) and its new start (excluded) moves by the same
+  distance as the note, so it keeps its place relative to the note; when the spans of two notes cover a point the
+  note whose old start is nearest takes it, and when two points end on one tick the later one is kept. Points
+  outside every span, device-parameter lanes and a track's own controller lanes stay where they are, and notes that
+  are not selected move nothing. **Grid per note** gives each note its own grid: the note value nearest to the
+  note's length, from a 1/32 note up to the grid of the panel, so a long note lands on the big grid and a short one
+  on a fine grid in one quantize (it does nothing while a groove names the grid). The quantize panel has both as
+  switches (**Grid per note**, off, and **Move controllers**, on), and **GROOVE FROM MIDI FILE** next to EXTRACT
+  GROOVE FROM CLIP: it asks for a `.mid` file, measures the onsets and velocities of all its notes against the
+  panel's step and slots, and adds the result to the song's grooves under the file's name (numbered when taken); a
+  MIDI file dropped on the open panel does the same and imports nothing behind it. The groove list in the panel
+  shows three rows (it scrolls) so that the taller panel fits a small window. Not done yet: a groove from an audio
+  loop, and a quantize of note lengths to a length grid.
 - **Controller lanes without a note clip.** A note track can hold pitch bend, aftertouch and CC lanes of its own,
   outside its clips, in song time. **Track > Edit Track Controllers** opens the piano roll on them: the roll shows the
   ruler and the controller area over the whole song (no notes, so no grid, keys or velocity lane), with the same lane
