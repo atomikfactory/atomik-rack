@@ -35,6 +35,11 @@ pub const CTL_HEADER_HEIGHT: f64 = 20.0;
 pub const CTL_BODY_HEIGHT: f64 = 84.0;
 /// Height of the whole area (chips and lane).
 pub const CTL_AREA_HEIGHT: f64 = CTL_HEADER_HEIGHT + CTL_BODY_HEIGHT;
+/// The fold button at the left end of the chip row, `(x0, y0)` the top-left of the area.
+pub fn fold_rect(x0: f64, y0: f64) -> Rect {
+    Rect::new(x0 + 38.0, y0 + 4.0, x0 + 52.0, y0 + 18.0)
+}
+
 /// Space above and below the value range inside the body.
 pub const CTL_PAD: f64 = 8.0;
 /// How close a press must be to a point to take it, in pixels.
@@ -97,6 +102,8 @@ pub enum Part {
 pub struct LaneEditor {
     /// The area is shown under the velocity lane.
     pub open: bool,
+    /// The lane body is folded away: only the chip row stays.
+    pub folded: bool,
     /// The lane being edited.
     pub kind: ControllerKind,
     /// The number of the CC stepper.
@@ -113,6 +120,7 @@ impl Default for LaneEditor {
     fn default() -> Self {
         Self {
             open: false,
+            folded: false,
             kind: ControllerKind::PitchBend,
             cc: 74,
             poly: 60,

@@ -4,7 +4,7 @@
 mod support;
 
 use atomik_device_sdk::Registry;
-use atomik_model::{Command, Document, SongCommand};
+use atomik_model::{ClipId, Command, Document, SongCommand};
 use atomik_ui::arrangement::{COMPACT_BELOW, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, TRACK_HEIGHT};
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
@@ -600,4 +600,52 @@ fn the_pencil_draws_on_the_key_under_the_pointer_at_any_key_height() {
             .collect();
         assert!(drawn.contains(&target), "{kh}: {drawn:?}");
     }
+}
+
+#[test]
+fn a_note_clip_in_a_track_under_32_px_is_stacked_bars_without_a_header() {
+    let (mut v, mut d, reg) = setup();
+    let tall = v.clip_rect(ClipId(3)).unwrap();
+    assert!(
+        v.mute_button_center(ClipId(3)).is_some(),
+        "a tall clip has its mute button"
+    );
+    // A double click near the top of a tall clip is the label: it renames.
+    let top = Point::new(tall.x0 + 40.0, tall.y0 + 5.0);
+    let a = run(
+        |e| v.handle(e, d.doc(), &reg),
+        &[
+            down(top),
+            up(top),
+            down_mods(top, Modifiers::NONE, 2),
+            up(top),
+        ],
+    );
+    assert!(!a.contains(&UiAction::OpenPianoRoll(ClipId(3))));
+    assert!(v.org_edit_text().is_some());
+    v.cancel_org_edit();
+    // Small tracks: the clip has no header, so the same spot opens the piano roll.
+    d.apply(
+        Command::Song(SongCommand::SetTrackHeights(heights(&[("keys", 28)]))),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    let r = v.clip_rect(ClipId(3)).unwrap();
+    assert!(r.height() < 26.0, "{r:?}");
+    assert!(v.mute_button_center(ClipId(3)).is_none());
+    let top = Point::new(r.x0 + 40.0, r.y0 + 5.0);
+    let a = run(
+        |e| v.handle(e, d.doc(), &reg),
+        &[
+            down(top),
+            up(top),
+            down_mods(top, Modifiers::NONE, 2),
+            up(top),
+        ],
+    );
+    assert!(a.contains(&UiAction::OpenPianoRoll(ClipId(3))));
+    // It still paints, with the notes spread over the whole height of the clip.
+    let dl = paint(&mut v, &d, &reg);
+    assert!(!dl.to_json().is_empty());
 }

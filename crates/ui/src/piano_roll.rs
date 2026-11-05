@@ -187,6 +187,8 @@ enum Hit {
     CtlChip(Chip, Part),
     /// The controller lane's body.
     CtlBody,
+    /// The fold button of the controller area.
+    CtlFold,
     None,
 }
 
@@ -851,9 +853,28 @@ impl PianoRollView {
         Rect::new(self.axis.x0, (y1 - VELOCITY_HEIGHT).max(b.y0), b.x1, y1)
     }
 
-    /// Whether the controller area (pitch bend, aftertouch and CC lanes) is shown.
+    /// Whether the controller lane (pitch bend, aftertouch and CC lanes) is shown: the area is
+    /// open and not folded to its chip row.
     pub fn controllers_open(&self) -> bool {
-        self.ctl.open
+        self.ctl.open && !self.ctl.folded
+    }
+
+    /// Whether the controller area is folded to its chip row.
+    pub fn controllers_folded(&self) -> bool {
+        self.ctl.folded
+    }
+
+    /// Folds the controller lane away (the chip row stays) or unfolds it, the way an automation
+    /// lane folds in the arrangement.
+    pub fn set_controllers_folded(&mut self, folded: bool) {
+        if folded != self.ctl.folded {
+            self.ctl.folded = folded;
+            self.ctl_sel.clear();
+            self.ctl_focus = false;
+            self.msg_sel = None;
+            self.clamp_scroll();
+            self.repaint = true;
+        }
     }
 
     /// Shows or hides the controller area under the velocity lane.
@@ -1016,7 +1037,13 @@ impl PianoRollView {
 
     /// The height the controller area takes at the bottom of the roll (0 while it is hidden).
     fn ctl_height(&self) -> f64 {
-        if self.ctl.open { CTL_AREA_HEIGHT } else { 0.0 }
+        if !self.ctl.open {
+            0.0
+        } else if self.ctl.folded {
+            CTL_HEADER_HEIGHT
+        } else {
+            CTL_AREA_HEIGHT
+        }
     }
 
     /// The controller area: the chip row and the lane, with the side panel (an empty rectangle
@@ -1580,6 +1607,9 @@ impl PianoRollView {
         if self.ctl.open && pos.y >= self.velocity_rect().y1 {
             let a = self.controller_area();
             if pos.y < a.y0 + CTL_HEADER_HEIGHT {
+                if cl::fold_rect(a.x0, a.y0).inflate(2.0, 2.0).contains(pos) {
+                    return Hit::CtlFold;
+                }
                 return match cl::chip_at(self.ctl.messages, self.axis.x0, a.y0, pos.x, pos.y) {
                     Some((chip, part)) => Hit::CtlChip(chip, part),
                     None => Hit::None,
@@ -1634,6 +1664,16 @@ impl PianoRollView {
         }
         match self.hit(pos) {
             Hit::Top(Some(item)) => Some(self.top_help(item)),
+            Hit::CtlFold => {
+                let a = self.controller_area();
+                let rect = cl::fold_rect(a.x0, a.y0);
+                let text = if self.ctl.folded {
+                    "Unfold the controller lane"
+                } else {
+                    "Fold the controller lane away, keeping the lane chips"
+                };
+                Some(Help::new(rect, text))
+            }
             Hit::CtlChip(chip, _) => {
                 let a = self.controller_area();
                 let rect = cl::chip_rect(self.axis.x0, a.y0, chip);
@@ -1942,6 +1982,7 @@ impl PianoRollView {
             Hit::Top(Some(TopItem::Controllers)) if primary => {
                 self.set_controllers_open(!self.ctl.open);
             }
+            Hit::CtlFold if primary => self.set_controllers_folded(!self.ctl.folded),
             Hit::CtlChip(Chip::Thin, _) if primary => {
                 if let Some(action) = self.thin_controllers(self.ctl_thinning) {
                     out.extend(action);
@@ -1955,6 +1996,8 @@ impl PianoRollView {
             Hit::CtlChip(Chip::AddSysex, _) if primary => self.msg_add_sysex(out),
             Hit::CtlChip(Chip::ClearMessages, _) if primary => self.msg_clear(out),
             Hit::CtlChip(chip, part) if primary => {
+                // Picking a lane shows it: a folded area opens again.
+                self.set_controllers_folded(false);
                 self.ctl.press(chip, part);
                 self.ctl_sel.clear();
                 self.msg_sel = None;
@@ -4165,7 +4208,7 @@ impl PianoRollView {
 
     /// The controller area: the chip row and the lane of the chosen controller.
     fn paint_controllers(&self, c: &mut dyn Canvas) {
-        use vello::kurbo::BezPath;
+        use vello::kurbo::{BezPath, Stroke};
         let st = &self.st;
         let t = &st.base;
         let area = self.controller_area();
@@ -4247,6 +4290,25 @@ impl PianoRollView {
                     self.accent,
                 );
             }
+        }
+        // The fold button: a chevron that points down while the lane is shown.
+        let fold = cl::fold_rect(area.x0, area.y0);
+        let mid = fold.center();
+        let hot = self.hover == Hit::CtlFold;
+        let mut chevron = BezPath::new();
+        if self.ctl.folded {
+            chevron.move_to(pt(mid.x - 2.0, mid.y - 4.0));
+            chevron.line_to(pt(mid.x + 3.0, mid.y));
+            chevron.line_to(pt(mid.x - 2.0, mid.y + 4.0));
+        } else {
+            chevron.move_to(pt(mid.x - 4.0, mid.y - 2.0));
+            chevron.line_to(pt(mid.x, mid.y + 3.0));
+            chevron.line_to(pt(mid.x + 4.0, mid.y - 2.0));
+        }
+        let colour = if hot { t.text } else { t.text_muted };
+        c.stroke(&chevron.into(), &Stroke::new(1.4), &colour.into());
+        if self.ctl.folded {
+            return;
         }
         if self.ctl.messages {
             self.paint_messages(c, area, body);

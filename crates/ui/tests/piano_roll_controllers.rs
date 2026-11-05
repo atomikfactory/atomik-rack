@@ -696,3 +696,43 @@ fn preview_controllers_png() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, png).unwrap();
 }
+
+#[test]
+fn the_controller_lane_folds_to_its_chip_row_and_a_lane_chip_unfolds_it() {
+    let (mut v, d, reg) = setup(vec![]);
+    let full = v.controller_area().height();
+    assert!(!v.controllers_folded());
+    let a = v.controller_area();
+    // The fold button sits at the left end of the chip row.
+    let button = Point::new(a.x0 + 45.0, a.y0 + 11.0);
+    v.handle(&down(button), d.doc(), &reg);
+    v.handle(&up(button), d.doc(), &reg);
+    assert!(v.controllers_folded());
+    assert!(!v.controllers_open(), "no lane body while folded");
+    let folded = v.controller_area();
+    assert!(
+        folded.height() < 24.0 && folded.height() > 0.0,
+        "{folded:?}"
+    );
+    assert_eq!(folded.y1, v.bounds().y1);
+    assert_eq!(
+        v.velocity_rect().y1,
+        folded.y0,
+        "the roll gets the room back"
+    );
+    assert!(full - folded.height() > 80.0);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    // Picking a lane chip shows the lane again.
+    let chip = v.controller_chip_center(Chip::Preset(1));
+    v.handle(&down(chip), d.doc(), &reg);
+    v.handle(&up(chip), d.doc(), &reg);
+    assert!(!v.controllers_folded());
+    assert_eq!(v.controller_area().height(), full);
+    assert_eq!(v.controller_kind(), ControllerKind::ChannelPressure);
+    // The fold button folds it again; folding keeps the area open for the next unfold.
+    v.set_controllers_folded(true);
+    assert!(v.controllers_folded());
+    v.set_controllers_folded(false);
+    assert!(v.controllers_open());
+}
