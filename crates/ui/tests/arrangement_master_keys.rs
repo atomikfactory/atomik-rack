@@ -1,4 +1,4 @@
-//! The arrangement corner's master mute, solo and Manual Rec buttons and the master keyboard arrow
+//! The arrangement corner's master mute, solo, quantize and Manual Rec buttons and the master keyboard arrow
 //! of a track header: what a click and each command ask the app for.
 
 mod support;
@@ -14,7 +14,8 @@ use support::*;
 /// Rec, one row under the snap selector.
 const MUTE_BUTTON: Point = Point::new(22.0, 32.5);
 const SOLO_BUTTON: Point = Point::new(46.0, 32.5);
-const MANUAL_REC_BUTTON: Point = Point::new(94.0, 32.5);
+const QUANTIZE_BUTTON: Point = Point::new(70.0, 32.5);
+const MANUAL_REC_BUTTON: Point = Point::new(106.0, 32.5);
 /// The arrow of the first track header (the first row starts under the 40 px ruler).
 const FIRST_ARROW: Point = Point::new(180.0, 56.0);
 
@@ -148,4 +149,35 @@ fn the_header_arrow_chooses_the_keyboard_track_only_in_separated_mode() {
             .any(|a| matches!(a, UiAction::SetMasterKeyboard(None))),
         "{a:?}"
     );
+}
+
+#[test]
+fn the_quantize_button_asks_for_the_clips_and_a_right_click_for_the_panel() {
+    use atomik_ui::QuantizeAction;
+    let (doc, mut v) = flagged(&[], &[]);
+    assert!(
+        click(&mut v, &doc, QUANTIZE_BUTTON)
+            .iter()
+            .any(|a| matches!(a, UiAction::Quantize(QuantizeAction::ApplyClips)))
+    );
+    let reg = registry();
+    let acts = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            mv(QUANTIZE_BUTTON),
+            down_with(QUANTIZE_BUTTON, atomik_ui::PointerButton::Secondary, 1),
+            up(QUANTIZE_BUTTON),
+        ],
+    );
+    assert!(
+        acts.iter()
+            .any(|a| matches!(a, UiAction::Quantize(QuantizeAction::Options))),
+        "{acts:?}"
+    );
+    // The button's rectangle is where the others are not: the corner stays unambiguous.
+    let c = |b| v.corner_button_center(b);
+    use atomik_ui::CornerButton as B;
+    let xs = [B::ClearMutes, B::ClearSolos, B::Quantize, B::ManualRec].map(|b| c(b).x);
+    assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
+    assert_eq!(c(B::Quantize), QUANTIZE_BUTTON);
 }

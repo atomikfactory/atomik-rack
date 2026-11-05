@@ -47,7 +47,6 @@ fn lane_button(b: LaneButton, rect: Rect) -> Help {
     }
 }
 
-/// The help of a corner button.fn corner_button(b: CornerButton, rect: Rect) -> Help {    match b {        CornerButton::ClearMutes => Help::new(rect, "Clear every mute")            .with_command("sequencer.clear_mutes"),        CornerButton::ClearSolos => Help::new(rect, "Clear every solo")            .with_command("sequencer.clear_solos"),        CornerButton::ManualRec => Help::new(            rect,            "Manual Rec: selecting a track no longer arms it; arm tracks with their R buttons",        )        .with_command("sequencer.manual_rec"),    }}
 /// The help of a corner button.
 fn corner_button(b: CornerButton, rect: Rect) -> Help {
     match b {
@@ -57,6 +56,11 @@ fn corner_button(b: CornerButton, rect: Rect) -> Help {
         CornerButton::ClearSolos => {
             Help::new(rect, "Clear every solo").with_command("sequencer.clear_solos")
         }
+        CornerButton::Quantize => Help::new(
+            rect,
+            "Quantize the selected clips with the quantize panel's last settings; right click for the panel",
+        )
+        .with_command("editor.quantize"),
         CornerButton::ManualRec => Help::new(
             rect,
             "Manual Rec: selecting a track no longer arms it; arm tracks with their R buttons",

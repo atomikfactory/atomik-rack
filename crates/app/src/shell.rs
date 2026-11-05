@@ -1131,6 +1131,7 @@ impl<B: AudioBackend> Shell<B> {
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
         self.song_info.is_some()
+            || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
             || self.scale.is_some()
             || self.color_picker.is_some()
             || self.ime_target().is_some()
@@ -1442,7 +1443,23 @@ impl<B: AudioBackend> Shell<B> {
             QuantizeAction::Close => self.close_quantize(),
             QuantizeAction::Apply => self.core.apply_quantize(pane, params),
             // Only the piano roll and the quantize key send these (see `pane_actions`).
-            QuantizeAction::ApplyLast | QuantizeAction::Options => {}
+            QuantizeAction::ApplyLast | QuantizeAction::ApplyClips | QuantizeAction::Options => {}
+            QuantizeAction::SetLive => {
+                if let Some(name) = values.groove {
+                    self.core
+                        .set_clip_groove(pane, Some((name, values.strength)));
+                }
+            }
+            QuantizeAction::ClearLive => self.core.set_clip_groove(pane, None),
+            QuantizeAction::Rename { from, to } => {
+                if self.core.rename_groove(&from, &to) {
+                    // The renamed groove stays the chosen one.
+                    self.sync_quantize();
+                    if let Some(view) = &mut self.quantize {
+                        view.select_groove(&to);
+                    }
+                }
+            }
             QuantizeAction::Extract => {
                 if let Some(name) =
                     self.core
@@ -4974,6 +4991,10 @@ impl<B: AudioBackend> Shell<B> {
                         Pane::Arrangement
                     };
                     self.apply_last_quantize(pane);
+                }
+                // The arrangement corner's QUANT button: the same, on the selected clips.
+                UiAction::Quantize(QuantizeAction::ApplyClips) => {
+                    self.apply_last_quantize(Pane::Arrangement);
                 }
                 UiAction::Quantize(QuantizeAction::Options) => self.open_quantize(),
                 // Q Rec on the transport bar: the same choice as the Input Quantize menu.

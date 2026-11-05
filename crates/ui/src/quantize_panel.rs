@@ -10,9 +10,12 @@
 //! Groove velocity  [-]  100 %         [+]
 //! Humanize timing  [-]  0 %           [+]
 //! Humanize velocity[-]  0 %           [+]
+//! Humanize length  [-]  0 %           [+]
 //! Seed             [-]  0             [+]
 //! Snap note ends   [-]  OFF           [+]
-//! [ APPLY ]
+//! Legato           [-]  OFF           [+]
+//! Groove name      [ Late 2nd                 ] [ RENAME ]
+//! [ APPLY ] [ LIVE ON CLIPS ] [ CLEAR LIVE ]
 //! GROOVES IN THIS SONG
 //!   Late 2nd           1/16  2 slots                                  [ DELETE ]
 //! Measure with        [-]  1/16          [+]
@@ -26,13 +29,20 @@
 //! ([`QuantizeView::params`], [`QuantizeView::values`]) when [`UiAction::Quantize`] arrives:
 //!
 //! * `APPLY` emits [`QuantizeAction::Apply`] (not while there is nothing to apply it to).
+//! * `LIVE ON CLIPS` emits [`QuantizeAction::SetLive`] (the chosen groove, at the strength of the
+//!   panel, becomes the live groove of the selected clips: their notes are not edited) and `CLEAR
+//!   LIVE` emits [`QuantizeAction::ClearLive`].
+//! * The groove name is a [`TextField`]: it shows the name of the chosen groove of the song (a
+//!   built-in groove has no name to edit); `RENAME` or Enter emits [`QuantizeAction::Rename`].
 //! * `EXTRACT GROOVE FROM CLIP` emits [`QuantizeAction::Extract`] (not without a clip to measure).
 //! * `DELETE` on a groove row emits [`QuantizeAction::Delete`].
 //! * `CLOSE` emits [`QuantizeAction::Close`].
 //!
 //! The piano roll's QUANT button and the quantize key emit [`QuantizeAction::ApplyLast`] (apply
 //! the last settings without the panel); its `...` button and a right click on QUANT emit
-//! [`QuantizeAction::Options`] (open the panel).
+//! [`QuantizeAction::Options`] (open the panel). The QUANT button of the arrangement's corner
+//! emits [`QuantizeAction::ApplyClips`] (the same, on the arrangement's selected clips) and
+//! opens the panel on a right click.
 //!
 //! Every value has a `-` and a `+` button and answers the wheel. The settings live in
 //! [`QuantizeValues`], which the app keeps between openings. The groove row cycles through
@@ -41,14 +51,15 @@
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
-use crate::event::{PointerButton, UiEvent};
+use crate::event::{Key, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
-use crate::theme::Theme;
+use crate::text_field::{FieldColors, TextField};
+use crate::theme::{Theme, mix};
 use crate::tooltip::{Help, stepper_help};
 use atomik_core::PPQ;
-use atomik_model::groove::{MAX_GROOVE_SLOTS, SWING_MAX, SWING_MIN};
+use atomik_model::groove::{MAX_GROOVE_NAME, MAX_GROOVE_SLOTS, SWING_MAX, SWING_MIN};
 use atomik_model::{QuantizeParams, StepResolution};
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -119,6 +130,10 @@ pub struct QuantizeValues {
     pub humanize_time: u8,
     /// Humanize velocity, percent.
     pub humanize_velocity: u8,
+    /// Humanize note lengths, percent.
+    pub humanize_length: u8,
+    /// Stretch the notes to reach the next one.
+    pub legato: bool,
     /// The humanize seed, 0..=999.
     pub seed: u32,
     /// Also snap note ends.
@@ -139,6 +154,8 @@ impl Default for QuantizeValues {
             groove_velocity: 100,
             humanize_time: 0,
             humanize_velocity: 0,
+            humanize_length: 0,
+            legato: false,
             seed: 0,
             snap_ends: false,
             extract_step: StepResolution::Sixteenth,
@@ -160,8 +177,9 @@ impl QuantizeValues {
             groove_velocity: pct(self.groove_velocity),
             humanize_time: pct(self.humanize_time),
             humanize_velocity: pct(self.humanize_velocity),
+            humanize_length: pct(self.humanize_length),
+            legato: self.legato,
             seed: self.seed,
-            ..QuantizeParams::default()
         }
     }
 }
@@ -187,8 +205,22 @@ pub enum QuantizeAction {
     /// Quantize with the settings the panel last had (from the piano roll's QUANT button and
     /// the quantize key, not from the open panel).
     ApplyLast,
+    /// Quantize the arrangement's selected clips with the settings the panel last had (from the
+    /// arrangement corner's QUANT button).
+    ApplyClips,
     /// Open the panel (from the piano roll's options button or a right click on QUANT).
     Options,
+    /// Give the selected clips the chosen groove, at the panel's strength, as their live groove.
+    SetLive,
+    /// Hand the selected clips back to their track's groove.
+    ClearLive,
+    /// Rename the song's groove `from` to `to`.
+    Rename {
+        /// The groove's name now.
+        from: String,
+        /// The name typed in the field.
+        to: String,
+    },
     /// Measure a groove from the clip and add it to the song.
     Extract,
     /// Remove the song's groove of this name.
@@ -214,10 +246,14 @@ pub enum QuantizeRow {
     HumanizeTime,
     /// Random velocity.
     HumanizeVelocity,
+    /// Random note length.
+    HumanizeLength,
     /// Humanize seed.
     Seed,
     /// Also snap the ends of notes.
     SnapEnds,
+    /// Stretch each note to reach the next.
+    Legato,
     /// The step an extracted groove is measured against.
     ExtractStep,
     /// The slots of an extracted groove.
@@ -226,7 +262,7 @@ pub enum QuantizeRow {
 
 impl QuantizeRow {
     /// The rows above the APPLY button.
-    const TOP: [QuantizeRow; 9] = [
+    const TOP: [QuantizeRow; 11] = [
         QuantizeRow::Grid,
         QuantizeRow::Strength,
         QuantizeRow::Swing,
@@ -234,9 +270,16 @@ impl QuantizeRow {
         QuantizeRow::GrooveVelocity,
         QuantizeRow::HumanizeTime,
         QuantizeRow::HumanizeVelocity,
+        QuantizeRow::HumanizeLength,
         QuantizeRow::Seed,
         QuantizeRow::SnapEnds,
+        QuantizeRow::Legato,
     ];
+
+    /// A row that is an ON / OFF switch (a click on its value flips it; it is not dragged).
+    fn is_toggle(self) -> bool {
+        matches!(self, QuantizeRow::SnapEnds | QuantizeRow::Legato)
+    }
 
     fn title(self) -> &'static str {
         match self {
@@ -247,8 +290,10 @@ impl QuantizeRow {
             QuantizeRow::GrooveVelocity => "Groove velocity",
             QuantizeRow::HumanizeTime => "Humanize timing",
             QuantizeRow::HumanizeVelocity => "Humanize velocity",
+            QuantizeRow::HumanizeLength => "Humanize length",
             QuantizeRow::Seed => "Seed",
             QuantizeRow::SnapEnds => "Snap note ends",
+            QuantizeRow::Legato => "Legato",
             QuantizeRow::ExtractStep => "Measure against",
             QuantizeRow::ExtractSlots => "Slots",
         }
@@ -270,6 +315,14 @@ pub struct QuantizeView {
     hover: Option<Point>,
     /// A drag on a value: the row and the vertical travel (up steps the value up).
     drag: Option<(QuantizeRow, StepDrag)>,
+    /// The groove name being typed.
+    name: TextField,
+    /// The groove the name field was last filled for.
+    name_for: Option<String>,
+    /// The name field has the keys.
+    name_focus: bool,
+    /// A pointer drag is selecting in the name field.
+    name_drag: bool,
     repaint: bool,
 }
 
@@ -295,6 +348,10 @@ impl QuantizeView {
             scroll: 0,
             hover: None,
             drag: None,
+            name: TextField::new("", MAX_GROOVE_NAME, false),
+            name_for: None,
+            name_focus: false,
+            name_drag: false,
             repaint: true,
         }
     }
@@ -337,6 +394,7 @@ impl QuantizeView {
             self.values.groove = None;
         }
         self.clamp_scroll();
+        self.sync_name();
         self.repaint = true;
     }
 
@@ -344,8 +402,42 @@ impl QuantizeView {
     pub fn select_groove(&mut self, name: &str) {
         if self.grooves.iter().any(|g| g.name == name) {
             self.values.groove = Some(name.to_owned());
+            self.sync_name();
             self.repaint = true;
         }
+    }
+
+    /// The chosen groove when it is one of the song's (the only kind that has a name to edit).
+    fn renamable(&self) -> Option<&GrooveEntry> {
+        self.chosen_groove().filter(|g| !g.builtin)
+    }
+
+    /// Fills the name field with the chosen groove's name when the choice changed since the last
+    /// time (typing is not overwritten).
+    fn sync_name(&mut self) {
+        let want = self.renamable().map(|g| g.name.clone());
+        if want != self.name_for {
+            self.name.set_text(want.as_deref().unwrap_or(""));
+            self.name_focus = self.name_focus && want.is_some();
+            self.name_for = want;
+        }
+    }
+
+    /// Whether the name field has the keys (the shell then offers the input method to it).
+    pub fn wants_text(&self) -> bool {
+        self.name_focus && self.renamable().is_some()
+    }
+
+    /// The text of the name field.
+    pub fn name_text(&self) -> &str {
+        self.name.text()
+    }
+
+    /// The rename the field asks for: the chosen groove and the typed name, when they differ.
+    fn rename_action(&self) -> Option<QuantizeAction> {
+        let from = self.renamable()?.name.clone();
+        let to = self.name.text().trim().to_owned();
+        (!to.is_empty() && to != from).then_some(QuantizeAction::Rename { from, to })
     }
 
     /// The settings.
@@ -379,8 +471,10 @@ impl QuantizeView {
             QuantizeRow::GrooveVelocity => format!("{} %", v.groove_velocity),
             QuantizeRow::HumanizeTime => format!("{} %", v.humanize_time),
             QuantizeRow::HumanizeVelocity => format!("{} %", v.humanize_velocity),
+            QuantizeRow::HumanizeLength => format!("{} %", v.humanize_length),
             QuantizeRow::Seed => v.seed.to_string(),
             QuantizeRow::SnapEnds => if v.snap_ends { "ON" } else { "OFF" }.to_owned(),
+            QuantizeRow::Legato => if v.legato { "ON" } else { "OFF" }.to_owned(),
             QuantizeRow::ExtractStep => step_label(v.extract_step).to_owned(),
             QuantizeRow::ExtractSlots => v.extract_slots.to_string(),
         }
@@ -433,10 +527,12 @@ impl QuantizeView {
             QuantizeRow::HumanizeVelocity => {
                 v.humanize_velocity = up(v.humanize_velocity, 5, 0, 100)
             }
+            QuantizeRow::HumanizeLength => v.humanize_length = up(v.humanize_length, 5, 0, 100),
             QuantizeRow::Seed => {
                 v.seed = (i64::from(v.seed) + i64::from(dir)).clamp(0, i64::from(SEED_MAX)) as u32;
             }
             QuantizeRow::SnapEnds => v.snap_ends = !v.snap_ends,
+            QuantizeRow::Legato => v.legato = !v.legato,
             QuantizeRow::ExtractStep => {
                 let at = EXTRACT_STEPS
                     .iter()
@@ -450,6 +546,7 @@ impl QuantizeView {
                     as usize;
             }
         }
+        self.sync_name();
         self.repaint = true;
     }
 
@@ -465,11 +562,7 @@ impl QuantizeView {
         QuantizeRow::TOP
             .into_iter()
             .chain([QuantizeRow::ExtractStep, QuantizeRow::ExtractSlots])
-            .find(|r| {
-                *r != QuantizeRow::SnapEnds
-                    && self.row_enabled(*r)
-                    && self.value_rect(*r).contains(pos)
-            })
+            .find(|r| !r.is_toggle() && self.row_enabled(*r) && self.value_rect(*r).contains(pos))
     }
 
     /// True while a value is being dragged.
@@ -491,7 +584,7 @@ impl QuantizeView {
     fn height() -> f64 {
         HEADER_H
             + TARGET_H
-            + QuantizeRow::TOP.len() as f64 * ROW_H
+            + (QuantizeRow::TOP.len() + 1) as f64 * ROW_H
             + APPLY_H
             + LIB_HEAD_H
             + LIB_ROWS as f64 * LIB_ROW_H
@@ -553,16 +646,52 @@ impl QuantizeView {
         )
     }
 
+    /// The row of the groove name, under the value rows.
+    fn name_row(&self) -> Rect {
+        let p = self.panel();
+        let y = self.rows_top() + QuantizeRow::TOP.len() as f64 * ROW_H;
+        Rect::new(p.x0, y, p.x1, y + ROW_H)
+    }
+
+    /// The groove name field.
+    pub fn name_rect(&self) -> Rect {
+        let r = self.name_row();
+        let x = self.cluster_x();
+        let y = r.y0 + (ROW_H - BTN_H) / 2.0;
+        Rect::new(x, y, x + 2.0 * STEP_BTN_W + VALUE_W + 6.0, y + BTN_H)
+    }
+
+    /// The RENAME button, right of the name field.
+    pub fn rename_rect(&self) -> Rect {
+        let f = self.name_rect();
+        Rect::new(f.x1 + 6.0, f.y0, self.panel().x1 - PAD, f.y1)
+    }
+
+    fn apply_top(&self) -> f64 {
+        self.rows_top() + (QuantizeRow::TOP.len() + 1) as f64 * ROW_H
+    }
+
     /// The APPLY button.
     pub fn apply_rect(&self) -> Rect {
         let p = self.panel();
-        let top = self.rows_top() + QuantizeRow::TOP.len() as f64 * ROW_H;
-        let y = top + (APPLY_H - BTN_H - 4.0) / 2.0;
+        let y = self.apply_top() + (APPLY_H - BTN_H - 4.0) / 2.0;
         Rect::new(p.x0 + PAD, y, p.x0 + PAD + 120.0, y + BTN_H + 4.0)
     }
 
+    /// The LIVE ON CLIPS button.
+    pub fn live_rect(&self) -> Rect {
+        let a = self.apply_rect();
+        Rect::new(a.x1 + 8.0, a.y0, a.x1 + 8.0 + 150.0, a.y1)
+    }
+
+    /// The CLEAR LIVE button.
+    pub fn clear_live_rect(&self) -> Rect {
+        let l = self.live_rect();
+        Rect::new(l.x1 + 8.0, l.y0, l.x1 + 8.0 + 100.0, l.y1)
+    }
+
     fn lib_top(&self) -> f64 {
-        self.rows_top() + QuantizeRow::TOP.len() as f64 * ROW_H + APPLY_H
+        self.apply_top() + APPLY_H
     }
 
     fn extract_top(&self) -> f64 {
@@ -623,6 +752,30 @@ impl QuantizeView {
                 "Quantize the selection with these settings (one undo step)",
             );
         }
+        if self.live_rect().contains(pos) {
+            return help(
+                self.live_rect(),
+                "Play the selected clips with the chosen groove at the strength above; their notes stay as they are",
+            );
+        }
+        if self.clear_live_rect().contains(pos) {
+            return help(
+                self.clear_live_rect(),
+                "Give the selected clips back to their track's groove",
+            );
+        }
+        if self.rename_rect().contains(pos) {
+            return help(
+                self.rename_rect(),
+                "Rename the chosen groove of this song (Enter does it too)",
+            );
+        }
+        if self.name_rect().contains(pos) {
+            return help(
+                self.name_rect(),
+                "The name of the chosen groove of this song; type a new one",
+            );
+        }
         if self.extract_rect().contains(pos) {
             return help(
                 self.extract_rect(),
@@ -645,7 +798,7 @@ impl QuantizeView {
                 self.value_rect(row),
                 self.plus_rect(row),
             );
-            if let Some(h) = stepper_help(pos, row.title(), rects, row != QuantizeRow::SnapEnds) {
+            if let Some(h) = stepper_help(pos, row.title(), rects, !row.is_toggle()) {
                 return Some(h);
             }
         }
@@ -660,6 +813,9 @@ impl QuantizeView {
             UiEvent::PointerMove { pos, .. } => {
                 self.hover = Some(*pos);
                 self.repaint = true;
+                if self.name_drag {
+                    self.name.drag(*pos);
+                }
                 if let Some((row, steps)) = &mut self.drag {
                     let (row, n) = (*row, steps.update(pos.y, PX_PER_STEP));
                     if n != 0 {
@@ -672,6 +828,7 @@ impl QuantizeView {
                 ..
             } => {
                 self.drag = None;
+                self.name_drag = false;
                 self.repaint = true;
             }
             UiEvent::PointerLeave => {
@@ -681,13 +838,37 @@ impl QuantizeView {
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
-                ..
+                modifiers,
+                clicks,
             } => {
                 self.repaint = true;
-                if let Some(action) = self.click(*pos) {
+                self.name_focus = false;
+                if self.name_rect().contains(*pos) {
+                    if self.renamable().is_some() {
+                        self.name_focus = true;
+                        self.name_drag = true;
+                        self.name.press(*pos, *clicks, modifiers.shift);
+                    }
+                } else if let Some(action) = self.click(*pos) {
                     out.push(UiAction::Quantize(action));
                 } else if let Some(row) = self.draggable_value_at(*pos) {
                     self.drag = Some((row, StepDrag::new(pos.y)));
+                }
+            }
+            UiEvent::Ime(ime) if self.wants_text() => {
+                if self.name.handle_ime(ime) {
+                    self.repaint = true;
+                }
+            }
+            UiEvent::Key {
+                key,
+                modifiers,
+                pressed: true,
+            } if self.wants_text() => {
+                if self.name.handle_key(key, *modifiers).handled() {
+                    self.repaint = true;
+                } else if *key == Key::Enter {
+                    out.extend(self.rename_action().map(UiAction::Quantize));
                 }
             }
             UiEvent::Wheel { pos, delta, .. } => {
@@ -716,6 +897,16 @@ impl QuantizeView {
         if self.apply_rect().contains(pos) {
             return self.can_apply.then_some(QuantizeAction::Apply);
         }
+        if self.live_rect().contains(pos) {
+            return (self.can_apply && self.chosen_groove().is_some())
+                .then_some(QuantizeAction::SetLive);
+        }
+        if self.clear_live_rect().contains(pos) {
+            return self.can_apply.then_some(QuantizeAction::ClearLive);
+        }
+        if self.rename_rect().contains(pos) {
+            return self.rename_action();
+        }
         if self.extract_rect().contains(pos) {
             return self.can_extract.then_some(QuantizeAction::Extract);
         }
@@ -728,7 +919,7 @@ impl QuantizeView {
                 return None;
             }
             if self.plus_rect(row).contains(pos)
-                || (row == QuantizeRow::SnapEnds && self.value_rect(row).contains(pos))
+                || (row.is_toggle() && self.value_rect(row).contains(pos))
             {
                 self.step(row, 1);
                 return None;
@@ -816,6 +1007,47 @@ impl QuantizeView {
             );
             sp::button(c, st, plus, "+", None, enabled && hovered(plus));
         }
+        let name_row = self.name_row();
+        let can_rename = self.renamable().is_some();
+        sp::label(
+            c,
+            "Groove name",
+            name_row.x0 + PAD,
+            name_row.y0 + 17.0,
+            10.5,
+            if can_rename { t.text } else { t.text_muted },
+            Align::Start,
+        );
+        let field = self.name_rect();
+        let focused = self.name_focus && can_rename;
+        sp::lcd(c, st, field, focused.then_some(t.focus));
+        if can_rename {
+            let colors = FieldColors {
+                text: t.text,
+                caret: t.text,
+                selection: mix(t.lcd, t.focus, 0.5),
+            };
+            self.name.paint(c, field, 10.5, 14.0, colors, focused);
+        } else {
+            sp::label(
+                c,
+                &fit_label("pick a groove of this song", field.width() - 12.0, 10.0),
+                field.x0 + 8.0,
+                field.y0 + 14.0,
+                10.0,
+                t.text_muted,
+                Align::Start,
+            );
+        }
+        let rename = self.rename_rect();
+        sp::button(
+            c,
+            st,
+            rename,
+            "RENAME",
+            None,
+            self.rename_action().is_some() && hovered(rename),
+        );
         let apply = self.apply_rect();
         sp::button(
             c,
@@ -824,6 +1056,25 @@ impl QuantizeView {
             "APPLY",
             self.can_apply.then_some(st.loop_on),
             self.can_apply && hovered(apply),
+        );
+        let live = self.live_rect();
+        let can_live = self.can_apply && self.chosen_groove().is_some();
+        sp::button(
+            c,
+            st,
+            live,
+            "LIVE ON CLIPS",
+            None,
+            can_live && hovered(live),
+        );
+        let clear = self.clear_live_rect();
+        sp::button(
+            c,
+            st,
+            clear,
+            "CLEAR LIVE",
+            None,
+            self.can_apply && hovered(clear),
         );
         let lib = self.lib_top();
         sp::line(c, p.x0, lib + 0.5, p.x1, lib + 0.5, st.separator);
