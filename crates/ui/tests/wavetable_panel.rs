@@ -209,12 +209,12 @@ fn the_table_choice_cycles_through_the_tables() {
     let a = v.handle(&down(at), &doc, &reg);
     assert_eq!(set_param(&a), vec![("osc1.table".to_string(), 1.0)]);
     let _ = v.handle(&up(at), &doc, &reg);
-    // From the last table a click never leaves the range.
-    let (doc, mut v) = setup(&[("osc1.table", 11.0)]);
+    // From the last table (the imported one) a click never leaves the range.
+    let (doc, mut v) = setup(&[("osc1.table", 12.0)]);
     let at = v.control_center(&key("wt"), "osc1.table").unwrap();
     let a = v.handle(&down(at), &doc, &reg);
     let s = set_param(&a);
-    assert!(s.iter().all(|(_, x)| (0.0..=11.0).contains(x)), "{s:?}");
+    assert!(s.iter().all(|(_, x)| (0.0..=12.0).contains(x)), "{s:?}");
 }
 
 #[test]

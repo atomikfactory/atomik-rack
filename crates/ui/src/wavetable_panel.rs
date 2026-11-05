@@ -61,6 +61,7 @@ const SECTION_ORDER: [&str; 11] = [
 fn section_prefix(key: &str) -> &str {
     match key {
         "voices" | "velocity.amp" | "bend.range" => "voice",
+        "osc2.unison_voices" | "osc2.unison_detune" | "osc2.unison_spread" => "unison",
         "pitch_cv_trim"
         | "pan_cv_trim"
         | "filter.resonance_cv_trim"
@@ -75,6 +76,10 @@ fn section_prefix(key: &str) -> &str {
 pub fn wavetable_label(key: &str) -> Option<&'static str> {
     Some(match key {
         "unison.voices" => "Count",
+        "unison.mode" => "Osc 2",
+        "osc2.unison_voices" => "Count 2",
+        "osc2.unison_detune" => "Detune 2",
+        "osc2.unison_spread" => "Spread 2",
         "mix.sub" => "Sub",
         "mix.noise" => "Noise",
         "filter.env_amount" => "Mod env",

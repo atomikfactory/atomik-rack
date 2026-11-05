@@ -7,10 +7,22 @@
 //!
 //! * **Oscillators.** `osc1.*` and `osc2.*`: table, frame `position` (0 is the first frame, 1 the
 //!   last; the output blends the two neighbouring frames, so it is continuous), octave, semitone
-//!   and cents, level. Both oscillators run `unison.voices` (1..=7) detuned copies spread evenly
+//!   and cents, level. An oscillator runs `unison.voices` (1..=7) detuned copies spread evenly
 //!   over `±unison.detune` cents and `±unison.spread` of the stereo field (balance law: a lone
 //!   copy is centred at unity gain), each copy at its own phase; the copies are scaled by
-//!   `1/sqrt(n)`. Unison copies after the first start at seeded random phases.
+//!   `1/sqrt(n)`. Unison copies after the first start at seeded random phases. With
+//!   `unison.mode` at `shared` (the default, and what projects from before the setting get) both
+//!   oscillators use those three settings; at `separate` oscillator 2 takes its own
+//!   `osc2.unison_voices`, `osc2.unison_detune` and `osc2.unison_spread`.
+//! * **Tables.** The twelve factory tables, and an imported one (a table param at `imported`): a
+//!   sample dropped on the device is cut into frames of 2048 samples and played as a table (see
+//!   [`attach_table`] and [`atomik_dsp::wavetable::build_pyramid`]). The device takes one sample,
+//!   a new drop replaces it; without one the imported table is silent. A change of table does
+//!   not click: each voice reads the old and the new table for [`TABLE_FADE_MS`] and crossfades
+//!   between them.
+//! * **Position display.** The device publishes the modulated frame position of its newest
+//!   sounding voice, one value per oscillator (`-1` when nothing sounds), for the panel
+//!   ([`Device::meter_values`]).
 //! * **Band limiting.** Every read uses the table's mip level for the highest frequency of the
 //!   oscillator (the pitch plus the detune of the widest copy), picked every 16 samples, so no
 //!   harmonic goes past Nyquist and the output does not alias, whatever the pitch or the pitch
@@ -43,9 +55,12 @@
 use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
-    SocketDescriptor, SocketId, SocketKind,
+    SampleBuffer, SampleMap, SampleMapRef, SocketDescriptor, SocketId, SocketKind,
 };
-use atomik_dsp::wavetable::{TABLE_COUNT, TABLE_NAMES, Wavetable, WavetableBank, factory_bank};
+use atomik_dsp::wavetable::{
+    IMPORTED_TABLE, PYRAMID_LEN, TABLE_CHOICES, WavetableBank, build_pyramid, factory_bank,
+    level_for, read_pyramid,
+};
 use atomik_dsp::{
     Adsr, AdsrStage, FilterMode, Lfo, LfoShape, Rng, Smoother, Svf, balance_gains, note_to_hz,
     sin_cycles,
@@ -59,6 +74,10 @@ use crate::poly_synth::{derive_seed, soft_limit};
 pub const MAX_VOICES: usize = 16;
 /// Most unison copies per oscillator.
 pub const MAX_UNISON: usize = 7;
+/// Length of the crossfade when an oscillator's table changes, in milliseconds.
+pub const TABLE_FADE_MS: f32 = 12.0;
+/// Values published through [`Device::meter_values`]: the position of each oscillator.
+pub const METER_COUNT: usize = 2;
 
 const fn param(
     id: u32,
@@ -82,11 +101,12 @@ const fn param(
     }
 }
 
-const TABLES: Unit = Unit::Choice(&TABLE_NAMES);
+const TABLES: Unit = Unit::Choice(&TABLE_CHOICES);
+const UNISON_MODES: Unit = Unit::Choice(&["shared", "separate"]);
 const FILTER_MODES: Unit = Unit::Choice(&["LP12", "BP12", "HP12"]);
 const LFO_WAVES: Unit = Unit::Choice(&["sine", "triangle", "saw", "square", "sample&hold"]);
 const ENV_MS: (f32, f32) = (0.5, 10_000.0);
-const LAST_TABLE: f32 = (TABLE_COUNT - 1) as f32;
+const LAST_TABLE: f32 = IMPORTED_TABLE as f32;
 
 const P_OSC1_TABLE: u32 = 0;
 const P_OSC1_POSITION: u32 = 1;
@@ -137,7 +157,11 @@ const P_CV_RESONANCE: u32 = 45;
 const P_CV_LEVEL: u32 = 46;
 const P_CV_PAN: u32 = 47;
 const P_BEND_RANGE: u32 = 48;
-const PARAM_COUNT: usize = 49;
+const P_UNISON_MODE: u32 = 49;
+const P_OSC2_UNISON_VOICES: u32 = 50;
+const P_OSC2_UNISON_DETUNE: u32 = 51;
+const P_OSC2_UNISON_SPREAD: u32 = 52;
+const PARAM_COUNT: usize = 53;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -583,6 +607,42 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Semitones,
         false,
     ),
+    param(
+        P_UNISON_MODE,
+        "unison.mode",
+        "Unison mode",
+        (0.0, 1.0, 0.0),
+        Lin,
+        UNISON_MODES,
+        true,
+    ),
+    param(
+        P_OSC2_UNISON_VOICES,
+        "osc2.unison_voices",
+        "Osc 2 unison voices",
+        (1.0, MAX_UNISON as f32, 1.0),
+        Lin,
+        Unit::None,
+        true,
+    ),
+    param(
+        P_OSC2_UNISON_DETUNE,
+        "osc2.unison_detune",
+        "Osc 2 unison detune",
+        (0.0, 100.0, 20.0),
+        Lin,
+        Unit::Cents,
+        false,
+    ),
+    param(
+        P_OSC2_UNISON_SPREAD,
+        "osc2.unison_spread",
+        "Osc 2 unison spread",
+        (0.0, 1.0, 0.5),
+        Lin,
+        Unit::Percent,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -734,14 +794,10 @@ struct Shared {
     levels: [f32; 2],
     sub: f32,
     noise: f32,
-    /// Unison copies per oscillator.
-    unison: usize,
-    /// Frequency ratio of each copy.
-    uni_ratio: [f32; MAX_UNISON],
-    /// Ratio of the widest copy (the highest frequency of the oscillator).
-    uni_top: f32,
-    /// Left and right gain of each copy, normalisation included.
-    uni_gain: [(f32, f32); MAX_UNISON],
+    /// The unison copies of each oscillator.
+    unison: [Unison; 2],
+    /// Fade rate of a table change, per sample.
+    fade_step: f32,
     filter_mode: FilterMode,
     cutoff: f32,
     k: f32,
@@ -767,6 +823,103 @@ struct Shared {
     cv_resonance_amount: f32,
     /// Set per batch: the resonance CV socket is cabled.
     cv_resonance_on: bool,
+}
+
+/// The unison copies of one oscillator.
+#[derive(Debug, Clone, Copy)]
+struct Unison {
+    /// Number of copies.
+    count: usize,
+    /// Frequency ratio of each copy.
+    ratio: [f32; MAX_UNISON],
+    /// Left and right gain of each copy, normalisation included.
+    gain: [(f32, f32); MAX_UNISON],
+    /// Ratio of the widest copy (the highest frequency of the oscillator).
+    top: f32,
+}
+
+impl Unison {
+    const SINGLE: Self = Self {
+        count: 1,
+        ratio: [1.0; MAX_UNISON],
+        gain: [(1.0, 1.0); MAX_UNISON],
+        top: 1.0,
+    };
+
+    /// `voices` copies spread over `±detune` cents and `±spread` of the stereo field.
+    fn new(voices: f32, detune: f32, spread: f32) -> Self {
+        let n = (voices.round().max(1.0) as usize).min(MAX_UNISON);
+        let norm = 1.0 / (n as f32).sqrt();
+        let mut u = Self::SINGLE;
+        u.count = n;
+        for c in 0..MAX_UNISON {
+            // -1..=1 across the copies (0 for a lone copy).
+            let x = if n > 1 && c < n {
+                2.0 * c as f32 / (n - 1) as f32 - 1.0
+            } else {
+                0.0
+            };
+            u.ratio[c] = (detune * x / 1_200.0).exp2();
+            let (gl, gr) = balance_gains(spread * x);
+            u.gain[c] = (gl * norm, gr * norm);
+        }
+        u.top = if n == 1 {
+            1.0
+        } else {
+            (detune / 1_200.0).exp2().max(1.0)
+        };
+        u
+    }
+}
+
+/// The stored cycles an oscillator reads: a factory table, the imported one, or silence.
+fn table_data<'a>(bank: &'a WavetableBank, index: usize, user: Option<&'a [f32]>) -> &'a [f32] {
+    if index == IMPORTED_TABLE {
+        user.unwrap_or(&[])
+    } else {
+        bank.table(index).pyramid()
+    }
+}
+
+/// The imported table of a sample map made by [`attach_table`], if it holds one: the buffer
+/// after the zones' own, as a table of stored frames.
+fn imported_of(map: &SampleMap) -> Option<&[f32]> {
+    let last = map.buffers().len().checked_sub(1)?;
+    let buffer = &map.buffers()[last];
+    let own = map.zones().iter().any(|z| z.buffer as usize == last);
+    if own || buffer.channels != 1 || buffer.frames != PYRAMID_LEN as u64 {
+        return None;
+    }
+    buffer.data.first().map(Vec::as_slice)
+}
+
+/// The sample map of an imported table: `map` with one more buffer, the table made from the
+/// first zone (its `start..end` frames, the channels averaged) by
+/// [`atomik_dsp::wavetable::build_pyramid`]. The synth plays that buffer as the `imported`
+/// table. `map` itself comes back when it has no zone or the zone holds fewer than two
+/// samples. Builds a few hundred FFTs: call it off the audio thread, where the map is made.
+pub fn attach_table(map: SampleMapRef) -> SampleMapRef {
+    let Some(zone) = map.zones().first() else {
+        return map;
+    };
+    let buffer = map.buffer_of(zone);
+    let end = usize::try_from(zone.end)
+        .unwrap_or(usize::MAX)
+        .min(buffer.data[0].len());
+    let start = usize::try_from(zone.start).unwrap_or(usize::MAX).min(end);
+    let channels = buffer.data.len() as f32;
+    let mono: Vec<f32> = (start..end)
+        .map(|i| buffer.data.iter().map(|c| c[i]).sum::<f32>() / channels)
+        .collect();
+    let Some(pyramid) = build_pyramid(&mono) else {
+        return map;
+    };
+    let Ok(table) = SampleBuffer::new(vec![pyramid].into()) else {
+        return map;
+    };
+    let mut buffers = map.buffers().to_vec();
+    buffers.push(std::sync::Arc::new(table));
+    SampleMap::new(buffers, map.zones().to_vec()).map_or(map, std::sync::Arc::new)
 }
 
 /// Control-rate modulation values read by a voice.
@@ -799,6 +952,11 @@ struct Voice {
     /// Phase step per sample of each copy, set at the control rate.
     step: [[f64; MAX_UNISON]; 2],
     mip: [usize; 2],
+    /// The table each oscillator reads, the one it is fading away from and how much of that one
+    /// is left (1 at the change, 0 when done).
+    table: [usize; 2],
+    old_table: [usize; 2],
+    fade: [f32; 2],
     position: [f32; 2],
     position_target: [f32; 2],
     position_step: [f32; 2],
@@ -830,6 +988,9 @@ impl Voice {
             phase: [[0.0; MAX_UNISON]; 2],
             step: [[0.0; MAX_UNISON]; 2],
             mip: [0; 2],
+            table: [0; 2],
+            old_table: [0; 2],
+            fade: [0.0; 2],
             position: [0.0; 2],
             position_target: [0.0; 2],
             position_step: [0.0; 2],
@@ -882,6 +1043,8 @@ impl Voice {
     fn start(&mut self, key: u8, velocity: f32, p: &Shared) {
         self.key = key;
         self.pending = None;
+        self.table = p.tables;
+        self.fade = [0.0; 2];
         for osc in &mut self.phase {
             for (u, ph) in osc.iter_mut().enumerate() {
                 *ph = if u == 0 {
@@ -929,10 +1092,16 @@ impl Voice {
             + p.cv_pitch_amount * clean(c.pitch);
         let max_hz = MAX_FREQ_RATIO * p.sample_rate;
         for o in 0..2 {
+            if self.table[o] != p.tables[o] {
+                // A new table: keep reading the old one and fade it out.
+                self.old_table[o] = self.table[o];
+                self.table[o] = p.tables[o];
+                self.fade[o] = 1.0;
+            }
             let hz = note_to_hz(key + p.pitch_offset[o] + pitch, p.tune_cents).min(max_hz);
-            self.mip[o] = atomik_dsp::wavetable::level_for(hz * p.uni_top, p.sample_rate);
-            for u in 0..p.unison {
-                let step = (hz * p.uni_ratio[u]).min(max_hz) / p.sample_rate;
+            self.mip[o] = level_for(hz * p.unison[o].top, p.sample_rate);
+            for u in 0..p.unison[o].count {
+                let step = (hz * p.unison[o].ratio[u]).min(max_hz) / p.sample_rate;
                 self.step[o][u] = f64::from(step);
             }
             let target = (p.base_position[o]
@@ -989,22 +1158,29 @@ impl Voice {
 
     /// One sample of the two oscillators and their unison copies, as a stereo pair.
     #[inline]
-    fn oscillators(&mut self, tables: &[&Wavetable; 2], p: &Shared) -> (f32, f32) {
+    fn oscillators(&mut self, tables: &[[&[f32]; 2]; 2], p: &Shared) -> (f32, f32) {
         let (mut left, mut right) = (0.0f32, 0.0f32);
-        for (o, table) in tables.iter().enumerate() {
+        for (o, [table, old]) in tables.iter().enumerate() {
             let position = self.position[o];
             self.position[o] += self.position_step[o];
+            let fade = self.fade[o];
+            self.fade[o] = (fade - p.fade_step).max(0.0);
             let level = p.levels[o];
             if level <= 0.0 {
                 continue;
             }
             let (mut l, mut r) = (0.0f32, 0.0f32);
-            for u in 0..p.unison {
-                let s = table.read(self.mip[o], position, self.phase[o][u]);
+            let uni = &p.unison[o];
+            for u in 0..uni.count {
+                let mut s = read_pyramid(table, self.mip[o], position, self.phase[o][u]);
+                if fade > 0.0 {
+                    let was = read_pyramid(old, self.mip[o], position, self.phase[o][u]);
+                    s += (was - s) * fade;
+                }
                 let ph = self.phase[o][u] + self.step[o][u];
                 self.phase[o][u] = ph - ph.floor();
-                l += s * p.uni_gain[u].0;
-                r += s * p.uni_gain[u].1;
+                l += s * uni.gain[u].0;
+                r += s * uni.gain[u].1;
             }
             left += level * l;
             right += level * r;
@@ -1013,8 +1189,14 @@ impl Voice {
     }
 
     /// Adds this voice into `left` and `right`. The modulation slices are aligned with them.
-    fn render(&mut self, left: &mut [f32], right: &mut [f32], m: &Mods<'_>, p: &Shared) {
-        let tables = [p.bank.table(p.tables[0]), p.bank.table(p.tables[1])];
+    fn render(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        m: &Mods<'_>,
+        p: &Shared,
+        user: Option<&[f32]>,
+    ) {
         for (n, (lo, ro)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
             if self.countdown == 0 {
                 let c = Ctl {
@@ -1038,6 +1220,13 @@ impl Voice {
                     f.set_coefficients(self.g, k);
                 }
             }
+            // Resolved per sample: a table change (or a fade) inside the segment is seen at once.
+            let tables = [0, 1].map(|o| {
+                [
+                    table_data(p.bank, self.table[o], user),
+                    table_data(p.bank, self.old_table[o], user),
+                ]
+            });
             let (mut xl, mut xr) = self.oscillators(&tables, p);
             if p.sub > 0.0 {
                 let s = p.sub * sin_cycles(self.sub_phase) as f32;
@@ -1087,6 +1276,10 @@ pub struct WavetableSynth {
     cv_pan_amount: f32,
     /// Sustain, volume, expression, pressure and the bend range.
     ctl: ControllerState,
+    /// The sample map the imported table comes from (see [`attach_table`]).
+    samples: Option<SampleMapRef>,
+    /// The modulated position of each oscillator in the newest sounding voice, `-1` when idle.
+    shown: [f32; METER_COUNT],
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
@@ -1115,10 +1308,8 @@ impl WavetableSynth {
                 levels: [0.0; 2],
                 sub: 0.0,
                 noise: 0.0,
-                unison: 1,
-                uni_ratio: [1.0; MAX_UNISON],
-                uni_top: 1.0,
-                uni_gain: [(1.0, 1.0); MAX_UNISON],
+                unison: [Unison::SINGLE; 2],
+                fade_step: 1.0 / (TABLE_FADE_MS * 48.0),
                 filter_mode: FilterMode::Lowpass,
                 cutoff: 8_000.0,
                 k: 1.0,
@@ -1148,6 +1339,8 @@ impl WavetableSynth {
             cv_level_db: CV_LEVEL_RANGE_DB,
             cv_pan_amount: 1.0,
             ctl: ControllerState::new(),
+            samples: None,
+            shown: [-1.0; METER_COUNT],
             fresh: true,
             seed: 0,
             #[cfg(test)]
@@ -1165,31 +1358,22 @@ impl WavetableSynth {
         }
     }
 
-    /// Recomputes the unison copies: detune ratios, stereo gains and the level normalisation.
+    /// Recomputes the unison copies of both oscillators: detune ratios, stereo gains and the
+    /// level normalisation. Oscillator 2 follows the shared settings unless the mode is
+    /// `separate`.
     fn apply_unison(&mut self) {
-        let n = (self.values[P_UNISON_VOICES as usize].round().max(1.0) as usize).min(MAX_UNISON);
-        let (detune, spread) = (
-            self.values[P_UNISON_DETUNE as usize],
-            self.values[P_UNISON_SPREAD as usize],
-        );
-        let norm = 1.0 / (n as f32).sqrt();
-        let s = &mut self.shared;
-        s.unison = n;
-        for u in 0..MAX_UNISON {
-            // -1..=1 across the copies (0 for a lone copy).
-            let x = if n > 1 && u < n {
-                2.0 * u as f32 / (n - 1) as f32 - 1.0
-            } else {
-                0.0
-            };
-            s.uni_ratio[u] = (detune * x / 1_200.0).exp2();
-            let (gl, gr) = balance_gains(spread * x);
-            s.uni_gain[u] = (gl * norm, gr * norm);
-        }
-        s.uni_top = (detune / 1_200.0).exp2().max(1.0);
-        if n == 1 {
-            s.uni_top = 1.0;
-        }
+        let v = |id: u32| self.values[id as usize];
+        let first = Unison::new(v(P_UNISON_VOICES), v(P_UNISON_DETUNE), v(P_UNISON_SPREAD));
+        let second = if v(P_UNISON_MODE) >= 0.5 {
+            Unison::new(
+                v(P_OSC2_UNISON_VOICES),
+                v(P_OSC2_UNISON_DETUNE),
+                v(P_OSC2_UNISON_SPREAD),
+            )
+        } else {
+            first
+        };
+        self.shared.unison = [first, second];
     }
 
     /// Applies one stored plain value. RT-safe (no allocation).
@@ -1200,7 +1384,7 @@ impl WavetableSynth {
         match id {
             P_OSC1_TABLE | P_OSC2_TABLE => {
                 let i = usize::from(id == P_OSC2_TABLE);
-                self.shared.tables[i] = choice(v).min(TABLE_COUNT - 1);
+                self.shared.tables[i] = choice(v).min(IMPORTED_TABLE);
             }
             P_OSC1_POSITION => self.shared.base_position[0] = v,
             P_OSC2_POSITION => self.shared.base_position[1] = v,
@@ -1218,7 +1402,10 @@ impl WavetableSynth {
             P_OSC2_LEVEL => self.shared.levels[1] = v,
             P_SUB => self.shared.sub = v,
             P_NOISE => self.shared.noise = v,
-            P_UNISON_VOICES | P_UNISON_DETUNE | P_UNISON_SPREAD => self.apply_unison(),
+            P_UNISON_VOICES | P_UNISON_DETUNE | P_UNISON_SPREAD | P_UNISON_MODE
+            | P_OSC2_UNISON_VOICES | P_OSC2_UNISON_DETUNE | P_OSC2_UNISON_SPREAD => {
+                self.apply_unison();
+            }
             P_FILTER_MODE => self.shared.filter_mode = FilterMode::from_index(choice(v)),
             P_CUTOFF => self.shared.cutoff = v,
             P_RESONANCE => {
@@ -1362,10 +1549,25 @@ impl Device for WavetableSynth {
         &DESCRIPTOR
     }
 
+    fn swap_samples(&mut self, map: Option<SampleMapRef>) -> Option<SampleMapRef> {
+        std::mem::replace(&mut self.samples, map)
+    }
+
+    fn has_meter_values(&self) -> bool {
+        true
+    }
+
+    fn meter_values(&self, out: &mut [f32]) -> usize {
+        let n = out.len().min(METER_COUNT);
+        out[..n].copy_from_slice(&self.shown[..n]);
+        n
+    }
+
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
         self.seed = info.seed;
         self.shared.sample_rate = sr;
+        self.shared.fade_step = 1.0 / (TABLE_FADE_MS * 0.001 * sr);
         for v in &mut self.voices {
             v.amp.set_sample_rate(sr);
             v.menv.set_sample_rate(sr);
@@ -1395,6 +1597,7 @@ impl Device for WavetableSynth {
         self.lfo.reset();
         let m = self.master.target();
         self.master.set_immediate(m);
+        self.shown = [-1.0; METER_COUNT];
         self.fresh = true;
     }
 
@@ -1444,8 +1647,9 @@ impl Device for WavetableSynth {
                 position: &cv_position[start..end],
                 resonance: &cv_res[start..end],
             };
+            let user = self.samples.as_deref().and_then(imported_of);
             for v in self.voices.iter_mut().filter(|v| v.is_active()) {
-                v.render(&mut left[start..end], &mut right[start..end], &m, &p);
+                v.render(&mut left[start..end], &mut right[start..end], &m, &p, user);
             }
             self.ctl.fill_gain(&mut ctl_gain[start..end]);
             start = end;
@@ -1474,6 +1678,12 @@ impl Device for WavetableSynth {
         *ctx.output(OUT_L) = left;
         *ctx.output(OUT_R) = right;
         *ctx.output(LFO_CV_OUT) = lfo;
+        self.shown = self
+            .voices
+            .iter()
+            .filter(|v| v.is_active())
+            .max_by_key(|v| v.order)
+            .map_or([-1.0; METER_COUNT], |v| v.position);
         #[cfg(test)]
         self.update_probe();
     }
@@ -1487,6 +1697,7 @@ mod tests {
         harness, off, on, sweep_params_min_max,
     };
     use atomik_core::NoteEvent;
+    use atomik_dsp::wavetable::{CYCLE_LEN, TABLE_COUNT};
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::signal::{db, dominant_frequency, magnitude_spectrum, max_step, peak, rms};
     use std::sync::Arc;
@@ -1611,6 +1822,10 @@ mod tests {
                 "master.level_cv_trim",
                 "pan_cv_trim",
                 "bend.range",
+                "unison.mode",
+                "osc2.unison_voices",
+                "osc2.unison_detune",
+                "osc2.unison_spread",
             ],
             &[
                 "notes_in",
@@ -1628,8 +1843,14 @@ mod tests {
         assert_eq!(DESCRIPTOR.type_id, "atomik.wavetable-synth");
         assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
         let t = DESCRIPTOR.param_by_key("osc1.table").unwrap();
-        assert_eq!(t.unit, Unit::Choice(&TABLE_NAMES));
-        assert_eq!(t.max, (TABLE_COUNT - 1) as f32);
+        assert_eq!(t.unit, Unit::Choice(&TABLE_CHOICES));
+        assert_eq!(
+            t.max, TABLE_COUNT as f32,
+            "the factory tables, then the imported one"
+        );
+        assert_eq!(DESCRIPTOR.param_by_key("osc2.table").unwrap().max, t.max);
+        // Old projects: the separate settings are off and the shared ones keep their meaning.
+        assert_eq!(DESCRIPTOR.param_by_key("unison.mode").unwrap().default, 0.0);
         let c = DESCRIPTOR.param_by_key("filter.cutoff").unwrap();
         assert_eq!((c.taper, c.unit), (Taper::Exponential, Unit::Hz));
         assert!((DESCRIPTOR.param_by_key("osc2.fine").unwrap().default - 7.0).abs() < 1e-6);
@@ -1949,6 +2170,7 @@ mod tests {
             h.push_note("notes_in", on(0, 48, 1.0));
             h.render(seconds(0.2), &OUT).remove(0)
         };
+        // The factory tables only: the imported one is silent without a sample.
         let all: Vec<Vec<f32>> = (0..TABLE_COUNT).map(|t| frame(t as f32)).collect();
         for t in 0..TABLE_COUNT {
             assert!(rms(&all[t]) > 0.02, "table {t} is silent");
@@ -2203,6 +2425,329 @@ mod tests {
             first(4),
             "a different patch seed, different phases"
         );
+    }
+
+    #[test]
+    fn unison_is_shared_by_default_and_osc2_can_take_its_own() {
+        let render = |separate: bool, osc2: (f32, f32, f32)| {
+            let (mut h, _) = synth();
+            h.set_param("osc1.level", 0.0);
+            h.set_param("osc2.level", 1.0);
+            h.set_param("osc2.position", 1.0);
+            h.set_param("osc2.fine", 0.0);
+            h.set_param("filter.cutoff", 20_000.0);
+            h.set_param("env.mod.to_pos1", 0.0);
+            h.set_param("unison.voices", 1.0);
+            h.set_param("unison.spread", 1.0);
+            h.set_param("osc2.unison_voices", osc2.0);
+            h.set_param("osc2.unison_detune", osc2.1);
+            h.set_param("osc2.unison_spread", osc2.2);
+            h.set_param("unison.mode", if separate { 1.0 } else { 0.0 });
+            h.push_note("notes_in", on(0, 48, 1.0));
+            h.render(seconds(0.3), &OUT)
+        };
+        // Shared: osc 2 follows the one copy of the shared settings, whatever its own say.
+        let shared = render(false, (5.0, 40.0, 1.0));
+        assert_eq!(shared[0], shared[1], "one centred copy");
+        assert_eq!(shared, render(false, (3.0, 10.0, 0.0)));
+        // Separate: osc 2 runs five spread copies.
+        let own = render(true, (5.0, 40.0, 1.0));
+        assert_ne!(own[0], own[1], "its own spread");
+        assert_ne!(own, shared);
+        // Oscillator 1 keeps the shared settings.
+        let first = |separate: bool| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.set_param("unison.voices", 3.0);
+            h.set_param("unison.detune", 25.0);
+            h.set_param("unison.spread", 0.0);
+            h.set_param("osc2.unison_voices", 7.0);
+            h.set_param("osc2.unison_detune", 80.0);
+            h.set_param("unison.mode", if separate { 1.0 } else { 0.0 });
+            h.push_note("notes_in", on(0, 48, 1.0));
+            h.render(seconds(0.2), &OUT)
+        };
+        assert_eq!(
+            first(false),
+            first(true),
+            "osc 2 is silent here: osc 1 is unchanged"
+        );
+    }
+
+    #[test]
+    fn a_widely_detuned_second_oscillator_still_stays_band_limited() {
+        let (mut h, _) = synth();
+        h.set_param("osc1.level", 0.0);
+        h.set_param("osc2.level", 1.0);
+        h.set_param("osc2.table", 0.0);
+        h.set_param("osc2.position", 0.0);
+        h.set_param("osc2.fine", 0.0);
+        h.set_param("filter.cutoff", 20_000.0);
+        h.set_param("unison.mode", 1.0);
+        h.set_param("osc2.unison_voices", 7.0);
+        h.set_param("osc2.unison_detune", 100.0);
+        h.set_param("env.amp.sustain", 1.0);
+        h.push_note("notes_in", on(0, 100, 1.0));
+        let o = h.render(seconds(1.0), &OUT);
+        assert!(o[0].iter().all(|v| v.is_finite()) && peak(&o[0]) < 4.0);
+    }
+
+    // -------------------------------------------------------------- tables: crossfade and import
+
+    /// A sample map of one zone over `data` (mono, the whole buffer), the way a dropped sample
+    /// reaches the device before [`attach_table`].
+    fn sample_map(data: Vec<f32>) -> SampleMapRef {
+        use atomik_device_sdk::{LoopMode, TriggerMode, Zone, ZoneExt};
+        let frames = data.len() as u64;
+        let buffer = Arc::new(SampleBuffer::new(vec![data].into()).unwrap());
+        let zone = Zone {
+            buffer: 0,
+            key_lo: 0,
+            key_hi: 127,
+            vel_lo: 1,
+            vel_hi: 127,
+            root_key: 60,
+            transpose: 0,
+            tune_cents: 0.0,
+            gain_db: 0.0,
+            pan: 0.0,
+            start: 0,
+            end: frames,
+            loop_mode: LoopMode::Off,
+            loop_start: 0,
+            loop_end: 0,
+            crossfade: 0,
+            trigger: TriggerMode::Gate,
+            reverse: false,
+            ext: ZoneExt::NONE,
+        };
+        Arc::new(SampleMap::new(vec![buffer], vec![zone]).unwrap())
+    }
+
+    /// `frames` frames of 2048 samples: frame `f` is a sine of `cycles(f)` periods.
+    fn sine_frames(frames: usize, cycles: impl Fn(usize) -> f64) -> Vec<f32> {
+        (0..frames * CYCLE_LEN)
+            .map(|n| {
+                let p = (n % CYCLE_LEN) as f64 / CYCLE_LEN as f64;
+                sin_cycles(p * cycles(n / CYCLE_LEN)) as f32
+            })
+            .collect()
+    }
+
+    /// Oscillator 1 on `table` at position 0, oscillator 2 off, one held note at key 45.
+    fn table_synth(table: f32) -> DeviceHarness {
+        let (mut h, _) = synth();
+        pure_sine(&mut h);
+        h.set_param("osc1.table", table);
+        h.push_note("notes_in", on(0, 45, 1.0));
+        h
+    }
+
+    #[test]
+    fn attach_table_adds_the_table_buffer_after_the_zones() {
+        let map = sample_map(sine_frames(4, |f| f as f64 + 1.0));
+        assert!(imported_of(&map).is_none());
+        let with = attach_table(map.clone());
+        assert_eq!(with.buffers().len(), 2);
+        assert_eq!(with.zones(), map.zones());
+        assert_eq!(imported_of(&with).map(<[f32]>::len), Some(PYRAMID_LEN));
+        // No zone, or too little audio: the map comes back as it is.
+        let empty = Arc::new(SampleMap::new(Vec::new(), Vec::new()).unwrap());
+        assert!(Arc::ptr_eq(&attach_table(empty.clone()), &empty));
+        let tiny = sample_map(vec![0.5]);
+        assert!(Arc::ptr_eq(&attach_table(tiny.clone()), &tiny));
+    }
+
+    #[test]
+    fn an_imported_sample_plays_as_a_table_at_its_own_harmonics() {
+        // One frame holding five periods of a sine: key 45 (110 Hz) gives 550 Hz.
+        let mut h = table_synth(IMPORTED_TABLE as f32);
+        let _ = h
+            .device_mut()
+            .swap_samples(Some(attach_table(sample_map(sine_frames(1, |_| 5.0)))));
+        let o = h.render(seconds(1.0), &OUT);
+        let f = dominant_frequency(&o[0][4_800..48_000], SR);
+        assert!((f - 550.0).abs() < 2.0, "{f} Hz");
+        assert!(rms(&o[0]) > 0.05, "audible: {}", rms(&o[0]));
+    }
+
+    #[test]
+    fn the_imported_table_morphs_through_the_frames_of_the_sample() {
+        // Frame 0 is one period, the last frame eight: the position moves the pitch.
+        let map = attach_table(sample_map(sine_frames(8, |f| 1.0 + f as f64)));
+        let pitch_at = |position: f32| {
+            let mut h = table_synth(IMPORTED_TABLE as f32);
+            h.set_param("osc1.position", position);
+            let _ = h.device_mut().swap_samples(Some(map.clone()));
+            let o = h.render(seconds(1.0), &OUT);
+            dominant_frequency(&o[0][4_800..48_000], SR)
+        };
+        let (first, last) = (pitch_at(0.0), pitch_at(1.0));
+        assert!((first - 110.0).abs() < 2.0, "{first} Hz");
+        assert!((last - 880.0).abs() < 4.0, "{last} Hz");
+    }
+
+    #[test]
+    fn without_an_imported_sample_the_imported_table_is_silent() {
+        let imported = IMPORTED_TABLE as f32;
+        let mut h = table_synth(imported);
+        assert_eq!(peak(&h.render(seconds(0.2), &OUT)[0]), 0.0);
+        // A plain sample map (no table attached) does not make a sound either.
+        let mut h = table_synth(imported);
+        let _ = h
+            .device_mut()
+            .swap_samples(Some(sample_map(sine_frames(1, |_| 3.0))));
+        assert_eq!(peak(&h.render(seconds(0.2), &OUT)[0]), 0.0);
+        // Dropping the sample again silences it; the old map comes back for the caller to drop.
+        let mut h = table_synth(imported);
+        let map = attach_table(sample_map(sine_frames(1, |_| 3.0)));
+        assert!(h.device_mut().swap_samples(Some(map)).is_none());
+        assert!(peak(&h.render(seconds(0.2), &OUT)[0]) > 0.1);
+        assert!(h.device_mut().swap_samples(None).is_some());
+        let _ = h.render(seconds(0.1), &OUT);
+        assert_eq!(peak(&h.render(seconds(0.2), &OUT)[0]), 0.0);
+    }
+
+    #[test]
+    fn a_table_change_crossfades_instead_of_clicking() {
+        // Sine to saw at the same phase: a hard switch would jump by up to the difference of the
+        // two waves; the crossfade starts from the old wave and reaches the new one.
+        let change = |to: Option<f32>| {
+            let mut h = table_synth(SINE_SAW);
+            let mut out = h.render(seconds(0.1), &OUT).remove(0);
+            if let Some(t) = to {
+                h.set_param("osc1.table", t);
+            }
+            out.extend(h.render(seconds(0.1), &OUT).remove(0));
+            out
+        };
+        let cut = seconds(0.1) * BATCH;
+        let (old, new_from_start, faded) = (
+            change(None),
+            {
+                // The same note on the new table all along (same phases): a hard switch.
+                let mut h = table_synth(0.0);
+                h.render(seconds(0.2), &OUT).remove(0)
+            },
+            change(Some(0.0)),
+        );
+        let jump = (cut..cut + 24)
+            .map(|i| (new_from_start[i] - old[i]).abs())
+            .fold(0.0f32, f32::max);
+        let soft = (cut..cut + 24)
+            .map(|i| (faded[i] - old[i]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(jump > 0.1, "the two tables differ here: {jump}");
+        assert!(soft < 0.25 * jump, "faded {soft} vs hard {jump}");
+        // After the fade the voice plays the new table alone.
+        let tail = cut + seconds(0.05) * BATCH;
+        let off = (tail..faded.len())
+            .map(|i| (faded[i] - new_from_start[i]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(off < 0.02, "{off}");
+        // And the fade is gradual: the difference to the old wave grows over several ms.
+        let at = |ms: f64| {
+            let i = cut + (ms * 0.001 * SR) as usize;
+            (0..48)
+                .map(|n| (faded[i + n] - old[i + n]).abs())
+                .fold(0.0f32, f32::max)
+        };
+        assert!(
+            at(1.0) < at(6.0) && at(6.0) < at(14.0) + 0.01,
+            "{} {} {}",
+            at(1.0),
+            at(6.0),
+            at(14.0)
+        );
+    }
+
+    #[test]
+    fn a_table_change_never_steps_the_output_of_a_smooth_wave() {
+        // Sine to triangle (both smooth) while a note holds: no sample step bigger than the
+        // steady waves have.
+        let mut h = table_synth(SINE_SAW);
+        let mut out = h.render(seconds(0.1), &OUT).remove(0);
+        h.set_param("osc1.table", 4.0);
+        out.extend(h.render(seconds(0.1), &OUT).remove(0));
+        let steady = max_step(&out[..seconds(0.1) * BATCH]);
+        assert!(
+            max_step(&out) < 1.5 * steady,
+            "{} vs {steady}",
+            max_step(&out)
+        );
+    }
+
+    #[test]
+    fn a_new_note_starts_on_the_current_table_without_a_fade() {
+        let render = |change_first: bool| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            if change_first {
+                h.set_param("osc1.table", 4.0);
+            }
+            h.push_note("notes_in", on(0, 45, 1.0));
+            h.render(seconds(0.1), &OUT).remove(0)
+        };
+        let direct = {
+            let mut h = table_synth(4.0);
+            h.render(seconds(0.1), &OUT).remove(0)
+        };
+        assert_eq!(render(true), direct);
+    }
+
+    // ------------------------------------------------------------------- position display
+
+    #[test]
+    fn the_device_publishes_the_modulated_position_of_a_sounding_voice() {
+        let mut out = [0.0f32; 4];
+        let (mut h, _) = synth();
+        assert!(h.device().has_meter_values());
+        h.set_param("osc1.position", 0.2);
+        h.set_param("osc2.position", 0.6);
+        h.set_param("env.mod.to_pos1", 0.8);
+        h.set_param("env.mod.to_pos2", 0.0);
+        h.set_param("env.mod.attack", 1_000.0);
+        h.set_param("env.mod.sustain", 1.0);
+        h.render(2, &OUT);
+        assert_eq!(h.device().meter_values(&mut out), METER_COUNT);
+        assert_eq!(&out[..2], &[-1.0, -1.0], "nothing sounds");
+        h.push_note("notes_in", on(0, 60, 1.0));
+        h.render(seconds(0.05), &OUT);
+        h.device().meter_values(&mut out);
+        let early = out[0];
+        h.render(seconds(0.4), &OUT);
+        h.device().meter_values(&mut out);
+        assert!(early >= 0.2 && early < out[0], "{early} -> {}", out[0]);
+        assert!(out[0] > 0.3 && out[0] <= 1.0, "{}", out[0]);
+        assert!(
+            (out[1] - 0.6).abs() < 1e-4,
+            "osc 2 is not modulated: {}",
+            out[1]
+        );
+        // A buffer shorter than the values gets what fits.
+        let mut one = [9.0f32; 1];
+        assert_eq!(h.device().meter_values(&mut one), 1);
+        // The note released and gone: nothing to show again.
+        h.push_note("notes_in", off(0, 60));
+        h.set_param("env.amp.release", 5.0);
+        h.render(seconds(0.5), &OUT);
+        h.device().meter_values(&mut out);
+        assert_eq!(&out[..2], &[-1.0, -1.0]);
+    }
+
+    #[test]
+    fn the_published_position_follows_the_newest_voice() {
+        let (mut h, _) = synth();
+        h.set_param("osc1.position", 0.1);
+        h.set_param("env.mod.to_pos1", 0.0);
+        h.push_note("notes_in", on(0, 60, 1.0));
+        h.render(seconds(0.05), &OUT);
+        h.set_param("osc1.position", 0.9);
+        h.push_note("notes_in", on(0, 64, 1.0));
+        h.render(seconds(0.05), &OUT);
+        let mut out = [0.0f32; 2];
+        h.device().meter_values(&mut out);
+        assert!((out[0] - 0.9).abs() < 1e-3, "{}", out[0]);
     }
 
     // ------------------------------------------------------------------------ band limiting
