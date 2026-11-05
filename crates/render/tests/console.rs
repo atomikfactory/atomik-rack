@@ -171,6 +171,7 @@ fn pdc_clicks_doc() -> RackDoc {
                 scale: None,
                 param_lanes: Vec::new(),
                 midi: Default::default(),
+                groove: None,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

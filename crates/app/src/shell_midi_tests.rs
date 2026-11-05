@@ -280,6 +280,7 @@ fn shell_with_group(s: &mut Shell<NullBackend>) {
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

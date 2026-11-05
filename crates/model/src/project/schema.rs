@@ -440,6 +440,8 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(NoteClip, "param_lanes", 41),
     field(NoteClip, "programs", 43).ignorable(),
     field(NoteClip, "sysex", 43).ignorable(),
+    field(NoteClip, "groove", 43).ignorable(),
+    field(NoteClip, "groove_strength", 43).ignorable(),
     field(NoteClip, "notes", 1).req(),
     field(AudioClip, "id", 1).req(),
     field(AudioClip, "start", 1).req(),

@@ -24,6 +24,14 @@
 //! command on the same song gives the same notes, a bounce is reproducible and an undo followed
 //! by a redo cannot change anything. Another seed gives another take of the same amounts.
 //!
+//! **Swing parity.** [`quantize_notes_in`] takes the song's bar lines: an odd step is the odd step
+//! of its bar, so after a meter change, or a bar that holds an odd number of steps, the swing
+//! starts straight again at the bar line. (Without bar lines the steps count from the start of
+//! the song.) A 4/4 song is not affected.
+//!
+//! **Lengths.** A quantize can also humanize the note lengths (a bounded random change, one tick
+//! at the least) and make the quantized notes legato (each reaches the start of the next).
+//!
 //! # Collisions
 //!
 //! A clip holds at most one note per `(tick, key)`. Two notes of one key that quantize onto the
@@ -48,7 +56,7 @@
 //! [`crate::groove_cmd`]. Audio clips are not touched; controller lane points stay where they are.
 
 use crate::song::{MAX_TICK, Note, StepResolution};
-use atomik_core::PPQ;
+use atomik_core::{MeterMap, PPQ};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Most grooves a song may hold (the built-in ones are not counted).
@@ -217,6 +225,11 @@ pub struct QuantizeParams {
     pub humanize_time: f32,
     /// Random velocity, `0..=1` of [`HUMANIZE_VELOCITY_RANGE`], either way.
     pub humanize_velocity: f32,
+    /// Random note length, `0..=1` of [`HUMANIZE_TIME_TICKS`], either way (a note stays at least
+    /// one tick long).
+    pub humanize_length: f32,
+    /// After the notes moved, stretch each one to reach the start of the next selected note.
+    pub legato: bool,
     /// Another seed is another take of the same humanize amounts.
     pub seed: u32,
 }
@@ -233,6 +246,8 @@ impl Default for QuantizeParams {
             groove_velocity: 1.0,
             humanize_time: 0.0,
             humanize_velocity: 0.0,
+            humanize_length: 0.0,
+            legato: false,
             seed: 0,
         }
     }
@@ -252,6 +267,7 @@ impl QuantizeParams {
             ("groove velocity", self.groove_velocity),
             ("humanize time", self.humanize_time),
             ("humanize velocity", self.humanize_velocity),
+            ("humanize length", self.humanize_length),
         ] {
             if !(0.0..=1.0).contains(&v) {
                 return Err(format!("quantize {what} {v} is outside 0..=1"));
@@ -273,6 +289,8 @@ impl QuantizeParams {
             && !velocity
             && self.humanize_time == 0.0
             && self.humanize_velocity == 0.0
+            && self.humanize_length == 0.0
+            && !self.legato
     }
 }
 
@@ -315,6 +333,7 @@ pub fn groove_notes(
         grid: step,
         delay: 0.0,
         groove: Some(groove),
+        meter: None,
     };
     let mut out: Vec<(i64, i64, u8, f32)> = notes
         .into_iter()
@@ -350,6 +369,10 @@ pub(crate) struct Targets<'a> {
     pub(crate) grid: i64,
     pub(crate) delay: f64,
     pub(crate) groove: Option<&'a Groove>,
+    /// The song's bar lines. With them a step is odd (and swung) when it is the odd step of its
+    /// own bar, so a bar of an odd number of steps starts straight again; without them steps
+    /// count from the start of the song.
+    pub(crate) meter: Option<MeterMap<'a>>,
 }
 
 impl Targets<'_> {
@@ -360,10 +383,20 @@ impl Targets<'_> {
         })
     }
 
+    /// Whether grid position `i` is an odd step (the swing delays it).
+    fn is_odd(&self, i: i64) -> bool {
+        let Some(meter) = self.meter else {
+            return i.rem_euclid(2) == 1;
+        };
+        let at = i.saturating_mul(self.grid).max(0);
+        let from_bar = at - meter.bar_start(meter.bar_at(at));
+        ((from_bar + self.grid / 2) / self.grid) % 2 == 1
+    }
+
     /// Where grid position `i` is, in ticks.
     pub(crate) fn position(&self, i: i64) -> f64 {
         let grid = self.grid as f64;
-        let swing = if i.rem_euclid(2) == 1 {
+        let swing = if self.is_odd(i) {
             self.delay * grid
         } else {
             0.0
@@ -405,11 +438,27 @@ pub fn quantize_notes(
     params: &QuantizeParams,
     groove: Option<&Groove>,
 ) -> Quantized {
+    quantize_notes_in(notes, selected, origin, clip_seed, params, groove, None)
+}
+
+/// [`quantize_notes`] on the song's bar lines: with `meter` the swing counts steps from the start
+/// of each bar (see [`Targets`]), so a meter change or a bar of an odd number of steps does not
+/// turn the swing around. A 4/4 song gives the same notes as [`quantize_notes`].
+pub fn quantize_notes_in(
+    notes: &[Note],
+    selected: Option<&BTreeSet<usize>>,
+    origin: i64,
+    clip_seed: u64,
+    params: &QuantizeParams,
+    groove: Option<&Groove>,
+    meter: Option<MeterMap<'_>>,
+) -> Quantized {
     let grid = groove.map_or(params.grid, |g| g.step.ticks()).max(1);
     let targets = Targets {
         grid,
         delay: swing_delay(params.swing),
         groove,
+        meter,
     };
     let seed = u64::from(params.seed);
     let moved: Vec<Note> = notes
@@ -445,6 +494,11 @@ pub fn quantize_notes(
                 velocity +=
                     (u * f64::from(params.humanize_velocity * HUMANIZE_VELOCITY_RANGE)) as f32;
             }
+            if params.humanize_length > 0.0 {
+                let u = signed_unit(hash64(seed ^ 0x5A5A_5A5A, clip_seed, at));
+                let ticks = u * f64::from(params.humanize_length) * HUMANIZE_TIME_TICKS as f64;
+                length += ticks.round() as i64;
+            }
             Note {
                 tick: (start - origin).clamp(0, MAX_TICK),
                 length: length.clamp(1, MAX_TICK),
@@ -453,7 +507,28 @@ pub fn quantize_notes(
             }
         })
         .collect();
-    resolve(notes, selected, moved)
+    let mut out = resolve(notes, selected, moved);
+    if params.legato {
+        legato(&mut out, selected);
+    }
+    out
+}
+
+/// Stretches (or shortens) each selected note to reach the start of the next later selected
+/// note; the last one keeps its length. Starts and keys do not change, so the notes stay sorted.
+fn legato(out: &mut Quantized, selected: Option<&BTreeSet<usize>>) {
+    let is_selected = |i: usize| selected.is_none_or(|s| s.contains(&i));
+    let at: Vec<usize> = (0..out.new_index.len())
+        .filter(|&i| is_selected(i))
+        .map(|i| out.new_index[i])
+        .collect();
+    let starts: BTreeSet<i64> = at.iter().map(|&p| out.notes[p].tick).collect();
+    for p in at {
+        let n = &mut out.notes[p];
+        if let Some(&next) = starts.range(n.tick + 1..).next() {
+            n.length = (next - n.tick).clamp(1, MAX_TICK);
+        }
+    }
 }
 
 /// Claims the first free `(tick, key)` at or after `tick`, or, when everything up to the last tick
@@ -869,6 +944,110 @@ mod tests {
         assert_eq!(names.len(), all.len());
         let s66 = builtin_groove("Swing 66%").unwrap();
         assert!((s66.slots[1].offset - 0.32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn swing_follows_the_bar_lines_of_the_meter() {
+        use atomik_core::{MeterEvent, MeterTable};
+        // 3/16 bars hold three steps: counting from the song start, the first step of bar 2 would be
+        // an odd one. With the bar lines it is the first step of its bar and plays straight.
+        let table = MeterTable::new(&[MeterEvent::new(1, 3, 16)]).unwrap();
+        let notes: Vec<Note> = (0..6).map(|i| note(i * S, 60)).collect();
+        let p = QuantizeParams {
+            swing: 66,
+            ..params()
+        };
+        let delay = 1229;
+        let by_song = quantize_notes(&notes, None, 0, 1, &p, None).notes;
+        let by_bar = quantize_notes_in(&notes, None, 0, 1, &p, None, Some(table.map())).notes;
+        let late = |out: &[Note]| -> Vec<bool> {
+            out.iter()
+                .enumerate()
+                .map(|(i, n)| n.tick == i as i64 * S + delay)
+                .collect()
+        };
+        assert_eq!(late(&by_song), [false, true, false, true, false, true]);
+        assert_eq!(late(&by_bar), [false, true, false, false, true, false]);
+        // 4/4 bars hold an even number of steps: both agree.
+        let four = MeterTable::constant(4, 4);
+        let by_four = quantize_notes_in(&notes, None, 0, 1, &p, None, Some(four.map())).notes;
+        assert_eq!(by_four, by_song);
+    }
+
+    #[test]
+    fn swing_restarts_after_a_meter_change() {
+        use atomik_core::{MeterEvent, MeterTable};
+        // One 7/16 bar (seven steps), then 4/4: the second bar starts on an odd song step but
+        // its own first step is straight.
+        let table =
+            MeterTable::new(&[MeterEvent::new(1, 7, 16), MeterEvent::new(2, 4, 4)]).unwrap();
+        let p = QuantizeParams {
+            swing: 66,
+            ..params()
+        };
+        let notes = [note(7 * S, 60), note(8 * S, 60)];
+        let out = quantize_notes_in(&notes, None, 0, 1, &p, None, Some(table.map())).notes;
+        assert_eq!(out[0].tick, 7 * S, "first step of the 4/4 bar is straight");
+        assert_eq!(out[1].tick, 8 * S + 1229, "its second step is swung");
+    }
+
+    #[test]
+    fn humanize_length_changes_lengths_within_bounds_and_is_reproducible() {
+        let notes: Vec<Note> = (0..8).map(|i| note(i * S, 60 + i as u8)).collect();
+        let p = QuantizeParams {
+            humanize_length: 1.0,
+            seed: 3,
+            ..params()
+        };
+        let a = q(&notes, &p, None);
+        assert_eq!(a, q(&notes, &p, None));
+        assert!(a.iter().any(|n| n.length != S));
+        assert!(
+            a.iter()
+                .all(|n| (n.length - S).abs() <= HUMANIZE_TIME_TICKS && n.length >= 1)
+        );
+        assert!(
+            a.iter().zip(&notes).all(|(x, y)| x.tick == y.tick),
+            "starts stay"
+        );
+        let other = QuantizeParams {
+            seed: 4,
+            ..p.clone()
+        };
+        assert_ne!(q(&notes, &other, None), a);
+        assert!(!p.is_identity(None));
+        assert!(
+            QuantizeParams {
+                humanize_length: 1.5,
+                ..params()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn legato_reaches_the_next_selected_start_and_keeps_the_last_length() {
+        let notes = [note(10, 60), note(S + 10, 62), note(3 * S + 10, 64)];
+        let p = QuantizeParams {
+            legato: true,
+            ..params()
+        };
+        let out = q(&notes, &p, None);
+        assert_eq!(
+            out.iter().map(|n| (n.tick, n.length)).collect::<Vec<_>>(),
+            [(0, S), (S, 2 * S), (3 * S, S)]
+        );
+        // Only the selected notes take part.
+        let sel: BTreeSet<usize> = [0, 2].into();
+        let out = quantize_notes(&notes, Some(&sel), 0, 1, &p, None).notes;
+        assert_eq!((out[0].tick, out[0].length), (0, 3 * S));
+        assert_eq!(
+            (out[1].tick, out[1].length),
+            (S + 10, S),
+            "unselected note untouched"
+        );
+        assert!(!p.is_identity(None));
     }
 
     #[test]

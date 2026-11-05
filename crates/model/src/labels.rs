@@ -99,6 +99,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::SetLoop { .. } => "Set Loop",
         SongCommand::SetSongEnd(_) => "Set Song End",
         SongCommand::QuantizeNotes { .. } | SongCommand::ApplyQuantize { .. } => "Quantize",
+        SongCommand::SetClipGroove { .. } => "Set Clip Groove",
         SongCommand::ApplyNoteTool { tool, .. } => tool.label(),
         SongCommand::MoveNoteLane { copy: true, .. } => "Copy Lane",
         SongCommand::MoveNoteLane { .. } => "Move Lane",

@@ -191,6 +191,7 @@ fn clip_item(dir: &Path) -> PathBuf {
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

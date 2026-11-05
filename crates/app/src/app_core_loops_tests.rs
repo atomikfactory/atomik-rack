@@ -113,6 +113,7 @@ fn lane_clip(key: u8) -> atomik_model::Clip {
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

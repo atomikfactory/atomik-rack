@@ -31,6 +31,7 @@ use crate::library_drop;
 use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
 use crate::pick_list::PickList;
+use crate::quantize_panel::QuantizeAction;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
@@ -221,22 +222,26 @@ pub enum TrackButton {
 }
 
 /// A button in the corner above the track list: the master mute and solo clear every track's,
-/// the third switches Manual Rec.
+/// QUANT quantizes the selected clips, the last switches Manual Rec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CornerButton {
     /// Clear every mute.
     ClearMutes,
     /// Clear every solo.
     ClearSolos,
+    /// Quantize the selected clips with the quantize panel's last settings (a right click opens
+    /// the panel).
+    Quantize,
     /// Manual Rec: selecting a track does not arm it.
     ManualRec,
 }
 
 impl CornerButton {
     /// Every button, left to right.
-    pub const ALL: [CornerButton; 3] = [
+    pub const ALL: [CornerButton; 4] = [
         CornerButton::ClearMutes,
         CornerButton::ClearSolos,
+        CornerButton::Quantize,
         CornerButton::ManualRec,
     ];
 }
@@ -1351,9 +1356,10 @@ impl ArrangementView {
     fn corner_button_rect(&self, button: CornerButton) -> Rect {
         let (x, y) = (self.bounds.x0 + 12.0, self.bounds.y0 + 27.0);
         match button {
-            CornerButton::ClearMutes => Rect::new(x, y, x + 20.0, y + 11.0),
-            CornerButton::ClearSolos => Rect::new(x + 24.0, y, x + 44.0, y + 11.0),
-            CornerButton::ManualRec => Rect::new(x + 52.0, y, x + 112.0, y + 11.0),
+            CornerButton::ClearMutes => Rect::new(x, y, x + 18.0, y + 11.0),
+            CornerButton::ClearSolos => Rect::new(x + 21.0, y, x + 39.0, y + 11.0),
+            CornerButton::Quantize => Rect::new(x + 42.0, y, x + 74.0, y + 11.0),
+            CornerButton::ManualRec => Rect::new(x + 78.0, y, x + 112.0, y + 11.0),
         }
     }
 
@@ -1382,6 +1388,7 @@ impl ArrangementView {
         match button {
             CornerButton::ClearMutes => self.clear_flags(false).into_iter().collect(),
             CornerButton::ClearSolos => self.clear_flags(true).into_iter().collect(),
+            CornerButton::Quantize => vec![UiAction::Quantize(QuantizeAction::ApplyClips)],
             CornerButton::ManualRec => vec![UiAction::ToggleManualRec],
         }
     }
@@ -1400,6 +1407,11 @@ impl ArrangementView {
     /// Centre of a toolbar button (the corner above the track list).
     pub fn tool_button_center(&self, tool: Tool) -> Point {
         self.tool_rect(tool).center()
+    }
+
+    /// Centre of a button of the corner above the track list.
+    pub fn corner_button_center(&self, button: CornerButton) -> Point {
+        self.corner_button_rect(button).center()
     }
 
     /// Zoom in logical pixels per tick.
@@ -3150,6 +3162,9 @@ impl ArrangementView {
             Hit::Snap => self.snap = self.snap.cycle(false),
             Hit::Tool(t) if primary => self.set_tool(t),
             Hit::CornerButton(b) if primary => out.extend(self.corner_action(b)),
+            Hit::CornerButton(CornerButton::Quantize) => {
+                out.push(UiAction::Quantize(QuantizeAction::Options));
+            }
             Hit::RulerLabel if primary && tool == Tool::Razor => {
                 // The razor in the ruler splits every track at the snapped position.
                 let at = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
@@ -7597,11 +7612,13 @@ impl ArrangementView {
             let (label, on) = match button {
                 CornerButton::ClearMutes => ("M", self.song.tracks.iter().any(|t| t.muted)),
                 CornerButton::ClearSolos => ("S", self.song.tracks.iter().any(|t| t.solo)),
+                CornerButton::Quantize => ("QUANT", false),
                 CornerButton::ManualRec => ("MAN REC", self.manual_rec),
             };
             let lit = match button {
                 CornerButton::ClearMutes => st.mute,
                 CornerButton::ClearSolos => st.solo,
+                CornerButton::Quantize => st.loop_on,
                 CornerButton::ManualRec => st.record,
             };
             let hover = self.hover == Some(Hit::CornerButton(button));
@@ -7672,6 +7689,7 @@ fn new_clip_cmd(
             scale: None,
             param_lanes: Vec::new(),
             midi: Default::default(),
+            groove: None,
             controllers: Vec::new(),
             name: None,
             color: None,

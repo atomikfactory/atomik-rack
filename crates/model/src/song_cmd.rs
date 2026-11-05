@@ -775,6 +775,7 @@ pub(crate) fn check_new_clip(
         controllers,
         param_lanes,
         midi: std::sync::Arc::new(midi),
+        groove: None,
         ..clip
     })
 }
@@ -1349,6 +1350,7 @@ pub(crate) fn plan(
         | SongCommand::SetGroove(_)
         | SongCommand::RenameGroove { .. }
         | SongCommand::DeleteGroove { .. }
+        | SongCommand::SetClipGroove { .. }
         | SongCommand::ExtractGroove { .. } => crate::groove_cmd::plan(doc, command)?,
         SongCommand::ApplyNoteTool { .. } => crate::note_tools::plan(doc, command)?,
         SongCommand::MoveNoteLane {
@@ -1509,6 +1511,7 @@ pub(crate) fn plan(
                 old: Some(c.clone()),
                 new: Some(Clip {
                     midi: std::sync::Arc::new(midi),
+                    groove: None,
                     ..c.clone()
                 }),
             }
@@ -1660,6 +1663,7 @@ pub(crate) fn plan(
                 scale: None,
                 param_lanes: Vec::new(),
                 midi: Default::default(),
+                groove: None,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

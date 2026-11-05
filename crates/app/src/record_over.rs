@@ -251,6 +251,7 @@ pub fn keep_events_follow_up(doc: &RackDoc, id: ClipId, policy: KeepEvents) -> V
                         scale: clip.scale,
                         param_lanes: Vec::new(),
                         midi: Default::default(),
+                        groove: None,
                         controllers: Vec::new(),
                         name: None,
                         color: None,

@@ -391,3 +391,167 @@ fn dragging_a_value_up_or_down_steps_it_and_a_click_changes_nothing() {
     v.handle(&mv(Point::new(grid.x, grid.y - 10.0)));
     assert_eq!(v.values().grid, before + 2);
 }
+
+fn press(v: &mut QuantizeView, key: atomik_ui::Key) -> Vec<QuantizeAction> {
+    v.handle(&UiEvent::Key {
+        key,
+        modifiers: Default::default(),
+        pressed: true,
+    })
+    .into_iter()
+    .filter_map(|a| match a {
+        UiAction::Quantize(q) => Some(q),
+        _ => None,
+    })
+    .collect()
+}
+
+fn type_text(v: &mut QuantizeView, text: &str) {
+    for ch in text.chars() {
+        press(v, atomik_ui::Key::Char(ch));
+    }
+}
+
+#[test]
+fn humanize_length_and_legato_have_rows_that_reach_the_models_parameters() {
+    let mut v = view();
+    for _ in 0..4 {
+        v.step(QuantizeRow::HumanizeLength, 1);
+    }
+    v.step(QuantizeRow::Legato, 1);
+    assert_eq!(v.value_text(QuantizeRow::HumanizeLength), "20 %");
+    assert_eq!(v.value_text(QuantizeRow::Legato), "ON");
+    let p = v.params();
+    assert!((p.humanize_length - 0.2).abs() < 1e-6);
+    assert!(p.legato);
+    p.validate().unwrap();
+    // The toggle flips on a click of its value, and is not a drag.
+    let r = v.value_rect(QuantizeRow::Legato).center();
+    clk!(v, r);
+    assert_eq!(v.value_text(QuantizeRow::Legato), "OFF");
+    v.handle(&down(r));
+    assert!(!v.is_dragging());
+    v.handle(&up(r));
+    let t = texts(&v);
+    assert!(has(&t, "Humanize length") && has(&t, "Legato"));
+}
+
+#[test]
+fn the_name_field_shows_a_song_groove_and_a_built_in_one_has_no_name_to_edit() {
+    let mut v = view();
+    assert_eq!(v.name_text(), "");
+    assert!(!v.wants_text());
+    // A click on the field with no song groove chosen does not take the keys.
+    clk!(v, v.name_rect().center());
+    assert!(!v.wants_text());
+    v.select_groove("Straight");
+    assert_eq!(v.name_text(), "", "a built-in groove is not renamed");
+    clk!(v, v.name_rect().center());
+    assert!(!v.wants_text());
+    assert!(clk!(v, v.rename_rect().center()).is_empty());
+    v.select_groove("Mine");
+    assert_eq!(v.name_text(), "Mine");
+    clk!(v, v.name_rect().center());
+    assert!(v.wants_text());
+    // A click elsewhere gives the keys back.
+    clk!(v, v.apply_rect().center());
+    assert!(!v.wants_text());
+}
+
+#[test]
+fn typing_a_name_and_pressing_enter_or_rename_asks_for_the_rename() {
+    let mut v = view();
+    v.select_groove("Mine");
+    clk!(v, v.name_rect().center());
+    // Nothing typed yet: the name is unchanged, so there is nothing to ask for.
+    assert!(press(&mut v, atomik_ui::Key::Enter).is_empty());
+    assert!(clk!(v, v.rename_rect().center()).is_empty());
+    clk!(v, v.name_rect().center());
+    type_text(&mut v, " Two");
+    assert_eq!(v.name_text(), "Mine Two");
+    let want = QuantizeAction::Rename {
+        from: "Mine".into(),
+        to: "Mine Two".into(),
+    };
+    assert_eq!(
+        press(&mut v, atomik_ui::Key::Enter),
+        std::slice::from_ref(&want)
+    );
+    assert_eq!(clk!(v, v.rename_rect().center()), [want]);
+    // A blank name asks for nothing (the button took the keys away: click the field again).
+    clk!(v, v.name_rect().center());
+    for _ in 0..8 {
+        press(&mut v, atomik_ui::Key::Backspace);
+    }
+    assert_eq!(v.name_text(), "");
+    assert!(press(&mut v, atomik_ui::Key::Enter).is_empty());
+    // The name is limited like a groove name.
+    type_text(&mut v, &"x".repeat(60));
+    assert_eq!(v.name_text().chars().count(), 32);
+}
+
+#[test]
+fn the_name_follows_the_chosen_groove_and_keeps_typing_while_the_list_refreshes() {
+    let mut v = view();
+    v.select_groove("Mine");
+    clk!(v, v.name_rect().center());
+    type_text(&mut v, "!");
+    // The app refreshes the list every frame: unchanged choice, unchanged typing.
+    v.set_grooves(vec![
+        groove("Straight", true),
+        groove("Swing 60%", true),
+        groove("Mine", false),
+    ]);
+    assert_eq!(v.name_text(), "Mine!");
+    // After a rename the app offers the new name and chooses it.
+    v.set_grooves(vec![groove("Straight", true), groove("Fresh", false)]);
+    assert_eq!(v.name_text(), "", "the old choice is gone");
+    assert!(!v.wants_text());
+    v.select_groove("Fresh");
+    assert_eq!(v.name_text(), "Fresh");
+    // Stepping the groove row follows too.
+    v.step(QuantizeRow::Groove, -1);
+    assert_eq!(v.name_text(), "");
+}
+
+#[test]
+fn the_live_buttons_need_a_target_and_the_set_one_a_chosen_groove() {
+    let mut v = view();
+    assert!(
+        clk!(v, v.live_rect().center()).is_empty(),
+        "no groove chosen"
+    );
+    assert_eq!(
+        clk!(v, v.clear_live_rect().center()),
+        [QuantizeAction::ClearLive]
+    );
+    v.select_groove("Swing 60%");
+    assert_eq!(clk!(v, v.live_rect().center()), [QuantizeAction::SetLive]);
+    v.set_target(String::new(), false, false);
+    assert!(clk!(v, v.live_rect().center()).is_empty());
+    assert!(clk!(v, v.clear_live_rect().center()).is_empty());
+    let t = texts(&v);
+    for want in ["LIVE ON CLIPS", "CLEAR LIVE", "RENAME", "Groove name"] {
+        assert!(has(&t, want), "{want}");
+    }
+}
+
+#[test]
+fn the_panel_still_fits_a_small_window_with_the_new_rows() {
+    let mut v = view();
+    v.set_bounds(Rect::new(0.0, 0.0, 500.0, 760.0));
+    let p = v.panel();
+    assert!(p.y1 <= 760.0, "{p:?}");
+    for r in [
+        v.name_rect(),
+        v.rename_rect(),
+        v.live_rect(),
+        v.clear_live_rect(),
+        v.apply_rect(),
+        v.extract_rect(),
+    ] {
+        assert!(r.x1 <= p.x1 && r.y1 <= p.y1, "{r:?} inside {p:?}");
+    }
+    assert!(v.live_rect().x0 >= v.apply_rect().x1);
+    assert!(v.clear_live_rect().x0 >= v.live_rect().x1);
+}

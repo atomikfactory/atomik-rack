@@ -606,10 +606,12 @@ pub fn quantize_audio(
     }
     let strength = q.strength.clamp(0.0, 1.0);
     let randomize = q.randomize.clamp(0.0, 1.0);
+    let meter = song.meter_table();
     let targets = Targets {
         grid: q.groove.as_ref().map_or(q.grid, |g| g.step.ticks()).max(1),
         delay: swing_delay(q.swing),
         groove: q.groove.as_ref(),
+        meter: Some(meter.map()),
     };
     let base = warped_at_song_tempo(song, start, a);
     let offset = base.source_offset;

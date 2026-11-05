@@ -857,6 +857,7 @@ fn the_song_sent_to_the_engine_enters_at_the_player() {
             scale: None,
             param_lanes: Vec::new(),
             midi: Default::default(),
+            groove: None,
             controllers: Vec::new(),
             name: None,
             color: None,

@@ -471,3 +471,180 @@ fn dragging_a_value_in_the_panel_steps_it_and_leaves_the_undo_history_alone() {
     );
     assert_eq!(s.quantize_values().grid, grid + 2, "and the app keeps them");
 }
+
+fn song_groove(s: &mut Shell<NullBackend>, name: &str) {
+    let groove = atomik_model::Groove {
+        name: name.to_owned(),
+        step: atomik_model::StepResolution::Sixteenth,
+        slots: vec![
+            atomik_model::GrooveSlot::STRAIGHT,
+            atomik_model::GrooveSlot {
+                offset: 0.25,
+                velocity: 0.8,
+            },
+        ],
+    };
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::SetGroove(groove)))
+        .unwrap();
+}
+
+fn clip_groove(s: &Shell<NullBackend>, id: ClipId) -> Option<atomik_model::TrackGroove> {
+    s.core()
+        .doc()
+        .song
+        .clip(id)
+        .unwrap()
+        .2
+        .groove
+        .as_deref()
+        .cloned()
+}
+
+#[test]
+fn a_live_groove_goes_on_the_selected_clips_in_one_undo_step_and_off_again() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    song_groove(&mut s, "Late");
+    let before = notes(&s, id);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.core_mut()
+        .set_clip_groove(Pane::Arrangement, Some(("Late".to_owned(), 60)));
+    assert!(s.core().last_rejection().is_none());
+    let g = clip_groove(&s, id).expect("the clip has the groove");
+    assert_eq!((g.name.as_str(), g.strength), ("Late", 60));
+    assert_eq!(notes(&s, id), before, "the notes are not edited");
+    s.core_mut().set_clip_groove(Pane::Arrangement, None);
+    assert_eq!(clip_groove(&s, id), None);
+    s.core_mut().undo();
+    assert!(clip_groove(&s, id).is_some());
+    // Nothing selected: refused with a message.
+    s.core_mut().arrangement_mut().set_selected_clips(&[]);
+    s.core_mut()
+        .set_clip_groove(Pane::Arrangement, Some(("Late".to_owned(), 60)));
+    assert!(s.core().last_rejection().is_some());
+}
+
+#[test]
+fn renaming_a_groove_follows_on_the_clips_and_a_taken_name_is_refused() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    song_groove(&mut s, "Late");
+    song_groove(&mut s, "Early");
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.core_mut()
+        .set_clip_groove(Pane::Arrangement, Some(("Late".to_owned(), 100)));
+    assert!(!s.core_mut().rename_groove("Late", "Early"), "taken");
+    assert!(!s.core_mut().rename_groove("Late", "Swing 55%"), "built-in");
+    assert!(!s.core_mut().rename_groove("Late", "   "), "blank");
+    assert!(s.core_mut().rename_groove("Late", "  Behind "));
+    assert_eq!(clip_groove(&s, id).unwrap().name, "Behind");
+    assert!(s.core().doc().song.groove("Late").is_none());
+}
+
+fn right_click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) {
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: atomik_ui::PointerButton::Secondary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    s.handle(&UiEvent::PointerUp {
+        pos: p,
+        button: atomik_ui::PointerButton::Secondary,
+        modifiers: Modifiers::NONE,
+    });
+}
+
+#[test]
+fn the_arrangement_corner_button_quantizes_the_selected_clips_and_a_right_click_opens_the_panel() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    last_settings_are_an_eighth(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.set_focus(Pane::Arrangement);
+    s.frame();
+    let q = s
+        .core()
+        .arrangement()
+        .corner_button_center(atomik_ui::CornerButton::Quantize);
+    click(&mut s, q);
+    assert_eq!(off_eighth(&s, id), [0, 0, 0], "the panel's last grid");
+    assert!(!s.quantize_open());
+    // One undo step.
+    s.core_mut().undo();
+    assert_ne!(off_eighth(&s, id), [0, 0, 0]);
+    s.frame();
+    right_click(&mut s, q);
+    assert!(s.quantize_open());
+    assert_eq!(s.quantize_view().unwrap().params().grid, 2 * S);
+}
+
+#[test]
+fn the_arrangement_target_is_the_selected_clips_even_while_the_roll_is_open() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    s.core_mut().open_piano_roll(id);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    assert_eq!(
+        s.core().quantize_target(Pane::Arrangement),
+        crate::app_core::QuantizeTarget::Clips(vec![id])
+    );
+}
+
+#[test]
+fn the_panel_sets_and_clears_a_live_groove_on_the_selected_clips_and_renames_a_groove() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    song_groove(&mut s, "Late");
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.set_focus(Pane::Arrangement);
+    s.execute(AppCommand::QuantizeOptions);
+    s.frame();
+    // No groove chosen yet: LIVE ON CLIPS does nothing.
+    let live = s.quantize_view().unwrap().live_rect().center();
+    click(&mut s, live);
+    assert_eq!(clip_groove(&s, id), None);
+    s.quantize.as_mut().unwrap().select_groove("Late");
+    step(&mut s, QuantizeRow::Strength, false);
+    let live = s.quantize_view().unwrap().live_rect().center();
+    click(&mut s, live);
+    let g = clip_groove(&s, id).expect("the live groove is on the clip");
+    assert_eq!((g.name.as_str(), g.strength), ("Late", 95));
+    // Rename through the field: type, then Enter.
+    let field = s.quantize_view().unwrap().name_rect().center();
+    click(&mut s, field);
+    assert!(s.wants_text_input());
+    for ch in " 2".chars() {
+        s.handle(&UiEvent::Key {
+            key: Key::Char(ch),
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        });
+    }
+    s.handle(&UiEvent::Key {
+        key: Key::Enter,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(s.core().doc().song.groove("Late 2").is_some());
+    assert_eq!(
+        clip_groove(&s, id).unwrap().name,
+        "Late 2",
+        "the clip follows"
+    );
+    let v = s.quantize_view().unwrap();
+    assert_eq!(v.values().groove.as_deref(), Some("Late 2"), "still chosen");
+    assert_eq!(v.name_text(), "Late 2");
+    // CLEAR LIVE hands the clip back.
+    let clear = v.clear_live_rect().center();
+    click(&mut s, clear);
+    assert_eq!(clip_groove(&s, id), None);
+    // Closing the panel takes the keys back.
+    s.handle(&UiEvent::Key {
+        key: Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(!s.wants_text_input());
+}

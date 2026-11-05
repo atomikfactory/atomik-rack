@@ -52,6 +52,7 @@ fn notes_clip(start: i64, notes: &[(i64, i64, u8)]) -> Clip {
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

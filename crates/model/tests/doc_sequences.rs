@@ -291,7 +291,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..3).prop_map(WfOp::Sort),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
-        (0u8..6, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
+        (0u8..8, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
         (0u8..10, 0usize..12, 0usize..12, 0usize..6, 0usize..6)
             .prop_map(|(k, a, b, c, d)| WfOp::Lanes(k, a, b, c, d)),
@@ -952,6 +952,13 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                     from: "Custom".to_owned(),
                     to: "Renamed".to_owned(),
                 }),
+                6 | 7 => song(SongCommand::SetClipGroove {
+                    clips: vec![pick(&ids, *t)?],
+                    groove: (*kind == 6).then(|| atomik_model::TrackGroove {
+                        name: "Swing 55%".to_owned(),
+                        strength: *strength,
+                    }),
+                }),
                 _ => song(SongCommand::DeleteGroove {
                     name: if *t % 2 == 0 { "Custom" } else { "Renamed" }.to_owned(),
                 }),
@@ -962,6 +969,8 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             quantize: QuantizeParams {
                 grid: [1, 7, PPQ / 4, PPQ, 1 << 20][usize::from(*grid) % 5],
                 snap_ends: *ends,
+                legato: *ends,
+                humanize_length: if *grid % 2 == 0 { 0.5 } else { 0.0 },
                 ..QuantizeParams::default()
             },
         }),

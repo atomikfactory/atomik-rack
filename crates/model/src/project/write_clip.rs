@@ -196,6 +196,27 @@ fn write_midi_data(w: &mut String, c: &Clip, indent: &str) {
     }
 }
 
+/// Writes a note clip's `"groove"` (and `"groove_strength"` unless it is 100).
+fn write_clip_groove(w: &mut String, c: &Clip, indent: &str) {
+    let Some(g) = c.groove.as_deref() else {
+        return;
+    };
+    let _ = write!(
+        w,
+        ",
+{indent}\"groove\": {}",
+        json_str(&g.name)
+    );
+    if g.strength < crate::groove::GROOVE_STRENGTH_MAX {
+        let _ = write!(
+            w,
+            ",
+{indent}\"groove_strength\": {}",
+            g.strength
+        );
+    }
+}
+
 /// Writes one clip object of a lane's `"clips"` (or of a take group's `"takes"`), after the
 /// separator `sep` of its list.
 pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
@@ -220,6 +241,7 @@ pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
             write_note_clip_tail(w, c, notes, indent);
             write_param_lanes(w, c, indent);
             write_midi_data(w, c, indent);
+            write_clip_groove(w, c, indent);
         }
         ClipContent::Automation(points) => {
             let _ = write!(w, "{indent}\"points\": ");
