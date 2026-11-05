@@ -7,11 +7,17 @@
 //! The **current** snapshot is the one a compare is on, else the first the mix matches exactly,
 //! else the last one stored, updated, recalled or compared with (while it exists).
 //!
-//! A **morph** moves the mix from the current snapshot to another over a time (1, 2, 4 or 8
-//! seconds, Mixer > Morph Time). The core steps it once per frame ([`AppCore::transport_frame`]):
-//! each step is the model's `MorphSnapshots` at the position the clock gives, ordinary param edits
-//! the engine smooths, all folded into one undo step. Any other edit takes the mix over and ends
-//! the morph where it is; a morph does not start while another plays or a compare is on.
+//! A **morph** moves the mix from where it is now to a snapshot over a time (1, 2, 4 or 8
+//! seconds, Mixer > Morph Time, kept in the UI state). The mix is captured when the morph starts,
+//! so it needs no current snapshot and may begin from a mix no snapshot holds. The core steps it
+//! once per frame ([`AppCore::transport_frame`]): each step is the model's `MorphFromMix` at the
+//! position the clock gives, ordinary param edits the engine smooths, all folded into one undo
+//! step. Any other edit takes the mix over and ends the morph where it is; a morph does not start
+//! while another plays or a compare is on.
+//!
+//! A snapshot may name a **marker**: while the song plays, the playhead crossing a marker of
+//! that name recalls the snapshot ([`AppCore::snapshot_marker_frame`], once per frame). A
+//! compare in progress is left alone.
 
 use super::*;
 use crate::commands::SnapshotMenu;
@@ -23,7 +29,8 @@ pub(super) const DEFAULT_MORPH_SECONDS: f32 = 2.0;
 /// A morph that is playing.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct SnapshotMorph {
-    from: u32,
+    /// The mix when the morph began.
+    start: atomik_model::MixerState,
     to: u32,
     seconds: f64,
     /// The clock reading of the first step.
@@ -83,10 +90,12 @@ impl<S: EngineSink> AppCore<S> {
             can_compare: !console.snapshots.is_empty(),
             comparing: console.compare.is_some(),
             can_delete: current.is_some(),
-            can_morph: console.snapshots.len() > 1
-                && current.is_some()
-                && console.compare.is_none()
-                && self.snapshot_morph.is_none(),
+            can_morph: console.compare.is_none()
+                && self.snapshot_morph.is_none()
+                && console
+                    .snapshots
+                    .iter()
+                    .any(|s| !doc.snapshot_matches(s.id, &self.registry, SnapshotScope::ALL)),
             can_effects: current.is_some() && console.compare.is_none(),
             effects: current
                 .and_then(|id| console.snapshot(id))
@@ -233,9 +242,9 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Mixer > Morph to Next / Previous Snapshot, and the chip menu's Morph To: moves the mix
-    /// from the current snapshot to snapshot `to` (the neighbour of the current one when none is
-    /// given, `forward` picking which) over the morph time. False, with a message, when it
-    /// cannot start.
+    /// from where it is now to snapshot `to` (the neighbour of the current one when none is
+    /// given, `forward` picking which; the first or the last when none is current) over the morph
+    /// time. False, with a message, when it cannot start.
     pub fn morph_snapshot(&mut self, to: Option<u32>, forward: bool) -> bool {
         if self.snapshot_morph.is_some() {
             self.reject("A morph is already playing; edit the mix to stop it".into());
@@ -246,28 +255,37 @@ impl<S: EngineSink> AppCore<S> {
             return false;
         }
         let ids: Vec<u32> = self.doc().console.snapshots.iter().map(|s| s.id).collect();
-        let Some(from) = self.current_snapshot() else {
-            self.reject("Store or recall a snapshot first to morph from it".into());
-            return false;
-        };
-        let to = match to {
-            Some(to) => to,
-            None => {
-                let at = ids.iter().position(|i| *i == from).unwrap_or(0);
-                let n = ids.len();
-                ids[if forward {
-                    (at + 1) % n
-                } else {
-                    (at + n - 1) % n
-                }]
-            }
-        };
-        if to == from || !ids.contains(&to) {
-            self.reject("A morph needs a second snapshot to move to".into());
+        if ids.is_empty() {
+            self.reject("Store a snapshot first to morph to it".into());
             return false;
         }
+        let n = ids.len();
+        let to = match to {
+            Some(to) => to,
+            None => match self
+                .current_snapshot()
+                .and_then(|c| ids.iter().position(|i| *i == c))
+            {
+                Some(at) if forward => ids[(at + 1) % n],
+                Some(at) => ids[(at + n - 1) % n],
+                None if forward => ids[0],
+                None => ids[n - 1],
+            },
+        };
+        let Some(effects) = self.doc().console.snapshot(to).map(|s| s.state.effects) else {
+            self.reject("There is no such snapshot to morph to".into());
+            return false;
+        };
+        if self
+            .doc()
+            .snapshot_matches(to, &self.registry, SnapshotScope::ALL)
+        {
+            self.reject("The mix is already that snapshot".into());
+            return false;
+        }
+        let start = self.doc().capture_mixer_with(&self.registry, effects);
         self.snapshot_morph = Some(SnapshotMorph {
-            from,
+            start,
             to,
             seconds: f64::from(self.morph_seconds),
             started: None,
@@ -290,12 +308,16 @@ impl<S: EngineSink> AppCore<S> {
         };
         let started = *m.started.get_or_insert(now_seconds);
         let at = ((now_seconds - started) / m.seconds).clamp(0.0, 1.0) as f32;
-        let (from, to, steps) = (m.from, m.to, m.steps);
+        let (to, steps) = (m.to, m.steps);
+        let start = m.start.clone();
         let done = at >= 1.0;
-        if !self.doc().morph_matches(&self.registry, from, to, at) {
+        if !self
+            .doc()
+            .morph_from_matches(&self.registry, &start, to, at)
+        {
             self.join_next = steps > 0;
-            let applied = self.apply_command(Command::Console(ConsoleCommand::MorphSnapshots {
-                from,
+            let applied = self.apply_command(Command::Console(ConsoleCommand::MorphFromMix {
+                start: Box::new(start),
                 to,
                 at,
             }));
@@ -316,6 +338,45 @@ impl<S: EngineSink> AppCore<S> {
             self.snapshot_morph = None;
             self.snapshot_hint = Some(to);
             self.console.set_snapshot_hint(Some(to));
+        }
+    }
+
+    /// One frame of marker recall: while the song plays, a marker the playhead has crossed since
+    /// the last frame recalls the snapshot that names it (the last one when several were crossed).
+    /// After a start, a locate or a loop wrap the markers up to a sixteenth before the playhead
+    /// count, so a marker at the very start of a pass recalls too. A compare in progress, or a
+    /// morph, is left alone.
+    pub(super) fn snapshot_marker_frame(&mut self, playing: bool, tick: i64) {
+        if !playing {
+            self.marker_seen = None;
+            return;
+        }
+        let seen = self.marker_seen.replace(tick);
+        let (from, to) = match seen {
+            Some(prev) if tick >= prev => (prev + 1, tick),
+            _ => (tick - atomik_core::PPQ / 4 + 1, tick),
+        };
+        if self
+            .doc()
+            .console
+            .snapshots
+            .iter()
+            .all(|s| s.marker.is_none())
+            || self.doc().console.compare.is_some()
+            || self.snapshot_morph.is_some()
+        {
+            return;
+        }
+        let doc = self.doc();
+        let target = doc
+            .song
+            .markers
+            .iter()
+            .filter(|m| m.tick >= from && m.tick <= to)
+            .filter_map(|m| doc.console.snapshot_for_marker(&m.name))
+            .next_back();
+        if let Some(id) = target {
+            self.recall_snapshot(Some(id));
         }
     }
 }

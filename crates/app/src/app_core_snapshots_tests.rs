@@ -333,14 +333,21 @@ fn another_edit_takes_the_mix_over_and_ends_the_morph() {
 }
 
 #[test]
-fn a_morph_needs_a_current_snapshot_a_second_one_and_no_compare() {
+fn a_morph_needs_a_snapshot_that_is_not_the_mix_and_no_compare() {
     let mut c = core();
     assert!(!c.morph_snapshot(None, true));
-    assert!(c.last_rejection().unwrap().contains("Store or recall"));
+    assert!(c.last_rejection().unwrap().contains("Store a snapshot"));
+    assert!(!c.snapshot_menu().can_morph);
     assert!(c.store_snapshot(None));
     assert!(!c.morph_snapshot(None, true));
-    assert!(c.last_rejection().unwrap().contains("second snapshot"));
-    assert!(!c.snapshot_menu().can_morph);
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .contains("already that snapshot")
+    );
+    assert!(!c.snapshot_menu().can_morph, "the only snapshot is the mix");
+    set(&mut c, "channel", "fader", 0.4);
+    assert!(c.snapshot_menu().can_morph, "a moved mix can morph back");
 
     let mut c = two_snapshots();
     assert!(c.snapshot_menu().can_morph);
@@ -353,6 +360,47 @@ fn a_morph_needs_a_current_snapshot_a_second_one_and_no_compare() {
     assert!(!c.snapshot_menu().can_morph, "one at a time");
     assert!(!c.morph_snapshot(Some(1), true));
     assert!(c.last_rejection().unwrap().contains("already playing"));
+}
+
+#[test]
+fn a_morph_starts_from_the_mix_as_it_is_even_when_no_snapshot_holds_it() {
+    let mut c = two_snapshots();
+    // The mix is neither snapshot, and no snapshot is current.
+    set(&mut c, "channel", "fader", 0.6);
+    set(&mut c, "channel", "pan", 0.5);
+    set(&mut c, "channel", "mute", 1.0);
+    assert!(c.recall_snapshot(Some(1)));
+    set(&mut c, "channel", "fader", 0.6);
+    let before = c.doc().clone();
+    assert!(c.morph_snapshot(Some(2), true));
+    c.transport_frame(0.0);
+    assert_eq!(
+        value(&c, "channel", "fader"),
+        0.6,
+        "the first frame does not jump to the snapshot the mix last came from"
+    );
+    c.transport_frame(1.0);
+    let f = value(&c, "channel", "fader");
+    assert!((f - 0.75).abs() < 1e-5, "half way from 0.6 to 0.9: {f}");
+    c.transport_frame(2.0);
+    assert!(!c.snapshot_morphing());
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    assert_eq!(c.current_snapshot(), Some(2));
+    assert!(c.undo());
+    assert_eq!(c.doc(), &before, "the morph is one undo step");
+}
+
+#[test]
+fn with_no_current_snapshot_next_is_the_first_and_previous_the_last() {
+    let mut c = two_snapshots();
+    set(&mut c, "channel", "fader", 0.5);
+    assert_eq!(c.current_snapshot(), Some(2), "the hint stays");
+    // Deleting the hinted snapshot leaves none current.
+    assert!(c.delete_snapshot(Some(2)));
+    assert_eq!(c.current_snapshot(), None);
+    assert!(c.morph_snapshot(None, true));
+    play(&mut c, 0.0);
+    assert_eq!(c.current_snapshot(), Some(1));
 }
 
 #[test]
@@ -407,4 +455,112 @@ fn a_new_core_has_no_morph_and_a_new_document_ends_one() {
     assert!(c.morph_snapshot(None, true));
     c.new_document();
     assert!(!c.snapshot_morphing());
+}
+
+// ---- Marker recall -------------------------------------------------------------------------
+
+fn marker(id: u32, tick: i64, name: &str) -> atomik_model::Marker {
+    atomik_model::Marker {
+        id,
+        tick,
+        name: name.into(),
+        color: None,
+    }
+}
+
+/// `two_snapshots` with markers `Verse` at 1000 and `Chorus` at 5000, `A` recalling at `Verse`
+/// and `B` at `chorus`; the mix is `B`'s.
+fn marked() -> AppCore<RecordingSink> {
+    let mut c = two_snapshots();
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetMarkers(vec![
+        marker(1, 1000, "Verse"),
+        marker(2, 5000, "Chorus"),
+    ])))
+    .expect("markers");
+    for (id, name) in [(1, "Verse"), (2, "chorus")] {
+        c.apply_command(Command::Console(ConsoleCommand::SetSnapshotMarker {
+            id,
+            marker: Some(name.into()),
+        }))
+        .expect("marker set");
+    }
+    c
+}
+
+#[test]
+fn the_playhead_crossing_a_marker_recalls_its_snapshot() {
+    let mut c = marked();
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    // Not playing: nothing happens however far the playhead is.
+    c.snapshot_marker_frame(false, 1200);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    // Playing from before the marker: the frame that crosses it recalls.
+    c.snapshot_marker_frame(true, 100);
+    c.snapshot_marker_frame(true, 900);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(value(&c, "channel", "fader"), 0.3, "Verse recalls A");
+    assert_eq!(c.current_snapshot(), Some(1));
+    // The next frames do not recall again, so an edit made after the marker stays.
+    set(&mut c, "channel", "fader", 0.5);
+    c.snapshot_marker_frame(true, 1500);
+    assert_eq!(value(&c, "channel", "fader"), 0.5);
+    // A later marker, matched ignoring case.
+    c.snapshot_marker_frame(true, 5200);
+    assert_eq!(value(&c, "channel", "fader"), 0.9, "Chorus recalls B");
+}
+
+#[test]
+fn a_start_on_a_marker_and_a_wrap_to_one_recall_it_and_a_locate_past_one_does_not() {
+    let mut c = marked();
+    // Starting right at the marker.
+    c.snapshot_marker_frame(true, 1000);
+    assert_eq!(value(&c, "channel", "fader"), 0.3);
+    // The song plays on past Chorus, then the loop wraps back to just after it.
+    c.snapshot_marker_frame(false, 0);
+    set(&mut c, "channel", "fader", 0.5);
+    c.snapshot_marker_frame(true, 20000);
+    assert_eq!(value(&c, "channel", "fader"), 0.5);
+    c.snapshot_marker_frame(true, 5100);
+    assert_eq!(
+        value(&c, "channel", "fader"),
+        0.9,
+        "a wrap that lands past Chorus recalls it"
+    );
+    // Starting well past a marker does not recall it.
+    c.snapshot_marker_frame(false, 0);
+    set(&mut c, "channel", "fader", 0.5);
+    c.snapshot_marker_frame(true, 4900);
+    assert_eq!(value(&c, "channel", "fader"), 0.5);
+}
+
+#[test]
+fn a_compare_or_a_morph_in_progress_is_left_alone_by_marker_recall() {
+    let mut c = marked();
+    assert!(c.compare_snapshot(Some(2)));
+    let comparing = c.doc().clone();
+    c.snapshot_marker_frame(true, 500);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(c.doc(), &comparing);
+    assert!(c.end_compare());
+    assert!(c.morph_snapshot(Some(1), true));
+    c.snapshot_marker_frame(true, 5000);
+    c.snapshot_marker_frame(true, 5100);
+    assert!(c.snapshot_morphing());
+}
+
+#[test]
+fn a_marker_with_no_snapshot_or_a_snapshot_with_no_marker_does_nothing() {
+    let mut c = marked();
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetMarkers(vec![
+        marker(1, 1000, "Bridge"),
+    ])))
+    .expect("markers");
+    c.snapshot_marker_frame(true, 500);
+    c.snapshot_marker_frame(true, 1500);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    let mut c = two_snapshots();
+    c.snapshot_marker_frame(true, 0);
+    c.snapshot_marker_frame(true, 9000);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
 }

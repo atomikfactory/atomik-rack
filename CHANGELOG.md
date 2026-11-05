@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Snapshot follow-ups: a morph from the mix as it is, a morph time that is kept, recall at a marker and A/B of one
+  strip.** Mixer > Morph to Next Snapshot and Morph to Previous Snapshot (and Morph to this in the chip menu) now start
+  from the mix as it is when you press them, not from the current snapshot, so a morph works with no snapshot
+  current, from a mix that no snapshot holds and from one you have just moved; with no current snapshot, next is the
+  first and previous the last, and a morph is refused only when the mix already is the snapshot. The morph time of
+  Mixer > Morph Time is kept in the interface state and comes back at the next start. A snapshot can be tied to a
+  marker: the chip menu lists the first eight markers (Recall at marker, and Stop recalling at it) and, while the song
+  plays, the playhead crossing a marker of that name (ignoring case) recalls the snapshot, as does starting or
+  looping back to just after one; a compare or a morph in progress is left alone. The strip name plate menu has
+  Compare strip with the current snapshot: only that strip and the effects on its insert chain go to the snapshot's
+  values and flip with Flip strip A/B, the rest of the mix and the groups stay as they are (the status area says
+  one strip). The project format stays 43: a snapshot's `"marker"` is written only when set and an older build
+  ignores it. Not done yet: snapshots that capture the output routing and the insert chains' members, and recall as
+  an automation lane.
 - **Console follow-ups: buses and mixer channels in the strip clipboard, meter modes, a peak reset, bus colours and a
   release Auto.** Copy, Cut, Paste and Duplicate in the console now take output buses and channels with no source
   device: they are copied as a name and their settings, and a paste makes a new mixer channel, or a bus on the master

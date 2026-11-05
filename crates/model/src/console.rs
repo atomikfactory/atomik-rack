@@ -776,6 +776,38 @@ pub enum ConsoleCommand {
         /// The position between them.
         at: f32,
     },
+    /// Set the mix to the point `at` (0..=1) between `start`, a mix captured by the caller
+    /// (`RackDoc::capture_mixer_with`, taken when the morph began), and snapshot `to`, through
+    /// ordinary param edits in one undo step. It is a morph that starts from the mix as it is
+    /// rather than from a snapshot. Rejected while comparing, for an unknown snapshot and when
+    /// nothing would change.
+    MorphFromMix {
+        /// The mix at position 0.
+        start: Box<MixerState>,
+        /// The snapshot at position 1.
+        to: u32,
+        /// The position between them.
+        at: f32,
+    },
+    /// Set the marker that recalls snapshot `id` when the playhead crosses it while playing
+    /// (matched by name, ignoring case; `None` clears it). Rejected when it already is that.
+    SetSnapshotMarker {
+        /// The snapshot id.
+        id: u32,
+        /// The marker name, or `None`.
+        marker: Option<String>,
+    },
+    /// Compare one strip with snapshot `id`: like [`ConsoleCommand::Compare`] but only the strip
+    /// `strip` (a channel or a bus, with the effects on its insert chain) is recalled and
+    /// flipped; the rest of the mix, and the groups, stay as they are. While a compare of that
+    /// strip with `id` is on it flips the strip, as `Compare` does. Rejected while another
+    /// compare is on, or for a device that is not a strip.
+    CompareStrip {
+        /// The snapshot id.
+        id: u32,
+        /// The strip.
+        strip: DeviceKey,
+    },
     /// Delete a snapshot; a compare with it ends first.
     DeleteSnapshot {
         /// The snapshot id.

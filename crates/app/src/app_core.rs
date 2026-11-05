@@ -212,6 +212,8 @@ pub struct AppCore<S: EngineSink> {
     /// `app_core_snapshots.rs`).
     snapshot_morph: Option<snapshots::SnapshotMorph>,
     morph_seconds: f32,
+    /// The song position of the last frame that played, for the markers that recall snapshots.
+    marker_seen: Option<i64>,
     /// MIDI learn, the mapping runtime and the held mapped moves (see `app_core_midimap.rs`).
     midi: midimap::MidiControl,
     /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
@@ -489,6 +491,7 @@ impl<S: EngineSink> AppCore<S> {
             console_selection: Vec::new(),
             snapshot_hint: None,
             snapshot_morph: None,
+            marker_seen: None,
             morph_seconds: snapshots::DEFAULT_MORPH_SECONDS,
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
@@ -787,6 +790,7 @@ impl<S: EngineSink> AppCore<S> {
         if !matches!(
             command,
             Command::Console(atomik_model::ConsoleCommand::MorphSnapshots { .. })
+                | Command::Console(atomik_model::ConsoleCommand::MorphFromMix { .. })
         ) {
             self.snapshot_morph = None;
         }
@@ -1544,6 +1548,7 @@ impl<S: EngineSink> AppCore<S> {
         if state.playing || state.engine_frame > 0 {
             self.position = state.tick;
         }
+        self.snapshot_marker_frame(state.playing, state.tick);
         // Following a MIDI clock, the clock starts and stops the transport: the buttons show it.
         if self.sink.sync_status().following {
             self.playing = state.playing;

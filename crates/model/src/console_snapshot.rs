@@ -18,6 +18,10 @@
 //! strips, the output routing, the insert chains' members); including the last two is a
 //! follow-up (see the roadmap).
 //!
+//! A snapshot may name a **marker** (`SetSnapshotMarker`): the app recalls the snapshot when the
+//! playhead crosses a marker of that name while the song plays (the name is matched ignoring
+//! case; the arrangement is not touched).
+//!
 //! **Drift.** A snapshot may name strips, effects and groups that were deleted since: recall skips
 //! them ([`RackDoc::snapshot_notes`] lists what it skips), and a strip or group that the snapshot
 //! never knew stays as it is. A VCA group is matched by id; a group that is gone is not brought
@@ -37,8 +41,13 @@
 //! applying successive positions, all folded into one undo step; position 1 is exactly a recall
 //! of the second snapshot.
 //!
+//! `MorphFromMix` is the same with a mix the caller captured as the start, so a morph can begin
+//! from the mix as it is, whether or not it matches a snapshot.
+//!
 //! **Compare** keeps the working mix in a hidden slot ([`CompareState`], not saved) while a
-//! snapshot is recalled, and flips between the two. The flip swaps the live mix with the slot, so
+//! snapshot is recalled, and flips between the two. `CompareStrip` does the same for one strip
+//! and the effects on its insert chain: the slot and the recall hold only those devices, so the
+//! rest of the mix and the groups are not touched. The flip swaps the live mix with the slot, so
 //! an edit made while one side is live belongs to that side and comes back when the side is
 //! flipped to again; nothing is lost either way. The compare state is part of the undo history:
 //! beginning, flipping and ending are one undo step each. Recalling, deleting the compared
@@ -186,6 +195,9 @@ pub struct MixerSnapshot {
     pub note: String,
     /// The chip colour, `None` for the default.
     pub color: Option<[u8; 3]>,
+    /// The name of a marker (compared ignoring case) that recalls the snapshot when the playhead
+    /// crosses it while the song plays; `None` for no recall.
+    pub marker: Option<String>,
 }
 
 /// An A/B comparison in progress (see the module documentation). Not saved.
@@ -198,6 +210,9 @@ pub struct CompareState {
     pub other: MixerState,
     /// True while the snapshot's side is live, false while the working mix is.
     pub on_snapshot: bool,
+    /// The strip the compare is about: only it (and its insert chain) is held and flipped, the
+    /// rest of the mix stays as it is. `None` compares the whole mix.
+    pub strip: Option<DeviceKey>,
 }
 
 impl Console {
@@ -212,6 +227,19 @@ impl Console {
         self.snapshots
             .iter()
             .find(|s| s.name.trim().to_lowercase() == wanted)
+    }
+
+    /// The first snapshot that recalls at the marker called `name` (ignoring case).
+    pub fn snapshot_for_marker(&self, name: &str) -> Option<u32> {
+        let wanted = name.trim().to_lowercase();
+        self.snapshots
+            .iter()
+            .find(|s| {
+                s.marker
+                    .as_ref()
+                    .is_some_and(|m| m.trim().to_lowercase() == wanted)
+            })
+            .map(|s| s.id)
     }
 
     /// The id the next snapshot gets (what `StoreSnapshot` will use).
@@ -448,6 +476,21 @@ impl RackDoc {
         self.console.channel_index(key).is_some() || self.console.bus_index(key).is_some()
     }
 
+    /// `state` cut down to the strip `strip` and the effects on its insert chain, with no groups:
+    /// what a compare of one strip holds.
+    fn strip_state(
+        &self,
+        registry: &Registry,
+        mut state: MixerState,
+        strip: &DeviceKey,
+    ) -> MixerState {
+        let mut keep: Vec<DeviceKey> = insert_chain(self, registry, strip).into_iter().collect();
+        keep.push(strip.clone());
+        state.devices.retain(|k, _| keep.contains(k));
+        state.vcas.clear();
+        state
+    }
+
     /// True when recalling snapshot `id` with `scope` would change nothing (the part of the mix
     /// it covers is as it was stored). `false` for an unknown snapshot.
     pub fn snapshot_matches(&self, id: u32, registry: &Registry, scope: SnapshotScope) -> bool {
@@ -535,6 +578,22 @@ impl RackDoc {
         let a = &self.console.snapshot(from)?.state;
         let b = &self.console.snapshot(to)?.state;
         Some(self.morph_state(registry, a, b, at))
+    }
+
+    /// True when `MorphFromMix { start, to, at }` would change nothing (or snapshot `to` is
+    /// unknown): the app skips such steps while it plays a morph.
+    pub fn morph_from_matches(
+        &self,
+        registry: &Registry,
+        start: &MixerState,
+        to: u32,
+        at: f32,
+    ) -> bool {
+        self.console.snapshot(to).is_none_or(|b| {
+            let state = self.morph_state(registry, start, &b.state, at);
+            self.recall_changes(registry, &state, SnapshotScope::ALL)
+                .is_empty()
+        })
     }
 
     /// True when `MorphSnapshots { from, to, at }` would change nothing (or a snapshot is
@@ -657,6 +716,29 @@ fn set_compare(p: &mut Planner<'_>, new: Option<CompareState>) {
     });
 }
 
+/// Flips an A/B compare: the live mix (of the compared strip only, for a strip compare) and the
+/// hidden slot swap.
+fn flip(p: &mut Planner<'_>, c: CompareState) {
+    let registry = p.registry;
+    let mut live = p.doc().capture_mixer_with(registry, c.other.effects);
+    if let Some(strip) = &c.strip {
+        live = p.doc().strip_state(registry, live, strip);
+    }
+    let changes = p
+        .doc()
+        .recall_changes(registry, &c.other, SnapshotScope::ALL);
+    apply(p, changes);
+    set_compare(
+        p,
+        Some(CompareState {
+            snapshot: c.snapshot,
+            other: live,
+            on_snapshot: !c.on_snapshot,
+            strip: c.strip,
+        }),
+    );
+}
+
 /// Plans the snapshot commands (the arms of [`ConsoleCommand`] that are about snapshots).
 pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), ModelError> {
     let registry = p.registry;
@@ -678,6 +760,7 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                     state,
                     note: String::new(),
                     color: None,
+                    marker: None,
                 });
                 Ok(())
             })
@@ -788,6 +871,75 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             apply(p, changes);
             Ok(())
         }
+        ConsoleCommand::MorphFromMix { start, to, at } => {
+            if !at.is_finite() || !(0.0..=1.0).contains(&at) {
+                return Err(bad("a morph position is between 0 and 1"));
+            }
+            if p.doc().console.compare.is_some() {
+                return Err(bad("end the compare before morphing"));
+            }
+            let target = &snapshot_of(&p.doc().console, to)?.state;
+            let state = p.doc().morph_state(registry, &start, target, at);
+            let changes = p.doc().recall_changes(registry, &state, SnapshotScope::ALL);
+            if changes.is_empty() {
+                return Err(bad("the mix is already there"));
+            }
+            apply(p, changes);
+            Ok(())
+        }
+        ConsoleCommand::SetSnapshotMarker { id, marker } => {
+            let marker = marker.map(|m| m.trim().to_owned());
+            if marker
+                .as_ref()
+                .is_some_and(|m| m.is_empty() || m.chars().count() > crate::MAX_MARKER_NAME)
+            {
+                return Err(bad("a marker name is not empty and at most 64 characters"));
+            }
+            if snapshot_of(&p.doc().console, id)?.marker == marker {
+                return Err(bad("the snapshot already recalls at that marker"));
+            }
+            edit_list(p, |list| {
+                if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+                    s.marker = marker;
+                }
+                Ok(())
+            })
+        }
+        ConsoleCommand::CompareStrip { id, strip } => {
+            let snapshot = snapshot_of(&p.doc().console, id)?.state.clone();
+            let master = p.doc().console.master.as_ref() == Some(&strip);
+            if !master && !p.doc().is_console_strip(&strip) {
+                return Err(bad("only a channel, a bus or the master can be compared"));
+            }
+            match p.doc().console.compare.clone() {
+                None => {
+                    if !snapshot.devices.contains_key(&strip) {
+                        return Err(bad("the snapshot holds nothing of that strip"));
+                    }
+                    let held = p.doc().capture_mixer_with(registry, snapshot.effects);
+                    let held = p.doc().strip_state(registry, held, &strip);
+                    let theirs = p.doc().strip_state(registry, snapshot, &strip);
+                    let changes = p
+                        .doc()
+                        .recall_changes(registry, &theirs, SnapshotScope::ALL);
+                    apply(p, changes);
+                    set_compare(
+                        p,
+                        Some(CompareState {
+                            snapshot: id,
+                            other: held,
+                            on_snapshot: true,
+                            strip: Some(strip),
+                        }),
+                    );
+                }
+                Some(c) if c.snapshot == id && c.strip.as_ref() == Some(&strip) => {
+                    flip(p, c);
+                }
+                Some(_) => return Err(bad("end the compare before comparing another strip")),
+            }
+            Ok(())
+        }
         ConsoleCommand::RecallSnapshot { id, scope } => {
             let state = snapshot_of(&p.doc().console, id)?.state.clone();
             let was_comparing = p.doc().console.compare.is_some();
@@ -854,23 +1006,15 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                             snapshot: id,
                             other: held,
                             on_snapshot: true,
+                            strip: None,
                         }),
                     );
                 }
-                Some(c) if c.snapshot == id => {
-                    let live = p.doc().capture_mixer_with(registry, c.other.effects);
-                    let changes = p
-                        .doc()
-                        .recall_changes(registry, &c.other, SnapshotScope::ALL);
-                    apply(p, changes);
-                    set_compare(
-                        p,
-                        Some(CompareState {
-                            snapshot: id,
-                            other: live,
-                            on_snapshot: !c.on_snapshot,
-                        }),
-                    );
+                Some(c) if c.snapshot == id => flip(p, c),
+                Some(c) if c.strip.is_some() => {
+                    return Err(bad(
+                        "end the strip compare before comparing another snapshot",
+                    ));
                 }
                 // Another snapshot takes the place of the compared one: the snapshot side
                 // changes, the working side stays where it is.
@@ -890,6 +1034,7 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                             snapshot: id,
                             other,
                             on_snapshot: c.on_snapshot,
+                            strip: None,
                         }),
                     );
                 }
@@ -954,6 +1099,7 @@ mod tests {
                 state: MixerState::default(),
                 note: String::new(),
                 color: None,
+                marker: None,
             });
         }
         assert_eq!(c.default_snapshot_name(), "2");

@@ -796,6 +796,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.core.console_mut().set_link_faders(self.ui.link_faders);
         self.core.console_mut().set_meter_mode(self.ui.meter_mode);
+        self.core.set_morph_seconds(self.ui.morph_seconds);
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
@@ -6068,6 +6069,8 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::MorphTime(seconds) => {
                 self.core.set_morph_seconds(seconds);
+                self.ui.morph_seconds = seconds.clamp(1, 8);
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::SnapshotEffects => {

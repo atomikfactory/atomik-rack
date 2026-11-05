@@ -143,6 +143,9 @@ pub struct UiState {
     /// The ballistics of the console strip meters (`"peak"`, `"ppm"` or `"vu"`). An absent key
     /// means peak.
     pub meter_mode: MeterMode,
+    /// How long a snapshot morph takes, in seconds (1 to 8; Mixer > Morph Time). An absent key
+    /// means 2.
+    pub morph_seconds: u8,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -197,6 +200,7 @@ impl Default for UiState {
             audio_editor_mode: AudioMode::Overview,
             link_faders: false,
             meter_mode: MeterMode::Peak,
+            morph_seconds: 2,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,

@@ -278,8 +278,9 @@
 //! captured device is listed, with `{}` when all its params are at the default), and `"vcas"`
 //! lists the groups as `{"id", "name", "level_db"?, "mute"?, "solo"?, "members"}`. A snapshot may
 //! also carry `"effects": true` (the effect devices then list all their params, not only the
-//! `"bypass"`), a `"note"` of at most 200 characters and a `"color"` (`"#rrggbb"`); all three are
-//! written only when set and are ignorable. A snapshot may
+//! `"bypass"`), a `"note"` of at most 200 characters, a `"color"` (`"#rrggbb"`) and a `"marker"` (the name of
+//! a marker that recalls it during playback); all four are written only when set and are
+//! ignorable. A snapshot may
 //! name devices, params and groups that do not exist (they were deleted after it was taken;
 //! recall skips them), so the loader checks the shape and the numbers, not the references. The
 //! compare slot is not saved. The field is omitted when there are no snapshots, so a project

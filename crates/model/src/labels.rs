@@ -136,7 +136,11 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
         ConsoleCommand::SetSnapshotEffects { .. } => "Snapshot Effect Parameters",
         ConsoleCommand::SetSnapshotNote { .. } => "Snapshot Note",
         ConsoleCommand::SetSnapshotColor { .. } => "Snapshot Colour",
-        ConsoleCommand::MorphSnapshots { .. } => "Morph Snapshots",
+        ConsoleCommand::MorphSnapshots { .. } | ConsoleCommand::MorphFromMix { .. } => {
+            "Morph Snapshots"
+        }
+        ConsoleCommand::SetSnapshotMarker { .. } => "Snapshot Marker",
+        ConsoleCommand::CompareStrip { .. } => "Compare Strip",
         _ => DEFAULT_LABEL,
     }
 }

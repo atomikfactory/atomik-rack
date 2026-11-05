@@ -801,6 +801,9 @@ pub(crate) fn plan(
         | ConsoleCommand::SetSnapshotNote { .. }
         | ConsoleCommand::SetSnapshotColor { .. }
         | ConsoleCommand::MorphSnapshots { .. }
+        | ConsoleCommand::MorphFromMix { .. }
+        | ConsoleCommand::SetSnapshotMarker { .. }
+        | ConsoleCommand::CompareStrip { .. }
         | ConsoleCommand::DeleteSnapshot { .. }
         | ConsoleCommand::MoveSnapshot { .. }
         | ConsoleCommand::Compare { .. }
