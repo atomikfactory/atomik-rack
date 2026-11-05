@@ -108,6 +108,19 @@ pub fn save_text_atomic(path: &Path, contents: &str) -> Result<()> {
     })
 }
 
+/// What [`Bundle::collect_from`] did, each list sorted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CollectReport {
+    /// Assets copied into the bundle.
+    pub copied: Vec<String>,
+    /// Assets the bundle already held.
+    pub present: Vec<String>,
+    /// Assets no source held either.
+    pub missing: Vec<String>,
+    /// Bytes of the files copied.
+    pub bytes: u64,
+}
+
 /// A project folder with its `Audio/` store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bundle {
@@ -317,6 +330,55 @@ impl Bundle {
         let to = Bundle::create(to_root)?;
         copy_dir(&from.audio_dir(), &to.audio_dir())?;
         Ok(to)
+    }
+
+    /// Brings the assets `wanted` into this bundle: the ones it lacks are copied (with their
+    /// peak caches) from the first of the bundle folders `sources` that holds them. Nothing in a
+    /// source is changed or deleted, and nothing outside this bundle is written; a source that is
+    /// this bundle, or is not a folder, is skipped. Assets are named by content, so a file found
+    /// in any source is the one wanted. The report says what was copied, what was already here
+    /// and what no source had.
+    ///
+    /// # Errors
+    /// Reading a source file or writing into this bundle failed; the files copied so far stay.
+    pub fn collect_from(
+        &self,
+        sources: &[PathBuf],
+        wanted: &BTreeSet<String>,
+    ) -> Result<CollectReport> {
+        let mut report = CollectReport::default();
+        let sources: Vec<Bundle> = sources
+            .iter()
+            .filter(|root| root.as_path() != self.root.as_path())
+            .filter_map(|root| Bundle::open(root).ok())
+            .collect();
+        for hash in wanted {
+            if self.exists(hash) {
+                report.present.push(hash.clone());
+                continue;
+            }
+            let Some(source) = sources.iter().find(|s| s.exists(hash)) else {
+                report.missing.push(hash.clone());
+                continue;
+            };
+            fs::create_dir_all(self.peaks_dir())?;
+            let from = source.asset_path(hash);
+            write_atomic(&self.asset_path(hash), |tmp| {
+                fs::copy(&from, tmp)?;
+                Ok(())
+            })?;
+            report.bytes += fs::metadata(self.asset_path(hash)).map_or(0, |m| m.len());
+            let peaks = source.peaks_path(hash);
+            if peaks.is_file() {
+                // A cache: a copy that fails is rebuilt on demand.
+                let _ = write_atomic(&self.peaks_path(hash), |tmp| {
+                    fs::copy(&peaks, tmp)?;
+                    Ok(())
+                });
+            }
+            report.copied.push(hash.clone());
+        }
+        Ok(report)
     }
 
     /// Asset hashes present in `Audio/` that are not in `referenced`, sorted. An unreadable

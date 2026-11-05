@@ -25,7 +25,7 @@ pub use archive::{
     ARCHIVE_EXTENSION, ArchiveError, ArchiveLimits, ArchiveReport, Extracted, archive_size,
     archive_work, extract_archive, is_safe_component, read_archive_project, write_archive,
 };
-pub use bundle::{AssetInfo, Bundle, is_valid_hash, save_text_atomic};
+pub use bundle::{AssetInfo, Bundle, CollectReport, is_valid_hash, save_text_atomic};
 pub use data::AudioData;
 pub use decode::{
     DEFAULT_MAX_SAMPLES, Decoded, decode_bytes, decode_bytes_with, decode_file, decode_file_with,
