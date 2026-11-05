@@ -19,6 +19,7 @@ use crate::console::{DelayLine, Latencies, MAX_METER_VALUES, Meters, PdcReport};
 use crate::fault::FaultState;
 use crate::graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError, rules};
 use crate::plan::{CompileOptions, Node, Route, Routed, Step};
+use crate::preview_clock::PreviewClock;
 use atomik_core::{Batch, NoteBuffer, NoteKind, ParamId};
 use atomik_device_sdk::{
     DeviceDescriptor, Direction, PlayerDataRef, SampleMapRef, SocketId, SocketKind,
@@ -576,6 +577,14 @@ impl Arena {
             Some(node) => std::mem::replace(&mut node.note_tap, tap),
             // No such device: the tap goes back to be retired.
             None => tap,
+        }
+    }
+
+    /// Starts (`on`) or stops the preview clock of device `id`: a new clock starts at tick 0.
+    /// A device that is not in the arena is ignored.
+    pub(crate) fn set_preview(&mut self, id: DeviceInstanceId, on: bool) {
+        if let Some(node) = self.node_by_id(id) {
+            node.preview = on.then(PreviewClock::new);
         }
     }
 

@@ -507,6 +507,8 @@ pub struct RackView {
     theme: Theme,
     /// The device a sampling runs into (its SAMPLE button reads STOP).
     sampling: Option<DeviceKey>,
+    /// The player whose preview runs (its play button reads as pressed).
+    previewing: Option<DeviceKey>,
     layout_provider: Option<LayoutProvider>,
     devices: Vec<DeviceView>,
     specs: BTreeMap<String, Arc<PanelSpec>>,
@@ -742,6 +744,27 @@ impl RackView {
         self.sampling = device;
     }
 
+    /// Tells the panels which note player is previewing (`None`: none): its play button is lit.
+    /// The app calls it when the state changes.
+    pub fn set_previewing(&mut self, device: Option<DeviceKey>) {
+        if self.previewing == device {
+            return;
+        }
+        for d in &mut self.devices {
+            if self.previewing.as_ref() == Some(&d.key) || device.as_ref() == Some(&d.key) {
+                d.lists = [None, None];
+                d.revision += 1;
+            }
+        }
+        self.previewing = device;
+        self.repaint = true;
+    }
+
+    /// The note player whose preview the panels show (see [`Self::set_previewing`]).
+    pub fn previewing(&self) -> Option<&DeviceKey> {
+        self.previewing.as_ref()
+    }
+
     /// Gives the granular sampler panels the waveform peaks of pool asset `asset` (its content
     /// hash), replacing earlier ones; the panels that draw it are repainted. The app shares the
     /// pyramids it feeds the arrangement and the sample editor with.
@@ -820,6 +843,7 @@ impl RackView {
             },
             toast: None,
             sampling: None,
+            previewing: None,
             midi: crate::MidiMarks::default(),
             clip_scale: None,
             repaint: true,

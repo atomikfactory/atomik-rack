@@ -307,6 +307,8 @@ enum ControlOp {
     },
     /// Fade the preview out.
     PreviewStop,
+    /// Start (`on`) or stop the preview clock of note player `id`.
+    PreviewPlayer { id: DeviceInstanceId, on: bool },
     /// Put a tap on the notes device `id` receives (or, with `None`, take it off); the tap it
     /// replaces is retired.
     NoteTap {
@@ -940,6 +942,19 @@ impl EngineHandle {
             },
         )?;
         Ok(tap)
+    }
+
+    /// Starts (`on`) or stops the preview of note player `id` at the next batch boundary: the
+    /// player runs on a clock of its own at the song tempo, from tick 0, while the song
+    /// transport stands still (see the `preview_clock` module). Stopping puts the player back on
+    /// the stopped transport, which makes it close the notes it holds. The song transport
+    /// starting ends a preview by itself. A device that is not in the engine is ignored; a
+    /// new plan (`submit_plan`) drops the clocks with the devices it replaces.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn preview_player(&mut self, id: DeviceInstanceId, on: bool) -> Result<(), EngineError> {
+        self.push(0, ControlOp::PreviewPlayer { id, on })
     }
 
     /// Takes the note tap off device `id` (the engine retires it).
@@ -1644,6 +1659,7 @@ impl Engine {
                     self.retire(Garbage::Retired(Retired::Preview(cut)));
                 }
             }
+            ControlOp::PreviewPlayer { id, on } => self.arena.set_preview(id, on),
             ControlOp::NoteTap { id, tap } => {
                 if let Some(old) = self.arena.set_note_tap(id, tap) {
                     self.retire(Garbage::Retired(Retired::NoteTap(old)));

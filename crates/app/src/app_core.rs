@@ -282,6 +282,8 @@ pub struct AppCore<S: EngineSink> {
     eq_live: eq_live::EqLive,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
+    /// The note player preview that runs (see `app_core_preview.rs`).
+    player_preview: Option<preview_ops::PlayerPreview>,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: Option<atomik_model::PatternDoc>,
     /// The counter the drum generator draws its seeds and character from.
@@ -530,6 +532,7 @@ impl<S: EngineSink> AppCore<S> {
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
             sampling: sampling::Sampling::default(),
+            player_preview: None,
             pattern_clip_seen: None,
             drum_draws: clock_entropy(),
             transport_bar: TransportBar::new(theme.clone()),
@@ -1455,6 +1458,8 @@ impl<S: EngineSink> AppCore<S> {
         self.cancel_automation_take();
         self.cancel_audio_recording();
         self.cancel_sampling();
+        // The new engine has no preview clock on any device.
+        self.forget_player_preview();
         self.playing = false;
         self.pending_play = None;
         self.pending_pre_roll = None;
@@ -1543,6 +1548,7 @@ impl<S: EngineSink> AppCore<S> {
             self.playing = state.playing;
         }
         self.feed_take(&state);
+        self.feed_player_preview();
         self.show_transport();
         self.feed_automation_values();
         self.feed_device_meters();
@@ -3009,6 +3015,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts playback, after `count_in` when there is one (the transport holds its position
     /// while the click counts).
     fn play_from(&mut self, count_in: Option<PreRoll>) {
+        // The song plays: a player preview gives way to it.
+        self.stop_player_preview();
         if !self.playing {
             self.last_start = Some(self.position);
         }
@@ -3388,6 +3396,8 @@ mod setups;
 mod dub_ops;
 #[path = "app_core_player_stack.rs"]
 mod player_stack_ops;
+#[path = "app_core_preview.rs"]
+mod preview_ops;
 #[path = "app_core_takes.rs"]
 mod takes_ops;
 

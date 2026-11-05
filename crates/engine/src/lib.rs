@@ -18,6 +18,7 @@ mod phase_lock;
 mod plan;
 mod player;
 mod preview;
+mod preview_clock;
 mod record;
 mod seq;
 mod stream;
