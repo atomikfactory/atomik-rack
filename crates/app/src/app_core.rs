@@ -677,6 +677,17 @@ impl<S: EngineSink> AppCore<S> {
         self.recent_path = Some(path);
     }
 
+    /// Takes the recent list another song changed. The other song writes the file, so nothing
+    /// is saved here.
+    pub fn adopt_recent(&mut self, paths: &[PathBuf]) {
+        let mut list = crate::recent::RecentFiles::default();
+        // The list is newest first: pushing from the oldest end keeps that order.
+        for path in paths.iter().rev() {
+            list.push(path);
+        }
+        self.recent = list;
+    }
+
     /// Forgets every recent song.
     pub fn clear_recent(&mut self) {
         if self.recent.clear() {

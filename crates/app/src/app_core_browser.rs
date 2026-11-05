@@ -78,6 +78,9 @@ pub(crate) struct BrowserState {
     fallback: Option<(PathBuf, PathBuf)>,
     roots: Vec<PathBuf>,
     db: LibraryDb,
+    /// Counts the changes made to `db` here (not the ones adopted from another song), so a
+    /// workspace can tell which song changed the library.
+    revision: u64,
     lib_path: Option<PathBuf>,
     /// The library folder (`<root>/Patches`, `Containers`, `Clips`, `Projects`); `None` while
     /// unknown.
@@ -131,6 +134,7 @@ impl Default for BrowserState {
             fallback: None,
             roots: Vec::new(),
             db: LibraryDb::new(),
+            revision: 0,
             lib_path: None,
             library_root: None,
             dirty: false,
@@ -245,6 +249,31 @@ impl<S: EngineSink> AppCore<S> {
             self.refresh_places();
             self.reshow_collection();
         }
+    }
+
+    /// How many times the library was changed in this song (see
+    /// [`Self::adopt_library`]).
+    pub fn library_revision(&self) -> u64 {
+        self.browser.revision
+    }
+
+    /// A copy of the favourites, tags, lists and places, for the other open songs.
+    pub fn library_copy(&self) -> atomik_library::LibraryDb {
+        self.browser.db.clone()
+    }
+
+    /// Takes the favourites, tags, lists and places another song changed (the file browser
+    /// repaints its marks and Places). The other song writes the file, so nothing is saved here.
+    pub fn adopt_library(&mut self, db: atomik_library::LibraryDb) {
+        if self.browser.db == db {
+            return;
+        }
+        self.browser.db = db;
+        let (revision, dirty) = (self.browser.revision, self.browser.dirty);
+        let shown = self.browser.shown_paths.clone();
+        self.library_changed(&shown);
+        self.browser.revision = revision;
+        self.browser.dirty = dirty;
     }
 
     /// The library folder, or `None` while unknown.
@@ -1003,6 +1032,7 @@ impl<S: EngineSink> AppCore<S> {
     /// list when it shows a collection.
     fn library_changed(&mut self, paths: &[PathBuf]) {
         self.browser.dirty = true;
+        self.browser.revision += 1;
         let marks: Vec<(PathBuf, bool, Vec<String>)> = paths
             .iter()
             .map(|p| {

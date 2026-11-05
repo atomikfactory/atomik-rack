@@ -729,3 +729,228 @@ fn a_copy_in_one_song_pastes_in_the_song_the_calls_are_routed_to_next() {
     w.focus(second);
     assert_eq!(w.core().clipboard().get().map(|d| d.len()), Some(2));
 }
+
+/// A mono ramp wav in a fresh temporary folder: the folder and the file.
+fn ramp_file(tag: &str) -> (PathBuf, PathBuf) {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "atomik-workspace-{tag}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let data: Vec<f32> = (0..4_800).map(|i| i as f32 / 4_800.0).collect();
+    let file = dir.join("ramp.wav");
+    atomik_audio_file::write_wav_f32(
+        &file,
+        &atomik_audio_file::AudioData::new(48_000, vec![data]).unwrap(),
+    )
+    .unwrap();
+    (dir, file)
+}
+
+#[test]
+fn audio_clips_copied_in_one_song_bring_their_audio_to_the_song_they_are_pasted_in() {
+    use crate::app_core::Pane;
+    use atomik_ui::ImportTarget;
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("paste-audio");
+    let first = w.routed();
+    w.core_mut()
+        .import_audio(vec![file], ImportTarget::NewTracks, 0);
+    w.core_mut().wait_background();
+    let clip = w.core().doc().song.tracks[0].lanes[0].clips[0].id;
+    let hash = w.core().doc().assets.keys().next().cloned().unwrap();
+    w.core_mut().arrangement_mut().set_selected_clips(&[clip]);
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.copy", None);
+
+    let second = w.new_song();
+    assert_ne!(second, first);
+    assert!(
+        w.core().doc().assets.is_empty(),
+        "the new song has no audio"
+    );
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    w.core_mut().wait_background();
+
+    assert!(
+        w.core().doc().assets.contains_key(&hash),
+        "the asset is registered"
+    );
+    let root = w
+        .core()
+        .bundle_root()
+        .expect("the song got a bundle")
+        .to_path_buf();
+    assert!(
+        root.join("Audio").join(format!("{hash}.wav")).is_file(),
+        "the file was copied into the song's own bundle"
+    );
+    assert_ne!(
+        Some(root.as_path()),
+        w.song(first).unwrap().core().bundle_root()
+    );
+    assert!(
+        w.core().missing_assets().is_empty(),
+        "{:?}",
+        w.core().missing_assets()
+    );
+    assert_eq!(w.core().doc().song.tracks.len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_paste_whose_source_song_lost_the_file_lists_it_as_missing() {
+    use crate::app_core::Pane;
+    use atomik_ui::ImportTarget;
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file("paste-gone");
+    w.core_mut()
+        .import_audio(vec![file], ImportTarget::NewTracks, 0);
+    w.core_mut().wait_background();
+    let clip = w.core().doc().song.tracks[0].lanes[0].clips[0].id;
+    let hash = w.core().doc().assets.keys().next().cloned().unwrap();
+    let first_root = w.core().bundle_root().unwrap().to_path_buf();
+    w.core_mut().arrangement_mut().set_selected_clips(&[clip]);
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.copy", None);
+    let _second = w.new_song();
+    std::fs::remove_file(first_root.join("Audio").join(format!("{hash}.wav"))).unwrap();
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    w.core_mut().wait_background();
+    let missing: Vec<&str> = w
+        .core()
+        .missing_assets()
+        .iter()
+        .map(|m| m.hash.as_str())
+        .collect();
+    assert_eq!(missing, vec![hash.as_str()]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_song_saved_in_one_window_shows_in_the_recent_list_of_every_song() {
+    let (mut w, _backend) = workspace();
+    let first = w.routed();
+    let second = w.new_song();
+    let dir = std::env::temp_dir().join(format!("atomik-workspace-recent-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("a.atomik"), dir.join("b.atomik"));
+    w.core_mut().save_as(&a).unwrap();
+    w.frame_all(0.0);
+    assert_eq!(
+        w.song(first).unwrap().core().recent(),
+        std::slice::from_ref(&a)
+    );
+    assert_eq!(
+        w.song(second).unwrap().core().recent(),
+        std::slice::from_ref(&a)
+    );
+
+    // The other song saves too: the list is the same everywhere, newest first.
+    w.select(first);
+    w.core_mut().save_as(&b).unwrap();
+    w.frame_all(0.0);
+    for id in [first, second] {
+        assert_eq!(
+            w.song(id).unwrap().core().recent(),
+            [b.clone(), a.clone()],
+            "song {id:?}"
+        );
+    }
+    // Clearing the list in one song clears it in the others.
+    w.core_mut().clear_recent();
+    w.frame_all(0.0);
+    assert!(w.song(second).unwrap().core().recent().is_empty());
+    // A song opened later starts from the shared list.
+    w.core_mut().save_as(&a).unwrap();
+    let third = w.new_song();
+    assert_eq!(w.song(third).unwrap().core().recent(), [a]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_favourite_marked_in_one_song_shows_in_the_others_and_a_new_song_starts_with_it() {
+    use atomik_ui::BrowseAction;
+    let (mut w, _backend) = workspace();
+    let first = w.routed();
+    let second = w.new_song();
+    let pick = std::env::temp_dir().join("atomik-workspace-fav.wav");
+    w.core_mut()
+        .browse(BrowseAction::ToggleFavorite(vec![pick.clone()]));
+    w.frame_all(0.0);
+    assert!(
+        w.song(second)
+            .unwrap()
+            .core()
+            .library_db()
+            .is_favorite(&pick)
+    );
+    assert!(
+        w.song(first)
+            .unwrap()
+            .core()
+            .library_db()
+            .is_favorite(&pick)
+    );
+    // The change made in the other song reaches this one, and does not undo the first.
+    w.select(first);
+    let other = std::env::temp_dir().join("atomik-workspace-fav-2.wav");
+    w.core_mut()
+        .browse(BrowseAction::ToggleFavorite(vec![other.clone()]));
+    w.frame_all(0.0);
+    let db = w.song(second).unwrap().core().library_db();
+    assert!(db.is_favorite(&pick) && db.is_favorite(&other));
+    let third = w.new_song();
+    let db = w.song(third).unwrap().core().library_db();
+    assert!(db.is_favorite(&pick) && db.is_favorite(&other));
+    // Adopting a change is not a change: a song that only took it writes nothing.
+    assert_eq!(w.song(third).unwrap().core().library_revision(), 0);
+    assert_eq!(w.song(first).unwrap().core().library_revision(), 1);
+    assert_eq!(w.song(second).unwrap().core().library_revision(), 1);
+}
+
+#[test]
+fn recovered_songs_open_in_windows_of_their_own_without_moving_the_audio() {
+    use atomik_model::{SongInfo, empty_doc};
+    let dir = std::env::temp_dir().join(format!("atomik-workspace-recover-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = empty_doc();
+    doc.info = SongInfo {
+        title: "Lost song".into(),
+        ..SongInfo::default()
+    };
+    let good = dir.join("lost-00000000000000000001.recover.atomik");
+    std::fs::write(&good, atomik_model::save_project(&doc)).unwrap();
+    let broken = dir.join("broken-00000000000000000001.recover.atomik");
+    std::fs::write(&broken, "not a project").unwrap();
+
+    let (mut w, backend) = workspace();
+    let first = w.routed();
+    let opened = w.recover_songs(&[broken, good]);
+    assert_eq!(opened, 1, "the unreadable copy is skipped");
+    assert_eq!(w.len(), 2, "and leaves no window");
+    assert_eq!(w.routed(), first);
+    assert_eq!(w.play_focus(), first, "the audio stays where it was");
+    assert_eq!(backend.open.load(Ordering::SeqCst), 1);
+    let second = w.ids()[1];
+    let song = w.song(second).unwrap();
+    assert_eq!(song.core().doc().info.title, "Lost song");
+    assert!(song.core().is_dirty(), "a recovered song is not saved yet");
+    assert!(song.core().file().is_none());
+    let message = w.core().last_rejection().unwrap();
+    assert!(message.contains("came back"), "{message}");
+    // Nothing to recover: nothing happens.
+    assert_eq!(w.recover_songs(&[]), 0);
+    let _ = std::fs::remove_dir_all(dir);
+}

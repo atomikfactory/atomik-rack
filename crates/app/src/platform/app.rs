@@ -341,7 +341,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
             song.start_with_default_song();
             song
         });
-    let shell = Workspace::new(shell, song_factory);
+    let mut shell = Workspace::new(shell, song_factory);
+    // Songs that were open next to the first one when the last run was cut off come back in
+    // windows of their own (the first song's own banner offers its copy).
+    let crashed =
+        crate::recovery::crashed_song_snapshots(&config.dir.join(crate::recovery::RECOVERY_FOLDER));
+    shell.recover_songs(&crashed);
     let mut app = App {
         ime_on: false,
         shell,

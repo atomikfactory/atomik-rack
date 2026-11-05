@@ -163,3 +163,76 @@ fn a_truncated_recording_never_panics_the_reader() {
     std::fs::write(&cut, &lying).unwrap();
     let _ = atomik_audio_file::decode_file(&cut);
 }
+
+/// A song folder `song-<n>` under `root` with one snapshot; the marker of its session is left
+/// behind (`crashed`) or removed by a clean exit.
+fn song_folder(root: &Path, n: u32, crashed: bool) -> PathBuf {
+    let folder = root.join(format!("song-{n}"));
+    let (marker, _) = SessionMarker::start(&folder);
+    let writer = RecoveryWriter::new().unwrap();
+    writer.submit(
+        empty_doc(),
+        RecoveryDir::new(&folder),
+        format!("s{n}"),
+        1,
+        3,
+        None,
+    );
+    writer.wait();
+    let mut marker = marker.unwrap();
+    if !crashed {
+        marker.clean_exit();
+    }
+    // Dropped either way: the lock is released, the file stays only for a crash.
+    drop(marker);
+    folder
+}
+
+#[test]
+fn the_scan_offers_the_newest_snapshot_of_each_song_folder_that_was_cut_off() {
+    let root = dir("songs");
+    let two = song_folder(&root, 2, true);
+    let _clean = song_folder(&root, 3, false);
+    let four = song_folder(&root, 4, true);
+    // Not a song folder: ignored.
+    std::fs::create_dir_all(root.join("other")).unwrap();
+    let found = crashed_song_snapshots(&root);
+    assert_eq!(
+        found,
+        vec![
+            RecoveryDir::new(&two).newest().unwrap(),
+            RecoveryDir::new(&four).newest().unwrap()
+        ]
+    );
+    // The dead markers are gone: the next start offers nothing, and a song that takes the
+    // folder over starts without a crash of its own.
+    assert!(crashed_song_snapshots(&root).is_empty());
+    let (marker, unclean) = SessionMarker::start(&two);
+    assert!(!unclean);
+    marker.unwrap().clean_exit();
+}
+
+#[test]
+fn a_song_folder_of_a_live_session_is_not_offered() {
+    let root = dir("songs-live");
+    let folder = root.join("song-2");
+    let (marker, _) = SessionMarker::start(&folder);
+    let mut marker = marker.unwrap();
+    let writer = RecoveryWriter::new().unwrap();
+    writer.submit(
+        empty_doc(),
+        RecoveryDir::new(&folder),
+        "s".into(),
+        1,
+        3,
+        None,
+    );
+    writer.wait();
+    assert!(crashed_song_snapshots(&root).is_empty());
+    marker.clean_exit();
+}
+
+#[test]
+fn a_missing_recovery_folder_offers_nothing() {
+    assert!(crashed_song_snapshots(&dir("songs-none").join("absent")).is_empty());
+}
