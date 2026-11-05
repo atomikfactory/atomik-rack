@@ -13,7 +13,13 @@
 //! * **The analysis is the UI's.** The app reads the tap at the display rate and runs
 //!   `atomik_dsp::spectrum` on it (FFT of `size` points with the `window`, the `channel`, the
 //!   `averaging`, the peak `hold` and `decay`, the `tilt`, the 20 Hz to 20 kHz log axis over the
-//!   `range` dB below 0 dBFS, and with `mode` 1 the one-third-octave bands). The params are
+//!   `range` dB below 0 dBFS, and with `mode` 1 the one-third-octave bands, with `mode` 2 a
+//!   spectrogram: the same fine trace as a scrolling image, newest row on top). `size` goes up
+//!   to 16384 points, `smoothing` averages the fine trace across neighbouring bins over a
+//!   fraction of an octave and `weighting` applies the K-weighting of the loudness meters. The
+//!   `reference` choice draws a stored band curve over the trace (as captured, or shifted to
+//!   the level of the signal) and a rising edge of `reference.capture` stores the current
+//!   bands as that curve (kept with the user's settings, not in the project). The params are
 //!   therefore display settings: the device stores them (they are part of the project and of
 //!   presets) and does not use them. A bypassed device keeps its audio path but the panel stops
 //!   updating and says so.
@@ -30,17 +36,24 @@ use atomik_device_sdk::{
 use std::sync::Arc;
 
 /// Transform sizes of the `size` choice.
-pub const SIZES: [usize; 4] = [1024, 2048, 4096, 8192];
+pub const SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16_384];
 /// Names of the `size` choice.
-pub const SIZE_NAMES: [&str; 4] = ["1024", "2048", "4096", "8192"];
+pub const SIZE_NAMES: [&str; 5] = ["1024", "2048", "4096", "8192", "16384"];
 /// Names of the `window` choice.
 pub const WINDOW_NAMES: [&str; 2] = ["Hann", "B-Harris"];
 /// Names of the `channel` choice.
 pub const CHANNEL_NAMES: [&str; 5] = ["Left", "Right", "Mid", "Side", "Sum"];
 /// Names of the `mode` choice.
-pub const MODE_NAMES: [&str; 2] = ["Fine", "1/3 oct"];
+pub const MODE_NAMES: [&str; 3] = ["Fine", "1/3 oct", "Spectrogram"];
 /// Names of the `tilt` choice.
 pub const TILT_NAMES: [&str; 3] = ["0 dB", "3 dB", "4.5 dB"];
+/// Names of the `smoothing` choice: the fraction of an octave the fine trace is averaged over.
+pub const SMOOTHING_NAMES: [&str; 4] = ["Off", "1/12 oct", "1/6 oct", "1/3 oct"];
+/// Names of the `weighting` choice.
+pub const WEIGHTING_NAMES: [&str; 2] = ["Flat", "K-weighted"];
+/// Names of the `reference` choice: the stored reference curve is hidden, drawn as it was
+/// captured, or drawn shifted to the level of the signal.
+pub const REFERENCE_NAMES: [&str; 3] = ["Off", "Stored", "Stored, level matched"];
 /// The slope of each `tilt` choice in dB per octave.
 pub const TILT_DB_PER_OCT: [f32; 3] = [0.0, 3.0, 4.5];
 
@@ -53,6 +66,10 @@ const P_HOLD: u32 = 5;
 const P_DECAY: u32 = 6;
 const P_RANGE: u32 = 7;
 const P_TILT: u32 = 8;
+const P_SMOOTHING: u32 = 9;
+const P_WEIGHTING: u32 = 10;
+const P_REFERENCE: u32 = 11;
+const P_CAPTURE: u32 = 12;
 
 #[allow(clippy::too_many_arguments)]
 const fn param(
@@ -78,13 +95,13 @@ const fn param(
     }
 }
 
-static PARAMS: [ParamDescriptor; 10] = [
+static PARAMS: [ParamDescriptor; 14] = [
     param(
         P_SIZE,
         "size",
         "FFT size",
         0.0,
-        3.0,
+        4.0,
         2.0,
         Unit::Choice(&SIZE_NAMES),
         true,
@@ -114,7 +131,7 @@ static PARAMS: [ParamDescriptor; 10] = [
         "mode",
         "Display",
         0.0,
-        1.0,
+        2.0,
         0.0,
         Unit::Choice(&MODE_NAMES),
         true,
@@ -169,7 +186,47 @@ static PARAMS: [ParamDescriptor; 10] = [
         Unit::Choice(&TILT_NAMES),
         true,
     ),
-    bypass_param(9),
+    param(
+        P_SMOOTHING,
+        "smoothing",
+        "Smoothing",
+        0.0,
+        3.0,
+        0.0,
+        Unit::Choice(&SMOOTHING_NAMES),
+        true,
+    ),
+    param(
+        P_WEIGHTING,
+        "weighting",
+        "Weighting",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Choice(&WEIGHTING_NAMES),
+        true,
+    ),
+    param(
+        P_REFERENCE,
+        "reference",
+        "Reference curve",
+        0.0,
+        2.0,
+        0.0,
+        Unit::Choice(&REFERENCE_NAMES),
+        true,
+    ),
+    param(
+        P_CAPTURE,
+        "reference.capture",
+        "Capture reference",
+        0.0,
+        1.0,
+        0.0,
+        Unit::Toggle,
+        true,
+    ),
+    bypass_param(13),
 ];
 
 const IN_L: SocketId = SocketId(0);

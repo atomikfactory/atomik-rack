@@ -7,6 +7,7 @@ use super::*;
 use crate::offline_sink::OfflineSink;
 use crate::sink::RecordingSink;
 use atomik_core::PPQ;
+use atomik_dsp::spectrum::{Smoothing, Weighting};
 use atomik_model::{
     Cable, Clip, ClipContent, ClipId, Command, DeviceKey, Note, SocketRef, SongCommand,
 };
@@ -528,4 +529,341 @@ fn the_probe_reads_the_pitch_of_a_tuner_device() {
     assert_eq!(value("key"), 69.0);
     assert!(value("cents").abs() < 5.0 && (value("hz") - 440.0).abs() < 3.0);
     assert!(data(&c, "tun").tuner.is_some(), "the probe fed the panel");
+}
+
+// ------------------------------------------------------------------ meter follow-ups
+
+/// Feeds `frames` of a tone to a spectrum device, the tap head moving on by `advance`.
+fn feed_tone(
+    c: &mut AppCore<RecordingSink>,
+    id: DeviceInstanceId,
+    hz: f64,
+    head: &mut u64,
+    advance: u64,
+) {
+    *head += advance;
+    let t = tone(hz, 16_384, *head, 1.0);
+    c.sink_mut().device_scopes.insert(id, (t.0, t.1, *head));
+    c.frame();
+}
+
+fn unique_file(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("atomik-meter-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("spectrum-reference.json")
+}
+
+#[test]
+fn the_largest_transform_smoothing_and_weighting_reach_the_analysis_settings() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SPECTRUM, "spec");
+    let desc = c.registry().descriptor(SPECTRUM).unwrap();
+    let settings = |c: &AppCore<RecordingSink>| {
+        analysers::spectrum_settings(desc, c.doc().resolve(&key("spec")).unwrap())
+    };
+    let s = settings(&c);
+    assert_eq!(s.size, 4096);
+    assert_eq!(s.smoothing, Smoothing::Off);
+    assert_eq!(s.weighting, Weighting::Flat);
+    set(&mut c, "spec", "size", 4.0);
+    set(&mut c, "spec", "smoothing", 3.0);
+    set(&mut c, "spec", "weighting", 1.0);
+    let s = settings(&c);
+    assert_eq!(s.size, 16_384);
+    assert_eq!(s.smoothing, Smoothing::Third);
+    assert_eq!(s.weighting, Weighting::K);
+    // The spectrogram mode shows the fine trace, never the bands.
+    set(&mut c, "spec", "mode", 2.0);
+    assert!(!settings(&c).bands);
+    set(&mut c, "spec", "mode", 1.0);
+    assert!(settings(&c).bands);
+    // A 16384-point analysis reads the whole tap and finds the tone to a fraction of a bin.
+    set(&mut c, "spec", "mode", 0.0);
+    set(&mut c, "spec", "weighting", 0.0);
+    set(&mut c, "spec", "smoothing", 0.0);
+    let id = c.device_id(&key("spec")).unwrap();
+    let mut head = 0;
+    feed_tone(&mut c, id, 1000.0, &mut head, 16_384);
+    let d = data(&c, "spec");
+    assert!((d.peak_hz - 1000.0).abs() < 3.0, "{}", d.peak_hz);
+}
+
+#[test]
+fn the_k_weighting_changes_what_the_spectrum_reads() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SPECTRUM, "spec");
+    set(&mut c, "spec", "averaging", 0.0);
+    let id = c.device_id(&key("spec")).unwrap();
+    let mut head = 0;
+    feed_tone(&mut c, id, 4000.0, &mut head, 8192);
+    let flat = data(&c, "spec").peak_db;
+    set(&mut c, "spec", "weighting", 1.0);
+    feed_tone(&mut c, id, 4000.0, &mut head, 8192);
+    let weighted = data(&c, "spec").peak_db;
+    // The shelf of the K-weighting: about +4 dB at 4 kHz.
+    let expected = atomik_dsp::k_weighting::k_weighting_db(4000.0, 48_000.0) as f32;
+    assert!(expected > 3.5);
+    assert!(
+        (weighted - flat - expected).abs() < 0.3,
+        "{flat} -> {weighted}"
+    );
+}
+
+#[test]
+fn the_spectrogram_scrolls_with_the_audio_and_not_with_the_frames() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SPECTRUM, "spec");
+    set(&mut c, "spec", "averaging", 0.0);
+    let id = c.device_id(&key("spec")).unwrap();
+    let mut head = 0;
+    feed_tone(&mut c, id, 1000.0, &mut head, 8192);
+    assert!(
+        data(&c, "spec").spectrogram.is_empty(),
+        "not in the trace mode"
+    );
+    set(&mut c, "spec", "mode", 2.0);
+    // The first feed in the mode has no time behind it: an empty image of the right size.
+    feed_tone(&mut c, id, 1000.0, &mut head, 3600);
+    let d = data(&c, "spec");
+    assert_eq!((d.spectrogram_cols, d.spectrogram_rows), (120, 80));
+    assert_eq!(d.spectrogram.len(), 120 * 80);
+    assert!((d.spectrogram_span_s - 6.0).abs() < 1e-3);
+    // 75 ms is 3600 frames: each feed of that length adds one row, the newest first.
+    feed_tone(&mut c, id, 1000.0, &mut head, 3600);
+    feed_tone(&mut c, id, 1000.0, &mut head, 3599);
+    let d = data(&c, "spec");
+    let rows_written = (0..80)
+        .filter(|r| d.spectrogram[r * 120..(r + 1) * 120].iter().any(|v| *v > 0))
+        .count();
+    assert_eq!(rows_written, 2, "one row per 75 ms of audio");
+    let newest = &d.spectrogram[..120];
+    let loudest = newest
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, v)| **v)
+        .unwrap()
+        .0;
+    // 1 kHz is 55 % of the way along the log axis of 20 Hz to 20 kHz: column 66 of 120.
+    assert!((64..=68).contains(&loudest), "{loudest}");
+    // A tone that moves shows as a different newest row, the old one one row down.
+    feed_tone(&mut c, id, 4000.0, &mut head, 3600);
+    let d = data(&c, "spec");
+    let moved = d.spectrogram[..120]
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, v)| **v)
+        .unwrap()
+        .0;
+    assert!(moved > loudest + 10, "{moved}");
+    let before = d.spectrogram[120..240]
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, v)| **v)
+        .unwrap()
+        .0;
+    assert!((64..=68).contains(&before), "{before}");
+    // Leaving the mode empties the image.
+    set(&mut c, "spec", "mode", 0.0);
+    feed_tone(&mut c, id, 1000.0, &mut head, 3600);
+    let d = data(&c, "spec");
+    assert!(d.spectrogram.is_empty() && d.spectrogram_rows == 0);
+}
+
+#[test]
+fn a_rising_edge_of_capture_stores_the_bands_and_the_reference_choice_draws_them() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SPECTRUM, "spec");
+    set(&mut c, "spec", "averaging", 0.0);
+    let id = c.device_id(&key("spec")).unwrap();
+    let mut head = 0;
+    assert!(c.spectrum_reference().is_none());
+    // Nothing to capture before there is a picture, or from silence.
+    set(&mut c, "spec", "reference.capture", 1.0);
+    c.frame();
+    assert!(c.spectrum_reference().is_none());
+    set(&mut c, "spec", "reference.capture", 0.0);
+    c.frame();
+    let silence = (vec![0.0f32; 8192], vec![0.0f32; 8192]);
+    head += 8192;
+    c.sink_mut()
+        .device_scopes
+        .insert(id, (silence.0, silence.1, head));
+    c.frame();
+    set(&mut c, "spec", "reference.capture", 1.0);
+    c.frame();
+    assert!(c.spectrum_reference().is_none());
+    assert!(c.last_rejection().unwrap().contains("no signal"));
+    set(&mut c, "spec", "reference.capture", 0.0);
+    c.frame();
+    // A tone: the capture holds its bands, with the 1 kHz band the loudest.
+    feed_tone(&mut c, id, 1000.0, &mut head, 8192);
+    assert!(data(&c, "spec").reference.is_empty(), "the choice is off");
+    set(&mut c, "spec", "reference.capture", 1.0);
+    c.frame();
+    let stored = *c.spectrum_reference().expect("captured");
+    let loudest = stored
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap()
+        .0;
+    assert_eq!(loudest, 17);
+    // Staying on is not another capture: a new tone does not replace it.
+    feed_tone(&mut c, id, 4000.0, &mut head, 8192);
+    assert_eq!(c.spectrum_reference(), Some(&stored));
+    set(&mut c, "spec", "reference.capture", 0.0);
+    c.frame();
+    // Showing it, as stored and level matched (while the engine stands still).
+    set(&mut c, "spec", "reference", 1.0);
+    c.frame();
+    let shown = data(&c, "spec").reference;
+    assert_eq!(shown.len(), 31);
+    assert!((shown[17] - stored[17]).abs() < 1e-3, "as captured");
+    set(&mut c, "spec", "reference", 2.0);
+    c.frame();
+    let matched = data(&c, "spec").reference;
+    assert_eq!(matched.len(), 31);
+    // The live tone is at 4 kHz now: the matched curve is shifted to the level of the signal.
+    assert!(
+        matched
+            .iter()
+            .zip(&shown)
+            .any(|(m, s)| (m - s).abs() > 0.5 && *s > -150.0),
+        "matched differs from stored"
+    );
+    // The spectrogram has no level axis to draw it on.
+    set(&mut c, "spec", "mode", 2.0);
+    c.frame();
+    assert!(data(&c, "spec").reference.is_empty());
+    set(&mut c, "spec", "mode", 0.0);
+    set(&mut c, "spec", "reference", 0.0);
+    c.frame();
+    assert!(data(&c, "spec").reference.is_empty());
+}
+
+#[test]
+fn the_stored_curve_is_kept_in_a_file_and_read_again() {
+    let file = unique_file("keep");
+    let mut c = AppCore::new(RecordingSink::new());
+    c.set_reference_path(Some(file.clone()));
+    assert!(c.spectrum_reference().is_none());
+    add(&mut c, SPECTRUM, "spec");
+    let id = c.device_id(&key("spec")).unwrap();
+    let mut head = 0;
+    feed_tone(&mut c, id, 1000.0, &mut head, 8192);
+    set(&mut c, "spec", "reference.capture", 1.0);
+    c.frame();
+    let stored = *c.spectrum_reference().unwrap();
+    assert!(file.exists());
+    assert!(!file.with_extension("json.tmp").exists());
+    // Another session reads it.
+    let mut other = AppCore::new(RecordingSink::new());
+    other.set_reference_path(Some(file.clone()));
+    let back = other.spectrum_reference().unwrap();
+    for (a, b) in stored.iter().zip(back) {
+        assert!((a - b).abs() < 0.006);
+    }
+    // A damaged file is ignored and the next capture replaces it.
+    std::fs::write(&file, "garbage").unwrap();
+    other.set_reference_path(Some(file.clone()));
+    assert!(other.spectrum_reference().is_none());
+    // A newer file is left alone, even by a capture.
+    std::fs::write(&file, "{\"version\":9,\"bands\":[]}").unwrap();
+    c.set_reference_path(Some(file.clone()));
+    set(&mut c, "spec", "reference.capture", 0.0);
+    c.frame();
+    set(&mut c, "spec", "reference.capture", 1.0);
+    c.frame();
+    assert!(c.spectrum_reference().is_some(), "kept for this session");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "{\"version\":9,\"bands\":[]}"
+    );
+    assert!(c.last_rejection().unwrap().contains("newer version"));
+    std::fs::remove_dir_all(file.parent().unwrap()).unwrap();
+}
+
+fn phase_values(short: f32, integrated: f32) -> Vec<f32> {
+    let mut v = vec![0.0; 16];
+    v[atomik_ui::fx::phase::MOMENTARY] = short;
+    v[atomik_ui::fx::phase::SHORT_TERM] = short;
+    v[atomik_ui::fx::phase::INTEGRATED] = integrated;
+    v
+}
+
+#[test]
+fn the_phase_meter_keeps_a_loudness_history_and_the_range_after_the_windows_fill() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, PHASE, "ph");
+    let id = c.device_id(&key("ph")).unwrap();
+    let mut head = 0u64;
+    let mut second = |c: &mut AppCore<RecordingSink>, short: f32, integrated: f32| {
+        head += 48_000;
+        let t = tone(440.0, 2048, head, 1.0);
+        c.sink_mut().device_scopes.insert(id, (t.0, t.1, head));
+        c.sink_mut()
+            .device_values
+            .insert(id, (phase_values(short, integrated), head));
+        c.frame();
+    };
+    // The first three seconds are the meter's windows filling: not in the history.
+    for _ in 0..3 {
+        second(&mut c, -45.0, -120.0);
+    }
+    assert!(data(&c, "ph").loudness_history.is_empty());
+    assert_eq!(data(&c, "ph").lra, None);
+    // Then a programme that swings between -26 and -14.
+    for i in 0..60 {
+        let short = if i % 2 == 0 { -26.0 } else { -14.0 };
+        second(&mut c, short, -18.0);
+    }
+    let d = data(&c, "ph");
+    assert_eq!(d.loudness_history.len(), 60);
+    assert!((d.loudness_history[0] + 26.0).abs() < 1e-3);
+    assert!((d.loudness_history[1] + 14.0).abs() < 1e-3);
+    let lra = d.lra.expect("a range");
+    assert!((lra - 12.0).abs() < 0.5, "{lra}");
+    // The meter's reset (the integrated loudness falls to silence) starts the history again.
+    second(&mut c, -20.0, -120.0);
+    let d = data(&c, "ph");
+    assert!(
+        d.loudness_history.is_empty(),
+        "{:?}",
+        d.loudness_history.len()
+    );
+    assert_eq!(d.lra, None);
+    // A paused engine adds nothing.
+    for _ in 0..3 {
+        second(&mut c, -20.0, -20.0);
+    }
+    let before = data(&c, "ph").loudness_history.len();
+    c.frame();
+    c.frame();
+    assert_eq!(data(&c, "ph").loudness_history.len(), before);
+}
+
+#[test]
+fn a_bypassed_phase_meter_keeps_its_history() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, PHASE, "ph");
+    let id = c.device_id(&key("ph")).unwrap();
+    let mut head = 0u64;
+    for _ in 0..8 {
+        head += 48_000;
+        let t = tone(440.0, 2048, head, 1.0);
+        c.sink_mut().device_scopes.insert(id, (t.0, t.1, head));
+        c.sink_mut()
+            .device_values
+            .insert(id, (phase_values(-20.0, -20.0), head));
+        c.frame();
+    }
+    let live = data(&c, "ph");
+    assert!(!live.loudness_history.is_empty());
+    set(&mut c, "ph", "bypass", 1.0);
+    head += 48_000 * 10;
+    let t = tone(440.0, 2048, head, 1.0);
+    c.sink_mut().device_scopes.insert(id, (t.0, t.1, head));
+    c.frame();
+    assert_eq!(data(&c, "ph"), live);
 }

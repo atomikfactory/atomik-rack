@@ -736,6 +736,11 @@ impl<B: AudioBackend> Shell<B> {
         };
         shell.core.set_roles(&shell.roles);
         shell.configure_surface();
+        shell.core.set_reference_path(
+            options_library_path
+                .as_deref()
+                .map(crate::spectrum_reference::reference_path),
+        );
         shell.core.set_library_path(options_library_path);
         shell.sync_library_root();
         // Before anything saves the window state: a save copies the panel's values.

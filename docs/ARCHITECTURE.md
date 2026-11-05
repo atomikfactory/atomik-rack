@@ -4985,11 +4985,20 @@ Device::process                              AppCore::feed_device_scopes
   position), so the display does not depend on how often it is drawn.
   [app_core_analysers.rs](../crates/app/src/app_core_analysers.rs) keeps one analysis state per
   analyser device of the flat rack (inside containers by path key), reads the device's settings from
-  the document (`size`, `window`, `channel`, `mode`, `averaging`, `hold`, `decay`, `tilt`), skips a
-  device whose tap did not move (a paused engine costs no view work) and a bypassed device (its
-  panel keeps the last picture and says `BYPASSED`), and hands `RackView::set_analyser` an
-  `AnalyserData`: the spectrum trace and peaks (240 log columns or 31 bands), the loudest bin, and
-  the newest 2048 scope frames decimated by two. The phase meter's numbers (peaks with hold, RMS,
+  the document (`size` up to 16384, `window`, `channel`, `mode`, `averaging`, `hold`, `decay`,
+  `tilt`, `smoothing`, `weighting`, `reference`), skips a device whose tap did not move (a paused
+  engine costs no view work) and a bypassed device (its panel keeps the last picture and says
+  `BYPASSED`), and hands `RackView::set_analyser` an `AnalyserData`: the spectrum trace and peaks
+  (240 log columns or 31 bands), the loudest bin, the spectrogram image, the reference curve, the
+  loudness history and range, and the newest 2048 scope frames decimated by two. Three more
+  pieces of pure display code sit in the dsp crate: `spectrogram.rs` (a scrolling 8-bit image
+  advanced by whole rows of audio time), `loudness_history.rs` (the short-term graph and the
+  Tech 3342 range over a 0.1 LU histogram) and `k_weighting.rs` (the BS.1770 filter and its
+  response, shared with the loudness meters). A rising edge of the spectrum's `reference.capture`
+  stores the 31 band levels on screen in `spectrum-reference.json` beside the library file
+  ([spectrum_reference.rs](../crates/app/src/spectrum_reference.rs), read once at start-up, written
+  atomically, never overwriting a newer version's file): the curve is a user setting, not part of
+  the project, so the project format is unchanged. The phase meter's numbers (peaks with hold, RMS,
   correlation, balance, width, mid and side, sample and true peak, momentary, short-term and
   integrated LUFS from the mastering device's BS.1770 meter) are computed in `process`, because they
   are cheap and exact there, and published as 16 meter values.
@@ -5011,8 +5020,8 @@ Device::process                              AppCore::feed_device_scopes
   and every project saved before they existed loads and bounces unchanged: nothing new is persisted
   (the devices are ordinary devices with ordinary params, and the project format is unchanged).
 - **Not covered.** Plugin devices have no tap; a console channel strip has no meter panel of this
-  kind (the console's own peak and RMS meters stay); the spectrum has no spectrogram or reference
-  curve; loudness has no history graph (see the roadmap).
+  kind (the console's own peak and RMS meters stay); the reference curve is a stored one, not a
+  second device (see the roadmap).
 
 ## 6l. The library
 
@@ -5717,9 +5726,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   [Bit-identity claims](TESTING.md#bit-identity-claims)).
 - **Analysers.** A plugin device has no scope tap, so no spectrum or goniometer (its own meters
   stay); the analysers read the audio of the device they sit on, so they are meters of a chain, not
-  of a console channel or bus (no console panel yet); the fine spectrum has no reference curve or
-  spectrogram and the loudness no history graph; a headless session reads them with `session_meters`
-  (an offline render), not live.
+  of a console channel or bus (no console panel yet); the reference curve is a stored one (no
+  second device to compare against); a headless session reads them with `session_meters` (an
+  offline render), not live.
 - **Plugins.** Sandboxed (the default), each instance is a process of its own and its editor a
   separate window; a live batch that the child answers late passes dry. In process, a native crash
   takes the app down (the crash journal and recovery snapshots limit the damage). The plugin is

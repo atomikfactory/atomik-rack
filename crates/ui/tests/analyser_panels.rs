@@ -228,6 +228,162 @@ fn the_bands_and_the_fine_trace_paint_differently_and_the_data_changes_the_paint
     assert_ne!(fine, paint(&doc4, &mut v4).to_json());
 }
 
+/// A spectrogram image: a tone at 1 kHz that slides up over time, newest row first.
+fn spectrogram_data() -> AnalyserData {
+    let (cols, rows) = (120usize, 80usize);
+    let mut cells = Vec::with_capacity(cols * rows);
+    for row in 0..rows {
+        let centre = 0.45 + 0.004 * (rows - row) as f32;
+        for col in 0..cols {
+            let t = col as f32 / cols as f32;
+            let db = -90.0 + 80.0 * (-((t - centre) * 18.0).powi(2)).exp();
+            cells.push(atomik_dsp::spectrogram::quantise(db));
+        }
+    }
+    AnalyserData {
+        spectrogram: cells,
+        spectrogram_cols: cols,
+        spectrogram_rows: rows,
+        spectrogram_span_s: 6.0,
+        peak_hz: 1000.0,
+        peak_db: -12.0,
+        ..AnalyserData::default()
+    }
+}
+
+/// Ten minutes of loudness: quiet at the start, then a programme near -14 LUFS.
+fn history_data() -> AnalyserData {
+    let loudness_history: Vec<f32> = (0..400)
+        .map(|i| {
+            if i < 20 {
+                -120.0
+            } else {
+                -14.0 + 4.0 * (i as f32 * 0.07).sin()
+            }
+        })
+        .collect();
+    AnalyserData {
+        loudness_history,
+        lra: Some(6.2),
+        ..scope_data()
+    }
+}
+
+#[test]
+fn the_spectrogram_mode_paints_an_image_and_its_time_axis() {
+    let (mut doc, mut v) = fed(FxKind::Spectrum, &spectrogram_data());
+    let trace = paint(&doc, &mut v).to_json();
+    doc.devices[0].params.insert("mode".into(), 2.0);
+    v.sync(&doc, &registry());
+    let image = paint(&doc, &mut v);
+    assert_ne!(trace, image.to_json());
+    let t = texts(&image);
+    for s in ["NOW", "-6s", "1k", "PEAK 1.00 kHz  -12.0 dB"] {
+        assert!(t.iter().any(|x| x == s), "{s:?}: {t:?}");
+    }
+    // The level axis is the trace's: it is gone.
+    assert!(!t.iter().any(|x| x == "-10"), "{t:?}");
+    // The image changes with the data.
+    let mut quieter = spectrogram_data();
+    for c in &mut quieter.spectrogram {
+        *c = c.saturating_sub(60);
+    }
+    v.set_analyser(&key("fx"), &quieter);
+    assert_ne!(image.to_json(), paint(&doc, &mut v).to_json());
+    // No image fed: only the axes are drawn.
+    let (mut doc, mut v) = rack(FxKind::Spectrum);
+    doc.devices[0].params.insert("mode".into(), 2.0);
+    v.sync(&doc, &registry());
+    v.set_device_meter_values(&key("fx"), &raw_meters(FxKind::Spectrum));
+    assert!(texts(&paint(&doc, &mut v)).iter().any(|x| x == "NOW"));
+}
+
+#[test]
+fn a_reference_curve_is_drawn_over_the_trace_and_the_bands() {
+    let plain = spectrum_data(false);
+    let mut with = plain.clone();
+    with.reference = (0..31).map(|i| -40.0 - i as f32).collect();
+    let (doc, mut v) = fed(FxKind::Spectrum, &plain);
+    let before = paint(&doc, &mut v).to_json();
+    v.set_analyser(&key("fx"), &with);
+    let after = paint(&doc, &mut v).to_json();
+    assert_ne!(before, after);
+    // Bands too.
+    let mut bands = spectrum_data(true);
+    let (doc2, mut v2) = fed(FxKind::Spectrum, &bands);
+    let b0 = paint(&doc2, &mut v2).to_json();
+    bands.reference = with.reference.clone();
+    v2.set_analyser(&key("fx"), &bands);
+    assert_ne!(b0, paint(&doc2, &mut v2).to_json());
+    // A reference with gaps (silent bands) paints without them.
+    let mut gappy = with.clone();
+    gappy.reference[10] = -200.0;
+    v.set_analyser(&key("fx"), &gappy);
+    assert_ne!(after, paint(&doc, &mut v).to_json());
+}
+
+#[test]
+fn the_loudness_history_replaces_the_readouts_and_shows_the_range_and_the_target() {
+    let (mut doc, mut v) = fed(FxKind::PhaseMeter, &history_data());
+    let readouts = paint(&doc, &mut v);
+    assert!(texts(&readouts).iter().any(|x| x == "MOMENTARY"));
+    doc.devices[0].params.insert("loudness_view".into(), 1.0);
+    v.sync(&doc, &registry());
+    let graph = paint(&doc, &mut v);
+    assert_ne!(readouts.to_json(), graph.to_json());
+    let t = texts(&graph);
+    for s in [
+        "SHORT-TERM",
+        "-19.2 LUFS",
+        "INT -20.1",
+        "LRA 6.2 LU",
+        "TARGET -14",
+        "-14",
+    ] {
+        assert!(t.iter().any(|x| x == s), "{s:?}: {t:?}");
+    }
+    assert!(!t.iter().any(|x| x == "MOMENTARY"), "{t:?}");
+    // The goniometer and the bars are still there.
+    assert!(t.iter().any(|x| x == "CORRELATION"));
+    // A new target moves the line and says so.
+    doc.devices[0].params.insert("target".into(), -23.0);
+    v.sync(&doc, &registry());
+    let moved = paint(&doc, &mut v);
+    assert_ne!(graph.to_json(), moved.to_json());
+    assert!(texts(&moved).iter().any(|x| x == "TARGET -23"));
+    // No range yet and loudness off.
+    let mut early = history_data();
+    early.lra = None;
+    v.set_analyser(&key("fx"), &early);
+    assert!(texts(&paint(&doc, &mut v)).iter().any(|x| x == "LRA --"));
+    doc.devices[0].params.insert("loudness".into(), 0.0);
+    v.sync(&doc, &registry());
+    let off = texts(&paint(&doc, &mut v));
+    assert!(off.iter().any(|x| x == "LRA --") && off.iter().any(|x| x == "INT --"));
+}
+
+#[test]
+fn the_new_controls_are_on_the_panels() {
+    for (kind, keys) in [
+        (
+            FxKind::Spectrum,
+            &["smoothing", "weighting", "reference", "reference.capture"][..],
+        ),
+        (FxKind::PhaseMeter, &["loudness_view", "target"][..]),
+    ] {
+        let reg = registry();
+        let desc = reg.get(kind.type_id()).unwrap().descriptor;
+        let spec = fx_layout(kind, desc);
+        for k in keys {
+            let i = desc.params.iter().position(|p| p.key == *k).unwrap();
+            assert!(
+                spec.front.iter().any(|c| c.param == i),
+                "{kind:?}: {k} has no control"
+            );
+        }
+    }
+}
+
 #[test]
 fn goldens_of_the_populated_panels() {
     for (name, kind, data, flip) in [
@@ -249,8 +405,31 @@ fn goldens_of_the_populated_panels() {
             scope_data(),
             Flip::Front,
         ),
+        (
+            "analyser_spectrogram_1x.json",
+            FxKind::Spectrum,
+            spectrogram_data(),
+            Flip::Front,
+        ),
+        (
+            "analyser_loudness_history_1x.json",
+            FxKind::PhaseMeter,
+            history_data(),
+            Flip::Front,
+        ),
     ] {
-        let (doc, mut v) = fed(kind, &data);
+        let (mut doc, mut v) = fed(kind, &data);
+        match name {
+            "analyser_spectrogram_1x.json" => {
+                doc.devices[0].params.insert("mode".into(), 2.0);
+                v.sync(&doc, &registry());
+            }
+            "analyser_loudness_history_1x.json" => {
+                doc.devices[0].params.insert("loudness_view".into(), 1.0);
+                v.sync(&doc, &registry());
+            }
+            _ => {}
+        }
         v.set_flip(flip);
         check(name, &paint(&doc, &mut v).to_json());
     }

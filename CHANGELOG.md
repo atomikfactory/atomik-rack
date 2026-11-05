@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Metering follow-ups: spectrogram, reference curve, loudness history, K-weighting, 16384 points and
+  smoothing.** The Spectrum analyser gets a third display, Spectrogram: the fine trace as a scrolling image with
+  the frequency across and the newest row on top, one row for every 75 ms of audio over 6 seconds, brighter for
+  louder, which scrolls with the audio (a paused engine stops it). FFT size goes up to 16384 points, a new
+  Smoothing choice (off, 1/12, 1/6 or 1/3 octave) averages the fine trace across neighbouring bins with a window
+  that grows with the frequency (the bands and the loudest-bin readout stay unsmoothed), and Weighting K applies
+  the BS.1770 K-weighting to the whole display so it shows what the loudness meter hears. A Reference curve can
+  be stored: switching Capture on stores the one-third-octave band levels on screen, kept in
+  `spectrum-reference.json` beside the library file (so any project's spectrum can use it), and the Curve choice
+  draws it over the trace or the bands, as stored or with its level matched to the signal so that shapes can be
+  compared. In the Phase Meter, the new View choice (Readouts or History) turns the loudness box into a graph of
+  the short-term loudness of the last five minutes with a line at the new Target (-36 to -6 LUFS, default -14),
+  the integrated loudness and the loudness range (LRA, as EBU Tech 3342 defines it) of the programme since the
+  last reset. All the new settings are ordinary params, so the device's patch strip saves them as user presets.
+  The spectrum panel is one rack unit taller. The new params sit before Bypass in the two devices; projects store
+  params by key, so older projects open as they were. Not done yet: the meters as console panels, a second
+  device as the reference, and meters for plugin devices. No project format change.
 - **Audio to notes follow-ups: pitch bend kept as a lane, several clips at once, progress and cancel, whole long
   clips, and drum kits with key maps.** With Keep pitch bend on (the default; a row of the Audio to Notes panel) a
   pitched note keeps how the voice moves inside it: the new note clip gets a pitch-bend lane that follows the

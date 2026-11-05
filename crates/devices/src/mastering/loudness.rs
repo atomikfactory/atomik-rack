@@ -69,37 +69,7 @@ fn lufs(z: f64) -> f64 {
     }
 }
 
-/// K-weighting coefficients `(pre-filter, RLB high-pass)` for `sr`.
-pub fn k_weighting(sr: f64) -> (BiquadCoeffs, BiquadCoeffs) {
-    let pi = std::f64::consts::PI;
-    let (f0, g, q) = (
-        1_681.974_450_955_532,
-        3.999_843_853_973_347,
-        0.707_175_236_955_419_6,
-    );
-    let k = (pi * f0 / sr).tan();
-    let vh = 10f64.powf(g / 20.0);
-    let vb = vh.powf(0.499_666_774_154_541_6);
-    let a0 = 1.0 + k / q + k * k;
-    let shelf = BiquadCoeffs {
-        b0: (vh + vb * k / q + k * k) / a0,
-        b1: 2.0 * (k * k - vh) / a0,
-        b2: (vh - vb * k / q + k * k) / a0,
-        a1: 2.0 * (k * k - 1.0) / a0,
-        a2: (1.0 - k / q + k * k) / a0,
-    };
-    let (f0, q) = (38.135_470_876_139_82, 0.500_327_037_325_395_3);
-    let k = (pi * f0 / sr).tan();
-    let a0 = 1.0 + k / q + k * k;
-    let rlb = BiquadCoeffs {
-        b0: 1.0,
-        b1: -2.0,
-        b2: 1.0,
-        a1: 2.0 * (k * k - 1.0) / a0,
-        a2: (1.0 - k / q + k * k) / a0,
-    };
-    (shelf, rlb)
-}
+pub use atomik_dsp::k_weighting::k_weighting;
 
 /// Stereo BS.1770 / R128 loudness meter (see the module docs).
 #[derive(Debug, Clone)]

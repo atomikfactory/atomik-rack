@@ -16,6 +16,16 @@
 //! * **Tuner:** the pitch of the louder channel ([`atomik_dsp::tuner`]) against the device's `ref`
 //!   (A4) shifted by the project's master tune, smoothed and held as the audio track's tuner is.
 //!
+//! Beyond the trace the spectrum feed keeps three more things per device. The **spectrogram**
+//! (display mode 2): the fine trace appended as a row of an 8-bit image every 75 ms of audio
+//! (`atomik_dsp::spectrogram`), 80 rows, newest first. The **reference curve**: a stored set of
+//! 31 band levels (`spectrum-reference.json` next to the library file, [`crate::spectrum_reference`])
+//! that a rising edge of the device's `reference.capture` fills from the signal now on screen,
+//! drawn over the trace as the `reference` choice says (as stored, or level matched). The phase
+//! meter keeps a **loudness history**: its short-term loudness once a second for the graph and
+//! the loudness range since the last reset (`atomik_dsp::loudness_history`), skipping the first
+//! three seconds after a start or a reset while the meter's windows fill.
+//!
 //! The FFT and the drawing therefore cost the audio thread nothing. A device whose tap did not
 //! move since the last feed (a paused engine) is skipped, so an idle project costs no view work;
 //! a bypassed device is skipped too, so its panel freezes on what it last showed.
@@ -33,11 +43,26 @@ use crate::sink::EngineSink;
 use atomik_device_sdk::DeviceDescriptor;
 use atomik_devices::phase_meter::value;
 use atomik_devices::spectrum::{CHANNEL_NAMES, SIZES, TILT_DB_PER_OCT};
-use atomik_dsp::spectrum::{ChannelMode, Settings, Spectrum, WindowKind, band_centres};
+use atomik_dsp::loudness_history::LoudnessHistory;
+use atomik_dsp::spectrogram::Spectrogram;
+use atomik_dsp::spectrum::{
+    BAND_COUNT, ChannelMode, FLOOR_DB, Settings, Smoothing, Spectrum, Weighting, WindowKind,
+    band_centres, reference_curve,
+};
 use atomik_model::{DeviceKey, ExpandedRack, RackDevice};
 use atomik_ui::analyser::{AnalyserData, SCOPE_READ_FRAMES, TRACE_COLUMNS};
 use atomik_ui::fx::FxKind;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+/// Columns of the spectrogram image (the trace has 240).
+const SPECTROGRAM_COLS: usize = 120;
+/// Rows of the spectrogram image.
+const SPECTROGRAM_ROWS: usize = 80;
+/// Milliseconds of audio per spectrogram row: 80 rows are 6 seconds.
+const SPECTROGRAM_PERIOD_MS: f32 = 75.0;
+/// Seconds after a start or a reset that the loudness history skips.
+const HISTORY_SETTLE_S: u64 = 3;
 
 /// The device types of the analyser feed.
 fn analyser_kind(type_id: &str) -> Option<FxKind> {
@@ -79,11 +104,40 @@ pub fn spectrum_settings(desc: &DeviceDescriptor, dev: &RackDevice) -> Settings 
             3 => ChannelMode::Side,
             _ => ChannelMode::Sum,
         },
-        bands: choice("mode", 1) == 1,
+        // Mode 2, the spectrogram, shows the fine trace as an image.
+        bands: choice("mode", 2) == 1,
         averaging_ms: param(desc, dev, "averaging"),
         hold_ms: param(desc, dev, "hold"),
         decay_db_per_s: param(desc, dev, "decay"),
         tilt_db_per_oct: TILT_DB_PER_OCT[choice("tilt", TILT_DB_PER_OCT.len() - 1)],
+        smoothing: match choice("smoothing", 3) {
+            1 => Smoothing::Twelfth,
+            2 => Smoothing::Sixth,
+            3 => Smoothing::Third,
+            _ => Smoothing::Off,
+        },
+        weighting: if choice("weighting", 1) == 1 {
+            Weighting::K
+        } else {
+            Weighting::Flat
+        },
+    }
+}
+
+/// What a spectrum device shows besides the trace itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpectrumView {
+    /// Display mode 2: the spectrogram image instead of the trace.
+    spectrogram: bool,
+    /// The `reference` choice: 0 off, 1 as stored, 2 shifted to the level of the signal.
+    reference: usize,
+}
+
+fn spectrum_view(desc: &DeviceDescriptor, dev: &RackDevice) -> SpectrumView {
+    let choice = |key: &str, max: usize| (param(desc, dev, key).round().max(0.0) as usize).min(max);
+    SpectrumView {
+        spectrogram: choice("mode", 2) == 2,
+        reference: choice("reference", 2),
     }
 }
 
@@ -112,6 +166,35 @@ struct State {
     /// The data was computed at least once.
     fed: bool,
     data: AnalyserData,
+    /// The spectrogram image.
+    image: Spectrogram,
+    /// The loudness graph and range of a phase meter.
+    history: LoudnessHistory,
+    /// Audio frames since the history started or was reset.
+    history_age: u64,
+    /// The integrated loudness of the previous feed (a fall to silence is a reset).
+    integrated: f32,
+    /// `reference.capture` was on at the previous feed.
+    capture_on: bool,
+    /// What the reference of `data` was built for: the choice, the stored curve's serial and
+    /// whether the spectrogram hides it.
+    reference_key: Option<(usize, u64, bool)>,
+}
+
+/// What the display of one device needs besides the frames.
+struct Extra<'a> {
+    /// The tuner's `(reference Hz, shown Hz)`.
+    reference: (f32, f32),
+    /// The spectrum's extra display state.
+    view: SpectrumView,
+    /// The stored reference curve.
+    stored: Option<[f32; BAND_COUNT]>,
+    /// The device's published meter values (the phase meter's loudness).
+    meters: &'a [f32],
+    /// The serial of the stored curve (see `Analysers::reference_serial`).
+    serial: u64,
+    /// A headless probe: one reading, so the image and the history are filled from it.
+    probe: bool,
 }
 
 impl State {
@@ -122,7 +205,64 @@ impl State {
             head: 0,
             fed: false,
             data: AnalyserData::default(),
+            image: Spectrogram::new(SPECTROGRAM_COLS, SPECTROGRAM_ROWS, SPECTROGRAM_PERIOD_MS),
+            history: LoudnessHistory::new(),
+            history_age: 0,
+            integrated: FLOOR_DB,
+            capture_on: false,
+            reference_key: None,
         }
+    }
+
+    /// Rebuilds the reference curve of the display from the stored one (nothing in the
+    /// spectrogram, which has no level axis for it).
+    fn refresh_reference(
+        &mut self,
+        view: SpectrumView,
+        stored: Option<&[f32; BAND_COUNT]>,
+        serial: u64,
+        tilt_db_per_oct: f32,
+    ) {
+        self.data.reference.clear();
+        if let Some(stored) = stored.filter(|_| view.reference > 0 && !view.spectrogram) {
+            let now = self.spectrum.band_levels();
+            self.data.reference.extend(reference_curve(
+                stored,
+                &now,
+                view.reference == 2,
+                tilt_db_per_oct,
+            ));
+        }
+        self.reference_key = Some((view.reference, serial, view.spectrogram));
+    }
+
+    /// Adds the loudness the phase meter publishes to the history graph and the range (module
+    /// docs). A fall of the integrated loudness to silence is a reset of the meter.
+    fn feed_history(&mut self, extra: &Extra<'_>, elapsed: u64, first: bool, sample_rate: f32) {
+        use atomik_devices::phase_meter::value;
+        let (Some(short), Some(integrated)) = (
+            extra.meters.get(value::SHORT_TERM).copied(),
+            extra.meters.get(value::INTEGRATED).copied(),
+        ) else {
+            return;
+        };
+        if integrated <= -119.9 && self.integrated > -119.9 {
+            self.history.reset();
+            self.history_age = 0;
+        }
+        self.integrated = integrated;
+        let rate = f64::from(sample_rate) as u64;
+        if extra.probe {
+            self.history.push(short, rate, sample_rate);
+        } else {
+            let elapsed = if first { 0 } else { elapsed };
+            self.history_age = self.history_age.saturating_add(elapsed);
+            if self.history_age >= HISTORY_SETTLE_S * rate {
+                self.history.push(short, elapsed, sample_rate);
+            }
+        }
+        self.history.graph(&mut self.data.loudness_history);
+        self.data.lra = self.history.lra();
     }
 
     /// Computes the display data of a read of the tap that ended at `head`.
@@ -133,8 +273,9 @@ impl State {
         (left, right): (&[f32], &[f32]),
         head: u64,
         sample_rate: f32,
-        reference: (f32, f32),
+        extra: &Extra<'_>,
     ) {
+        let reference = extra.reference;
         let elapsed = head.saturating_sub(self.head);
         let first = !self.fed;
         self.head = head;
@@ -153,6 +294,34 @@ impl State {
                 d.bands = settings.bands;
                 d.peak_hz = self.spectrum.peak_hz();
                 d.peak_db = self.spectrum.peak_db();
+                if extra.view.spectrogram {
+                    let step =
+                        (f64::from(SPECTROGRAM_PERIOD_MS) * 0.001 * f64::from(sample_rate)) as u64;
+                    let frames = if extra.probe {
+                        step * SPECTROGRAM_ROWS as u64
+                    } else if first {
+                        0
+                    } else {
+                        elapsed
+                    };
+                    self.image.push(self.spectrum.trace(), frames, sample_rate);
+                    self.image.rows_newest_first(&mut d.spectrogram);
+                    d.spectrogram_cols = self.image.cols();
+                    d.spectrogram_rows = self.image.rows();
+                    d.spectrogram_span_s =
+                        self.image.rows() as f32 * self.image.period_ms() * 0.001;
+                } else if !d.spectrogram.is_empty() {
+                    self.image.clear();
+                    d.spectrogram.clear();
+                    (d.spectrogram_cols, d.spectrogram_rows) = (0, 0);
+                    d.spectrogram_span_s = 0.0;
+                }
+                self.refresh_reference(
+                    extra.view,
+                    extra.stored.as_ref(),
+                    extra.serial,
+                    settings.tilt_db_per_oct,
+                );
             }
             FxKind::Tuner => {
                 // The louder channel: a mono source may sit on either input.
@@ -171,6 +340,7 @@ impl State {
                 d.scope_l.extend(left.iter().step_by(2));
                 d.scope_r.clear();
                 d.scope_r.extend(right.iter().step_by(2));
+                self.feed_history(extra, elapsed, first, sample_rate);
             }
         }
     }
@@ -183,6 +353,14 @@ pub(super) struct Analysers {
     states: BTreeMap<DeviceKey, State>,
     left: Vec<f32>,
     right: Vec<f32>,
+    /// The stored reference curve (31 band levels in dB).
+    reference: Option<[f32; BAND_COUNT]>,
+    /// Counts the changes of `reference`, so a display knows its copy is stale.
+    reference_serial: u64,
+    /// Where the curve is kept; `None` keeps it in memory only (tests).
+    reference_path: Option<PathBuf>,
+    /// The file was written by a newer version or cannot be read: never overwrite it.
+    reference_locked: bool,
 }
 
 impl Analysers {
@@ -250,6 +428,7 @@ impl<S: EngineSink> AppCore<S> {
         let mut a = std::mem::take(&mut self.analysers);
         let sample_rate = self.doc().sample_rate as f32;
         let tune_cents = self.doc().tune_cents;
+        let mut captured: Option<[f32; BAND_COUNT]> = None;
         for (key, kind) in &a.devices {
             let Some(id) = self.ids.get(key).copied() else {
                 continue;
@@ -262,6 +441,8 @@ impl<S: EngineSink> AppCore<S> {
             }
             let settings = spectrum_settings(desc, dev);
             let reference = tuner_reference(desc, dev, tune_cents);
+            let view = spectrum_view(desc, dev);
+            let capture = param(desc, dev, "reference.capture") >= 0.5;
             let want = match kind {
                 FxKind::Spectrum => settings.size,
                 FxKind::Tuner => atomik_dsp::tuner::frames_wanted(sample_rate),
@@ -273,14 +454,103 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             };
             let state = a.states.entry(key.clone()).or_insert_with(State::new);
+            if *kind == FxKind::Spectrum {
+                if capture && !state.capture_on && state.fed {
+                    captured = Some(state.spectrum.band_levels());
+                }
+                state.capture_on = capture;
+                // A new choice or a new stored curve shows at once, even with the engine paused.
+                let want_key = Some((view.reference, a.reference_serial, view.spectrogram));
+                if state.fed && state.reference_key != want_key {
+                    state.refresh_reference(
+                        view,
+                        a.reference.as_ref(),
+                        a.reference_serial,
+                        settings.tilt_db_per_oct,
+                    );
+                    self.view.set_analyser(key, &state.data);
+                }
+            }
             if head == 0 || (head == state.head && state.fed) {
                 continue;
             }
             let frames = (&a.left[..n], &a.right[..n]);
-            state.apply(*kind, &settings, frames, head, sample_rate, reference);
+            let mut meters = [0.0f32; atomik_devices::phase_meter::PHASE_METERS];
+            let meter_count = if *kind == FxKind::PhaseMeter {
+                self.sink
+                    .read_device_meter_values(id, &mut meters)
+                    .map_or(0, |(n, _)| n)
+            } else {
+                0
+            };
+            let extra = Extra {
+                reference,
+                view,
+                stored: a.reference,
+                meters: &meters[..meter_count],
+                serial: a.reference_serial,
+                probe: false,
+            };
+            state.apply(*kind, &settings, frames, head, sample_rate, &extra);
             self.view.set_analyser(key, &state.data);
         }
         self.analysers = a;
+        if let Some(bands) = captured {
+            self.store_reference(bands);
+        }
+    }
+
+    /// Keeps `bands` as the reference curve and writes it to the user's file.
+    fn store_reference(&mut self, bands: [f32; BAND_COUNT]) {
+        if bands.iter().all(|v| *v <= FLOOR_DB + 50.0) {
+            self.report("There is no signal to capture as a reference curve");
+            return;
+        }
+        let a = &mut self.analysers;
+        a.reference = Some(bands);
+        a.reference_serial += 1;
+        let mut message = "Spectrum reference curve captured".to_string();
+        if let Some(path) = a.reference_path.clone() {
+            if a.reference_locked {
+                message = "Spectrum reference captured for this session; the stored curve was \
+                           written by a newer version and is left alone"
+                    .to_string();
+            } else if let Err(e) = crate::spectrum_reference::save(&path, &bands) {
+                log::warn!("writing {}: {e}", path.display());
+                message = format!("Spectrum reference captured but not saved: {e}");
+            }
+        }
+        self.report(message);
+    }
+
+    /// Where the stored spectrum reference curve lives (`spectrum-reference.json` next to the
+    /// library file); `None` keeps it in memory only (tests). Reads it now: a damaged file is
+    /// ignored until the next capture, a file from a newer version is never overwritten.
+    pub fn set_reference_path(&mut self, path: Option<PathBuf>) {
+        use crate::spectrum_reference::{Loaded, load};
+        let a = &mut self.analysers;
+        a.reference = None;
+        a.reference_locked = false;
+        if let Some(p) = &path {
+            match load(p) {
+                Loaded::Curve(bands) => a.reference = Some(bands),
+                Loaded::Missing => {}
+                Loaded::Unusable { why, newer } => {
+                    log::warn!(
+                        "the spectrum reference curve {} is not used: {why}",
+                        p.display()
+                    );
+                    a.reference_locked = newer;
+                }
+            }
+        }
+        a.reference_path = path;
+        a.reference_serial += 1;
+    }
+
+    /// The stored spectrum reference curve: 31 band levels in dB.
+    pub fn spectrum_reference(&self) -> Option<&[f32; BAND_COUNT]> {
+        self.analysers.reference.as_ref()
     }
 
     /// The analyser devices of the flat rack (flat key, kind).
@@ -343,13 +613,21 @@ impl<S: EngineSink> AppCore<S> {
             let type_id = dev.type_id.clone();
             let mut state = State::new();
             let reference = tuner_reference(desc, dev, tune_cents);
+            let extra = Extra {
+                reference,
+                view: spectrum_view(desc, dev),
+                stored: self.analysers.reference,
+                meters: &probe.values,
+                serial: self.analysers.reference_serial,
+                probe: true,
+            };
             state.apply(
                 kind,
                 &settings,
                 (&probe.left, &probe.right),
                 probe.head,
                 sample_rate,
-                reference,
+                &extra,
             );
             self.view.set_device_meter_values(&probe.key, &probe.values);
             self.view.set_analyser(&probe.key, &state.data);
