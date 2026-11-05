@@ -51,7 +51,7 @@ use atomik_core::{ParamId, SampleRate};
 use std::sync::Arc;
 
 /// Maximum number of values a device can publish through [`Device::meter_values`].
-pub const MAX_METER_VALUES: usize = 32;
+pub const MAX_METER_VALUES: usize = 64;
 
 /// Information passed to [`Device::prepare`].
 #[derive(Debug, Clone, Copy, PartialEq)]

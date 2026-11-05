@@ -2763,7 +2763,7 @@ of this is saved in the project.
 - **Device meter values.** A device that answers `Device::has_meter_values()` with true when it is
   inserted gets `Device::meter_values(&self, out)` called by the audio thread once per batch, after
   the routing ran (every node is home), in ascending device id order. It writes up to
-  `MAX_METER_VALUES` (32) latest values (gain reduction, loudness, band energies; peak-hold is the
+  `MAX_METER_VALUES` (64) latest values (gain reduction, loudness, band energies; peak-hold is the
   device's business). The engine stores them as f32 bits in the arena slot's bank inside `Meters`
   with a count, an owner id and a publish sequence that only grows; any other device costs one bool
   test per batch. The UI reads with `EngineHandle::device_meter_values(id, out)` or
@@ -5581,12 +5581,13 @@ expanded by the app into one batch like the FM synth's (`organ::sounds`); the ge
 
 The grain sampler `atomik.granular` is registered with samples like the sampler, so the app builds
 its `SampleMap` from its zone (a drop replaces the one zone) and swaps it in with
-`set_device_samples`; a voice plays the first zone that matches the note, or a built-in vowel pad
+`set_device_samples`; a voice plays the first zone that matches the note (or, with the layered zone
+mode, one voice for every matching zone), or a built-in vowel pad
 (`dsp::grain::default_source`, cached per sample rate) while no map is installed.
 [dsp/src/grain.rs](../crates/dsp/src/grain.rs) holds the windows, the fixed 64-grain pool (full: the
 grain nearest its end is replaced), the grain clock and the read that low-passes a high
 transposition; every voice owns its pool, so nothing allocates on the audio thread. The device
-publishes 31 meter values (position, spray, grain counts and the last 13 grains), which the app
+publishes 63 meter values (position, spray, grain counts and the last 29 grains), which the app
 feeds the rack view each frame like an effect's meters, next to the peaks of the loaded assets for
 the waveform.
 

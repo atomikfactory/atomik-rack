@@ -101,7 +101,7 @@ pub enum Pane {
     SpectrumEq,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
-pub const FX_METER_CAPACITY: usize = 32;
+pub const FX_METER_CAPACITY: usize = 64;
 
 /// Metered outputs of a console channel or bus: main out left/right, then the gain-reduction CV.
 pub const CHANNEL_METER_SOCKETS: [&str; 3] = ["out_l", "out_r", "gr_cv_out"];

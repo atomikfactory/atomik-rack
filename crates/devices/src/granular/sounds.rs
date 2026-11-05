@@ -16,11 +16,21 @@
 //! | Shimmer | an octave up, short Tukey grains with a third of them reversed and 30 cents of scatter, wide, a high-pass, a slow scan through the sample |
 //! | Stutter | percussive 55 ms grains at 9 a second with no timing scatter and no spray: the same slice repeats; a square LFO jumps the position between two slices, and each note starts faster and settles |
 //! | Texture | a half-speed scan through the sample with a wide spray, half the grains reversed, 45 cents of scatter, an LFO on the grain size and a filter that opens and closes with each note |
+//! | Legato Lead | one voice in legato mode with a 90 ms glide between keys, short Tukey grains on the "eh", a low-pass that follows the key and vibrato from a per-voice LFO that restarts with each note |
+//! | Wobble Pad | a slow pad whose position drifts to and fro on a per-voice triangle LFO, so every note starts its sweep from the same place, with a slow swell and a wide stereo spread |
 
 use super::DESCRIPTOR;
 
 /// The names of the sounds, in selector order.
-pub const SOUND_NAMES: [&str; 5] = ["Init", "Frozen Pad", "Shimmer", "Stutter", "Texture"];
+pub const SOUND_NAMES: [&str; 7] = [
+    "Init",
+    "Frozen Pad",
+    "Shimmer",
+    "Stutter",
+    "Texture",
+    "Legato Lead",
+    "Wobble Pad",
+];
 
 /// A factory sound.
 #[derive(Debug, Clone, Copy)]
@@ -32,7 +42,7 @@ pub struct Sound {
 }
 
 /// The sounds, in selector order.
-pub const SOUNDS: [Sound; 5] = [
+pub const SOUNDS: [Sound; 7] = [
     Sound {
         name: "Init",
         changes: &[],
@@ -136,6 +146,51 @@ pub const SOUNDS: [Sound; 5] = [
             ("lfo.wave", 1.0),
             ("lfo.rate", 0.3),
             ("lfo.to_size", 0.5),
+        ],
+    },
+    Sound {
+        name: "Legato Lead",
+        changes: &[
+            ("master.level", -7.0),
+            ("voice.mode", 2.0),
+            ("voice.glide", 90.0),
+            ("grain.density", 70.0),
+            ("grain.size", 60.0),
+            ("grain.window", 1.0),
+            ("grain.timing", 0.2),
+            ("grain.spread", 0.4),
+            ("grain.limit", 40.0),
+            ("pos.position", 0.62),
+            ("pos.spray", 0.03),
+            ("env.amp.attack", 15.0),
+            ("env.amp.release", 250.0),
+            ("filter.enabled", 1.0),
+            ("filter.cutoff", 4_500.0),
+            ("filter.resonance", 0.25),
+            ("filter.key_track", 0.3),
+            ("lfo.rate", 5.5),
+            ("lfo.scope", 1.0),
+            ("lfo.to_pitch", 0.2),
+        ],
+    },
+    Sound {
+        name: "Wobble Pad",
+        changes: &[
+            ("master.level", -8.0),
+            ("grain.density", 30.0),
+            ("grain.size", 160.0),
+            ("grain.timing", 0.5),
+            ("grain.spread", 0.9),
+            ("grain.limit", 64.0),
+            ("pos.position", 0.25),
+            ("pos.spray", 0.04),
+            ("env.amp.attack", 500.0),
+            ("env.amp.release", 1_400.0),
+            ("lfo.wave", 1.0),
+            ("lfo.rate", 0.7),
+            ("lfo.scope", 1.0),
+            ("lfo.to_position", 0.25),
+            ("lfo.to_density", 0.4),
         ],
     },
 ];

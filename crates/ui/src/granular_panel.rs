@@ -20,9 +20,12 @@
 //! * the **grains** that sound: one tick each at its place in the window, bright when it has
 //!   just started and fading as it nears its end.
 //!
+//! A click or a drag on the waveform sets the position knob to the place under the pointer (one
+//! undo step per drag, Escape puts the start value back).
+//!
 //! Position and spray are the published values of the newest voice, so the markers follow the
 //! scan, the LFO, the mod envelope, the wheel and the CVs; with no voice sounding they show the
-//! knobs. The grains are the last thirteen started, from the device's published values (the
+//! knobs. The grains are the last twenty-nine started, from the device's published values (the
 //! source, the position, the spray, the grain and voice counts, then (position, life) pairs, as
 //! `atomik_devices::granular` documents). The source says which waveform is shown: the device
 //! plays its built-in pad while its sample is not loaded (or its file is missing), so the panel
@@ -47,9 +50,11 @@ const BAND_H: f64 = 92.0;
 /// Gap between the sample strip and the waveform.
 const GAP: f64 = 8.0;
 /// Values the device publishes (see `atomik_devices::granular::METER_COUNT`).
-pub const METER_COUNT: usize = 31;
+pub const METER_COUNT: usize = 5 + 2 * TRAIL_GRAINS;
 /// Grains in the published values.
-pub const TRAIL_GRAINS: usize = 13;
+pub const TRAIL_GRAINS: usize = 29;
+/// Margin between the waveform frame and the sample window it draws.
+const WAVE_INSET: f64 = 6.0;
 /// Columns of the built-in source's waveform.
 const BUILTIN_COLUMNS: usize = 512;
 /// Characters of the sample name the strip shows.
@@ -64,6 +69,31 @@ pub struct GranularPanel {
     pub wave: Rect,
 }
 
+/// The part of the waveform display that shows the sample window (inside the frame): the left edge
+/// is the start of the window and the right edge its end.
+pub fn wave_inner(wave: Rect) -> Rect {
+    Rect::new(
+        wave.x0 + WAVE_INSET,
+        wave.y0 + WAVE_INSET,
+        wave.x1 - WAVE_INSET,
+        wave.y1 - WAVE_INSET,
+    )
+}
+
+/// The part of the display a press sets the position from: the window and the margin around it,
+/// so the first and last pixels of the frame reach 0 and 100 %.
+pub fn wave_hit_area(wave: Rect) -> Rect {
+    wave
+}
+
+/// The position `0..=1` at x `x` of a display whose frame is `area`, rounded to a tenth of a
+/// percent. Points outside the window give 0 or 1.
+pub fn position_at(area: Rect, x: f64) -> f32 {
+    let inner = wave_inner(area);
+    let f = ((x - inner.x0) / inner.width().max(1.0)).clamp(0.0, 1.0);
+    ((f * 1000.0).round() / 1000.0) as f32
+}
+
 /// What the strip says about the loaded sample (view state, from the document).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleInfo {
@@ -71,7 +101,7 @@ pub struct SampleInfo {
     pub name: String,
     /// Length of the window the grains read, in seconds.
     pub seconds: f64,
-    /// Zones the device has (only the first matching one plays).
+    /// Zones the device has (the zone mode says whether the first matching one plays or all).
     pub zones: usize,
 }
 
@@ -94,7 +124,7 @@ const SECTION_ORDER: [&str; 9] = [
 /// The section of a param key.
 fn section_prefix(key: &str) -> &str {
     match key {
-        "sound" | "voices" | "master.level" => "main",
+        "sound" | "voices" | "master.level" | "voice.mode" | "voice.glide" | "zone.mode" => "main",
         "velocity.amp" => "amp.env",
         "bend.range" => "pitch",
         "master.level_cv_trim" => "cv",
@@ -137,6 +167,10 @@ pub fn granular_label(key: &str) -> Option<&'static str> {
         "lfo.to_cutoff" | "cv.cutoff_amount" => "Cutoff",
         "bend.range" => "Bend",
         "master.level_cv_trim" => "Level",
+        "voice.mode" => "Mode",
+        "voice.glide" => "Glide",
+        "zone.mode" => "Zones",
+        "lfo.scope" => "Scope",
         _ => return None,
     })
 }
@@ -216,6 +250,14 @@ pub fn granular_help(key: &str) -> Option<&'static str> {
             "Pitch bend range each way in semitones; a controller message can set it too"
         }
         "master.level_cv_trim" => "How far the level CV moves the output level",
+        "voice.mode" => {
+            "Poly plays every key; mono and legato play one note, legato keeps the grains running"
+        }
+        "voice.glide" => "Time the pitch takes to slide to a new key in mono and legato mode",
+        "zone.mode" => {
+            "First plays the first sample that fits the key; layered plays every one that fits"
+        }
+        "lfo.scope" => "Shared: one LFO for all notes. Voice: each note starts its own LFO afresh",
         _ => return None,
     })
 }
@@ -365,7 +407,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         1.0,
         theme.ink.with_alpha(0.07),
     );
-    let inner = Rect::new(r.x0 + 6.0, r.y0 + 6.0, r.x1 - 6.0, r.y1 - 6.0);
+    let inner = wave_inner(r);
     let (position, spray) = markers(device, desc, grain.meters);
     let x_of = |f: f32| inner.x0 + f64::from(f.clamp(0.0, 1.0)) * inner.width();
     // The spray band, then the waveform over it.

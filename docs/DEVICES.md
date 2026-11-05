@@ -798,15 +798,20 @@ are in [dsp/src/grain.rs](../crates/dsp/src/grain.rs) and the voice in
 from the browser, and the device holds **one** sample: a drop replaces the zone in one undo step
 (extra files are named in the status message and ignored). Project files keep the reference, relink
 works as for the sampler, and EDIT opens the sample editor on the zone. The first zone whose key and
-velocity range match a note plays; its start and end are the **window** the grains read (position 0
-to 100 % is that window), and its root key, transpose, tune, gain and pan apply; its loop and
-trigger fields are ignored. With a map that has no zone for a note, that note is silent. A sample
-swap allocates nothing and fades a voice that loses its zone in 5 ms, as the sampler does.
+velocity range match a note plays (`zone.mode` first, the default); its start and end are the
+**window** the grains read (position 0 to 100 % is that window), and its root key, transpose, tune,
+gain and pan apply; its loop and trigger fields are ignored. With a map that has no zone for a note,
+that note is silent. A sample swap allocates nothing and fades a voice that loses its zone in 5 ms,
+as the sampler does. A map with several zones comes from a project or patch file; a drop on the
+panel still builds one.
 
 | Param | Range | Default | Meaning |
 |---|---|---|---|
 | `sound` | choice | Init | Factory sound (see below). |
 | `voices` | 1 to 16 | 8 | Notes at once; the oldest is stolen (2 ms fade). |
+| `voice.mode` | poly, mono, legato | poly | Poly gives every key a voice; mono plays one note (the last key, back to a held key on release); legato also keeps the grains and envelopes running under a held key and changes the pitch only. |
+| `voice.glide` | 0 to 2000 ms | 0 | Time a pitch takes to cover most of the way to a new key in the mono modes. |
+| `zone.mode` | first, layered | first | First plays the first matching zone. Layered plays every matching zone (at most 8, one voice each) with round-robin slots and velocity crossfades as the sampler has them; the mono modes play the first of them. |
 | `master.level` | -60 to 6 dB | -6 | Output level. |
 | `grain.density` | 1 to 200 Hz | 24 | Grains started a second per voice. |
 | `grain.size` | 5 to 500 ms | 90 | Grain length. |
@@ -824,7 +829,7 @@ swap allocates nothing and fades a voice that loses its zone in 5 ms, as the sam
 | `env.amp.*`, `velocity.amp` | | A 30 ms, D 400 ms, S 1, R 400 ms, 50 % | Amp ADSR and velocity sensitivity. |
 | `filter.enabled`, `filter.mode`, `filter.cutoff`, `filter.resonance`, `filter.key_track`, `filter.env_amount` | | off, LP12, 8 kHz | A 12 dB state-variable filter per voice; the mod envelope opens it. |
 | `env.mod.*` | | A 5 ms, D 600 ms, S 0, R 300 ms | The mod envelope, with `to_position` (fraction), `to_size`, `to_density` (octaves), `to_pitch` (semitones). |
-| `lfo.wave`, `lfo.rate` | | sine, 0.5 Hz | The LFO, with `to_position`, `to_size`, `to_density`, `to_pitch`, `to_cutoff`. |
+| `lfo.wave`, `lfo.rate`, `lfo.scope` | | sine, 0.5 Hz, shared | The LFO, with `to_position`, `to_size`, `to_density`, `to_pitch`, `to_cutoff`. Shared is one free-running LFO for every voice; voice gives each note its own, restarted at the note and seeded by it (so a sample-and-hold LFO draws a different stream per note). |
 | `wheel.to_position`, `wheel.to_spray` | | 0, 50 % | Mod wheel (CC 1); by default it opens the spray. |
 | `bend.range` | 0 to 24 st | 2 | Pitch-bend range each way. The sustain pedal, volume, expression and pressure are described under "MIDI". |
 | `cv.pitch_amount`, `cv.position_amount`, `cv.density_amount`, `cv.cutoff_amount`, `master.level_cv_trim` | | 12 st, 50 %, 2 oct, 2 oct, 1 | Scale of the CV inputs. |
@@ -845,9 +850,10 @@ Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_c
 - **Randomness.** Each note seeds its own stream from the patch seed and the note's start number
   (reset by `reset`), so two renders of the same notes are identical, at any host block size.
 - **Panel.** The sample strip names the sample or the built-in source; the waveform of the window
-  shows the position, the spray band and the live grains from the device's published values (31
-  meter values: source, position, spray, grain and voice counts, the last 13 grains as position and
-  life).
+  shows the position, the spray band and the live grains from the device's published values (63
+  meter values: source, position, spray, grain and voice counts, the last 29 grains as position and
+  life). A click or a drag on the waveform sets `pos.position` to the place under the pointer (one
+  undo step per drag; Escape puts the start value back).
 
 ### Sounds
 
@@ -862,6 +868,8 @@ sounds are made for the built-in source.
 | Shimmer | An octave up, short Tukey grains, a third reversed, 30 cents of scatter, wide, high-passed, a slow scan. |
 | Stutter | Percussive 55 ms grains at 9 a second, no timing scatter or spray: the same slice repeats; a square LFO jumps between two slices and each note starts faster. |
 | Texture | A half-speed scan with wide spray, half the grains reversed, 45 cents of scatter, an LFO on the size and a filter that opens with each note. |
+| Legato Lead | One legato voice with a 90 ms glide, short Tukey grains on the "eh", a low-pass that follows the key and vibrato from a per-voice LFO. |
+| Wobble Pad | A slow swelling pad whose position sweeps on a per-voice triangle LFO, so every note starts the sweep from the same place; wide spread. |
 
 ---
 

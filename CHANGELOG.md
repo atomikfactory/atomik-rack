@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Grain sampler follow-ups.** A click or a drag on the waveform of the grain sampler sets the position to the place
+  under the pointer (one undo step per drag, Escape puts the start value back). The Mode choice adds mono and legato:
+  one voice plays the last key and returns to a key still held when another is let go, and legato keeps the grains
+  and the envelopes running under a held key and changes the pitch only (a key on another sample window starts a new
+  note). Glide (0 to 2 s) slides the pitch to the new key in both, also from the pitch of a note that has ended. The
+  LFO Scope choice gives each voice its own LFO, restarted at the note and seeded by it, instead of one LFO free
+  running for all. The Zones choice adds a layered mode: a note plays every sample whose key and velocity range fits
+  (up to eight, one voice each) with the round-robin slots and velocity crossfades the sampler has, where the first
+  mode keeps playing the first match. The panel draws the last 29 grains instead of 13, which raises the number of
+  display values a device may publish from 32 to 64, and the Legato Lead and Wobble Pad sounds are new. The new
+  params default to the old behaviour, so existing projects sound the same and the project format stays 43. Not done
+  yet: spectral or pitch-synchronous grains, a freeze of a live input, a way to build several zones on the panel (a
+  drop still replaces its one zone), and pick lists for the new choices.
 - **Organ instrument.** A polyphonic drawbar organ in the browser: a tone generator with one sine wheel for each
   semitone feeds nine drawbars (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3' and 1') in equal temperament, each
   with nine positions 3 dB apart (0 is off), so two keys that land on one pitch share a wheel and add in phase.
