@@ -9,6 +9,25 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Snapshot follow-ups: effect parameters, a morph, a note and a colour, 64 snapshots and keys.** A mixer snapshot
+  can hold every parameter of the effect devices on the insert chains and the FX returns, not only their bypass: the
+  chip menu has Include the effect parameters (it takes the effects as they are now) and Keep only the effect bypass,
+  Update keeps the choice, and A/B compare and recall follow it. Mixer > Morph to Next Snapshot and Morph to Previous
+  Snapshot move the mix from the current snapshot to its neighbour (or, from the chip menu, to any snapshot) over the
+  morph time of Mixer > Morph Time (1, 2, 4 or 8 seconds). Each frame sets the mix to the point the clock gives
+  through ordinary parameter edits, so the strips' own ramps smooth it: a level or a frequency moves along its own
+  scale, a switch or a choice flips at the half way point, a group's level moves in dB, and the whole morph is one
+  undo step. Any other edit takes the mix over where it is, and a morph does not start while a compare is on or
+  another morph plays. A snapshot has a note (Edit note in the chip menu; it shows in the status area while the
+  snapshot is current and in the chip's tooltip) and a chip colour (Next colour steps through the palette, No colour
+  clears it; the colour is a bar along the foot of the chip). A console now holds 64 snapshots (it held 16), and the
+  chips that do not fit the bar scroll: the mouse wheel over the bar or the arrows that show at either end move the
+  first chip, and the bar scrolls by itself to the chip of the snapshot that becomes current. Recall Next Snapshot,
+  Recall Previous Snapshot and Compare A/B have default keys: `Ctrl+Alt+PageDown`, `Ctrl+Alt+PageUp` and
+  `Ctrl+Alt+B` (`Cmd+Alt` on macOS) in the standard profile. The project format stays 43: a snapshot's
+  `"effects"`, `"note"` and `"color"` are written only when set and an older build ignores them. Not done yet:
+  snapshots that capture the output routing and the insert chains' members, recall as an automation lane or a marker
+  action, a morph that starts from the mix as it is, a morph time kept between sessions, and A/B of one strip.
 - **Channel strip follow-ups: compressor look-ahead, a polarity for each side, bypass-all over the dynamics and EQ,
   a parallel detector choice, a trim readout and a gain-reduction number.** The strip compressor gets a
   look-ahead of 0 to 10 ms (`comp.lookahead`, the LOOK knob in the console's DYNAMICS section): the strip delays the
