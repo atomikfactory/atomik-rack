@@ -44,6 +44,7 @@ use crate::keymap::CommandOutcome;
 use crate::marker_edit::{auto_name, palette_color};
 use crate::paint::{fit_label, tooltip};
 use crate::seq_paint as sp;
+use crate::text_field::{FieldColors, TextField};
 use crate::theme::mix;
 use atomik_model::{
     ClipId, Command, DeviceKey, MAX_CLIP_NAME_CHARS, MAX_GROUP_NAME, MAX_LANE_NAME_CHARS,
@@ -73,6 +74,9 @@ const MAX_INDENT_LEVELS: usize = 3;
 const MAX_TRACK_NAME_CHARS: usize = atomik_model::console::MAX_BUS_NAME_CHARS;
 /// Longest first line of a comment the tooltip shows, in characters.
 const TIP_CHARS: usize = 80;
+/// Lines the comment box shows before it scrolls, and the height of one.
+const COMMENT_ROWS: usize = 5;
+const COMMENT_LINE_H: f64 = 14.0;
 
 /// A control in the header of a folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,13 +164,18 @@ pub(super) enum EditTarget {
     Clip(ClipId),
 }
 
-/// A text being typed: one line, Enter commits, Escape cancels.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A text being typed: one line, Enter commits, Escape cancels. A comment is typed in a box of
+/// several lines instead (Shift+Enter breaks the line, Enter still commits).
+#[derive(Debug, Clone)]
 pub(super) struct TextEdit {
     target: EditTarget,
     text: String,
     /// The text the edit started with: committing it unchanged does nothing.
     original: String,
+    /// The editor of a comment (`text` follows it).
+    field: Option<TextField>,
+    /// A pointer drag is selecting in `field`.
+    dragging: bool,
 }
 
 /// What the view remembers about the organisation of the tracks.
@@ -573,22 +582,23 @@ impl ArrangementView {
                     x0,
                     r.y0 + 1.0,
                     x1,
-                    r.y0 + super::CLIP_HEADER + 9.0,
+                    r.y0 + super::clip_header(clip, r) + 9.0,
                 ))
             }
             EditTarget::Comment(d) => {
                 let track = self.song.tracks.iter().position(|t| &t.device == d)?;
                 let hr = self.row_rect(self.row_of(track, 0)?);
-                let cy = if hr.height() < super::COMPACT_BELOW {
-                    hr.y0 + hr.height() / 2.0
-                } else {
-                    hr.y0 + 17.0
-                };
+                // A box of several lines over the header, kept inside the view.
+                let h = COMMENT_ROWS as f64 * COMMENT_LINE_H + 8.0;
+                let top = hr
+                    .y0
+                    .min(self.bounds.y1 - h - 4.0)
+                    .max(self.bounds.y0 + 2.0);
                 Some(Rect::new(
-                    hr.x0 + 28.0,
-                    cy - 10.0,
+                    hr.x0 + 4.0,
+                    top,
                     hr.x0 + TRACK_LIST_WIDTH - 6.0,
-                    cy + 10.0,
+                    top + h,
                 ))
             }
         }
@@ -854,6 +864,36 @@ impl ArrangementView {
         self.og.edit.as_ref().map(|e| e.text.as_str())
     }
 
+    /// Input-method and drag events of a comment being typed. True when the event is used up.
+    pub(super) fn org_edit_event(&mut self, event: &crate::event::UiEvent) -> bool {
+        use crate::event::UiEvent;
+        let Some(e) = &mut self.og.edit else {
+            return false;
+        };
+        let Some(field) = &mut e.field else {
+            return false;
+        };
+        match event {
+            UiEvent::Ime(ime) => {
+                if field.handle_ime(ime) {
+                    e.text = field.text().to_owned();
+                }
+                self.repaint = true;
+                true
+            }
+            UiEvent::PointerMove { pos, .. } if e.dragging => {
+                field.drag(*pos);
+                self.repaint = true;
+                true
+            }
+            UiEvent::PointerUp { .. } if e.dragging => {
+                e.dragging = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Starts typing a folder's name. False when there is no such folder.
     pub fn begin_folder_rename(&mut self, group: u32) -> bool {
         let Some(name) = self.song.org.group(group).map(|g| g.name.clone()) else {
@@ -883,9 +923,13 @@ impl ArrangementView {
         if self.song.track(device).is_none() {
             return false;
         }
-        // One line is typed; a comment of several shows its line breaks as slashes.
-        let text = self.song.track_comment(device).replace('\n', " / ");
+        let text = self.song.track_comment(device).to_owned();
         self.start_edit(EditTarget::Comment(device.clone()), text);
+        if let Some(e) = &mut self.og.edit {
+            let mut field = TextField::new(&e.text, MAX_TRACK_COMMENT, true);
+            field.set_caret(usize::MAX);
+            e.field = Some(field);
+        }
         true
     }
 
@@ -908,6 +952,8 @@ impl ArrangementView {
             target,
             original: text.clone(),
             text,
+            field: None,
+            dragging: false,
         });
         self.drag = Drag::None;
         self.mk.rename = None;
@@ -970,7 +1016,11 @@ impl ArrangementView {
                 }));
             }
             EditTarget::Comment(device) => {
-                let comment: String = text.chars().take(MAX_TRACK_COMMENT).collect();
+                let comment: String = text
+                    .chars()
+                    .map(|c| if c == '\t' { ' ' } else { c })
+                    .take(MAX_TRACK_COMMENT)
+                    .collect();
                 let comment = comment.trim_end().to_owned();
                 if self.song.track_comment(&device) == comment {
                     return;
@@ -987,6 +1037,30 @@ impl ArrangementView {
         modifiers: Modifiers,
         out: &mut Vec<UiAction>,
     ) {
+        if self.og.edit.as_ref().is_some_and(|e| e.field.is_some()) {
+            match key {
+                Key::Escape => self.finish_edit(false, out),
+                Key::Enter if !modifiers.shift => self.finish_edit(true, out),
+                _ => {
+                    if let Some(e) = &mut self.og.edit
+                        && let Some(field) = &mut e.field
+                    {
+                        let used = match key {
+                            Key::Enter => field.insert(
+                                "
+",
+                            ),
+                            _ => field.handle_key(key, modifiers).handled(),
+                        };
+                        if used {
+                            e.text = field.text().to_owned();
+                        }
+                    }
+                }
+            }
+            self.repaint = true;
+            return;
+        }
         match key {
             Key::Enter => self.finish_edit(true, out),
             Key::Escape => self.finish_edit(false, out),
@@ -1020,11 +1094,23 @@ impl ArrangementView {
 
     /// A press while a text is typed: inside the field it keeps typing, anywhere else it
     /// commits. True when the press was inside the field (and is used up).
-    pub(super) fn org_edit_press(&mut self, pos: Point, out: &mut Vec<UiAction>) -> bool {
+    pub(super) fn org_edit_press(
+        &mut self,
+        pos: Point,
+        clicks: u8,
+        shift: bool,
+        out: &mut Vec<UiAction>,
+    ) -> bool {
         if self.og.edit.is_none() {
             return false;
         }
         if self.edit_rect().is_some_and(|r| r.contains(pos)) {
+            if let Some(e) = &mut self.og.edit
+                && let Some(field) = &mut e.field
+            {
+                field.press(pos, clicks, shift);
+                e.dragging = true;
+            }
             return true;
         }
         self.finish_edit(true, out);
@@ -1490,7 +1576,19 @@ impl ArrangementView {
         self.paint_lane_drop(c);
         self.paint_header_band(c);
         if let (Some(e), Some(r)) = (&self.og.edit, self.edit_rect()) {
-            super::markers::name_field(c, &self.st, r, &e.text);
+            if let Some(field) = &e.field {
+                let t = &self.st.base;
+                c.fill_with(RoundedRect::from_rect(r, 2.0), t.lcd);
+                c.stroke_with(RoundedRect::from_rect(r, 2.0), 1.2, t.focus);
+                let colors = FieldColors {
+                    text: t.text,
+                    caret: t.text,
+                    selection: mix(t.lcd, t.focus, 0.5),
+                };
+                field.paint(c, r, 10.0, COMMENT_LINE_H, colors, true);
+            } else {
+                super::markers::name_field(c, &self.st, r, &e.text);
+            }
         } else if let Some(text) = self.comment_tooltip()
             && let Some(Hit::Comment(track)) = self.hover
             && let Some(row) = self.row_of(track, 0)

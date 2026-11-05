@@ -119,6 +119,9 @@ pub const LANE_HEIGHT: f64 = 52.0;
 /// Height of an "add track" row.
 pub const ADD_ROW_HEIGHT: f64 = 28.0;
 const CLIP_HEADER: f64 = 12.0;
+/// A clip rectangle shorter than this (a track under 32 px) has no header: a note clip is drawn
+/// as stacked bars over its whole height, and the mute button is left out.
+const STACKED_BELOW: f64 = 26.0;
 /// Width of the CALC chip in a clip header.
 const CALC_CHIP_WIDTH: f64 = 26.0;
 /// Side of the mute button at the right end of a clip header.
@@ -2746,7 +2749,7 @@ impl ArrangementView {
                     let part = match seq_edit::hit_span(pos.x, r.x0, r.x1, EDGE_PX) {
                         Some(SpanPart::End) => ClipPart::Edge,
                         _ if pos.x < r.x0 + EDGE_PX.min(r.width() / 3.0) => ClipPart::EdgeStart,
-                        _ if pos.y < r.y0 + CLIP_HEADER => ClipPart::Header,
+                        _ if pos.y < r.y0 + clip_header(clip, r) => ClipPart::Header,
                         _ if automation => ClipPart::AutoBody,
                         _ => ClipPart::Body,
                     };
@@ -2776,6 +2779,9 @@ impl ArrangementView {
         self.sync_current(doc, registry);
         let mut out = Vec::new();
         if self.insp.visible && self.insp_event(event, &mut out) {
+            return out;
+        }
+        if self.org_edit_event(event) {
             return out;
         }
         match event {
@@ -2980,7 +2986,7 @@ impl ArrangementView {
         if self.rename_press(pos, out) {
             return;
         }
-        if self.org_edit_press(pos, out) {
+        if self.org_edit_press(pos, clicks, modifiers.shift, out) {
             return;
         }
         if let Some(m) = self.menu.take() {
@@ -6771,18 +6777,32 @@ impl ArrangementView {
         };
         c.fill_with(shape, fill);
         c.push_clip(&shape.into());
-        let head = Rect::new(vis.x0, vis.y0, vis.x1, vis.y0 + CLIP_HEADER);
-        c.fill_with(head, st.clip_head(accent, muted).with_alpha(0.9));
-        let body = Rect::new(vis.x0, vis.y0 + CLIP_HEADER, vis.x1, vis.y1);
+        let hh = clip_header(clip, r);
+        let stacked = hh == 0.0;
+        if !stacked {
+            let head = Rect::new(vis.x0, vis.y0, vis.x1, vis.y0 + hh);
+            c.fill_with(head, st.clip_head(accent, muted).with_alpha(0.9));
+        }
+        let body = Rect::new(vis.x0, vis.y0 + hh, vis.x1, vis.y1);
         let windows = seq_edit::content_windows(clip);
         let light = mix(st.clip_head(accent, muted), st.base.text, 0.35);
         match &clip.content {
             ClipContent::Notes(notes) if !notes.is_empty() => {
                 let lo = notes.iter().map(|n| n.key).min().unwrap_or(60);
                 let hi = notes.iter().map(|n| n.key).max().unwrap_or(60);
-                let span = f64::from(hi - lo).max(11.0) + 1.0;
+                // Stacked bars use the played pitch range only; a clip with a header shows at
+                // least an octave so a small clip does not stretch to fill the height.
+                let span = if stacked {
+                    f64::from(hi - lo) + 1.0
+                } else {
+                    f64::from(hi - lo).max(11.0) + 1.0
+                };
                 let lo = f64::from(lo) - ((span - 1.0) - f64::from(hi - lo)) / 2.0;
-                let (y0, y1) = (body.y0 + 3.0, body.y1 - 3.0);
+                let (y0, y1) = if stacked {
+                    (body.y0 + 2.0, body.y1 - 2.0)
+                } else {
+                    (body.y0 + 3.0, body.y1 - 3.0)
+                };
                 let kh = ((y1 - y0) / span).max(1.5);
                 for w in &windows {
                     let (wx0, wx1) = (
@@ -6805,7 +6825,11 @@ impl ArrangementView {
                             continue;
                         }
                         let y = y1 - (f64::from(n.key) - lo + 1.0) * (y1 - y0) / span;
-                        let h = kh.clamp(2.5, 4.0);
+                        let h = if stacked {
+                            kh.clamp(1.5, 5.0)
+                        } else {
+                            kh.clamp(2.5, 4.0)
+                        };
                         c.fill_with(Rect::new(x0, y - h / 2.0, x1 - 0.5, y + h / 2.0), light);
                     }
                 }
@@ -6931,7 +6955,19 @@ impl ArrangementView {
                 right = chip.x0;
             }
             let text = fit_label(label, right - x - 4.0, 8.0);
-            c.text(&TextRun::new(text, pt(x, vis.y0 + 9.0), 8.0, st.base.on_accent).weight(700));
+            if stacked {
+                // The name sits on the bars: small, with the plate colour behind it.
+                let at = pt(x, vis.y0 + 7.5);
+                c.text(
+                    &TextRun::new(text.clone(), pt(at.x + 0.6, at.y + 0.6), 7.0, st.base.plate)
+                        .weight(700),
+                );
+                c.text(&TextRun::new(text, at, 7.0, st.base.on_accent).weight(700));
+            } else {
+                c.text(
+                    &TextRun::new(text, pt(x, vis.y0 + 9.0), 8.0, st.base.on_accent).weight(700),
+                );
+            }
         }
         if let Some(b) = button {
             let hover = matches!(
@@ -7843,6 +7879,9 @@ fn workflow_cmd(c: WorkflowCommand) -> UiAction {
 /// The mute button of a clip header at the right end of the visible strip, `None` when the
 /// clip is narrower than three buttons (it would cover the label and the edge handle).
 fn mute_button_rect(r: Rect, tl: Rect, audio: bool) -> Option<Rect> {
+    if r.height() < STACKED_BELOW {
+        return None;
+    }
     // Audio clips keep the top-right corner for the fade-out handle.
     let right = r.x1.min(tl.x1) - if audio { AUDIO_HANDLE_INSET } else { 0.0 };
     if r.width() < 3.0 * MUTE_BUTTON || right - r.x0.max(tl.x0) < 3.0 * MUTE_BUTTON {
@@ -7854,6 +7893,16 @@ fn mute_button_rect(r: Rect, tl: Rect, audio: bool) -> Option<Rect> {
         right - 2.0,
         r.y0 + 1.0 + MUTE_BUTTON,
     ))
+}
+
+/// The height of the header of a clip drawn in `r`: none for a note clip of a track under 32 px,
+/// which is drawn as stacked bars.
+pub(crate) fn clip_header(clip: &Clip, r: Rect) -> f64 {
+    if matches!(clip.content, ClipContent::Notes(_)) && r.height() < STACKED_BELOW {
+        0.0
+    } else {
+        CLIP_HEADER
+    }
 }
 
 fn mute_cmd(ids: Vec<ClipId>, muted: bool) -> UiAction {

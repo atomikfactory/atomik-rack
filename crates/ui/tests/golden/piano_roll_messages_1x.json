@@ -320,6 +320,7 @@
 {"fill":{"rrect":[464.00,458.00,516.00,474.00,3.00]},"brush":"#0f1214ff"},
 {"stroke":{"rrect":[464.50,458.50,515.50,473.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"text":"CLEAR","at":[490.00,469.50],"size":9.00,"weight":400,"align":"center","color":"#ece8e1ff"},
+{"stroke":{"path":"M41.00 465.00 L45.00 470.00 L49.00 465.00 "},"width":1.40,"cap":"round","join":"round","brush":"#8f96a0ff"},
 {"fill":{"rect":[0.00,476.00,56.00,560.00]},"brush":"#1c1e23ff"},
 {"text":"PRG","at":[8.00,498.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"SYSEX","at":[8.00,536.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},

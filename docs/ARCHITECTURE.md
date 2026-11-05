@@ -1320,7 +1320,9 @@ notes, and reach the track's device as the note events it already understands
   kind and the points relative to the first), Paste lays them into the lane shown from the playhead (values
   keep their place in the range of the target, points at or after the clip's content end are dropped, a
   point on an existing one replaces it) in one undo step and selects them. `editor.toggle_controllers`
-  (Shift+L) shows and hides the area. The MSG chip at the end of the chip row switches the area to the
+  (Shift+L) shows and hides the area; the chevron at the left end of the chip row folds the lane away
+  (`LaneEditor::folded`, view-only) so only the chip row stays, as an automation lane folds in the
+  arrangement, and picking a lane chip unfolds it. The MSG chip at the end of the chip row switches the area to the
   clip's program changes and SysEx messages ([midi_lane.rs](../crates/ui/src/midi_lane.rs)): program
   changes on an upper row (`P5`, or `B3.0 P5` with a bank select) and SysEx messages on a lower one
   (`SYX 4`, the data length). A press on empty space of the upper row adds a program change (the program
@@ -1837,9 +1839,15 @@ bounce, except the mute and solo of a folder, which decide which tracks play.
   move. A header outlines the selected tracks (shift-click or ctrl-click adds one; a selected folder
   stands for its tracks), draws the folder guides of its ancestors at its left edge, takes its
   accent from the track colour (clips follow; clips have no colour of their own) and shows a note
-  mark when it has a comment, with the first line as a tooltip. A comment and a folder name are
-  typed in place (one line, Enter commits, Escape or a press elsewhere cancels or commits as for the
-  marker names): `is_text_owner` covers them, so the shell resolves `Text` over `Sequencer`. The
+  mark when it has a comment, with the first line as a tooltip. A folder name is typed in place (one
+  line, Enter commits, Escape or a press elsewhere cancels or commits as for the marker names). A
+  comment is typed in a box of five lines over the header, a shared multi-line `TextField` (Shift+Enter
+  breaks the line, Enter or a press outside commits, Escape cancels; the caret,
+  selection, clipboard and input method work as in the song information panel). `is_text_owner`
+  covers both, so the shell resolves `Text` over `Sequencer`. In a track under 32 px (a clip
+  rectangle under 26 px) a note clip has no header band: its notes are stacked bars over the whole
+  height of the clip (the played pitch range, not at least an octave), its name is small text on
+  them, and the mute button is left out (`clip_header` in `arrangement.rs`). The
   take rows still open at once on a click (the view keeps its own set), and the click also sends
   `SetTakesOpen`; the view takes the song's set again when the document changes under it (undo,
   redo, load).

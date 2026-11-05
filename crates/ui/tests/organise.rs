@@ -138,6 +138,11 @@ fn grouped() -> (Document, Registry, ArrangementView) {
     (d, reg, v)
 }
 
+const SHIFT: Modifiers = Modifiers {
+    shift: true,
+    ..Modifiers::NONE
+};
+
 fn type_text(d: &Document, reg: &Registry, v: &mut ArrangementView, text: &str) -> Vec<UiAction> {
     let mut out = Vec::new();
     for ch in text.chars() {
@@ -721,9 +726,84 @@ fn a_comment_of_several_lines_is_left_alone_when_the_edit_changes_nothing() {
     .unwrap();
     v.sync(d.doc(), &reg);
     v.begin_comment_edit(&key("keys"));
-    assert_eq!(v.org_edit_text(), Some("one / two"));
+    assert_eq!(
+        v.org_edit_text(),
+        Some(
+            "one
+two"
+        )
+    );
     let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
-    assert!(actions.is_empty(), "Enter without a change keeps the lines");
+    assert!(
+        actions.is_empty(),
+        "committing without a change keeps the lines"
+    );
+}
+
+#[test]
+fn shift_enter_breaks_the_line_of_a_comment_and_enter_commits_all_the_lines() {
+    let (mut d, reg, mut v) = setup();
+    v.begin_comment_edit(&key("keys"));
+    type_text(&d, &reg, &mut v, "one");
+    let actions = v.handle(&press(Key::Enter, SHIFT), d.doc(), &reg);
+    assert!(actions.is_empty(), "Shift+Enter only breaks the line");
+    type_text(&d, &reg, &mut v, "two");
+    v.handle(&press(Key::Enter, SHIFT), d.doc(), &reg);
+    type_text(&d, &reg, &mut v, "three");
+    assert_eq!(
+        v.org_edit_text(),
+        Some(
+            "one
+two
+three"
+        )
+    );
+    // Up moves by a line: a character typed after two Ups goes on the first line.
+    v.handle(&press(Key::Up, Modifiers::NONE), d.doc(), &reg);
+    v.handle(&press(Key::Up, Modifiers::NONE), d.doc(), &reg);
+    type_text(&d, &reg, &mut v, "!");
+    assert_eq!(
+        v.org_edit_text(),
+        Some(
+            "one!
+two
+three"
+        )
+    );
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert_eq!(
+        song_cmds(&actions),
+        [SongCommand::SetTrackComment {
+            device: key("keys"),
+            comment: "one!
+two
+three"
+                .into()
+        }]
+    );
+    apply(&mut d, &reg, &mut v, &actions);
+    assert_eq!(
+        d.doc().song.track_comment(&key("keys")),
+        "one!
+two
+three"
+    );
+    assert!(v.org_edit_text().is_none(), "the edit is over");
+}
+
+#[test]
+fn escape_drops_a_comment_in_the_box_and_a_press_outside_keeps_it() {
+    let (d, reg, mut v) = setup();
+    v.begin_comment_edit(&key("keys"));
+    type_text(&d, &reg, &mut v, "gone");
+    let actions = v.handle(&press(Key::Escape, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty());
+    assert!(v.org_edit_text().is_none());
+    v.begin_comment_edit(&key("keys"));
+    type_text(&d, &reg, &mut v, "kept");
+    let far = Point::new(700.0, 20.0);
+    let actions = v.handle(&down(far, Modifiers::NONE, 1), d.doc(), &reg);
+    assert_eq!(song_cmds(&actions).len(), 1, "a press outside commits");
 }
 
 // ------------------------------------------------------------------ colours
