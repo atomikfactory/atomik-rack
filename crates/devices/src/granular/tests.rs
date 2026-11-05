@@ -272,7 +272,7 @@ fn descriptor_validates_and_lists_the_documented_params_and_sockets() {
     assert_eq!(DESCRIPTOR.type_id, "atomik.granular");
     assert_eq!(DESCRIPTOR.name, "Grain Sampler");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
-    assert_eq!(PARAMS.len(), 51);
+    assert_eq!(PARAMS.len(), 55);
     for (i, p) in DESCRIPTOR.params.iter().enumerate() {
         assert_eq!(p.id.0 as usize, i, "{}", p.key);
         assert!(
@@ -2192,7 +2192,7 @@ fn set_param_reset_and_every_batch_allocate_nothing() {
     assert_no_alloc(|| h.device_mut().reset());
     h.render(2, &OUT);
     // Meter values too.
-    let mut buf = [0.0f32; 32];
+    let mut buf = [0.0f32; 64];
     assert_no_alloc(|| h.device().meter_values(&mut buf));
 }
 
@@ -2471,4 +2471,404 @@ fn master_tune_shifts_the_grains_by_the_cents_ratio() {
         let want = 480.0 * 2f64.powf(f64::from(cents) / 1200.0);
         assert!((got / want - 1.0).abs() < 5e-4, "{cents} cents: {got}");
     }
+}
+
+// ------------------------------------------------------------- mono, legato and glide
+
+/// A patch of fast grains (a grain every few ms) so the latest pitch is always fresh.
+fn dense(h: &mut DeviceHarness) {
+    plain(h);
+    h.set_param("grain.density", 200.0);
+    h.set_param("grain.size", 20.0);
+    h.set_param("grain.timing", 0.0);
+    h.set_param("env.amp.attack", 0.5);
+}
+
+fn key_on(h: &mut DeviceHarness, key: u8) {
+    push(h, 0, NoteKind::On { key, velocity: 1.0 });
+}
+
+#[test]
+fn the_new_params_default_to_the_old_behaviour() {
+    for (key, default) in [
+        ("voice.mode", 0.0),
+        ("voice.glide", 0.0),
+        ("lfo.scope", 0.0),
+        ("zone.mode", 0.0),
+    ] {
+        let p = DESCRIPTOR.param_by_key(key).unwrap();
+        assert!((p.default - default).abs() < f32::EPSILON, "{key}");
+    }
+    assert_eq!(METER_COUNT, 5 + 2 * TRAIL_GRAINS);
+    const { assert!(METER_COUNT <= atomik_device_sdk::MAX_METER_VALUES) };
+}
+
+#[test]
+fn the_mono_modes_play_one_voice_and_poly_plays_every_key() {
+    for (mode, want) in [(0.0f32, 3), (1.0, 1), (2.0, 1)] {
+        let (mut h, _) = granular();
+        dense(&mut h);
+        h.set_param("voice.mode", mode);
+        for key in [60, 64, 67] {
+            key_on(&mut h, key);
+            render(&mut h, seconds(0.05));
+        }
+        render(&mut h, 2);
+        assert_eq!(voices_of(&h), want, "mode {mode}");
+    }
+}
+
+#[test]
+fn mono_glides_from_the_last_pitch_to_the_new_key() {
+    let (mut h, p) = granular();
+    dense(&mut h);
+    h.set_param("voice.mode", 1.0);
+    h.set_param("voice.glide", 300.0);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.3));
+    assert!(p.semis_last().abs() < 0.01, "{}", p.semis_last());
+    push(&mut h, 0, NoteKind::Off { key: 60 });
+    render(&mut h, seconds(0.3));
+    // A new note starts where the last one was and glides up a fifth.
+    key_on(&mut h, 67);
+    render(&mut h, seconds(0.02));
+    let early = p.semis_last();
+    assert!(early < 2.0, "starts near the old pitch: {early}");
+    render(&mut h, seconds(1.5));
+    assert!((p.semis_last() - 7.0).abs() < 0.05, "{}", p.semis_last());
+    // Without glide it jumps at once.
+    let (mut h, p) = granular();
+    dense(&mut h);
+    h.set_param("voice.mode", 1.0);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.1));
+    key_on(&mut h, 67);
+    render(&mut h, seconds(0.1));
+    assert!((p.semis_last() - 7.0).abs() < 0.01);
+}
+
+#[test]
+fn legato_keeps_the_envelope_running_where_mono_restarts_it() {
+    let level_after_second_key = |mode: f32| {
+        let (mut h, _) = granular();
+        dense(&mut h);
+        h.set_param("voice.mode", mode);
+        h.set_param("env.amp.attack", 400.0);
+        key_on(&mut h, 60);
+        render(&mut h, seconds(1.0));
+        key_on(&mut h, 64);
+        // 10 ms after the second key, past the 2 ms steal fade of mono.
+        let (l, _) = render(&mut h, seconds(0.04));
+        rms(&l[480..1_920])
+    };
+    let (mono, legato) = (level_after_second_key(1.0), level_after_second_key(2.0));
+    assert!(legato > 4.0 * mono, "mono {mono}, legato {legato}");
+}
+
+#[test]
+fn releasing_the_top_key_returns_to_the_key_still_held() {
+    for mode in [1.0f32, 2.0] {
+        let (mut h, p) = granular();
+        dense(&mut h);
+        h.set_param("voice.mode", mode);
+        key_on(&mut h, 60);
+        render(&mut h, seconds(0.1));
+        key_on(&mut h, 67);
+        render(&mut h, seconds(0.1));
+        assert!((p.semis_last() - 7.0).abs() < 0.01, "mode {mode}");
+        push(&mut h, 0, NoteKind::Off { key: 67 });
+        render(&mut h, seconds(0.1));
+        assert!(p.semis_last().abs() < 0.01, "mode {mode}: back to 60");
+        assert_eq!(voices_of(&h), 1);
+        // Releasing the last key lets the voice go.
+        push(&mut h, 0, NoteKind::Off { key: 60 });
+        render(&mut h, seconds(1.0));
+        assert_eq!(voices_of(&h), 0, "mode {mode}");
+    }
+}
+
+#[test]
+fn a_legato_key_on_another_sample_starts_a_new_note() {
+    // Two zones on different buffers: legato across them cannot keep the grains.
+    let mut z0 = zone(0, 48_000);
+    z0.key_hi = 63;
+    let mut z1 = zone(1, 48_000);
+    z1.key_lo = 64;
+    let m = map(two_buffers(), vec![z0, z1]);
+    let (mut h, _) = with_map(&m);
+    dense(&mut h);
+    h.set_param("voice.mode", 2.0);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.2));
+    key_on(&mut h, 66);
+    let (l, _) = render(&mut h, seconds(0.5));
+    assert!(l.iter().all(|v| v.is_finite()));
+    assert_eq!(voices_of(&h), 1);
+    assert!(meter(&h)[0] > 1.5, "the second zone plays");
+}
+
+#[test]
+fn switching_to_mono_releases_the_extra_voices() {
+    let (mut h, _) = granular();
+    dense(&mut h);
+    h.set_param("env.amp.release", 50.0);
+    for key in [60, 64, 67] {
+        key_on(&mut h, key);
+    }
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 3);
+    h.set_param("voice.mode", 1.0);
+    render(&mut h, seconds(1.0));
+    assert_eq!(voices_of(&h), 1);
+}
+
+// ------------------------------------------------------------------------ per-voice LFO
+
+#[test]
+fn a_voice_lfo_restarts_with_each_note_where_the_shared_one_runs_on() {
+    // A square LFO (high for the first half cycle) at 1 Hz moves the pitch 12 semitones.
+    let pitch_at_second_note = |scope: f32| {
+        let (mut h, p) = granular();
+        dense(&mut h);
+        h.set_param("lfo.wave", 3.0);
+        h.set_param("lfo.rate", 1.0);
+        h.set_param("lfo.to_pitch", 12.0);
+        h.set_param("lfo.scope", scope);
+        h.set_param("env.amp.release", 20.0);
+        key_on(&mut h, 60);
+        render(&mut h, seconds(0.75));
+        // The first note ends; the second starts in the shared LFO low half.
+        push(&mut h, 0, NoteKind::Off { key: 60 });
+        render(&mut h, seconds(0.1));
+        key_on(&mut h, 60);
+        render(&mut h, seconds(0.1));
+        p.semis_last()
+    };
+    let shared = pitch_at_second_note(0.0);
+    let voice = pitch_at_second_note(1.0);
+    assert!((shared + 12.0).abs() < 0.01, "shared LFO is low: {shared}");
+    assert!(
+        (voice - 12.0).abs() < 0.01,
+        "voice LFO restarted high: {voice}"
+    );
+}
+
+#[test]
+fn voice_lfos_of_two_notes_run_apart() {
+    let (mut h, p) = granular();
+    dense(&mut h);
+    h.set_param("lfo.wave", 3.0);
+    h.set_param("lfo.rate", 1.0);
+    h.set_param("lfo.to_pitch", 12.0);
+    h.set_param("lfo.scope", 1.0);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.6));
+    key_on(&mut h, 72);
+    render(&mut h, seconds(0.05));
+    // The first note LFO has gone low, the new one is high: the pitches span the range.
+    let (lo, hi) = p.semis();
+    assert!(lo < -11.0 && hi > 23.0, "{lo}..{hi}");
+}
+
+// ------------------------------------------------------------------------ zone selection
+
+/// A zone on buffer `i` with the given key and velocity ranges.
+fn ranged(i: u32, keys: (u8, u8), vels: (u8, u8), ext: atomik_device_sdk::ZoneExt) -> Zone {
+    let mut z = zone(i, 48_000);
+    (z.key_lo, z.key_hi) = keys;
+    (z.vel_lo, z.vel_hi) = vels;
+    z.ext = ext;
+    z
+}
+
+fn two_buffers() -> Vec<Arc<SampleBuffer>> {
+    vec![
+        buffer(vec![sine(48_000, 300.0, 0.5)]),
+        buffer(vec![sine(48_000, 450.0, 0.5)]),
+    ]
+}
+
+#[test]
+fn the_first_mode_plays_the_first_matching_zone_only() {
+    let all = (0, 127);
+    let vel = (1, 127);
+    let none = atomik_device_sdk::ZoneExt::NONE;
+    let m = map(
+        two_buffers(),
+        vec![ranged(0, all, vel, none), ranged(1, all, vel, none)],
+    );
+    let (mut h, _) = with_map(&m);
+    dense(&mut h);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 1);
+    assert!(meter(&h)[0].to_bits() == 1.0f32.to_bits(), "zone 0");
+}
+
+#[test]
+fn the_layered_mode_plays_every_matching_zone() {
+    let all = (0, 127);
+    let vel = (1, 127);
+    let none = atomik_device_sdk::ZoneExt::NONE;
+    let m = map(
+        two_buffers(),
+        vec![
+            ranged(0, all, vel, none),
+            ranged(1, (60, 72), vel, none),
+            ranged(1, (0, 40), vel, none),
+        ],
+    );
+    let (mut h, _) = with_map(&m);
+    dense(&mut h);
+    h.set_param("zone.mode", 1.0);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 2, "zones 0 and 1 match key 60");
+    key_on(&mut h, 30);
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 4, "zones 0 and 2 match key 30");
+    key_on(&mut h, 100);
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 5, "only zone 0 covers key 100");
+}
+
+#[test]
+fn the_layered_mode_follows_round_robin_and_the_velocity_fade() {
+    let all = (0, 127);
+    let vel = (1, 127);
+    let rr = |pos| atomik_device_sdk::ZoneExt {
+        rr_len: 2,
+        rr_pos: pos,
+        ..atomik_device_sdk::ZoneExt::NONE
+    };
+    let m = map(
+        two_buffers(),
+        vec![ranged(0, all, vel, rr(0)), ranged(1, all, vel, rr(1))],
+    );
+    let (mut h, _) = with_map(&m);
+    dense(&mut h);
+    h.set_param("zone.mode", 1.0);
+    h.set_param("env.amp.release", 0.5);
+    for want in [1.0f32, 2.0, 1.0, 2.0] {
+        key_on(&mut h, 60);
+        render(&mut h, seconds(0.05));
+        assert!(meter(&h)[0].to_bits() == want.to_bits(), "zone {want}");
+        push(&mut h, 0, NoteKind::Off { key: 60 });
+        render(&mut h, seconds(0.05));
+    }
+    // Two zones crossfaded over velocity: both sound in the overlap.
+    let ext = atomik_device_sdk::ZoneExt {
+        vel_xfade: 20,
+        ..atomik_device_sdk::ZoneExt::NONE
+    };
+    let m = map(
+        two_buffers(),
+        vec![ranged(0, all, (1, 80), ext), ranged(1, all, (60, 127), ext)],
+    );
+    let (mut h, _) = with_map(&m);
+    dense(&mut h);
+    h.set_param("zone.mode", 1.0);
+    h.set_param("env.amp.release", 20.0);
+    let velocity = 70.0 / 127.0;
+    push(&mut h, 0, NoteKind::On { key: 60, velocity });
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 2, "both zones at velocity 70");
+    push(&mut h, 0, NoteKind::Off { key: 60 });
+    render(&mut h, seconds(1.0));
+    let velocity = 20.0 / 127.0;
+    push(&mut h, 0, NoteKind::On { key: 60, velocity });
+    render(&mut h, seconds(0.1));
+    assert_eq!(voices_of(&h), 1, "only the first zone at velocity 20");
+}
+
+#[test]
+fn layers_stay_bounded_and_deterministic() {
+    let all = (0, 127);
+    let vel = (1, 127);
+    let none = atomik_device_sdk::ZoneExt::NONE;
+    let zones: Vec<Zone> = (0..12).map(|_| ranged(0, all, vel, none)).collect();
+    let m = map(vec![buffer(vec![sine(48_000, 300.0, 0.5)])], zones);
+    let run = || {
+        let (mut h, _) = with_map(&m);
+        dense(&mut h);
+        h.set_param("zone.mode", 1.0);
+        h.set_param("voices", 16.0);
+        key_on(&mut h, 60);
+        let (l, _) = render(&mut h, seconds(0.3));
+        assert_eq!(voices_of(&h), MAX_LAYERS);
+        l
+    };
+    let (a, b) = (run(), run());
+    assert!(a.iter().all(|v| v.is_finite() && v.abs() <= 4.0));
+    assert_eq!(a, b);
+}
+
+// ---------------------------------------------------------------------------- the trail
+
+#[test]
+fn the_trail_lists_more_than_thirteen_grains_when_they_sound() {
+    let (mut h, _) = granular();
+    plain(&mut h);
+    h.set_param("grain.density", 200.0);
+    h.set_param("grain.size", 500.0);
+    key_on(&mut h, 60);
+    render(&mut h, seconds(1.0));
+    let live = (0..TRAIL_GRAINS)
+        .filter(|i| meter(&h)[5 + 2 * i] >= 0.0)
+        .count();
+    assert_eq!(live, TRAIL_GRAINS);
+    assert!(live > 13);
+}
+
+// ------------------------------------------------------------ real-time safety of the new code
+
+#[test]
+fn mono_layers_and_the_voice_lfo_never_allocate() {
+    let all = (0, 127);
+    let vel = (1, 127);
+    let none = atomik_device_sdk::ZoneExt::NONE;
+    let m = map(
+        two_buffers(),
+        vec![ranged(0, all, vel, none), ranged(1, all, vel, none)],
+    );
+    let (mut h, _) = with_map(&m);
+    dense(&mut h);
+    h.set_param("lfo.scope", 1.0);
+    h.set_param("zone.mode", 1.0);
+    for mode in [1.0f32, 2.0, 0.0] {
+        assert_no_alloc(|| {
+            h.set_param("voice.mode", mode);
+            h.set_param("voice.glide", 100.0);
+        });
+        for key in [60u8, 64, 67, 72] {
+            push(&mut h, 0, NoteKind::On { key, velocity: 0.8 });
+            push(&mut h, 40, NoteKind::Off { key });
+            assert_no_alloc(|| h.process());
+            h.render(3, &OUT);
+        }
+    }
+}
+
+#[test]
+fn the_new_sounds_use_the_new_modes() {
+    let find = |name: &str| sounds::SOUND_NAMES.iter().position(|n| *n == name).unwrap();
+    // The lead is one legato voice.
+    let (mut h, _) = granular();
+    for (k, v) in sounds::values(find("Legato Lead")) {
+        h.set_param(k, v);
+    }
+    key_on(&mut h, 60);
+    render(&mut h, seconds(0.2));
+    key_on(&mut h, 67);
+    render(&mut h, seconds(0.3));
+    assert_eq!(voices_of(&h), 1);
+    // The wobble pad has a voice LFO: notes at different times start the sweep alike.
+    let (mut h, p) = granular();
+    for (k, v) in sounds::values(find("Wobble Pad")) {
+        h.set_param(k, v);
+    }
+    key_on(&mut h, 60);
+    render(&mut h, seconds(1.0));
+    let (lo, hi) = p.pos();
+    assert!(hi - lo > 0.1, "the position sweeps: {lo}..{hi}");
 }

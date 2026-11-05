@@ -94,7 +94,7 @@ const SECTION_ORDER: [&str; 9] = [
 /// The section of a param key.
 fn section_prefix(key: &str) -> &str {
     match key {
-        "sound" | "voices" | "master.level" => "main",
+        "sound" | "voices" | "master.level" | "voice.mode" | "voice.glide" | "zone.mode" => "main",
         "velocity.amp" => "amp.env",
         "bend.range" => "pitch",
         "master.level_cv_trim" => "cv",
@@ -137,6 +137,10 @@ pub fn granular_label(key: &str) -> Option<&'static str> {
         "lfo.to_cutoff" | "cv.cutoff_amount" => "Cutoff",
         "bend.range" => "Bend",
         "master.level_cv_trim" => "Level",
+        "voice.mode" => "Mode",
+        "voice.glide" => "Glide",
+        "zone.mode" => "Zones",
+        "lfo.scope" => "Scope",
         _ => return None,
     })
 }
@@ -216,6 +220,14 @@ pub fn granular_help(key: &str) -> Option<&'static str> {
             "Pitch bend range each way in semitones; a controller message can set it too"
         }
         "master.level_cv_trim" => "How far the level CV moves the output level",
+        "voice.mode" => {
+            "Poly plays every key; mono and legato play one note, legato keeps the grains running"
+        }
+        "voice.glide" => "Time the pitch takes to slide to a new key in mono and legato mode",
+        "zone.mode" => {
+            "First plays the first sample that fits the key; layered plays every one that fits"
+        }
+        "lfo.scope" => "Shared: one LFO for all notes. Voice: each note starts its own LFO afresh",
         _ => return None,
     })
 }

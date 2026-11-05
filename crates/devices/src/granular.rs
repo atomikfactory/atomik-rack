@@ -13,7 +13,8 @@
 //! * **Sample.** The device plays the sample map the app installs with `swap_samples`, exactly as
 //!   the sampler does (the pool, the browser, a drop on the panel, the sample editor, relink): the
 //!   first zone that matches the note (key and velocity range, in list order) gives the audio
-//!   and the **window** `start..end` the grains read from; the zone's root key, transpose, tune,
+//!   and the **window** `start..end` the grains read from (`zone.mode` layered: see **Zones**);
+//!   the zone's root key, transpose, tune,
 //!   gain and pan apply, its loop and trigger fields are ignored (the grains loop the window by
 //!   themselves, and a note-off always releases). A mono sample is panned per grain with the
 //!   constant-power law, a stereo one balanced. **Without a map** the device plays its built-in
@@ -50,7 +51,22 @@
 //!   sounding the one closest to the end of its window is replaced, a deterministic cut at the
 //!   quietest moment. Notes: up to `voices` (default 8, at most 16); a note that finds no free
 //!   voice steals the oldest, which fades out over 2 ms.
-//! * **Modulation.** One LFO (`lfo.*`) and one mod envelope (`env.mod.*`) per voice move the
+//! * **Zones.** `zone.mode` first (the default) plays the first matching zone. Layered plays
+//!   every zone whose key and velocity ranges match, whose round-robin slot is the one its
+//!   group's note counter selects and whose velocity crossfade gain is above zero, one voice
+//!   each (at most [`MAX_LAYERS`]) with the zone's crossfade gain; every group with a round-robin
+//!   zone in range counts one note whichever zone sounded, as the sampler does. The built-in
+//!   source is one zone.
+//! * **Play mode.** `voice.mode` poly (the default), mono (one voice, the last key wins, a key
+//!   released under a held one returns to it) or legato (as mono, but a key played while another
+//!   is held keeps the voice, its envelopes and its grains and changes the pitch only; a key on
+//!   another sample window starts a new note). Mono notes fade the voice out over 2 ms and start
+//!   afresh. `voice.glide` is the time in ms a pitch takes to cover most of the way to the new key
+//!   in the mono modes, also from the last note's pitch to a note started after it was released.
+//!   Layered zones play only their first zone in the mono modes.
+//! * **Modulation.** One LFO (`lfo.*`), free-running and shared by the voices (`lfo.scope`
+//!   shared, the default) or one per voice restarted with each note and seeded by it (voice),
+//!   and one mod envelope (`env.mod.*`) per voice move the
 //!   position (a fraction of the window), the size and the density (octaves) and the pitch
 //!   (semitones); the LFO and the filter envelope move the cutoff (octaves). The mod wheel (CC 1)
 //!   adds `wheel.to_position` to the position and `wheel.to_spray` to the spray (default: it
@@ -71,9 +87,9 @@
 //!   construction. Deterministic: each note seeds its own random stream from the patch seed and
 //!   the note's start number (which `reset` restarts), so two renders of the same notes are the
 //!   same samples. Output is bounded by 4.
-//! * **Display.** The device publishes 31 values (`meter_values`) for the panel: the source
+//! * **Display.** The device publishes 63 values (`meter_values`) for the panel: the source
 //!   (0 built-in, else the zone number plus 1), the newest voice's position and spray (`-1` when
-//!   no voice sounds), the number of sounding grains and voices, then the last 13 started grains
+//!   no voice sounds), the number of sounding grains and voices, then the last 29 started grains
 //!   as (position in the window, how far through its life) pairs (`-1, -1` for none).
 
 pub mod sounds;
@@ -83,9 +99,9 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
 use atomik_device_sdk::{
-    Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, LoopMode, PrepareInfo,
-    ProcessContext, SampleBuffer, SampleMap, SampleMapRef, SocketDescriptor, SocketId, SocketKind,
-    TriggerMode, Zone, velocity_to_7bit,
+    Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, LoopMode, MAX_ZONE_GROUPS,
+    PrepareInfo, ProcessContext, SampleBuffer, SampleMap, SampleMapRef, SocketDescriptor, SocketId,
+    SocketKind, TriggerMode, Zone, velocity_to_7bit,
 };
 use atomik_dsp::grain::{
     self, GrainClock, GrainParams, GrainPool, GrainSource, MAX_GRAINS, MAX_STEP, Window,
@@ -104,9 +120,11 @@ use crate::poly_synth::{derive_seed, soft_limit};
 /// Number of preallocated voices (the highest value of `voices`).
 pub const MAX_VOICES: usize = 16;
 /// Number of values the device publishes for its panel (`meter_values`).
-pub const METER_COUNT: usize = 31;
+pub const METER_COUNT: usize = 5 + 2 * TRAIL_GRAINS;
 /// How many started grains the display values list.
-pub const TRAIL_GRAINS: usize = 13;
+pub const TRAIL_GRAINS: usize = 29;
+/// The most zones one note sounds at once in the layered zone mode.
+pub const MAX_LAYERS: usize = 8;
 /// The value published for "none".
 pub const NONE: f32 = -1.0;
 
@@ -137,6 +155,9 @@ use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 const SOUNDS: Unit = Unit::Choice(&sounds::SOUND_NAMES);
 const WINDOWS: Unit = Unit::Choice(&["Hann", "Tukey", "Percussive"]);
 const FILTER_MODES: Unit = Unit::Choice(&["LP12", "BP12", "HP12"]);
+const PLAY_MODES: Unit = Unit::Choice(&["poly", "mono", "legato"]);
+const LFO_SCOPES: Unit = Unit::Choice(&["shared", "voice"]);
+const ZONE_MODES: Unit = Unit::Choice(&["first", "layered"]);
 const LFO_WAVES: Unit = Unit::Choice(&["sine", "triangle", "saw", "square", "sample&hold"]);
 const ENV_MS: (f32, f32) = (0.5, 10_000.0);
 
@@ -191,7 +212,11 @@ const P_CV_DENSITY: u32 = 47;
 const P_CV_CUTOFF: u32 = 48;
 const P_CV_LEVEL: u32 = 49;
 const P_BEND_RANGE: u32 = 50;
-const PARAM_COUNT: usize = 51;
+const P_PLAY_MODE: u32 = 51;
+const P_GLIDE: u32 = 52;
+const P_LFO_SCOPE: u32 = 53;
+const P_ZONE_MODE: u32 = 54;
+const PARAM_COUNT: usize = 55;
 
 static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
     param(
@@ -653,6 +678,42 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Semitones,
         false,
     ),
+    param(
+        P_PLAY_MODE,
+        "voice.mode",
+        "Play mode",
+        (0.0, 2.0, 0.0),
+        Lin,
+        PLAY_MODES,
+        true,
+    ),
+    param(
+        P_GLIDE,
+        "voice.glide",
+        "Glide",
+        (0.0, 2_000.0, 0.0),
+        Lin,
+        Unit::Ms,
+        false,
+    ),
+    param(
+        P_LFO_SCOPE,
+        "lfo.scope",
+        "LFO scope",
+        (0.0, 1.0, 0.0),
+        Lin,
+        LFO_SCOPES,
+        true,
+    ),
+    param(
+        P_ZONE_MODE,
+        "zone.mode",
+        "Zone mode",
+        (0.0, 1.0, 0.0),
+        Lin,
+        ZONE_MODES,
+        true,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -826,6 +887,23 @@ struct Shared {
     bend: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
+    mode: PlayMode,
+    /// Share of the way to the new pitch covered per control step (1 is no glide).
+    glide_coef: f32,
+    /// Every voice runs its own LFO, restarted at each note.
+    lfo_voice: bool,
+    lfo_shape: LfoShape,
+    lfo_rate: f32,
+    /// A note sounds every matching zone (round-robin and velocity fade honoured).
+    layered: bool,
+}
+
+/// How notes take voices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayMode {
+    Poly,
+    Mono,
+    Legato,
 }
 
 impl Shared {
@@ -872,6 +950,12 @@ impl Shared {
             cv_level_db: CV_LEVEL_RANGE_DB,
             bend: 0.0,
             wheel: 0.0,
+            mode: PlayMode::Poly,
+            glide_coef: 1.0,
+            lfo_voice: false,
+            lfo_shape: LfoShape::Sine,
+            lfo_rate: 0.5,
+            layered: false,
         }
     }
 }
@@ -905,6 +989,8 @@ struct Selection {
     src: SrcRef,
     zone_idx: u32,
     zone: Zone,
+    /// The velocity crossfade gain of the zone (1 unless layered).
+    fade: f32,
 }
 
 /// The zone of the built-in source: the whole buffer on every key, rooted at middle C.
@@ -949,6 +1035,7 @@ impl<'a> Banks<'a> {
                 src: SrcRef::Builtin,
                 zone_idx: 0,
                 zone: builtin_zone(self.builtin.frames),
+                fade: 1.0,
             }),
             Some(map) => map
                 .zones()
@@ -959,8 +1046,22 @@ impl<'a> Banks<'a> {
                     src: SrcRef::Map(z.buffer),
                     zone_idx: i as u32,
                     zone: *z,
+                    fade: 1.0,
                 }),
         }
+    }
+
+    /// Zone `index` of the current map for a layered note, with its velocity fade; `None` when
+    /// the map changed under a waiting note or the fade is silent.
+    fn select_index(&self, index: u32, vel7: u8) -> Option<Selection> {
+        let z = self.current?.zones().get(index as usize)?;
+        let fade = z.velocity_gain(vel7);
+        (fade > 0.0).then_some(Selection {
+            src: SrcRef::Map(z.buffer),
+            zone_idx: index,
+            zone: *z,
+            fade,
+        })
     }
 
     /// The planar audio of `src` in `slot`.
@@ -981,6 +1082,15 @@ impl<'a> Banks<'a> {
 /// A note waiting for its voice's steal fade to end.
 #[derive(Debug, Clone, Copy)]
 struct Pending {
+    key: u8,
+    velocity: f32,
+    /// The zone a layered note chose (`None`: the first match).
+    zone: Option<u32>,
+}
+
+/// A held key, for the mono modes.
+#[derive(Debug, Clone, Copy)]
+struct Held {
     key: u8,
     velocity: f32,
 }
@@ -1078,6 +1188,13 @@ struct Voice {
     velocity: f32,
     vel_gain: f32,
     zone_gain: f32,
+    /// Set by a note, cleared by its release (the mono modes ask).
+    gated: bool,
+    /// The pitch in semitones (a MIDI key) now: it glides to `key` in the mono modes.
+    pitch_key: f32,
+    /// This voice's own LFO and its value for the current sample (`lfo.scope` voice).
+    lfo: Lfo,
+    lfo_value: f32,
     pending: Option<Pending>,
     pool: GrainPool,
     clock: GrainClock,
@@ -1109,11 +1226,16 @@ impl Voice {
                 src: SrcRef::Builtin,
                 zone_idx: 0,
                 zone: builtin_zone(0),
+                fade: 1.0,
             },
             stereo: false,
             velocity: 1.0,
             vel_gain: 1.0,
             zone_gain: 1.0,
+            gated: false,
+            pitch_key: 60.0,
+            lfo: Lfo::new(0),
+            lfo_value: 0.0,
             pending: None,
             pool: GrainPool::new(),
             clock: GrainClock::new(),
@@ -1150,6 +1272,7 @@ impl Voice {
         self.amp.reset();
         self.menv.reset();
         self.pending = None;
+        self.gated = false;
         self.fade_left = 0;
         self.pool.clear();
     }
@@ -1157,11 +1280,20 @@ impl Voice {
     /// Takes the zone of `sel`: its gain and the window.
     fn take(&mut self, sel: Selection) {
         self.sel = sel;
-        self.zone_gain = db_to_gain(sel.zone.gain_db);
+        self.zone_gain = db_to_gain(sel.zone.gain_db) * sel.fade;
     }
 
-    /// Starts a note from silence (fresh grains, filters and envelopes).
-    fn start(&mut self, sel: Selection, key: u8, velocity: f32, p: &Shared, seed: u64) {
+    /// Starts a note from silence (fresh grains, filters and envelopes). `from` is the pitch
+    /// (a MIDI key) a mono note glides from; without it the pitch is the key's.
+    fn start(
+        &mut self,
+        sel: Selection,
+        key: u8,
+        velocity: f32,
+        p: &Shared,
+        seed: u64,
+        from: Option<f32>,
+    ) {
         self.take(sel);
         let velocity = if velocity.is_nan() {
             0.0
@@ -1169,6 +1301,8 @@ impl Voice {
             velocity.clamp(0.0, 1.0)
         };
         self.key = key;
+        self.pitch_key = from.unwrap_or_else(|| f32::from(key));
+        self.gated = true;
         self.slot = Slot::Current;
         self.pending = None;
         self.velocity = velocity;
@@ -1177,6 +1311,10 @@ impl Voice {
         self.pool.set_limit(p.limit);
         self.clock.reset();
         self.rng = Rng::new(hash64(seed, self.order, 0x6772_6169));
+        self.lfo = Lfo::new(hash64(seed, self.order, 0x6c66_6f76));
+        self.lfo.set_shape(p.lfo_shape);
+        self.lfo.set_rate(p.lfo_rate, p.sample_rate);
+        self.lfo_value = 0.0;
         self.scan_phase = 0.0;
         for flt in &mut self.filters {
             flt.reset();
@@ -1205,6 +1343,7 @@ impl Voice {
 
     fn release(&mut self) {
         self.pending = None;
+        self.gated = false;
         self.amp.gate_off();
         self.menv.gate_off();
     }
@@ -1232,8 +1371,17 @@ impl Voice {
 
     /// Control-rate update: the grain rate, size, pitch and level, the filter, the panel view.
     fn control(&mut self, m: &Mods<'_>, n: usize, p: &Shared, f: &mut Frame<'_>) {
-        let lfo = m.lfo[n];
+        let lfo = if p.lfo_voice {
+            self.lfo_value
+        } else {
+            m.lfo[n]
+        };
         let menv = self.menv.level();
+        let target = f32::from(self.key);
+        self.pitch_key += (target - self.pitch_key) * p.glide_coef;
+        if (target - self.pitch_key).abs() < 1e-3 {
+            self.pitch_key = target;
+        }
         let z = &self.sel.zone;
         let position = (p.position
             + lfo * p.lfo_position
@@ -1249,7 +1397,7 @@ impl Voice {
                 lfo * p.lfo_density + menv * p.env_density + clean(m.density[n]) * p.cv_density,
             ))
         .clamp(MIN_DENSITY, MAX_DENSITY);
-        let semis = p.key_track * (f32::from(self.key) - f32::from(z.root_key))
+        let semis = p.key_track * (self.pitch_key - f32::from(z.root_key))
             + f32::from(z.transpose)
             + z.tune_cents * 0.01
             + p.transpose
@@ -1387,6 +1535,9 @@ impl Voice {
         self.stereo = data.len() >= 2;
         let mut src = source_of(data, &self.sel.zone);
         for n in 0..out_l.len() {
+            if p.lfo_voice {
+                self.lfo_value = self.lfo.next_sample();
+            }
             if self.countdown == 0 {
                 self.control(m, n, p, f);
                 self.countdown = CONTROL_INTERVAL;
@@ -1430,13 +1581,17 @@ impl Voice {
             }
             if !self.amp.is_active() {
                 let started = self.pending.take().and_then(|pe| {
-                    banks
-                        .select(pe.key, velocity_to_7bit(pe.velocity))
-                        .map(|sel| (sel, pe))
+                    let vel7 = velocity_to_7bit(pe.velocity);
+                    match pe.zone {
+                        None => banks.select(pe.key, vel7),
+                        Some(i) => banks.select_index(i, vel7),
+                    }
+                    .map(|sel| (sel, pe))
                 });
                 match started {
                     Some((sel, pe)) => {
-                        self.start(sel, pe.key, pe.velocity, p, f.seed);
+                        let from = (p.mode != PlayMode::Poly).then_some(self.pitch_key);
+                        self.start(sel, pe.key, pe.velocity, p, f.seed, from);
                         match banks.data(sel.src, Slot::Current) {
                             Some(d) => {
                                 data = d;
@@ -1505,6 +1660,13 @@ pub struct Granular {
     voices: Vec<Voice>,
     voice_limit: usize,
     next_order: u64,
+    /// The keys held in the mono modes, oldest first (at most one per key).
+    held: [Held; MAX_VOICES],
+    held_len: usize,
+    /// The pitch the mono voice last sounded at, to glide from.
+    last_pitch: Option<f32>,
+    /// Round-robin note counts per group and key (layered zone mode).
+    round_robin: Vec<u32>,
     lfo: Lfo,
     master: Smoother,
     /// Sustain, volume, expression, pressure and the bend range.
@@ -1541,6 +1703,13 @@ impl Granular {
             voices: vec![Voice::new(); MAX_VOICES],
             voice_limit: 8,
             next_order: 0,
+            held: [Held {
+                key: 0,
+                velocity: 0.0,
+            }; MAX_VOICES],
+            held_len: 0,
+            last_pitch: None,
+            round_robin: vec![0; MAX_ZONE_GROUPS * 128],
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             ctl: ControllerState::new(),
@@ -1629,8 +1798,43 @@ impl Granular {
             P_MOD_SIZE => s.env_size = v,
             P_MOD_DENSITY => s.env_density = v,
             P_MOD_PITCH => s.env_pitch = v,
-            P_LFO_WAVE => self.lfo.set_shape(LfoShape::from_index(choice(v))),
-            P_LFO_RATE => self.lfo.set_rate(v, sr),
+            P_LFO_WAVE => {
+                let shape = LfoShape::from_index(choice(v));
+                s.lfo_shape = shape;
+                self.lfo.set_shape(shape);
+                voices.iter_mut().for_each(|vc| vc.lfo.set_shape(shape));
+            }
+            P_LFO_RATE => {
+                s.lfo_rate = v;
+                self.lfo.set_rate(v, sr);
+                voices.iter_mut().for_each(|vc| vc.lfo.set_rate(v, sr));
+            }
+            P_LFO_SCOPE => s.lfo_voice = v >= 0.5,
+            P_ZONE_MODE => s.layered = v >= 0.5,
+            P_PLAY_MODE => {
+                let mode = match choice(v) {
+                    0 => PlayMode::Poly,
+                    1 => PlayMode::Mono,
+                    _ => PlayMode::Legato,
+                };
+                if mode != s.mode {
+                    s.mode = mode;
+                    self.held_len = 0;
+                    if mode != PlayMode::Poly {
+                        for vc in &mut voices[1..] {
+                            vc.release();
+                        }
+                    }
+                }
+            }
+            P_GLIDE => {
+                s.glide_coef = if v <= 0.0 {
+                    1.0
+                } else {
+                    let tau = (v * 0.001 * sr).max(1.0);
+                    1.0 - (-(CONTROL_INTERVAL as f32) / tau).exp()
+                };
+            }
             P_LFO_POSITION => s.lfo_position = v,
             P_LFO_SIZE => s.lfo_size = v,
             P_LFO_DENSITY => s.lfo_density = v,
@@ -1651,28 +1855,187 @@ impl Granular {
         }
     }
 
-    /// Starts a voice for the first zone that matches the note (or the built-in source).
-    fn note_on(&mut self, key: u8, velocity: f32) {
-        self.ctl.note_on(key);
+    /// The zones a note plays: the first that matches (or the built-in source), or in the
+    /// layered mode every one whose key and velocity ranges match, whose round-robin slot is the
+    /// one its group note counter selects and whose velocity fade is above zero (at most
+    /// [`MAX_LAYERS`]). Every group that has a round-robin zone in range then counts one note,
+    /// whichever zone sounded, so the cycle is a pure function of the notes played since the
+    /// last reset.
+    fn pick(&mut self, key: u8, velocity: f32) -> ([Option<Selection>; MAX_LAYERS], bool) {
+        let vel7 = velocity_to_7bit(velocity);
         let banks = Banks {
             current: self.current.as_deref(),
             draining: None,
             builtin: &self.builtin,
         };
-        let Some(sel) = banks.select(key, velocity_to_7bit(velocity)) else {
+        let mut picks = [None; MAX_LAYERS];
+        let layered = self.shared.layered && self.current.is_some();
+        if !layered {
+            picks[0] = banks.select(key, vel7);
+            return (picks, false);
+        }
+        let zones = self.current.as_deref().map_or(&[][..], |m| m.zones());
+        let mut n = 0;
+        let mut counted = 0u32;
+        for (zi, zone) in zones.iter().enumerate() {
+            if !zone.contains(key, vel7) {
+                continue;
+            }
+            if zone.ext.round_robin() {
+                let g = usize::from(zone.ext.group).min(MAX_ZONE_GROUPS - 1);
+                counted |= 1 << g;
+                if !zone.rr_turn(self.round_robin[g * 128 + usize::from(key & 127)]) {
+                    continue;
+                }
+            }
+            if n < MAX_LAYERS
+                && let Some(sel) = banks.select_index(zi as u32, vel7)
+            {
+                picks[n] = Some(sel);
+                n += 1;
+            }
+        }
+        for g in 0..MAX_ZONE_GROUPS {
+            if counted >> g & 1 == 1 {
+                let c = &mut self.round_robin[g * 128 + usize::from(key & 127)];
+                *c = c.wrapping_add(1);
+            }
+        }
+        (picks, true)
+    }
+
+    /// Starts a voice for each zone the note plays.
+    fn note_on(&mut self, key: u8, velocity: f32) {
+        self.ctl.note_on(key);
+        if self.shared.mode != PlayMode::Poly {
+            return self.mono_note_on(key, velocity);
+        }
+        let (picks, layered) = self.pick(key, velocity);
+        let p = self.shared;
+        for sel in picks.into_iter().flatten() {
+            let order = self.next_order;
+            self.next_order += 1;
+            let voices = &mut self.voices[..self.voice_limit];
+            // A free voice, else steal the oldest started voice (2 ms fade, then the note).
+            if let Some(v) = voices.iter_mut().find(|v| !v.is_active()) {
+                v.order = order;
+                v.start(sel, key, velocity, &p, self.seed, None);
+            } else if let Some(v) = voices.iter_mut().min_by_key(|v| v.order) {
+                v.order = order;
+                v.steal(Pending {
+                    key,
+                    velocity,
+                    zone: layered.then_some(sel.zone_idx),
+                });
+            }
+        }
+    }
+
+    /// A key in the mono modes: the one voice plays it (the last key wins), gliding from the
+    /// pitch it last sounded at. Legato under a held key (and the same sample window) changes
+    /// the pitch only; otherwise the voice fades out over 2 ms and the note starts.
+    fn mono_note_on(&mut self, key: u8, velocity: f32) {
+        self.hold(key, velocity);
+        let (picks, layered) = self.pick(key, velocity);
+        let Some(sel) = picks[0] else {
             return;
         };
         let p = self.shared;
+        let from = self.last_pitch;
         let order = self.next_order;
         self.next_order += 1;
-        let voices = &mut self.voices[..self.voice_limit];
-        // A free voice, else steal the oldest started voice (2 ms fade, then the note).
-        if let Some(v) = voices.iter_mut().find(|v| !v.is_active()) {
+        let v = &mut self.voices[0];
+        let continues = p.mode == PlayMode::Legato
+            && v.is_active()
+            && v.gated
+            && v.pending.is_none()
+            && v.slot == Slot::Current
+            && v.sel.src == sel.src
+            && v.window() == (sel.zone.start, sel.zone.end);
+        if continues {
+            v.key = key;
+            v.velocity = velocity.clamp(0.0, 1.0);
+            v.vel_gain = 1.0 - p.velocity_amount * (1.0 - v.velocity);
+            v.take(sel);
+        } else if v.is_active() {
             v.order = order;
-            v.start(sel, key, velocity, &p, self.seed);
-        } else if let Some(v) = voices.iter_mut().min_by_key(|v| v.order) {
+            v.steal(Pending {
+                key,
+                velocity,
+                zone: layered.then_some(sel.zone_idx),
+            });
+        } else {
             v.order = order;
-            v.steal(Pending { key, velocity });
+            v.start(sel, key, velocity, &p, self.seed, from);
+        }
+        self.last_pitch = Some(f32::from(key));
+    }
+
+    /// Puts `key` on top of the held keys of the mono modes.
+    fn hold(&mut self, key: u8, velocity: f32) {
+        self.unhold(key);
+        if self.held_len < MAX_VOICES {
+            self.held[self.held_len] = Held { key, velocity };
+            self.held_len += 1;
+        } else {
+            self.held.copy_within(1.., 0);
+            self.held[MAX_VOICES - 1] = Held { key, velocity };
+        }
+    }
+
+    /// Takes `key` off the held keys.
+    fn unhold(&mut self, key: u8) {
+        if let Some(i) = self.held[..self.held_len].iter().position(|h| h.key == key) {
+            self.held.copy_within(i + 1..self.held_len, i);
+            self.held_len -= 1;
+        }
+    }
+
+    /// A key released in the mono modes: back to the key still held, or release.
+    fn mono_note_off(&mut self, key: u8) {
+        self.unhold(key);
+        let back = self.held[..self.held_len].last().copied();
+        let legato = self.shared.mode == PlayMode::Legato;
+        let order = self.next_order;
+        let v = &mut self.voices[0];
+        if let Some(pe) = v.pending {
+            if pe.key == key {
+                v.pending = back.map(|b| Pending {
+                    key: b.key,
+                    velocity: b.velocity,
+                    zone: None,
+                });
+            }
+            return;
+        }
+        if !v.is_active() || !v.gated || v.key != key {
+            return;
+        }
+        match back {
+            None => v.release(),
+            Some(b) if legato => v.key = b.key,
+            Some(b) => {
+                self.next_order += 1;
+                v.order = order;
+                v.steal(Pending {
+                    key: b.key,
+                    velocity: b.velocity,
+                    zone: None,
+                });
+            }
+        }
+        if let Some(b) = back {
+            self.last_pitch = Some(f32::from(b.key));
+        }
+    }
+
+    /// The key is let go (or its held-back release comes due): its voices release, or in the
+    /// mono modes the voice returns to the key still held.
+    fn release_key(&mut self, key: u8) {
+        if self.shared.mode == PlayMode::Poly {
+            self.note_off(key);
+        } else {
+            self.mono_note_off(key);
         }
     }
 
@@ -1691,11 +2054,12 @@ impl Granular {
             NoteKind::On { key, velocity } => self.note_on(key, velocity),
             NoteKind::Off { key } => {
                 if self.ctl.note_off(key) {
-                    self.note_off(key);
+                    self.release_key(key);
                 }
             }
             NoteKind::AllOff => {
                 self.ctl.all_off();
+                self.held_len = 0;
                 self.voices.iter_mut().for_each(Voice::release);
             }
             NoteKind::Cc {
@@ -1712,7 +2076,7 @@ impl Granular {
                         n += 1;
                     });
                     for &key in &keys[..n] {
-                        self.note_off(key);
+                        self.release_key(key);
                     }
                 }
                 self.shared.bend = self.ctl.bend_semitones();
@@ -1754,6 +2118,9 @@ impl Device for Granular {
             v.filter_ready = false;
         }
         self.next_order = 0;
+        self.held_len = 0;
+        self.last_pitch = None;
+        self.round_robin.fill(0);
         self.lfo.reset();
         let m = self.master.target();
         self.master.set_immediate(m);
@@ -1803,6 +2170,7 @@ impl Device for Granular {
                         src: SrcRef::Map(nz.buffer),
                         zone_idx: v.sel.zone_idx,
                         zone: *nz,
+                        fade: v.sel.fade,
                     })
                 });
                 match target {
