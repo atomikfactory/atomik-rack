@@ -9,6 +9,35 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **MIDI learn follow-ups: NRPN and RPN sources, MMC as a transport, port and channel cells and the preset of one
+  device.** The controllers that make up a registered or non-registered parameter number (99 and 98 or 101 and 100
+  to select it, 6 and 38 for the data entry, 96 and 97 for increment and decrement) are followed per input port and
+  channel, so two controllers or two channels never mix their selections. A completed run is a source of its own: MIDI
+  Learn learns an NRPN or RPN as that number (a knob that sends one is no longer learned as CC 99, 98 or 6), the
+  mapping panel and the project file show it as `NRPN 300` or `RPN 2` (project format unchanged, 43: the `"kind"` of
+  a source may now be `"nrpn"` or `"rpn"` with a `"number"` up to 16383, and an older build refuses a project that
+  uses one). The data entry is a 14 bit position (a sender that never sends the low half still reaches both ends of
+  the range), data increment and decrement move the target by detents of the mapping's step in the absolute and the
+  relative modes, a relative encoder may read the data entry like a 7 bit controller, buttons are down from the
+  middle of the range and a transport target presses on the data entry or an increment. A mapping on a plain
+  controller that is part of a run (CC 6, say) still hears it, and a mapping that consumes keeps the whole run away
+  from the notes of the armed instrument. A port set to the mapping role in Settings > MIDI now also reads MIDI
+  Machine Control: play, stop, pause, record strobe and exit, and locate (a time in hours, minutes, seconds, frames
+  and subframes at the four SMPTE rates, turned into a song position through the tempo map) run as the transport
+  buttons do, and rewind and fast forward step a bar. While MIDI Learn waits for a control, or while the transport
+  follows an external clock, they are held back with the usual message. The rows of the MIDI Mappings panel have
+  a PORT cell and a CH cell: a click steps the source on to the next input port (Any port, then the ports set up in
+  Settings, then the ports the mappings already name) or channel (Any, 1 to 16), a right click back and the wheel
+  both ways, each one undo step; the source of a control surface keeps its surface, and the panel is wider. The
+  DEVICE button of the panel saves the mappings of the selected device (the focused device of a surface, else the
+  selected one) as the preset of its type: its params are addressed as `device_type` targets, so the preset applies
+  to the selected device of that type in any project, or to the first one when the selected device is of another
+  type, wherever it sits in the rack, which is how a plugin keeps its mappings (a plugin's type names the plugin);
+  IMPORT applies it. The MCP tools send NRPN runs and machine control SysEx through `session_midi_input` (the
+  answer has `playing` and `position`) and `session_midi_learn` has `export_device`. Not done yet: HUI and other
+  surface protocols, OSC, level meters, flip and the function keys on the eight-fader driver, an extender unit,
+  sends and plugin parameters on the V-pots, learning the parameters of a plugin whose editor window is open, a
+  merge group for the tempo and for several controls moved at once, an MMC device number and a per-port switch.
 - **Snapshot follow-ups: effect parameters, a morph, a note and a colour, 64 snapshots and keys.** A mixer snapshot
   can hold every parameter of the effect devices on the insert chains and the FX returns, not only their bypass: the
   chip menu has Include the effect parameters (it takes the effects as they are now) and Keep only the effect bypass,

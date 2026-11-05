@@ -3128,11 +3128,29 @@ project with mappings of every kind bounces bit for bit like the same project wi
    hub.consumes(port, msg)?  (consume list, learn flag)      learn?  ─► Learner ─► MidiMapCommand::Learn
         yes: no note                                         else    ─► MidiMapping::feed ─► SetParam / SetVcaLevel /
         no : NoteForwarder ─► live note queue ─► audio                   SetTempo / a transport key  (apply_command)
+   SysEx (mapping-role port) ─► parse_mmc ─► hub MMC queue ──► machine_control ─► transport_action
 ```
 
+- **Parameter numbers and machine control.** [crates/model/src/midi_param.rs](../crates/model/src/midi_param.rs)
+  holds `ParamParser` (the state of one port and channel: the selected NRPN or RPN, the data halves,
+  a 7 bit sender spread over 14 bits until a low half is seen, the null RPN) and `ParamBank` (one
+  parser per port and channel, bounded). The app feeds every message to the bank before the
+  mappings: a completed run is a `ParamEvent` (`Value` of 14 bits or `Step`) that the mappings with
+  an `Nrpn(n)` or `Rpn(n)` source hear through `MidiSource::matches_param` and
+  `MidiMapping::feed_param`; the controllers of the run stay plain controllers for the other
+  mappings, and the `Learner` keeps its own bank, learns the number when a run completes and never
+  learns the selecting controllers. The hub's consume rule treats the controllers of a run as part
+  of a consuming parameter mapping. [crates/midi-io/src/mmc.rs](../crates/midi-io/src/mmc.rs) reads
+  MIDI Machine Control (`parse_mmc`: stop, play and deferred play, fast forward, rewind, record
+  strobe and exit, pause, locate with SMPTE time); a port in the mapping role keeps SysEx
+  (`MidiConnection::open` ignores only time and active sensing there), `PortInput::on_message` queues
+  the command in the hub, and `AppCore::machine_control` runs it as a `TransportAction` (a locate
+  converts seconds through the song's tempo table; learning swallows it).
+
 - **Sources and targets.** A `MidiSource` is a kind of message (`Cc(n)` 7 bit, `Cc14(msb)` a
-  controller pair where the LSB is the MSB plus 32, `PitchBend`, `Note(key)`), a channel or any, a
-  port by name or any. A `MidiTarget` is `Param { device, param }` (a path key inside a container is
+  controller pair where the LSB is the MSB plus 32, `PitchBend`, `Note(key)`, `Nrpn(n)` and `Rpn(n)`
+  parameter numbers of 14 bits), a channel or any, a port by name or any (the panel's port and
+  channel cells edit these two). A `MidiTarget` is `Param { device, param }` (a path key inside a container is
   allowed), `Vca { id }` (the group's level), `Tempo`,
   `Transport(Play | Stop | TogglePlay | Record | Loop | ReturnToZero)` or `SelectedStrip { param }`
   (the selected console strip, resolved at each message through the console's selection). Parameters
@@ -3174,7 +3192,8 @@ project with mappings of every kind bounces bit for bit like the same project wi
   learned source takes its channel and **any port** (a port can be set in a file), and the options
   of `MapOptions::for_source` (a note is a toggle button, anything else absolute with takeover).
   `MidiMapCommand::Learn` on a target that already has a mapping moves it to the new control and
-  keeps its options. While learning every message is consumed.
+  keeps its options. While learning every message is consumed. A completed NRPN or RPN run decides at
+  once and is learned as `Nrpn(n)` or `Rpn(n)`.
 - **What is consumed.** The hub holds the sources of the mappings with `consume` and the learn flag,
   replaced by the UI thread whenever the mappings change and read by the MIDI thread per message. A
   consumed message is parsed and timestamped but not routed, so it plays no note into the armed
@@ -3190,8 +3209,13 @@ project with mappings of every kind bounces bit for bit like the same project wi
   selected strip. It drops the input port. Applying a preset resolves each mapping against the
   project's own devices, skips (and names) those whose instance, param or group is missing, and adds
   the rest in one undo step. A device inside a container has no role and is left out of an export
-  with a note. Presets are files (`atomik-midi-preset`, JSON; the shell opens the dialogs in a
-  `midi-presets` folder next to `settings.json`).
+  with a note. The preset of one device (`RackDoc::midi_preset_for_device`, the panel's DEVICE
+  button) addresses its params as `PresetTarget::OfType` (a device type and the param key, no
+  position, so a device inside a container can have one): `resolve_preset_on` points them at the
+  selected device when it has that type, else at the first device of the type, which is how a
+  plugin (whose type id names the plugin) keeps its mappings. Presets are files
+  (`atomik-midi-preset`, JSON; the shell opens the dialogs in a `midi-presets` folder next to
+  `settings.json`).
 - **Commands, undo and the file.** `Command::MidiMap(MidiMapCommand)`: `Add`, `Learn`, `Set`,
   `Remove`, `Forget` (every mapping of a target), `AddMany` and `Clear`, each one undo step on one
   `Edit::MidiMaps` (the whole list swaps), reporting `SyncOp::MidiMapsChanged` (the app rebuilds the
@@ -5749,10 +5773,12 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
 - **Recordings and streaming.** A recorded lap is read back into RAM before the app decides whether
   to stream it, and the reported device latency can miss buffering that a driver does not report;
   the user offset in the settings corrects that.
-- **MIDI mappings and control surfaces.** NRPN and RPN sources are not decoded (a 14 bit controller
-  pair is), a mapping has one source and one target (a source may have several mappings, a target
-  may have several), a preset addresses a device by its position among the devices of its type (so
-  reordering the rack changes what it addresses) and not at all inside a container, a mapped tempo
+- **MIDI mappings and control surfaces.** A mapping has one source and one target (a source may have
+  several mappings, a target may have several), a preset addresses a device by its position among
+  the devices of its type (so reordering the rack changes what it addresses) and not at all inside
+  a container (the preset of one device addresses by type alone), a project that uses an NRPN or RPN
+  source is refused by an older build of format 43, machine control has no device number and no
+  per-port switch (a mapping-role port always obeys it), a mapped tempo
   change is one undo step per message (the tempo has no merge group), two controls moved at once
   alternate into separate undo steps, a relative encoder cannot be a pitch bend or a note, a VCA
   level is mapped linearly in dB, the selected-strip role resolves at each message (so the soft
