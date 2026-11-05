@@ -388,6 +388,10 @@ enum MenuItem {
     SnapEffects(u32, bool),
     /// Set the chip colour of this snapshot.
     SnapColor(u32, Option<[u8; 3]>),
+    /// Make this snapshot recall at the marker of this name, or (`None`) at none.
+    SnapMarker(u32, Option<String>),
+    /// Compare this strip alone with this snapshot, or flip that compare.
+    StripCompare(u32, DeviceKey),
     Disabled,
 }
 
@@ -790,6 +794,8 @@ pub struct ConsoleView {
     /// skips (see [`crate::console_snapshots`]).
     snaps: Vec<SnapView>,
     compare: Option<CompareView>,
+    /// The strip a one-strip compare is about.
+    compare_strip: Option<DeviceKey>,
     snap_hint: Option<u32>,
     snap_notes: Vec<String>,
     /// The first chip of the snapshot bar that is shown, and the snapshot last scrolled into
@@ -880,6 +886,7 @@ impl ConsoleView {
             vcas: Vec::new(),
             snaps: Vec::new(),
             compare: None,
+            compare_strip: None,
             snap_hint: None,
             snap_notes: Vec::new(),
             snap_first: 0,
@@ -2193,7 +2200,9 @@ impl ConsoleView {
         let compare = console.compare.as_ref().map(|c| CompareView {
             snapshot: c.snapshot,
             on_snapshot: c.on_snapshot,
+            strip: c.strip.is_some(),
         });
+        self.compare_strip = console.compare.as_ref().and_then(|c| c.strip.clone());
         let notes = cs::current(&snaps, compare, self.snap_hint)
             .map_or_else(Vec::new, |id| doc.snapshot_notes(id));
         if snaps != self.snaps || compare != self.compare || notes != self.snap_notes {
@@ -2913,6 +2922,38 @@ impl ConsoleView {
         if s.color.is_some() {
             items.push(("No colour".to_string(), MenuItem::SnapColor(id, None)));
         }
+        // The markers that can recall it while the song plays (the first few, in song order).
+        let bound = doc.console.snapshot(id).and_then(|s| s.marker.clone());
+        for m in doc.song.markers.iter().take(8) {
+            let on = bound
+                .as_ref()
+                .is_some_and(|b| b.eq_ignore_ascii_case(&m.name));
+            if on {
+                items.push((
+                    format!("Stop recalling at {}", m.name),
+                    MenuItem::SnapMarker(id, None),
+                ));
+            } else {
+                items.push((
+                    format!("Recall at marker {}", m.name),
+                    MenuItem::SnapMarker(id, Some(m.name.clone())),
+                ));
+            }
+        }
+        if let Some(b) = bound
+            .filter(|b| {
+                !doc.song
+                    .markers
+                    .iter()
+                    .any(|m| m.name.eq_ignore_ascii_case(b))
+            })
+            .filter(|_| doc.song.markers.len() <= 8)
+        {
+            items.push((
+                format!("Stop recalling at {b} (no such marker)"),
+                MenuItem::SnapMarker(id, None),
+            ));
+        }
         if i > 0 {
             items.push(("Move left".to_string(), MenuItem::SnapMove(id, i - 1)));
         }
@@ -3224,6 +3265,14 @@ impl ConsoleView {
                 self.begin_rename_snapshot(*id);
                 return;
             }
+            (MenuItem::SnapMarker(id, marker), _) => ConsoleCommand::SetSnapshotMarker {
+                id: *id,
+                marker: marker.clone(),
+            },
+            (MenuItem::StripCompare(id, strip), _) => ConsoleCommand::CompareStrip {
+                id: *id,
+                strip: strip.clone(),
+            },
             (MenuItem::SnapMove(id, to), _) => ConsoleCommand::MoveSnapshot { id: *id, to: *to },
             (MenuItem::SnapDelete(id), _) => ConsoleCommand::DeleteSnapshot { id: *id },
             (MenuItem::VcaColor(id, color), _) => ConsoleCommand::SetVcaColor {
@@ -3273,7 +3322,7 @@ impl ConsoleView {
         let mut items: Vec<(String, MenuItem)> = Vec::new();
         if i >= self.n_channels {
             items.push(("Rename".to_string(), MenuItem::RenameBus(key.clone())));
-            items.push(("Delete bus".to_string(), MenuItem::DeleteBus(key)));
+            items.push(("Delete bus".to_string(), MenuItem::DeleteBus(key.clone())));
         }
         items.push(("New VCA...".to_string(), MenuItem::NewVca));
         for g in &doc.console.vcas {
@@ -3286,6 +3335,29 @@ impl ConsoleView {
         }
         if targets.iter().any(|t| doc.console.vca_of(t).is_some()) {
             items.push(("Remove from VCA".to_string(), MenuItem::AssignVca(None)));
+        }
+        // A/B of this strip alone: with the snapshot that is current, or the flip of a compare
+        // that is already on it.
+        let compared = self
+            .compare
+            .filter(|c| c.strip && self.compare_strip.as_ref() == Some(&key))
+            .map(|c| c.snapshot);
+        let current = compared.or_else(|| {
+            self.current_snapshot()
+                .filter(|id| self.compare.is_none() && doc.console.snapshot(*id).is_some())
+        });
+        if let Some(id) = current.filter(|id| {
+            doc.console
+                .snapshot(*id)
+                .is_some_and(|s| s.state.devices.contains_key(&key))
+        }) {
+            let name = doc.console.snapshot(id).map_or("", |s| s.name.as_str());
+            let label = if compared.is_some() {
+                format!("Flip strip A/B ({name})")
+            } else {
+                format!("Compare strip with {name}")
+            };
+            items.push((label, MenuItem::StripCompare(id, key.clone())));
         }
         // The channel settings commands act on the selection; the strip clicked joins it first
         // when it is not in it.

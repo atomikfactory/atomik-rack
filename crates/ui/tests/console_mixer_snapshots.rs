@@ -811,3 +811,111 @@ fn console_snapshots_preview_png() {
     std::fs::write(&path, png).unwrap();
     println!("wrote {}", path.display());
 }
+
+// ---- Marker recall and the one-strip compare ------------------------------------------------
+
+fn marker(id: u32, tick: i64, name: &str) -> atomik_model::Marker {
+    atomik_model::Marker {
+        id,
+        tick,
+        name: name.into(),
+        color: None,
+    }
+}
+
+#[test]
+fn the_chip_menu_binds_a_snapshot_to_a_marker_and_unbinds_it() {
+    let (mut d, reg) = project(2);
+    let mut v = wide(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    assert!(
+        !v.menu_items().iter().any(|t| t.contains("marker")),
+        "no markers, no rows"
+    );
+    d.apply(
+        Command::Song(atomik_model::SongCommand::SetMarkers(vec![
+            marker(1, 0, "Verse"),
+            marker(2, 5000, "Chorus"),
+        ])),
+        &reg,
+    )
+    .unwrap();
+    v = wide(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let a = pick(&mut v, d.doc(), &reg, "Recall at marker Chorus");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotMarker {
+            id: 1,
+            marker: Some("Chorus".into())
+        }]
+    );
+    d.apply(con(console_cmds(&a).remove(0)), &reg).unwrap();
+    v.sync(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let items = v.menu_items();
+    assert!(
+        items.iter().any(|t| t == "Stop recalling at Chorus"),
+        "{items:?}"
+    );
+    assert!(
+        items.iter().any(|t| t == "Recall at marker Verse"),
+        "{items:?}"
+    );
+    let a = pick(&mut v, d.doc(), &reg, "Stop recalling at Chorus");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotMarker {
+            id: 1,
+            marker: None
+        }]
+    );
+}
+
+#[test]
+fn the_strip_menu_compares_one_strip_with_the_current_snapshot_and_flips_it() {
+    let (mut d, reg) = project(1);
+    let mut v = wide(d.doc(), &reg);
+    d.apply(set("ch-bass", "fader", 0.9), &reg).unwrap();
+    v.set_snapshot_hint(Some(1));
+    v.sync(d.doc(), &reg);
+    let p = v.name_center(&key("ch-bass")).unwrap();
+    v.handle(&down_with(p, PointerButton::Secondary, 1), d.doc(), &reg);
+    let a = pick(&mut v, d.doc(), &reg, "Compare strip with A");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::CompareStrip {
+            id: 1,
+            strip: key("ch-bass")
+        }]
+    );
+    d.apply(con(console_cmds(&a).remove(0)), &reg).unwrap();
+    v.sync(d.doc(), &reg);
+    assert_eq!(v.compare_state(), Some((1, true)));
+    assert_eq!(v.snapshot_status().as_deref(), Some("B: A (one strip)"));
+
+    // On that strip the row flips; on another strip there is none.
+    v.handle(&down_with(p, PointerButton::Secondary, 1), d.doc(), &reg);
+    let a = pick(&mut v, d.doc(), &reg, "Flip strip A/B (A)");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::CompareStrip {
+            id: 1,
+            strip: key("ch-bass")
+        }]
+    );
+    v.sync(d.doc(), &reg);
+    let other = v.name_center(&key("ch-lead")).unwrap();
+    v.handle(
+        &down_with(other, PointerButton::Secondary, 1),
+        d.doc(),
+        &reg,
+    );
+    assert!(
+        !v.menu_items()
+            .iter()
+            .any(|t| t.contains("strip A/B") || t.contains("Compare strip")),
+        "{:?}",
+        v.menu_items()
+    );
+}

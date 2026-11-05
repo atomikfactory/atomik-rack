@@ -60,6 +60,8 @@ pub struct CompareView {
     pub snapshot: u32,
     /// The snapshot's side is live (B), else the working mix (A).
     pub on_snapshot: bool,
+    /// The compare is about one strip only (see `ConsoleCommand::CompareStrip`).
+    pub strip: bool,
 }
 
 /// The places of the bar's parts.
@@ -178,10 +180,15 @@ pub fn status_text(
             .map_or("", |s| s.name.as_str())
     };
     if let Some(c) = compare {
-        return Some(if c.on_snapshot {
+        let side = if c.on_snapshot {
             format!("B: {}", name_of(c.snapshot))
         } else {
             "A: working mix".to_owned()
+        };
+        return Some(if c.strip {
+            format!("{side} (one strip)")
+        } else {
+            side
         });
     }
     let name = active.map_or("", name_of);
@@ -426,6 +433,7 @@ mod tests {
         let c = CompareView {
             snapshot: 3,
             on_snapshot: true,
+            strip: false,
         };
         assert_eq!(current(&s, Some(c), None), Some(3));
     }
@@ -437,6 +445,7 @@ mod tests {
             Some(CompareView {
                 snapshot: 2,
                 on_snapshot,
+                strip: false,
             })
         };
         assert_eq!(status_text(&s, on(true), None, &[]).unwrap(), "B: Verse");
