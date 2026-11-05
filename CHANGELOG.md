@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Wavetable synth follow-ups.** A sample dropped on the wavetable synth (from the file browser or the desktop) is
+  a table: choose `imported` in a table pick list and the sample plays as a table, cut into frames of 2048 samples
+  (a short sample is one cycle, a long one contributes 16 evenly spaced frames, and the part between the zone's
+  start and end is used, so the sample editor trims it). It is built into the same band-limited form as the factory
+  tables, so it does not alias, and it is saved with the project's audio. The table choice opens a pick list on a
+  click (a right-click still steps back). Oscillator 2 can have its own unison count, detune and spread (the Osc 2
+  choice in the Unison section); the default shares the settings, so old projects sound the same. A change of
+  table fades from the old table to the new over 12 ms instead of clicking. While a voice sounds, the displays follow
+  its modulated frame position and keep the knob position as a faint curve. The panel is one rack unit taller and the
+  project format stays 43. Not done yet: a table editor, a mod matrix beyond the fixed targets, morphing between two
+  tables, more than 16 frames per imported table, and a curve of the imported table on the panel.
 - **FM synth follow-ups.** Each operator picks a wave: the sine (the old sound, bit for bit), a half sine, the
   rectified sine, a squeezed sine, a triangle or a soft square. Poly glide makes a new note in poly mode slide in from
   the key played before it (the Glide time sets how fast, a stolen voice included). A stereo chorus (mix, rate, depth)
