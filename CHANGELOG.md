@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Player preview: a play button on every note player.** The name strip of the step sequencer, the arpeggiator,
+  the drum generator, the CV sequencer, the note repeater, the note delay, Key & Chord and the note filter has a
+  small play button beside BYPASS. With the song stopped, it runs that player and the players after it in the
+  stack on a clock of their own at the song tempo, from the start of the pattern, and the notes play through the
+  instrument and the mixer channel of the track, so you can hear a player without playing the song; the song
+  position does not move and nothing is saved. A second press stops it, as do Play on the transport, a MIDI clock
+  that starts the transport, opening another song, restarting the audio engine and deleting the player; stopping
+  closes the notes the players hold, and only one preview runs at a time (pressing another player's button
+  switches to it). The note-processing players (arpeggiator, note repeater, note delay, Key & Chord, note filter)
+  work on the notes played on the Piano Keys or a MIDI keyboard while they preview: the button selects the player,
+  which is where live notes go. The device context menu has Preview Player (`rack.preview_player`, no default
+  key). The engine takes one preview flag per device on the control path and keeps the clock on the device's node,
+  so nothing allocates or waits on the audio thread. Project format unchanged (43): the preview is not saved.
+  Players inside a container preview alone (the players after them in the container are not started).
 - **MIDI learn follow-ups: NRPN and RPN sources, MMC as a transport, port and channel cells and the preset of one
   device.** The controllers that make up a registered or non-registered parameter number (99 and 98 or 101 and 100
   to select it, 6 and 38 for the data entry, 96 and 97 for increment and decrement) are followed per input port and
