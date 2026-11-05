@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Freeze and export follow-ups: container devices, Freeze with Strip and Export Selection.** A container
+  instrument or a container effect in the insert chain freezes like any device, with every device inside it left out
+  of the engine (the render is taken at the inner output that feeds the container's output, and the latency cut
+  from its start is the longest path through the chain, so a container with a latent effect lines up as the same
+  effect outside it does). **Freeze with Strip** (Track menu, a check item, off by default,
+  `sequencer.freeze_strip`) makes Freeze Track take the render at the output of the channel: the input stage, EQ,
+  dynamics, inserts, fader and pan are baked in, the whole insert chain is included and the channel is not built
+  while the track is frozen; what the channel fed (the master or a bus) is fed by the render. A strip with a send on
+  into a return slot that holds an effect, or one that feeds a parallel channel, is refused with a message, since
+  their signal would go silent; Re-render Frozen Track keeps the choice, and Freeze Track up to Selected Device
+  never bakes the strip. The strip of a frozen track cannot be edited until it is unfrozen. The choice is a saved
+  `strip` field of the frozen object, an ignorable one: the project format stays 44. **File > Export Selection as
+  Audio File** (`file.export_selection_audio`) renders exactly the time range selected on the lanes of the
+  arrangement, with no tail and whatever the locators say, and the stems panel has a third RANGE choice, SELECTION,
+  next to the whole song and the locators (the choice is not remembered between sessions). Still to come: baking the
+  sends into a freeze, a render that follows tempo changes, freezing with in-process plugins, a latency-compensated
+  mix and the selection in the MCP export tool.
 - **Tempo detection, Warp Loop as N Bars and Quantize Audio on a reversed clip.** Detect Tempo, Warp to Song Tempo,
   Warp Loop as Bars and Quantize Audio no longer refuse a clip that plays backwards. Quantize Audio moves each
   transient to the grid line nearest where the reversed clip plays it (the clip's two ends stay put, and the mirror
