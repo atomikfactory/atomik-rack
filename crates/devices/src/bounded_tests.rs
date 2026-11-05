@@ -199,6 +199,12 @@ proptest! {
         check_bounded("atomik.mono-bass", &s)?;
     }
 
+    /// The organ: any params and notes.
+    #[test]
+    fn qa_organ_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.organ", &s)?;
+    }
+
     /// The dual layer: any params (both layers) and notes.
     #[test]
     fn qa_dual_layer_any_params_bounded_at_every_sample_rate(s in scene()) {

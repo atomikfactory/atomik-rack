@@ -1,7 +1,7 @@
 # Device reference
 
-Atomik Rack ships sixty-four original devices: the poly synth (with its mono bass and dual layer
-variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
+Atomik Rack ships sixty-five original devices: the poly synth (with its mono bass and dual layer
+variants), the semi-modular synth, the organ, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
@@ -384,6 +384,97 @@ Oscillator `type` is one of saw, pulse, triangle, sine, wave, table, fm and nois
   allocates on the audio thread, the noise, the random source and the sample and hold LFO are seeded from the
   patch seed, every output is bounded by 4 (the poly synth's soft limiter) and a render is the same bit for bit
   however it is cut into batches.
+
+---
+
+## Organ: `atomik.organ` (Instrument)
+
+A drawbar organ: a tone generator with one sine wheel per semitone, nine drawbars, percussion, key click, a
+vibrato and chorus scanner and an overdrive. Source: [crates/devices/src/organ.rs](../crates/devices/src/organ.rs).
+It is polyphonic (16 keys), deterministic and allocation-free, and its stereo output goes straight into
+the [Rotary Speaker](#rotary-speaker-atomikrotary-speaker-effect).
+
+### Sockets
+
+`notes_in` (notes in), `out_l`, `out_r` (audio out).
+
+### Params
+
+| Key | Name | Range | Default | Notes |
+|---|---|---|---|---|
+| `sound` | Sound | 0-5 | 0 | A factory sound (see Sounds); the device ignores it |
+| `drawbar.16` | 16' | 0-8 | 8 | Footage 16', 12 semitones below the key |
+| `drawbar.5_1_3` | 5 1/3' | 0-8 | 8 | 7 semitones above the key |
+| `drawbar.8` | 8' | 0-8 | 8 | The key itself |
+| `drawbar.4` | 4' | 0-8 | 0 | 12 semitones above |
+| `drawbar.2_2_3` | 2 2/3' | 0-8 | 0 | 19 semitones above |
+| `drawbar.2` | 2' | 0-8 | 0 | 24 semitones above |
+| `drawbar.1_3_5` | 1 3/5' | 0-8 | 0 | 28 semitones above |
+| `drawbar.1_1_3` | 1 1/3' | 0-8 | 0 | 31 semitones above |
+| `drawbar.1` | 1' | 0-8 | 0 | 36 semitones above; silent while percussion is on |
+| `perc.mode` | Percussion | Off, 2nd, 3rd | Off | The harmonic added at a key strike |
+| `perc.decay` | Decay | Fast, Slow | Fast | 60 dB in 0.2 s or 0.9 s |
+| `perc.level` | Perc level | Soft, Normal | Normal | Soft is 6 dB lower |
+| `key.click` | Key click | 0 to 1 | 0.3 | The burst at a key press and release |
+| `scanner.type` | Scanner | Off, V1-V3, C1-C3 | Off | Vibrato or chorus, by depth |
+| `scanner.rate` | Scan rate | 4 to 9 Hz | 6.8 | |
+| `out.drive` | Drive | 0 to 1 | 0 | Overdrive; 0 is bit-exact off |
+| `out.level` | Level | -24 to +6 dB | 0 | A gain after the drive |
+
+### Behaviour (as built)
+
+- **Tone generator.** One sine wheel for each semitone from 12 below key 0 to 36 above key 127, all
+  phase-locked (rotating phasors, advanced with additions and multiplications only, so every platform
+  makes the same bits) and started at phases that follow the device seed. Wheels above 45 % of the sample
+  rate are left out: a high key loses its highest drawbars rather than aliasing. Keys that land on one
+  pitch share a wheel (the 4' of key 60 and the 8' of key 72), so such partials add in phase.
+- **Drawbars.** Footages 16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3' and 1' at -12, +7, 0, +12, +19, +24,
+  +28, +31 and +36 semitones from the key, in equal temperament. Position 0 is off, every step up is 3 dB
+  louder and 8 is full level. A move glides over 10 ms.
+- **Keys.** An organ key is on or off (velocity is ignored); its envelope opens in about 1 ms and closes in
+  about 4 ms. A key struck again while it sounds keeps its voice; with all 16 voices taken the quietest
+  released voice (else the oldest key) is reused. Sustain (CC 64), volume (CC 7) and expression (CC 11)
+  work as in the [MIDI](#midi) chart; the bend, wheel and pressure are ignored. The master tune moves
+  every wheel.
+- **Percussion.** The 2nd or 3rd harmonic (the 4' or the 2 2/3' wheel) of every sounding key, under one
+  envelope that restarts only when a key is struck while none is held. The 1' drawbar is silent while
+  percussion is on.
+- **Key click.** A burst of high-passed noise at a key press (and a smaller one, 0.4 of it, at a release),
+  4 ms to -60 dB. The noise follows the device seed.
+- **Scanner.** A delay of 0.7 ms swung by a sine. V1 to V3 swing it by 0.12, 0.24 and 0.42 ms and use only
+  the delayed signal; C1 to C3 mix the delayed and the direct signal half and half, with the right output
+  a quarter turn behind for width. A change of type glides over 30 ms; Off passes the signal bit for bit.
+- **Output.** The drawbar sum is scaled by 0.15 (one key at full registration stays below 1), then the
+  scanner, the drive (a rational soft clipper with up to 18 dB of gain in front), the level and a soft
+  limit that keeps every sample below 2, then volume and expression.
+
+### Sounds
+
+`sound` selects a factory sound, a value for every param but `sound`
+([organ/sounds.rs](../crates/devices/src/organ/sounds.rs), listing what differs from the init sound). As
+for the FM synth, the device ignores the param and the app turns a `SetParam` of `sound` into one
+`Command::Batch`, so one undo brings back everything it changed.
+
+| Sound | Registration | Idea |
+|---|---|---|
+| Init | 888 000 000 | The three lowest footages, nothing else |
+| Jazz | 888 000 000 | Fast third-harmonic percussion, full chorus, a little drive |
+| Full | 888 888 888 | Every drawbar out, a deep vibrato and some overdrive |
+| Rock | 888 800 000 | Bright and driven, a medium vibrato, a firm key click |
+| Mellow | 008 603 000 | A soft flute-like tone with a light chorus |
+| Church | 608 604 002 | A pipe-like stack of octaves and fifths, no scanner |
+
+### Tests
+
+The unit tests measure each drawbar at its equal-tempered frequency and amplitude, the 3 dB steps, shared
+wheels, chords, the wheel limit at 44.1, 48 and 96 kHz, the voice limit and stealing (against a render
+without the stolen key), release to exact silence, percussion (harmonic, decay times, level, trigger rule),
+key click, the scanner sidebands against the Bessel values, drive, level, master tune, the pedal and volume
+contracts, determinism and reset, every param at its extremes and the factory sounds. A proptest in
+[bounded_tests.rs](../crates/devices/src/bounded_tests.rs) drives random params and notes at 44.1, 48 and
+96 kHz, and
+[crates/render/tests/organ.rs](../crates/render/tests/organ.rs) bounces the organ into the rotary speaker at
+every host block size.
 
 ---
 
@@ -4205,6 +4296,7 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 | `atomik.mono-bass` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.dual-layer` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.semi-modular` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.organ` | no | no | no | yes | yes | yes | no |
 | `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
 | `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
@@ -4215,8 +4307,8 @@ without it (`cargo test -p atomik-devices midi_chart`), so this table cannot dri
 
 The eight melodic instruments (poly synth, mono bass, dual layer, semi-modular, wavetable synth, FM synth,
 grain sampler and sampler) share one helper, `ControllerState`
-([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)). What it does,
-identically in each:
+([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)); the organ uses it
+for the pedal, volume and expression only. What it does, identically in each:
 
 - **Sustain (CC 64).** A value of 64 or more is the pedal down. While it is down a note-off is held
   back and the voice keeps sounding; when the pedal goes up every held-back key is released at the
