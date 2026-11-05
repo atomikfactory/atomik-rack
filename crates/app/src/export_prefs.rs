@@ -113,6 +113,8 @@ impl ExportPrefs {
             file,
             dry: self.dry,
             locators: self.locators,
+            // The time selection is not remembered: it belongs to the song that is open.
+            selection: false,
         }
     }
 
@@ -179,6 +181,7 @@ mod tests {
             file: ExportFile::Aiff,
             dry: true,
             locators: true,
+            selection: false,
         };
         let prefs = ExportPrefs::from_values(&values, Some(Path::new("music")));
         prefs.save(&path).unwrap();

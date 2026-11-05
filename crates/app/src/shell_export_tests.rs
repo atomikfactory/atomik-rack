@@ -312,3 +312,38 @@ fn export_stems_asks_for_a_folder_and_writes_a_file_per_strip_with_the_remembere
     assert_eq!(s.export_values().file, atomik_ui::ExportFile::Aiff);
     assert_eq!(s.export_audio_dir(), Some(t.0.clone()));
 }
+
+#[test]
+fn export_selection_waits_for_a_selected_range_and_has_its_own_command_and_name() {
+    let t = Tmp::new();
+    let mut s = shell(&t.0);
+    let selection = item(&s, AppCommand::ExportSelectionAudio);
+    assert_eq!(selection.label, "Export Selection as Audio File\u{2026}");
+    assert_eq!(
+        selection.command.command_id(),
+        Some(("file.export_selection_audio", None))
+    );
+    assert!(!selection.enabled, "no range is selected");
+    assert!(s.execute(AppCommand::ExportSelectionAudio).is_empty());
+    assert!(
+        s.core()
+            .last_rejection()
+            .unwrap()
+            .contains("Select a time range")
+    );
+    assert_eq!(
+        s.export_audio_name(ExportScope::Selection),
+        "project selection.wav"
+    );
+    // With a range selected on a lane the command asks for a file.
+    let device = s.core().doc().song.tracks[0].device.clone();
+    s.core_mut()
+        .arrangement_mut()
+        .set_lane_range(device, 0, 0, 960);
+    s.frame();
+    assert!(item(&s, AppCommand::ExportSelectionAudio).enabled);
+    assert_eq!(
+        s.execute(AppCommand::ExportSelectionAudio),
+        vec![ShellRequest::PickExportAudio(ExportScope::Selection)]
+    );
+}

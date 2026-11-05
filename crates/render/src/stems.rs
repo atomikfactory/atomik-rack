@@ -193,7 +193,7 @@ pub fn render_stems(
     let (from, to) = span_frames(doc, request.span)?;
     let tail = match request.span {
         ExportSpan::Song => (request.tail_seconds * f64::from(doc.sample_rate)).round() as u64,
-        ExportSpan::Loop => 0,
+        ExportSpan::Loop | ExportSpan::Range(..) => 0,
     };
     let frames = usize::try_from(to + tail).map_err(|e| fail(e.to_string()))?;
     let (from_f, to_f) = (from as usize, to as usize);
@@ -240,7 +240,7 @@ pub fn render_stems(
         });
         // The outputs of the document decide how much of the tail is audible, as in an export.
         let keep = match request.span {
-            ExportSpan::Loop => to_f,
+            ExportSpan::Loop | ExportSpan::Range(..) => to_f,
             ExportSpan::Song => {
                 let len = rendered.channels.first().map_or(0, Vec::len);
                 let outputs = &rendered.channels[..base.min(rendered.channels.len())];

@@ -49,6 +49,7 @@ impl<B: AudioBackend> Shell<B> {
         match scope {
             ExportScope::Song => format!("{stem}.wav"),
             ExportScope::Loop => format!("{stem} loop.wav"),
+            ExportScope::Selection => format!("{stem} selection.wav"),
             // The folder the stems go into, made inside the one the dialog picks.
             ExportScope::Stems => atomik_render::stems::stems_folder_name(&stem),
         }

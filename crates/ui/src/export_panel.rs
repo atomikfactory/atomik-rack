@@ -18,7 +18,8 @@
 //! holds; EXPORT emits [`ExportAction::Start`] with them and CANCEL (or Esc) emits
 //! [`ExportAction::Cancel`]. The dither applies to 16-bit files only, so its row is greyed at the
 //! other depths; the tail applies to a song and to stems (which also have a CHANNELS row: after the
-//! strip or dry, and a RANGE row: the whole song or only what lies between the locators). FLAC
+//! strip or dry, and a RANGE row: the whole song, only what lies between the locators, or the time
+//! range selected on the lanes). FLAC
 //! holds 16-bit and 24-bit audio, so the 32-bit float button is inert while FLAC is chosen (and
 //! choosing FLAC at 32-bit float moves the depth to 24-bit). In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
@@ -55,6 +56,8 @@ pub enum ExportScope {
     Song,
     /// From the left to the right locator.
     Loop,
+    /// The time range selected on the lanes of the arrangement, exactly, with no tail.
+    Selection,
     /// The song as one file per mixer strip (channels, buses, returns and the master), in a
     /// folder.
     Stems,
@@ -114,6 +117,9 @@ pub struct ExportValues {
     pub dry: bool,
     /// Stems only: export just the range between the locators (no tail) instead of the song.
     pub locators: bool,
+    /// Stems only: export just the time range selected on the lanes (no tail). It wins over
+    /// `locators`. It is not remembered between sessions.
+    pub selection: bool,
 }
 
 impl Default for ExportValues {
@@ -126,6 +132,7 @@ impl Default for ExportValues {
             file: ExportFile::Wav,
             dry: false,
             locators: false,
+            selection: false,
         }
     }
 }
@@ -139,6 +146,14 @@ pub enum ExportAction {
     Cancel,
 }
 
+/// The range of a stems export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RangeChoice {
+    Song,
+    Locators,
+    Selection,
+}
+
 /// A button of the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
@@ -148,7 +163,7 @@ enum Hit {
     File(ExportFile),
     Tail,
     Dry(bool),
-    Range(bool),
+    Range(RangeChoice),
     Start,
     Cancel,
 }
@@ -280,7 +295,7 @@ impl ExportView {
     /// every scope, then the tail (songs and stems), the strip and the range (stems).
     fn row_names(&self) -> Vec<&'static str> {
         let mut rows = vec!["BIT DEPTH", "DITHER", "SAMPLE RATE", "FILE FORMAT"];
-        if self.scope != ExportScope::Loop {
+        if !matches!(self.scope, ExportScope::Loop | ExportScope::Selection) {
             rows.push("TAIL");
         }
         if self.scope == ExportScope::Stems {
@@ -311,8 +326,13 @@ impl ExportView {
     }
 
     fn button(&self, row: usize, index: usize, width: f64) -> Rect {
+        self.button_at(row, index as f64 * (width + BTN_GAP), width)
+    }
+
+    /// The button of `row` that starts `offset` to the right of the first one.
+    fn button_at(&self, row: usize, offset: f64, width: f64) -> Rect {
         let p = self.panel();
-        let x = p.x0 + PAD + LABEL_W + index as f64 * (width + BTN_GAP);
+        let x = p.x0 + PAD + LABEL_W + offset;
         let y = self.row_top(row) + (ROW_H - BTN_H) / 2.0;
         Rect::new(x, y, x + width, y + BTN_H)
     }
@@ -418,7 +438,7 @@ impl ExportView {
                 true,
             ));
         }
-        if self.scope != ExportScope::Loop {
+        if !matches!(self.scope, ExportScope::Loop | ExportScope::Selection) {
             out.push((
                 Hit::Tail,
                 self.button(4, 0, 150.0),
@@ -440,15 +460,23 @@ impl ExportView {
                     true,
                 ));
             }
-            for (i, (locators, label)) in [(false, "WHOLE SONG"), (true, "BETWEEN LOCATORS")]
-                .into_iter()
-                .enumerate()
-            {
+            let chosen = if v.selection {
+                RangeChoice::Selection
+            } else if v.locators {
+                RangeChoice::Locators
+            } else {
+                RangeChoice::Song
+            };
+            for (choice, label, offset, width) in [
+                (RangeChoice::Song, "WHOLE SONG", 0.0, 110.0),
+                (RangeChoice::Locators, "BETWEEN LOCATORS", 116.0, 140.0),
+                (RangeChoice::Selection, "SELECTION", 262.0, 100.0),
+            ] {
                 out.push((
-                    Hit::Range(locators),
-                    self.button(6, i, if locators { 140.0 } else { 110.0 }),
+                    Hit::Range(choice),
+                    self.button_at(6, offset, width),
                     label.to_owned(),
-                    v.locators == locators,
+                    chosen == choice,
                     true,
                 ));
             }
@@ -541,7 +569,10 @@ impl ExportView {
             }
             Hit::Tail => self.values.tail = !self.values.tail,
             Hit::Dry(d) => self.values.dry = d,
-            Hit::Range(r) => self.values.locators = r,
+            Hit::Range(r) => {
+                self.values.locators = r == RangeChoice::Locators;
+                self.values.selection = r == RangeChoice::Selection;
+            }
             Hit::Start => return Some(ExportAction::Start(self.values)),
             Hit::Cancel => return Some(ExportAction::Cancel),
         }
@@ -585,9 +616,14 @@ impl ExportView {
                 "Each channel's source before its strip: no fader, pan, insert or send; buses, \
                  returns and the master are left out"
             }
-            Hit::Range(false) => "Every strip from the start to the End marker, plus the tail",
-            Hit::Range(true) => {
+            Hit::Range(RangeChoice::Song) => {
+                "Every strip from the start to the End marker, plus the tail"
+            }
+            Hit::Range(RangeChoice::Locators) => {
                 "Only the range between the left and the right locator, with no tail"
+            }
+            Hit::Range(RangeChoice::Selection) => {
+                "Only the time range selected on the lanes, with no tail"
             }
             Hit::Start if self.scope == ExportScope::Stems => "Render and write the files",
             Hit::Start => "Render and write the file",
@@ -603,9 +639,11 @@ impl ExportView {
         match (self.scope, self.in_progress()) {
             (ExportScope::Song, false) => "EXPORT SONG AS AUDIO FILE",
             (ExportScope::Loop, false) => "EXPORT LOOP AS AUDIO FILE",
+            (ExportScope::Selection, false) => "EXPORT SELECTION AS AUDIO FILE",
             (ExportScope::Stems, false) => "EXPORT STEMS",
             (ExportScope::Song, true) => "EXPORTING SONG",
             (ExportScope::Loop, true) => "EXPORTING LOOP",
+            (ExportScope::Selection, true) => "EXPORTING SELECTION",
             (ExportScope::Stems, true) => "EXPORTING STEMS",
         }
     }
@@ -715,6 +753,10 @@ impl ExportView {
                 "From the start to the End marker; the tail is kept while audible."
             }
             ExportScope::Loop => "Exactly from the left to the right locator, with no tail.",
+            ExportScope::Selection => "Exactly the time range selected on the lanes, with no tail.",
+            ExportScope::Stems if self.values.selection => {
+                "One file per strip, exactly the selected range, lined up with the master."
+            }
             ExportScope::Stems if self.values.locators => {
                 "One file per strip, exactly between the locators, lined up with the master."
             }

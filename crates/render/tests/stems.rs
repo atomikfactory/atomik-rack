@@ -398,3 +398,33 @@ fn stems_of_a_range_are_the_same_frames_of_the_whole_song_stems() {
         );
     }
 }
+
+#[test]
+fn stems_of_a_time_selection_are_the_same_frames_whatever_the_locators_say() {
+    let mut doc = clicks();
+    let whole = stems(&doc, &request(&doc, StemStrip::Full), &options(512, 0));
+    let end = doc.song.end_tick();
+    // The locators are somewhere else: the selection decides.
+    doc.song_mut().loop_range = (0, end / 4);
+    let (start, stop) = (end / 3, end / 2);
+    let from = doc.song.frame_at(start, doc.sample_rate) as usize;
+    let to = doc.song.frame_at(stop, doc.sample_rate) as usize;
+    let part = stems(
+        &doc,
+        &StemRequest {
+            span: ExportSpan::Range(start, stop),
+            ..request(&doc, StemStrip::Full)
+        },
+        &options(512, 0),
+    );
+    assert!(from < to && to <= whole[0].audio.frames());
+    for (p, w) in part.iter().zip(&whole) {
+        assert_eq!(p.audio.frames(), to - from, "{}", p.source.name);
+        assert_eq!(
+            p.audio.channels[0],
+            w.audio.channels[0][from..to],
+            "{}",
+            p.source.name
+        );
+    }
+}

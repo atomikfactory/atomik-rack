@@ -217,11 +217,21 @@ fn the_panel_values_map_to_the_render_request_and_format() {
     v.depth = ExportDepth::Pcm16;
     assert_eq!(export_format(&v).dither, atomik_dsp::DitherMode::None);
     // A song keeps its tail when asked to; a loop never has one.
-    assert!(export_request(ExportScope::Song, &v).tail_seconds > 0.0);
+    assert!(export_request(ExportScope::Song, &v, None).tail_seconds > 0.0);
     v.tail = false;
-    assert!(export_request(ExportScope::Song, &v).tail_seconds.abs() < f64::EPSILON);
+    assert!(
+        export_request(ExportScope::Song, &v, None)
+            .tail_seconds
+            .abs()
+            < f64::EPSILON
+    );
     v.tail = true;
-    assert!(export_request(ExportScope::Loop, &v).tail_seconds.abs() < f64::EPSILON);
+    assert!(
+        export_request(ExportScope::Loop, &v, None)
+            .tail_seconds
+            .abs()
+            < f64::EPSILON
+    );
 }
 
 #[test]
@@ -354,11 +364,11 @@ fn stems_can_be_exported_between_the_locators_without_a_tail() {
         ..values(ExportDepth::Pcm24)
     };
     assert_eq!(
-        export_request(ExportScope::Stems, &range).span,
+        export_request(ExportScope::Stems, &range, None).span,
         ExportSpan::Loop
     );
     assert!(
-        export_request(ExportScope::Stems, &range)
+        export_request(ExportScope::Stems, &range, None)
             .tail_seconds
             .abs()
             < f64::EPSILON
@@ -385,4 +395,92 @@ fn stems_can_be_exported_between_the_locators_without_a_tail() {
     );
     // The whole song is still exportable as stems.
     assert!(c.can_export_audio(ExportScope::Stems));
+}
+
+#[test]
+fn a_selection_export_is_exactly_the_range_selected_on_a_lane() {
+    let t = Tmp::new();
+    let mut c = core();
+    // The locators are somewhere else: only the selection counts.
+    c.apply_command(Command::Song(SongCommand::SetLoop {
+        range: (0, BAR),
+        enabled: false,
+    }))
+    .unwrap();
+    c.sink_mut().take();
+    assert_eq!(c.export_selection(), None);
+    assert!(!c.can_export_audio(ExportScope::Selection));
+    let why = c.export_audio_refusal(ExportScope::Selection).unwrap();
+    assert!(why.contains("Select a time range"), "{why}");
+    let path = t.file("selection.wav");
+    let chosen = ExportValues::default();
+    assert!(
+        c.start_audio_export(ExportScope::Selection, path.clone(), chosen)
+            .is_err()
+    );
+    assert!(!path.exists());
+
+    c.arrangement_mut()
+        .set_lane_range(key("lead"), 0, BAR / 2, BAR);
+    assert_eq!(c.export_selection(), Some((BAR / 2, BAR)));
+    assert!(c.can_export_audio(ExportScope::Selection));
+    let request = export_request(ExportScope::Selection, &chosen, c.export_selection());
+    assert_eq!(request.span, ExportSpan::Range(BAR / 2, BAR));
+    assert!(request.tail_seconds.abs() < f64::EPSILON);
+    c.start_audio_export(ExportScope::Selection, path.clone(), chosen)
+        .unwrap();
+    assert!(c.audio_export_busy());
+    assert_eq!(
+        c.audio_export_progress().map(|p| p.1).as_deref(),
+        Some("Rendering the selection")
+    );
+    c.wait_background();
+    let decoded = atomik_audio_file::decode_file(&path).unwrap();
+    // Half a bar at 120 BPM and 48 kHz.
+    assert_eq!(decoded.frames(), 48_000);
+    assert!(decoded.channels[0].iter().any(|x| x.abs() > 1e-4));
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .contains("Exported selection.wav")
+    );
+}
+
+#[test]
+fn stems_can_be_exported_for_the_selection_and_say_so_when_there_is_none() {
+    let t = Tmp::new();
+    let mut c = core();
+    let folder = t.file("Bounced selection");
+    let chosen = ExportValues {
+        selection: true,
+        file: ExportFile::Flac,
+        ..values(ExportDepth::Pcm24)
+    };
+    assert!(
+        c.start_audio_export(ExportScope::Stems, folder.clone(), chosen)
+            .is_err()
+    );
+    assert!(c.last_rejection().unwrap().contains("Select a time range"));
+    c.arrangement_mut()
+        .set_lane_range(key("lead"), 0, BAR, BAR + BAR / 2);
+    assert_eq!(
+        export_request(ExportScope::Stems, &chosen, c.export_selection()).span,
+        ExportSpan::Range(BAR, BAR + BAR / 2)
+    );
+    c.start_audio_export(ExportScope::Stems, folder.clone(), chosen)
+        .unwrap();
+    c.wait_background();
+    let mut files: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 2, "{files:?}");
+    for file in &files {
+        let decoded = atomik_audio_file::decode_file(file).unwrap();
+        assert_eq!(decoded.frames(), 48_000, "{}", file.display());
+    }
+    // The selection is not part of what is remembered between sessions.
+    let prefs = crate::export_prefs::ExportPrefs::from_values(&chosen, None);
+    assert!(!prefs.values().selection);
 }

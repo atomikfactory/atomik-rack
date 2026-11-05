@@ -94,6 +94,8 @@ pub enum AppCommand {
     ExportSongAudio,
     /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
     ExportLoopAudio,
+    /// File ▸ Export Selection as Audio File…: exactly the time range selected on the lanes.
+    ExportSelectionAudio,
     /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
     ExportStems,
     /// Help ▸ Export Device Parameter List…: a text table of every built-in device parameter.
@@ -691,6 +693,7 @@ impl AppCommand {
             AppCommand::ExportMidiSong => ("file.export_midi_song", None),
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
+            AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
             AppCommand::ExportStems => ("file.export_stems", None),
             AppCommand::ExportDeviceInfo => ("file.export_device_info", None),
             AppCommand::StressRack => ("file.stress_rack", None),
@@ -992,6 +995,7 @@ impl AppCommand {
             ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
+            ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
             ("file.export_stems", None) => AppCommand::ExportStems,
             ("file.export_device_info", None) => AppCommand::ExportDeviceInfo,
             ("file.stress_rack", None) => AppCommand::StressRack,
@@ -1686,6 +1690,9 @@ pub struct MenuState {
     /// The loop can be exported as audio: its locators are apart and no export runs (File >
     /// Export Loop as Audio File is available).
     pub export_loop: bool,
+    /// A time range is selected on the lanes and no export runs (File > Export Selection as
+    /// Audio File is available).
+    pub export_selection: bool,
     /// The console has strips and no export runs (File > Export Stems as Audio Files is
     /// available).
     pub export_stems: bool,
@@ -2177,6 +2184,11 @@ pub fn menus_with_songs(
                     "Export Loop as Audio File\u{2026}",
                     AppCommand::ExportLoopAudio,
                     state.export_loop,
+                ),
+                enabled(
+                    "Export Selection as Audio File\u{2026}",
+                    AppCommand::ExportSelectionAudio,
+                    state.export_selection,
                 ),
                 enabled(
                     "Export Stems as Audio Files\u{2026}",
@@ -3366,6 +3378,7 @@ mod tests {
             midi_song: false,
             export_song: false,
             export_loop: false,
+            export_selection: false,
             export_stems: false,
             org: OrgMenu::default(),
             lane: LaneMenu::default(),
@@ -3414,6 +3427,7 @@ mod tests {
             AppCommand::ExportMidiSong,
             AppCommand::ExportSongAudio,
             AppCommand::ExportLoopAudio,
+            AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
             AppCommand::StressRack,
             AppCommand::StressSong,
@@ -4080,6 +4094,7 @@ mod tests {
                 "480 per quarter",
                 "Export Song as Audio File\u{2026}",
                 "Export Loop as Audio File\u{2026}",
+                "Export Selection as Audio File\u{2026}",
                 "Export Stems as Audio Files\u{2026}",
                 "Stress Rack",
                 "Stress Song",
@@ -4693,6 +4708,7 @@ mod tests {
                 midi_song: true,
                 export_song: true,
                 export_loop: true,
+                export_selection: true,
                 export_stems: true,
                 org: OrgMenu::default(),
                 lane: LaneMenu::default(),

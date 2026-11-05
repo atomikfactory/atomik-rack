@@ -19,6 +19,8 @@
 //!   is rendered from tick 0 and the range is cut out of it, so a note held into the loop or an
 //!   effect that has been running starts the file the way it sounds when the loop plays. Whether
 //!   the loop is switched on does not matter.
+//! * **Range.** From one tick to another ([`ExportSpan::Range`]), the time selection of the
+//!   arrangement, cut out exactly like a loop (the song is rendered from tick 0, no tail).
 //!
 //! The rendered audio is converted to another sample rate if asked (the rendering itself is at
 //! the project's rate: the sinc converter of [`atomik_audio_file::resample`], whose output has
@@ -64,6 +66,8 @@ pub enum ExportSpan {
     Song,
     /// From the left to the right locator, exactly.
     Loop,
+    /// From tick `start` to tick `end` exactly, with no tail (a time selection).
+    Range(i64, i64),
 }
 
 /// What to render.
@@ -195,12 +199,16 @@ pub fn span_frames(doc: &RackDoc, span: ExportSpan) -> Result<(u64, u64), Render
     let (start, end) = match span {
         ExportSpan::Song => (0, doc.song.end_tick()),
         ExportSpan::Loop => doc.song.loop_range,
+        ExportSpan::Range(start, end) => (start, end),
     };
     let (from, to) = (doc.song.frame_at(start, rate), doc.song.frame_at(end, rate));
     if to <= from {
         return Err(RenderError::Project(match span {
             ExportSpan::Song => "the song is empty: there is nothing to export".to_owned(),
             ExportSpan::Loop => "the loop is empty: move its locators apart".to_owned(),
+            ExportSpan::Range(..) => {
+                "the selection is empty: there is nothing to export".to_owned()
+            }
         }));
     }
     Ok((from, to))
@@ -227,7 +235,7 @@ pub fn render_export(
     let (from, to) = span_frames(doc, request.span)?;
     let tail = match request.span {
         ExportSpan::Song => (request.tail_seconds * f64::from(doc.sample_rate)).round() as u64,
-        ExportSpan::Loop => 0,
+        ExportSpan::Loop | ExportSpan::Range(..) => 0,
     };
     let frames = usize::try_from(to + tail).map_err(|e| RenderError::Project(e.to_string()))?;
     let extra = Extra {
@@ -240,7 +248,7 @@ pub fn render_export(
     };
     let (rendered, from, to) = (core.rendered, from as usize, to as usize);
     let keep = match request.span {
-        ExportSpan::Loop => to,
+        ExportSpan::Loop | ExportSpan::Range(..) => to,
         ExportSpan::Song => {
             // Keep the tail as far as the output is above the floor, never less than the End.
             let rendered_len = rendered.channels.first().map_or(0, Vec::len);

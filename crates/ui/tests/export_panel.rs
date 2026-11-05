@@ -315,3 +315,52 @@ fn stems_alone_choose_between_the_whole_song_and_the_locators() {
         assert!(v.help_at(p).is_some(), "{label}");
     }
 }
+
+#[test]
+fn a_selection_has_its_own_panel_and_stems_can_choose_it() {
+    let v = view(ExportScope::Selection);
+    let t = texts(&v);
+    assert!(has(&t, "EXPORT SELECTION AS AUDIO FILE"), "{t:?}");
+    assert!(has(&t, "Exactly the time range selected"), "{t:?}");
+    assert!(
+        v.button_rect("KEEP EFFECT TAIL").is_none(),
+        "no tail for a range"
+    );
+    assert!(
+        v.button_rect("SELECTION").is_none(),
+        "only stems have the row"
+    );
+    assert!(v.button_rect("AIFF").is_some());
+
+    let mut v = view(ExportScope::Stems);
+    for want in ["WHOLE SONG", "BETWEEN LOCATORS", "SELECTION"] {
+        assert!(v.button_rect(want).is_some(), "{want}");
+    }
+    // The three buttons of the row do not overlap and stay inside the panel.
+    let rects: Vec<_> = ["WHOLE SONG", "BETWEEN LOCATORS", "SELECTION"]
+        .iter()
+        .map(|l| v.button_rect(l).unwrap())
+        .collect();
+    for pair in rects.windows(2) {
+        assert!(pair[0].x1 < pair[1].x0, "{pair:?}");
+    }
+    assert!(rects[2].x1 <= v.panel().x1);
+    click(&mut v, "SELECTION");
+    assert!(v.values().selection && !v.values().locators);
+    assert!(has(&texts(&v), "exactly the selected range"));
+    assert_eq!(
+        click(&mut v, "EXPORT"),
+        vec![ExportAction::Start(ExportValues {
+            selection: true,
+            ..ExportValues::default()
+        })]
+    );
+    // Choosing another range drops the selection.
+    click(&mut v, "BETWEEN LOCATORS");
+    assert!(v.values().locators && !v.values().selection);
+    click(&mut v, "SELECTION");
+    click(&mut v, "WHOLE SONG");
+    assert_eq!(v.values(), ExportValues::default());
+    let p = center(&v, "SELECTION");
+    assert!(v.help_at(p).is_some());
+}

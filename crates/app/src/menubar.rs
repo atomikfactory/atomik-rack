@@ -680,6 +680,7 @@ mod tests {
             midi_song: false,
             export_song: false,
             export_loop: false,
+            export_selection: false,
             export_stems: false,
             org: atomik_ui::arrangement::OrgMenu::default(),
             lane: atomik_ui::arrangement::LaneMenu::default(),
