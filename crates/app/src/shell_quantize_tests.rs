@@ -471,3 +471,73 @@ fn dragging_a_value_in_the_panel_steps_it_and_leaves_the_undo_history_alone() {
     );
     assert_eq!(s.quantize_values().grid, grid + 2, "and the app keeps them");
 }
+
+fn song_groove(s: &mut Shell<NullBackend>, name: &str) {
+    let groove = atomik_model::Groove {
+        name: name.to_owned(),
+        step: atomik_model::StepResolution::Sixteenth,
+        slots: vec![
+            atomik_model::GrooveSlot::STRAIGHT,
+            atomik_model::GrooveSlot {
+                offset: 0.25,
+                velocity: 0.8,
+            },
+        ],
+    };
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::SetGroove(groove)))
+        .unwrap();
+}
+
+fn clip_groove(s: &Shell<NullBackend>, id: ClipId) -> Option<atomik_model::TrackGroove> {
+    s.core()
+        .doc()
+        .song
+        .clip(id)
+        .unwrap()
+        .2
+        .groove
+        .as_deref()
+        .cloned()
+}
+
+#[test]
+fn a_live_groove_goes_on_the_selected_clips_in_one_undo_step_and_off_again() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    song_groove(&mut s, "Late");
+    let before = notes(&s, id);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.core_mut()
+        .set_clip_groove(Pane::Arrangement, Some(("Late".to_owned(), 60)));
+    assert!(s.core().last_rejection().is_none());
+    let g = clip_groove(&s, id).expect("the clip has the groove");
+    assert_eq!((g.name.as_str(), g.strength), ("Late", 60));
+    assert_eq!(notes(&s, id), before, "the notes are not edited");
+    s.core_mut().set_clip_groove(Pane::Arrangement, None);
+    assert_eq!(clip_groove(&s, id), None);
+    s.core_mut().undo();
+    assert!(clip_groove(&s, id).is_some());
+    // Nothing selected: refused with a message.
+    s.core_mut().arrangement_mut().set_selected_clips(&[]);
+    s.core_mut()
+        .set_clip_groove(Pane::Arrangement, Some(("Late".to_owned(), 60)));
+    assert!(s.core().last_rejection().is_some());
+}
+
+#[test]
+fn renaming_a_groove_follows_on_the_clips_and_a_taken_name_is_refused() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    song_groove(&mut s, "Late");
+    song_groove(&mut s, "Early");
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.core_mut()
+        .set_clip_groove(Pane::Arrangement, Some(("Late".to_owned(), 100)));
+    assert!(!s.core_mut().rename_groove("Late", "Early"), "taken");
+    assert!(!s.core_mut().rename_groove("Late", "Swing 55%"), "built-in");
+    assert!(!s.core_mut().rename_groove("Late", "   "), "blank");
+    assert!(s.core_mut().rename_groove("Late", "  Behind "));
+    assert_eq!(clip_groove(&s, id).unwrap().name, "Behind");
+    assert!(s.core().doc().song.groove("Late").is_none());
+}

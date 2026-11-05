@@ -10,7 +10,7 @@
 use super::*;
 use atomik_model::ClipContent;
 use atomik_model::groove::builtin_grooves;
-use atomik_model::{QuantizeParams, StepResolution};
+use atomik_model::{QuantizeParams, StepResolution, TrackGroove};
 use atomik_ui::GrooveEntry;
 
 /// What the quantize panel's APPLY works on.
@@ -158,6 +158,33 @@ impl<S: EngineSink> AppCore<S> {
         self.apply_command(Command::Song(command))
             .ok()
             .map(|()| name)
+    }
+
+    /// Gives the note clips `pane` works on the live groove `groove` (a name and a strength in
+    /// percent; `None` hands them back to their track's), as one undo step: the clips play it
+    /// instead of the track's groove and their notes stay as they are. A rejection is reported.
+    pub fn set_clip_groove(&mut self, pane: Pane, groove: Option<(String, u8)>) {
+        let clips = match self.quantize_target(pane) {
+            QuantizeTarget::None => return self.reject("select a note clip first".to_owned()),
+            QuantizeTarget::Notes { clip, .. } => vec![clip],
+            QuantizeTarget::Clips(clips) => clips,
+        };
+        let command = SongCommand::SetClipGroove {
+            clips,
+            groove: groove.map(|(name, strength)| TrackGroove { name, strength }),
+        };
+        let _ = self.apply_command(Command::Song(command));
+    }
+
+    /// Renames the song's groove `from` to `to` (the tracks and clips that use it follow), as
+    /// one undo step; true when it worked. A rejection (a taken or built-in name, a blank one) is
+    /// reported.
+    pub fn rename_groove(&mut self, from: &str, to: &str) -> bool {
+        let command = SongCommand::RenameGroove {
+            from: from.to_owned(),
+            to: to.trim().to_owned(),
+        };
+        self.apply_command(Command::Song(command)).is_ok()
     }
 
     /// Removes the song's groove `name` (one undo step).
