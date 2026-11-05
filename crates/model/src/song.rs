@@ -649,6 +649,12 @@ pub struct Track {
     /// stay as they are, and changing the template changes every track that names it. `None` is
     /// the default, and the only value of a track written before project format 43.
     pub groove: Option<TrackGroove>,
+    /// The track's own controller data: pitch bend, aftertouch and CC lanes that belong to the
+    /// track and not to a note clip, in song ticks (see [`crate::controller`]). They play with the
+    /// controllers of the clips ([`flatten_controllers`]) and are edited, recorded and saved like
+    /// a clip's lanes; a track that has none is the common case. Always empty on audio and
+    /// automation tracks. Written only when set (project format 44).
+    pub controllers: Vec<ControllerLane>,
     /// The track is frozen: its instrument and the first effects of its channel's insert chain
     /// are rendered to the audio held here, which plays instead of them (see
     /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.
@@ -1273,6 +1279,21 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Replace the controller lanes a note track holds outside its clips (see
+    /// [`Track::controllers`]; the lanes are in song ticks). The track must play notes (an empty
+    /// list is allowed on any track and a no-op there); the lanes are validated like a clip's:
+    /// sorted by kind, unique, points sorted by tick in `0..=MAX_TICK`, values in the kind's
+    /// range, and lanes without points are dropped. A point past the song end moves the end out
+    /// to it. `merge` groups drags into one undo step. Refused on a frozen track. Reports
+    /// [`crate::SyncOp::SongChanged`].
+    SetTrackControllers {
+        /// The track's device.
+        device: DeviceKey,
+        /// The track's whole own controller data after the edit.
+        lanes: Vec<ControllerLane>,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Replace a note clip's program changes and SysEx messages (see [`crate::midi_data`]). The
     /// clip must be a note clip (empty data is allowed on any clip and a no-op there); the data
     /// is put in canonical form (sorted, the last program change of a tick wins, empty SysEx
@@ -1720,8 +1741,8 @@ mod flatten;
 pub use crate::automation_view::automation_value_at;
 pub use flatten::{
     AudioRegion, Crossfade, FlatMidiData, FlatParam, audible_spans, crossfades, effective_tracks,
-    flatten_audio, flatten_automation, flatten_controllers, flatten_midi_data, flatten_notes,
-    flatten_notes_with, flatten_param_lanes, flatten_track_notes,
+    flatten_audio, flatten_automation, flatten_clip_controllers, flatten_controllers,
+    flatten_midi_data, flatten_notes, flatten_notes_with, flatten_param_lanes, flatten_track_notes,
 };
 pub(crate) use flatten::{automation_piece, controller_piece};
 

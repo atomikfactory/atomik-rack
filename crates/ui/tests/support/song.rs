@@ -82,6 +82,7 @@ pub fn track(device: &str, lanes: Vec<Lane>) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        controllers: Vec::new(),
         groove: None,
         frozen: None,
         lanes,

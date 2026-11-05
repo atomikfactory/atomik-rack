@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Controller lanes without a note clip.** A note track can hold pitch bend, aftertouch and CC lanes of its own,
+  outside its clips, in song time. **Track > Edit Track Controllers** opens the piano roll on them: the roll shows the
+  ruler and the controller area over the whole song (no notes, so no grid, keys or velocity lane), with the same lane
+  chips, drawing, dragging, Shift-click and rubber-band selection, delete, copy, cut, paste and thin as the lanes of a
+  clip; a drag is one undo step. The lanes play with the controllers of the clips (at an equal tick the track's own
+  point wins), in the engine, in a bounce and in the MIDI export, even on a track that has no clip. A take of
+  controller events and no notes no longer makes a clip of only controllers: the pass is laid over the track's lanes,
+  replacing what they held in the time the take covered, in one undo step (a take with notes keeps its controllers in
+  its clip, as before). Duplicating a track copies the lanes; Merge Note Lanes leaves them where they are; a frozen
+  track refuses edits to them. **Project format 44**: a note track's `"controllers"`, the same list as a note clip's in
+  song ticks, written before the track's `"lanes"` only when set. A reader of 43 would play the track without them,
+  so the field is not ignorable. Not done yet: MPE (per-note expression) lanes, a mark in the arrangement that shows a
+  track holds lanes of its own, writing the controllers of an imported MIDI channel that has no notes to the track's
+  lanes, and a track lane grid that follows a meter map (it counts bars from the first meter).
 - **Several songs: audio that travels, a shared library and recent list, and recovery of every song.** Copy and
   paste already crossed from one open song to another for clips, takes, devices, tracks, strips and patches, but the
   audio they use stayed behind in the first song's bundle. A paste now copies the files the song lacks from the

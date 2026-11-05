@@ -2240,6 +2240,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.track_controllers",
+        "Edit Track Controllers",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.track_height",
         "Track Height",
         G::Sequencer,

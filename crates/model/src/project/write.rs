@@ -208,7 +208,7 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
         let sep = if i == 0 { "" } else { "," };
         let _ = write!(
             w,
-            "{sep}\n      {{\n        \"device\": {}, \"muted\": {}, \"solo\": {}, \"armed\": {},{}{}{}{}{}{}{}{}\n        \"lanes\": [",
+            "{sep}\n      {{\n        \"device\": {}, \"muted\": {}, \"solo\": {}, \"armed\": {},{}{}{}{}{}{}{}{}{}\n        \"lanes\": [",
             json_str(&t.device.0),
             t.muted,
             t.solo,
@@ -258,7 +258,18 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
                     f.length,
                     audio_json(&f.audio)
                 )
-            })
+            }),
+            if t.controllers.is_empty() {
+                String::new()
+            } else {
+                let mut text = String::from(
+                    "
+        \"controllers\": ",
+                );
+                write_controller_lanes(&mut text, &t.controllers, "        ");
+                text.push(',');
+                text
+            }
         );
         for (j, lane) in t.lanes.iter().enumerate() {
             let sep = if j == 0 { "" } else { "," };

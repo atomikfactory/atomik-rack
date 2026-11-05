@@ -51,7 +51,9 @@
 //!   nothing before its first point, so a piece emits a point at its start only when the lane
 //!   already has a value there (an earlier point, or a ramp running through it); a point inside
 //!   the piece is emitted at its own tick. Lanes of the same kind in several clips of the lane
-//!   join into one list per kind. Between pieces the value holds.
+//!   join into one list per kind. Between pieces the value holds. The track's own controller
+//!   lanes ([`Track::controllers`], song ticks, no pieces) join the lists by tick, winning an
+//!   equal tick.
 //! - **Program changes and SysEx.** [`flatten_midi_data`] windows each clip's `midi` data like a
 //!   controller lane (same pieces, offsets, loops and hiding): the program in force at the start
 //!   of a piece is repeated there, the messages inside the piece keep their place. Only a MIDI
@@ -384,11 +386,33 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
 /// One kind's flattened controller points: `(song tick, value, curve)`.
 pub type FlatController = (ControllerKind, Vec<(i64, f32, Curve)>);
 
-/// The controller data a track's played note lanes play: for each [`ControllerKind`] in use
-/// (sorted by kind) the points `(song tick, value, curve)` with strictly increasing ticks
-/// (rules in the module docs). The lanes' points of a kind merge by tick; at an equal tick the
-/// later lane wins. Empty without controller lanes. Track mute and solo are not applied here.
+/// The controller data a track plays: for each controller kind in use (sorted by kind)
+/// the points `(song tick, value, curve)` with strictly increasing ticks (rules in the module
+/// docs). The controller lanes of the track's played note lanes ([`flatten_clip_controllers`])
+/// and the track's own ([`Track::controllers`]) merge by tick; at an equal tick the later note
+/// lane wins over an earlier one and the track's own point over any. Empty without controller
+/// lanes. Track mute and solo are not applied here.
 pub fn flatten_controllers(track: &Track) -> Vec<FlatController> {
+    let clips = flatten_clip_controllers(track);
+    if track.controllers.is_empty() {
+        return clips;
+    }
+    let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = clips.into_iter().collect();
+    for lane in &track.controllers {
+        let points = by_kind.entry(lane.kind).or_default();
+        // The points of the clips and the track's own join by tick; at an equal tick the track's
+        // own point wins.
+        points.retain(|p| lane.points.binary_search_by_key(&p.0, |q| q.tick).is_err());
+        points.extend(lane.points.iter().map(|p| (p.tick, p.value, p.curve)));
+        points.sort_by_key(|p| p.0);
+    }
+    by_kind.retain(|_, v| !v.is_empty());
+    by_kind.into_iter().collect()
+}
+
+/// [`flatten_controllers`] for the controller lanes of the track's note clips alone: what the
+/// clips play, without the track's own lanes ([`Track::controllers`]).
+pub fn flatten_clip_controllers(track: &Track) -> Vec<FlatController> {
     let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = BTreeMap::new();
     let mut lanes = track.played_note_lanes();
     let first = lanes.next().map(lane_controllers).unwrap_or_default();

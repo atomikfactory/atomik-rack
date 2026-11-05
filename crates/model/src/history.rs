@@ -1681,6 +1681,11 @@ pub(crate) fn song_end_growth(doc: &RackDoc, edit: &Edit) -> Option<Edit> {
             Edit::Lane { new: Some(l), .. } => lane_reach(l),
             Edit::Track { new: Some(t), .. } => t.lanes.iter().filter_map(lane_reach).max(),
             Edit::Compound(edits) => edits.iter().filter_map(farthest).max(),
+            Edit::Swap(Swap::TrackControllers { new, .. }) => new
+                .iter()
+                .flat_map(|l| l.points.iter())
+                .map(|p| p.tick + 1)
+                .max(),
             _ => None,
         }
     }

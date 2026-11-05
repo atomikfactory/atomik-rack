@@ -166,7 +166,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             (Pane::PianoRoll, Some(ClipboardKind::Controllers)) => {
                 !self.clipboard.is_empty()
-                    && self.piano_roll.clip().is_some()
+                    && (self.piano_roll.clip().is_some() || self.piano_roll.track().is_some())
                     && self.piano_roll.controllers_open()
             }
             _ => false,
@@ -241,20 +241,29 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             Pane::PianoRoll => {
-                let id = self.piano_roll.clip().ok_or_else(nothing)?;
                 // Points selected in the controller area are what Copy takes while the area has
-                // the focus (a press in its lane); otherwise the selected notes.
+                // the focus (a press in its lane); otherwise the selected notes. The lanes are
+                // the clip's, or the track's own in the track mode.
                 if self.piano_roll.controller_focus() {
-                    let (_, c) = doc.song.clip_or_take(id).ok_or_else(nothing)?;
+                    let lanes = match self.piano_roll.track() {
+                        Some(device) => doc.song.track(device).map(|t| t.controllers.as_slice()),
+                        None => self
+                            .piano_roll
+                            .clip()
+                            .and_then(|id| doc.song.clip_or_take(id))
+                            .map(|(_, c)| c.controllers.as_slice()),
+                    }
+                    .ok_or_else(nothing)?;
                     let indices = self.piano_roll.selected_controller_points();
                     return ControllerSnapshot::capture(
-                        &c.controllers,
+                        lanes,
                         self.piano_roll.controller_kind(),
                         &indices,
                     )
                     .map(ClipboardData::Controllers)
                     .ok_or_else(nothing);
                 }
+                let id = self.piano_roll.clip().ok_or_else(nothing)?;
                 let indices = self.piano_roll.selected_notes();
                 if indices.is_empty() {
                     return Err(nothing());
@@ -385,6 +394,9 @@ impl<S: EngineSink> AppCore<S> {
     /// start when the playhead is outside it): one undo step, and the pasted points are the
     /// selection afterwards.
     fn paste_controllers(&mut self, snapshot: &ControllerSnapshot) -> Result<(), String> {
+        if let Some(device) = self.piano_roll.track().cloned() {
+            return self.paste_track_controllers(&device, snapshot);
+        }
         let clip = self
             .piano_roll
             .clip()
@@ -408,6 +420,36 @@ impl<S: EngineSink> AppCore<S> {
                 .ok_or_else(|| "Nothing of the copied points falls inside the clip".to_string())?;
         self.apply_command(Command::Song(SongCommand::SetClipControllers {
             clip,
+            lanes,
+            merge: None,
+        }))
+        .map_err(|_| String::new())?;
+        self.piano_roll.set_controller_selection(&picked);
+        self.advance_playhead(snapshot.span);
+        Ok(())
+    }
+
+    /// [`Self::paste_controllers`] in the roll's track mode: the points go into the lane the roll
+    /// shows, from the playhead (song ticks), up to the song end.
+    fn paste_track_controllers(
+        &mut self,
+        device: &DeviceKey,
+        snapshot: &ControllerSnapshot,
+    ) -> Result<(), String> {
+        let song = &self.doc().song;
+        let track = song
+            .track(device)
+            .ok_or_else(|| "The track is gone".to_string())?;
+        let (lanes, picked) = controller_edit::paste_points(
+            &track.controllers,
+            self.piano_roll.controller_kind(),
+            self.position,
+            snapshot,
+            song.end,
+        )
+        .ok_or_else(|| "Nothing of the copied points falls inside the song".to_string())?;
+        self.apply_command(Command::Song(SongCommand::SetTrackControllers {
+            device: device.clone(),
             lanes,
             merge: None,
         }))

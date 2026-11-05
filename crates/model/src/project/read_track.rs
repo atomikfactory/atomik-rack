@@ -266,6 +266,10 @@ pub(super) fn load_track(
         }
     };
     let groove = load_track_groove(obj, path, song)?;
+    let controllers = match obj.get("controllers") {
+        Some(c) => load_controllers(c, &path.field("controllers"))?,
+        None => Vec::new(),
+    };
     let track = Track {
         device,
         muted: flag(obj, path, "muted")?,
@@ -274,10 +278,16 @@ pub(super) fn load_track(
         chase: !flag(obj, path, "no_chase")?,
         notes_to,
         direct_record: flag(obj, path, "direct_record")?,
+        controllers,
         groove,
         frozen,
         lanes,
     };
+    if track.is_audio() && !track.controllers.is_empty() {
+        return Err(path
+            .field("controllers")
+            .error("an audio track plays no notes, so it has no controller lanes"));
+    }
     if automation_track {
         // An automation track plays no notes and no audio: nothing of that can be set on it.
         for (field, set) in [
@@ -287,6 +297,7 @@ pub(super) fn load_track(
             ("notes_to", track.notes_to.is_some()),
             ("direct_record", track.direct_record),
             ("groove", track.groove.is_some()),
+            ("controllers", !track.controllers.is_empty()),
             ("frozen", track.frozen.is_some()),
         ] {
             if set {

@@ -42,6 +42,7 @@
 //!             "tracks": [{ "device", "muted", "solo", "armed", "no_chase"? (v17),
 //!                          "notes_to"? (v31, a device key: where the track's notes enter),
 //!                          "direct_record"? (v39, `true`: record the notes the players generate),
+//!                          "controllers"? (v44, as a note clip's, in song ticks; note tracks only),
 //!                          "groove"? (v43, the name of a groove of the song or a built-in one: the
 //!                          track's live groove), "groove_strength"? (v43, percent `0..=99`, 100 when omitted),
 //!                          "group"?, "color"?, "comment"? (v22), "frozen"? (v25),
@@ -412,7 +413,11 @@
 //! song lacks loads without one) and `"groove_strength"` (`0..=99`, omitted at 100), written after the
 //! clip's `"sysex"` only while set and ignorable (a reader that drops them plays the track's groove). A notes lane may also carry
 //! `"solo": true` and `"color": "#rrggbb"` after its `"muted"` (only while set; both ignorable: a reader
-//! that drops them plays every lane in the track's colour). Saving always writes version 43.
+//! that drops them plays every lane in the track's colour).
+//! Version 44 adds a note track's own controller lanes, `"controllers"` (the same list as a note clip's, in
+//! song ticks; see [`crate::controller`]), written before the track's `"lanes"` only when the track has
+//! any. They play with the controllers of the clips, so a reader of 43 would play the track without them:
+//! the field is not ignorable. Only a note track takes it. Saving always writes version 44.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -509,8 +514,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
 /// information) and 39 (no send follow, no parallel channels) and 40 (no master tune) and 41 (no
 /// modulation slots) and 42 (no CV inputs, macro kinds or split pass flags on containers) and 43
-/// (no live track grooves).
-pub const PROJECT_VERSION: u32 = 43;
+/// (no live track grooves) and 44 (no controller lanes outside note clips).
+pub const PROJECT_VERSION: u32 = 44;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

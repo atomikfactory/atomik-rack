@@ -130,3 +130,48 @@ fn a_saved_and_loaded_project_bounces_the_same() {
     assert_eq!(back, doc);
     assert_eq!(bounce(&back, 512, 0), bounce(&doc, 512, 0));
 }
+
+/// The song of [`song`] without lanes in the clip, the bend on the track itself.
+fn song_with_track_lanes(lanes: Vec<ControllerLane>) -> RackDoc {
+    let mut doc = song(Vec::new());
+    doc.song_mut().tracks[0].controllers = lanes;
+    doc
+}
+
+#[test]
+fn a_track_lane_without_any_clip_lane_bends_the_note_like_a_clip_lane() {
+    let doc = song_with_track_lanes(bend_up_at_beat_two());
+    let out = bounce(&doc, 512, 0);
+    let before = dominant_frequency(&out[9_600..43_200], SR);
+    let after = dominant_frequency(&out[52_800..91_200], SR);
+    assert!((before - 440.0).abs() < 2.0, "{before}");
+    assert!((after - 493.88).abs() < 3.0, "{after}");
+    // The same bend in the clip and on the track sounds the same.
+    assert_eq!(out, bounce(&song(bend_up_at_beat_two()), 512, 0));
+}
+
+#[test]
+fn a_track_lane_plays_where_the_track_has_no_clip_at_all() {
+    // The held note ends with its clip, but the bend lane is the track's and the lane of a
+    // track whose only clip lies later still reaches the device: a note started after beat two
+    // is already bent.
+    let mut doc = song_with_track_lanes(bend_up_at_beat_two());
+    let clip = &mut doc.song_mut().tracks[0].lanes[0].clips[0];
+    clip.start = 3 * PPQ;
+    clip.length = 4 * PPQ;
+    doc.song_mut().end = 8 * PPQ;
+    let out = bounce(&doc, 512, 0);
+    // The note starts at beat 4 (1.5 s): two semitones up from its first sample.
+    let f = dominant_frequency(&out[84_000..120_000], SR);
+    assert!((f - 493.88).abs() < 3.0, "{f}");
+}
+
+#[test]
+fn a_saved_and_loaded_project_with_track_lanes_bounces_the_same() {
+    let doc = song_with_track_lanes(bend_up_at_beat_two());
+    let text = save_project(&doc);
+    assert!(text.contains("\"controllers\""));
+    let back = load_project(&text, &default_registry()).unwrap();
+    assert_eq!(back, doc);
+    assert_eq!(bounce(&back, 512, 0), bounce(&doc, 512, 0));
+}

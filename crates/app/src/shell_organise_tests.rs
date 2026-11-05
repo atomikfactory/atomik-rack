@@ -158,6 +158,7 @@ fn the_track_menu_follows_the_selection() {
             "Bypass All Players",
             "Add Pattern Lane",
             "Pattern Lane to Notes",
+            "Edit Track Controllers",
             "Fold Automation Lanes",
             "Unfold Automation Lanes",
             "Track Height: Small",

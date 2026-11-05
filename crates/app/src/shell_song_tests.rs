@@ -319,6 +319,33 @@ fn the_piano_roll_opens_in_place_of_the_arrangement() {
 }
 
 #[test]
+fn edit_track_controllers_opens_the_roll_on_the_track_and_toggle_closes_it() {
+    let mut s = shell();
+    demo(&mut s);
+    s.execute(AppCommand::EditTrackControllers);
+    assert!(s.core().piano_roll_open());
+    assert!(s.core().piano_roll_clip().is_none(), "no clip is open");
+    assert!(s.core().piano_roll().track().is_some());
+    assert!(s.menu_state().piano_roll);
+    assert_eq!(s.focus(), Pane::PianoRoll);
+    s.frame();
+    let mut list = DisplayList::new();
+    s.paint(&mut list);
+    assert!(list.texts().contains(&"TRACK CONTROLLERS"));
+    // The View > Piano Roll command closes it; asking again for the clip opens the clip.
+    s.execute(AppCommand::TogglePianoRoll);
+    assert!(!s.core().piano_roll_open());
+    s.execute(AppCommand::TogglePianoRoll);
+    assert!(s.core().piano_roll_clip().is_some());
+    assert!(s.core().piano_roll().track().is_none());
+    // Without a note track the command says so and opens nothing.
+    let mut empty = shell();
+    empty.execute(AppCommand::EditTrackControllers);
+    assert!(!empty.core().piano_roll_open());
+    assert!(empty.core().last_rejection().is_some());
+}
+
+#[test]
 fn each_frame_shows_the_transport_and_paints_every_pane() {
     let mut s = shell();
     demo(&mut s);

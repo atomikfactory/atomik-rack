@@ -23,7 +23,7 @@ use crate::controller::{ControllerLane, canonical};
 use crate::history::Edit;
 use crate::song::{
     AutomationPoint, Clip, ClipContent, ClipId, Lane, MAX_NOTE_LANES, Note, Song, Track,
-    audible_spans, flatten_controllers, flatten_notes_with,
+    audible_spans, flatten_clip_controllers, flatten_notes_with,
 };
 use crate::song_cmd::{bad, check_geometry, note_lane_of, range};
 use crate::{DeviceKey, ModelError, RackDoc};
@@ -185,7 +185,7 @@ fn sounding_intervals(track: &Track) -> Vec<(i64, i64)> {
 fn merged_lane(doc: &RackDoc, track: &Track, next: &mut u64) -> Result<Lane, ModelError> {
     let intervals = sounding_intervals(track);
     let notes = flatten_notes_with(track, doc.song.tails);
-    let controllers = flatten_controllers(track);
+    let controllers = flatten_clip_controllers(track);
     let mut lane = Lane::notes();
     lane.name = track.lanes[0].name.clone();
     for (a, b) in intervals {

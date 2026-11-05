@@ -179,6 +179,16 @@ impl RackDoc {
                     found.add(&at, "only a note track has a live groove".to_owned());
                 }
             }
+            if !track.controllers.is_empty() {
+                if track.is_audio() || track.is_automation_only() {
+                    found.add(&at, "only a note track has controller lanes".to_owned());
+                }
+                if let Err(message) =
+                    crate::controller::check_lanes(&track.controllers, crate::song::MAX_TICK)
+                {
+                    found.add(format!("{at}.controllers"), message);
+                }
+            }
             for (l, lane) in track.lanes.iter().enumerate() {
                 let is_automation = matches!(lane.kind, LaneKind::Automation(_));
                 if lane

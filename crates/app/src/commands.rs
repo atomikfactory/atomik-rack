@@ -433,6 +433,9 @@ pub enum AppCommand {
     AddPatternLane,
     /// Track > Pattern Lane to Notes: the notes the lane's patterns play, on a new note lane.
     PatternLaneToNotes,
+    /// Track > Edit Track Controllers: the piano roll on the pitch bend, aftertouch and CC lanes
+    /// the selected note track holds outside its clips.
+    EditTrackControllers,
     /// Track ▸ Bounce Clips to New Track (Dry): the selected clips as the instrument plays them,
     /// before the channel strip, on a new audio track.
     BounceClipDry,
@@ -871,6 +874,7 @@ impl AppCommand {
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
             AppCommand::PatternLaneToNotes => ("sequencer.pattern_lane_to_notes", None),
+            AppCommand::EditTrackControllers => ("sequencer.track_controllers", None),
             AppCommand::BounceClipDry => ("sequencer.bounce_clip_dry", None),
             AppCommand::FoldLanes(true) => ("sequencer.fold_lanes", Some("fold")),
             AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
@@ -1197,6 +1201,7 @@ impl AppCommand {
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
             ("sequencer.pattern_lane_to_notes", None) => AppCommand::PatternLaneToNotes,
+            ("sequencer.track_controllers", None) => AppCommand::EditTrackControllers,
             ("sequencer.bounce_clip_dry", None) => AppCommand::BounceClipDry,
             ("sequencer.fold_lanes", Some("fold")) => AppCommand::FoldLanes(true),
             ("sequencer.fold_lanes", Some("unfold")) => AppCommand::FoldLanes(false),
@@ -2864,6 +2869,7 @@ pub fn menus_with_songs(
                 MenuEntry::Separator,
                 item("Add Pattern Lane", AppCommand::AddPatternLane),
                 item("Pattern Lane to Notes", AppCommand::PatternLaneToNotes),
+                item("Edit Track Controllers", AppCommand::EditTrackControllers),
                 MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
@@ -3531,6 +3537,7 @@ mod tests {
             AppCommand::BounceClipDry,
             AppCommand::AddPatternLane,
             AppCommand::PatternLaneToNotes,
+            AppCommand::EditTrackControllers,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
@@ -4271,6 +4278,7 @@ mod tests {
                 "Bypass All Players",
                 "Add Pattern Lane",
                 "Pattern Lane to Notes",
+                "Edit Track Controllers",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",
