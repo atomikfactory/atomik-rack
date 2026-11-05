@@ -1553,7 +1553,12 @@ a note and is applied first.
   when `i` is odd and offset by the groove slot `i mod len`; the nearest is picked among those
   targets, not among the plain grid lines, so a heavily swung off-beat captures the notes near it.
   Swing is on the 50..75 % scale: an odd step is delayed by `(swing - 50) / 50` of a step (66 % is a
-  triplet feel). A
+  triplet feel). The commands plan through `quantize_notes_in`, which takes the song's bar lines: a
+  step is odd when it is the odd step of its own bar, so a meter change or a bar of an odd number of
+  steps restarts the swing at the bar line (a 4/4 song is unchanged; `quantize_notes` counts from the
+  start of the song). `humanize_length` changes each length by a bounded random amount (one tick at
+  the least, its own hash stream) and `legato` stretches each quantized note to the next selected
+  start. A
   `Groove { name, step, slots: [GrooveSlot { offset (steps, -0.5..=0.5), velocity (scale, 0..=2) }] }`
   has its own step, and a quantize that names one runs on the groove's step (the grid field is not
   used). `snap_ends` also moves each note's end towards its target (a note never ends up empty).
@@ -1593,15 +1598,24 @@ a note and is applied first.
   template edit re-times every user at once; `RenameGroove { from, to }` renames the groove and the
   tracks that use it; `DeleteGroove` takes it off them (both one undo step, a compound of the library edit
   and a swap per track). The track fields are `"groove"` and `"groove_strength"` (format 43, omitted when
-  100). Controller lanes do not move with the notes yet.
+  100). A note clip can carry a groove of its own (`Clip::groove`, `SetClipGroove { clips, groove }`, one
+  compound of `Edit::Clip`): `flatten_track_notes` plays the track's groove for the clips without one and
+  each distinct clip groove for its own clips (which clip hides which is decided first, over all of them),
+  then merges by `(tick, key)`. The rename and delete above follow on the clips too. The clip fields are
+  `"groove"` and `"groove_strength"` after `"sysex"`, ignorable under format 43; a clip that names a groove
+  the song lacks (pasted from another song) loads without one. Controller lanes do not move with the
+  notes yet.
 - **Library in the project.** `Song.grooves` is the song's shared library, saved by project format
   21 as `"grooves"` (see section 2 above for the fields; names are unique, not a built-in name, and
   at most 32 characters; a version 20 file loads without it and the field is unknown there).
 - **Panel** ([quantize_panel.rs](../crates/ui/src/quantize_panel.rs),
   [app_core_quantize.rs](../crates/app/src/app_core_quantize.rs), `Shell`). `QuantizeView` is a
   modal like the relink panel with a `-` / `+` pair and the wheel per value (grid, strength, swing,
-  groove, groove velocity, humanize timing and velocity, seed, snap ends) and the groove library
-  list. It has no document: the shell tells it what APPLY works on (`AppCore::quantize_target`: the
+  groove, groove velocity, humanize timing, velocity and length, seed, snap ends, legato), a text
+  field that names and renames the chosen groove of the song (`RENAME` or Enter, `RenameGroove`;
+  `Shell::wants_text_input` follows its focus), `LIVE ON CLIPS` and `CLEAR LIVE` (`SetClipGroove` on the
+  target's clips at the panel's strength) and the groove library list. It has no document: the
+  shell tells it what APPLY works on (`AppCore::quantize_target`: the
   piano roll's selected notes, else the arrangement's selected note clips, the roll first while it
   is the focused pane) and the grooves on offer, and reads `QuantizeValues` back (kept between
   openings, not in the project). Edit > Quantize Options (`edit.quantize_options`, unbound by
@@ -1611,7 +1625,9 @@ a note and is applied first.
   opening it: the roll answers with `UiAction::Quantize(QuantizeAction::ApplyLast)` (its `...`
   button and a right click on QUANT send `Options`) and `Shell` applies `quantize_values().params()`
   through `AppCore::apply_quantize`; from the arrangement the shell runs the command itself on the
-  selected clips. The roll has no quantize strength or grid of its own any more.
+  selected clips. The arrangement corner has a QUANT button (`CornerButton::Quantize`, between S and
+  MAN REC) that sends `QuantizeAction::ApplyClips` (the same on the selected clips, also while the roll is
+  open; a right click sends `Options`). The roll has no quantize strength or grid of its own any more.
 - **Inspection.** `project_inspect` and `session_status` list the song's grooves under
   `song.grooves` (name, step, slots), left out when there are none.
 - **Note tools** ([note_tools.rs](../crates/model/src/note_tools.rs)). `ApplyNoteTool` (clips, an optional

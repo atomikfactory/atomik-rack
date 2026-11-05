@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Quantize and groove follow-ups: a live groove per clip, a groove name field, length options, a QUANT button in
+  the arrangement and swing that follows the bar lines.** A note clip can play a groove of its own instead of its
+  track's (`LIVE ON CLIPS` in the quantize panel at the panel's strength, `CLEAR LIVE` to hand it back; the notes are
+  not edited, and renaming or deleting the groove follows on the clips). The panel has a text field that shows the
+  chosen groove of the song and renames it (the `RENAME` button or Enter; the tracks and clips that use it follow),
+  and two new rows, humanize length (a bounded random change to each note length, reproducible per seed) and legato
+  (each quantized note reaches the start of the next selected one). The arrangement's corner has a QUANT button between
+  S and MAN REC: it quantizes the selected clips with the panel's last settings, and a right click opens the panel.
+  Swing now counts steps from the start of each bar of the meter map, so a meter change or a bar with an odd number
+  of steps no longer turns the swing around (a 4/4 song quantizes as before; Quantize Audio follows the bars too).
+  Project format unchanged (43): a clip's `"groove"` and `"groove_strength"` are written only when set and are
+  ignorable (an older reader plays the track's groove). Controller lane points still do not move with their notes, and a
+  groove from a MIDI file or an audio loop is not built yet.
 - **Player preview: a play button on every note player.** The name strip of the step sequencer, the arpeggiator,
   the drum generator, the CV sequencer, the note repeater, the note delay, Key & Chord and the note filter has a
   small play button beside BYPASS. With the song stopped, it runs that player and the players after it in the
