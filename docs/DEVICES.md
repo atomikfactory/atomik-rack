@@ -3246,7 +3246,8 @@ Moves every note event later in time and never adds a note. Source:
 
 The step sequencer's note row plus two rows of control voltage, with patterns that can be chained.
 It takes the **same pattern data** as the step sequencer (the rack panel, the grid editor, the
-pattern clipboard and the pattern commands work unchanged) and, per pattern, two **curve rows** A
+pattern clipboard and the pattern commands work unchanged; COPY also keeps the curve rows and PASTE
+writes steps and curves as one undo step) and, per pattern, two **curve rows** A
 and B of 64 steps: a value from -100 to 100 % and a slide flag (`CvSeqData`, registered with
 `register_with_curves`; the document side is `RackDevice.curves`, `"curves"` in the project file,
 project format 32). Sources:
