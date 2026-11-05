@@ -215,6 +215,61 @@ fn kind_label(desc: &DeviceDescriptor) -> &'static str {
     }
 }
 
+/// One family of the device types a menu lists: the heading and the (type id, name) of each type,
+/// by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceGroup {
+    /// The family: Instruments, Effects, Utilities, Modulators, Players or Containers.
+    pub name: &'static str,
+    /// The types of the family: type id and name.
+    pub types: Vec<(&'static str, &'static str)>,
+}
+
+/// The device types the browser offers at the top of the rack (without the console) that
+/// `accept` takes, grouped by family in the browser's order, each family by name; families with
+/// no type are left out. The Create and Replace submenus list these.
+pub fn device_groups(
+    registry: &Registry,
+    accept: impl Fn(&DeviceDescriptor) -> bool,
+) -> Vec<DeviceGroup> {
+    const FAMILIES: [&str; 6] = [
+        "Instruments",
+        "Effects",
+        "Utilities",
+        "Modulators",
+        "Players",
+        "Containers",
+    ];
+    let family = |d: &DeviceDescriptor| -> &'static str {
+        if is_modulator(d.type_id) {
+            "Modulators"
+        } else if is_player(d.type_id) {
+            "Players"
+        } else if d.type_id == CONTAINER_TYPE {
+            "Containers"
+        } else {
+            match d.kind {
+                DeviceKind::Instrument => "Instruments",
+                DeviceKind::Effect => "Effects",
+                _ => "Utilities",
+            }
+        }
+    };
+    let rows = Browser::default().rows(registry);
+    FAMILIES
+        .into_iter()
+        .filter_map(|name| {
+            let mut types: Vec<(&'static str, &'static str)> = rows
+                .iter()
+                .filter(|d| family(d) == name && accept(d))
+                .map(|d| (d.type_id, d.name))
+                .collect();
+            types.sort_by_key(|(_, n)| n.to_lowercase());
+            (!types.is_empty()).then_some(DeviceGroup { name, types })
+        })
+        .collect()
+}
+
 /// The sort group of a row: devices, the modulators, the players, then the containers.
 fn group_of(type_id: &str) -> u8 {
     if type_id == CONTAINER_TYPE {

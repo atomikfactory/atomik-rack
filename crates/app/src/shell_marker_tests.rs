@@ -358,7 +358,7 @@ fn the_marker_context_menus_list_their_commands() {
                         enabled,
                         ..
                     } => Some((command, arg, enabled)),
-                    Spec::Separator | Spec::Submenu { .. } => None,
+                    Spec::Separator | Spec::Submenu { .. } | Spec::Rows(_) => None,
                 })
                 .collect()
         };

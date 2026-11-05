@@ -62,7 +62,7 @@ fn the_context_menus_list_their_commands() {
                     enabled,
                     ..
                 } => Some((command, arg, enabled)),
-                Spec::Separator | Spec::Submenu { .. } => None,
+                Spec::Separator | Spec::Submenu { .. } | Spec::Rows(_) => None,
             })
             .collect()
     };
@@ -101,7 +101,7 @@ fn the_context_menus_list_their_commands() {
         .into_iter()
         .find_map(|s| match s {
             Spec::Item { checked, .. } => checked,
-            Spec::Separator | Spec::Submenu { .. } => None,
+            Spec::Separator | Spec::Submenu { .. } | Spec::Rows(_) => None,
         });
     assert_eq!(checked, Some(true));
 }

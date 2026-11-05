@@ -1218,7 +1218,7 @@ mod tests {
                 Spec::Item {
                     command, enabled, ..
                 } => Some((command, enabled)),
-                Spec::Separator | Spec::Submenu { .. } => None,
+                Spec::Separator | Spec::Submenu { .. } | Spec::Rows(_) => None,
             })
             .collect()
     }
@@ -1491,7 +1491,7 @@ mod tests {
             .into_iter()
             .filter_map(|s| match s {
                 Spec::Item { label, .. } => Some(label),
-                Spec::Separator | Spec::Submenu { .. } => None,
+                Spec::Separator | Spec::Submenu { .. } | Spec::Rows(_) => None,
             })
             .collect();
         assert_eq!(
@@ -1653,7 +1653,7 @@ mod tests {
             .into_iter()
             .filter_map(|s| match s {
                 Spec::Item { command, label, .. } => Some((command, label)),
-                Spec::Separator | Spec::Submenu { .. } => None,
+                Spec::Separator | Spec::Submenu { .. } | Spec::Rows(_) => None,
             })
             .collect()
     }
@@ -1714,7 +1714,7 @@ mod tests {
                     ..
                 } => out.push((*command, *arg, *enabled, *checked)),
                 Spec::Submenu { items, .. } => walk(items, out),
-                Spec::Separator => {}
+                Spec::Separator | Spec::Rows(_) => {}
             }
         }
     }
@@ -2017,7 +2017,7 @@ mod tests {
                     match s {
                         Spec::Item { command, arg, .. } => out.push((command, *arg)),
                         Spec::Submenu { items, .. } => walk(items, out),
-                        Spec::Separator => {}
+                        Spec::Separator | Spec::Rows(_) => {}
                     }
                 }
             }

@@ -428,6 +428,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("create.device", "Create Device", G::Create, C::Global),
     cmd("create.effect", "Create Effect", G::Create, C::Global).menu(),
     cmd(
         "create.instrument",
@@ -1345,6 +1346,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.patch_prev", "Previous Patch", G::Rack, C::Rack).rep(),
     cmd("rack.preview_player", "Preview Player", G::Rack, C::Rack),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
+    cmd("rack.replace_device", "Replace Device", G::Rack, C::Rack),
     cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
     cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),
     cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),

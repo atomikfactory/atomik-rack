@@ -3,13 +3,16 @@
 //! * The **"+" handles**: on the seam between two devices of a column (and at the top and the
 //!   foot of a column) a small "+" shows while the pointer rests there. Pressing it opens the
 //!   device browser for an insert at that place: the row chosen (Enter or a double click) is
-//!   added at that slot, wired as a device dropped there is. Top level, front side only.
+//!   added at that slot, wired as a device dropped there is. Inside an unfolded container the
+//!   seams among its devices (below the INPUT strip, between devices, above the OUTPUT strip)
+//!   have one too: the row is added inside that container at that place. Front side only.
 //! * The **unfold on hover**: a cable dragged over a folded device unfolds it once the pointer
 //!   has rested there for [`UNFOLD_DELAY`], so a socket of its back can be reached. The view
 //!   only says which device is due; the host applies the unfold as an ordinary edit.
 
 use super::columns::column_left;
 use super::inline::is_inner;
+use super::inline::parent_of;
 use super::{Drag, Flip, Hit, RackView, UiAction};
 use crate::canvas::{Canvas, CanvasExt};
 use atomik_device_sdk::{RACK_WIDTH, Registry};
@@ -26,17 +29,20 @@ const REACH_Y: f64 = 7.0;
 pub const UNFOLD_DELAY: f64 = 0.7;
 
 /// A place between two devices of a column (or at an end of it) that can take a device.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct Seam {
     /// The column.
     pub column: u16,
     /// Height of the seam, rack coordinates.
     pub y: f64,
+    /// For a seam inside an unfolded container: the container and how many of its devices lie
+    /// above the seam (the index the add commands take). `None` at the top level.
+    pub inside: Option<(DeviceKey, usize)>,
 }
 
 impl Seam {
     /// Where the "+" is drawn, rack coordinates.
-    fn centre(self) -> Point {
+    fn centre(&self) -> Point {
         Point::new(
             column_left(self.column) + f64::from(RACK_WIDTH) / 2.0,
             self.y,
@@ -64,16 +70,60 @@ impl RackView {
                 out.push(Seam {
                     column,
                     y: self.devices[first].y,
+                    inside: None,
                 });
             }
             for &i in &members {
                 out.push(Seam {
                     column,
                     y: self.block_bottom(i),
+                    inside: None,
                 });
             }
         }
+        for frame in &self.frames {
+            self.inside_seams(&frame.container, &mut out);
+        }
         out
+    }
+
+    /// The seams inside the unfolded container `container`: below its INPUT strip, then below
+    /// each of its devices (the last one is the seam above the OUTPUT strip).
+    fn inside_seams(&self, container: &DeviceKey, out: &mut Vec<Seam>) {
+        let Some(column) = self
+            .devices
+            .iter()
+            .find(|d| d.key == *container)
+            .map(|d| d.column)
+        else {
+            return;
+        };
+        let mut index = 0;
+        for (i, d) in self
+            .devices
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| parent_of(&d.key).as_ref() == Some(container))
+        {
+            if d.is_interface() {
+                // The two strips of the container: the OUTPUT one is the end (its seam is the
+                // one below the last device).
+                if !d.key.0.ends_with("~out") {
+                    out.push(Seam {
+                        column,
+                        y: d.y + d.height,
+                        inside: Some((container.clone(), 0)),
+                    });
+                }
+            } else {
+                index += 1;
+                out.push(Seam {
+                    column,
+                    y: self.block_bottom(i),
+                    inside: Some((container.clone(), index)),
+                });
+            }
+        }
     }
 
     /// The centres of the "+" handles, in view coordinates: above the first device of each
@@ -93,6 +143,17 @@ impl RackView {
     /// The slot the browser opened by a "+" handle inserts at, until it closes.
     pub fn pending_insert(&self) -> Option<RackSlot> {
         self.insert_at
+    }
+
+    /// The container and the index among its devices the browser opened by a "+" handle inside
+    /// an unfolded container inserts at, until it closes.
+    pub fn pending_insert_inside(&self) -> Option<(&DeviceKey, usize)> {
+        self.insert_in.as_ref().map(|(c, i)| (c, *i))
+    }
+
+    /// Whether the browser was opened by a "+" handle (at the top level or inside a container).
+    pub(super) fn inserting(&self) -> bool {
+        self.insert_at.is_some() || self.insert_in.is_some()
     }
 
     /// The seam under view position `pos`, when no gesture is running.
@@ -132,12 +193,17 @@ impl RackView {
         let Some(seam) = self.handle_at(pos) else {
             return false;
         };
-        let none = vec![false; self.devices.len()];
-        let at = Point::new(column_left(seam.column) + 1.0, seam.y);
-        let dp = self.drop_point(at, &none);
-        let slot = RackSlot {
-            column: dp.column,
-            index: self.slot_index(doc, &dp, &[]),
+        let slot = match &seam.inside {
+            Some(_) => None,
+            None => {
+                let none = vec![false; self.devices.len()];
+                let at = Point::new(column_left(seam.column) + 1.0, seam.y);
+                let dp = self.drop_point(at, &none);
+                Some(RackSlot {
+                    column: dp.column,
+                    index: self.slot_index(doc, &dp, &[]),
+                })
+            }
         };
         self.browser.visible = true;
         self.browser.focused = true;
@@ -146,7 +212,10 @@ impl RackView {
         self.browser.scroll = 0.0;
         self.browser.highlighted =
             crate::browser::Browser::first_selectable(&self.browser.list(registry));
-        self.set_insert(Some(slot));
+        match slot {
+            Some(slot) => self.set_insert(Some(slot)),
+            None => self.set_insert_inside(seam.inside),
+        }
         self.plus = None;
         self.clamp_scroll();
         self.repaint = true;
@@ -157,12 +226,20 @@ impl RackView {
     /// Sets (or clears) the slot the browser's next add goes to.
     pub(super) fn set_insert(&mut self, slot: Option<RackSlot>) {
         self.insert_at = slot;
+        self.insert_in = None;
         self.browser.insert = slot.is_some();
+    }
+
+    /// Sets (or clears) the place inside a container the browser's next add goes to.
+    pub(super) fn set_insert_inside(&mut self, place: Option<(DeviceKey, usize)>) {
+        self.insert_at = None;
+        self.browser.insert = place.is_some();
+        self.insert_in = place;
     }
 
     /// Draws the "+" the pointer is on (rack coordinates).
     pub(super) fn paint_handle(&self, c: &mut dyn Canvas) {
-        let Some(seam) = self.plus else { return };
+        let Some(seam) = &self.plus else { return };
         let theme = &self.theme;
         let at = seam.centre();
         let disc = Circle::new(at, HANDLE_RADIUS);
