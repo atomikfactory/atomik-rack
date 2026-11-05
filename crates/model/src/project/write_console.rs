@@ -138,6 +138,9 @@ pub(super) fn snapshot_json(s: &MixerSnapshot) -> String {
     if let Some([r, g, b]) = s.color {
         let _ = write!(out, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
     }
+    if let Some(marker) = &s.marker {
+        let _ = write!(out, ", \"marker\": {}", json_str(marker));
+    }
     if !s.state.vcas.is_empty() {
         let vcas: Vec<String> = s
             .state

@@ -339,6 +339,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Snapshot, "effects", 43).ignorable(),
     field(Snapshot, "note", 43).ignorable(),
     field(Snapshot, "color", 43).ignorable(),
+    field(Snapshot, "marker", 43).ignorable(),
     field(SnapshotVca, "id", 1).req(),
     field(SnapshotVca, "name", 1).req(),
     field(SnapshotVca, "level_db", 1),

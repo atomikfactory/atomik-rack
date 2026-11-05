@@ -106,7 +106,7 @@ pub(super) fn load_vcas(
 /// most 32 characters unique ignoring case, the params of each captured device (finite numbers)
 /// and the groups as they were. The keys are not checked against the rack: a snapshot may name
 /// what was deleted since. At most 64 snapshots. A snapshot may hold the params of the effect
-/// devices (`"effects"`), a note (at most 200 characters) and a colour.
+/// devices (`"effects"`), a note (at most 200 characters), a colour and a marker name.
 pub(super) fn load_snapshots(
     v: &Value,
     path: &JsonPath,
@@ -223,12 +223,24 @@ pub(super) fn load_snapshots(
             Some(c) => parse_color(c, &p.field("color"))?,
             None => None,
         };
+        let marker = match s.get("marker") {
+            Some(m) => {
+                let mp = p.field("marker");
+                let m = string(m, &mp)?;
+                if m.trim().is_empty() || m.chars().count() > crate::MAX_MARKER_NAME {
+                    return Err(mp.error("a marker name is not empty and at most 64 characters"));
+                }
+                Some(m.trim().to_owned())
+            }
+            None => None,
+        };
         console.snapshots.push(MixerSnapshot {
             id,
             name: name.to_owned(),
             state,
             note,
             color,
+            marker,
         });
     }
     Ok(())
