@@ -5681,6 +5681,20 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::CollectFiles => {
+                match self.core.collect_files() {
+                    Ok(()) => {}
+                    Err(AppError::NoPath) => {
+                        self.notify(
+                            "Save the song first: Collect Files gathers its audio next to the project file"
+                                .to_owned(),
+                        );
+                    }
+                    Err(e) => self.notify(e.to_string()),
+                }
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::RelinkAudio => {
                 self.open_relink();
                 self.menubar.as_mut().map(MenuBar::close);

@@ -27,12 +27,48 @@
 
 use super::{AppCore, AppError, ProjectBundle, io_error};
 use crate::sink::EngineSink;
-use atomik_audio_file::{Bundle, save_text_atomic};
+use atomik_audio_file::{Bundle, CollectReport, save_text_atomic};
 use atomik_model::RackDoc;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread::JoinHandle;
+
+/// The bundle folder Collect Files fills for the project file `file`: the folder the file sits
+/// in when it is named like the file, else the folder `<name>/` beside it (made if needed), so a
+/// project that shares an `Audio/` folder with others gets audio of its own.
+fn collect_root(file: &Path) -> PathBuf {
+    let folder = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match file.file_stem() {
+        Some(stem) if folder.file_name() == Some(stem) => folder.to_path_buf(),
+        _ => super::sibling_bundle_root(file),
+    }
+}
+
+/// The folders near the project file `file` that can hold its audio: its bundle folder, its own
+/// folder and the folder above it, each only when it has an `Audio/` directory.
+fn audio_folders(file: &Path) -> Vec<PathBuf> {
+    let folder = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut found = Vec::new();
+    let candidates = [
+        super::existing_bundle_root(file),
+        Some(super::sibling_bundle_root(file)),
+        Some(folder.to_path_buf()),
+        folder.parent().map(Path::to_path_buf),
+    ];
+    for root in candidates.into_iter().flatten() {
+        if root.join("Audio").is_dir() && !found.contains(&root) {
+            found.push(root);
+        }
+    }
+    found
+}
 
 /// How the destination bundle is made.
 enum BundlePlan {
@@ -40,8 +76,9 @@ enum BundlePlan {
     None,
     /// The bundle the session holds is the destination; only its orphans go.
     Existing(Bundle),
-    /// Save As: the audio of `from` is copied into a new bundle at `to`.
-    Copy { from: PathBuf, to: PathBuf },
+    /// Save As and Collect Files: the audio the project uses is copied from the bundle folder
+    /// `from` (and the job's other sources) into the bundle at `to`.
+    Copy { to: PathBuf },
     /// The first save of a project whose audio is already in `to`'s place: made empty.
     Create(PathBuf),
 }
@@ -52,27 +89,47 @@ pub(super) struct Job {
     snapshot: RackDoc,
     keep: BTreeSet<String>,
     plan: BundlePlan,
+    /// Bundle folders the audio the destination lacks is looked for in, in order.
+    sources: Vec<PathBuf>,
+    /// Collect Files: look for the audio the destination lacks even when it is the bundle the
+    /// session holds.
+    collect: bool,
+}
+
+/// What a finished save hands back.
+pub(super) struct Saved {
+    bundle: Option<Bundle>,
+    report: CollectReport,
 }
 
 impl Job {
     /// Writes the project and tidies the bundle. Returns the bundle the project now lives in.
-    pub(super) fn run(self) -> Result<Option<Bundle>, AppError> {
+    pub(super) fn run(self) -> Result<Saved, AppError> {
         let text = atomik_model::save_project_checked(&self.snapshot)?;
+        let mut report = CollectReport::default();
         let mut dest = match &self.plan {
             BundlePlan::None => None,
             BundlePlan::Existing(bundle) => Some(bundle.clone()),
-            BundlePlan::Copy { from, to } => {
-                Some(Bundle::copy_bundle(from, to).map_err(|e| io_error(to, e))?)
-            }
+            BundlePlan::Copy { to } => Some(Bundle::create(to).map_err(|e| io_error(to, e))?),
             BundlePlan::Create(root) => Some(Bundle::create(root).map_err(|e| io_error(root, e))?),
         };
+        if let Some(bundle) = &dest
+            && (self.collect || matches!(self.plan, BundlePlan::Copy { .. }))
+        {
+            report = bundle
+                .collect_from(&self.sources, &self.keep)
+                .map_err(|e| io_error(bundle.root(), e))?;
+        }
         save_text_atomic(&self.file, &text).map_err(|e| io_error(&self.file, e))?;
         if let Some(bundle) = &mut dest {
             bundle
                 .remove_orphans(&self.keep)
                 .map_err(|e| io_error(bundle.root(), e))?;
         }
-        Ok(dest)
+        Ok(Saved {
+            bundle: dest,
+            report,
+        })
     }
 }
 
@@ -81,7 +138,8 @@ pub(super) struct Flight {
     file: PathBuf,
     snapshot: RackDoc,
     note_recent: bool,
-    rx: Receiver<Result<Option<Bundle>, AppError>>,
+    collect: bool,
+    rx: Receiver<Result<Saved, AppError>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -110,12 +168,46 @@ impl<S: EngineSink> AppCore<S> {
 
     /// [`AppCore::save`]'s steps with the worker's part on the caller's thread.
     pub(super) fn save_now(&mut self, file: &Path, root: Option<PathBuf>) -> Result<(), AppError> {
+        self.save_now_with(file, root, false)
+    }
+
+    fn save_now_with(
+        &mut self,
+        file: &Path,
+        root: Option<PathBuf>,
+        collect: bool,
+    ) -> Result<(), AppError> {
         self.settle_save();
-        let job = self.prepare_save(file, root);
+        let job = self.prepare_save(file, root, collect);
         let snapshot = job.snapshot.clone();
-        let dest = job.run()?;
-        self.finish_save(file, snapshot, dest);
+        let saved = job.run()?;
+        self.finish_save(file, snapshot, saved.bundle);
+        self.after_collect(collect, &saved.report);
         Ok(())
+    }
+
+    /// File > Collect Files: the audio the project uses is copied into the project's own
+    /// bundle folder (see the module docs of `app_core_audio.rs`), the project is saved, and the
+    /// toast says what was copied and what is still missing.
+    ///
+    /// # Errors
+    /// [`AppError::NoPath`] without a project file; what a save fails with.
+    pub fn collect_files(&mut self) -> Result<(), AppError> {
+        let file = self
+            .file
+            .clone()
+            .filter(|p| super::super::is_project_path(p))
+            .ok_or(AppError::NoPath)?;
+        if self.document.referenced_assets().is_empty() {
+            self.reject("The project uses no audio files".to_owned());
+            return Ok(());
+        }
+        let root = collect_root(&file);
+        if self.audio.background_save {
+            self.save_later(&file, Some(root), false, true)
+        } else {
+            self.save_now_with(&file, Some(root), true)
+        }
     }
 
     /// Makes [`AppCore::save_interactive`] and [`AppCore::save_as_interactive`] write on a
@@ -158,7 +250,7 @@ impl<S: EngineSink> AppCore<S> {
     /// [`AppError::NoPath`] without a project file; what a blocking save fails with.
     pub fn save_in_background(&mut self) -> Result<(), AppError> {
         let (file, root) = self.save_target()?;
-        self.save_later(&file, Some(root), false)
+        self.save_later(&file, Some(root), false, false)
     }
 
     /// [`AppCore::save_as`] with the writing on a worker (see the module docs).
@@ -167,7 +259,7 @@ impl<S: EngineSink> AppCore<S> {
     /// What a blocking save fails with.
     pub fn save_as_in_background(&mut self, path: &Path) -> Result<(), AppError> {
         let (file, root) = self.save_as_target(path);
-        self.save_later(&file, root, true)
+        self.save_later(&file, root, true, false)
     }
 
     fn save_later(
@@ -175,16 +267,17 @@ impl<S: EngineSink> AppCore<S> {
         file: &Path,
         root: Option<PathBuf>,
         note_recent: bool,
+        collect: bool,
     ) -> Result<(), AppError> {
         self.settle_save();
         if self.audio_work_running() {
-            self.save_now(file, root)?;
+            self.save_now_with(file, root, collect)?;
             if note_recent {
                 self.note_recent();
             }
             return Ok(());
         }
-        let job = self.prepare_save(file, root);
+        let job = self.prepare_save(file, root, collect);
         let snapshot = job.snapshot.clone();
         let (tx, rx) = channel();
         let worker = std::thread::Builder::new()
@@ -200,6 +293,7 @@ impl<S: EngineSink> AppCore<S> {
             file: file.to_path_buf(),
             snapshot,
             note_recent,
+            collect,
             rx,
             worker: Some(worker),
         });
@@ -217,7 +311,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The UI-thread part of a save (see the module docs).
-    fn prepare_save(&mut self, file: &Path, root: Option<PathBuf>) -> Job {
+    fn prepare_save(&mut self, file: &Path, root: Option<PathBuf>, collect: bool) -> Job {
         // The plugins' own state goes into the document first.
         self.plugins_capture_all();
         let keep = self.document.referenced_assets();
@@ -227,10 +321,7 @@ impl<S: EngineSink> AppCore<S> {
             (Some(root), false, Some(b)) if b.bundle.root() == root.as_path() => {
                 BundlePlan::Existing(b.bundle.clone())
             }
-            (Some(root), false, Some(b)) => BundlePlan::Copy {
-                from: b.bundle.root().to_path_buf(),
-                to: root.clone(),
-            },
+            (Some(root), false, Some(_)) => BundlePlan::Copy { to: root.clone() },
             (Some(root), false, None) => BundlePlan::Create(root.clone()),
             // The last audio was removed: its files still go.
             (Some(root), true, Some(b)) if !b.scratch && b.bundle.root() == root.as_path() => {
@@ -238,11 +329,98 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => BundlePlan::None,
         };
+        // The bundle the session holds first, then the folders a moved or shared project keeps
+        // its audio in.
+        let mut sources: Vec<PathBuf> = Vec::new();
+        if let Some(b) = &self.audio.bundle {
+            sources.push(b.bundle.root().to_path_buf());
+        }
+        if let Some(old) = &self.file {
+            for root in audio_folders(old) {
+                if !sources.contains(&root) {
+                    sources.push(root);
+                }
+            }
+        }
         Job {
             file: file.to_path_buf(),
             snapshot,
             keep,
             plan,
+            sources,
+            collect,
+        }
+    }
+
+    /// A save that collected: loads the audio it brought back and says what it did.
+    fn after_collect(&mut self, collect: bool, report: &CollectReport) {
+        let back: Vec<String> = self
+            .audio
+            .missing
+            .iter()
+            .filter(|m| report.copied.contains(&m.hash))
+            .map(|m| m.hash.clone())
+            .collect();
+        if !back.is_empty()
+            && let Some(bundle) = self.audio.bundle.as_ref().map(|b| b.bundle.clone())
+        {
+            let threshold = self.stream_threshold();
+            let started = crate::audio_import::spawn_load(
+                self.audio.tx.clone(),
+                self.audio.generation,
+                bundle,
+                threshold,
+                back,
+            );
+            match started {
+                Ok(()) => self.audio.pending += 1,
+                Err(e) => self.reject(format!("audio: cannot start the loader: {e}")),
+            }
+        }
+        if collect {
+            let message = self.collect_message(report);
+            self.reject(message);
+        }
+    }
+
+    /// The toast of Collect Files.
+    fn collect_message(&self, report: &CollectReport) -> String {
+        let folder = self
+            .audio
+            .bundle
+            .as_ref()
+            .and_then(|b| {
+                b.bundle
+                    .root()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "the project folder".to_owned());
+        let lost: Vec<String> = report.missing.iter().map(|h| self.asset_name(h)).collect();
+        let shown = lost.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+        let more = lost.len().saturating_sub(5);
+        let tail = if lost.is_empty() {
+            String::new()
+        } else if more > 0 {
+            format!("; {} not found: {shown} and {more} more", lost.len())
+        } else {
+            format!("; {} not found: {shown}", lost.len())
+        };
+        if !report.copied.is_empty() {
+            let n = report.copied.len();
+            format!(
+                "Collected {n} audio file{} ({}) into {folder}{tail}",
+                if n == 1 { "" } else { "s" },
+                super::super::archive::size_text(report.bytes),
+            )
+        } else if report.present.is_empty() {
+            format!("Nothing was collected into {folder}{tail}")
+        } else {
+            let n = report.present.len();
+            format!(
+                "All {n} audio file{} already in {folder}{tail}",
+                if n == 1 { " is" } else { "s are" },
+            )
         }
     }
 
@@ -294,8 +472,9 @@ impl<S: EngineSink> AppCore<S> {
             let _ = worker.join();
         }
         match result {
-            Ok(Ok(dest)) => {
-                self.finish_save(&flight.file, flight.snapshot, dest);
+            Ok(Ok(saved)) => {
+                self.finish_save(&flight.file, flight.snapshot, saved.bundle);
+                self.after_collect(flight.collect, &saved.report);
                 if flight.note_recent {
                     self.note_recent();
                 }

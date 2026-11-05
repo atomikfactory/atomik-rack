@@ -704,3 +704,44 @@ fn the_panel_takes_composed_text_the_clipboard_and_a_selection_through_the_shell
     press(&mut s, Key::Escape);
     assert!(!s.wants_text_input());
 }
+
+#[test]
+fn collect_files_is_a_file_menu_command_that_needs_a_saved_song() {
+    let t = Tmp::new("collect");
+    let mut s = shell(&t);
+    let entry = item(&s, AppCommand::CollectFiles);
+    assert_eq!(entry.label, "Collect Files\u{2026}");
+    assert!(entry.enabled);
+    // An unsaved song has no folder to collect into.
+    assert!(s.execute(AppCommand::CollectFiles).is_empty());
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Save the song first"))
+    );
+
+    // A song whose project file shares an Audio folder gets its own.
+    let shared = t.path("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    let wav = t.path("a.wav");
+    atomik_audio_file::write_wav_f32(
+        &wav,
+        &atomik_audio_file::AudioData::new(48_000, vec![vec![0.5; 4_800]]).unwrap(),
+    )
+    .unwrap();
+    s.core_mut()
+        .import_audio(vec![wav], atomik_ui::ImportTarget::NewTracks, 0);
+    s.core_mut().wait_background();
+    s.core_mut().save_as(&shared.join("shared.atomik")).unwrap();
+    std::fs::copy(shared.join("shared.atomik"), shared.join("song.atomik")).unwrap();
+    s.open_file(&shared.join("song.atomik"));
+    s.core_mut().wait_background();
+    assert!(s.execute(AppCommand::CollectFiles).is_empty());
+    s.core_mut().wait_background();
+    assert!(shared.join("song").join("Audio").is_dir());
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Collected 1 audio file"))
+    );
+}

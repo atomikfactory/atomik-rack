@@ -21,6 +21,17 @@
 //!   the song uses) with `save_text_atomic`, then deletes the files of assets that neither
 //!   the saved song nor the undo/redo history ([`atomik_model::Document::referenced_assets`])
 //!   reference. Assets only the history references stay on disk (and in the live pool).
+//! * **Save As** (a relocation) copies only the audio the project uses, from the session
+//!   bundle and, for what that lacks, from the folders near the old project file that hold an
+//!   `Audio/` directory; the old files stay where they were. Links are content hashes, so the
+//!   project works from its new folder without any rewriting.
+//! * **Collect Files** ([`AppCore::collect_files`]) is a Save in place that also gathers the
+//!   audio the project uses into the project's own bundle (`<name>/` beside the file, or the
+//!   folder the file sits in when it is named like the file): a project that shared an `Audio/`
+//!   folder gets audio of its own, and audio that was missing from the bundle but sits in a
+//!   nearby folder is copied in and loaded. Nothing outside the bundle is written, nothing in
+//!   the folders copied from is changed, and a toast counts what was copied and names what no
+//!   folder had.
 //! * **Open** verifies every pool asset: missing files are listed
 //!   ([`AppCore::missing_assets`], and a toast); those clips play silence. They can be relinked
 //!   (see below).

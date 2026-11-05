@@ -28,7 +28,12 @@ a loop legal: cables, project files and containers accept a loop through it and 
 loop is bit-identical at every block size and worker count),
 and grain sampler follow-ups (a click or a drag on the waveform sets the position, mono and legato play modes with a
 glide, an LFO that can run in every voice from the note, a layered zone mode that plays every sample whose key and
-velocity range fits, with round-robin and velocity fades, a 29-grain trail on the panel and two more factory sounds).
+velocity range fits, with round-robin and velocity fades, a 29-grain trail on the panel and two more factory sounds),
+and collect and relocate (File > Collect Files saves the song in place and gathers the audio it uses into the
+project's own folder, from a folder it shared with other projects or from a nearby folder that holds audio the
+project lost, with a report of what was copied and what was not found; Save As copies only the audio the song
+uses and finds audio the old bundle lacks in the folders near the old file, so a project moved to another folder
+keeps working).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -88,7 +93,10 @@ New original devices built from the existing DSP blocks, grouped by the gap they
 
 - **Library of devices, patches and projects.** Done: the browser lists the built-in devices and the patches, containers, clips and projects of a library folder; Save to Library writes the selected devices, a container or a note clip with their samples; items load by double click or drag as one undo step, and projects open after the unsaved-changes question. Still to come: factory content, previews of clips and patches, and deleting items from the browser.
 - **Start screen follow-ups.** The start screen is done (File > Start Screen, and at start-up unless its check box is cleared). Still to come: previews of the templates, pinned songs that stay at the top of the recent list, and a row for it in Settings, Workflow.
-- **Collect and relocate.** A project archive (`.atomikz`) packs a project with its audio, and relinking by folder repairs a project that moved, which covers part of this. Still to come: copying every file a project uses into its bundle in place, and relocating a project without breaking its links.
+- **Collect and relocate follow-ups.** Collect Files and Save As keep a project working in its new folder (see
+  above), a project archive packs a project with its audio and relinking by folder repairs one that moved. Still to
+  come: a preview of what Collect Files will copy, a cancel for a very large collection, collecting plugin preset
+  and impulse files that live outside the project, and a Move Project command that also removes the old folder.
 - **Song information follow-ups.** The title, author and notes of a song are done (File > Song Information). A version history inside the project is still to come.
 - **Several songs follow-ups.** Songs open in windows of their own, one of them with the audio and the MIDI keyboard. Still to come: moving clips, devices, channels and patches between open songs, separate Input Focus and Play Focus buttons on the interface panel, recovery that offers a second song's snapshots after a crash, the library and the recent list shared live between songs, and a session of the MCP server with more than one song.
 

@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Collect Files and relocation.** **File > Collect Files** saves the song in place and gathers the audio it uses
+  into the song's own bundle folder (`<name>/` beside the project file, or the folder the file sits in when it is
+  named like the file). A song that shared an `Audio` folder with other projects gets audio of its own, and audio
+  that was missing from the bundle but sits in a nearby folder (the folder of the file, the folder above it, a
+  folder named like the file) is copied in and loaded. The copy runs on the save worker, nothing outside the
+  bundle is written, the folders it copied from are left as they were, and a message counts the files and bytes
+  copied and names the audio no folder had (those stay missing and can be relinked). It needs a saved song. **Save
+  As** now copies only the audio the song uses, not the whole `Audio` folder, and looks in the same nearby folders
+  for audio the old bundle lacks, so a song saved into another folder keeps working. Links are content hashes, so
+  no project text is rewritten. The project format is unchanged. Not done yet: a preview of what will be copied,
+  a cancel for a very large collection, and collecting files that live outside the project, such as plugin presets.
 - **Start screen.** A box with the choices for a song to work on: **New Song** (the default song when one is chosen),
   **Open**, the templates of the templates folder (the first eight) and the recent songs with the day each file was
   last changed and its folder. It is shown when the app starts with no song to open, and any time from **File > Start

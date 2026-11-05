@@ -389,3 +389,70 @@ fn convert_rate_stores_an_aligned_copy_and_keeps_the_original() {
     }
     assert!(b.exists(&a.hash), "the original stays");
 }
+
+#[test]
+fn collect_from_copies_only_the_wanted_assets_and_reports_the_rest() {
+    let root = tmp_dir("collect");
+    let mut shared = Bundle::create(&root.join("Shared")).unwrap();
+    let a = shared.add_recording(&recording(4000, 0.1), "a").unwrap();
+    let b = shared.add_recording(&recording(4100, 0.2), "b").unwrap();
+    let unrelated = shared.add_recording(&recording(4200, 0.3), "c").unwrap();
+    let mut elsewhere = Bundle::create(&root.join("Elsewhere")).unwrap();
+    let d = elsewhere.add_recording(&recording(4300, 0.4), "d").unwrap();
+    let mut own = Bundle::create(&root.join("Own")).unwrap();
+    let held = own.add_recording(&recording(4400, 0.5), "e").unwrap();
+    let before = tree(&root.join("Shared"));
+
+    let ghost = "f".repeat(64);
+    let wanted: BTreeSet<String> = [&a, &b, &d, &held]
+        .iter()
+        .map(|i| i.hash.clone())
+        .chain([ghost.clone(), "not a hash".to_owned()])
+        .collect();
+    let sources = vec![
+        root.join("Own"),
+        root.join("Shared"),
+        root.join("Elsewhere"),
+        root.join("No Such Folder"),
+    ];
+    let report = own.collect_from(&sources, &wanted).unwrap();
+
+    let mut copied = vec![a.hash.clone(), b.hash.clone(), d.hash.clone()];
+    copied.sort();
+    assert_eq!(report.copied, copied);
+    assert_eq!(report.present, vec![held.hash.clone()]);
+    let mut missing = vec![ghost, "not a hash".to_owned()];
+    missing.sort();
+    assert_eq!(report.missing, missing);
+    assert!(report.bytes > 0);
+    for hash in &copied {
+        assert!(own.exists(hash));
+        assert!(own.peaks_path(hash).is_file(), "the peak cache comes along");
+        assert_eq!(
+            std::fs::read(own.asset_path(hash)).unwrap().len() as u64,
+            std::fs::metadata(
+                [&shared, &elsewhere]
+                    .iter()
+                    .map(|s| s.asset_path(hash))
+                    .find(|p| p.is_file())
+                    .unwrap()
+            )
+            .unwrap()
+            .len()
+        );
+    }
+    assert!(
+        !own.exists(&unrelated.hash),
+        "what no one wants stays behind"
+    );
+    assert_eq!(
+        before,
+        tree(&root.join("Shared")),
+        "a source is never changed"
+    );
+
+    // Collecting again copies nothing more.
+    let again = own.collect_from(&sources, &wanted).unwrap();
+    assert!(again.copied.is_empty() && again.bytes == 0);
+    assert_eq!(again.present.len(), 4);
+}

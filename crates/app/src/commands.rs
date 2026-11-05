@@ -80,6 +80,8 @@ pub enum AppCommand {
     /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
     /// (a file each, or a folder search). Only enabled while some are missing.
     RelinkAudio,
+    /// File ▸ Collect Files…: copy the audio the project uses into its own bundle folder.
+    CollectFiles,
     /// File ▸ Export Patch… (the rack as patch v2, without the song).
     ExportPatch,
     /// File ▸ Export MIDI Clip…: the selected note clip as a MIDI file.
@@ -677,6 +679,7 @@ impl AppCommand {
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
+            AppCommand::CollectFiles => ("file.collect_files", None),
             AppCommand::ExportPatch => ("file.export_patch", None),
             AppCommand::ExportMidiClip => ("file.export_midi_clip", None),
             AppCommand::ExportMidiTrack => ("file.export_midi_track", None),
@@ -975,6 +978,7 @@ impl AppCommand {
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
+            ("file.collect_files", None) => AppCommand::CollectFiles,
             ("file.export_patch", None) => AppCommand::ExportPatch,
             ("file.export_midi_clip", None) => AppCommand::ExportMidiClip,
             ("file.export_midi_track", None) => AppCommand::ExportMidiTrack,
@@ -2109,6 +2113,7 @@ pub fn menus_with_songs(
                     AppCommand::RelinkAudio,
                     state.missing_audio,
                 ),
+                item("Collect Files\u{2026}", AppCommand::CollectFiles),
                 item("Export Project Archive\u{2026}", AppCommand::ExportArchive),
                 item("Import Project Archive\u{2026}", AppCommand::ImportArchive),
                 enabled(
@@ -3385,6 +3390,7 @@ mod tests {
             AppCommand::ImportMidi,
             AppCommand::ImportMidiSong,
             AppCommand::RelinkAudio,
+            AppCommand::CollectFiles,
             AppCommand::ExportPatch,
             AppCommand::ExportMidiClip,
             AppCommand::ExportMidiTrack,
@@ -4041,6 +4047,7 @@ mod tests {
                 "Import MIDI\u{2026}",
                 "Import MIDI as Song\u{2026}",
                 "Relink Missing Audio\u{2026}",
+                "Collect Files\u{2026}",
                 "Export Project Archive\u{2026}",
                 "Import Project Archive\u{2026}",
                 "Cancel Project Archive",
