@@ -13,14 +13,17 @@
 //! and the learn flag (while learning, everything is consumed). The UI thread replaces the list
 //! whenever the mappings change; the MIDI thread reads it per message.
 
-use atomik_core::ChannelMessage;
-use atomik_model::MidiSource;
+use atomik_core::{ChannelMessage, MessageKind};
+use atomik_midi_io::Mmc;
+use atomik_model::{MidiSource, SourceKind, is_param_controller};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The most messages waiting for the UI thread; the newest are dropped beyond it.
 pub const INBOX_CAPACITY: usize = 4096;
+/// The most machine control commands waiting for the UI thread.
+pub const MMC_CAPACITY: usize = 64;
 
 /// One message from a MIDI input.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +38,7 @@ pub struct Inbound {
 #[derive(Debug, Default)]
 pub struct ControlHub {
     inbox: Mutex<VecDeque<Inbound>>,
+    mmc: Mutex<VecDeque<Mmc>>,
     dropped: AtomicU64,
     consume: Mutex<Arc<Vec<MidiSource>>>,
     learning: AtomicBool,
@@ -61,6 +65,21 @@ impl ControlHub {
             port: Arc::clone(port),
             message,
         });
+    }
+
+    /// Queues a machine control command (MIDI thread); a full queue drops it and counts it.
+    pub fn push_mmc(&self, command: Mmc) {
+        let mut queue = lock(&self.mmc);
+        if queue.len() >= MMC_CAPACITY {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        queue.push_back(command);
+    }
+
+    /// Moves the queued machine control commands into `out`, oldest first (UI thread).
+    pub fn drain_mmc(&self, out: &mut Vec<Mmc>) {
+        out.extend(lock(&self.mmc).drain(..));
     }
 
     /// Moves the queued messages into `out`, oldest first (UI thread).
@@ -95,8 +114,22 @@ impl ControlHub {
             return true;
         }
         let rules = Arc::clone(&lock(&self.consume));
-        rules.iter().any(|s| s.matches(port, message))
+        rules.iter().any(|s| {
+            s.matches(port, message)
+                // The controllers that make up an NRPN or RPN belong to a consuming mapping of
+                // that kind, whichever number it addresses.
+                || (matches!(s.kind, SourceKind::Nrpn(_) | SourceKind::Rpn(_))
+                    && is_param_message(message)
+                    && s.port.as_deref().is_none_or(|p| p == port)
+                    && s.channel.is_none_or(|c| c == message.channel))
+        })
     }
+}
+
+/// True for a controller message that is part of a parameter run (see
+/// [`atomik_model::midi_param`] for the numbers).
+fn is_param_message(message: &ChannelMessage) -> bool {
+    matches!(message.kind, MessageKind::Cc { number, .. } if is_param_controller(number))
 }
 
 #[cfg(test)]
@@ -128,6 +161,49 @@ mod tests {
         let mut out = Vec::new();
         hub.drain(&mut out);
         assert_eq!(out.len(), INBOX_CAPACITY);
+    }
+
+    #[test]
+    fn a_consuming_parameter_mapping_keeps_the_whole_run_away_from_the_notes() {
+        let hub = ControlHub::new();
+        hub.set_consumed(vec![MidiSource {
+            port: Some("Pad".into()),
+            channel: Some(1),
+            kind: SourceKind::Nrpn(5),
+            surface: None,
+        }]);
+        for n in [6, 38, 96, 97, 98, 99, 100, 101] {
+            assert!(hub.consumes("Pad", &ChannelMessage::cc(1, n, 3)), "{n}");
+            assert!(
+                !hub.consumes("Pad", &ChannelMessage::cc(2, n, 3)),
+                "channel {n}"
+            );
+            assert!(
+                !hub.consumes("Other", &ChannelMessage::cc(1, n, 3)),
+                "port {n}"
+            );
+        }
+        assert!(!hub.consumes("Pad", &ChannelMessage::cc(1, 7, 3)));
+        assert!(!hub.consumes("Pad", &ChannelMessage::note_on(1, 6, 3)));
+    }
+
+    #[test]
+    fn machine_control_commands_queue_in_order_and_the_queue_is_bounded() {
+        let hub = ControlHub::new();
+        hub.push_mmc(Mmc::Play);
+        hub.push_mmc(Mmc::Stop);
+        let mut out = Vec::new();
+        hub.drain_mmc(&mut out);
+        assert_eq!(out, [Mmc::Play, Mmc::Stop]);
+        hub.drain_mmc(&mut out);
+        assert_eq!(out.len(), 2, "drained once");
+        for _ in 0..MMC_CAPACITY + 3 {
+            hub.push_mmc(Mmc::Pause);
+        }
+        assert_eq!(hub.dropped(), 3);
+        let mut all = Vec::new();
+        hub.drain_mmc(&mut all);
+        assert_eq!(all.len(), MMC_CAPACITY);
     }
 
     #[test]

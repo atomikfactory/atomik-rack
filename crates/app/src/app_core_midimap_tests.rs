@@ -760,6 +760,199 @@ fn a_preset_that_finds_nothing_in_this_project_adds_nothing() {
     assert!(empty.doc().midi_maps.is_empty());
 }
 
+// ---- NRPN and RPN -----------------------------------------------------------------------------
+
+/// A run of controllers on channel 0 of port `Pad`: select NRPN `number`, then send `tail`.
+fn nrpn_run(c: &mut AppCore<RecordingSink>, t: f64, number: u16, tail: &[(u8, u8)]) {
+    send(c, t, cc(99, (number >> 7) as u8));
+    send(c, t, cc(98, (number & 0x7F) as u8));
+    for &(n, v) in tail {
+        send(c, t, cc(n, v));
+    }
+}
+
+#[test]
+fn a_knob_that_sends_an_nrpn_is_learnt_as_that_number() {
+    let mut c = core();
+    c.midi_arm(param("channel", "fader"));
+    nrpn_run(&mut c, 0.0, 300, &[(6, 64)]);
+    assert_eq!(
+        c.doc().midi_maps[0].source,
+        MidiSource::any_port(Some(0), SourceKind::Nrpn(300)),
+        "not CC 99, 98 or 6"
+    );
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .starts_with("Mapped NRPN 300 ch 1")
+    );
+    assert!(!c.control_hub().is_learning());
+    // A registered number is learnt the same way, by an increment.
+    c.midi_arm(param("channel", "pan"));
+    send(&mut c, 1.0, cc(101, 0));
+    send(&mut c, 1.0, cc(100, 5));
+    send(&mut c, 1.0, cc(96, 1));
+    assert_eq!(
+        c.doc().midi_maps[1].source,
+        MidiSource::any_port(Some(0), SourceKind::Rpn(5))
+    );
+}
+
+#[test]
+fn an_nrpn_mapping_follows_its_data_entry_in_14_bits() {
+    let mut c = core();
+    let id = map(
+        &mut c,
+        MidiSource::any_port(Some(0), SourceKind::Nrpn(300)),
+        param("channel", "fader"),
+    );
+    options(&mut c, id, |o| o.pickup = false);
+    nrpn_run(&mut c, 0.0, 300, &[(6, 64), (38, 0)]);
+    assert!(near(value(&c, "channel", "fader"), 8192.0 / 16_383.0));
+    nrpn_run(&mut c, 1.0, 300, &[(6, 127), (38, 127)]);
+    assert!(near(value(&c, "channel", "fader"), 1.0));
+    // Another number, another channel and another port are not this mapping.
+    nrpn_run(&mut c, 2.0, 301, &[(6, 0), (38, 0)]);
+    assert!(near(value(&c, "channel", "fader"), 1.0));
+    c.inject_midi("Pad", ChannelMessage::cc(1, 99, 2));
+    c.inject_midi("Pad", ChannelMessage::cc(1, 98, 44));
+    c.inject_midi("Pad", ChannelMessage::cc(1, 6, 0));
+    c.midi_control_frame(3.0);
+    assert!(near(value(&c, "channel", "fader"), 1.0), "channel 2");
+    // The controllers of the run are still plain controllers: a mapping on CC 6 hears them.
+    let on_six = map(&mut c, cc_source(0, 6), param("channel", "pan"));
+    options(&mut c, on_six, |o| o.pickup = false);
+    nrpn_run(&mut c, 4.0, 300, &[(6, 127)]);
+    assert!(near(value(&c, "channel", "pan"), 1.0));
+    // One sweep is one undo step.
+    let before = c.doc().midi_maps.len();
+    assert!(c.undo());
+    assert_eq!(
+        c.doc().midi_maps.len(),
+        before,
+        "the sweep, not the mapping"
+    );
+}
+
+#[test]
+fn increment_and_decrement_nudge_the_target_by_detents() {
+    let mut c = core();
+    let id = map(
+        &mut c,
+        MidiSource::any_port(Some(0), SourceKind::Rpn(0)),
+        param("channel", "fader"),
+    );
+    options(&mut c, id, |o| {
+        o.sensitivity = 0.1;
+        o.mode = MapMode::Relative(RelativeKind::TwosComplement);
+    });
+    let start = value(&c, "channel", "fader");
+    send(&mut c, 0.0, cc(101, 0));
+    send(&mut c, 0.0, cc(100, 0));
+    send(&mut c, 0.0, cc(97, 1));
+    let down = value(&c, "channel", "fader");
+    assert!(down < start, "{down} < {start}");
+    send(&mut c, 0.1, cc(96, 1));
+    send(&mut c, 0.1, cc(96, 1));
+    assert!(value(&c, "channel", "fader") > start);
+}
+
+// ---- Machine control --------------------------------------------------------------------------
+
+#[test]
+fn machine_control_plays_stops_records_and_locates_the_song() {
+    use atomik_midi_io::Mmc;
+    let mut c = core();
+    let hub = Arc::clone(c.control_hub());
+    hub.push_mmc(Mmc::Play);
+    c.midi_control_frame(0.0);
+    assert!(c.is_playing());
+    hub.push_mmc(Mmc::Stop);
+    c.midi_control_frame(0.1);
+    assert!(!c.is_playing());
+    hub.push_mmc(Mmc::Play);
+    hub.push_mmc(Mmc::Pause);
+    c.midi_control_frame(0.2);
+    assert!(!c.is_playing(), "both, in order");
+    // At 120 BPM two seconds are one bar.
+    hub.push_mmc(Mmc::Locate { seconds: 2.0 });
+    c.midi_control_frame(0.3);
+    assert_eq!(c.position(), BAR);
+    hub.push_mmc(Mmc::Locate { seconds: 0.0 });
+    c.midi_control_frame(0.4);
+    assert_eq!(c.position(), 0);
+    // A step forward and back moves by a bar.
+    hub.push_mmc(Mmc::FastForward);
+    c.midi_control_frame(0.5);
+    assert_eq!(c.position(), BAR);
+    hub.push_mmc(Mmc::Rewind);
+    c.midi_control_frame(0.6);
+    assert_eq!(c.position(), 0);
+}
+
+#[test]
+fn machine_control_goes_through_the_tempo_map() {
+    use atomik_midi_io::Mmc;
+    let mut c = core();
+    c.apply_command(Command::SetTempo(60.0)).unwrap();
+    c.control_hub().push_mmc(Mmc::Locate { seconds: 2.0 });
+    c.midi_control_frame(0.0);
+    assert_eq!(c.position(), 2 * PPQ, "two beats at 60 BPM");
+}
+
+#[test]
+fn machine_control_waits_while_a_control_is_being_learnt() {
+    use atomik_midi_io::Mmc;
+    let mut c = core();
+    c.midi_arm(param("channel", "fader"));
+    c.control_hub().push_mmc(Mmc::Play);
+    c.midi_control_frame(0.0);
+    assert!(!c.is_playing(), "learning swallows it");
+    c.midi_cancel_arm();
+    c.control_hub().push_mmc(Mmc::Play);
+    c.midi_control_frame(0.1);
+    assert!(c.is_playing());
+}
+
+// ---- The preset of one device -----------------------------------------------------------------
+
+#[test]
+fn the_selected_device_exports_and_imports_a_preset_of_its_type() {
+    let tmp = Tmp::new();
+    let path = tmp.0.join("Lead.json");
+    let mut c = core();
+    map(&mut c, cc_source(0, 74), param("b", CUTOFF));
+    map(&mut c, cc_source(0, 7), param("channel-2", "fader"));
+    // Nothing selected, or a device without mappings: nothing to export.
+    assert!(!c.export_midi_device_preset(&path));
+    c.after_view_change();
+    c.view_mut().set_selection(&[key("a")], None);
+    assert!(!c.export_midi_device_preset(&path));
+    c.view_mut().set_selection(&[key("b")], None);
+    assert!(c.export_midi_device_preset(&path));
+
+    // A project with three synths; the preset goes where the user selected.
+    let mut d = AppCore::new(RecordingSink::new());
+    for k in ["x", "y", "z"] {
+        d.apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: SYNTH.into(),
+            key: Some(key(k)),
+        })
+        .unwrap();
+    }
+    d.after_view_change();
+    d.view_mut().set_selection(&[key("z")], None);
+    assert!(d.import_midi_preset(&path));
+    assert_eq!(d.doc().midi_maps.len(), 1);
+    assert_eq!(d.doc().midi_maps[0].target, param("z", CUTOFF));
+    assert_eq!(d.doc().midi_maps[0].source, cc_source(0, 74));
+    // With no selection the first device of the type takes it.
+    d.view_mut().set_selection(&[], None);
+    assert!(d.import_midi_preset(&path));
+    assert_eq!(d.doc().midi_maps[1].target, param("x", CUTOFF));
+}
+
 #[test]
 fn clear_removes_every_mapping_in_one_step() {
     let mut c = core();

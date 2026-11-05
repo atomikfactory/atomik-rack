@@ -20,6 +20,13 @@
 //!   first control moved on the hardware becomes its source (a 14 bit pair is recognised by its
 //!   two halves, [`Learner`]); the mapping is one undo step, and every message is consumed while
 //!   learning, so the keyboard plays nothing.
+//! * **Parameter numbers.** The controllers of an NRPN or RPN (selecting, data entry, increment
+//!   and decrement) are parsed per port and channel ([`ParamBank`]); a completed run is an event
+//!   that the mappings with an NRPN or RPN source hear, and that learning turns into such a
+//!   source. The controllers themselves still reach the mappings on plain controllers.
+//! * **Machine control.** A mapping-role port also carries MMC (SysEx): the hub queues play,
+//!   stop, pause, record and locate, and [`AppCore::midi_control_frame`] runs them as transport
+//!   requests (a locate converts the time through the song's tempo map).
 //! * **What is consumed.** A message a mapping with `consume` listens to never reaches the notes
 //!   of the armed instrument; the list lives in the hub and is rebuilt when the mappings
 //!   change.
@@ -28,10 +35,11 @@
 use super::*;
 use crate::midi_control::{ControlHub, Inbound};
 use atomik_core::{ChannelMessage, VCA_MAX_DB, VCA_MIN_DB};
+use atomik_midi_io::Mmc;
 use atomik_model::{
     Effect, Learner, MapMode, MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource,
-    MidiTarget, RemoteCommand, TEMPO_MAX, TEMPO_MIN, TransportTarget, load_midi_preset,
-    save_midi_preset,
+    MidiTarget, ParamBank, ParamEvent, RemoteCommand, TEMPO_MAX, TEMPO_MIN, TransportTarget,
+    load_midi_preset, save_midi_preset,
 };
 use atomik_ui::{MidiMapRow, MidiMarks};
 
@@ -70,6 +78,8 @@ pub(super) struct MidiControl {
     /// The target waiting for a hardware control.
     armed: Option<MidiTarget>,
     learner: Learner,
+    /// The NRPN and RPN runs in flight, by port and channel.
+    params: ParamBank,
     /// The soft takeover and the like, by mapping id.
     states: BTreeMap<u32, MapState>,
     gestures: Vec<Gesture>,
@@ -96,6 +106,7 @@ impl MidiControl {
             learn_mode: false,
             armed: None,
             learner: Learner::new(),
+            params: ParamBank::new(),
             states: BTreeMap::new(),
             gestures: Vec::new(),
             next_merge: MIDI_MERGE_BASE,
@@ -158,6 +169,12 @@ impl MidiControl {
             .retain(|g| g.held || now - g.last_at < GESTURE_TIMEOUT);
         self.gestures.len() != before
     }
+}
+
+/// What reached the mappings: one message, or the parameter run a message completed.
+enum Input<'a> {
+    Message(&'a ChannelMessage),
+    Param(&'a ParamEvent),
 }
 
 /// A target resolved against the project and the registry.
@@ -350,12 +367,41 @@ impl<S: EngineSink> AppCore<S> {
             self.midi_message(&port, message);
         }
         self.midi.inbox = inbox;
+        let mut commands = Vec::new();
+        self.midi.hub.drain_mmc(&mut commands);
+        for command in commands {
+            self.machine_control(command);
+        }
         if self.midi.armed.is_some()
             && let Some(source) = self.midi.learner.tick(now)
         {
             self.finish_learn(source);
         }
         self.end_expired_gestures();
+    }
+
+    /// Runs one machine control command as a transport request (learning swallows them: the
+    /// transport does not move while a control is being mapped). A locate time is read in
+    /// seconds from the start of the song through its tempo map.
+    fn machine_control(&mut self, command: Mmc) {
+        if self.midi.learning() {
+            return;
+        }
+        let action = match command {
+            Mmc::Stop | Mmc::Pause => TransportAction::Stop,
+            Mmc::Play => TransportAction::Play,
+            Mmc::FastForward => TransportAction::Bars(1),
+            Mmc::Rewind => TransportAction::Bars(-1),
+            // Punch in starts the take, punch out ends it; neither does the other's work.
+            Mmc::RecordStrobe if self.take.is_some() => return,
+            Mmc::RecordExit if self.take.is_none() => return,
+            Mmc::RecordStrobe | Mmc::RecordExit => TransportAction::ToggleRecord,
+            Mmc::Locate { seconds } => {
+                let table = self.doc().song.tempo_table();
+                TransportAction::Locate(table.map().tick(seconds, 1.0).round() as i64)
+            }
+        };
+        self.transport_action(action);
     }
 
     /// Ends the gestures whose control has been still for the timeout (merge, automation touch).
@@ -410,9 +456,24 @@ impl<S: EngineSink> AppCore<S> {
             .filter(|m| m.source.matches_from(port, surface, &msg))
             .cloned()
             .collect();
+        // A message that completes a parameter run is heard by the mappings of that number too.
+        let event = self.midi.params.feed(port, &msg);
+        let param_hits: Vec<MidiMapping> = event.map_or_else(Vec::new, |e| {
+            self.doc()
+                .midi_maps
+                .iter()
+                .filter(|m| m.source.matches_param(port, surface, msg.channel, &e))
+                .cloned()
+                .collect()
+        });
         self.midi.origin = surface.map(str::to_owned);
         for mapping in hits {
-            self.apply_mapping(&mapping, &msg);
+            self.apply_mapping(&mapping, Input::Message(&msg));
+        }
+        if let Some(event) = &event {
+            for mapping in param_hits {
+                self.apply_mapping(&mapping, Input::Param(event));
+            }
         }
         self.midi.origin = None;
     }
@@ -485,7 +546,7 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn apply_mapping(&mut self, mapping: &MidiMapping, msg: &ChannelMessage) {
+    fn apply_mapping(&mut self, mapping: &MidiMapping, input: Input<'_>) {
         let Some(resolved) = self.resolve(&mapping.target) else {
             return;
         };
@@ -496,7 +557,10 @@ impl<S: EngineSink> AppCore<S> {
             m.options.pickup = false;
         }
         let mut state = self.midi.states.remove(&m.id).unwrap_or_default();
-        let effect = m.feed(&mut state, msg, current);
+        let effect = match input {
+            Input::Message(msg) => m.feed(&mut state, msg, current),
+            Input::Param(event) => m.feed_param(&mut state, event, current),
+        };
         self.midi.states.insert(m.id, state);
         let continuous = matches!(m.options.mode, MapMode::Absolute | MapMode::Relative(_));
         match effect {
@@ -648,6 +712,7 @@ impl<S: EngineSink> AppCore<S> {
     pub(super) fn midi_replaced(&mut self) {
         self.midi.armed = None;
         self.midi.learner.reset();
+        self.midi.params.reset();
         self.midi.gestures.clear();
         self.sync_learning();
         self.midi_maps_changed();
@@ -816,6 +881,33 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 
+    /// Writes the mappings of the selected device (the device a control surface is locked to,
+    /// else the one selected in the rack) as the preset of its type: it applies to any device of
+    /// that type, a plugin say, wherever it sits in the rack of another project.
+    pub fn export_midi_device_preset(&mut self, path: &Path) -> bool {
+        let Some(device) = self.focused_device(None) else {
+            self.report("Select a device to export its MIDI mappings");
+            return false;
+        };
+        let name = path
+            .file_stem()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let Some(preset) = self.doc().midi_preset_for_device(&name, &device) else {
+            self.report(format!("`{device}` has no MIDI mappings to export"));
+            return false;
+        };
+        if let Err(e) = std::fs::write(path, save_midi_preset(&preset)) {
+            self.report(format!("{}: {e}", path.display()));
+            return false;
+        }
+        let count = preset.maps.len();
+        self.report(format!(
+            "Exported {count} MIDI mapping{} of `{device}`",
+            if count == 1 { "" } else { "s" }
+        ));
+        true
+    }
+
     /// Reads a preset file and adds its mappings, resolved against this project's devices, in
     /// one undo step.
     pub fn import_midi_preset(&mut self, path: &Path) -> bool {
@@ -831,7 +923,11 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Adds a preset's mappings, resolved against this project's devices, in one undo step.
     pub fn apply_midi_preset(&mut self, preset: &MidiPreset) -> bool {
-        let (maps, notes) = self.doc().resolve_preset(&self.registry, preset);
+        // The preset of one device goes to the selected device when it is of that type.
+        let on = self.focused_device(None);
+        let (maps, notes) = self
+            .doc()
+            .resolve_preset_on(&self.registry, preset, on.as_ref());
         if maps.is_empty() {
             self.report(match notes.first() {
                 Some(n) => format!("Nothing to map: {n}"),

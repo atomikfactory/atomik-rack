@@ -19,15 +19,19 @@
 //!   messages the devices queue (the MIDI Out device) and the engine's MIDI clock.
 //! - [`clock`] turns the realtime messages of a MIDI clock (Clock, Start, Continue, Stop, Song
 //!   Position Pointer) into the state the song player follows.
+//! - [`mmc`] reads MIDI Machine Control (play, stop, record, locate) from SysEx.
 //! - [`ports`] opens raw input (SysEx included) and output ports for control surfaces.
 //! - [`surface`] holds the control-surface drivers (pure: bytes in, actions out, bytes out).
 //! - [`smf`] reads and writes Standard MIDI Files (format 0 and 1), pure bytes in and out.
 
 pub mod clock;
+pub mod mmc;
 pub mod out;
 pub mod ports;
 pub mod smf;
 pub mod surface;
+
+pub use mmc::{Mmc, parse_mmc};
 
 use atomik_core::{ChannelMessage, NoteKind};
 use atomik_device_sdk::SocketId;
