@@ -4,8 +4,9 @@
 //! ```text
 //! "midi_maps": [
 //!   { "id": 1,
-//!     "source": { "kind": "cc" | "cc14" | "pitch_bend" | "note",
-//!                 "number": 0..=127 (cc, note) | 0..=31 (cc14; not on pitch_bend),
+//!     "source": { "kind": "cc" | "cc14" | "pitch_bend" | "note" | "nrpn" | "rpn",
+//!                 "number": 0..=127 (cc, note) | 0..=31 (cc14) | 0..=16383 (nrpn, rpn; not on
+//!                           pitch_bend),
 //!                 "channel": 0..=15 (omitted: any channel),
 //!                 "port": "name" (omitted: any port),
 //!                 "surface": "name" (a generic controller surface; omitted: any origin) },
@@ -30,13 +31,16 @@
 //! A preset file is `{"format": "atomik-midi-preset", "version": 1, "name": "...", "maps": [...]}`
 //! with the same mapping objects without `id`, and the target addressing by role: `{"kind":
 //! "device", "type": "atomik.channel", "nth": 2, "param": "fader"}` is the fader of the third
-//! channel strip of any project (the sources never carry a port).
+//! channel strip of any project (the sources never carry a port). The preset of one device (one
+//! plugin) addresses its params as `{"kind": "device_type", "type": "clap:...", "param": "..."}`:
+//! applied to the selected device of that type, else to the first one, wherever it sits.
 
 use crate::midi_map::{
     DEFAULT_SENSITIVITY, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions, MidiMapping,
     MidiPreset, MidiSource, MidiTarget, PresetMap, PresetTarget, RemoteCommand, SourceKind,
     TransportTarget,
 };
+use crate::midi_param::MAX_PARAM_NUMBER;
 use crate::patch::{JsonPath, array, f32_text, json_str, number, object, string, uint};
 use crate::{DeviceKey, ModelError};
 use serde_json::{Map, Value};
@@ -64,10 +68,12 @@ const PRESET_FIELDS: &[&str] = &["format", "version", "name", "maps"];
 fn source_json(s: &MidiSource) -> String {
     let mut out = String::from("{");
     let (kind, number) = match s.kind {
-        SourceKind::Cc(n) => ("cc", Some(n)),
-        SourceKind::Cc14(n) => ("cc14", Some(n)),
+        SourceKind::Cc(n) => ("cc", Some(u16::from(n))),
+        SourceKind::Cc14(n) => ("cc14", Some(u16::from(n))),
         SourceKind::PitchBend => ("pitch_bend", None),
-        SourceKind::Note(k) => ("note", Some(k)),
+        SourceKind::Note(k) => ("note", Some(u16::from(k))),
+        SourceKind::Nrpn(n) => ("nrpn", Some(n)),
+        SourceKind::Rpn(n) => ("rpn", Some(n)),
     };
     let _ = write!(out, "\"kind\": \"{kind}\"");
     if let Some(n) = number {
@@ -122,6 +128,11 @@ fn preset_target_json(t: &PresetTarget) -> String {
             param,
         } => format!(
             "{{\"kind\": \"device\", \"type\": {}, \"nth\": {nth}, \"param\": {}}}",
+            json_str(type_id),
+            json_str(param)
+        ),
+        PresetTarget::OfType { type_id, param } => format!(
+            "{{\"kind\": \"device_type\", \"type\": {}, \"param\": {}}}",
             json_str(type_id),
             json_str(param)
         ),
@@ -229,10 +240,19 @@ fn source_from(v: &Value, path: &JsonPath, allow_port: bool) -> Result<MidiSourc
             .ok_or_else(|| p.error(format!("a {kind} source needs a number")))?;
         Ok(uint(n, &p, max)? as u8)
     };
+    let wide_number_at = || -> Result<u16, ModelError> {
+        let p = path.field("number");
+        let n = o
+            .get("number")
+            .ok_or_else(|| p.error(format!("a {kind} source needs a number")))?;
+        Ok(uint(n, &p, u64::from(MAX_PARAM_NUMBER))? as u16)
+    };
     let kind = match kind {
         "cc" => SourceKind::Cc(number_at(127)?),
         "cc14" => SourceKind::Cc14(number_at(31)?),
         "note" => SourceKind::Note(number_at(127)?),
+        "nrpn" => SourceKind::Nrpn(wide_number_at()?),
+        "rpn" => SourceKind::Rpn(wide_number_at()?),
         "pitch_bend" => {
             if o.contains_key("number") {
                 return Err(path
@@ -243,7 +263,7 @@ fn source_from(v: &Value, path: &JsonPath, allow_port: bool) -> Result<MidiSourc
         }
         other => {
             return Err(kind_path.error(format!(
-                "unknown source kind {other:?}; expected cc, cc14, pitch_bend or note"
+                "unknown source kind {other:?}; expected cc, cc14, pitch_bend, note, nrpn or rpn"
             )));
         }
     };
@@ -343,6 +363,23 @@ fn target_from(v: &Value, path: &JsonPath, preset: bool) -> Result<AnyTarget, Mo
                 param: param_of(o)?,
             })
         }
+        "device_type" if preset => {
+            let o = object(
+                v,
+                path,
+                &["kind", "type", "param"],
+                &["kind", "type", "param"],
+            )?;
+            let type_path = path.field("type");
+            let type_id = string(&o["type"], &type_path)?;
+            if type_id.is_empty() {
+                return Err(type_path.error("the device type is empty"));
+            }
+            AnyTarget::Role(PresetTarget::OfType {
+                type_id: type_id.to_owned(),
+                param: param_of(o)?,
+            })
+        }
         "vca" => {
             let o = object(v, path, &["kind", "id"], &["kind", "id"])?;
             let id_path = path.field("id");
@@ -414,7 +451,7 @@ fn target_from(v: &Value, path: &JsonPath, preset: bool) -> Result<AnyTarget, Mo
         }
         other => {
             let expected = if preset {
-                "device, vca, tempo, transport, selected, focused or command"
+                "device, device_type, vca, tempo, transport, selected, focused or command"
             } else {
                 "param, vca, tempo, transport, selected, focused or command"
             };

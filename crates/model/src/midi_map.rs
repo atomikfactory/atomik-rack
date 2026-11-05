@@ -46,6 +46,10 @@
 
 use crate::console::{CHANNEL_TYPE, is_internal_param};
 use crate::history::Edit;
+use crate::midi_param::{
+    MAX_PARAM_NUMBER, PARAM_BUTTON_THRESHOLD, ParamBank, ParamChange, ParamEvent, ParamSpace,
+    is_param_selector,
+};
 use crate::{DeviceKey, ModelError, RackDoc};
 use atomik_core::{ChannelMessage, MessageKind};
 use atomik_device_sdk::Registry;
@@ -73,6 +77,11 @@ pub enum SourceKind {
     PitchBend,
     /// A note: its on message presses, its off message releases.
     Note(u8),
+    /// A non-registered parameter number, 0..=16383 (see [`crate::midi_param`]): its data entry
+    /// is the position, data increment and decrement step it.
+    Nrpn(u16),
+    /// A registered parameter number, 0..=16383.
+    Rpn(u16),
 }
 
 /// A hardware control: what message, on which channel, from which port.
@@ -133,14 +142,48 @@ impl MidiSource {
         }
     }
 
-    /// A short text for lists: `CC 7 ch 1`, `CC 1/33 (14 bit) any ch`, `Bend ch 3`, `Note C3 ch 10`.
-    pub fn describe(&self) -> String {
-        let what = match self.kind {
+    /// True when `event` (a parameter run completed on `channel` of `port`, sent by `surface`
+    /// when it came from a control surface) is for this source. The message-level
+    /// [`Self::matches_from`] never hears an NRPN or RPN source: its controllers arrive as a run
+    /// that the app parses first.
+    pub fn matches_param(
+        &self,
+        port: &str,
+        surface: Option<&str>,
+        channel: u8,
+        event: &ParamEvent,
+    ) -> bool {
+        if self.surface.as_deref().is_some_and(|s| surface != Some(s)) {
+            return false;
+        }
+        if self.port.as_deref().is_some_and(|p| p != port) {
+            return false;
+        }
+        if self.channel.is_some_and(|c| c != channel) {
+            return false;
+        }
+        match self.kind {
+            SourceKind::Nrpn(n) => event.space == ParamSpace::Nrpn && event.number == n,
+            SourceKind::Rpn(n) => event.space == ParamSpace::Rpn && event.number == n,
+            _ => false,
+        }
+    }
+
+    /// The kind of message alone, without channel or port: `CC 7`, `NRPN 1234`, `Note C3`.
+    pub fn what(&self) -> String {
+        match self.kind {
             SourceKind::Cc(n) => format!("CC {n}"),
             SourceKind::Cc14(n) => format!("CC {n}/{} (14 bit)", n + 32),
             SourceKind::PitchBend => "Bend".to_owned(),
             SourceKind::Note(k) => format!("Note {}", note_name(k)),
-        };
+            SourceKind::Nrpn(n) => format!("NRPN {n}"),
+            SourceKind::Rpn(n) => format!("RPN {n}"),
+        }
+    }
+
+    /// A short text for lists: `CC 7 ch 1`, `CC 1/33 (14 bit) any ch`, `Bend ch 3`, `Note C3 ch 10`.
+    pub fn describe(&self) -> String {
+        let what = self.what();
         let channel = self
             .channel
             .map_or_else(|| "any ch".to_owned(), |c| format!("ch {}", c + 1));
@@ -151,9 +194,20 @@ impl MidiSource {
         }
     }
 
-    /// True when the source is a 7 bit controller (the only kind a relative encoder can use).
+    /// True when the source is a 7 bit controller.
     pub fn is_cc(&self) -> bool {
         matches!(self.kind, SourceKind::Cc(_))
+    }
+
+    /// True when the source is a registered or non-registered parameter number.
+    pub fn is_param(&self) -> bool {
+        matches!(self.kind, SourceKind::Nrpn(_) | SourceKind::Rpn(_))
+    }
+
+    /// True when a relative encoder can use the source: a 7 bit controller, or a parameter
+    /// number (whose data increment and decrement are steps).
+    pub fn can_be_relative(&self) -> bool {
+        self.is_cc() || self.is_param()
     }
 }
 
@@ -533,8 +587,10 @@ impl MapOptions {
         if !(self.sensitivity.is_finite() && self.sensitivity > 0.0 && self.sensitivity <= 1.0) {
             return Some("the sensitivity must be above 0 and at most 1".to_owned());
         }
-        if matches!(self.mode, MapMode::Relative(_)) && !source.is_cc() {
-            return Some("only a 7 bit controller can be a relative encoder".to_owned());
+        if matches!(self.mode, MapMode::Relative(_)) && !source.can_be_relative() {
+            return Some(
+                "only a 7 bit controller or an NRPN or RPN can be a relative encoder".to_owned(),
+            );
         }
         None
     }
@@ -619,41 +675,99 @@ impl MidiMapping {
                 let MessageKind::Cc { value, .. } = msg.kind else {
                     return None;
                 };
-                let detents = kind.detents(value);
-                if detents == 0 {
-                    return None;
-                }
-                let sign = if o.invert { -1.0 } else { 1.0 };
-                let (lo, hi) = (o.min.min(o.max), o.min.max(o.max));
-                let moved = current? + detents as f32 * o.sensitivity * sign;
-                let out = moved.clamp(lo, hi);
-                state.last_applied = Some(out);
-                Some(Effect::Set(out))
+                self.moved_by(state, kind.detents(value), current)
             }
             MapMode::Toggle => {
-                if !self.press(state, msg) {
-                    return None;
-                }
-                // Flip against what the target is now (it may have changed elsewhere).
-                let (off, on) = self.ends();
-                let is_on = current.is_some_and(|c| (c - on).abs() < (c - off).abs());
-                let out = if is_on { off } else { on };
-                state.last_applied = Some(out);
-                Some(Effect::Set(out))
+                let pressed = self.press(state, msg);
+                self.flip(state, pressed, current)
             }
             MapMode::Momentary => {
-                let was = state.held;
                 let down = self.button_down(msg)?;
-                state.held = down;
-                if down == was {
-                    return None;
-                }
-                let (off, on) = self.ends();
-                let out = if down { on } else { off };
-                state.last_applied = Some(out);
-                Some(Effect::Set(out))
+                self.hold(state, down)
             }
         }
+    }
+
+    /// What a parameter run (an NRPN or RPN data entry, increment or decrement) does. `current`
+    /// is as for [`Self::feed`]. The event must be one the source of the mapping
+    /// [`MidiSource::matches_param`].
+    ///
+    /// A value is the position of the control (14 bit); a step moves the target by detents of the
+    /// mapping's sensitivity in any mode that moves a value, so a pair of increment and decrement
+    /// buttons works. A relative encoder reads the high half of a value like a 7 bit controller.
+    /// A button is down from the middle of the range.
+    pub fn feed_param(
+        &self,
+        state: &mut MapState,
+        event: &ParamEvent,
+        current: Option<f32>,
+    ) -> Option<Effect> {
+        let down = |v: u16| v >= PARAM_BUTTON_THRESHOLD;
+        if self.target.is_trigger() {
+            return match event.change {
+                ParamChange::Value(v) => self.edge(state, down(v)).then_some(Effect::Trigger),
+                ParamChange::Step(d) => (d > 0).then_some(Effect::Trigger),
+            };
+        }
+        match (self.options.mode, event.change) {
+            (MapMode::Absolute, ParamChange::Value(v)) => {
+                let level = f32::from(v.min(MAX_PARAM_NUMBER)) / 16_383.0;
+                self.absolute(state, level, current)
+            }
+            (MapMode::Absolute | MapMode::Relative(_), ParamChange::Step(d)) => {
+                self.moved_by(state, i32::from(d), current)
+            }
+            (MapMode::Relative(kind), ParamChange::Value(v)) => {
+                self.moved_by(state, kind.detents((v >> 7) as u8), current)
+            }
+            (MapMode::Toggle, ParamChange::Value(v)) => {
+                let pressed = self.edge(state, down(v));
+                self.flip(state, pressed, current)
+            }
+            (MapMode::Toggle, ParamChange::Step(d)) => self.flip(state, d > 0, current),
+            (MapMode::Momentary, ParamChange::Value(v)) => self.hold(state, down(v)),
+            (MapMode::Momentary, ParamChange::Step(_)) => None,
+        }
+    }
+
+    /// A relative move of `detents` (positive is clockwise) from the value of the target.
+    fn moved_by(&self, state: &mut MapState, detents: i32, current: Option<f32>) -> Option<Effect> {
+        let o = &self.options;
+        if detents == 0 {
+            return None;
+        }
+        let sign = if o.invert { -1.0 } else { 1.0 };
+        let (lo, hi) = (o.min.min(o.max), o.min.max(o.max));
+        let moved = current? + detents as f32 * o.sensitivity * sign;
+        let out = moved.clamp(lo, hi);
+        state.last_applied = Some(out);
+        Some(Effect::Set(out))
+    }
+
+    /// A toggle that was pressed flips the target against what it is now (it may have changed
+    /// elsewhere).
+    fn flip(&self, state: &mut MapState, pressed: bool, current: Option<f32>) -> Option<Effect> {
+        if !pressed {
+            return None;
+        }
+        let (off, on) = self.ends();
+        let is_on = current.is_some_and(|c| (c - on).abs() < (c - off).abs());
+        let out = if is_on { off } else { on };
+        state.last_applied = Some(out);
+        Some(Effect::Set(out))
+    }
+
+    /// A momentary button: the target is at one end while it is down, at the other when up.
+    fn hold(&self, state: &mut MapState, down: bool) -> Option<Effect> {
+        let was = state.held;
+        state.held = down;
+        if down == was {
+            return None;
+        }
+        let (off, on) = self.ends();
+        let out = if down { on } else { off };
+        state.last_applied = Some(out);
+        Some(Effect::Set(out))
     }
 
     /// The target values of a released and a pressed button (`invert` swaps them).
@@ -680,9 +794,12 @@ impl MidiMapping {
     /// True for the message that presses a button (a release, or a repeat while it is down, is
     /// not a press).
     fn press(&self, state: &mut MapState, msg: &ChannelMessage) -> bool {
-        let Some(down) = self.button_down(msg) else {
-            return false;
-        };
+        self.button_down(msg)
+            .is_some_and(|down| self.edge(state, down))
+    }
+
+    /// Records the button as `down` and says whether that is a press.
+    fn edge(&self, state: &mut MapState, down: bool) -> bool {
         let pressed = down && !state.held;
         state.held = down;
         pressed
@@ -751,7 +868,9 @@ fn learned(msg: &ChannelMessage) -> Option<MidiSource> {
         MessageKind::NoteOn { key, .. } => SourceKind::Note(key),
         // A note off and the channel-mode controllers are never a control.
         MessageKind::NoteOff { .. } => return None,
-        MessageKind::Cc { number, .. } if number >= 120 => return None,
+        MessageKind::Cc { number, .. } if number >= 120 || is_param_selector(number) => {
+            return None;
+        }
         MessageKind::Cc { number, .. } => SourceKind::Cc(number),
         MessageKind::PitchBend { .. } => SourceKind::PitchBend,
     };
@@ -764,6 +883,9 @@ fn learned(msg: &ChannelMessage) -> Option<MidiSource> {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Learner {
     pending: Option<Pending>,
+    /// The runs of selecting and data controllers, so a knob that sends an NRPN or RPN is
+    /// learned as that number and not as the controllers it is made of.
+    params: ParamBank,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -789,10 +911,20 @@ impl Learner {
     /// Forgets anything held back.
     pub fn reset(&mut self) {
         self.pending = None;
+        self.params.reset();
     }
 
     /// Takes a message at time `now` (seconds): returns the source when it is decided.
     pub fn feed(&mut self, port: &str, msg: ChannelMessage, now: f64) -> Option<MidiSource> {
+        if let Some(event) = self.params.feed(port, &msg) {
+            // A completed parameter run decides at once and drops what was held back.
+            self.pending = None;
+            let kind = match event.space {
+                ParamSpace::Nrpn => SourceKind::Nrpn(event.number),
+                ParamSpace::Rpn => SourceKind::Rpn(event.number),
+            };
+            return Some(MidiSource::any_port(Some(msg.channel), kind));
+        }
         if let MessageKind::Cc { number, .. } = msg.kind
             && number < 64
         {
@@ -860,6 +992,15 @@ pub enum PresetTarget {
         type_id: String,
         /// The position among the top-level devices of that type.
         nth: usize,
+        /// The param key.
+        param: String,
+    },
+    /// A param of **a device of a type**, wherever it sits: the preset of one plugin. It is
+    /// applied to the device the user picks (the selected one), else to the first device of the
+    /// type, so the mappings follow the plugin and not its position in the rack.
+    OfType {
+        /// The device type id (a plugin's type id names the plugin).
+        type_id: String,
         /// The param key.
         param: String,
     },
@@ -972,6 +1113,38 @@ impl RackDoc {
         Some((d.type_id.clone(), nth))
     }
 
+    /// Exports the mappings of one device as the preset of its type: every param mapping of
+    /// `device` becomes a [`PresetTarget::OfType`], so the preset applies to any device of that
+    /// type (a plugin, say) in any project, wherever it sits in the rack. `None` when the device
+    /// is gone or has no mappings.
+    pub fn midi_preset_for_device(&self, name: &str, device: &DeviceKey) -> Option<MidiPreset> {
+        let type_id = self.resolve(device)?.type_id.clone();
+        let mut preset = MidiPreset {
+            name: name.to_owned(),
+            maps: Vec::new(),
+        };
+        for m in &self.midi_maps {
+            let MidiTarget::Param { device: key, param } = &m.target else {
+                continue;
+            };
+            if key != device {
+                continue;
+            }
+            let mut source = m.source.clone();
+            source.port = None;
+            source.surface = None;
+            preset.maps.push(PresetMap {
+                source,
+                target: PresetTarget::OfType {
+                    type_id: type_id.clone(),
+                    param: param.clone(),
+                },
+                options: m.options,
+            });
+        }
+        (!preset.maps.is_empty()).then_some(preset)
+    }
+
     /// Exports the mappings `ids` (all when empty) as a preset by role. A mapping that cannot be
     /// addressed by role (a device inside a container, or one that is gone) is left out and
     /// named in the second value.
@@ -1031,10 +1204,43 @@ impl RackDoc {
         registry: &Registry,
         preset: &MidiPreset,
     ) -> (Vec<MidiMapping>, Vec<String>) {
+        self.resolve_preset_on(registry, preset, None)
+    }
+
+    /// Like [`Self::resolve_preset`], with the device a preset made for one device (a
+    /// [`PresetTarget::OfType`]) goes to: `on` when it is of the right type, else the first
+    /// top-level device of the type.
+    pub fn resolve_preset_on(
+        &self,
+        registry: &Registry,
+        preset: &MidiPreset,
+        on: Option<&DeviceKey>,
+    ) -> (Vec<MidiMapping>, Vec<String>) {
         let mut maps = Vec::new();
         let mut notes = Vec::new();
         for p in &preset.maps {
             let target = match &p.target {
+                PresetTarget::OfType { type_id, param } => {
+                    let chosen = on
+                        .and_then(|k| self.resolve(k).filter(|d| &d.type_id == type_id))
+                        .map(|d| d.key.clone());
+                    let found = chosen.or_else(|| {
+                        self.devices
+                            .iter()
+                            .find(|d| &d.type_id == type_id)
+                            .map(|d| d.key.clone())
+                    });
+                    match found {
+                        Some(device) => MidiTarget::Param {
+                            device,
+                            param: param.clone(),
+                        },
+                        None => {
+                            notes.push(format!("no {type_id} for `{param}`"));
+                            continue;
+                        }
+                    }
+                }
                 PresetTarget::Device {
                     type_id,
                     nth,
@@ -1139,6 +1345,9 @@ fn check_source(source: &MidiSource) -> Result<(), ModelError> {
             "a 14 bit controller pair starts at 0..=31, not {n}"
         ))),
         SourceKind::Note(k) if k > 127 => Err(bad(format!("key {k} does not exist"))),
+        SourceKind::Nrpn(n) | SourceKind::Rpn(n) if n > MAX_PARAM_NUMBER => Err(bad(format!(
+            "parameter number {n} does not exist (0..={MAX_PARAM_NUMBER})"
+        ))),
         _ => Ok(()),
     }
 }
@@ -1658,6 +1867,207 @@ mod tests {
             Some(MidiSource::any_port(Some(0), SourceKind::Note(5)))
         );
         assert!(!l.is_waiting());
+    }
+
+    fn event(space: ParamSpace, number: u16, change: ParamChange) -> ParamEvent {
+        ParamEvent {
+            space,
+            number,
+            change,
+        }
+    }
+
+    fn nrpn(number: u16, change: ParamChange) -> ParamEvent {
+        event(ParamSpace::Nrpn, number, change)
+    }
+
+    #[test]
+    fn a_parameter_source_hears_its_number_family_channel_and_port_only() {
+        let s = MidiSource {
+            port: Some("Pad".into()),
+            channel: Some(2),
+            kind: SourceKind::Nrpn(300),
+            surface: None,
+        };
+        let e = nrpn(300, ParamChange::Value(1));
+        assert!(s.matches_param("Pad", None, 2, &e));
+        assert!(!s.matches_param("Other", None, 2, &e));
+        assert!(!s.matches_param("Pad", None, 3, &e));
+        assert!(!s.matches_param("Pad", None, 2, &nrpn(301, ParamChange::Value(1))));
+        assert!(
+            !s.matches_param(
+                "Pad",
+                None,
+                2,
+                &event(ParamSpace::Rpn, 300, ParamChange::Step(1))
+            ),
+            "an RPN is not an NRPN of the same number"
+        );
+        let on_surface = MidiSource {
+            surface: Some("Desk".into()),
+            ..s.clone()
+        };
+        assert!(!on_surface.matches_param("Pad", None, 2, &e));
+        assert!(on_surface.matches_param("Pad", Some("Desk"), 2, &e));
+        // The message-level match never hears a parameter source.
+        assert!(!s.matches("Pad", &cc(2, 6, 10)));
+        assert!(!MidiSource::any_port(None, SourceKind::Cc(7)).matches_param("Pad", None, 0, &e));
+    }
+
+    #[test]
+    fn a_data_entry_is_a_14_bit_level() {
+        let mut m = mapping(SourceKind::Nrpn(5), MapOptions::default());
+        m.options.pickup = false;
+        let mut st = MapState::default();
+        let at = |m: &MidiMapping, st: &mut MapState, v| {
+            set(m.feed_param(st, &nrpn(5, ParamChange::Value(v)), None))
+        };
+        assert!(near(at(&m, &mut st, 0), 0.0));
+        assert!(near(at(&m, &mut st, 16_383), 1.0));
+        assert!(near(at(&m, &mut st, 8_192), 8_192.0 / 16_383.0));
+        m.options.invert = true;
+        m.options.min = 0.2;
+        m.options.max = 0.6;
+        assert!(near(at(&m, &mut st, 0), 0.6));
+        assert!(near(at(&m, &mut st, 16_383), 0.2));
+    }
+
+    #[test]
+    fn increment_and_decrement_step_the_value_in_detents() {
+        let mut m = mapping(SourceKind::Rpn(0), MapOptions::default());
+        m.options.sensitivity = 0.1;
+        let mut st = MapState::default();
+        let step = |d| event(ParamSpace::Rpn, 0, ParamChange::Step(d));
+        assert!(near(set(m.feed_param(&mut st, &step(1), Some(0.5))), 0.6));
+        assert!(near(set(m.feed_param(&mut st, &step(-2), Some(0.5))), 0.3));
+        assert!(near(set(m.feed_param(&mut st, &step(9), Some(0.5))), 1.0));
+        assert_eq!(
+            m.feed_param(&mut st, &step(1), None),
+            None,
+            "no known value, no relative move"
+        );
+        m.options.invert = true;
+        assert!(near(set(m.feed_param(&mut st, &step(1), Some(0.5))), 0.4));
+        // A relative mapping moves the same way on steps, and reads the high half of a value.
+        m.options.invert = false;
+        m.options.mode = MapMode::Relative(RelativeKind::TwosComplement);
+        assert!(near(set(m.feed_param(&mut st, &step(1), Some(0.5))), 0.6));
+        let up = nrpn_for(&m, ParamChange::Value(1 << 7));
+        assert!(near(set(m.feed_param(&mut st, &up, Some(0.5))), 0.6));
+        let down = nrpn_for(&m, ParamChange::Value(127 << 7));
+        assert!(near(set(m.feed_param(&mut st, &down, Some(0.5))), 0.4));
+    }
+
+    fn nrpn_for(m: &MidiMapping, change: ParamChange) -> ParamEvent {
+        match m.source.kind {
+            SourceKind::Nrpn(n) => nrpn(n, change),
+            SourceKind::Rpn(n) => event(ParamSpace::Rpn, n, change),
+            other => panic!("not a parameter source: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_parameter_button_is_down_from_the_middle_of_the_range() {
+        let mut m = mapping(SourceKind::Nrpn(1), MapOptions::default());
+        m.options.mode = MapMode::Toggle;
+        let mut st = MapState::default();
+        let value = |v| nrpn(1, ParamChange::Value(v));
+        assert!(near(
+            set(m.feed_param(&mut st, &value(16_383), Some(0.0))),
+            1.0
+        ));
+        assert_eq!(
+            m.feed_param(&mut st, &value(16_383), Some(1.0)),
+            None,
+            "a repeat"
+        );
+        assert_eq!(
+            m.feed_param(&mut st, &value(0), Some(1.0)),
+            None,
+            "a release"
+        );
+        assert!(near(
+            set(m.feed_param(&mut st, &value(9_000), Some(1.0))),
+            0.0
+        ));
+        m.options.mode = MapMode::Momentary;
+        let mut st = MapState::default();
+        assert!(near(
+            set(m.feed_param(&mut st, &value(16_000), Some(0.0))),
+            1.0
+        ));
+        assert!(near(set(m.feed_param(&mut st, &value(10), Some(1.0))), 0.0));
+        // A transport target presses on the data entry and on an increment.
+        m.target = MidiTarget::Transport(TransportTarget::Play);
+        let mut st = MapState::default();
+        assert_eq!(
+            m.feed_param(&mut st, &value(16_000), None),
+            Some(Effect::Trigger)
+        );
+        assert_eq!(m.feed_param(&mut st, &value(16_100), None), None);
+        assert_eq!(m.feed_param(&mut st, &value(0), None), None);
+        assert_eq!(
+            m.feed_param(&mut st, &nrpn(1, ParamChange::Step(1)), None),
+            Some(Effect::Trigger)
+        );
+        assert_eq!(
+            m.feed_param(&mut st, &nrpn(1, ParamChange::Step(-1)), None),
+            None
+        );
+    }
+
+    #[test]
+    fn the_learner_learns_a_parameter_number_not_its_controllers() {
+        let mut l = Learner::new();
+        // The selecting controllers are never a control by themselves.
+        assert_eq!(l.feed("p", cc(3, 99, 1), 0.0), None);
+        assert_eq!(l.feed("p", cc(3, 98, 2), 0.0), None);
+        assert!(!l.is_waiting());
+        assert_eq!(
+            l.feed("p", cc(3, 6, 64), 0.0),
+            Some(MidiSource::any_port(Some(3), SourceKind::Nrpn(130)))
+        );
+        // A run on another channel does not borrow this one's selection.
+        assert_eq!(l.feed("p", cc(4, 6, 64), 0.1), None);
+        l.reset();
+        assert_eq!(l.feed("p", cc(0, 101, 0), 0.0), None);
+        assert_eq!(l.feed("p", cc(0, 100, 3), 0.0), None);
+        assert_eq!(
+            l.feed("p", cc(0, 96, 1), 0.0),
+            Some(MidiSource::any_port(Some(0), SourceKind::Rpn(3)))
+        );
+        // Data entry with nothing selected is still the plain controller.
+        l.reset();
+        assert_eq!(l.feed("p", cc(0, 6, 10), 0.0), None);
+        assert_eq!(
+            l.tick(1.0),
+            Some(MidiSource::any_port(Some(0), SourceKind::Cc(6)))
+        );
+    }
+
+    #[test]
+    fn a_parameter_source_is_checked_and_described() {
+        let ok = MidiSource::any_port(Some(1), SourceKind::Nrpn(16_383));
+        assert_eq!(ok.describe(), "NRPN 16383 ch 2");
+        assert_eq!(ok.what(), "NRPN 16383");
+        assert_eq!(
+            MidiSource::any_port(None, SourceKind::Rpn(2)).describe(),
+            "RPN 2 any ch"
+        );
+        assert!(check_source(&ok).is_ok());
+        assert!(check_source(&MidiSource::any_port(None, SourceKind::Rpn(16_384))).is_err());
+        // A parameter number can be a relative encoder, a pitch bend cannot.
+        let relative = MapOptions {
+            mode: MapMode::Relative(RelativeKind::SignMagnitude),
+            ..MapOptions::default()
+        };
+        assert_eq!(relative.problem(&ok), None);
+        assert!(
+            relative
+                .problem(&MidiSource::any_port(None, SourceKind::PitchBend))
+                .is_some()
+        );
+        assert_eq!(MapOptions::for_source(ok.kind).mode, MapMode::Absolute);
     }
 
     #[test]
