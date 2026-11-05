@@ -225,6 +225,59 @@ fn a_freeze_that_cannot_hold_changes_nothing() {
     assert!(e.to_string().contains("not frozen"));
 }
 
+fn refreeze(d: &mut Document, reg: &Registry, frozen: Frozen) -> Result<Vec<SyncOp>, ModelError> {
+    d.apply(
+        sc(SongCommand::RefreezeTrack {
+            device: key("synth"),
+            frozen,
+        }),
+        reg,
+    )
+}
+
+#[test]
+fn a_new_render_replaces_the_frozen_one_in_one_undo_step() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 2);
+    let fx = chain_keys(&d, &reg);
+    freeze(&mut d, &reg, vec![fx[0].clone()]);
+    let first = frozen_of(&d).unwrap().clone();
+    let steps = d.undo_depth();
+    let mut second = render(vec![fx[0].clone(), fx[1].clone()]);
+    second.audio = audio(2);
+    let ops = refreeze(&mut d, &reg, second.clone()).unwrap();
+    assert!(ops.contains(&SyncOp::SongChanged) && ops.contains(&SyncOp::FrozenChanged));
+    assert_eq!(frozen_of(&d), Some(&second), "the render is replaced");
+    assert_eq!(d.undo_depth(), steps + 1, "one step");
+    d.undo().unwrap();
+    assert_eq!(
+        frozen_of(&d),
+        Some(&first),
+        "undo brings the old render back"
+    );
+    d.redo().unwrap();
+    assert_eq!(frozen_of(&d), Some(&second));
+}
+
+#[test]
+fn a_render_can_only_be_replaced_by_one_that_holds() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 2);
+    let fx = chain_keys(&d, &reg);
+    // Not frozen: nothing to replace.
+    let e = refreeze(&mut d, &reg, render(vec![])).expect_err("not frozen");
+    assert!(e.to_string().contains("not frozen"), "{e}");
+    freeze(&mut d, &reg, vec![fx[0].clone()]);
+    let before = d.doc().clone();
+    let mut bad = render(vec![fx[1].clone()]);
+    bad.audio = audio(2);
+    refreeze(&mut d, &reg, bad).expect_err("not the first effects of the chain");
+    let mut bad = render(vec![]);
+    bad.audio = audio(9);
+    refreeze(&mut d, &reg, bad).expect_err("an asset that is not in the pool");
+    assert_eq!(d.doc(), &before, "nothing changed");
+}
+
 #[test]
 fn a_track_without_a_console_channel_cannot_be_frozen() {
     let reg = registry();

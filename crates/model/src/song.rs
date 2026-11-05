@@ -1618,6 +1618,16 @@ pub enum SongCommand {
         /// The render and what it includes.
         frozen: Frozen,
     },
+    /// Replaces the render of the frozen track of `device` by `frozen` (one undo step; the track
+    /// stays frozen and the original is never restored on the way). The same rules as [`SongCommand::FreezeTrack`] apply to `frozen`, but the track
+    /// must be frozen already. The old render stays in the pool while undo can bring it back.
+    /// Reports [`crate::SyncOp::SongChanged`] and [`crate::SyncOp::FrozenChanged`].
+    RefreezeTrack {
+        /// The frozen track's device.
+        device: DeviceKey,
+        /// The new render and what it includes.
+        frozen: Frozen,
+    },
     /// Unfreezes the track of `device` (one undo step): the track, its clips, its instrument and
     /// its effects are exactly as they were before the freeze. With `keep_audio` the render also
     /// becomes the clip of a new audio track (in the same step) that sits right after the unfrozen

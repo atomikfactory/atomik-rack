@@ -5397,6 +5397,8 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::UnfreezeTrackKeep
             | AppCommand::BounceInPlace
             | AppCommand::BounceInPlaceMute
+            | AppCommand::BounceRange
+            | AppCommand::RefreezeTrack
             | AppCommand::BounceClipDry => {
                 match command {
                     AppCommand::FreezeTrack => self.core.freeze_tracks(FreezeThrough::Track),
@@ -5408,6 +5410,8 @@ impl<B: AudioBackend> Shell<B> {
                     AppCommand::UnfreezeTrack => self.core.unfreeze_tracks(false),
                     AppCommand::UnfreezeTrackKeep => self.core.unfreeze_tracks(true),
                     AppCommand::BounceInPlace => self.core.bounce_in_place(false),
+                    AppCommand::BounceRange => self.core.bounce_range(),
+                    AppCommand::RefreezeTrack => self.core.refreeze_tracks(),
                     AppCommand::BounceClipDry => self.core.bounce_clips_dry(),
                     _ => self.core.bounce_in_place(true),
                 }

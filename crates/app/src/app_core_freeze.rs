@@ -21,6 +21,13 @@
 //! Keep Audio** also leaves the render as a clip on a new audio track. The rendered file goes at
 //! the next save unless a clip or the undo history still uses it.
 //!
+//! **Re-render Frozen Track** (`sequencer.refreeze_track`) renders a
+//! frozen track again, through the same part of its chain, without unfreezing it first: the track
+//! stays frozen, plays the old render until the new one is done, and one `RefreezeTrack` step
+//! swaps them. It is for what the render depends on outside the track (a source that keys the
+//! chain, the tail setting, a plugin that was updated). The worker renders a copy of the document
+//! in which the track is unfrozen, so its devices run for the render.
+//!
 //! # Bounce in place
 //!
 //! **Bounce in Place** renders the selected clips (note clips of any note lane, or audio clips; the
@@ -29,6 +36,12 @@
 //! originals stay (**Bounce in Place and Mute Originals** mutes them in the same step). It is the additive twin of a freeze: nothing is
 //! frozen, nothing leaves the engine, and the sends and the rest of the channel strip apply to
 //! the new track like to any.
+//!
+//! **Bounce Range in Place** (`sequencer.bounce_range`) renders a
+//! time range instead of whole clips: the range selected on a lane of a track, or else the range
+//! between the locators on each selected track. Everything the track plays in the range goes
+//! through its chain into one clip on a new audio track that starts at the beginning of the range;
+//! a clip that crosses an edge of the range contributes the part inside. The originals stay.
 //!
 //! **Bounce Clips to New Track (Dry)** does the same through no insert effect: the render is the
 //! instrument's own output (an audio clip's gain, fades and warp included), before the effects
@@ -47,7 +60,8 @@
 //! the registry as `sequencer.freeze_track`, `sequencer.freeze_track_to_device`,
 //! `sequencer.freeze_tail`, `sequencer.freeze_cancel`, `sequencer.unfreeze_track`,
 //! `sequencer.unfreeze_track_keep`, `sequencer.bounce_in_place`,
-//! `sequencer.bounce_in_place_mute` and `sequencer.bounce_clip_dry`.
+//! `sequencer.bounce_in_place_mute`, `sequencer.bounce_range`, `sequencer.refreeze_track` and
+//! `sequencer.bounce_clip_dry`.
 
 use super::*;
 use crate::commands::FreezeMenu;
@@ -82,6 +96,8 @@ enum Kind {
     Bounce { mute: Vec<ClipId>, dry: bool },
     /// Replace the looped audio clip by one clip of the render (dry, the clip alone).
     Loop { clip: ClipId },
+    /// Render the frozen track again through the same effects and swap the render in.
+    Refreeze,
 }
 
 /// A render waiting for its turn.
@@ -162,6 +178,16 @@ fn print_of(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Option<Pr
     ))
 }
 
+/// A track and the span `[start, end)` in ticks a range bounce renders on it.
+type RangeJob = (DeviceKey, (i64, i64));
+
+/// Whether `track` plays a note or audio clip somewhere in `[start, end)`.
+fn plays_in(track: &Track, (start, end): (i64, i64)) -> bool {
+    track.lanes.iter().flat_map(|l| &l.clips).any(|c| {
+        !matches!(c.content, ClipContent::Automation(_)) && c.start < end && c.end() > start
+    })
+}
+
 impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ queries
 
@@ -179,6 +205,7 @@ impl<S: EngineSink> AppCore<S> {
             Kind::Freeze => "Freezing",
             Kind::Bounce { .. } => "Bouncing",
             Kind::Loop { .. } => "Rendering",
+            Kind::Refreeze => "Re-rendering",
         };
         let waiting = self.audio.freeze.queue.len();
         let more = if waiting > 0 {
@@ -220,6 +247,7 @@ impl<S: EngineSink> AppCore<S> {
             })
         });
         let (players, direct_record, players_folded, players_bypassed) = self.players_menu();
+        let ranges = self.range_candidates().0;
         FreezeMenu {
             players,
             direct_record,
@@ -230,6 +258,11 @@ impl<S: EngineSink> AppCore<S> {
                 .iter()
                 .any(|d| doc.song.track(d).is_some_and(|t| t.frozen.is_some())),
             can_bounce: !busy && bounceable,
+            can_bounce_range: !busy && !ranges.is_empty(),
+            can_refreeze: !busy
+                && tracks
+                    .iter()
+                    .any(|d| doc.song.track(d).is_some_and(|t| t.frozen.is_some())),
             busy,
             tail: self.audio.freeze.tail,
         }
@@ -370,6 +403,126 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Renders the selected frozen tracks again and swaps the new render in (see the module
+    /// docs).
+    pub fn refreeze_tracks(&mut self) {
+        let frozen: Vec<DeviceKey> = self
+            .arrangement
+            .command_tracks()
+            .into_iter()
+            .filter(|d| self.doc().song.track(d).is_some_and(|t| t.frozen.is_some()))
+            .collect();
+        if frozen.is_empty() {
+            return self.reject("Select a frozen track to render again".to_owned());
+        }
+        let mut jobs = Vec::new();
+        let mut skipped = Vec::new();
+        for device in &frozen {
+            match self.plan_refreeze(device) {
+                Ok(job) => jobs.push(job),
+                Err(why) => skipped.push(why),
+            }
+        }
+        if jobs.is_empty() {
+            return self.reject(skipped.join(" \u{b7} "));
+        }
+        self.audio.freeze.queue.extend(jobs);
+        self.start_next_job();
+        if !skipped.is_empty() {
+            self.reject(skipped.join(" \u{b7} "));
+        }
+    }
+
+    /// Renders the range of the selected lane, or else the range between the locators, of each
+    /// selected track through its chain into a new audio track (see the module docs).
+    pub fn bounce_range(&mut self) {
+        let (spans, mut skipped) = self.range_candidates();
+        if spans.is_empty() {
+            return self.reject(skipped.join(" \u{b7} "));
+        }
+        let tail = self.tail_seconds();
+        let mut jobs = Vec::new();
+        for (device, span) in spans {
+            let name = self.track_name(&device);
+            let effects = match track_chain(self.doc(), &self.registry, &device) {
+                Ok(chain) => chain.effects.len(),
+                Err(why) => {
+                    skipped.push(why);
+                    continue;
+                }
+            };
+            let id = self.next_freeze_job();
+            jobs.push(Job {
+                id,
+                kind: Kind::Bounce {
+                    mute: Vec::new(),
+                    dry: false,
+                },
+                request: FreezeRequest {
+                    device,
+                    effects,
+                    clips: None,
+                    span,
+                    tail_seconds: tail,
+                },
+                name,
+            });
+        }
+        if jobs.is_empty() {
+            return self.reject(skipped.join(" \u{b7} "));
+        }
+        self.audio.freeze.queue.extend(jobs);
+        self.start_next_job();
+        if !skipped.is_empty() {
+            self.reject(skipped.join(" \u{b7} "));
+        }
+    }
+
+    /// The tracks a range bounce renders with the span of each, and why the others are left out.
+    /// The span is the range selected on a lane (that lane's track alone) or the range between
+    /// the locators on every selected track; a track qualifies when it is not frozen, has a
+    /// chain and plays a note or audio clip inside the span.
+    fn range_candidates(&self) -> (Vec<RangeJob>, Vec<String>) {
+        let doc = self.doc();
+        let wanted: Vec<RangeJob> = match self.arrangement.lane_range() {
+            Some((device, _, start, end)) => vec![(device, (start, end))],
+            None => {
+                let tracks = self.arrangement.command_tracks();
+                let range = doc.song.loop_range;
+                if tracks.is_empty() {
+                    return (Vec::new(), vec!["Select a track to bounce".to_owned()]);
+                }
+                if range.0 >= range.1 {
+                    let why = "The locators are at the same place: move them apart";
+                    return (Vec::new(), vec![why.to_owned()]);
+                }
+                tracks.into_iter().map(|d| (d, range)).collect()
+            }
+        };
+        let mut spans = Vec::new();
+        let mut skipped = Vec::new();
+        for (device, span) in wanted {
+            let name = self.track_name(&device);
+            let Some(track) = doc.song.track(&device) else {
+                continue;
+            };
+            if track.frozen.is_some() {
+                skipped.push(format!("{name} is frozen: unfreeze it to bounce"));
+            } else if track.is_automation_only() {
+                skipped.push("Only note and audio tracks can be bounced".to_owned());
+            } else if let Err(why) = track_chain(doc, &self.registry, &device) {
+                skipped.push(why);
+            } else if !plays_in(track, span) {
+                skipped.push(format!("{name} has nothing in the range"));
+            } else {
+                spans.push((device, span));
+            }
+        }
+        skipped.sort();
+        skipped.dedup();
+        (spans, skipped)
+    }
+
     /// Turns `ConvertLoop` to a single clip of looped audio clips into renders (see the module
     /// docs): returns the command to apply for what is left (the looped note and automation clips
     /// of the selection), or `None` when the renders were all there was.
@@ -472,6 +625,37 @@ impl<S: EngineSink> AppCore<S> {
             .map_or_else(|| device.0.clone(), |d| d.name.clone())
     }
 
+    /// The job that renders the frozen track `device` again through the effects it froze.
+    fn plan_refreeze(&mut self, device: &DeviceKey) -> Result<Job, String> {
+        let name = self.track_name(device);
+        let doc = self.doc();
+        let track = doc
+            .song
+            .track(device)
+            .ok_or_else(|| format!("{name} has no track"))?;
+        let frozen = track
+            .frozen
+            .as_ref()
+            .ok_or_else(|| format!("{name} is not frozen"))?;
+        let effects = frozen.effects.len();
+        track_chain(doc, &self.registry, device)?;
+        let span = clips_span(track).ok_or_else(|| format!("{name} has no clips to render"))?;
+        let request = FreezeRequest {
+            device: device.clone(),
+            effects,
+            clips: None,
+            span,
+            tail_seconds: self.tail_seconds(),
+        };
+        let id = self.next_freeze_job();
+        Ok(Job {
+            id,
+            kind: Kind::Refreeze,
+            request,
+            name,
+        })
+    }
+
     /// The job that freezes `device` as far as `through` says, or why it cannot.
     fn plan_freeze(&mut self, device: &DeviceKey, through: FreezeThrough) -> Result<Job, String> {
         let name = self.track_name(device);
@@ -530,11 +714,23 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         while let Some(job) = self.audio.freeze.queue.pop_front() {
-            let doc = self.doc().clone();
+            let mut doc = self.doc().clone();
             let Some(print) = print_of(&doc, &self.registry, &job.request.device) else {
                 self.reject(format!("{} cannot be frozen any more", job.name));
                 continue;
             };
+            if job.kind == Kind::Refreeze {
+                // The worker renders the track as it plays when it is not frozen.
+                let device = &job.request.device;
+                if let Some(t) = doc
+                    .song_mut()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| &t.device == device)
+                {
+                    t.frozen = None;
+                }
+            }
             let bundle = match self.import_bundle() {
                 Ok(b) => b,
                 Err(e) => {
@@ -548,6 +744,7 @@ impl<S: EngineSink> AppCore<S> {
                 Kind::Freeze => "frozen",
                 Kind::Bounce { .. } => "bounce",
                 Kind::Loop { .. } => "loop",
+                Kind::Refreeze => "frozen",
             };
             let work = Work {
                 doc,
@@ -652,6 +849,36 @@ impl<S: EngineSink> AppCore<S> {
                     };
                     self.reject(format!(
                         "Froze {}{}{later}",
+                        job.name,
+                        tail.unwrap_or_default()
+                    ));
+                }
+            }
+            Kind::Refreeze => {
+                let effects = self
+                    .doc()
+                    .song
+                    .track(&device)
+                    .and_then(|t| t.frozen.as_ref())
+                    .map(|f| f.effects.clone())
+                    .unwrap_or_default();
+                let applied = self.apply_command(Command::Song(SongCommand::RefreezeTrack {
+                    device,
+                    frozen: Frozen {
+                        start: done.start,
+                        length: done.length,
+                        audio,
+                        effects,
+                    },
+                }));
+                if applied.is_ok() {
+                    let later = if self.restart_deferred {
+                        ": it plays when playback stops"
+                    } else {
+                        ""
+                    };
+                    self.reject(format!(
+                        "Rendered {} again{}{later}",
                         job.name,
                         tail.unwrap_or_default()
                     ));

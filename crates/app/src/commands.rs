@@ -394,6 +394,11 @@ pub enum AppCommand {
     BounceInPlace,
     /// Track ▸ Bounce in Place and Mute Originals.
     BounceInPlaceMute,
+    /// Track ▸ Bounce Range in Place: the range selected on a lane, or the range between the
+    /// locators, of each selected track into a new audio track.
+    BounceRange,
+    /// Track ▸ Re-render Frozen Track: render the selected frozen tracks again, still frozen.
+    RefreezeTrack,
     /// Track > Direct Record: record the notes the selected tracks' players generate.
     DirectRecord,
     /// Track > Send Players to Track: render the players' notes into a new lane.
@@ -826,6 +831,8 @@ impl AppCommand {
             AppCommand::UnfreezeTrackKeep => ("sequencer.unfreeze_track_keep", None),
             AppCommand::BounceInPlace => ("sequencer.bounce_in_place", None),
             AppCommand::BounceInPlaceMute => ("sequencer.bounce_in_place_mute", None),
+            AppCommand::BounceRange => ("sequencer.bounce_range", None),
+            AppCommand::RefreezeTrack => ("sequencer.refreeze_track", None),
             AppCommand::DirectRecord => ("sequencer.direct_record", None),
             AppCommand::SendPlayersToTrack => ("sequencer.send_players_to_track", None),
             AppCommand::FoldPlayers => ("sequencer.fold_players", None),
@@ -1135,6 +1142,8 @@ impl AppCommand {
             ("sequencer.unfreeze_track_keep", None) => AppCommand::UnfreezeTrackKeep,
             ("sequencer.bounce_in_place", None) => AppCommand::BounceInPlace,
             ("sequencer.bounce_in_place_mute", None) => AppCommand::BounceInPlaceMute,
+            ("sequencer.bounce_range", None) => AppCommand::BounceRange,
+            ("sequencer.refreeze_track", None) => AppCommand::RefreezeTrack,
             ("sequencer.direct_record", None) => AppCommand::DirectRecord,
             ("sequencer.send_players_to_track", None) => AppCommand::SendPlayersToTrack,
             ("sequencer.fold_players", None) => AppCommand::FoldPlayers,
@@ -1772,6 +1781,11 @@ pub struct FreezeMenu {
     /// A selected clip can be bounced (a note or audio clip of an unfrozen track), and no render
     /// runs.
     pub can_bounce: bool,
+    /// A selected track plays something in the range to bounce (the range selected on a lane, or
+    /// the one between the locators), and no render runs.
+    pub can_bounce_range: bool,
+    /// A selected track is frozen and no render runs (Re-render Frozen Track works).
+    pub can_refreeze: bool,
     /// A render runs or waits (Cancel Freeze works).
     pub busy: bool,
     /// Freezes keep the tail of the chain (the item is checked).
@@ -2664,6 +2678,11 @@ pub fn menus_with_songs(
                     state.freeze.tail,
                 ),
                 enabled(
+                    "Re-render Frozen Track",
+                    AppCommand::RefreezeTrack,
+                    state.freeze.can_refreeze,
+                ),
+                enabled(
                     "Unfreeze Track",
                     AppCommand::UnfreezeTrack,
                     state.freeze.can_unfreeze,
@@ -2689,6 +2708,11 @@ pub fn menus_with_songs(
                     "Bounce Clips to New Track (Dry)",
                     AppCommand::BounceClipDry,
                     state.freeze.can_bounce,
+                ),
+                enabled(
+                    "Bounce Range in Place",
+                    AppCommand::BounceRange,
+                    state.freeze.can_bounce_range,
                 ),
                 MenuEntry::Separator,
                 enabled(
@@ -3324,6 +3348,8 @@ mod tests {
             AppCommand::UnfreezeTrackKeep,
             AppCommand::BounceInPlace,
             AppCommand::BounceInPlaceMute,
+            AppCommand::BounceRange,
+            AppCommand::RefreezeTrack,
             AppCommand::DirectRecord,
             AppCommand::SendPlayersToTrack,
             AppCommand::FoldPlayers,
@@ -4033,12 +4059,14 @@ mod tests {
                 "Freeze Track",
                 "Freeze Track up to Selected Device",
                 "Freeze with Tail",
+                "Re-render Frozen Track",
                 "Unfreeze Track",
                 "Unfreeze Track and Keep Audio",
                 "Cancel Freeze",
                 "Bounce in Place",
                 "Bounce in Place and Mute Originals",
                 "Bounce Clips to New Track (Dry)",
+                "Bounce Range in Place",
                 "Send Players to Track",
                 "Direct Record",
                 "Fold All Players",

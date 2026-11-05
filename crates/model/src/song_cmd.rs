@@ -1671,6 +1671,9 @@ pub(crate) fn plan(
         SongCommand::FreezeTrack { device, frozen } => {
             crate::freeze::plan_freeze(doc, registry, &device, frozen)?
         }
+        SongCommand::RefreezeTrack { device, frozen } => {
+            crate::freeze::plan_refreeze(doc, registry, &device, frozen)?
+        }
         SongCommand::UnfreezeTrack { device, keep_audio } => {
             let unfreeze = crate::freeze::plan_unfreeze(doc, &device)?;
             if !keep_audio {

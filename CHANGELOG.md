@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Freeze and bounce follow-ups: bounce a time range, and render a frozen track again.** Track > Bounce Range in
+  Place renders a time range instead of whole clips: the range selected on a lane of a track, or else the range
+  between the locators on each selected track that plays a note or audio clip in it. Everything the track plays in
+  the range goes through its instrument and insert chain (with the tail, like Bounce in Place) into one clip on a
+  new audio track that starts where the range does; a clip that crosses an edge of the range contributes the part
+  inside, and the originals stay. Track > Re-render Frozen Track (also in the track header menu) renders a frozen
+  track again through the same effects without unfreezing it: the track keeps playing its old render while the new
+  one is made on the freeze worker, and one undo step swaps them (undo brings the old render back). It is for what
+  the render depends on outside the track: a source that keys the chain, the Freeze with Tail setting, a plugin
+  that was updated. The channel strip and the sends were never part of a freeze, so they already stay live on a
+  frozen track. New commands `sequencer.bounce_range` and `sequencer.refreeze_track`, without default keys.
 - **Audio editing follow-ups: a crossfade length handle, a curve for each fade, envelope points that snap and
   select together, and a strip silence that reads in blocks.** The crossfade where an audio clip starts over an
   earlier one has a grip at the line where it ends: dragging it makes the crossfade longer or shorter (the later

@@ -104,6 +104,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::MoveNoteLane { .. } => "Move Lane",
         SongCommand::MergeNoteLanes { .. } => "Merge Lanes",
         SongCommand::FreezeTrack { .. } => "Freeze Track",
+        SongCommand::RefreezeTrack { .. } => "Re-render Frozen Track",
         SongCommand::UnfreezeTrack { .. } => "Unfreeze Track",
         _ => DEFAULT_LABEL,
     }
