@@ -155,7 +155,17 @@ impl RackDoc {
             return Cow::Borrowed(self);
         }
         let mut devices = self.devices.clone();
+        let mut console = self.console.clone();
         for ((device, param), value) in shown {
+            // A group's level lane lives on the master: it shows on the group's fader.
+            if let Some(id) = crate::console_vca::vca_lane_id(param)
+                && self.console.master.as_ref() == Some(device)
+            {
+                if let Some(g) = console.vcas.iter_mut().find(|g| g.id == id) {
+                    g.level_db = crate::console_vca::clamp_vca_db(*value);
+                }
+                continue;
+            }
             if let Some(d) = devices.iter_mut().find(|d| &d.key == device) {
                 d.params.insert(param.clone(), *value);
             }
@@ -171,7 +181,7 @@ impl RackDoc {
             columns: self.columns,
             cables: self.cables.clone(),
             song: Arc::new(crate::empty_song(self.tempo_bpm)),
-            console: self.console.clone(),
+            console,
             midi_maps: Vec::new(),
             macros: self.macros.clone(),
             info: self.info.clone(),

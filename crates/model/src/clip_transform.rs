@@ -476,9 +476,9 @@ fn automation_range(
         });
     let desc = crate::song_cmd::device_descriptor(doc, registry, device).ok();
     match (desc, param) {
-        (Some(d), Some(p)) => d
-            .param_by_key(&p)
-            .map_or(1.0, |p| (p.max - p.min).max(f32::EPSILON)),
+        (Some(d), Some(p)) => {
+            crate::console_vca::lane_param(d, &p).map_or(1.0, |p| (p.max - p.min).max(f32::EPSILON))
+        }
         _ => 1.0,
     }
 }

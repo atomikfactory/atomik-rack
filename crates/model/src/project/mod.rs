@@ -694,6 +694,7 @@ fn load_value(
     }
     doc.console = load_console(&obj["console"], &root.field("console"), &doc, version)?;
     drop_stale_follows(&mut doc);
+    check_vca_lanes(&doc, &root.field("song").field("tracks"))?;
     if let Some(maps) = obj.get("midi_maps") {
         doc.midi_maps = crate::midi_map_io::load_midi_maps(maps, &root.field("midi_maps"))?;
     }
@@ -730,6 +731,26 @@ fn drop_stale_follows(doc: &mut RackDoc) {
     for i in gone {
         doc.console.vcas[i].follows = None;
     }
+}
+
+/// A level lane of a VCA group (`vca.<id>`) needs the group and the master's track.
+fn check_vca_lanes(doc: &RackDoc, path: &JsonPath) -> Result<(), ModelError> {
+    for (t, track) in doc.song.tracks.iter().enumerate() {
+        for lane in &track.lanes {
+            let LaneKind::Automation(key) = &lane.kind else {
+                continue;
+            };
+            let Some(id) = crate::console_vca::vca_lane_id(key) else {
+                continue;
+            };
+            if doc.console.vca(id).is_none() || doc.console.master.as_ref() != Some(&track.device) {
+                return Err(path.index(t).error(format!(
+                    "the level lane {key:?} needs VCA group {id} and the master"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A device's column must exist and the list must be sorted by column.

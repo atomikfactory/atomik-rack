@@ -37,7 +37,8 @@ pub use crate::console_snapshot::{
     MixerState, SnapshotScope, SnapshotVca,
 };
 pub use crate::console_vca::{
-    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_LANE_PARAM, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
+    lane_param, vca_lane_id, vca_lane_key,
 };
 use crate::{Cable, DeviceKey, INTERFACE_KEY, RackDoc, SocketRef};
 
