@@ -2,45 +2,63 @@
 //!
 //! The Audio to Notes panel (Audio menu) picks what to look for ([`NotesValues`]): *Pitched*
 //! follows one voice or instrument and cuts it into notes ([`atomik_dsp::notes::pitched`]), *Drums*
-//! finds the hits of a drum loop and sorts them into kick, snare and hats on the General MIDI keys
-//! ([`atomik_dsp::notes::drums`]).
+//! finds the hits of a drum loop and sorts them into kick, snare and hats, and with the full kit
+//! toms and a crash, on the keys of a chosen map ([`atomik_dsp::notes::drums`]).
 //!
-//! **What is read.** The first selected audio clip, the span of its asset that it plays (from the
-//! clip's offset; for a warped clip the span the time map reads), mixed to mono, and in play order
-//! for a reversed clip. Assets that stream from disk are read through the stream source in
-//! chunks, like strip silence does. The analysis runs on a worker thread (`atomik-notes`) and
-//! reads at most [`MAX_NOTES_SECONDS`] of the clip (the message says when it stopped early), so a
-//! multi-minute clip never stops the UI; the song keeps playing meanwhile and one extraction runs
-//! at a time.
+//! **What is read.** Every selected audio clip, one after the other: the span of its asset that
+//! it plays (from the clip's offset; for a warped clip the span the time map reads), mixed to
+//! mono, and in play order for a reversed clip. Assets that stream from disk are read through the
+//! stream source in chunks, like strip silence does. The analysis runs on a worker thread
+//! (`atomik-notes`), one clip at a time, and reads the **whole** clip, a minute of it at a time
+//! ([`atomik_dsp::notes::extract_in_segments`]), so a clip of any length never stops the UI nor
+//! holds more than a minute of audio in memory; the song keeps playing meanwhile. After each
+//! minute the worker publishes how far it is ([`AppCore::notes_progress`], shown in the status
+//! line and in the panel) and looks for a stop ([`AppCore::cancel_notes`]); a stopped run adds no
+//! notes, and the clips that were already finished keep theirs.
 //!
 //! **Warped clips.** A clip warped in Beats or Tonal mode, and a clip that is only transposed, is
 //! read from its source and its notes go where the clip plays them (through the warp time map,
 //! see [`atomik_model::notes_clip`]); the transposition is added to the keys. A clip in Repitch
 //! mode is refused with a message: its pitch follows the tempo, which the analysis cannot see.
 //!
-//! **Where the notes go.** Always one note clip that starts and ends with the audio clip: on a
-//! **new track** (a poly synth, named after the audio track, through `ImportMidi`) or on the
-//! **selected note track** (`AddClip`, lane 0; the instrument selected in the rack). It is one undo step and the new clip is selected.
-//! Drum notes land on the keys 36, 38, 42 and 46 whatever the instrument: point the track at a
-//! drum machine with samples on those pads to hear them. A result is dropped, with a message, when
-//! the audio clip changed or the project closed while the worker ran.
+//! **Where the notes go.** One note clip for each audio clip, starting and ending with it: on a
+//! **new track** each (a poly synth, named after the audio track, through `ImportMidi`) or on the
+//! **selected note track** (`AddClip`, lane 0; the instrument selected in the rack). Each is one
+//! undo step and the last new clip is selected. With *Keep pitch bend* a pitched note keeps how
+//! the voice moves as a pitch-bend lane of the clip (see [`atomik_model::notes_clip`]). Drum
+//! notes land on the keys of the chosen map whatever the instrument: point the track at a drum
+//! machine with samples on those pads to hear them. A result is dropped, with a message, when the
+//! audio clip changed or the project closed while the worker ran.
 
-use super::audio_edit_ops::for_each_chunk;
+use super::audio_edit_ops::{Selected, for_each_chunk};
 use super::*;
 use crate::audio_import::{NotesFound, spawn_notes};
 use atomik_core::PPQ;
-use atomik_dsp::notes::{DrumParams, PitchParams, extract_drum_notes, extract_pitched_notes};
+use atomik_dsp::notes::{Analysis, DrumParams, PitchParams, extract_in_segments};
 use atomik_engine::SongAsset;
 use atomik_model::{
-    AudioClipContent, Clip, ClipContent, FoundNote, ImportedTrack, MidiImport, NoteOptions,
-    WarpMode, WorkflowCommand, notes_clip,
+    AudioClipContent, Clip, ClipContent, FoundBend, FoundNote, ImportedTrack, MidiImport,
+    NoteOptions, WarpMode, WorkflowCommand, notes_clip,
 };
-use atomik_ui::{NotesMode, NotesValues};
+use atomik_ui::{NotesMode, NotesProgress, NotesValues};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// The longest stretch of a clip the analysis reads, in seconds.
-pub const MAX_NOTES_SECONDS: u64 = 600;
+/// What a worker that was told to stop answers with.
+const CANCELLED: &str = "cancelled";
 
-/// What a running extraction was asked for, to check it against the document when it is done.
+/// What the UI thread and the worker of one clip share: how far the analysis is, and a stop.
+#[derive(Debug, Default)]
+pub(super) struct Shared {
+    /// Frames of the clip finished.
+    done: AtomicU64,
+    /// Set to stop the worker after the stretch it is on.
+    cancel: AtomicBool,
+}
+
+/// One clip to extract, and what it was asked for, to check it against the document when it is
+/// done.
 struct Run {
     id: u64,
     clip: ClipId,
@@ -52,20 +70,45 @@ struct Run {
     target: Option<DeviceKey>,
     /// The name of the audio track, for the name of a new one.
     name: String,
+    /// The audio to read.
+    asset: SongAsset,
+    /// The first frame of the asset the clip plays, and how many frames it plays.
+    span: (u64, u64),
+    rate: u32,
+    shared: Arc<Shared>,
+}
+
+/// The clips of one request.
+#[derive(Debug, Default)]
+struct Batch {
+    /// Clips asked for (those that could start).
+    clips: usize,
+    /// Clips whose run is over.
+    finished: usize,
+    /// Notes added so far.
+    notes: usize,
+    /// Clips left out because they could not be read.
+    skipped: usize,
 }
 
 /// The Audio to Notes state of an open project.
 #[derive(Default)]
 pub(super) struct NotesState {
     running: Option<Run>,
+    queue: VecDeque<Run>,
     next: u64,
+    batch: Batch,
 }
 
 impl NotesState {
-    /// Forgets the running extraction (the project changed; its result is dropped by the
-    /// generation).
+    /// Forgets the running extraction and the ones queued behind it (the project changed; the
+    /// worker is told to stop and its result is dropped by the generation).
     pub(super) fn reset(&mut self) {
-        self.running = None;
+        if let Some(run) = self.running.take() {
+            run.shared.cancel.store(true, Ordering::Relaxed);
+        }
+        self.queue.clear();
+        self.batch = Batch::default();
     }
 }
 
@@ -91,42 +134,50 @@ fn read_mono(asset: &SongAsset, from: u64, n: u64, reverse: bool) -> Vec<f32> {
     mono
 }
 
-/// The analysis of one clip (what the worker runs): `n` frames of `asset` from `from`.
+/// The analysis of one clip (what the worker runs): `n` frames of `asset` from `from`, all of
+/// them, a stretch at a time. `None` when `shared` says stop.
 fn analyse(
     asset: &SongAsset,
     (from, n): (u64, u64),
     reverse: bool,
-    (rate, cap_seconds): (u32, u64),
+    rate: u32,
     v: &NotesValues,
-) -> NotesFound {
-    let cap = u64::from(rate) * cap_seconds;
-    let (take, truncated) = if n > cap { (cap, true) } else { (n, false) };
-    // A reversed clip plays the end of its span first.
-    let from = if reverse { from + n - take } else { from };
-    let mono = read_mono(asset, from, take, reverse);
+    shared: &Shared,
+) -> Option<NotesFound> {
     let sensitivity = v.sensitivity.min(100) as f32 / 100.0;
-    let found = match v.mode {
-        NotesMode::Pitched => extract_pitched_notes(
-            &[&mono],
-            rate,
-            &PitchParams {
-                sensitivity,
-                min_note_ms: v.min_note_ms,
-                key_lo: v.key_lo,
-                key_hi: v.key_hi,
-                tolerance_cents: v.drift_cents,
-            },
-        ),
-        NotesMode::Drums => extract_drum_notes(
-            &[&mono],
-            rate,
-            &DrumParams {
-                sensitivity,
-                open_hats: v.open_hats,
-            },
-        ),
+    let pitch = PitchParams {
+        sensitivity,
+        min_note_ms: v.min_note_ms,
+        key_lo: v.key_lo,
+        key_hi: v.key_hi,
+        tolerance_cents: v.drift_cents,
+        bend: v.keep_bend,
     };
-    NotesFound {
+    let drums = DrumParams {
+        sensitivity,
+        open_hats: v.open_hats,
+        kit: v.kit,
+        map: v.drum_map,
+    };
+    let what = match v.mode {
+        NotesMode::Pitched => Analysis::Pitched(&pitch),
+        NotesMode::Drums => Analysis::Drums(&drums),
+    };
+    // Frames count in play order: a reversed clip plays the end of its span first.
+    let mut read = |at: u64, len: u64| {
+        let len = len.min(n.saturating_sub(at));
+        if reverse {
+            read_mono(asset, from + n - at - len, len, true)
+        } else {
+            read_mono(asset, from + at, len, false)
+        }
+    };
+    let mut progress = |done: u64| {
+        shared.done.store(done, Ordering::Relaxed);
+        !shared.cancel.load(Ordering::Relaxed)
+    };
+    let found = extract_in_segments(n, rate, what, &mut read, &mut progress)?;
+    Some(NotesFound {
         notes: found
             .into_iter()
             .map(|n| FoundNote {
@@ -134,10 +185,17 @@ fn analyse(
                 length: n.length,
                 key: n.key,
                 velocity: n.velocity,
+                bend: n
+                    .bend
+                    .into_iter()
+                    .map(|p| FoundBend {
+                        frame: p.frame,
+                        semitones: p.semitones,
+                    })
+                    .collect(),
             })
             .collect(),
-        truncated,
-    }
+    })
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -146,8 +204,41 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.notes.running.is_some()
     }
 
-    /// What the Audio to Notes panel's EXTRACT works on (the first selected audio clip, by the
-    /// name of its file), and whether it can.
+    /// How far the running extraction has got (`None`: none runs): text for the status line and
+    /// the panel, and the fraction of the clips asked for that is done.
+    pub fn notes_progress(&self) -> Option<NotesProgress> {
+        let run = self.audio.notes.running.as_ref()?;
+        let batch = &self.audio.notes.batch;
+        let within = run.shared.done.load(Ordering::Relaxed) as f32 / run.span.1.max(1) as f32;
+        let fraction =
+            ((batch.finished as f32 + within.min(1.0)) / batch.clips.max(1) as f32).clamp(0.0, 1.0);
+        let percent = (fraction * 100.0).floor() as u32;
+        let text = if batch.clips > 1 {
+            format!(
+                "Extracting notes, clip {} of {}: {percent} %",
+                batch.finished + 1,
+                batch.clips
+            )
+        } else {
+            format!("Extracting notes: {percent} %")
+        };
+        Some(NotesProgress { text, fraction })
+    }
+
+    /// Stops the running extraction and drops the clips queued behind it. The worker ends after
+    /// the minute it is on; notes already added stay. False when nothing runs.
+    pub fn cancel_notes(&mut self) -> bool {
+        let Some(run) = &self.audio.notes.running else {
+            return false;
+        };
+        run.shared.cancel.store(true, Ordering::Relaxed);
+        self.audio.notes.queue.clear();
+        self.report("Audio to Notes: stopping\u{2026}");
+        true
+    }
+
+    /// What the Audio to Notes panel's EXTRACT works on (the selected audio clips, by the name
+    /// of the first one's file), and whether it can.
     pub fn audio_notes_target(&self) -> (String, bool) {
         if self.notes_busy() {
             return ("an extraction is running".to_owned(), false);
@@ -159,7 +250,7 @@ impl<S: EngineSink> AppCore<S> {
         let name = self.asset_name(&first.content.asset);
         match clips.len() {
             1 => (name, true),
-            n => (format!("{name} (the first of {n} selected clips)"), true),
+            n => (format!("{name} and {} more clips", n - 1), true),
         }
     }
 
@@ -184,31 +275,20 @@ impl<S: EngineSink> AppCore<S> {
             })
     }
 
-    /// Starts the extraction for the first selected audio clip with the panel's settings; the
-    /// notes arrive when the worker is done ([`AppCore::wait_background`] waits for them). False,
-    /// with a message, when nothing could start.
+    /// Starts the extraction for every selected audio clip with the panel's settings, one clip
+    /// after the other; the notes arrive when the workers are done
+    /// ([`AppCore::wait_background`] waits for them). False, with a message, when nothing could
+    /// start.
     pub fn audio_to_notes(&mut self, values: &NotesValues) -> bool {
         if self.notes_busy() {
             self.reject("Audio to Notes is already running".to_owned());
             return false;
         }
         let clips = self.selected_audio();
-        let Some(s) = clips.into_iter().next() else {
+        if clips.is_empty() {
             self.reject("Select an audio clip to extract notes from".to_owned());
             return false;
-        };
-        if s.content.warp.enabled && s.content.warp.mode == WarpMode::Repitch {
-            self.reject(
-                "Audio to Notes cannot read a clip warped in Repitch mode (its pitch follows the \
-                 tempo): use the Beats or Tonal mode, or turn warp off"
-                    .to_owned(),
-            );
-            return false;
         }
-        let Some(asset) = self.audio.assets.get(&s.content.asset).cloned() else {
-            self.reject("The audio file is missing".to_owned());
-            return false;
-        };
         let target = if values.new_track {
             None
         } else {
@@ -222,9 +302,54 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
         };
+        let mut runs: VecDeque<Run> = VecDeque::new();
+        let mut skipped: Vec<String> = Vec::new();
+        for s in clips {
+            match self.notes_run(&s, values, &target) {
+                Ok(run) => runs.push_back(run),
+                Err(why) => skipped.push(why),
+            }
+        }
+        if runs.is_empty() {
+            let why = skipped.into_iter().next().unwrap_or_default();
+            self.reject(why);
+            return false;
+        }
+        self.audio.notes.batch = Batch {
+            clips: runs.len(),
+            skipped: skipped.len(),
+            ..Batch::default()
+        };
+        self.audio.notes.queue = runs;
+        if self.start_next_notes() {
+            true
+        } else {
+            self.audio.notes.queue.clear();
+            self.audio.notes.batch = Batch::default();
+            false
+        }
+    }
+
+    /// The run for the selected clip `s`, or why it cannot be read.
+    fn notes_run(
+        &mut self,
+        s: &Selected,
+        values: &NotesValues,
+        target: &Option<DeviceKey>,
+    ) -> Result<Run, String> {
+        if s.content.warp.enabled && s.content.warp.mode == WarpMode::Repitch {
+            return Err(
+                "Audio to Notes cannot read a clip warped in Repitch mode (its pitch \
+                 follows the tempo): use the Beats or Tonal mode, or turn warp off"
+                    .to_owned(),
+            );
+        }
+        let Some(asset) = self.audio.assets.get(&s.content.asset).cloned() else {
+            return Err("The audio file is missing".to_owned());
+        };
         let song = &self.doc().song;
         let Some((track, _, clip)) = song.clip(s.id) else {
-            return false;
+            return Err("The clip is gone".to_owned());
         };
         let name = self
             .doc()
@@ -236,35 +361,56 @@ impl<S: EngineSink> AppCore<S> {
         let end = s.source_end(rate).min(asset.frames());
         let n = end.saturating_sub(from);
         if n == 0 {
-            self.reject("The clip has no audio to read".to_owned());
-            return false;
+            return Err("The clip has no audio to read".to_owned());
         }
         let id = self.audio.notes.next;
         self.audio.notes.next += 1;
-        let (reverse, job_values) = (s.content.reverse, values.clone());
+        Ok(Run {
+            id,
+            clip: s.id,
+            start,
+            length,
+            content: s.content.clone(),
+            values: values.clone(),
+            target: target.clone(),
+            name,
+            asset,
+            span: (from, n),
+            rate,
+            shared: Arc::new(Shared::default()),
+        })
+    }
+
+    /// Starts the worker for the next queued clip. False, with a message, when it cannot start.
+    fn start_next_notes(&mut self) -> bool {
+        let Some(run) = self.audio.notes.queue.pop_front() else {
+            return false;
+        };
+        let (asset, span, rate) = (run.asset.clone(), run.span, run.rate);
+        let (reverse, values, shared) = (
+            run.content.reverse,
+            run.values.clone(),
+            Arc::clone(&run.shared),
+        );
         let work: Box<dyn FnOnce() -> Result<NotesFound, String> + Send> = Box::new(move || {
-            Ok(analyse(
-                &asset,
-                (from, n),
-                reverse,
-                (rate, MAX_NOTES_SECONDS),
-                &job_values,
-            ))
+            analyse(&asset, span, reverse, rate, &values, &shared)
+                .ok_or_else(|| CANCELLED.to_owned())
         });
-        match spawn_notes(self.audio.tx.clone(), self.audio.generation, id, work) {
+        match spawn_notes(self.audio.tx.clone(), self.audio.generation, run.id, work) {
             Ok(()) => {
                 self.audio.pending += 1;
-                self.audio.notes.running = Some(Run {
-                    id,
-                    clip: s.id,
-                    start,
-                    length,
-                    content: s.content,
-                    values: values.clone(),
-                    target,
-                    name,
-                });
-                self.report("Extracting notes\u{2026}");
+                let batch = &self.audio.notes.batch;
+                let said = if batch.clips > 1 {
+                    format!(
+                        "Extracting notes, clip {} of {}\u{2026}",
+                        batch.finished + 1,
+                        batch.clips
+                    )
+                } else {
+                    "Extracting notes\u{2026}".to_owned()
+                };
+                self.audio.notes.running = Some(run);
+                self.report(said);
                 true
             }
             Err(e) => {
@@ -274,7 +420,7 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Applies a finished extraction (see the module docs).
+    /// Applies a finished extraction (see the module docs) and starts the next clip.
     pub(super) fn apply_noted(&mut self, id: u64, result: Result<NotesFound, String>) {
         if self.audio.notes.running.as_ref().is_none_or(|r| r.id != id) {
             return;
@@ -282,10 +428,50 @@ impl<S: EngineSink> AppCore<S> {
         let Some(run) = self.audio.notes.running.take() else {
             return;
         };
-        let found = match result {
-            Ok(f) => f,
-            Err(e) => return self.reject(format!("Audio to Notes: {e}")),
+        let stopped = run.shared.cancel.load(Ordering::Relaxed);
+        let outcome = match result {
+            _ if stopped => Err(None),
+            Ok(found) => self.add_found(&run, found).map_err(Some),
+            Err(e) => Err(Some(format!("Audio to Notes: {e}"))),
         };
+        let batch = &mut self.audio.notes.batch;
+        batch.finished += 1;
+        match outcome {
+            Ok((count, said)) => {
+                batch.notes += count;
+                self.report(said);
+            }
+            Err(Some(why)) => self.reject(why),
+            Err(None) => self.audio.notes.queue.clear(),
+        }
+        if !stopped && self.start_next_notes() {
+            return;
+        }
+        // The last clip of the request is over.
+        let batch = std::mem::take(&mut self.audio.notes.batch);
+        if stopped {
+            self.report("Audio to Notes: stopped".to_owned());
+        } else if batch.clips > 1 || batch.skipped > 0 {
+            let skipped = match batch.skipped {
+                0 => String::new(),
+                n => format!(
+                    " ({n} clip{} could not be read)",
+                    if n == 1 { "" } else { "s" }
+                ),
+            };
+            self.report(format!(
+                "Audio to Notes: {} note{} from {} clip{}{skipped}",
+                batch.notes,
+                if batch.notes == 1 { "" } else { "s" },
+                batch.clips,
+                if batch.clips == 1 { "" } else { "s" },
+            ));
+        }
+    }
+
+    /// Puts the notes `found` for `run` in the document. The number of notes and the message
+    /// to show, or the refusal to show.
+    fn add_found(&mut self, run: &Run, found: NotesFound) -> Result<(usize, String), String> {
         let song = &self.doc().song;
         let unchanged = song.clip(run.clip).is_some_and(|(_, _, c)| {
             c.start == run.start
@@ -293,7 +479,7 @@ impl<S: EngineSink> AppCore<S> {
                 && matches!(&c.content, ClipContent::Audio(a) if *a == run.content)
         });
         if !unchanged {
-            return self.reject(
+            return Err(
                 "The audio clip changed while its notes were extracted: run Audio to Notes again"
                     .to_owned(),
             );
@@ -321,7 +507,7 @@ impl<S: EngineSink> AppCore<S> {
                     NotesMode::Pitched => "raise the sensitivity or widen the note range",
                     NotesMode::Drums => "raise the sensitivity",
                 };
-                return self.reject(format!("No notes found in the clip: {hint}"));
+                return Err(format!("No notes found in the clip: {hint}"));
             }
         };
         let count = match &clip.content {
@@ -339,18 +525,14 @@ impl<S: EngineSink> AppCore<S> {
             }
         };
         match added {
-            Ok(place) => {
-                let more = if found.truncated {
-                    format!(" (from the first {} minutes)", MAX_NOTES_SECONDS / 60)
-                } else {
-                    String::new()
-                };
-                self.report(format!(
-                    "Audio to Notes: {count} note{} on {place}{more}",
+            Ok(place) => Ok((
+                count,
+                format!(
+                    "Audio to Notes: {count} note{} on {place}",
                     if count == 1 { "" } else { "s" }
-                ));
-            }
-            Err(e) => self.reject(format!("Audio to Notes: {e}")),
+                ),
+            )),
+            Err(e) => Err(format!("Audio to Notes: {e}")),
         }
     }
 

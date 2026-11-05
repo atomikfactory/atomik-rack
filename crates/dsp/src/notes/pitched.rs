@@ -27,8 +27,15 @@
 //!    comes first, and never after the next note starts. Notes shorter than the minimum are
 //!    dropped, and two notes of one key with at most 40 ms between them and no onset at the second
 //!    are joined. The velocity follows the peak level in dB, relative to the loudest note.
+//! 8. *Bend* (when [`PitchParams::bend`] is set): the smoothed pitch of the voiced frames inside
+//!    each note, as semitones from the note's key, thinned to the points a straight line between
+//!    them cannot stand in for within [`BEND_TOLERANCE`]. A frame whose window reaches out of the
+//!    note (half a window from either end) is left out, as the silence beside the note
+//!    pulls its pitch; so is a frame more than [`BEND_REACH`] from the key, a blip or an octave
+//!    slip. A note whose pitch never leaves
+//!    [`BEND_MIN_PEAK`] of its key has no contour.
 
-use super::{ExtractedNote, Levels, clamp_sensitivity, mono_mix, velocity_for};
+use super::{BendPoint, ExtractedNote, Levels, clamp_sensitivity, mono_mix, velocity_for};
 use crate::det_math::{exp2_det, log2_det};
 use crate::onset::detect_onsets;
 
@@ -50,6 +57,13 @@ const MIN_PEAK: f32 = 1.0e-4;
 const MIN_RMS: f32 = 3.0e-4;
 /// Frames of the pitch the running median of a note looks at.
 const RUN_MEDIAN: usize = 24;
+/// How far a bend point may sit from the straight line the thinning replaces it with, in
+/// semitones.
+pub const BEND_TOLERANCE: f32 = 0.05;
+/// The farthest a frame may be from the key of its note and still count as bend, in semitones.
+pub const BEND_REACH: f32 = 2.0;
+/// A note whose pitch stays within this many semitones of its key has no contour.
+pub const BEND_MIN_PEAK: f32 = 0.1;
 
 /// What to extract.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,6 +78,9 @@ pub struct PitchParams {
     pub key_hi: u8,
     /// How far, in cents, the pitch may drift inside one note (vibrato, a glide): 20..=300.
     pub tolerance_cents: u32,
+    /// Keep how the pitch moves inside each note (`ExtractedNote::bend`); else the pitch is
+    /// rounded to the key and the rest is dropped.
+    pub bend: bool,
 }
 
 impl Default for PitchParams {
@@ -74,6 +91,7 @@ impl Default for PitchParams {
             key_lo: 36,
             key_hi: 96,
             tolerance_cents: 70,
+            bend: false,
         }
     }
 }
@@ -376,7 +394,75 @@ pub fn extract_pitched_notes(
     let bridge = (BRIDGE_MS / hop_ms) as usize;
     let segs = segment(&frames, &onsets, (tol, stable, bridge), &ctx);
     let levels = Levels::new(&mono, sample_rate);
-    build_notes(&segs, &onsets, &levels, &ctx)
+    let mut notes = build_notes(&segs, &onsets, &levels, &ctx);
+    if params.bend {
+        for n in &mut notes {
+            n.bend = contour(&frames, &ctx, (n.start, n.start + n.length), n.key);
+        }
+    }
+    notes
+}
+
+/// The pitch of the voiced frames between `start` and `end` as semitones from `key`, thinned
+/// (module docs, step 8).
+fn contour(frames: &[Frame], ctx: &Ctx, (start, end): (u64, u64), key: u8) -> Vec<BendPoint> {
+    let (start, end) = (start + ctx.span / 2, end.saturating_sub(ctx.span / 2));
+    let first = start.div_ceil(ctx.step) as usize;
+    let key = f32::from(key);
+    let mut points: Vec<BendPoint> = Vec::new();
+    for (k, f) in frames.iter().enumerate().skip(first) {
+        let at = ctx.centre(k);
+        if at >= end {
+            break;
+        }
+        let off = f.pitch - key;
+        if f.voiced && off.abs() <= BEND_REACH {
+            points.push(BendPoint {
+                frame: at,
+                semitones: off,
+            });
+        }
+    }
+    let peak = points.iter().fold(0.0f32, |m, p| m.max(p.semitones.abs()));
+    if peak < BEND_MIN_PEAK {
+        return Vec::new();
+    }
+    thin(&points, BEND_TOLERANCE)
+}
+
+/// Ramer-Douglas-Peucker on the value alone: the points a line between the kept neighbours
+/// misses by more than `tolerance`, plus both ends.
+fn thin(points: &[BendPoint], tolerance: f32) -> Vec<BendPoint> {
+    if points.len() <= 2 {
+        return points.to_vec();
+    }
+    let mut keep = vec![false; points.len()];
+    keep[0] = true;
+    keep[points.len() - 1] = true;
+    let mut spans = vec![(0usize, points.len() - 1)];
+    while let Some((a, b)) = spans.pop() {
+        let (pa, pb) = (points[a], points[b]);
+        let width = (pb.frame - pa.frame) as f64;
+        let mut worst = (0.0f32, a);
+        for (i, p) in points.iter().enumerate().take(b).skip(a + 1) {
+            let t = (p.frame - pa.frame) as f64 / width;
+            let line = f64::from(pa.semitones) + t * f64::from(pb.semitones - pa.semitones);
+            let miss = (f64::from(p.semitones) - line).abs() as f32;
+            if miss > worst.0 {
+                worst = (miss, i);
+            }
+        }
+        if worst.0 > tolerance {
+            keep[worst.1] = true;
+            spans.push((a, worst.1));
+            spans.push((worst.1, b));
+        }
+    }
+    points
+        .iter()
+        .zip(keep)
+        .filter_map(|(p, k)| k.then_some(*p))
+        .collect()
 }
 
 /// Cuts the frames into segments (module docs, step 6).
@@ -582,6 +668,8 @@ fn build_notes(segs: &[Seg], onsets: &[u64], levels: &Levels, ctx: &Ctx) -> Vec<
             length: n.end - n.start,
             key: n.key,
             velocity: velocity_for(n.level, reference),
+            level: n.level,
+            bend: Vec::new(),
         })
         .collect()
 }

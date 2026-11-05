@@ -1018,20 +1018,33 @@ and a glide of 0.6 semitone stay one note, notes with a 20 ms gap or a re-attack
 tone gets its fundamental (no octave error), a plucked note ends where its level has fallen, the
 velocity follows the level in dB, the range and minimum length drop notes, silence, a very quiet
 file, `NaN` and infinite samples, an empty input and odd parameters give no notes and never `NaN`,
-white noise gives no pitched notes at three sensitivities, the same input gives the same notes; and
-a drum pattern of kicks, snares, closed and open hats and a kick with a hat is classified key by key
-with positions within 6 ms, with open hats off every hat is closed, and a steady tone is not a
-pattern. `crates/model/tests/audio_notes.rs` checks the frames to ticks mapping (constant tempo, an
-offset into the asset, a tempo change under the clip, a warped clip with and without a marker),
+white noise gives no pitched notes at three sensitivities, the same input gives the same notes; a
+glide of 0.6 semitone is kept as a thinned contour that ends where the voice did, a steady note has
+none and a vibrato keeps its swings; and a drum pattern of kicks, snares, closed and open hats and a
+kick with a hat is classified key by key with positions within 6 ms, with open hats off every hat is
+closed, and a steady tone is not a pattern; the pads map writes the classes in a row from key 36;
+the full kit tells three toms (115, 160 and 230 Hz) and a crash from a swept kick, a snare and a
+short hat, and leaves a plain loop as it was; and `extract_in_segments` is the detector alone for a
+short take, finds every note of a 150 s take once (one across the edge of a minute included), gives
+the velocities of the whole take one reference, stops when asked and reads no further, and
+analyses drums in minutes too. `crates/model/tests/audio_notes.rs` checks the frames to ticks mapping
+(constant tempo, an offset into the asset, a tempo change under the clip, a warped clip with and without a marker),
 Beats timing and its overlap rule, transposition and clamps, the clip bounds, nothing found, and the
 clip going in as one undo step through `ImportMidi` and `AddClip` with a save and load round trip
-(no format change). `app_core_notes_tests.rs` (procedural WAV files through the real import and the
+(no format change); a contour becomes a pitch-bend lane scaled to the bend range whose last point
+per note holds, starts with its note, is recentred by a note without one and after the last note,
+moves with a snapped note, drops points outside the clip and non-finite ones, and saves and
+loads. `app_core_notes_tests.rs` (procedural WAV files through the real import and the
 worker) covers a melody on a new track (aligned with the clip, one undo step, redo, the clip
 selected, the message), the selected note track, a drum loop, Beats timing, a clip that was trimmed
 and moved, a reversed clip, a transposed clip, a Repitch clip (refused), a beats-warped clip,
-silence and the refusals, a clip that changed meanwhile, and the ten-minute cap (with a smaller
-cap). `shell_notes_tests.rs` drives the panel (menu item and id, settings kept between openings,
-Esc, CLOSE, EXTRACT closing the panel, a refusal keeping it open). `crates/ui/tests/notes_panel.rs`
+silence and the refusals, a clip that changed meanwhile, a clip of 11 minutes read to its end
+(with progress reaching the end), a reversed long clip in play order, a stopped analysis, several
+selected clips (a track and an undo step each, the progress text, a clip that cannot be read not
+stopping the others), a stop that adds nothing and drops the queue, the pitch bend kept as a lane
+or not, and the drum key map. `shell_notes_tests.rs` drives the panel (menu item and id, settings
+kept between openings, Esc, CLOSE, EXTRACT closing the panel, a refusal keeping it open, the
+progress in the status line and the reopened panel cancelling). `crates/ui/tests/notes_panel.rs`
 covers the rows and their clamps. `crates/mcp/tests/session.rs` runs `session_audio_notes` on a
 project built from a generated melody and undoes it.
 
@@ -1049,9 +1062,15 @@ Hand checks, not automated (they need your ears and real recordings):
   kick, a snare and a closed and an open hat on the pads 36, 38, 42 and 46 and compare with the
   loop; look at snares with a hat on top, ghost notes and rim shots.
 - A clip warped to the song tempo, one that follows a tempo ramp, a trimmed clip and a reversed one:
-  the notes line up with the waveform and with what you hear. A multi-minute clip: the window stays
-  responsive while the status line says it is extracting, and the message says when only the first
-  ten minutes were read. A streamed (big) file.
+  the notes line up with the waveform and with what you hear. A multi-minute clip, and one longer
+  than ten minutes: the window stays responsive while the status line counts the percent, the notes
+  reach the end of the clip, Cancel (the Audio to Notes panel reopened) stops it within a minute
+  of audio and adds nothing. A streamed (big) file. Several clips selected at once, each on its own
+  track.
+- A sung line with portamento and vibrato, with Keep pitch bend on and off: with it on, the new
+  track follows the voice between the semitones and the lane in the piano roll shows the curve.
+- A drum loop with toms and cymbals with the full kit and each of the two key maps; point a drum
+  machine track at the pads and compare.
 - Beats timing at 1/8 and 1/16 on a loosely played line, then undo: one step, the track and the clip gone.
 
 ## Spectrum and metering

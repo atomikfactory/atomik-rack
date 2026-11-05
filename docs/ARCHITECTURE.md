@@ -2220,7 +2220,11 @@ engine, the audio thread and the file format are untouched.
   moved, and a note ends where the voicing ends or its level has decayed `24 + 12 * sensitivity` dB
   below its peak. The velocity follows the peak level in dB (24 dB range, floor 0.2) relative to the
   loudest note. Notes of one key with at most 40 ms between them and no onset at the second are
-  joined; notes under the minimum length are dropped.
+  joined; notes under the minimum length are dropped. With **Keep pitch bend** (`PitchParams::bend`)
+  each note also carries its **contour**: the smoothed pitch of its voiced frames, leaving out the
+  half window next to each end of the note (the silence beside a note pulls the pitch there) and
+  frames more than two semitones from the key, as semitone offsets from the key, thinned with
+  Ramer-Douglas-Peucker to 0.05 semitone; a note that never leaves 0.1 semitone has none.
 - **Drums** ([dsp/src/notes/drums.rs](../crates/dsp/src/notes/drums.rs)). The onsets of the existing
   detector, then for each hit a 30 ms FFT of the sound after it (a falling half-Hann window, which
   keeps the attack; cut at the next hit): the energy shares of a low (20 to 250 Hz), a mid and a
@@ -2228,10 +2232,25 @@ engine, the audio thread and the file format are untouched.
   most of what is above 250 Hz up in the high band is a kick and a hat struck together (two notes),
   a high band of half the energy (or 35% with a high crossing rate) is a hat, a low band of half is
   a kick, anything else is a snare. A hat is open when the high end alone (a second difference, so a
-  kick ringing under it does not count) stays above a tenth of its peak for 120 ms. The notes sit on
-  the General MIDI keys 36, 38, 42 and 46 with a fixed length (120 ms, 60 ms for a closed hat, 300
-  ms for an open one, cut where the next note of the key starts), and the velocity follows the peak
-  of the first 10 ms in dB.
+  kick ringing under it does not count) stays above a tenth of its peak for 120 ms. The full kit
+  (`DrumKit::Full`) also tells a **tom** from a kick, by the centre of the low band 25 to 75 ms after
+  the hit (a kick has swept down to its fundamental by then, a tom holds its pitch; above 95 Hz it is
+  a tom, low, mid or high at 135 and 185 Hz), and a hat that rings for 600 ms is a **crash**. The
+  classes are written on the keys of a `DrumMap`: General MIDI (36, 38, 42, 46, and 45, 47, 50 and 49
+  for the toms and crash) or the **pads** map, the classes in a row from key 36, the first pad of the
+  drum machine (kick, snare, closed hat, open hat, low, mid and high tom, crash). Each has a fixed
+  length (120 ms, 60 ms for a closed hat, 200 ms for a tom, 300 ms for an open hat, 800 ms for a
+  crash, cut where the next note of the class starts), and the velocity follows the peak of the first
+  10 ms in dB.
+- **Long takes** ([dsp/src/notes/long.rs](../crates/dsp/src/notes/long.rs)). `extract_in_segments`
+  runs either detector over a take of any length a minute at a time: it asks the caller for the
+  mono audio of each minute with 3 s on each side, keeps the notes that start inside the minute (so
+  every note belongs to one minute), tells the caller how far it has got after each minute and
+  stops when the caller says so. A take of at most 66 s is one pass, identical to the detector alone;
+  beyond that the minutes are separate analyses (a quiet passage is judged against the loudest sound
+  of its own minute, and a note that runs more than 3 s past the end of a minute is cut there), and the
+  velocities are worked out again at the end against the loudest note of the whole take. Memory is
+  one minute of audio whatever the length of the clip.
 - **Time** ([model/src/audio_notes.rs](../crates/model/src/audio_notes.rs)). `notes_clip` maps each
   frame of the analysed audio to the tick where the clip plays it with `tick_at_source`: through the
   tempo map for an unwarped clip (a tempo change or ramp under the clip moves the notes with the
@@ -2239,32 +2258,47 @@ engine, the audio thread and the file format are untouched.
   order it plays (a reversed clip is read from its end, backwards), so every clip maps the same way;
   the note clip starts and ends with the audio clip and has no offset. **Beats timing** rounds the
   start of each note to a grid (1/4 to 1/32) keeping its length, and the notes of one key never
-  overlap afterwards. The transposition of a transposed clip is added to the keys. There is no
-  command and no format change: the clip goes in with `AddClip` or, for a new track, `ImportMidi`
-  (the poly synth, named after the audio track), one undo step either way.
+  overlap afterwards. The transposition of a transposed clip is added to the keys. A note found
+  with a contour puts one **pitch-bend lane** in the clip (`Clip::controllers`, the existing
+  controller data), scaled for the default bend range of 2 semitones (`BEND_RANGE_SEMITONES`): each
+  note's contour starts at the note's first tick and its last point holds until the next note's
+  contour starts, so notes never glide into each other; a note without a contour recentres the bend
+  when the note before it left it, and the last note recentres it after it ends. A snapped note takes
+  its contour along. There is no new command and no format change: the clip goes in with `AddClip`
+  or, for a new track, `ImportMidi` (the poly synth, named after the audio track), one undo step
+  either way.
 - **App** ([app_core_notes.rs](../crates/app/src/app_core_notes.rs), `audio_import::spawn_notes`).
-  EXTRACT reads the span the first selected audio clip plays (from the clip's offset, for a warped
-  clip the span the time map reads; a streamed asset through the stream source in chunks, like strip
-  silence), mixed to mono, at most ten minutes of it, and runs the analysis on an `atomik-notes`
-  worker that sends `Msg::Noted` (counted like the other workers, so `wait_background` waits for it,
-  and a panic still sends a failure). One extraction runs at a time and the song keeps playing. The
-  result is dropped with a message when the audio clip changed or the project was closed meanwhile;
-  a clip in Repitch mode is refused (its pitch follows the tempo, which the analysis cannot see).
-  The notes go on a **new track** or on the note track selected in the rack (`AddClip`, lane 0); the
-  new clip is selected.
+  EXTRACT takes **every selected audio clip**, one after the other: it reads the span a clip plays
+  (from the clip's offset, for a warped clip the span the time map reads; a streamed asset through
+  the stream source in chunks, like strip silence), all of it, a minute at a time, mixed to mono,
+  and runs the analysis on an `atomik-notes` worker that sends `Msg::Noted` (counted like the other
+  workers, so `wait_background` waits for it, a panic still sends a failure, and the next clip of
+  the request starts when the previous result has been applied). The song keeps playing. The worker
+  publishes how many frames it has finished in an atomic (`Shared`), which `AppCore::notes_progress`
+  turns into the text of the status line and the bar of the panel, and looks at a stop flag after
+  each minute (`AppCore::cancel_notes`): a stopped clip adds nothing, the clips queued behind it are
+  dropped, the clips already finished keep their notes. A clip that cannot be read (Repitch mode, a
+  missing file) is skipped and counted in the final message. Each result is dropped with a message
+  when its audio clip changed or the project was closed meanwhile; a clip in Repitch mode is refused
+  (its pitch follows the tempo, which the analysis cannot see). The notes of each clip go on a
+  **new track** or on the note track selected in the rack (`AddClip`, lane 0); the last new clip is
+  selected.
 - **View** ([notes_panel.rs](../crates/ui/src/notes_panel.rs)). A modal panel like Strip Silence:
-  mode, sensitivity, minimum note, lowest and highest note, pitch drift, open hats, Beats timing and
-  target. The rows the mode does not use read `n/a`. EXTRACT closes the panel when the work starts.
-  The registry command `sequencer.audio_to_notes` has no default key.
+  mode, sensitivity, minimum note, lowest and highest note, pitch drift, keep pitch bend, open hats,
+  drum kit, drum keys, Beats timing and target. The rows the mode does not use read `n/a`. EXTRACT
+  closes the panel when the work starts; the same command opened while the work runs shows a bar
+  with the progress and a CANCEL button in place of EXTRACT. The registry command
+  `sequencer.audio_to_notes` has no default key.
 - **Determinism and limits.** Same samples and settings, same notes on every platform (only IEEE
   `+ - * /`, `sqrt`, sorting and the deterministic `log2`, `exp2` and cosine are on the decision
   path), and silence, non-finite samples and noise give no notes and no `NaN`. It is monophonic:
   chords and several voices give the loudest line at best. A re-attack of one pitch needs a dip in
   level of about 20 ms to be heard; a hit is one drum (a kick with a hat is the only combination),
-  so a snare with a hat is a snare. The drum notes land on the keys above whatever instrument the
-  track has: point the track at a drum machine with samples on those pads to hear them (the new
-  track has the poly synth). The analysis of 3 minutes of dense audio takes a few seconds on a
-  worker, and the ten-minute cap bounds its memory.
+  so a snare with a hat is a snare. The drum notes land on the keys of the chosen map whatever
+  instrument the track has: point the track at a drum machine with samples on those pads to hear
+  them (the new track has the poly synth); the drum machine is not filled from the audio. The
+  bend lane assumes a bend range of 2 semitones. The analysis of 3 minutes of dense audio takes a
+  few seconds on a worker, and the memory it holds is one minute of audio.
 
 ### 2.21 Note lanes
 

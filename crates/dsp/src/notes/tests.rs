@@ -227,6 +227,7 @@ fn silence_and_garbage_give_no_notes_and_no_nan() {
         key_lo: 200,
         key_hi: 3,
         tolerance_cents: 0,
+        bend: true,
     };
     let _ = extract_pitched_notes(&[&garbage], SR, &odd);
 }
@@ -394,4 +395,341 @@ fn a_steady_tone_is_not_taken_for_a_pattern_of_hits() {
     note(&mut x, hz(60), 0.2, 1.8, 0.5);
     let notes = extract_drum_notes(&[&x], SR, &DrumParams::default());
     assert!(notes.len() <= 1, "{notes:?}");
+}
+
+// ------------------------------------------------------------------ bend
+
+fn with_bend() -> PitchParams {
+    PitchParams {
+        bend: true,
+        ..PitchParams::default()
+    }
+}
+
+#[test]
+fn a_glide_is_kept_as_a_bend_contour() {
+    // E4 sliding up by 0.6 semitone over 150 ms, then holding.
+    let mut x = vec![0.0f32; frames(1.2)];
+    let mut phase = 0.0f64;
+    let (a, b) = (frames(0.1), frames(1.0));
+    for (i, v) in x.iter_mut().enumerate().take(b).skip(a) {
+        let t = (i - a) as f64 / f64::from(SR);
+        let semis = 0.6 * (t / 0.15).min(1.0);
+        phase += std::f64::consts::TAU * hz(64) * (semis / 12.0).exp2() / f64::from(SR);
+        *v = 0.5 * phase.sin() as f32;
+    }
+    let notes = extract_pitched_notes(&[&x], SR, &with_bend());
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    let n = &notes[0];
+    let key = f32::from(n.key);
+    assert!(n.bend.len() >= 2 && n.bend.len() < 30, "{:?}", n.bend);
+    for w in n.bend.windows(2) {
+        assert!(w[0].frame < w[1].frame);
+    }
+    for p in &n.bend {
+        assert!(p.frame >= n.start && p.frame < n.start + n.length, "{p:?}");
+    }
+    // The note ends at 64.6 whatever key it was rounded to.
+    let last = n.bend.last().expect("a point");
+    assert!((key + last.semitones - 64.6).abs() < 0.1, "{n:?}");
+    let first = n.bend.first().expect("a point");
+    assert!(key + first.semitones < 64.35, "{n:?}");
+    // Without the option the same note has no contour and the same key and timing.
+    let plain = extract_pitched_notes(&[&x], SR, &PitchParams::default());
+    assert!(plain[0].bend.is_empty());
+    assert_eq!(
+        (plain[0].key, plain[0].start, plain[0].length),
+        (n.key, n.start, n.length)
+    );
+}
+
+#[test]
+fn a_steady_note_has_no_contour() {
+    let x = melody();
+    let notes = extract_pitched_notes(&[&x], SR, &with_bend());
+    assert_eq!(notes.len(), MELODY.len());
+    for n in &notes {
+        assert!(n.bend.is_empty(), "{n:?}");
+    }
+}
+
+#[test]
+fn a_vibrato_is_kept_as_swings_of_the_contour() {
+    // A4 with a 5.5 Hz vibrato of +-0.4 semitone.
+    let mut x = vec![0.0f32; frames(1.6)];
+    let mut phase = 0.0f64;
+    let (a, b) = (frames(0.1), frames(1.5));
+    for (i, v) in x.iter_mut().enumerate().take(b).skip(a) {
+        let t = (i - a) as f64 / f64::from(SR);
+        let semis = 0.4 * (std::f64::consts::TAU * 5.5 * t).sin();
+        phase += std::f64::consts::TAU * hz(69) * (semis / 12.0).exp2() / f64::from(SR);
+        *v = 0.5 * phase.sin() as f32;
+    }
+    let notes = extract_pitched_notes(&[&x], SR, &with_bend());
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    let bend = &notes[0].bend;
+    let top = bend.iter().fold(f32::MIN, |m, p| m.max(p.semitones));
+    let bottom = bend.iter().fold(f32::MAX, |m, p| m.min(p.semitones));
+    assert!(top > 0.25 && bottom < -0.25, "{bend:?}");
+    assert!(top <= 2.0 && bottom >= -2.0);
+    // Thinned: far fewer points than the 5 ms frames.
+    assert!(bend.len() < 140 * 2 / 3, "{}", bend.len());
+}
+
+// ------------------------------------------------------------------ drum maps and kits
+
+#[test]
+fn the_pads_map_writes_the_classes_in_a_row_from_the_first_pad() {
+    let (x, want) = drum_loop();
+    let params = DrumParams {
+        map: DrumMap::Pads,
+        ..DrumParams::default()
+    };
+    let notes = extract_drum_notes(&[&x], SR, &params);
+    assert_eq!(notes.len(), want.len());
+    let pad = |gm: u8| match gm {
+        36 => 36,
+        38 => 37,
+        42 => 38,
+        _ => 39,
+    };
+    for (n, w) in notes.iter().zip(&want) {
+        assert_eq!(n.key, pad(w.1), "{notes:?}");
+    }
+    assert_eq!(DrumMap::Pads.key(DrumClass::Crash), 43);
+    assert_eq!(DrumMap::GeneralMidi.key(DrumClass::HighTom), 50);
+}
+
+/// A tom: a sine of `hz` decaying over about 150 ms.
+fn tom(x: &mut [f32], at: f64, hz: f64, amp: f32) {
+    let a = frames(at);
+    for i in 0..frames(0.5).min(x.len() - a) {
+        let t = i as f64 / f64::from(SR);
+        x[a + i] += amp * ((-t / 0.15).exp() * (std::f64::consts::TAU * hz * t).sin()) as f32;
+    }
+}
+
+/// A crash: high-passed noise decaying over about a second.
+fn crash(x: &mut [f32], at: f64, amp: f32, rng: &mut Rng) {
+    hat(x, at, amp, 0.4, rng);
+}
+
+fn full_kit() -> DrumParams {
+    DrumParams {
+        kit: DrumKit::Full,
+        ..DrumParams::default()
+    }
+}
+
+#[test]
+fn the_full_kit_tells_toms_from_the_kick_and_a_crash_from_a_hat() {
+    let mut rng = Rng::new(11);
+    let mut x = vec![0.0f32; frames(6.0)];
+    kick(&mut x, 0.10, 0.9);
+    tom(&mut x, 0.70, 115.0, 0.9);
+    tom(&mut x, 1.30, 160.0, 0.9);
+    tom(&mut x, 1.90, 230.0, 0.9);
+    snare(&mut x, 2.50, 0.8, &mut rng);
+    hat(&mut x, 3.10, 0.6, 0.012, &mut rng);
+    crash(&mut x, 3.50, 0.6, &mut rng);
+    let notes = extract_drum_notes(&[&x], SR, &full_kit());
+    let got: Vec<(f64, u8)> = notes.iter().map(|n| (secs(n.start), n.key)).collect();
+    let want = [
+        (0.10, 36),
+        (0.70, 45),
+        (1.30, 47),
+        (1.90, 50),
+        (2.50, 38),
+        (3.10, 42),
+        (3.50, 49),
+    ];
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for (g, w) in got.iter().zip(want) {
+        assert_eq!(g.1, w.1, "{got:?}");
+        assert!((g.0 - w.0).abs() < 0.01, "{got:?}");
+    }
+    // The basic kit has no toms and no crash: they are a kick and an open hat.
+    let basic = extract_drum_notes(&[&x], SR, &DrumParams::default());
+    assert!(basic.iter().all(|n| ![45, 47, 49, 50].contains(&n.key)));
+}
+
+#[test]
+fn the_full_kit_leaves_a_plain_loop_as_it_was() {
+    let (x, want) = drum_loop();
+    let notes = extract_drum_notes(&[&x], SR, &full_kit());
+    let got: Vec<u8> = notes.iter().map(|n| n.key).collect();
+    assert_eq!(got, want.iter().map(|w| w.1).collect::<Vec<_>>());
+}
+
+// ------------------------------------------------------------------ long takes
+
+const LR: u32 = 16_000;
+
+/// Mono audio at 16 kHz with sine notes `(key, from, to)` in seconds.
+fn tones(seconds: f64, notes: &[(u8, f64, f64)]) -> Vec<f32> {
+    let r = f64::from(LR);
+    let mut x = vec![0.0f32; (seconds * r) as usize];
+    for &(key, from, to) in notes {
+        let (a, b) = ((from * r) as usize, ((to * r) as usize).min(x.len()));
+        for (i, v) in x[a..b].iter_mut().enumerate() {
+            let t = i as f64 / r;
+            let env = ((i as f64 / 80.0).min(((b - a - i) as f64) / 80.0)).min(1.0);
+            *v += 0.5 * (env * (std::f64::consts::TAU * hz(key) * t).sin()) as f32;
+        }
+    }
+    x
+}
+
+fn read_from(x: &[f32], from: u64, n: u64) -> Vec<f32> {
+    let a = (from as usize).min(x.len());
+    x[a..(a + n as usize).min(x.len())].to_vec()
+}
+
+fn secs16(frames: u64) -> f64 {
+    frames as f64 / f64::from(LR)
+}
+
+#[test]
+fn a_short_take_is_analysed_in_one_pass_exactly_like_the_detector() {
+    let x = tones(3.0, &[(60, 0.2, 0.8), (67, 1.0, 1.6)]);
+    let params = PitchParams::default();
+    let mut calls = Vec::new();
+    let got = extract_in_segments(
+        x.len() as u64,
+        LR,
+        Analysis::Pitched(&params),
+        &mut |a, n| read_from(&x, a, n),
+        &mut |done| {
+            calls.push(done);
+            true
+        },
+    )
+    .expect("not stopped");
+    assert_eq!(got, extract_pitched_notes(&[&x], LR, &params));
+    assert_eq!(calls, vec![0, x.len() as u64]);
+}
+
+#[test]
+fn a_long_take_is_analysed_whole_and_a_note_across_a_stretch_edge_is_kept_once() {
+    // 150 s: a note every 10 s, and one that crosses the 60 s edge.
+    let mut list: Vec<(u8, f64, f64)> = Vec::new();
+    for i in 0..14 {
+        let from = 5.0 + 10.0 * f64::from(i);
+        if (55.0..65.0).contains(&from) {
+            continue;
+        }
+        list.push((48 + (i % 7) as u8, from, from + 1.0));
+    }
+    list.push((72, 59.2, 61.0));
+    list.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let x = tones(150.0, &list);
+    let params = PitchParams::default();
+    let mut calls = Vec::new();
+    let got = extract_in_segments(
+        x.len() as u64,
+        LR,
+        Analysis::Pitched(&params),
+        &mut |a, n| read_from(&x, a, n),
+        &mut |done| {
+            calls.push(done);
+            true
+        },
+    )
+    .expect("not stopped");
+    assert_eq!(calls, vec![0, 960_000, 1_920_000, 2_400_000]);
+    assert_eq!(got.len(), list.len(), "{got:?}");
+    for (n, (key, from, to)) in got.iter().zip(&list) {
+        assert_eq!(n.key, *key, "{got:?}");
+        assert!((secs16(n.start) - from).abs() < 0.04, "{got:?}");
+        assert!((secs16(n.start + n.length) - to).abs() < 0.06, "{got:?}");
+    }
+    for w in got.windows(2) {
+        assert!(w[0].start < w[1].start);
+    }
+}
+
+#[test]
+fn the_velocities_of_a_long_take_share_one_reference() {
+    // A loud note in the first stretch and a soft one in the second: the soft one is softer.
+    let mut x = tones(150.0, &[(60, 5.0, 6.0)]);
+    let soft = tones(150.0, &[(60, 100.0, 101.0)]);
+    for (a, b) in x.iter_mut().zip(&soft) {
+        *a += 0.1 * b;
+    }
+    let params = PitchParams::default();
+    let got = extract_in_segments(
+        x.len() as u64,
+        LR,
+        Analysis::Pitched(&params),
+        &mut |a, n| read_from(&x, a, n),
+        &mut |_| true,
+    )
+    .expect("not stopped");
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(got[0].velocity > 0.9, "{got:?}");
+    assert!(got[1].velocity < 0.5, "{got:?}");
+}
+
+#[test]
+fn stopping_between_stretches_gives_nothing_and_reads_no_further() {
+    let x = tones(200.0, &[(60, 5.0, 6.0)]);
+    let params = PitchParams::default();
+    let mut reads = 0;
+    let mut seen = Vec::new();
+    let got = extract_in_segments(
+        x.len() as u64,
+        LR,
+        Analysis::Pitched(&params),
+        &mut |a, n| {
+            reads += 1;
+            read_from(&x, a, n)
+        },
+        &mut |done| {
+            seen.push(done);
+            seen.len() < 3
+        },
+    );
+    assert!(got.is_none());
+    assert_eq!(seen, vec![0, 960_000, 1_920_000]);
+    assert_eq!(reads, 2);
+    // A stop before anything is read.
+    let none = extract_in_segments(
+        x.len() as u64,
+        LR,
+        Analysis::Pitched(&params),
+        &mut |a, n| read_from(&x, a, n),
+        &mut |_| false,
+    );
+    assert!(none.is_none());
+}
+
+#[test]
+fn drums_are_analysed_in_stretches_too() {
+    // Kicks at 5 s, 59.5 s (the edge) and 130 s.
+    let mut x = vec![0.0f32; LR as usize * 150];
+    for at in [5.0f64, 59.5, 130.0] {
+        let a = (at * f64::from(LR)) as usize;
+        let mut phase = 0.0f64;
+        for i in 0..6_400 {
+            let t = i as f64 / f64::from(LR);
+            let f = 50.0 + 100.0 * (-t / 0.03).exp();
+            phase += std::f64::consts::TAU * f / f64::from(LR);
+            x[a + i] += (0.9 * (-t / 0.12).exp() * phase.sin()) as f32;
+        }
+    }
+    let params = DrumParams::default();
+    let got = extract_in_segments(
+        x.len() as u64,
+        LR,
+        Analysis::Drums(&params),
+        &mut |a, n| read_from(&x, a, n),
+        &mut |_| true,
+    )
+    .expect("not stopped");
+    let starts: Vec<f64> = got.iter().map(|n| secs16(n.start)).collect();
+    assert_eq!(got.len(), 3, "{starts:?}");
+    for (s, w) in starts.iter().zip([5.0, 59.5, 130.0]) {
+        assert!((s - w).abs() < 0.01, "{starts:?}");
+    }
+    assert!(got.iter().all(|n| n.key == 36));
 }

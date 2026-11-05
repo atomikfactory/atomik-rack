@@ -434,7 +434,9 @@ pub use marker_edit::MarkSel;
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
 pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};
-pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
+pub use notes_panel::{
+    DrumKit, DrumMap, NotesAction, NotesMode, NotesProgress, NotesRow, NotesValues, NotesView,
+};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
 pub use piano_keys::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, KeysButton, KeysMode, OCTAVES, PIANO_KEYS_HEIGHT,

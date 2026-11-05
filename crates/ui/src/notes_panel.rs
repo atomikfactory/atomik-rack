@@ -9,7 +9,10 @@
 //! Lowest note      [-]  C2                    [+]
 //! Highest note     [-]  C7                    [+]
 //! Pitch drift      [-]  70 cents              [+]
+//! Keep pitch bend  [-]  On                    [+]
 //! Open hats        [-]  n/a                   [+]
+//! Drum kit         [-]  n/a                   [+]
+//! Drum keys        [-]  n/a                   [+]
 //! Beats timing     [-]  Free                  [+]
 //! Put notes on     [-]  New track             [+]
 //! [ EXTRACT ]
@@ -21,10 +24,13 @@
 //!
 //! * `EXTRACT` emits [`NotesAction::Apply`] (not while there is no audio clip to work on).
 //! * `CLOSE` emits [`NotesAction::Close`].
+//! * While an extraction runs ([`NotesView::set_progress`]) the button reads `CANCEL`, a bar and a
+//!   line of text beside it show how far the analysis has got, and a click emits
+//!   [`NotesAction::Cancel`].
 //!
 //! Every value has a `-` and a `+` button and answers the wheel. The rows that do not apply to the
-//! mode (the range and the pitch drift for drums, the open hats for a pitched voice) read `n/a` and
-//! do not step. The settings live in [`NotesValues`], which the app keeps between openings.
+//! mode (the range, the pitch drift and the pitch bend for drums, the open hats, the drum kit and
+//! the drum keys for a pitched voice) read `n/a` and do not step. The settings live in [`NotesValues`], which the app keeps between openings.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
@@ -35,6 +41,7 @@ use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::Theme;
 use crate::tooltip::{Help, stepper_help};
 use crate::zone_edit::note_name;
+pub use atomik_dsp::notes::{DrumKit, DrumMap};
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -108,8 +115,15 @@ pub struct NotesValues {
     pub key_hi: u8,
     /// How far, in cents, a note's pitch may drift before it is another note (pitched mode).
     pub drift_cents: u32,
+    /// Keep how the pitch moves inside a note as a pitch-bend lane, else round it to the key
+    /// (pitched mode).
+    pub keep_bend: bool,
     /// Tell open hats from closed ones (drum mode).
     pub open_hats: bool,
+    /// Which drums are told apart (drum mode).
+    pub kit: DrumKit,
+    /// The keys the drums are written on (drum mode).
+    pub drum_map: DrumMap,
     /// Round note starts to this note value (`0` free, else 4, 8, 16 or 32 per whole note).
     pub grid: u32,
     /// Put the notes on a new track (else on the selected note track).
@@ -125,7 +139,10 @@ impl Default for NotesValues {
             key_lo: 36,
             key_hi: 96,
             drift_cents: 70,
+            keep_bend: true,
             open_hats: true,
+            kit: DrumKit::Basic,
+            drum_map: DrumMap::GeneralMidi,
             grid: 0,
             new_track: true,
         }
@@ -139,6 +156,17 @@ pub enum NotesAction {
     Apply,
     /// Close the panel.
     Close,
+    /// Stop the extraction that is running.
+    Cancel,
+}
+
+/// How far a running extraction has got, for the panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NotesProgress {
+    /// What it is doing ("Extracting notes, clip 2 of 3").
+    pub text: String,
+    /// `0..=1` of the work.
+    pub fraction: f32,
 }
 
 /// A row of values.
@@ -156,8 +184,14 @@ pub enum NotesRow {
     Highest,
     /// The pitch drift of one note.
     Drift,
+    /// The pitch bend of a note kept as a bend lane.
+    Bend,
     /// Open and closed hats.
     OpenHats,
+    /// Basic or full drum kit.
+    Kit,
+    /// The key map of the drums.
+    Keys,
     /// Beats timing.
     Timing,
     /// A new track or the selected one.
@@ -166,14 +200,17 @@ pub enum NotesRow {
 
 impl NotesRow {
     /// Every row, top down.
-    pub const ALL: [NotesRow; 9] = [
+    pub const ALL: [NotesRow; 12] = [
         NotesRow::Mode,
         NotesRow::Sensitivity,
         NotesRow::MinNote,
         NotesRow::Lowest,
         NotesRow::Highest,
         NotesRow::Drift,
+        NotesRow::Bend,
         NotesRow::OpenHats,
+        NotesRow::Kit,
+        NotesRow::Keys,
         NotesRow::Timing,
         NotesRow::Target,
     ];
@@ -186,7 +223,10 @@ impl NotesRow {
             NotesRow::Lowest => "Lowest note",
             NotesRow::Highest => "Highest note",
             NotesRow::Drift => "Pitch drift",
+            NotesRow::Bend => "Keep pitch bend",
             NotesRow::OpenHats => "Open hats",
+            NotesRow::Kit => "Drum kit",
+            NotesRow::Keys => "Drum keys",
             NotesRow::Timing => "Beats timing",
             NotesRow::Target => "Put notes on",
         }
@@ -195,10 +235,12 @@ impl NotesRow {
     /// True when the row means something in `mode`.
     pub fn applies(self, mode: NotesMode) -> bool {
         match self {
-            NotesRow::MinNote | NotesRow::Lowest | NotesRow::Highest | NotesRow::Drift => {
-                mode == NotesMode::Pitched
-            }
-            NotesRow::OpenHats => mode == NotesMode::Drums,
+            NotesRow::MinNote
+            | NotesRow::Lowest
+            | NotesRow::Highest
+            | NotesRow::Drift
+            | NotesRow::Bend => mode == NotesMode::Pitched,
+            NotesRow::OpenHats | NotesRow::Kit | NotesRow::Keys => mode == NotesMode::Drums,
             _ => true,
         }
     }
@@ -224,6 +266,7 @@ pub struct NotesView {
     values: NotesValues,
     target: String,
     can_apply: bool,
+    progress: Option<NotesProgress>,
     hover: Option<Point>,
     /// A drag on a value: the row and the vertical travel (up steps the value up).
     drag: Option<(NotesRow, StepDrag)>,
@@ -246,6 +289,7 @@ impl NotesView {
             values,
             target: String::new(),
             can_apply: false,
+            progress: None,
             hover: None,
             drag: None,
             repaint: true,
@@ -275,6 +319,15 @@ impl NotesView {
         }
     }
 
+    /// Says how far the running extraction has got (`None`: none is running). While one runs the
+    /// EXTRACT button is a CANCEL button.
+    pub fn set_progress(&mut self, progress: Option<NotesProgress>) {
+        if progress != self.progress {
+            self.progress = progress;
+            self.repaint = true;
+        }
+    }
+
     /// The settings.
     pub fn values(&self) -> &NotesValues {
         &self.values
@@ -298,7 +351,18 @@ impl NotesView {
             NotesRow::Lowest => note_name(v.key_lo),
             NotesRow::Highest => note_name(v.key_hi),
             NotesRow::Drift => format!("{} cents", v.drift_cents),
+            NotesRow::Bend => if v.keep_bend { "On" } else { "Off" }.to_owned(),
             NotesRow::OpenHats => if v.open_hats { "On" } else { "Off" }.to_owned(),
+            NotesRow::Kit => match v.kit {
+                DrumKit::Basic => "Kick, snare, hats",
+                DrumKit::Full => "With toms and crash",
+            }
+            .to_owned(),
+            NotesRow::Keys => match v.drum_map {
+                DrumMap::GeneralMidi => "General MIDI",
+                DrumMap::Pads => "Drum machine pads, C2 up",
+            }
+            .to_owned(),
             NotesRow::Timing => match v.grid {
                 0 => "Free".to_owned(),
                 g => format!("1/{g}"),
@@ -338,7 +402,20 @@ impl NotesView {
                 v.key_hi = (i32::from(v.key_hi) + dir).clamp(i32::from(v.key_lo), 127) as u8;
             }
             NotesRow::Drift => v.drift_cents = step_list(&DRIFT_CENTS, v.drift_cents, dir),
+            NotesRow::Bend => v.keep_bend = !v.keep_bend,
             NotesRow::OpenHats => v.open_hats = !v.open_hats,
+            NotesRow::Kit => {
+                v.kit = match v.kit {
+                    DrumKit::Basic => DrumKit::Full,
+                    DrumKit::Full => DrumKit::Basic,
+                };
+            }
+            NotesRow::Keys => {
+                v.drum_map = match v.drum_map {
+                    DrumMap::GeneralMidi => DrumMap::Pads,
+                    DrumMap::Pads => DrumMap::GeneralMidi,
+                };
+            }
             NotesRow::Timing => v.grid = step_list(&GRIDS, v.grid, dir),
             NotesRow::Target => v.new_track = !v.new_track,
         }
@@ -433,10 +510,12 @@ impl NotesView {
             return help(self.close_rect(), "Close the panel; the settings are kept");
         }
         if self.apply_rect().contains(pos) {
-            return help(
-                self.apply_rect(),
-                "Turn the selected audio clip into notes (one undo step)",
-            );
+            let text = if self.progress.is_some() {
+                "Stop the extraction; notes already added stay"
+            } else {
+                "Turn the selected audio clips into notes (one undo step each)"
+            };
+            return help(self.apply_rect(), text);
         }
         NotesRow::ALL.into_iter().find_map(|row| {
             let rects = (
@@ -444,7 +523,15 @@ impl NotesView {
                 self.value_rect(row),
                 self.plus_rect(row),
             );
-            let numeric = !matches!(row, NotesRow::Mode | NotesRow::OpenHats | NotesRow::Target);
+            let numeric = !matches!(
+                row,
+                NotesRow::Mode
+                    | NotesRow::Bend
+                    | NotesRow::OpenHats
+                    | NotesRow::Kit
+                    | NotesRow::Keys
+                    | NotesRow::Target
+            );
             stepper_help(pos, row.title(), rects, numeric)
         })
     }
@@ -510,6 +597,9 @@ impl NotesView {
             return Some(NotesAction::Close);
         }
         if self.apply_rect().contains(pos) {
+            if self.progress.is_some() {
+                return Some(NotesAction::Cancel);
+            }
             return self.can_apply.then_some(NotesAction::Apply);
         }
         for row in NotesRow::ALL {
@@ -599,14 +689,36 @@ impl NotesView {
             sp::button(c, st, plus, "+", None, on && hovered(plus));
         }
         let apply = self.apply_rect();
-        sp::button(
-            c,
-            st,
-            apply,
-            "EXTRACT",
-            self.can_apply.then_some(st.loop_on),
-            self.can_apply && hovered(apply),
-        );
+        if let Some(progress) = &self.progress {
+            sp::button(c, st, apply, "CANCEL", None, hovered(apply));
+            let (x0, x1) = (apply.x1 + 12.0, p.x1 - PAD);
+            sp::label(
+                c,
+                &fit_label(&progress.text, x1 - x0, 10.0),
+                x0,
+                apply.y0 + 9.0,
+                10.0,
+                t.text,
+                Align::Start,
+            );
+            let bar = Rect::new(x0, apply.y0 + 15.0, x1, apply.y0 + 23.0);
+            sp::rect(c, bar, st.separator);
+            let done = f64::from(progress.fraction.clamp(0.0, 1.0));
+            sp::rect(
+                c,
+                Rect::new(bar.x0, bar.y0, bar.x0 + bar.width() * done, bar.y1),
+                st.loop_on,
+            );
+        } else {
+            sp::button(
+                c,
+                st,
+                apply,
+                "EXTRACT",
+                self.can_apply.then_some(st.loop_on),
+                self.can_apply && hovered(apply),
+            );
+        }
         c.pop_clip();
         c.pop_transform();
     }
