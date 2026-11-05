@@ -145,6 +145,7 @@ use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
 use crate::settings::{self, AudioSettings, LastGood, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
+use crate::start_screen::{RecentRow, StartOutcome, StartScreen};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
@@ -433,6 +434,8 @@ pub struct Shell<B: AudioBackend> {
     dialog: Option<SettingsDialog>,
     /// The About box, while it is open.
     about: Option<AboutBox>,
+    /// The start screen, while it is open.
+    start_screen: Option<StartScreen>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
     system_dark: bool,
     /// The rack split before a double-click on the divider collapsed the rack: the next
@@ -705,6 +708,7 @@ impl<B: AudioBackend> Shell<B> {
             scale_percent: 150.0,
             silence: None,
             song_info: None,
+            start_screen: None,
             color_picker: None,
             notes: None,
             notes_values: NotesValues::default(),
@@ -1178,6 +1182,86 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.song_info = None;
         self.repaint = true;
+    }
+
+    /// Whether the start screen is open.
+    pub fn start_screen_open(&self) -> bool {
+        self.start_screen.is_some()
+    }
+
+    /// The start screen, while it is open.
+    pub fn start_screen(&self) -> Option<&StartScreen> {
+        self.start_screen.as_ref()
+    }
+
+    /// Opens the start screen with the templates and the recent songs as they are now.
+    fn open_start_screen(&mut self) {
+        self.core.reload_templates();
+        let templates: Vec<String> = self
+            .core
+            .templates()
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        let recent: Vec<RecentRow> = self
+            .core
+            .recent()
+            .iter()
+            .map(|p| {
+                let modified = std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
+                RecentRow::new(p, modified)
+            })
+            .collect();
+        self.start_screen = Some(StartScreen::new(
+            templates,
+            recent,
+            self.workflow.default_song.is_some(),
+            self.workflow.show_start_screen,
+        ));
+        self.repaint = true;
+    }
+
+    /// Start-up when the command line names no project: the last song when the preference
+    /// says so, otherwise the default song (when one is chosen) and the start screen (unless
+    /// the preference says not to). Only the app's window calls it; the headless and MCP
+    /// sessions never do, so they never show the screen.
+    pub fn start_without_project(&mut self) {
+        if self.restore_last_project() {
+            return;
+        }
+        self.start_with_default_song();
+        if self.workflow.show_start_screen {
+            self.open_start_screen();
+        }
+    }
+
+    /// An event for the start screen: a pick closes it and runs the File menu's command for that
+    /// row; the check box is saved at once.
+    fn start_screen_event(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
+        let size = self.size();
+        let Some(screen) = &mut self.start_screen else {
+            return Vec::new();
+        };
+        match screen.handle(event, size) {
+            StartOutcome::Open => Vec::new(),
+            StartOutcome::Close => {
+                self.start_screen = None;
+                Vec::new()
+            }
+            StartOutcome::ShowAtStart(on) => {
+                self.workflow.show_start_screen = on;
+                self.save_workflow();
+                Vec::new()
+            }
+            StartOutcome::Run(command) => {
+                self.start_screen = None;
+                self.execute(command)
+            }
+        }
     }
 
     /// Whether the colour picker is open.
@@ -3775,6 +3859,10 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_quantize();
             return Vec::new();
         }
+        if self.start_screen.is_some() {
+            self.repaint = true;
+            return self.start_screen_event(event);
+        }
         let size = self.size();
         if let Some(about) = &mut self.about {
             self.repaint = true;
@@ -5377,6 +5465,10 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::SongInfo => {
                 self.open_song_info();
+                Vec::new()
+            }
+            AppCommand::StartScreen => {
+                self.open_start_screen();
                 Vec::new()
             }
             AppCommand::ExportArchive => self.export_archive_request(),
@@ -7404,6 +7496,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(about) = &self.about {
             about.paint(canvas, &theme, self.size());
         }
+        if let Some(start) = &self.start_screen {
+            start.paint(canvas, &theme, self.size());
+        }
         canvas.pop_transform();
     }
 }
@@ -7718,3 +7813,7 @@ mod interface_tests;
 #[cfg(test)]
 #[path = "shell_edit_keys_tests.rs"]
 mod edit_keys_tests;
+
+#[cfg(test)]
+#[path = "shell_start_screen_tests.rs"]
+mod start_screen_tests;

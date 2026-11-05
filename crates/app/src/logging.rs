@@ -260,6 +260,12 @@ pub fn utc_stamp(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
+/// `2026-10-29` for `secs` since the Unix epoch (the UTC day).
+pub fn date_stamp(secs: u64) -> String {
+    let (y, m, d, ..) = civil(secs);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 /// `20261029-123456` for `secs`: the form that names files.
 pub fn file_stamp(secs: u64) -> String {
     let (y, m, d, hh, mm, ss) = civil(secs);

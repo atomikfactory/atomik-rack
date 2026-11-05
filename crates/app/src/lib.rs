@@ -59,6 +59,7 @@ pub mod shell;
 pub mod sink;
 pub mod spectrum_reference;
 pub mod stage_timer;
+pub mod start_screen;
 pub mod status;
 pub mod stream_source;
 pub mod stress;

@@ -914,6 +914,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("file.song_info", "Song Information", G::Global, C::Global).menu(),
+    cmd("file.start_screen", "Start Screen", G::Global, C::Global).menu(),
     cmd("file.stress_rack", "Stress Rack", G::Global, C::Global).menu(),
     cmd("file.stress_song", "Stress Song", G::Global, C::Global).menu(),
     cmd("files.down", "Next Item", G::Files, C::Files).rep(),
