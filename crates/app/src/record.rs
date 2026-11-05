@@ -32,10 +32,16 @@
 //! - **Controller data.** Pitch bend, channel and polyphonic aftertouch and every CC that reaches
 //!   an armed device are recorded as controller lanes of the lap's clip (`Clip::controllers`),
 //!   one lane per kind, on the same laps and rounded-out range as the notes; a lap with
-//!   controller events and no notes still makes a clip. A recorded value holds until the next
+//!   controller events and no notes still makes a clip (unless the take is told to write such
+//!   laps to the track's own lanes, see below). A recorded value holds until the next
 //!   one, so the points are `Step`; a burst of events closer than `PPQ / 128` ticks (3.9 ms at
 //!   120 BPM) keeps its last value at the burst's first tick, and a point that repeats the value
 //!   before it is dropped. Input quantize does not touch them.
+//! - **Controllers without a note clip.** With [`Take::controllers_to_tracks`] a lap that has
+//!   controller events and no notes makes no clip: [`Take::finish_all`] returns it as a
+//!   [`ControllerPass`], the lanes in song ticks with the time the lap covers, and the app lays
+//!   it over the track's own controller lanes (`Track::controllers`), replacing what the lanes
+//!   held in that time.
 //! - **Input quantize** ([`InputQuantize`]): note starts snap to the nearest 1/8 or 1/16
 //!   before the clip is made; lengths are kept.
 //! - Notes still held at stop are closed at the stop position.
@@ -313,6 +319,8 @@ pub struct Take {
     pending: Vec<RecordedNote>,
     /// The take starts with a count-in: events before the song starts are dropped.
     count_in: bool,
+    /// A lap of controller events without notes is a [`ControllerPass`], not a clip.
+    controllers_to_tracks: bool,
     /// The engine frame the song starts at, once a count state announced it.
     song_start: u64,
 }
@@ -338,6 +346,7 @@ impl Take {
             controllers: BTreeMap::new(),
             pending: Vec::new(),
             count_in: false,
+            controllers_to_tracks: false,
             song_start: 0,
         }
     }
@@ -347,6 +356,14 @@ impl Take {
     #[must_use]
     pub fn counting_in(mut self, on: bool) -> Self {
         self.count_in = on;
+        self
+    }
+
+    /// Makes a lap of controller events and no notes a [`ControllerPass`] for the track's own
+    /// lanes instead of a clip with only controllers (see the module docs).
+    #[must_use]
+    pub fn controllers_to_tracks(mut self, on: bool) -> Self {
+        self.controllers_to_tracks = on;
         self
     }
 
@@ -518,7 +535,13 @@ impl Take {
     /// Ends the take at `stop` (the transport position when recording stopped): closes held
     /// notes there and returns one clip per (device, lap) with notes, in device then lap
     /// order, ready for `SongCommand::AddClip` on the track's lane ([`Self::lanes`]).
-    pub fn finish(mut self, stop: SongPosition, quantize: InputQuantize) -> Vec<(DeviceKey, Clip)> {
+    pub fn finish(self, stop: SongPosition, quantize: InputQuantize) -> Vec<(DeviceKey, Clip)> {
+        self.finish_all(stop, quantize).clips
+    }
+
+    /// [`Self::finish`] with the controller passes too: the laps that are controller events only
+    /// when the take writes those to the tracks ([`Self::controllers_to_tracks`]).
+    pub fn finish_all(mut self, stop: SongPosition, quantize: InputQuantize) -> Finished {
         let stop_lap = self.lap(stop.loop_count);
         let held: Vec<(DeviceInstanceId, u8)> = self.held.keys().copied().collect();
         for (device, key) in held {
@@ -526,6 +549,7 @@ impl Take {
         }
         let origin = self.origin.map_or(stop.tick.0, |o| o.0).max(0);
         let mut out = Vec::new();
+        let mut passes = Vec::new();
         let mut note_laps = std::mem::take(&mut self.notes);
         let mut ctl_laps = std::mem::take(&mut self.controllers);
         let laps: BTreeSet<(DeviceInstanceId, u64)> =
@@ -552,6 +576,25 @@ impl Take {
                 }
                 None => (origin, stop.tick.0),
             };
+            if self.controllers_to_tracks && notes.is_empty() && !ctl.is_empty() {
+                let ticks = || ctl.values().flatten().map(|p| p.0);
+                let first = ticks().min().map_or(from, |t| t.min(from)).max(0);
+                let last = ticks().max().map_or(to, |t| (t + 1).max(to));
+                let lanes = canonical(
+                    ctl.into_iter()
+                        .map(|(kind, raw)| ControllerLane::new(kind, record_points(&raw, 0)))
+                        .collect(),
+                );
+                passes.push((
+                    key,
+                    ControllerPass {
+                        from: first,
+                        to: last,
+                        lanes,
+                    },
+                ));
+                continue;
+            }
             let ctl_ticks = ctl.values().flatten().map(|p| p.0);
             let first = notes
                 .iter()
@@ -604,8 +647,30 @@ impl Take {
                 },
             ));
         }
-        out
+        Finished { clips: out, passes }
     }
+}
+
+/// What [`Take::finish_all`] returns: the clips and the controller passes.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Finished {
+    /// One clip per (device, lap) with notes (and, unless the take writes them to the tracks,
+    /// with controller events only), in device then lap order.
+    pub clips: Vec<(DeviceKey, Clip)>,
+    /// The laps of controller events and no notes, per device in lap order.
+    pub passes: Vec<(DeviceKey, ControllerPass)>,
+}
+
+/// Controller events recorded without notes, for the track's own lanes: the lanes in song ticks
+/// (`Step` points, a burst keeping its last value) and the song time the lap covered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControllerPass {
+    /// First song tick of the recorded time.
+    pub from: i64,
+    /// End of the recorded time (exclusive).
+    pub to: i64,
+    /// The recorded lanes, sorted by kind.
+    pub lanes: Vec<ControllerLane>,
 }
 
 #[cfg(test)]

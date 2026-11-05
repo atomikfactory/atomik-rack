@@ -1384,3 +1384,32 @@ fn imported_data_stays_within_the_limits_of_a_clip() {
     assert!(midi.sysex.iter().all(|m| m.data.len() <= MAX_SYSEX_BYTES));
     assert!(midi.check(MAX_TICK).is_ok());
 }
+
+#[test]
+fn a_tracks_own_controller_lanes_are_exported_with_no_clip_at_all() {
+    let song = conducted_song();
+    let mut t = track("t", Vec::new());
+    t.controllers = vec![ControllerLane::new(
+        ControllerKind::Cc(1),
+        vec![AutomationPoint {
+            tick: PPQ,
+            value: 1.0,
+            curve: Curve::Step,
+        }],
+    )];
+    let f = read(&track_file(
+        &song,
+        &t,
+        "T",
+        crate::midi_file::MidiResolution::Native,
+    ))
+    .unwrap();
+    assert!(f.tracks[0].events.iter().any(|e| matches!(
+        e.message,
+        SmfMessage::Controller {
+            controller: 1,
+            value: 127,
+            ..
+        }
+    )));
+}

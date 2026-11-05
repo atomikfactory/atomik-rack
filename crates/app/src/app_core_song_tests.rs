@@ -987,14 +987,10 @@ fn send_players_to_track_writes_the_generated_notes_to_a_new_lane_in_one_step() 
     assert_eq!(lane_count(&c), 1, "the lane and the clip are one undo step");
 }
 
-/// Pitch bend and a CC recorded with the notes land in the clip's controller lanes, reach the
-/// engine's song input and undo with the take.
-#[test]
-fn recording_turns_live_controller_data_into_clip_lanes() {
-    let mut c = with_track();
-    arm(&mut c, "a", true);
-    c.sink_mut().take();
-    transport(&mut c, TransportAction::ToggleRecord);
+/// Records `events` (kind, tick) on the armed track "a" for one bar and stops, returning the
+/// engine calls of the stop.
+fn record_events(c: &mut AppCore<RecordingSink>, events: &[(NoteKind, i64)]) -> Vec<SinkCall> {
+    transport(c, TransportAction::ToggleRecord);
     let start = TransportState {
         playing: true,
         engine_frame: 1000,
@@ -1002,21 +998,14 @@ fn recording_turns_live_controller_data_into_clip_lanes() {
     };
     let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
     c.sink_mut().state = start;
-    let ev = |kind, tick| RecordedNote {
-        device: id(1),
-        kind,
-        frame: frame(tick),
-    };
-    c.sink_mut().recorded = vec![
-        ev(NoteKind::PitchBend { value: 0.5 }, PPQ),
-        ev(
-            NoteKind::Cc {
-                controller: 1,
-                value: 1.0,
-            },
-            2 * PPQ,
-        ),
-    ];
+    c.sink_mut().recorded = events
+        .iter()
+        .map(|(kind, tick)| RecordedNote {
+            device: id(1),
+            kind: *kind,
+            frame: frame(*tick),
+        })
+        .collect();
     c.frame();
     c.sink_mut().state = TransportState {
         tick: BAR,
@@ -1024,15 +1013,98 @@ fn recording_turns_live_controller_data_into_clip_lanes() {
         song_frame: frame(BAR) - 1000,
         ..start
     };
-    let calls = transport(&mut c, TransportAction::Stop);
+    transport(c, TransportAction::Stop)
+}
+
+/// Pitch bend and a CC recorded with the notes land in the clip's controller lanes, reach the
+/// engine's song input and undo with the take.
+#[test]
+fn recording_turns_live_controller_data_with_notes_into_clip_lanes() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.sink_mut().take();
+    let calls = record_events(
+        &mut c,
+        &[
+            (NoteKind::PitchBend { value: 0.5 }, PPQ),
+            (
+                NoteKind::On {
+                    key: 60,
+                    velocity: 0.8,
+                },
+                PPQ,
+            ),
+            (NoteKind::Off { key: 60 }, 2 * PPQ),
+            (
+                NoteKind::Cc {
+                    controller: 1,
+                    value: 1.0,
+                },
+                2 * PPQ,
+            ),
+        ],
+    );
     let clip = &c.doc().song.tracks[0].lanes[0].clips[0];
-    assert!(matches!(&clip.content, ClipContent::Notes(n) if n.is_empty()));
+    assert!(matches!(&clip.content, ClipContent::Notes(n) if n.len() == 1));
     let kinds: Vec<_> = clip.controllers.iter().map(|l| l.kind).collect();
     assert_eq!(kinds, [ControllerKind::PitchBend, ControllerKind::Cc(1)]);
+    assert!(c.doc().song.tracks[0].controllers.is_empty());
     let lanes = &songs(&calls).last().unwrap().tracks[0].controllers;
     assert_eq!(lanes.len(), 2);
     assert!(c.undo());
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
+}
+
+/// Controller data recorded without a note makes no clip: it is written to the track's own
+/// lanes, reaches the engine's song input and undoes as one step. A second take replaces the
+/// stretch it covers.
+#[test]
+fn recording_controller_data_alone_writes_the_tracks_own_lanes() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.sink_mut().take();
+    let calls = record_events(
+        &mut c,
+        &[
+            (NoteKind::PitchBend { value: 0.5 }, PPQ),
+            (
+                NoteKind::Cc {
+                    controller: 1,
+                    value: 1.0,
+                },
+                2 * PPQ,
+            ),
+        ],
+    );
+    assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty(), "no clip");
+    let own = &c.doc().song.tracks[0].controllers;
+    let kinds: Vec<_> = own.iter().map(|l| l.kind).collect();
+    assert_eq!(kinds, [ControllerKind::PitchBend, ControllerKind::Cc(1)]);
+    assert_eq!(own[1].points.len(), 1);
+    assert_eq!(own[1].points[0].tick, 2 * PPQ);
+    let lanes = &songs(&calls).last().unwrap().tracks[0].controllers;
+    assert_eq!(lanes.len(), 2, "the engine plays them");
+    // A second pass over the same time replaces the wheel and keeps the bend it did not touch.
+    c.sink_mut().take();
+    record_events(
+        &mut c,
+        &[(
+            NoteKind::Cc {
+                controller: 1,
+                value: 0.25,
+            },
+            PPQ,
+        )],
+    );
+    let own = &c.doc().song.tracks[0].controllers;
+    assert_eq!(own.len(), 2);
+    assert_eq!(own[1].points.len(), 1);
+    assert_eq!(own[1].points[0].tick, PPQ);
+    assert_eq!(own[0].points.len(), 1, "the bend is untouched");
+    assert!(c.undo());
+    assert_eq!(c.doc().song.tracks[0].controllers.len(), 2);
+    assert!(c.undo());
+    assert!(c.doc().song.tracks[0].controllers.is_empty());
 }
 
 /// Recording over an enabled loop that wraps stacks the passes as takes of one group (one undo

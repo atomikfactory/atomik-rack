@@ -881,3 +881,115 @@ fn notes_copy_when_the_notes_are_the_selection_and_points_when_the_lane_has_the_
     command(&mut c, Pane::PianoRoll, "edit.copy");
     assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Controllers));
 }
+
+// ------------------------------------------------------------------ a track's own lanes
+
+fn track_lane(c: &AppCore<RecordingSink>, kind: atomik_model::ControllerKind) -> Vec<(i64, f32)> {
+    c.doc().song.tracks[0]
+        .controllers
+        .iter()
+        .find(|l| l.kind == kind)
+        .map(|l| l.points.iter().map(|p| (p.tick, p.value)).collect())
+        .unwrap_or_default()
+}
+
+/// The track of [`with_clip`] with a mod wheel lane of four held points of its own, open in the
+/// roll's track mode on the wheel lane.
+fn with_track_wheel_lane() -> AppCore<RecordingSink> {
+    use atomik_model::{ControllerKind, ControllerLane};
+    let mut c = with_clip();
+    let points = (0..4)
+        .map(|i| AutomationPoint {
+            tick: i * PPQ / 2,
+            value: 0.1 + 0.2 * i as f32,
+            curve: Curve::Step,
+        })
+        .collect();
+    song(
+        &mut c,
+        SongCommand::SetTrackControllers {
+            device: key("a"),
+            lanes: vec![ControllerLane::new(ControllerKind::Cc(1), points)],
+            merge: None,
+        },
+    );
+    assert!(c.open_track_controllers(key("a")));
+    c.after_view_change();
+    c.piano_roll_mut()
+        .set_controller_kind(ControllerKind::Cc(1));
+    c
+}
+
+#[test]
+fn the_track_roll_opens_on_a_note_track_and_closes_with_it() {
+    let mut c = with_clip();
+    assert!(!c.piano_roll_open());
+    assert!(c.open_track_controllers_default(), "the song's note track");
+    assert!(c.piano_roll_open());
+    assert_eq!(c.piano_roll_clip(), None, "no clip is open");
+    assert_eq!(c.piano_roll().track(), Some(&key("a")));
+    assert!(c.has_selection(Pane::PianoRoll) == c.piano_roll().controller_focus());
+    // Opening a clip leaves the track mode, closing the roll leaves both.
+    c.open_piano_roll(ClipId(1));
+    assert_eq!(c.piano_roll().track(), None);
+    assert!(c.piano_roll_open());
+    assert!(c.open_track_controllers(key("a")));
+    assert!(c.close_open_editor());
+    assert!(!c.piano_roll_open());
+    // A track that goes away takes the roll with it.
+    assert!(c.open_track_controllers(key("a")));
+    song(&mut c, SongCommand::RemoveTrack { device: key("a") });
+    assert!(!c.piano_roll_open());
+}
+
+#[test]
+fn a_track_that_plays_no_notes_has_no_track_roll() {
+    let mut c = core();
+    add(&mut c, DELAY, "d");
+    assert!(!c.open_track_controllers(key("d")));
+    assert!(
+        !c.open_track_controllers_default(),
+        "the song has no note track"
+    );
+    assert!(!c.piano_roll_open());
+}
+
+#[test]
+fn copy_and_paste_track_controller_points_at_the_playhead_one_undo_step_each() {
+    use atomik_model::ControllerKind;
+    let wheel = ControllerKind::Cc(1);
+    let mut c = with_track_wheel_lane();
+    c.piano_roll_mut().set_controller_selection(&[1, 2]);
+    assert!(c.has_selection(Pane::PianoRoll));
+    command(&mut c, Pane::PianoRoll, "edit.copy");
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Controllers));
+    assert!(c.can_paste(Pane::PianoRoll));
+    let before = track_lane(&c, wheel);
+    c.transport_action(TransportAction::Locate(2 * PPQ));
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    let after = track_lane(&c, wheel);
+    assert_eq!(after.len(), before.len() + 2, "{after:?}");
+    assert!(after.contains(&(2 * PPQ, before[1].1)), "{after:?}");
+    assert_eq!(c.piano_roll().selected_controller_points(), [4, 5]);
+    assert!(c.undo());
+    assert_eq!(track_lane(&c, wheel), before, "one step");
+    // The clip's own lanes were never touched.
+    let (_, _, clip) = c.doc().song.clip(ClipId(1)).unwrap();
+    assert!(clip.controllers.is_empty());
+}
+
+#[test]
+fn cut_removes_track_points_and_a_paste_past_the_song_end_is_refused() {
+    use atomik_model::ControllerKind;
+    let wheel = ControllerKind::Cc(1);
+    let mut c = with_track_wheel_lane();
+    c.piano_roll_mut().set_controller_selection(&[0, 3]);
+    command(&mut c, Pane::PianoRoll, "edit.cut");
+    assert_eq!(track_lane(&c, wheel).len(), 2);
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Controllers));
+    let before = track_lane(&c, wheel);
+    let end = c.doc().song.end;
+    c.transport_action(TransportAction::Locate(end + BAR));
+    command(&mut c, Pane::PianoRoll, "edit.paste");
+    assert_eq!(track_lane(&c, wheel), before);
+}

@@ -220,6 +220,33 @@ pub fn paste_points(
     Some((canonical(out), indices))
 }
 
+/// `lanes` with a recorded pass laid over the ticks `from..to`: for each lane of `recorded` the
+/// points of the lane of its kind inside the range (and any at a recorded tick) are replaced by
+/// the recorded points, whatever lies outside the range and every other kind stays. Used when a
+/// take of controller events only (no notes) writes to a track's own lanes.
+pub fn replace_range(
+    lanes: &[ControllerLane],
+    recorded: &[ControllerLane],
+    from: i64,
+    to: i64,
+) -> Vec<ControllerLane> {
+    let mut out = lanes.to_vec();
+    for rec in recorded {
+        let ticks: BTreeSet<i64> = rec.points.iter().map(|p| p.tick).collect();
+        let lane = lane_mut(&mut out, rec.kind);
+        lane.points
+            .retain(|p| (p.tick < from || p.tick >= to) && !ticks.contains(&p.tick));
+        lane.points.extend(
+            rec.points
+                .iter()
+                .filter(|p| (0..=MAX_TICK).contains(&p.tick))
+                .copied(),
+        );
+        lane.points.sort_by_key(|p| p.tick);
+    }
+    canonical(out)
+}
+
 /// `lanes` with the selected points of `kind` thinned: every run of neighbouring selected points
 /// is simplified like Cleanup Automation does (a ramp point the line through its neighbours
 /// reproduces within `fraction` of the range goes; so does a held point that repeats the value
@@ -440,6 +467,41 @@ mod tests {
         assert_eq!(p[0].points[0].value, -1.0);
         assert_eq!(p[0].points[1].value, 1.0);
         crate::controller::check_lanes(&p, MAX_TICK).unwrap();
+    }
+
+    #[test]
+    fn a_recorded_pass_replaces_its_range_and_leaves_the_rest() {
+        let mut old = lane(
+            CC,
+            vec![
+                pt(0, 0.1, Curve::Step),
+                pt(100, 0.2, Curve::Step),
+                pt(200, 0.3, Curve::Step),
+                pt(400, 0.4, Curve::Step),
+            ],
+        );
+        old.extend(lane(
+            ControllerKind::PitchBend,
+            vec![pt(150, 0.5, Curve::Step)],
+        ));
+        let old = canonical(old);
+        let rec = lane(
+            CC,
+            vec![pt(120, 0.9, Curve::Step), pt(300, 0.8, Curve::Step)],
+        );
+        let r = replace_range(&old, &rec, 100, 350);
+        // The two points inside 100..350 are gone; 0 and 400 stay; the recorded two are in.
+        assert_eq!(ticks(&r, CC), [0, 120, 300, 400]);
+        assert_eq!(
+            ticks(&r, ControllerKind::PitchBend),
+            [150],
+            "other kinds stay"
+        );
+        crate::controller::check_lanes(&r, MAX_TICK).unwrap();
+        // A kind with no lane yet gets one, in canonical order.
+        let r = replace_range(&[], &rec, 0, 1000);
+        assert_eq!(r.len(), 1);
+        assert_eq!(replace_range(&old, &[], 0, 1000), old);
     }
 
     #[test]

@@ -678,3 +678,65 @@ fn a_take_without_a_count_in_keeps_events_that_precede_the_first_playing_state()
     let clips = t.finish(stop(&snap, &st, E0 + 1000), InputQuantize::OFF);
     assert_eq!(notes(&clips[0].1).len(), 1);
 }
+
+#[test]
+fn controllers_alone_become_a_pass_for_the_tracks_lanes_when_the_take_asks() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None).controllers_to_tracks(true);
+    let at = |tick| frame_at(&snap, tick, 0, 0);
+    feed(
+        &mut t,
+        &snap,
+        &st,
+        &[
+            ctl(cc(1, 0.5), at(BAR + PPQ)),
+            ctl(cc(1, 1.0), at(BAR + 2 * PPQ)),
+            ctl(NoteKind::PitchBend { value: -0.5 }, at(BAR + 3 * PPQ)),
+        ],
+    );
+    let done = t.finish_all(stop(&snap, &st, at(2 * BAR)), InputQuantize::OFF);
+    assert!(done.clips.is_empty(), "no clip for controllers alone");
+    assert_eq!(done.passes.len(), 1);
+    let (device, pass) = &done.passes[0];
+    assert_eq!(device, &DeviceKey("bass".into()));
+    // Song ticks, from where the take began to where it stopped.
+    assert_eq!((pass.from, pass.to), (0, 2 * BAR));
+    let kinds: Vec<_> = pass.lanes.iter().map(|l| l.kind).collect();
+    assert_eq!(kinds, [ControllerKind::PitchBend, ControllerKind::Cc(1)]);
+    let wheel = pass.lanes[1]
+        .points
+        .iter()
+        .map(|p| p.tick)
+        .collect::<Vec<_>>();
+    assert!(
+        wheel.len() == 2 && (wheel[0] - (BAR + PPQ)).abs() <= 2,
+        "{wheel:?}"
+    );
+}
+
+#[test]
+fn controllers_with_notes_stay_in_the_clip_whatever_the_take_asks() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None).controllers_to_tracks(true);
+    let at = |tick| frame_at(&snap, tick, 0, 0);
+    let on = RecordedNote {
+        device: DEV,
+        kind: NoteKind::On {
+            key: 60,
+            velocity: 0.8,
+        },
+        frame: at(PPQ),
+    };
+    let off = RecordedNote {
+        device: DEV,
+        kind: NoteKind::Off { key: 60 },
+        frame: at(2 * PPQ),
+    };
+    feed(&mut t, &snap, &st, &[on, ctl(cc(1, 0.5), at(PPQ)), off]);
+    let done = t.finish_all(stop(&snap, &st, at(BAR)), InputQuantize::OFF);
+    assert!(done.passes.is_empty());
+    assert_eq!(done.clips.len(), 1);
+    assert_eq!(done.clips[0].1.controllers.len(), 1);
+}

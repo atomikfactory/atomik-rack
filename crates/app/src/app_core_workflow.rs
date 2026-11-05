@@ -319,7 +319,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Closes the editor that shows in place of the arrangement (piano roll, sample, step,
     /// slice, sequencer, container or plugin parameter pane); false when none is open.
     pub fn close_open_editor(&mut self) -> bool {
-        if self.piano_clip.is_some() {
+        if self.piano_roll_open() {
             self.close_piano_roll();
         } else if self.sample_editor_device().is_some() {
             self.close_sample_editor();

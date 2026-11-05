@@ -1,7 +1,7 @@
 //! [`AppCore`]: the window-free heart of the app (no winit, no GPU).
 
 use crate::clipboard::Clipboard;
-use crate::record::{InputQuantize, RecordedNote, Take};
+use crate::record::{ControllerPass, InputQuantize, RecordedNote, Take};
 use crate::record_over::{KeepEvents, RecordMode, keep_events_follow_up, note_take_command};
 use crate::sink::EngineSink;
 use crate::stage_timer::{StageClock, Stages};
@@ -1831,6 +1831,15 @@ impl<S: EngineSink> AppCore<S> {
         {
             self.close_piano_roll();
         }
+        if let Some(device) = self.piano_roll.track()
+            && !self
+                .doc()
+                .song
+                .track(device)
+                .is_some_and(|t| !t.is_audio() && !t.is_automation_only())
+        {
+            self.close_piano_roll();
+        }
         self.after_view_change();
     }
 
@@ -2749,6 +2758,59 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Opens the piano roll on the controller lanes the track of `device` holds outside its clips
+    /// (`Track::controllers`): false, and nothing changes, for a track that plays no notes.
+    pub fn open_track_controllers(&mut self, device: DeviceKey) -> bool {
+        let plays_notes = self
+            .doc()
+            .song
+            .track(&device)
+            .is_some_and(|t| !t.is_audio() && !t.is_automation_only());
+        if !plays_notes {
+            return false;
+        }
+        self.close_sample_editor();
+        self.close_step_editor();
+        self.close_slice_editor();
+        self.close_audio_editor();
+        self.close_seq_editor();
+        self.close_container_editor();
+        self.release_piano_roll_audition();
+        self.piano_roll.open_track(device);
+        self.piano_clip = None;
+        self.piano_roll.sync(self.document.doc(), &self.registry);
+        self.sync_clip_scale();
+        true
+    }
+
+    /// Opens the track controller lanes of the selected track: the track of the first selected
+    /// clip, else the selected track, else the selected device's track, else the first note
+    /// track of the song. False when the song has no note track.
+    pub fn open_track_controllers_default(&mut self) -> bool {
+        let song = &self.doc().song;
+        let plays_notes = |t: &atomik_model::Track| !t.is_audio() && !t.is_automation_only();
+        let device = self
+            .arrangement
+            .selected_clips()
+            .into_iter()
+            .find_map(|id| song.clip(id).map(|(t, _, _)| t))
+            .or_else(|| {
+                self.arrangement
+                    .selected_track()
+                    .and_then(|k| song.track(k))
+            })
+            .or_else(|| self.view.selected().and_then(|k| song.track(k)))
+            .filter(|t| plays_notes(t))
+            .or_else(|| song.tracks.iter().find(|t| plays_notes(t)))
+            .map(|t| t.device.clone());
+        device.is_some_and(|d| self.open_track_controllers(d))
+    }
+
+    /// Whether the piano roll is open, on a clip or on a track's own controller lanes.
+    pub fn piano_roll_open(&self) -> bool {
+        self.piano_clip.is_some() || self.piano_roll.track().is_some()
+    }
+
     /// Names the keys of the piano roll after what plays on them: on a drum machine track each
     /// pad that has a sample is named after its file, without the extension. Any other track
     /// shows plain note names. Display only: the notes keep their keys.
@@ -3141,7 +3203,9 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         let count_in = self.recording_count_in();
-        let take = Take::new(tracks, loop_range, meter).counting_in(count_in.is_some());
+        let take = Take::new(tracks, loop_range, meter)
+            .counting_in(count_in.is_some())
+            .controllers_to_tracks(true);
         self.sink.set_recording(&take.devices());
         self.sink.set_note_taps(&direct);
         self.take = Some(take);
@@ -3192,7 +3256,8 @@ impl<S: EngineSink> AppCore<S> {
         // takes with the last one playing; a single lap is a plain clip as before.
         let lanes = take.lanes().clone();
         let mut by_device: Vec<(DeviceKey, Vec<atomik_model::Clip>)> = Vec::new();
-        for (device, clip) in take.finish(stop, self.quantize) {
+        let finished = take.finish_all(stop, self.quantize);
+        for (device, clip) in finished.clips {
             match by_device.iter_mut().find(|(d, _)| *d == device) {
                 Some((_, clips)) => clips.push(clip),
                 None => by_device.push((device, vec![clip])),
@@ -3214,6 +3279,46 @@ impl<S: EngineSink> AppCore<S> {
             let command = note_take_command(self.doc(), device, lane, clips, self.record_mode);
             // A rejection is already reported.
             let _ = self.apply_command(command);
+            self.document.end_merge();
+        }
+        self.write_controller_passes(finished.passes);
+    }
+
+    /// Lays the controller events a take recorded without notes over the tracks' own controller
+    /// lanes: per track one `SetTrackControllers` (one undo step) in which each pass replaces
+    /// what the lanes held in the time it covered.
+    fn write_controller_passes(&mut self, passes: Vec<(DeviceKey, ControllerPass)>) {
+        let mut by_track: Vec<(DeviceKey, Vec<atomik_model::controller::ControllerLane>)> =
+            Vec::new();
+        for (device, pass) in passes {
+            let at = match by_track.iter().position(|(d, _)| *d == device) {
+                Some(at) => at,
+                None => {
+                    let base = self
+                        .doc()
+                        .song
+                        .track(&device)
+                        .map(|t| t.controllers.clone())
+                        .unwrap_or_default();
+                    by_track.push((device, base));
+                    by_track.len() - 1
+                }
+            };
+            let lanes = &mut by_track[at].1;
+            *lanes = atomik_model::controller_edit::replace_range(
+                lanes,
+                &pass.lanes,
+                pass.from,
+                pass.to,
+            );
+        }
+        for (device, lanes) in by_track {
+            // A rejection (a frozen track) is already reported.
+            let _ = self.apply_command(Command::Song(SongCommand::SetTrackControllers {
+                device,
+                lanes,
+                merge: None,
+            }));
             self.document.end_merge();
         }
     }

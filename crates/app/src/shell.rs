@@ -2570,7 +2570,7 @@ impl<B: AudioBackend> Shell<B> {
             can_combine,
             can_uncombine,
             song_visible: self.ui.show_song,
-            piano_roll: self.core.piano_roll_clip().is_some(),
+            piano_roll: self.core.piano_roll_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
             step_editor: self.core.step_editor_device().is_some(),
             slice_editor: self.core.slice_editor_device().is_some(),
@@ -2938,7 +2938,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::ContainerEditor
         } else if self.core.plugin_params_device().is_some() {
             Pane::PluginParams
-        } else if self.core.piano_roll_clip().is_some() {
+        } else if self.core.piano_roll_open() {
             Pane::PianoRoll
         } else if self.core.audio_editor_clip().is_some() {
             Pane::AudioEditor
@@ -5088,7 +5088,7 @@ impl<B: AudioBackend> Shell<B> {
                 // The piano roll's QUANT button: the panel's last settings, on the roll.
                 UiAction::Quantize(QuantizeAction::ApplyLast) => {
                     // From the transport bar too: the open roll, else the arrangement's selection.
-                    let pane = if self.core.piano_roll_clip().is_some() {
+                    let pane = if self.core.piano_roll_open() {
                         Pane::PianoRoll
                     } else {
                         Pane::Arrangement
@@ -5810,8 +5810,23 @@ impl<B: AudioBackend> Shell<B> {
                 self.ui_changed();
                 Vec::new()
             }
+            AppCommand::EditTrackControllers => {
+                if self.core.open_track_controllers_default() {
+                    if !self.ui.show_song || self.lower_is_console() {
+                        self.ui.show_song = true;
+                        self.ui.show_console = false;
+                        self.console_changed();
+                    }
+                    self.reveal_lower_pane();
+                    self.set_focus(Pane::PianoRoll);
+                } else {
+                    self.notify("no note track to edit: add or select a note track");
+                }
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::TogglePianoRoll => {
-                if self.core.piano_roll_clip().is_some() {
+                if self.core.piano_roll_open() {
                     self.core.close_piano_roll();
                 } else if self.core.open_piano_roll_default() {
                     if !self.ui.show_song || self.lower_is_console() {
