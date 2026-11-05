@@ -636,6 +636,8 @@ pub struct RackView {
     edits: BTreeMap<DeviceKey, usize>,
     /// The pattern clipboard of the sequencer panels (COPY, PASTE).
     pattern_clip: Option<PatternDoc>,
+    /// The curves copied with the pattern (a CV sequencer row A and B).
+    curve_clip: Option<atomik_model::CurvePatternDoc>,
     /// The drum generator panels' pattern clipboard.
     drum_clip: Option<atomik_model::DrumPatternDoc>,
     /// The visible page of each drum generator panel (view state).
@@ -900,6 +902,7 @@ impl RackView {
             big: crate::big_meter::BigMeter::default(),
             edits: BTreeMap::new(),
             pattern_clip: None,
+            curve_clip: None,
             drum_clip: None,
             pages: BTreeMap::new(),
             fx_modes: BTreeMap::new(),

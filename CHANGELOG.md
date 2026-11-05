@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rotary Speaker effect.** A rotating-speaker cabinet in the browser: the two inputs are summed, driven through
+  a soft clipper (Drive, off is exact), split at a Crossover (200 to 1600 Hz) and sent to a horn rotor (high band)
+  and a drum rotor (low band). Each rotor has a slow and a fast speed (horn 0.3 to 2 and 3 to 10 Hz, drum 0.2 to
+  1.5 and 3 to 8 Hz) and its own run-up time (50 ms to 3 s for the horn, 200 ms to 8 s for the drum), so a switch
+  from Slow to Fast speeds up the way a heavy rotor does; Speed picks Stop, Slow or Fast and a gate on the Speed
+  CV input forces Fast. Two microphones hear each rotor through a Doppler delay and a level that follows the rotor
+  angle (Doppler and Tremolo amounts), and Mic spread moves them from the same point to opposite sides, which
+  gives the stereo swirl. A CV output carries the horn angle. Mix 0 passes the input unchanged, the bounce is
+  bit-identical on every platform, and the output stays finite for any setting. The project format stays 43.
+  Not done yet: a cabinet resonance model, a microphone distance control and a dry path aligned to the wet one.
+- **Copy and paste of CV sequencer curves with their pattern.** COPY on a CV sequencer panel or in the grid editor
+  keeps the edited pattern's curve rows A and B with its steps, and PASTE writes both into the target pattern as one
+  undo step (the two views share the clipboard, curves included). A copy from a step sequencer pastes its steps and
+  leaves the target's curves alone, and a step sequencer never takes curves. Not done yet: copying one curve row
+  alone, and a CLEAR that also clears the curves.
 - **Feedback routing: the Feedback Route device makes a loop legal.** A cable that would close a loop is still
   refused ("a loop must pass through a Feedback Route"), but a loop that runs through the new Feedback Route
   utility is accepted when you cable it, when a project is read and inside containers. The device delays a stereo

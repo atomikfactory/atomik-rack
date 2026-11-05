@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 26, "{ids:?}");
+    assert_eq!(ids.len(), 27, "{ids:?}");
     ids
 }
 
@@ -37,8 +37,8 @@ fn raw(type_id: &str) -> DeviceHarness {
     use crate::{
         auto_filter, character, compressor, convolver, de_esser, distortion, duck, dynamics, echo,
         env_filter, eq, gain_tool, gate, guitar_amp, mastering, modulation, phase_meter,
-        pitch_shifter, reverb, space_reverb, spectrum, stereo_tool, transient_shaper, tuner,
-        vocoder,
+        pitch_shifter, reverb, rotary_speaker, space_reverb, spectrum, stereo_tool,
+        transient_shaper, tuner, vocoder,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
@@ -67,6 +67,7 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.tuner" => Box::new(tuner::Tuner::new()),
         "atomik.de-esser" => Box::new(de_esser::DeEsser::new()),
         "atomik.transient-shaper" => Box::new(transient_shaper::TransientShaper::new()),
+        "atomik.rotary-speaker" => Box::new(rotary_speaker::RotarySpeaker::new()),
         other => panic!("{other}"),
     };
     DeviceHarness::new(d, SR)

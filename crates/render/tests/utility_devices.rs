@@ -112,6 +112,10 @@ const EFFECTS: &[(&str, &str)] = &[
     ),
     ("atomik.pitch-shifter", r#"{"semitones": 7, "quality": 0}"#),
     (
+        "atomik.rotary-speaker",
+        r#"{"speed": 2, "doppler": 1, "tremolo": 1, "drive": 0.5}"#,
+    ),
+    (
         "atomik.de-esser",
         r#"{"freq": 1000, "q": 0.5, "threshold": -60, "ratio": 20, "range": 24, "mode": 1}"#,
     ),

@@ -470,6 +470,32 @@ fn the_pattern_clipboard_is_shared_between_the_panel_and_the_editor() {
     );
 }
 
+#[test]
+fn the_curves_travel_with_the_pattern_clipboard_between_the_panel_and_the_editor() {
+    let curves = || {
+        let mut p = atomik_model::CurvePatternDoc::default();
+        p.rows[0][3].value = 40;
+        p.rows[1][5].value = -60;
+        p
+    };
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.cv-sequencer", "cv");
+    c.handle_action(UiAction::OpenSeqEditor { device: key("cv") });
+    c.view_mut().set_pattern_clipboard(Some(busy(70)));
+    c.view_mut().set_pattern_curve_clipboard(Some(curves()));
+    c.after_view_change();
+    assert_eq!(c.seq_editor().curve_clipboard(), Some(&curves()));
+    // A copy made in the editor without curves clears them in the panel.
+    c.seq_editor_mut().set_clipboard(Some(busy(71)));
+    c.seq_editor_mut().set_curve_clipboard(None);
+    c.after_view_change();
+    assert_eq!(c.view().pattern_curve_clipboard(), None);
+    assert_eq!(
+        c.view().pattern_clipboard().map(|p| p.steps[0].key),
+        Some(71)
+    );
+}
+
 // ------------------------------------------------------------------ audition
 
 #[test]

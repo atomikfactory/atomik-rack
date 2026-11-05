@@ -8,7 +8,7 @@ use super::{
 use crate::event::{Key, Modifiers};
 use crate::seq_panel::{self, PlayState, RenameKey, SeqButton};
 use crate::widget::current_value;
-use atomik_model::{Command, DeviceKey, MAX_PATTERNS, PatternDoc};
+use atomik_model::{Command, CurvePatternDoc, DeviceKey, MAX_PATTERNS, PatternDoc};
 use vello::kurbo::{Point, Rect};
 
 /// Meter values kept per player panel (sequencer 3, arpeggiator 9).
@@ -187,6 +187,16 @@ impl RackView {
         self.pattern_clip = clip;
     }
 
+    /// The curves copied with the pattern clipboard (only a CV sequencer COPY sets them).
+    pub fn pattern_curve_clipboard(&self) -> Option<&CurvePatternDoc> {
+        self.curve_clip.as_ref()
+    }
+
+    /// Sets the curves of the pattern clipboard (the app mirrors it with the grid editor).
+    pub fn set_pattern_curve_clipboard(&mut self, clip: Option<CurvePatternDoc>) {
+        self.curve_clip = clip;
+    }
+
     /// The pattern name being edited in place on the panel of `key`.
     pub fn renaming(&self, key: &DeviceKey) -> Option<&str> {
         let r = self.rename.as_ref()?;
@@ -231,6 +241,18 @@ impl RackView {
         let dev = self.devices[i].device.as_ref()?;
         let steps = dev.steps.clone().unwrap_or_default();
         steps.patterns.get(index).cloned()
+    }
+
+    /// The curve rows of pattern `index` of a CV sequencer panel (`None` on any other panel).
+    fn curves_of(&self, i: usize, index: usize) -> Option<CurvePatternDoc> {
+        let d = &self.devices[i];
+        d.spec.seq.as_ref()?.curves?;
+        let dev = d.device.as_ref()?;
+        Some(
+            dev.curves
+                .as_ref()
+                .map_or_else(CurvePatternDoc::default, |c| c.pattern(index)),
+        )
     }
 
     pub(super) fn player_down(
@@ -351,13 +373,22 @@ impl RackView {
                     self.select_pattern(i, edit.min(count - 2), out);
                 }
             }
-            SeqButton::Copy => self.pattern_clip = self.pattern_of(i, edit),
+            SeqButton::Copy => {
+                self.pattern_clip = self.pattern_of(i, edit);
+                self.curve_clip = self.curves_of(i, edit);
+            }
             SeqButton::Paste => {
                 if let (Some(clip), Some(target)) = (&self.pattern_clip, self.pattern_of(i, edit)) {
-                    let pattern = seq_panel::pasted(&target, clip);
-                    if pattern != target {
-                        out.push(set_pattern(&key, edit, pattern));
-                    }
+                    let curves = self.curves_of(i, edit);
+                    let command = seq_panel::paste_command(
+                        &key,
+                        edit,
+                        &target,
+                        curves.as_ref(),
+                        clip,
+                        self.curve_clip.as_ref(),
+                    );
+                    out.extend(command.map(UiAction::Command));
                 }
             }
             SeqButton::Clear => {

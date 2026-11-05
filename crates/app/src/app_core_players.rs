@@ -134,15 +134,23 @@ impl<S: EngineSink> AppCore<S> {
     /// Keeps one pattern clipboard for the panel and the editor: whichever changed since the
     /// last agreement is copied to the other.
     pub(super) fn share_pattern_clipboard(&mut self) {
-        let rack = self.view.pattern_clipboard().cloned();
-        let editor = self.seq_editor.clipboard().cloned();
+        let rack = (
+            self.view.pattern_clipboard().cloned(),
+            self.view.pattern_curve_clipboard().cloned(),
+        );
+        let editor = (
+            self.seq_editor.clipboard().cloned(),
+            self.seq_editor.curve_clipboard().cloned(),
+        );
         if rack == editor {
             self.pattern_clip_seen = rack;
         } else if rack != self.pattern_clip_seen {
-            self.seq_editor.set_clipboard(rack.clone());
+            self.seq_editor.set_clipboard(rack.0.clone());
+            self.seq_editor.set_curve_clipboard(rack.1.clone());
             self.pattern_clip_seen = rack;
         } else {
-            self.view.set_pattern_clipboard(editor.clone());
+            self.view.set_pattern_clipboard(editor.0.clone());
+            self.view.set_pattern_curve_clipboard(editor.1.clone());
             self.pattern_clip_seen = editor;
         }
     }
