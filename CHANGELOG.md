@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Organ instrument.** A polyphonic drawbar organ in the browser: a tone generator with one sine wheel for each
+  semitone feeds nine drawbars (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3' and 1') in equal temperament, each
+  with nine positions 3 dB apart (0 is off), so two keys that land on one pitch share a wheel and add in phase.
+  Sixteen keys sound, with a 1 ms attack and a 4 ms release and no velocity. Percussion adds the 2nd or 3rd
+  harmonic with a Fast or Slow decay (60 dB in 0.2 s or 0.9 s) at a Soft or Normal level; it restarts only when a
+  key is struck while none is held, and the 1' drawbar is silent while it is on. Key click adds a short burst of
+  noise at a key press and a smaller one at a release. The scanner gives the vibrato V1 to V3 and the chorus C1 to
+  C3 at 4 to 9 Hz (Off is exact, a change of type glides), and Drive (off is exact) and Level finish the signal
+  below a soft limit of 2. Sustain, volume and expression work as on the other instruments and the master tune
+  moves every wheel. The Sound choice loads Init, Jazz, Full, Rock, Mellow or Church in one undo step. A bounce is
+  bit-identical on every platform and at every host block size, and the stereo output goes straight into the
+  Rotary Speaker. The project format stays 43: the device is a new type id and no saved field changed. Not done
+  yet: a panel with real drawbar sliders, tonewheel leakage and foldback, a second manual with a pedal bass, and a
+  mod wheel that sets the scanner depth or the rotary speed.
 - **Rotary Speaker effect.** A rotating-speaker cabinet in the browser: the two inputs are summed, driven through
   a soft clipper (Drive, off is exact), split at a Crossover (200 to 1600 Hz) and sent to a horn rotor (high band)
   and a drum rotor (low band). Each rotor has a slow and a fast speed (horn 0.3 to 2 and 3 to 10 Hz, drum 0.2 to
