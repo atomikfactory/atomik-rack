@@ -4,31 +4,33 @@
 //! "macros": {
 //!   "assigns": [ { "id": 1, "bank": "macro-bank", "macro": 1..=8,
 //!                  "device": "synth1", "param": "filter.cutoff",
-//!                  "min": 20.0, "max": 18000.0, "invert": true } … ],
+//!                  "min": 20.0, "max": 18000.0, "invert": true,
+//!                  "curve": "exp", "smooth_ms": 120 } … ],
 //!   "names":   [ { "bank": "macro-bank", "macro": 1..=8, "name": "Brightness" } … ]
 //! }
 //! ```
 //!
 //! `"assigns"` are in id order, ids from 1 and unique, at most [`MAX_MACRO_ASSIGNS`]; `"invert"`
-//! is omitted when false; `"min"` and `"max"` are finite plain values. A param is assigned at
+//! is omitted when false, `"curve"` (`"exp"` or `"log"`) when linear and `"smooth_ms"` (at most
+//! [`MAX_MACRO_SMOOTH_MS`]) when 0 (both ignorable for an older reader); `"min"` and `"max"` are
+//! finite plain values. A param is assigned at
 //! most once (the loader names the path of a second assignment). `"names"` are trimmed, 1 to 24
 //! characters, one per bank and macro, in bank and macro order. Either list is omitted when
 //! empty, and the object when both are. The loader checks the shape and the numbers, not the
 //! references: an assignment may name a bank or a device that was deleted (it does nothing).
 
 use crate::container::{MACRO_COUNT, MAX_MACRO_NAME_CHARS};
-use crate::macros::{MAX_MACRO_ASSIGNS, MacroAssign, MacroName, MacroSet};
+use crate::macros::{
+    MAX_MACRO_ASSIGNS, MAX_MACRO_SMOOTH_MS, MacroAssign, MacroCurve, MacroName, MacroSet,
+};
 use crate::patch::{JsonPath, array, f32_text, json_str, number, object, string, uint};
+use crate::project::schema::{self, Obj};
 use crate::{DeviceKey, ModelError};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 const MACROS_FIELDS: &[&str] = &["assigns", "names"];
-const ASSIGN_FIELDS: &[&str] = &[
-    "id", "bank", "macro", "device", "param", "min", "max", "invert",
-];
-const ASSIGN_REQUIRED: &[&str] = &["id", "bank", "macro", "device", "param", "min", "max"];
 const NAME_FIELDS: &[&str] = &["bank", "macro", "name"];
 
 /// Writes `"macros"` (with its trailing comma and newline) after `"midi_maps"`; nothing for an
@@ -46,8 +48,17 @@ pub(crate) fn write_macros(w: &mut String, set: &MacroSet) {
             .iter()
             .map(|a| {
                 let invert = if a.invert { ", \"invert\": true" } else { "" };
+                let curve = match a.curve {
+                    MacroCurve::Linear => String::new(),
+                    c => format!(", \"curve\": \"{}\"", c.name()),
+                };
+                let smooth = if a.smooth_ms > 0 {
+                    format!(", \"smooth_ms\": {}", a.smooth_ms)
+                } else {
+                    String::new()
+                };
                 format!(
-                    "      {{\"id\": {}, \"bank\": {}, \"macro\": {}, \"device\": {}, \"param\": {}, \"min\": {}, \"max\": {}{invert}}}",
+                    "      {{\"id\": {}, \"bank\": {}, \"macro\": {}, \"device\": {}, \"param\": {}, \"min\": {}, \"max\": {}{invert}{curve}{smooth}}}",
                     a.id,
                     json_str(&a.bank.0),
                     u32::from(a.index) + 1,
@@ -111,7 +122,7 @@ pub(crate) fn load_macros(v: &Value, path: &JsonPath) -> Result<MacroSet, ModelE
         let mut driven = BTreeSet::new();
         for (i, item) in items.iter().enumerate() {
             let p = lp.index(i);
-            let a = object(item, &p, ASSIGN_FIELDS, ASSIGN_REQUIRED)?;
+            let a = schema::current(item, &p, Obj::MacroAssign)?;
             let id_path = p.field("id");
             let id = uint(&a["id"], &id_path, u64::from(u32::MAX))? as u32;
             if id == 0 {
@@ -133,6 +144,18 @@ pub(crate) fn load_macros(v: &Value, path: &JsonPath) -> Result<MacroSet, ModelE
                     .ok_or_else(|| p.field("invert").error("expected true or false"))?,
                 None => false,
             };
+            let curve = match a.get("curve") {
+                Some(c) => {
+                    let cp = p.field("curve");
+                    MacroCurve::from_name(string(c, &cp)?)
+                        .ok_or_else(|| cp.error("expected \"linear\", \"exp\" or \"log\""))?
+                }
+                None => MacroCurve::Linear,
+            };
+            let smooth_ms = match a.get("smooth_ms") {
+                Some(v) => uint(v, &p.field("smooth_ms"), u64::from(MAX_MACRO_SMOOTH_MS))? as u16,
+                None => 0,
+            };
             set.assigns.push(MacroAssign {
                 id,
                 bank: DeviceKey(string(&a["bank"], &p.field("bank"))?.to_owned()),
@@ -142,6 +165,8 @@ pub(crate) fn load_macros(v: &Value, path: &JsonPath) -> Result<MacroSet, ModelE
                 min: finite(&a["min"], &p.field("min"))?,
                 max: finite(&a["max"], &p.field("max"))?,
                 invert,
+                curve,
+                smooth_ms,
             });
         }
         set.assigns.sort_by_key(|a| a.id);

@@ -26,6 +26,8 @@ fn assign(device: &str, param: &str, min: f32, max: f32, invert: bool) -> MacroA
         min,
         max,
         invert,
+        curve: Default::default(),
+        smooth_ms: 0,
     }
 }
 

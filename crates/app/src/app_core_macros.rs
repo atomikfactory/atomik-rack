@@ -286,6 +286,7 @@ impl<S: EngineSink> AppCore<S> {
                     min,
                     max,
                     invert,
+                    merge: None,
                 }));
             }
             MacrosAction::Remove(id) => {

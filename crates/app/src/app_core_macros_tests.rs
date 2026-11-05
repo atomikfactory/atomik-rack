@@ -100,6 +100,7 @@ fn assigned() -> AppCore<RecordingSink> {
                 min,
                 max,
                 invert: false,
+                merge: None,
             }),
         );
     }
@@ -159,6 +160,7 @@ fn assigning_removing_and_a_range_edit_reach_the_engine() {
             min: 100.0,
             max: 200.0,
             invert: false,
+            merge: None,
         }),
     );
     let sent = params_of(&c.sink_mut().take());
@@ -380,6 +382,7 @@ fn demo_doc() -> RackDoc {
             min: 300.0,
             max: 2400.0,
             invert: true,
+            merge: None,
         }),
     );
     let bank = bank(&c);

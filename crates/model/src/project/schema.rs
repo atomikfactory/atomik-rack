@@ -56,6 +56,7 @@ pub(crate) enum Obj {
     Vca,
     Snapshot,
     SnapshotVca,
+    MacroAssign,
     Song,
     TempoEvent,
     MeterEvent,
@@ -94,6 +95,7 @@ impl Obj {
             Obj::Vca => &["console.vcas[]"],
             Obj::Snapshot => &["console.snapshots[]"],
             Obj::SnapshotVca => &["console.snapshots[].vcas[]"],
+            Obj::MacroAssign => &["macros.assigns[]"],
             Obj::Song => &["song"],
             Obj::TempoEvent => &["song.tempo[]"],
             Obj::MeterEvent => &["song.meter[]"],
@@ -340,6 +342,16 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Snapshot, "note", 43).ignorable(),
     field(Snapshot, "color", 43).ignorable(),
     field(Snapshot, "marker", 43).ignorable(),
+    field(MacroAssign, "id", 29).req(),
+    field(MacroAssign, "bank", 29).req(),
+    field(MacroAssign, "macro", 29).req(),
+    field(MacroAssign, "device", 29).req(),
+    field(MacroAssign, "param", 29).req(),
+    field(MacroAssign, "min", 29).req(),
+    field(MacroAssign, "max", 29).req(),
+    field(MacroAssign, "invert", 29),
+    field(MacroAssign, "curve", 43).ignorable(),
+    field(MacroAssign, "smooth_ms", 43).ignorable(),
     field(SnapshotVca, "id", 1).req(),
     field(SnapshotVca, "name", 1).req(),
     field(SnapshotVca, "level_db", 1),
@@ -863,5 +875,16 @@ mod tests {
             "an unlisted one is left for the reader to refuse"
         );
         assert_eq!(clip["id"], 2, "a field this reader knows stays");
+    }
+
+    #[test]
+    fn the_macro_assignment_curve_and_smoothing_are_ignorable_rows() {
+        let paths = ignorable_paths(SPECS, 42, 43);
+        assert_eq!(paths["macros.assigns[].curve"], 43);
+        assert_eq!(paths["macros.assigns[].smooth_ms"], 43);
+        let at_42 = fields(Obj::MacroAssign, 42);
+        assert!(at_42.contains(&"invert") && !at_42.contains(&"curve"));
+        let now = current_fields(Obj::MacroAssign);
+        assert!(now.contains(&"curve") && now.contains(&"smooth_ms"));
     }
 }

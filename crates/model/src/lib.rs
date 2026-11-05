@@ -122,8 +122,9 @@ pub use freeze::{
 pub use lane_cmd::ExtractMode;
 pub use loop_convert::LoopConvert;
 pub use macros::{
-    MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MacroAssign, MacroCommand, MacroName, MacroSet,
-    assign_position, assign_value, expand_bank_lane, macro_index_of, macro_key,
+    MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MAX_MACRO_SMOOTH_MS, MacroAssign, MacroCommand, MacroCurve,
+    MacroName, MacroSet, assign_position, assign_value, expand_bank_lane, macro_index_of,
+    macro_key,
 };
 pub use master_tune::{MASTER_TUNE_MAX_CENTS, tune_ratio};
 pub use midi_import::{ImportedTrack, MidiImport};
@@ -1192,6 +1193,8 @@ enum MergeKey {
     Macro(u64, DeviceKey, u8, DeviceKey, String),
     /// `PluginCommand::SetState` on one plugin device.
     PluginState(u64, DeviceKey),
+    /// `MacroCommand::SetRange` or `MoveRange` of one drag.
+    MacroRange(u64),
 }
 
 impl Document {
@@ -1440,6 +1443,10 @@ impl Document {
                 merge: Some(m),
                 ..
             }) => Some(MergeKey::PluginState(*m, device.clone())),
+            Command::Macro(
+                MacroCommand::SetRange { merge: Some(m), .. }
+                | MacroCommand::MoveRange { merge: Some(m), .. },
+            ) => Some(MergeKey::MacroRange(*m)),
             _ => None,
         };
         let label = command.label();
@@ -1539,6 +1546,9 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::Macro { new, .. }), Edit::Macro { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Macros { new, .. }), Edit::Macros { new: latest, .. }) if merged => {
                 new.clone_from(latest);
             }
             (Some(Edit::PluginState { new, .. }), Edit::PluginState { new: latest, .. })

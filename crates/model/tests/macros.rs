@@ -128,6 +128,8 @@ fn the_value_is_linear_between_min_and_max_and_inverts() {
         min: 400.0,
         max: 1400.0,
         invert: false,
+        curve: Default::default(),
+        smooth_ms: 0,
     };
     assert_eq!(assign_value(&a, 0.0, &p), 400.0);
     assert_eq!(assign_value(&a, 0.5, &p), 900.0);
@@ -161,6 +163,8 @@ fn a_discrete_param_rounds_half_up_and_the_position_is_the_inverse() {
         min: p.min,
         max: p.max,
         invert: false,
+        curve: Default::default(),
+        smooth_ms: 0,
     };
     // Wave runs 0..3: thirds of the macro.
     let seen: Vec<f32> = [0.0, 0.16, 0.17, 0.5, 0.83, 0.84, 1.0]
@@ -296,6 +300,7 @@ fn set_range_edits_the_range_and_refuses_a_value_outside_the_param() {
             min: 300.0,
             max: 900.0,
             invert: false,
+            merge: None,
         },
     )
     .unwrap();
@@ -313,6 +318,7 @@ fn set_range_edits_the_range_and_refuses_a_value_outside_the_param() {
         min: 300.0,
         max: 900.0,
         invert: false,
+        merge: None,
     };
     assert!(run_macro(&mut d, &r, same).is_err(), "no change is refused");
     let p = desc(&r, SYNTH, CUTOFF);
@@ -322,6 +328,7 @@ fn set_range_edits_the_range_and_refuses_a_value_outside_the_param() {
             min,
             max,
             invert: false,
+            merge: None,
         };
         assert!(
             matches!(run_macro(&mut d, &r, c), Err(ModelError::OutOfRange(_))),
@@ -336,7 +343,8 @@ fn set_range_edits_the_range_and_refuses_a_value_outside_the_param() {
                 id: 99,
                 min: 0.0,
                 max: 1.0,
-                invert: false
+                invert: false,
+                merge: None,
             }
         )
         .is_err()

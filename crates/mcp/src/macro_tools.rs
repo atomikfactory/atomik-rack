@@ -15,7 +15,7 @@ use crate::tier1::read_project_text;
 use crate::tool::{Args, ToolOutput, definition};
 use atomik_app::app_core::SEARCH_ROWS;
 use atomik_model::{
-    Command, DeviceKey, MacroCommand, ParamIndex, RackDoc, SearchTarget, macro_key,
+    Command, DeviceKey, MacroCommand, MacroCurve, ParamIndex, RackDoc, SearchTarget, macro_key,
 };
 use atomik_render::default_registry;
 use serde_json::{Value, json};
@@ -65,6 +65,12 @@ pub fn macros_json(doc: &RackDoc) -> Vec<Value> {
                             if a.invert {
                                 v["invert"] = json!(true);
                             }
+                            if a.curve != MacroCurve::Linear {
+                                v["curve"] = json!(a.curve.name());
+                            }
+                            if a.smooth_ms > 0 {
+                                v["smooth_ms"] = json!(a.smooth_ms);
+                            }
                             if !doc.macro_assign_live(a) {
                                 v["live"] = json!(false);
                             }
@@ -92,12 +98,12 @@ pub fn macros_json(doc: &RackDoc) -> Vec<Value> {
 fn macros_def() -> Value {
     definition(
         "session_macros",
-        "Macro banks in the session. A bank is a rack device (`atomik.macro-bank`) with eight macro knobs; an assignment makes one macro drive a param of another top-level device between `min` and `max` (plain values of the param), optionally inverted. A param follows at most one macro (assigning it again moves it); a driven param refuses a direct edit. `action`: `new_bank`, `bank` (choose the bank new assignments go to: `bank`), `assign` (`device`, `param`, `macro` 1 to 8, optional `bank` or `new_bank` true, `min`, `max`, `invert`), `range` (assignment `id` with `min`, `max`, `invert`), `remove` (assignment `id`, or `device` and `param`; the param keeps its value), `clear` (every assignment of `macro` of `bank`), `rename` (`bank`, `macro`, `name`; empty resets it), `set` (`bank`, `macro`, `value` 0 to 1: the macro's value, one undo step), `follow` (`on`: automation follows the selection, as the View menu item) and `lane` (`device`, `param`: show the automation lane of a param, adding the empty lane if it is missing; a param a macro drives shows the macro's lane). Returns the banks with their macros and assignments, the last message the app showed and whether there is something to undo.",
+        "Macro banks in the session. A bank is a rack device (`atomik.macro-bank`) with eight macro knobs; an assignment makes one macro drive a param of another top-level device between `min` and `max` (plain values of the param), optionally inverted. A param follows at most one macro (assigning it again moves it); a driven param refuses a direct edit. `action`: `new_bank`, `bank` (choose the bank new assignments go to: `bank`), `assign` (`device`, `param`, `macro` 1 to 8, optional `bank` or `new_bank` true, `min`, `max`, `invert`), `range` (assignment `id` with `min`, `max`, `invert`), `shape` (assignment `id` with `curve` linear, exp or log and `smooth_ms` 0 to 5000: how the macro's travel maps onto the range and the glide of a live move), `remove` (assignment `id`, or `device` and `param`; the param keeps its value), `clear` (every assignment of `macro` of `bank`), `rename` (`bank`, `macro`, `name`; empty resets it), `set` (`bank`, `macro`, `value` 0 to 1: the macro's value, one undo step), `follow` (`on`: automation follows the selection, as the View menu item) and `lane` (`device`, `param`: show the automation lane of a param, adding the empty lane if it is missing; a param a macro drives shows the macro's lane). Returns the banks with their macros and assignments, the last message the app showed and whether there is something to undo.",
         &[
             (
                 "action",
                 "string",
-                "new_bank, bank, assign, range, remove, clear, rename, set, follow or lane.",
+                "new_bank, bank, assign, range, shape, remove, clear, rename, set, follow or lane.",
             ),
             (
                 "bank",
@@ -110,7 +116,17 @@ fn macros_def() -> Value {
             (
                 "id",
                 "number",
-                "range, remove: the assignment id (`macros` in `session_status` lists them).",
+                "range, shape, remove: the assignment id (`macros` in `session_status` lists them).",
+            ),
+            (
+                "curve",
+                "string",
+                "shape: linear, exp (slow start) or log (fast start); default: unchanged.",
+            ),
+            (
+                "smooth_ms",
+                "number",
+                "shape: the glide time of a live macro move in milliseconds, 0 to 5000; default: unchanged.",
             ),
             (
                 "min",
@@ -240,6 +256,41 @@ fn macros(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
                 min: args.opt_f64("min")?.map_or(current.min, |v| v as f32),
                 max: args.opt_f64("max")?.map_or(current.max, |v| v as f32),
                 invert: args.opt_bool("invert")?.unwrap_or(current.invert),
+                merge: None,
+            });
+            session
+                .shell_mut()
+                .core_mut()
+                .apply_command(command)
+                .is_ok()
+        }
+        "shape" => {
+            let id = args.opt_u64("id")?.ok_or("missing argument `id`")? as u32;
+            let current = session
+                .shell()
+                .core()
+                .doc()
+                .macros
+                .assigns
+                .iter()
+                .find(|a| a.id == id)
+                .cloned()
+                .ok_or_else(|| format!("no assignment {id}"))?;
+            let curve = match args.opt_str("curve")? {
+                Some(name) => MacroCurve::from_name(name)
+                    .ok_or_else(|| format!("curve is linear, exp or log, not {name:?}"))?,
+                None => current.curve,
+            };
+            let smooth_ms = match args.opt_u64("smooth_ms")? {
+                Some(ms) => {
+                    u16::try_from(ms).map_err(|_| "smooth_ms is at most 5000".to_owned())?
+                }
+                None => current.smooth_ms,
+            };
+            let command = Command::Macro(MacroCommand::SetShape {
+                id,
+                curve,
+                smooth_ms,
             });
             session
                 .shell_mut()
