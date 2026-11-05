@@ -49,6 +49,7 @@ fn song(lanes: Vec<ControllerLane>) -> RackDoc {
                 scale: None,
                 param_lanes: Vec::new(),
                 midi: Default::default(),
+                groove: None,
                 controllers: lanes,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, length, 69, 1.0)].into()),

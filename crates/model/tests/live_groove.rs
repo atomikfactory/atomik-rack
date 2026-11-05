@@ -356,3 +356,161 @@ fn deleting_the_track_or_duplicating_it_keeps_a_valid_document() {
         .count();
     assert_eq!(copies, 2, "a copy keeps the groove");
 }
+
+/// `song` plus a second clip on `lead` (one note on its second step, one bar later); the clips are
+/// 1 (first bar) and 3 (second bar).
+fn two_clips(reg: &Registry) -> Document {
+    let mut d = song(reg);
+    d.apply(
+        add_clip("lead", 0, notes_clip(BAR, BAR, vec![note(S, S, 67, 0.8)])),
+        reg,
+    )
+    .unwrap();
+    d
+}
+
+fn set_clip(clips: &[u64], groove: Option<TrackGroove>) -> Command {
+    sc(SongCommand::SetClipGroove {
+        clips: clips.iter().map(|&i| ClipId(i)).collect(),
+        groove,
+    })
+}
+
+#[test]
+fn a_clip_groove_overrides_the_track_groove_for_its_own_notes_only() {
+    let reg = registry();
+    let mut d = two_clips(&reg);
+    d.apply(set("lead", Some(live("Swing 55%", 100))), &reg)
+        .unwrap();
+    d.apply(set_clip(&[3], Some(live("Late", 100))), &reg)
+        .unwrap();
+    let notes = played(&d, "lead");
+    // The first clip plays the track's swing: its step 1 note is delayed by the 55% swing.
+    let first = notes.iter().find(|n| n.2 == 62).unwrap();
+    assert_eq!(first.0, S + (S as f64 * 0.1).round() as i64);
+    // The second clip plays "Late", a quarter step late and softer, not the track's swing.
+    let second = notes.iter().find(|n| n.2 == 67).unwrap();
+    assert_eq!(second.0, BAR + S + S / 4);
+    assert!((second.3 - 0.4).abs() < 1e-6);
+    assert!(
+        notes
+            .windows(2)
+            .all(|w| (w[0].0, w[0].2) <= (w[1].0, w[1].2))
+    );
+    // The stored notes are untouched.
+    assert_eq!(stored(&d, 3), [note(S, S, 67, 0.8)]);
+}
+
+#[test]
+fn a_clip_groove_works_on_a_track_without_one_and_none_hands_the_clip_back() {
+    let reg = registry();
+    let mut d = two_clips(&reg);
+    let plain = played(&d, "lead");
+    d.apply(set_clip(&[3], Some(live("Late", 100))), &reg)
+        .unwrap();
+    let grooved = played(&d, "lead");
+    assert_ne!(grooved, plain);
+    assert_eq!(grooved[..3], plain[..3], "the first clip plays as stored");
+    d.apply(set_clip(&[3], None), &reg).unwrap();
+    assert_eq!(played(&d, "lead"), plain);
+    d.undo().unwrap();
+    assert_eq!(played(&d, "lead"), grooved);
+}
+
+#[test]
+fn a_clip_groove_is_refused_for_a_missing_groove_a_bad_strength_or_a_non_note_clip() {
+    let reg = registry();
+    let mut d = two_clips(&reg);
+    assert!(matches!(
+        d.apply(set_clip(&[3], Some(live("Gone", 100))), &reg),
+        Err(ModelError::UnknownKey(_))
+    ));
+    assert!(matches!(
+        d.apply(set_clip(&[3], Some(live("Late", 101))), &reg),
+        Err(ModelError::OutOfRange(_))
+    ));
+    assert!(d.apply(set_clip(&[], None), &reg).is_err());
+    assert!(
+        d.apply(set_clip(&[3], None), &reg).is_err(),
+        "nothing changes"
+    );
+    assert!(
+        d.apply(set_clip(&[99], Some(live("Late", 50))), &reg)
+            .is_err()
+    );
+}
+
+#[test]
+fn renaming_or_deleting_a_groove_follows_on_the_clips_in_one_undo_step() {
+    let reg = registry();
+    let mut d = two_clips(&reg);
+    d.apply(set_clip(&[1, 3], Some(live("Late", 70))), &reg)
+        .unwrap();
+    d.apply(
+        sc(SongCommand::RenameGroove {
+            from: "Late".into(),
+            to: "Behind".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let g = |d: &Document, id| {
+        d.doc()
+            .song
+            .clip(ClipId(id))
+            .unwrap()
+            .2
+            .groove
+            .as_deref()
+            .cloned()
+    };
+    assert_eq!(g(&d, 1), Some(live("Behind", 70)));
+    assert_eq!(g(&d, 3), Some(live("Behind", 70)));
+    d.undo().unwrap();
+    assert_eq!(g(&d, 3), Some(live("Late", 70)));
+    d.apply(
+        sc(SongCommand::DeleteGroove {
+            name: "Late".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    assert_eq!((g(&d, 1), g(&d, 3)), (None, None));
+    d.undo().unwrap();
+    assert_eq!(g(&d, 1), Some(live("Late", 70)));
+}
+
+#[test]
+fn editing_the_template_reports_a_song_change_when_only_a_clip_uses_it() {
+    let reg = registry();
+    let mut d = two_clips(&reg);
+    d.apply(set_clip(&[3], Some(live("Late", 100))), &reg)
+        .unwrap();
+    let ops = d.apply(sc(SongCommand::SetGroove(late())), &reg).unwrap();
+    assert!(ops.contains(&SyncOp::SongChanged), "{ops:?}");
+}
+
+#[test]
+fn the_clip_groove_round_trips_and_a_clip_naming_a_missing_groove_loads_without_it() {
+    let reg = registry();
+    let mut d = two_clips(&reg);
+    d.apply(set_clip(&[1], Some(live("Late", 100))), &reg)
+        .unwrap();
+    d.apply(set_clip(&[3], Some(live("Swing 55%", 35))), &reg)
+        .unwrap();
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let clips = &v["song"]["tracks"][0]["lanes"][0]["clips"];
+    assert_eq!(clips[0]["groove"], "Late");
+    assert!(clips[0].get("groove_strength").is_none());
+    assert_eq!(clips[1]["groove"], "Swing 55%");
+    assert_eq!(clips[1]["groove_strength"], 35);
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(save_project(&loaded), text, "canonical");
+    let gone = text.replace("\"groove\": \"Late\"", "\"groove\": \"Gone\"");
+    let loaded = load_project(&gone, &reg).unwrap();
+    assert!(loaded.song.clip(ClipId(1)).unwrap().2.groove.is_none());
+    assert!(!save_project(d.doc()).is_empty());
+    // A project without a clip groove writes nothing for it.
+    assert!(!save_project(two_clips(&reg).doc()).contains("\"groove\""));
+}

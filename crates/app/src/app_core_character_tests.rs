@@ -95,6 +95,7 @@ fn clip(length: i64, content: ClipContent) -> Clip {
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

@@ -2,13 +2,15 @@
 //! `RenameGroove`, `DeleteGroove`, `ExtractGroove`); the arithmetic is in [`crate::groove`].
 
 use crate::groove::{
-    Groove, MAX_GROOVES, QuantizeParams, builtin_groove, extract_groove, quantize_notes,
+    GROOVE_STRENGTH_MAX, Groove, MAX_GROOVES, QuantizeParams, builtin_groove, extract_groove,
+    quantize_notes_in,
 };
 use crate::history::{Edit, Swap};
 use crate::song::{Clip, ClipContent, ClipId, Song, SongCommand, TrackGroove};
 use crate::song_cmd::{bad, check_note, range};
 use crate::{DeviceKey, ModelError, RackDoc};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 /// The clip `id` with its device and lane index.
 fn find(doc: &RackDoc, id: ClipId) -> Result<(DeviceKey, usize, &Clip), ModelError> {
@@ -57,7 +59,16 @@ fn clip_edit(
     if is_compiled(doc, &device, lane, clip) {
         return Ok(None);
     }
-    let out = quantize_notes(notes, selected, c.start - c.offset, clip.0, params, groove);
+    let meter = doc.song.meter_table();
+    let out = quantize_notes_in(
+        notes,
+        selected,
+        c.start - c.offset,
+        clip.0,
+        params,
+        groove,
+        Some(meter.map()),
+    );
     // The same rules a SetClipContent of these notes would meet, so the step is always one the
     // document accepts (and saves).
     for n in &out.notes {
@@ -107,13 +118,15 @@ fn with_groove(song: &Song, groove: Groove) -> Result<Edit, ModelError> {
     })
 }
 
-/// The edits that give every track that names the groove `name` `with(its live groove)` instead.
+/// The edits that give every track and every note clip that names the groove `name`
+/// `with(its live groove)` instead.
 fn retarget(
     song: &Song,
     name: &str,
     with: impl Fn(&TrackGroove) -> Option<TrackGroove>,
 ) -> Vec<Edit> {
-    song.tracks
+    let mut edits: Vec<Edit> = song
+        .tracks
         .iter()
         .filter_map(|t| {
             let old = t.groove.clone().filter(|g| g.name == name)?;
@@ -123,7 +136,77 @@ fn retarget(
                 old: Some(old),
             }))
         })
-        .collect()
+        .collect();
+    for t in &song.tracks {
+        for (lane, l) in t.lanes.iter().enumerate() {
+            for c in &l.clips {
+                let Some(old) = c.groove.as_deref().filter(|g| g.name == name) else {
+                    continue;
+                };
+                edits.push(Edit::Clip {
+                    device: t.device.clone(),
+                    lane,
+                    old: Some(c.clone()),
+                    new: Some(Clip {
+                        groove: with(old).map(Arc::new),
+                        ..c.clone()
+                    }),
+                });
+            }
+        }
+    }
+    edits
+}
+
+/// The edit that gives the note clips `clips` the live groove `groove`.
+fn set_clip_groove(
+    doc: &RackDoc,
+    clips: Vec<ClipId>,
+    groove: Option<TrackGroove>,
+) -> Result<Edit, ModelError> {
+    if let Some(g) = &groove {
+        if doc.song.groove(&g.name).is_none() {
+            return Err(ModelError::UnknownKey(format!("groove {}", g.name)));
+        }
+        if g.strength > GROOVE_STRENGTH_MAX {
+            return Err(range(format!(
+                "groove strength {} is outside 0..={GROOVE_STRENGTH_MAX}",
+                g.strength
+            )));
+        }
+    }
+    let ids: BTreeSet<ClipId> = clips.into_iter().collect();
+    if ids.is_empty() {
+        return Err(bad("no clips are selected"));
+    }
+    let mut edits = Vec::new();
+    for id in ids {
+        let (device, lane, c) = find(doc, id)?;
+        if !c.content.is_notes() {
+            return Err(bad(format!("clip {} is not a note clip", id.0)));
+        }
+        if is_compiled(doc, &device, lane, id) {
+            return Err(bad(format!(
+                "clip {} is compiled from takes; give the track the groove instead",
+                id.0
+            )));
+        }
+        if c.groove.as_deref() != groove.as_ref() {
+            edits.push(Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    groove: groove.clone().map(Arc::new),
+                    ..c.clone()
+                }),
+            });
+        }
+    }
+    if edits.is_empty() {
+        return Err(bad("the clips already have that groove"));
+    }
+    Ok(Edit::Compound(edits))
 }
 
 /// Plans one quantize or groove command.
@@ -168,6 +251,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             )
         }
         SongCommand::SetGroove(groove) => with_groove(song, groove),
+        SongCommand::SetClipGroove { clips, groove } => set_clip_groove(doc, clips, groove),
         SongCommand::RenameGroove { from, to } => {
             let mut new = song.grooves.clone();
             let at = new

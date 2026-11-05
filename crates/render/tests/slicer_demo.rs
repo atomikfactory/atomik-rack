@@ -238,6 +238,7 @@ pub fn demo_doc(hash: &str, meta: &AssetMeta, markers: &[u64]) -> RackDoc {
                 scale: None,
                 param_lanes: Vec::new(),
                 midi: Default::default(),
+                groove: None,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

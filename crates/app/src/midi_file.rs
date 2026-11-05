@@ -998,6 +998,7 @@ impl MidiTrack {
             param_lanes: Vec::new(),
             controllers: self.controllers,
             midi: self.midi.into(),
+            groove: None,
             content: ClipContent::Notes(self.notes.into()),
         }
     }

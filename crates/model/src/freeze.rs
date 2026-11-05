@@ -90,6 +90,7 @@ impl Frozen {
             scale: None,
             param_lanes: Vec::new(),
             midi: Default::default(),
+            groove: None,
             controllers: Vec::new(),
             name: None,
             color: None,
@@ -429,6 +430,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::SetClipScale { clip, .. }
                 | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),
                 SongCommand::ApplyQuantize { clips, .. }
+                | SongCommand::SetClipGroove { clips, .. }
                 | SongCommand::ApplyNoteTool { clips, .. } => clips.iter().find_map(clip_frozen),
                 SongCommand::SetClipMeta { ids, .. } => ids.iter().find_map(clip_frozen),
                 SongCommand::SetTempoMap(_)
@@ -688,6 +690,7 @@ pub(crate) fn plan_rendered_track(
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

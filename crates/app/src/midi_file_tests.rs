@@ -34,6 +34,7 @@ fn clip(start: i64, length: i64, notes: Vec<Note>, controllers: Vec<ControllerLa
         controllers,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         content: ClipContent::Notes(notes.into()),
     }
 }

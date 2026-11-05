@@ -135,6 +135,7 @@ pub(super) fn load_clip(
             scale: None,
             param_lanes: Vec::new(),
             midi: Default::default(),
+            groove: None,
             controllers: Vec::new(),
             name,
             color,
@@ -193,8 +194,40 @@ pub(super) fn load_clip(
             None => Vec::new(),
         },
         midi: std::sync::Arc::new(load_midi_data(obj, path)?),
+        groove: load_clip_groove(obj, path, song)?,
         content,
     })
+}
+
+/// Reads a note clip's optional `"groove"` (a groove of the song or a built-in one) and
+/// `"groove_strength"` (percent `0..=99`, 100 when omitted). A clip pasted from another song can
+/// name a groove this song lacks: such a clip loads without a groove (it plays as it is stored).
+fn load_clip_groove(
+    obj: &serde_json::Map<String, Value>,
+    path: &JsonPath,
+    song: &Song,
+) -> Result<Option<Arc<TrackGroove>>, ModelError> {
+    let strength_path = path.field("groove_strength");
+    let Some(name) = obj.get("groove") else {
+        if obj.contains_key("groove_strength") {
+            return Err(strength_path.error("a strength needs the clip's \"groove\""));
+        }
+        return Ok(None);
+    };
+    let name = string(name, &path.field("groove"))?;
+    let strength = match obj.get("groove_strength") {
+        None => GROOVE_STRENGTH_MAX,
+        Some(v) => {
+            let n = uint(v, &strength_path, u64::from(GROOVE_STRENGTH_MAX - 1))?;
+            u8::try_from(n).map_err(|_| strength_path.error("out of range"))?
+        }
+    };
+    Ok(song.groove(name).map(|_| {
+        Arc::new(TrackGroove {
+            name: name.to_owned(),
+            strength,
+        })
+    }))
 }
 
 /// Reads a note clip's optional `"programs"` (`[tick, program]`, or `[tick, program, msb, lsb]` with

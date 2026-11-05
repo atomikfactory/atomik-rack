@@ -124,6 +124,7 @@ fn note_clip(start: i64, length: i64, notes: Vec<Note>) -> Clip {
         scale: None,
         param_lanes: Vec::new(),
         midi: Default::default(),
+        groove: None,
         controllers: Vec::new(),
         name: None,
         color: None,

@@ -161,6 +161,7 @@ impl QuantizeValues {
             humanize_time: pct(self.humanize_time),
             humanize_velocity: pct(self.humanize_velocity),
             seed: self.seed,
+            ..QuantizeParams::default()
         }
     }
 }

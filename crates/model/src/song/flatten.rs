@@ -31,7 +31,8 @@
 //!   is cut at the piece end as before.
 //! - **Live groove.** After all of the above, a track's [`Track::groove`] moves each flattened
 //!   note by the offset of the slot of the song-grid position nearest to it and scales its
-//!   velocity, both by the track's strength ([`flatten_track_notes`]); lengths stay.
+//!   velocity, both by the track's strength ([`flatten_track_notes`]); lengths stay. A clip with a
+//!   groove of its own ([`Clip::groove`]) plays that instead of the track's.
 //! - **Automation.** Each piece emits a point at its start carrying the content value there
 //!   (interpolated if between points, the first value before the first point), then every
 //!   content point inside the piece. A ramp still running at the end of a piece gets a closing
@@ -60,7 +61,7 @@
 
 use super::{
     AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind,
-    Song, Track,
+    Song, Track, TrackGroove,
 };
 use crate::DeviceKey;
 use crate::controller::{ControllerKind, value_at as lane_value_at};
@@ -142,12 +143,25 @@ pub fn flatten_notes(track: &Track) -> Vec<(i64, i64, u8, f32)> {
 /// end, the loop end or the start of a later clip); without it the note is cut at the end of
 /// its piece.
 pub fn flatten_notes_with(track: &Track, tails: bool) -> Vec<(i64, i64, u8, f32)> {
+    flatten_notes_of(track, tails, |_| true)
+}
+
+/// [`flatten_notes_with`] for the clips `keep` accepts only. Which clips hide which is decided
+/// first, over all of them, so a note a later clip hides stays hidden whatever `keep` says.
+fn flatten_notes_of(
+    track: &Track,
+    tails: bool,
+    keep: impl Fn(&Clip) -> bool,
+) -> Vec<(i64, i64, u8, f32)> {
     let mut out = Vec::new();
     for lane in track.played_note_lanes() {
         for (clip, s, e, cs) in audible_pieces(lane) {
             let ClipContent::Notes(notes) = &clip.content else {
                 continue;
             };
+            if !keep(clip) {
+                continue;
+            }
             let ce = cs + (e - s);
             let from = notes.partition_point(|n| n.tick < cs);
             for n in notes[from..].iter().take_while(|n| n.tick < ce) {
@@ -171,15 +185,36 @@ pub fn flatten_notes_with(track: &Track, tails: bool) -> Vec<(i64, i64, u8, f32)
 /// groove that names nothing plays nothing different). The stored notes are not touched, so this
 /// is the one flattening the engine, the offline render and the MIDI export all use.
 pub fn flatten_track_notes(song: &Song, track: &Track) -> Vec<(i64, i64, u8, f32)> {
-    let notes = flatten_notes_with(track, song.tails);
-    match track
-        .groove
-        .as_ref()
-        .and_then(|g| Some((song.groove(&g.name)?, g.strength)))
-    {
+    let live = |g: &TrackGroove| Some((song.groove(&g.name)?, g.strength));
+    let own: Vec<&TrackGroove> = track
+        .played_note_lanes()
+        .flat_map(|l| &l.clips)
+        .filter_map(|c| c.groove.as_deref())
+        .collect();
+    let apply = |notes, groove: Option<&TrackGroove>| match groove.and_then(live) {
         Some((groove, strength)) => crate::groove::groove_notes(notes, &groove, strength),
         None => notes,
+    };
+    if own.is_empty() {
+        return apply(flatten_notes_with(track, song.tails), track.groove.as_ref());
     }
+    // Clips with a groove of their own play it instead of the track's; the rest play the track's.
+    let mut out = apply(
+        flatten_notes_of(track, song.tails, |c| c.groove.is_none()),
+        track.groove.as_ref(),
+    );
+    let mut seen: Vec<&TrackGroove> = Vec::new();
+    for g in own {
+        if seen.contains(&g) {
+            continue;
+        }
+        seen.push(g);
+        let notes = flatten_notes_of(track, song.tails, |c| c.groove.as_deref() == Some(g));
+        out.extend(apply(notes, Some(g)));
+    }
+    // Stable: equal `(tick, key)` keep the order of the groups above.
+    out.sort_by_key(|&(t, _, k, _)| (t, k));
+    out
 }
 
 /// The content value at content position `c` and the shape of the curve leaving it.

@@ -39,6 +39,7 @@ fn project() -> atomik_model::RackDoc {
                 scale: None,
                 param_lanes: Vec::new(),
                 midi: Default::default(),
+                groove: None,
                 controllers: Vec::new(),
                 name: None,
                 color: None,

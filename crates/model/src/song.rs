@@ -445,6 +445,12 @@ pub struct Clip {
     /// only on a note clip (see [`crate::midi_data`]). Nothing plays them; a MIDI file export
     /// writes them back. Shared, so a clip without any costs one pointer.
     pub midi: Arc<MidiData>,
+    /// A live groove of the clip's own: its notes play moved and accented by a groove template
+    /// of the song and the track's [`Track::groove`] does not touch them. `Some` only on a note
+    /// clip. Like the track's, it is applied when the song is flattened, so the stored notes never
+    /// change (see [`crate::groove`]). Renaming the groove renames it here; deleting the groove
+    /// takes it off the clips.
+    pub groove: Option<Arc<TrackGroove>>,
     /// Content.
     pub content: ClipContent,
 }
@@ -842,6 +848,16 @@ pub enum SongCommand {
         /// Device (track).
         device: DeviceKey,
         /// The groove, or `None` to play the notes as they are.
+        groove: Option<TrackGroove>,
+    },
+    /// Set or clear the live groove of note clips (see [`Clip::groove`]): the clips play moved and
+    /// accented by the groove instead of the track's. The groove must exist; every clip must be a
+    /// note clip that is not compiled from takes. One undo step; reports
+    /// [`crate::SyncOp::SongChanged`].
+    SetClipGroove {
+        /// The clips.
+        clips: Vec<ClipId>,
+        /// The groove, or `None` to hand the clips back to the track's groove.
         groove: Option<TrackGroove>,
     },
     /// Add a note lane after the track's last note lane (before its automation lanes), with a
@@ -1713,6 +1729,16 @@ pub const MAX_TICK: i64 = 1 << 40;
 pub const MAX_LOOP_REPEATS: i64 = 4096;
 
 impl Song {
+    /// Whether any track or note clip names a live groove.
+    pub fn uses_live_groove(&self) -> bool {
+        self.tracks.iter().any(|t| {
+            t.groove.is_some()
+                || t.lanes
+                    .iter()
+                    .any(|l| l.clips.iter().any(|c| c.groove.is_some()))
+        })
+    }
+
     /// The groove called `name`: one of the song's, else a built-in one.
     pub fn groove(&self, name: &str) -> Option<Groove> {
         self.grooves

@@ -824,8 +824,8 @@ pub enum Command {
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
-/// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track has a live groove |
-/// | a track's live groove (`SetTrackGroove`; also undo/redo) | `SongChanged` |
+/// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track or clip has a live groove |
+/// | a track's or note clip's live groove (`SetTrackGroove`, `SetClipGroove`; also undo/redo) | `SongChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
 /// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveTracks`, `MoveGroup`, `MoveGroupTo`, `SetGroupFlags`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
