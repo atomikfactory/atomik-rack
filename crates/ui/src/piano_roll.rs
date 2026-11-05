@@ -2791,7 +2791,9 @@ impl PianoRollView {
                 base,
             } => {
                 *p = pos;
-                let mut s = base.clone();
+                // The notes the press started from may be gone (an undo in the middle of the band).
+                let mut s: BTreeSet<usize> =
+                    base.iter().copied().filter(|i| *i < rects.len()).collect();
                 s.extend(seq_edit::rubber_band(*start, pos, &rects));
                 new_sel = Some(s);
             }

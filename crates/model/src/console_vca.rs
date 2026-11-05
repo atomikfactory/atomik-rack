@@ -334,6 +334,12 @@ fn edit_groups(
     Ok(())
 }
 
+/// Puts the members of every group back in console order after the strips were reordered, in
+/// the same step (a group keeps its members sorted the way the console shows them).
+pub(crate) fn keep_member_order(p: &mut Planner<'_>) -> Result<(), ModelError> {
+    edit_groups(p, |_| Ok(()))
+}
+
 /// The refusal of a hand edit of the members of a group that follows a folder.
 fn followed(g: &VcaGroup) -> ModelError {
     bad(format!(

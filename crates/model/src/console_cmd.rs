@@ -686,6 +686,7 @@ pub(crate) fn plan(
                 from,
                 to: to.min(console.channels.len() - 1),
             });
+            crate::console_vca::keep_member_order(&mut p)?;
         }
         ConsoleCommand::SetReturn { slot, effect } => {
             if slot >= FX_SLOTS {

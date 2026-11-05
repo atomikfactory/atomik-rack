@@ -208,7 +208,7 @@ pub(crate) fn check_cable(
     }
     if would_create_cycle(doc, registry, cable) {
         return Err(ModelError::BadCable(format!(
-            "{} -> {} would create a cycle (feedback loops are not supported)",
+            "{} -> {} would create a cycle (a loop must pass through a Feedback Route)",
             cable.from, cable.to
         )));
     }
@@ -468,7 +468,7 @@ pub(crate) fn expanded_problem(
     cables: &[Cable],
     registry: &Registry,
 ) -> Option<String> {
-    const CYCLE: &str = "would create a cycle (feedback loops are not supported)";
+    const CYCLE: &str = "would create a cycle (a loop must pass through a Feedback Route)";
     let (flat, looped) = crate::expand::expand_with_loops(devices, cables, registry);
     if looped {
         return Some(format!(

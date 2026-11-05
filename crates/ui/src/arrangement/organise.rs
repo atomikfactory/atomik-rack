@@ -1004,6 +1004,11 @@ impl ArrangementView {
                 // A blank name clears it; the model trims and checks the rest.
                 let name: String = text.chars().take(MAX_CLIP_NAME_CHARS).collect();
                 let name = name.trim_end().to_owned();
+                // Nothing changes when the name is the one the clip has (no command, no undo step).
+                let current = self.song.clip(id).and_then(|(_, _, c)| c.name.as_deref());
+                if current.unwrap_or("") == name {
+                    return;
+                }
                 let change = if name.is_empty() {
                     MetaChange::Clear
                 } else {

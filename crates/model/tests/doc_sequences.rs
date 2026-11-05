@@ -292,7 +292,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..15, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
-        (0usize..5).prop_map(WfOp::AddDevice),
+        (0usize..6).prop_map(WfOp::AddDevice),
         (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
         (0usize..12, 0u8..8, 0u8..40).prop_map(|(d, s, v)| WfOp::ModSlot(d, s, v)),
         (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
@@ -696,7 +696,15 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
         }),
         WfOp::AddDevice(t) => add(
             usize::MAX,
-            [SYNTH, DELAY, CONTAINER, SAMPLER, "atomik.midi-out"][*t],
+            [
+                SYNTH,
+                DELAY,
+                CONTAINER,
+                SAMPLER,
+                "atomik.midi-out",
+                // The only device a loop may run through.
+                "atomik.feedback",
+            ][*t],
             None,
         ),
         WfOp::ModSlot(i, slot, v) => {
@@ -1141,4 +1149,15 @@ proptest! {
     fn whole_document_sequences_keep_the_invariants(steps in prop::collection::vec(step(), 0..50)) {
         run_sequence(&steps)?;
     }
+}
+
+#[test]
+fn moving_a_channel_after_a_folder_with_a_following_group_keeps_the_invariants() {
+    run_sequence(&[
+        Step::Wf(WfOp::Folder(vec![5, 2])),
+        Step::Console(ConsoleOp::VcaForFolder(0)),
+        Step::Console(ConsoleOp::FollowFolder(0, None)),
+        Step::Console(ConsoleOp::MoveChannel(30, 1)),
+    ])
+    .expect("the sequence keeps the invariants");
 }

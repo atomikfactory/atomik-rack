@@ -437,3 +437,35 @@ fn a_note_dropped_on_another_replaces_it_and_stays_selected() {
     assert_eq!(list.len(), 2);
     assert!(sel.is_empty());
 }
+
+#[test]
+fn a_band_that_outlives_an_undo_does_not_select_notes_that_are_gone() {
+    let (doc, reg) = (song_doc(), registry());
+    let (a, b) = roll_pair(&doc, &reg);
+    let steps = [
+        Step::Down(940.531_771_768_571_4, 91.994_530_304_030_18, 0, true, false),
+        Step::Up(0.0, 0.0, 0),
+        Step::Down(
+            526.912_150_869_650_8,
+            101.538_264_025_009_81,
+            2,
+            false,
+            false,
+        ),
+        Step::Undo,
+        Step::Move(0.0, 0.0, 0),
+    ];
+    run(a, b, doc, &reg, &steps).expect("the selection stays valid after the undo");
+}
+
+#[test]
+fn committing_an_unchanged_clip_name_sends_nothing() {
+    let (doc, reg) = (song_doc(), registry());
+    let (a, b) = arrangement_pair(&doc, &reg);
+    let steps = [
+        Step::Down(403.162_898_747_330_74, 160.650_733_248_032, 0, true, false),
+        Step::Key(9, 0),
+        Step::Down(0.0, 0.0, 0, false, false),
+    ];
+    run(a, b, doc, &reg, &steps).expect("an unchanged name is not a command");
+}

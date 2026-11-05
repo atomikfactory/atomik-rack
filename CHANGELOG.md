@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Feedback routing: the Feedback Route device makes a loop legal.** A cable that would close a loop is still
+  refused ("a loop must pass through a Feedback Route"), but a loop that runs through the new Feedback Route
+  utility is accepted when you cable it, when a project is read and inside containers. The device delays a stereo
+  signal by at least one engine batch (64 frames, about 1.3 ms at 48 kHz), or by Time (0 to 1000 ms, whole
+  frames), and scales what comes back by Gain (-60 to 0 dB); a change of either glides over about 50 ms. The first
+  delay's worth of output is silence and the n-th frame out is exactly the (n - delay)-th frame in, so a bounce
+  of a loop is bit-identical at every host buffer size and with any number of workers. The delay is not reported as
+  latency (the loop is not compensated), what enters is limited to plus or minus 16 so a loop with too much gain
+  stays finite, and the device has no bypass. Cable the end of the chain into In L/R and Out L/R to where the
+  signal should re-enter; one loop may pass through several of them, and a Feedback Route may feed its own
+  inputs for a plain repeating delay. The project format stays 43: the device is a new type id, no saved field
+  changed. Not done yet: a delay shorter than one batch, a latency-aligned loop, a feedback send and return pair
+  for two places far apart in a rack, and a distinct look for a cable that closes a loop.
 - **Macro follow-ups: a curve and a smoothing time per assignment, a driven knob that moves its range, assigning by
   dragging a knob onto a macro and a range edit by dragging.** Each assignment in the Macros panel has a CURVE button
   (linear, exp for a slow start, log for a fast start: the travel between MIN and MAX bends, the two ends stay
