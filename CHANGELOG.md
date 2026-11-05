@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Track organisation follow-ups: stacked bars in small tracks, comments of several lines and folding the
+  controller lane.** In a track under 32 px a note clip drops its header band and draws its notes as stacked bars
+  over the whole clip (the name is small text on them, and the mute button is left out). A track comment is typed in
+  a box of five lines over the header, with the caret, selection, clipboard and input method of the other text
+  fields: Shift+Enter breaks the line, Enter or a press outside commits, Escape cancels. The controller
+  area of the piano roll has a chevron at the left of its chip row that folds the lane away and keeps the chips,
+  like a folded automation lane; picking a lane chip unfolds it. Project format unchanged (43). Routing the tracks of
+  a folder to an output bus and a folder-level fader are not built yet.
 - **Takes: a razor and comping several tracks at once.** With the Razor tool, a click in a take row cuts the comp
   at the pointer: from there to the end of the comp segment under it (or to the next segment when the comp is silent)
   plays from that take; a drag with the razor comps the dragged range like a plain drag, and a click that would change
