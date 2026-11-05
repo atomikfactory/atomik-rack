@@ -10,6 +10,7 @@ use crate::record::InputQuantize;
 use crate::windows::WindowKind;
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
+use atomik_ui::big_meter::MeterMode;
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
     OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, SONG_ARGS, TEMPLATE_ARGS,
@@ -302,6 +303,8 @@ pub enum AppCommand {
     MorphPreviousSnapshot,
     /// Mixer > Morph Time: how long a morph takes, in seconds (`mixer.morph_time`).
     MorphTime(u8),
+    /// Mixer > Meter Mode: the ballistics of the console strip meters (`mixer.meter_mode`).
+    MeterMode(MeterMode),
     /// Mixer > Snapshot Includes Effects: the current snapshot holds the effect parameters too.
     SnapshotEffects,
     /// Mixer > Compare A/B: starts comparing the mix with a snapshot (`mixer.compare_snapshot`,
@@ -774,6 +777,7 @@ impl AppCommand {
             AppCommand::CreateParallel => ("mixer.create_parallel", None),
             AppCommand::ToggleSendFollow => ("mixer.toggle_send_follow", None),
             AppCommand::LinkFaders => ("mixer.link_faders", None),
+            AppCommand::MeterMode(m) => ("mixer.meter_mode", Some(m.word())),
             AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
             AppCommand::CreateVca => ("mixer.create_vca", None),
             AppCommand::AddToVca(None) => ("mixer.add_to_vca", None),
@@ -1065,6 +1069,7 @@ impl AppCommand {
             ("mixer.create_parallel", None) => AppCommand::CreateParallel,
             ("mixer.toggle_send_follow", None) => AppCommand::ToggleSendFollow,
             ("mixer.link_faders", None) => AppCommand::LinkFaders,
+            ("mixer.meter_mode", Some(a)) => AppCommand::MeterMode(MeterMode::from_word(a)?),
             ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
             ("mixer.create_vca", None) => AppCommand::CreateVca,
             ("mixer.add_to_vca", None) => AppCommand::AddToVca(None),
@@ -1747,6 +1752,8 @@ pub struct StripMenu {
     pub can_reset: bool,
     /// A selected strip has an insert chain: Clear Inserts works.
     pub can_clear_inserts: bool,
+    /// The ballistics the strip meters show (Meter Mode).
+    pub meter_mode: MeterMode,
 }
 
 /// What a Copy Channel Settings takes from the strip: everything, or one section.
@@ -2623,6 +2630,23 @@ pub fn menus_with_songs(
                     AppCommand::ToggleSendFollow,
                     state.send_follow,
                 ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Meter Mode",
+                    entries: [
+                        ("Peak Meters", MeterMode::Peak),
+                        ("PPM Meters", MeterMode::Ppm),
+                        ("VU Meters", MeterMode::Vu),
+                    ]
+                    .into_iter()
+                    .map(|(label, mode)| {
+                        check(
+                            label,
+                            AppCommand::MeterMode(mode),
+                            state.strip.meter_mode == mode,
+                        )
+                    })
+                    .collect(),
+                }),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
@@ -3565,6 +3589,9 @@ mod tests {
         for s in MORPH_TIME_ARGS.iter().filter_map(|a| a.parse().ok()) {
             v.push(AppCommand::MorphTime(s));
         }
+        for m in MeterMode::ALL {
+            v.push(AppCommand::MeterMode(m));
+        }
         v.push(AppCommand::MorphSnapshot(None));
         v.push(AppCommand::MorphPreviousSnapshot);
         v.push(AppCommand::SnapshotEffects);
@@ -4166,6 +4193,9 @@ mod tests {
                 "Delay Compensation",
                 "Align Returns",
                 "Sends Follow Bus",
+                "Peak Meters",
+                "PPM Meters",
+                "VU Meters",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Previous track",

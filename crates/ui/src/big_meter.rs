@@ -11,10 +11,12 @@
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::theme::Theme;
+use serde::{Deserialize, Serialize};
 use vello::kurbo::{Point, Rect, RoundedRect};
 
 /// Which ballistics the meter shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MeterMode {
     /// Average level: the needle reaches 99 % of a steady tone in [`VU_RISE_SECONDS`].
     #[default]
@@ -28,6 +30,20 @@ pub enum MeterMode {
 impl MeterMode {
     /// Every mode, in button order.
     pub const ALL: [MeterMode; 3] = [MeterMode::Vu, MeterMode::Ppm, MeterMode::Peak];
+
+    /// The word of the `mixer.meter_mode` argument.
+    pub fn word(self) -> &'static str {
+        match self {
+            MeterMode::Vu => "vu",
+            MeterMode::Ppm => "ppm",
+            MeterMode::Peak => "peak",
+        }
+    }
+
+    /// The mode a `mixer.meter_mode` argument names.
+    pub fn from_word(word: &str) -> Option<MeterMode> {
+        MeterMode::ALL.into_iter().find(|m| m.word() == word)
+    }
 
     /// The button label.
     pub fn label(self) -> &'static str {

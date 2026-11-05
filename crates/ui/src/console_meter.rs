@@ -12,8 +12,16 @@
 //! - **Clip:** lit for [`CLIP_HOLD_S`] after any peak at or above 0 dBFS.
 //! - **Gain reduction:** shown in dB (`-20·log10(gr)`), instant attack, release at
 //!   [`GR_RELEASE_DB_PER_S`].
+//! - **Meter mode** ([`MeterMode`]): *Peak* is the above. *PPM* lets the peak bars (and their hold)
+//!   fall like a quasi-peak programme meter, [`PPM_FALL_DB`] in [`PPM_FALL_SECONDS`]. *VU* shows
+//!   the RMS bars with a VU's integration: the needle reaches 99 % of a steady level in
+//!   [`VU_RISE_SECONDS`], rising and falling alike.
+//! - **Peak reset:** [`MeterBallistics::reset_peaks`] drops the holds and the clip lamps; the
+//!   latched maximum ([`MeterBallistics::latched_db`]) is what the master's readouts show until then.
 //! - **Scale:** [`meter_norm`] maps dB to 0..1 bar height with an IEC 60268-18 style
 //!   piecewise deflection, extended linearly up to [`METER_TOP_DB`].
+
+use crate::big_meter::{MeterMode, PPM_FALL_DB, PPM_FALL_SECONDS, VU_RISE_SECONDS};
 
 /// Lowest level shown (dBFS); anything quieter reads as silence.
 pub const METER_FLOOR_DB: f32 = -60.0;
@@ -157,6 +165,10 @@ pub struct MeterBallistics {
     /// Displayed gain reduction (dB, ≥ 0).
     pub gr_db: f32,
     clip_age: [f32; 2],
+    /// The highest peak since the last [`Self::reset_peaks`] (dB, L and R).
+    latched: [f32; 2],
+    /// The VU integrator of each side, linear amplitude.
+    vu: [f32; 2],
     input: ChannelMeters,
     merging: bool,
 }
@@ -175,6 +187,8 @@ impl MeterBallistics {
             rms: [Ballistic::new(); 2],
             gr_db: 0.0,
             clip_age: [f32::INFINITY; 2],
+            latched: [METER_FLOOR_DB; 2],
+            vu: [0.0; 2],
             input: ChannelMeters::SILENT,
             merging: false,
         }
@@ -200,9 +214,29 @@ impl MeterBallistics {
         }
     }
 
-    /// Applies the recorded reading over `dt` seconds (clamped to 0..=[`MAX_FRAME_DT`]).
-    /// Returns true when anything drawn changed.
+    /// Applies the recorded reading over `dt` seconds (clamped to 0..=[`MAX_FRAME_DT`]) with the
+    /// peak ballistics. Returns true when anything drawn changed.
     pub fn advance(&mut self, dt: f64) -> bool {
+        self.advance_with(dt, MeterMode::Peak)
+    }
+
+    /// Drops the peak holds and the clip lamps and restarts the latched maximum from the level
+    /// now shown.
+    pub fn reset_peaks(&mut self) {
+        for ch in 0..2 {
+            self.peak[ch].hold_db = self.peak[ch].level_db;
+            self.clip_age[ch] = f32::INFINITY;
+            self.latched[ch] = self.peak[ch].level_db;
+        }
+    }
+
+    /// The highest peak since the last reset, in dB (channel 0 = L, 1 = R).
+    pub fn latched_db(&self, ch: usize) -> f32 {
+        self.latched.get(ch).copied().unwrap_or(METER_FLOOR_DB)
+    }
+
+    /// Like [`Self::advance`] with the ballistics of `mode`.
+    pub fn advance_with(&mut self, dt: f64, mode: MeterMode) -> bool {
         let dt = if dt.is_nan() {
             0.0
         } else {
@@ -210,12 +244,29 @@ impl MeterBallistics {
         } as f32;
         let before = self.snapshot();
         let m = self.input;
+        let peak_fall = match mode {
+            MeterMode::Ppm => (PPM_FALL_DB / PPM_FALL_SECONDS) as f32,
+            MeterMode::Vu | MeterMode::Peak => PEAK_FALL_DB_PER_S,
+        };
+        // A step towards the input that covers 99 % of the gap in `VU_RISE_SECONDS`.
+        let vu_step = 1.0 - (-f64::from(dt) * 100f64.ln() / VU_RISE_SECONDS).exp() as f32;
         for (ch, (peak, rms)) in [(m.out_peak_l, m.out_rms_l), (m.out_peak_r, m.out_rms_r)]
             .into_iter()
             .enumerate()
         {
-            self.peak[ch].step(amp_to_meter_db(peak), dt, PEAK_FALL_DB_PER_S);
-            self.rms[ch].step(amp_to_meter_db(rms), dt, RMS_FALL_DB_PER_S);
+            self.peak[ch].step(amp_to_meter_db(peak), dt, peak_fall);
+            if mode == MeterMode::Vu {
+                let rms = if rms.is_nan() { 0.0 } else { rms.max(0.0) };
+                self.vu[ch] += (rms - self.vu[ch]) * vu_step;
+                if self.vu[ch] < 1e-9 {
+                    self.vu[ch] = 0.0;
+                }
+                self.rms[ch].level_db = amp_to_meter_db(self.vu[ch]);
+            } else {
+                self.rms[ch].step(amp_to_meter_db(rms), dt, RMS_FALL_DB_PER_S);
+                self.vu[ch] = rms.max(0.0);
+            }
+            self.latched[ch] = self.latched[ch].max(amp_to_meter_db(peak));
             self.clip_age[ch] = if peak >= 1.0 {
                 0.0
             } else {
@@ -238,7 +289,7 @@ impl MeterBallistics {
             .any(|(a, b)| (a - b).abs() > 1e-3)
     }
 
-    fn snapshot(&self) -> [f32; 9] {
+    fn snapshot(&self) -> [f32; 11] {
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
         [
             self.peak[0].level_db,
@@ -250,6 +301,8 @@ impl MeterBallistics {
             self.gr_db,
             flag(self.clip(0)),
             flag(self.clip(1)),
+            self.latched[0],
+            self.latched[1],
         ]
     }
 
@@ -404,6 +457,76 @@ mod tests {
         m.set_input(ChannelMeters::SILENT);
         m.advance(-1.0);
         assert!(close(m.peak[0].level_db, -6.0, 1e-3));
+    }
+
+    #[test]
+    fn ppm_lets_the_peak_bars_fall_slowly_and_vu_integrates_the_rms() {
+        // PPM: 24 dB in 2.8 s, so one second drops about 8.6 dB (the peak mode drops 24).
+        let mut ppm = MeterBallistics::new();
+        ppm.set_input(meters(1.0, 0.5, 1.0));
+        ppm.advance_with(0.0, MeterMode::Ppm);
+        let mut peak = MeterBallistics::new();
+        peak.set_input(meters(1.0, 0.5, 1.0));
+        peak.advance(0.0);
+        for _ in 0..4 {
+            ppm.set_input(ChannelMeters::SILENT);
+            ppm.advance_with(0.25, MeterMode::Ppm);
+            peak.set_input(ChannelMeters::SILENT);
+            peak.advance(0.25);
+        }
+        assert!(
+            close(ppm.peak[0].level_db, -8.57, 0.05),
+            "{}",
+            ppm.peak[0].level_db
+        );
+        assert!(close(peak.peak[0].level_db, -24.0, 0.05));
+        // VU: a steady tone of -6 dB RMS reaches 99 % of its level in 300 ms, not at once.
+        let mut vu = MeterBallistics::new();
+        let steady = meters(0.5, 0.5, 1.0);
+        for _ in 0..3 {
+            vu.set_input(steady);
+            vu.advance_with(0.1, MeterMode::Vu);
+        }
+        let reached = 10f32.powf(vu.rms[0].level_db / 20.0) / 0.5;
+        assert!(close(reached, 0.99, 0.01), "{reached}");
+        let mut first = MeterBallistics::new();
+        first.set_input(steady);
+        first.advance_with(0.03, MeterMode::Vu);
+        assert!(first.rms[0].level_db < -12.0, "{}", first.rms[0].level_db);
+        // And the VU falls as slowly as it rises (peak mode drops the RMS 12 dB/s).
+        vu.set_input(ChannelMeters::SILENT);
+        vu.advance_with(0.1, MeterMode::Vu);
+        assert!(
+            vu.rms[0].level_db < -9.0 && vu.rms[0].level_db > -20.0,
+            "{}",
+            vu.rms[0].level_db
+        );
+    }
+
+    #[test]
+    fn reset_peaks_drops_the_holds_the_clip_lamps_and_the_latched_maximum() {
+        let mut m = MeterBallistics::new();
+        m.set_input(meters(1.0, 0.5, 1.0));
+        m.advance(0.03);
+        assert!(m.clip(0));
+        assert!(close(m.latched_db(0), 0.0, 1e-4));
+        // The latched maximum stays while the bar falls.
+        for _ in 0..8 {
+            m.set_input(ChannelMeters::SILENT);
+            m.advance(0.25);
+        }
+        assert!(close(m.latched_db(0), 0.0, 1e-4));
+        assert_eq!(m.latched_db(5), METER_FLOOR_DB, "no such channel");
+        m.set_input(meters(1.0, 0.5, 1.0));
+        m.advance(0.03);
+        m.reset_peaks();
+        assert!(!m.clip(0) && !m.clip(1));
+        assert_eq!(m.peak[0].hold_db, m.peak[0].level_db);
+        assert_eq!(m.latched_db(0), m.peak[0].level_db);
+        // A later peak latches again.
+        m.set_input(meters(0.5, 0.25, 1.0));
+        m.advance(0.03);
+        assert!(m.latched_db(0) >= -6.03);
     }
 
     #[test]

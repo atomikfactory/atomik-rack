@@ -41,7 +41,8 @@
 //! selected ones. **Ganged edits**: a fader, a send level, a mute, a solo or a send switch of a
 //! selected strip moves on every selected strip as one `Batch` ([`crate::console_gang`]): levels
 //! by the same dB, switches to the state clicked, one undo step per drag. A right-click on a plate
-//! also offers the channel settings commands (copy, paste, reset, clear inserts).
+//! also offers the strip clipboard (cut, copy, paste and duplicate) and the channel settings
+//! commands (copy, paste, reset, clear inserts).
 //! **Link faders** ([`ConsoleView::set_link_faders`]): while on, a fader or a send level of a
 //! strip that is in a VCA group and is not part of a multiple selection moves the levels of
 //! every member of its group by the same dB, selected or not; with it off a group's faders move
@@ -80,6 +81,7 @@
 mod help;
 
 use crate::action::UiAction;
+use crate::big_meter::MeterMode;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::color_picker::ColorTarget;
 use crate::console_gang as gang;
@@ -295,6 +297,8 @@ enum Hit {
     Insert(Target, usize),
     /// The remove (x) part of a filled insert slot.
     InsertRemove(Target, usize),
+    /// A peak readout of the master's OUTPUT section: a click resets the peaks.
+    PeakReset,
     /// The bypass (B) part of a filled insert slot whose effect has a bypass.
     InsertBypass(Target, usize),
     Menu(usize),
@@ -405,6 +409,8 @@ struct Menu {
     new_vca_name: String,
     /// The item that is the strip's current destination (marked with a dot).
     current: Option<usize>,
+    /// A colour swatch per row (the buses of an output selector menu), by row.
+    colors: Vec<Option<Color>>,
     /// The panel, its scrolling and the hover row (rows are list indices).
     list: PickList,
 }
@@ -423,6 +429,7 @@ impl Menu {
             targets: Vec::new(),
             new_vca_name: String::new(),
             current: None,
+            colors: Vec::new(),
             list,
         }
     }
@@ -523,6 +530,8 @@ struct StripView {
     caption: String,
     /// Where the output goes, as the selector reads it.
     output: String,
+    /// The colour of the bus the output goes to (the selector's swatch).
+    output_color: Option<Color>,
     /// Selected in the console (outlined name plate).
     selected: bool,
     /// The VCA group the strip is in: its colour and offset in dB.
@@ -560,6 +569,7 @@ impl StripView {
             desc: None,
             name: String::new(),
             accent: Color::WHITE,
+            output_color: None,
             latency: None,
             silenced: false,
             inserts: Vec::new(),
@@ -794,6 +804,10 @@ pub struct ConsoleView {
     next_cache: u64,
     meters: BTreeMap<DeviceKey, MeterBallistics>,
     latencies: BTreeMap<DeviceKey, u32>,
+    /// The latency of the whole mix up to the interface outputs, in frames.
+    total_latency: u32,
+    /// The ballistics the strip meters show.
+    meter_mode: MeterMode,
     pdc_warning: bool,
     maximised: bool,
     compensation: bool,
@@ -878,6 +892,8 @@ impl ConsoleView {
             next_cache: 1,
             meters: BTreeMap::new(),
             latencies: BTreeMap::new(),
+            total_latency: 0,
+            meter_mode: MeterMode::Peak,
             pdc_warning: false,
             maximised: false,
             compensation: true,
@@ -1039,7 +1055,7 @@ impl ConsoleView {
         self.last_time = Some(now_seconds);
         let mut changed = false;
         for m in self.meters.values_mut() {
-            changed |= m.advance(dt);
+            changed |= m.advance_with(dt, self.meter_mode);
         }
         if changed {
             self.repaint = true;
@@ -1049,6 +1065,44 @@ impl ConsoleView {
     /// The ballistics of a channel's (or the master's) meter.
     pub fn meter(&self, key: &DeviceKey) -> Option<&MeterBallistics> {
         self.meters.get(key)
+    }
+
+    /// The ballistics of the strip meters: peak (the default), PPM or VU (see
+    /// [`crate::console_meter`]). A view setting, not saved in the project.
+    pub fn set_meter_mode(&mut self, mode: MeterMode) {
+        if mode != self.meter_mode {
+            self.meter_mode = mode;
+            self.repaint = true;
+        }
+    }
+
+    /// The ballistics of the strip meters.
+    pub fn meter_mode(&self) -> MeterMode {
+        self.meter_mode
+    }
+
+    /// Drops the peak holds, the clip lamps and the latched maximum of every meter (what a click
+    /// on the master's peak readouts does).
+    pub fn reset_peaks(&mut self) {
+        for m in self.meters.values_mut() {
+            m.reset_peaks();
+        }
+        self.repaint = true;
+    }
+
+    /// The latency of the whole mix, from the strips to the interface outputs (master inserts
+    /// and the master's own latency included), in frames. The toolbar readout shows it beside the
+    /// largest strip latency when the master chain adds some.
+    pub fn set_total_latency(&mut self, frames: u32) {
+        if frames != self.total_latency {
+            self.total_latency = frames;
+            self.repaint = true;
+        }
+    }
+
+    /// The latency of the whole mix as last set, in frames.
+    pub fn total_latency(&self) -> u32 {
+        self.total_latency
     }
 
     /// Per-channel latency readouts in frames (from the routing plan's PDC report).
@@ -1235,6 +1289,34 @@ impl ConsoleView {
             .iter()
             .find(|s| &s.key == strip)
             .map(|s| s.output.clone())
+    }
+
+    /// The colour of the bus a strip's output goes to (the swatch its selector shows), `None`
+    /// when it goes anywhere else.
+    pub fn output_swatch(&self, strip: &DeviceKey) -> Option<Color> {
+        self.strips
+            .iter()
+            .find(|s| &s.key == strip)
+            .and_then(|s| s.output_color)
+    }
+
+    /// The colour swatch of each row of the open menu (buses of an output selector menu).
+    pub fn menu_swatches(&self) -> Vec<Option<Color>> {
+        self.menu.as_ref().map_or_else(Vec::new, |m| {
+            (0..m.items.len())
+                .map(|i| m.colors.get(i).copied().flatten())
+                .collect()
+        })
+    }
+
+    /// Centre of the master's left peak readout (a click resets the peaks).
+    pub fn master_peak_center(&self) -> Option<Point> {
+        let l = self.master_layout.as_ref()?;
+        let (_, r) = l
+            .output
+            .iter()
+            .find(|(item, _)| *item == cl::OutputItem::PeakLeft)?;
+        Some(r.center() + Vec2::new(self.master_x()?, self.area_top()))
     }
 
     /// Centre of a strip's output selector.
@@ -1842,6 +1924,12 @@ impl ConsoleView {
                 if l.clear_mute.contains(lp) {
                     return Hit::Button(ConsoleButton::ClearMutes);
                 }
+                if l.output.iter().any(|(item, r)| {
+                    matches!(item, cl::OutputItem::PeakLeft | cl::OutputItem::PeakRight)
+                        && r.contains(lp)
+                }) {
+                    return Hit::PeakReset;
+                }
                 if let Some(i) = l
                     .controls
                     .iter()
@@ -1909,7 +1997,7 @@ impl ConsoleView {
                 {
                     return Hit::Jump(i, j);
                 }
-                if s.has_track && colour_rect(l.name).contains(lp) {
+                if (s.has_track || i >= self.n_channels) && colour_rect(l.name).contains(lp) {
                     return Hit::Plate(i);
                 }
                 return Hit::Name(i);
@@ -2124,6 +2212,13 @@ impl ConsoleView {
             self.repaint = true;
         }
         let generation = self.generation;
+        // A bus shows its device's colour when it has one (set from its name plate).
+        let cable = self.st.base.cable_cv;
+        let bus_accent = |k: &DeviceKey| {
+            doc.device(k)
+                .and_then(|d| d.color)
+                .map_or(cable, |[r, g, b]| Color::from_rgb8(r, g, b))
+        };
         for (i, s) in self.strips.iter_mut().enumerate() {
             let key = s.key.clone();
             // A param a macro drives shows the value the macro gives it.
@@ -2158,10 +2253,14 @@ impl ConsoleView {
             } else if let Some(b) = console.buses.get(i - n_channels) {
                 s.name = b.name.clone();
                 s.name_device = key.clone();
-                s.accent = self.st.base.cable_cv;
+                s.accent = bus_accent(&key);
                 s.caption = format!("BUS {}", i - n_channels + 1);
             }
             s.output = output_label(doc, &key);
+            s.output_color = match output_dest(doc, &key) {
+                OutputDest::Bus(b) => Some(bus_accent(&b)),
+                _ => None,
+            };
             s.vca_id = console.vca_of(&key).map(|g| g.id);
             s.vca = console
                 .vca_of(&key)
@@ -2184,6 +2283,7 @@ impl ConsoleView {
                 format!("{:?}", s.automated),
                 format!("{}", s.insert_scroll),
                 format!("{:?} {}", s.source, s.has_track),
+                format!("{:?}", s.output_color),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -2571,7 +2671,11 @@ impl ConsoleView {
                 self.open_strip_menu(i, pos, doc)
             }
             (Hit::Plate(i), PointerButton::Primary) => {
-                if let Some(source) = self.strips.get(i).and_then(|s| s.source.clone()) {
+                if i >= self.n_channels {
+                    if let Some(bus) = self.strips.get(i).map(|s| s.key.clone()) {
+                        out.push(UiAction::PickColor(ColorTarget::Devices(vec![bus])));
+                    }
+                } else if let Some(source) = self.strips.get(i).and_then(|s| s.source.clone()) {
                     out.push(UiAction::PickColor(ColorTarget::Tracks(vec![source])));
                 }
             }
@@ -2596,6 +2700,7 @@ impl ConsoleView {
             (Hit::Vca(i, VcaPart::Plate), PointerButton::Secondary) => self.open_vca_menu(i, pos),
             (Hit::Vca(i, part), PointerButton::Primary) => self.vca_down(i, part, clicks, out),
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
+            (Hit::PeakReset, PointerButton::Primary) => self.reset_peaks(),
             (Hit::Insert(t, slot), PointerButton::Primary) => {
                 self.insert_click(t, slot, pos, doc, registry, out)
             }
@@ -3185,6 +3290,10 @@ impl ConsoleView {
         // The channel settings commands act on the selection; the strip clicked joins it first
         // when it is not in it.
         for (label, id) in [
+            ("Cut strip", "edit.cut"),
+            ("Copy strip", "edit.copy"),
+            ("Paste strip", "edit.paste"),
+            ("Duplicate strip", "edit.duplicate"),
             ("Copy settings", "mixer.copy_settings"),
             ("Copy levels", "mixer.copy_settings_levels"),
             ("Copy sends", "mixer.copy_settings_sends"),
@@ -3372,6 +3481,17 @@ impl ConsoleView {
             }
         }
         items.push(("New bus...".into(), MenuItem::NewBus));
+        let colors: Vec<Option<Color>> = items
+            .iter()
+            .map(|(_, it)| match it {
+                MenuItem::Output(OutputDest::Bus(b)) => Some(
+                    doc.device(b)
+                        .and_then(|d| d.color)
+                        .map_or(self.st.base.cable_cv, |[r, g, b]| Color::from_rgb8(r, g, b)),
+                ),
+                _ => None,
+            })
+            .collect();
         let current = items
             .iter()
             .position(|(_, it)| matches!(it, MenuItem::Output(d) if *d == now));
@@ -3380,6 +3500,7 @@ impl ConsoleView {
             strip: Some(strip),
             new_bus_name: doc.console.default_bus_name(),
             current,
+            colors,
             ..Menu::plain(items, origin)
         });
         if let Some(m) = &mut self.menu {
@@ -4591,8 +4712,9 @@ impl ConsoleView {
         let st = &self.st;
         let t = &st.base;
         let meter = self.meters.get(&m.key);
+        // The readouts keep the highest peak until a click resets them.
         let peak =
-            |ch: usize| meter.map_or(crate::console_meter::METER_FLOOR_DB, |b| b.peak[ch].hold_db);
+            |ch: usize| meter.map_or(crate::console_meter::METER_FLOOR_DB, |b| b.latched_db(ch));
         let db_text = |db: f32| {
             if db <= crate::console_meter::METER_FLOOR_DB {
                 "-inf".to_string()
@@ -4677,11 +4799,15 @@ impl ConsoleView {
         if let Some(r) = self.toolbar_rect(ConsoleButton::Compensation) {
             let max = self.latencies.values().copied().max().unwrap_or(0);
             let ms = f64::from(max) * 1000.0 / f64::from(self.sample_rate);
-            let text = if self.compensation {
-                format!("LATENCY {max} smp  {ms:.1} ms")
-            } else {
-                format!("LATENCY {max} smp  {ms:.1} ms  (not compensated)")
-            };
+            let mut text = format!("LATENCY {max} smp  {ms:.1} ms");
+            if self.total_latency > max {
+                let total = self.total_latency;
+                let total_ms = f64::from(total) * 1000.0 / f64::from(self.sample_rate);
+                text.push_str(&format!("  TOTAL {total} smp  {total_ms:.1} ms"));
+            }
+            if !self.compensation {
+                text.push_str("  (not compensated)");
+            }
             sp::label(
                 c,
                 &text,
@@ -5359,7 +5485,7 @@ fn record_strip(
         meter_trough(pinned, st, r);
     }
     if let Some(r) = l.output {
-        output_selector(pinned, st, r, &s.output);
+        output_selector(pinned, st, r, &s.output, s.output_color);
     }
     name_plate(
         pinned,
@@ -5464,13 +5590,26 @@ fn send_on(s: &StripView, level_key: &str) -> bool {
 }
 
 /// A strip's output selector: the destination on a small display with a drop-down mark.
-fn output_selector(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, text: &str) {
+fn output_selector(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, text: &str, swatch: Option<Color>) {
     let t = &st.base;
     sp::lcd(c, st, r, None);
     let col = if text == "none" { t.text_muted } else { t.text };
+    // The colour of the bus the strip plays into.
+    let shift = if let Some(color) = swatch {
+        let dot = Rect::new(
+            r.x0 + 3.0,
+            r.center().y - 2.5,
+            r.x0 + 8.0,
+            r.center().y + 2.5,
+        );
+        c.fill_with(RoundedRect::from_rect(dot, 1.5), color);
+        7.0
+    } else {
+        0.0
+    };
     c.text(&TextRun::new(
-        fit_label(text, r.width() - 16.0, 7.0),
-        pt(r.x0 + 4.0, r.center().y + 2.5),
+        fit_label(text, r.width() - 16.0 - shift, 7.0),
+        pt(r.x0 + 4.0 + shift, r.center().y + 2.5),
         7.0,
         col,
     ));
@@ -5698,15 +5837,21 @@ fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
         if m.list.hover == Some(i) && !disabled {
             c.fill_with(RoundedRect::from_rect(rr, 3.0), t.browser_row);
         }
-        let text = fit_label(label, m.list.width - 24.0, 10.0);
+        let swatch = m.colors.get(i).copied().flatten();
+        let shift = if swatch.is_some() { 12.0 } else { 0.0 };
+        let text = fit_label(label, m.list.width - 24.0 - shift, 10.0);
         let col = if disabled { t.text_muted } else { t.text };
         if m.current == Some(i) {
             c.fill_with(Circle::new(pt(rr.x0 + 5.0, rr.y0 + 10.0), 2.0), t.highlight);
         }
+        if let Some(color) = swatch {
+            let dot = Rect::new(rr.x0 + 11.0, rr.y0 + 6.0, rr.x0 + 19.0, rr.y0 + 14.0);
+            c.fill_with(RoundedRect::from_rect(dot, 2.0), color);
+        }
         sp::label(
             c,
             &text,
-            rr.x0 + 11.0,
+            rr.x0 + 11.0 + shift,
             rr.y0 + 14.0,
             10.0,
             col,

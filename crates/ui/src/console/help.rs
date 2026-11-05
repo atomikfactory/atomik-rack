@@ -117,6 +117,13 @@ impl ConsoleView {
                     "Where this strip's output goes: click to choose",
                 )
             }
+            Hit::PeakReset => {
+                let l = self.master_layout.as_ref()?;
+                let origin = Vec2::new(self.master_x()?, top);
+                let lp = pos - origin;
+                let (_, r) = l.output.iter().find(|(_, r)| r.contains(lp))?;
+                help(*r + origin, "Highest peak so far: click to reset the peaks")
+            }
             Hit::Picker(slot) => {
                 let l = self.master_layout.as_ref()?;
                 let (_, r) = l.return_pickers.iter().find(|(s, _)| *s == slot)?;

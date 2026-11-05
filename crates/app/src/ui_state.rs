@@ -24,6 +24,7 @@
 use crate::record::InputQuantize;
 use crate::windows::WindowsState;
 use atomik_ui::arrangement::clamp_track_zoom;
+use atomik_ui::big_meter::MeterMode;
 use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
 use atomik_ui::timeline::Snap;
@@ -139,6 +140,9 @@ pub struct UiState {
     /// Link faders in the console: a level of a strip in a VCA group moves the group's levels.
     /// An absent key means off.
     pub link_faders: bool,
+    /// The ballistics of the console strip meters (`"peak"`, `"ppm"` or `"vu"`). An absent key
+    /// means peak.
+    pub meter_mode: MeterMode,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -192,6 +196,7 @@ impl Default for UiState {
             piano_keys_velocity: DEFAULT_VELOCITY,
             audio_editor_mode: AudioMode::Overview,
             link_faders: false,
+            meter_mode: MeterMode::Peak,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,

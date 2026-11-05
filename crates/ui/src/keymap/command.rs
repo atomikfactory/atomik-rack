@@ -195,6 +195,8 @@ pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
 /// The values of `file.midi_resolution`: the ticks per quarter note of an exported MIDI file
 /// (`native` is the model's own 15 360).
 pub const MIDI_RESOLUTION_ARGS: &[&str] = &["native", "960", "480"];
+/// The values of `mixer.meter_mode`: the ballistics of the console strip meters.
+pub const METER_MODE_ARGS: &[&str] = &["peak", "ppm", "vu"];
 /// The values of `mixer.morph_time`: how long a morph between two snapshots takes, in seconds.
 pub const MORPH_TIME_ARGS: &[&str] = &["1", "2", "4", "8"];
 /// The values of `audio.input_channels`: the host inputs the project asks for.
@@ -1096,6 +1098,9 @@ const COMMANDS: &[CommandDef] = &[
         C::Mixer,
     ),
     cmd("mixer.link_faders", "Link Faders", G::Mixer, C::Global).menu(),
+    cmd("mixer.meter_mode", "Meter Mode", G::Mixer, C::Global)
+        .arg(METER_MODE_ARGS)
+        .menu(),
     cmd(
         "mixer.morph_previous_snapshot",
         "Morph to Previous Snapshot",

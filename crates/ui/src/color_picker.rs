@@ -58,6 +58,8 @@ pub enum ColorTarget {
     Folder(u32),
     /// The colour of these tracks (and of the devices that play them).
     Tracks(Vec<DeviceKey>),
+    /// The colour of these devices only (a console bus has no track).
+    Devices(Vec<DeviceKey>),
 }
 
 /// What the panel asks the app to do.
