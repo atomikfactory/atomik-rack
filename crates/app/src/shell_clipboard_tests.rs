@@ -399,6 +399,7 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.patch_next",
             "rack.midi_out_port",
             "rack.mod_matrix",
+            "rack.preview_player",
         ]
     );
     let text = |id: &str| {
@@ -1523,5 +1524,43 @@ fn a_lane_range_copies_cuts_deletes_and_pastes_the_parts_of_the_clips_inside_it(
     assert!(
         s.core().arrangement().lane_range().is_none(),
         "a deleted range is spent"
+    );
+}
+
+#[test]
+fn the_device_menu_runs_the_preview_command_on_a_player_only() {
+    let mut s = rack3();
+    add(&mut s, "atomik.arpeggiator", "arp");
+    s.core_mut().after_view_change();
+    let on = |items: &[(String, Option<String>, bool)]| {
+        items
+            .iter()
+            .find(|(c, _, _)| c == "rack.preview_player")
+            .map(|(_, _, e)| *e)
+    };
+    // An instrument is not a player: the item is listed but off.
+    let items = open_menu_on(&mut s, "a");
+    assert_eq!(on(&items), Some(false));
+    let mut s = rack3();
+    add(&mut s, "atomik.arpeggiator", "arp");
+    s.core_mut().after_view_change();
+    // A player has it on, and the item runs the command on it. The shell of a test has no audio
+    // engine, so the command answers that previewing needs one (the engine side is in the app
+    // core tests).
+    let arp = plate(&s, "arp");
+    let items = open_menu(&mut s, arp);
+    assert_eq!(on(&items), Some(true));
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.preview_player")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("Previewing needs audio")),
+        "{:?}",
+        s.core().last_rejection()
     );
 }

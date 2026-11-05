@@ -214,6 +214,11 @@ pub enum UiAction {
         /// The tuner is shown.
         on: bool,
     },
+    /// The play button of a note player's panel: start the preview of the player (it and the
+    /// players after it run on a clock of their own while the song is stopped, so the notes are
+    /// heard through the track's instrument), or stop it when it runs. The app answers with
+    /// [`crate::RackView::set_previewing`]. View state, not an undo step.
+    PreviewPlayer(DeviceKey),
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.

@@ -17,7 +17,8 @@ impl RackView {
         if d.is_interface() || self.locked.as_ref() == Some(&d.key) {
             return None;
         }
-        let r = crate::paint::name_rect(d.height, d.folded, d.has_strip_bypass());
+        let r =
+            crate::paint::name_rect_for(d.height, d.folded, d.has_strip_bypass(), d.has_preview());
         Some(self.rack_to_view(r.center() + d.offset()))
     }
 

@@ -186,6 +186,8 @@ enum Hit {
     Plugin(usize, PluginButton),
     /// The BYPASS switch of a built-in effect's name strip.
     Bypass(usize),
+    /// The play (preview) button of a note player's name strip.
+    Preview(usize),
     /// A part of the patch strip on the foot of a name plate.
     Patch(usize, PatchOp),
     /// A socket cell of the Audio I/O panel (device index, socket): lamp, meter, clip lamp.
@@ -246,6 +248,7 @@ impl Hit {
             | Hit::MacroName(i, _)
             | Hit::Plugin(i, _)
             | Hit::Bypass(i)
+            | Hit::Preview(i)
             | Hit::Patch(i, _)
             | Hit::Control(i, _)
             | Hit::IoCell(i, _)
@@ -366,6 +369,14 @@ impl DeviceView {
     /// [`autolayout::has_strip_bypass`]).
     fn has_strip_bypass(&self) -> bool {
         self.device.is_some() && self.desc.as_ref().is_some_and(autolayout::has_strip_bypass)
+    }
+    /// A note player with the play button on its name strip.
+    fn has_preview(&self) -> bool {
+        self.has_strip_bypass()
+            && self
+                .desc
+                .as_ref()
+                .is_some_and(|d| crate::browser::is_player(d.type_id))
     }
     /// The effect's `bypass` param is on.
     fn is_bypassed(&self) -> bool {
@@ -1707,7 +1718,12 @@ impl RackView {
                     false,
                 );
                 if self.locked.as_ref() != Some(&d.key) {
-                    let name = paint::name_rect(d.height, d.folded, d.has_strip_bypass());
+                    let name = paint::name_rect_for(
+                        d.height,
+                        d.folded,
+                        d.has_strip_bypass(),
+                        d.has_preview(),
+                    );
                     tree.add(pn, name + off, Hit::Name(i), false);
                 }
                 let fc = paint::fold_button_center(d.height, d.folded) + off;
@@ -1718,10 +1734,18 @@ impl RackView {
                     false,
                 );
                 if d.has_strip_bypass() {
+                    let bypass = if d.has_preview() {
+                        paint::player_bypass_rect(d.height, d.folded)
+                    } else {
+                        paint::bypass_button_rect(d.height, d.folded)
+                    };
+                    tree.add(pn, bypass + off, Hit::Bypass(i), false);
+                }
+                if d.has_preview() {
                     tree.add(
                         pn,
-                        paint::bypass_button_rect(d.height, d.folded) + off,
-                        Hit::Bypass(i),
+                        paint::preview_button_rect(d.height, d.folded) + off,
+                        Hit::Preview(i),
                         false,
                     );
                 }
@@ -2307,13 +2331,31 @@ impl RackView {
     pub fn bypass_button_rect(&self, key: &DeviceKey) -> Option<Rect> {
         let d = &self.devices[self.device_index(key)?];
         d.has_strip_bypass().then(|| {
-            let r = paint::bypass_button_rect(d.height, d.folded) + d.offset();
-            let (a, b) = (
-                self.rack_to_view(Point::new(r.x0, r.y0)),
-                self.rack_to_view(Point::new(r.x1, r.y1)),
-            );
-            Rect::new(a.x, a.y, b.x, b.y)
+            let r = if d.has_preview() {
+                paint::player_bypass_rect(d.height, d.folded)
+            } else {
+                paint::bypass_button_rect(d.height, d.folded)
+            };
+            self.panel_rect_to_view(r + d.offset())
         })
+    }
+
+    /// The play (preview) button of a note player's name strip (logical view coordinates, front
+    /// or back side): `None` for any other device.
+    pub fn preview_button_rect(&self, key: &DeviceKey) -> Option<Rect> {
+        let d = &self.devices[self.device_index(key)?];
+        d.has_preview().then(|| {
+            self.panel_rect_to_view(paint::preview_button_rect(d.height, d.folded) + d.offset())
+        })
+    }
+
+    /// `r`, in rack coordinates, in logical view coordinates.
+    fn panel_rect_to_view(&self, r: Rect) -> Rect {
+        let (a, b) = (
+            self.rack_to_view(Point::new(r.x0, r.y0)),
+            self.rack_to_view(Point::new(r.x1, r.y1)),
+        );
+        Rect::new(a.x, a.y, b.x, b.y)
     }
 
     /// Midpoint of a cable's curve (logical view coordinates).
@@ -2813,6 +2855,15 @@ impl RackView {
                             )
                         }
                         PatchOp::Save => "Save this device as a patch".to_string(),
+                    })
+                }
+                Some(Hit::Preview(i)) if self.button_tips => {
+                    Some(if self.previewing.as_ref() == Some(&self.devices[i].key) {
+                        "Click to stop the preview".to_string()
+                    } else {
+                        "Preview: run this player and the ones after it on their own while the \
+                         song is stopped, to hear them through the track's instrument"
+                            .to_string()
                     })
                 }
                 Some(Hit::Bypass(i)) if self.button_tips => {
@@ -3478,6 +3529,7 @@ impl RackView {
                 }));
             }
             (Hit::Bypass(i), PointerButton::Primary) => self.bypass_down(i, out),
+            (Hit::Preview(i), PointerButton::Primary) => self.preview_down(i, out),
             (Hit::Patch(i, op), PointerButton::Primary) => {
                 self.select(i, out);
                 out.push(UiAction::DevicePatch {
@@ -3672,6 +3724,7 @@ impl RackView {
                 | Hit::MacroName(i, _)
                 | Hit::Plugin(i, _)
                 | Hit::ScButton(i)
+                | Hit::Preview(i)
                 | Hit::TunerButton(i),
                 _,
             ) => self.select(i, out),
@@ -3710,6 +3763,14 @@ impl RackView {
 
     /// A press on the BYPASS switch of an effect's name strip: toggles its `bypass` param,
     /// one undo step like any other param edit.
+    /// A press on the play button of a note player: selects it (live notes then go to it) and
+    /// asks the app to start or stop its preview. The lamp follows the app's answer
+    /// ([`Self::set_previewing`]).
+    fn preview_down(&mut self, i: usize, out: &mut Vec<UiAction>) {
+        self.select(i, out);
+        out.push(UiAction::PreviewPlayer(self.devices[i].key.clone()));
+    }
+
     fn bypass_down(&mut self, i: usize, out: &mut Vec<UiAction>) {
         self.select(i, out);
         if self.driven_by(i, autolayout::BYPASS_KEY).is_some() {
@@ -4530,6 +4591,7 @@ impl RackView {
             master: d.master.info(),
             from_clip: self.clip_scale.is_some(),
             sampling: self.sampling.as_ref() == Some(&d.key),
+            previewing: self.previewing.as_ref() == Some(&d.key),
             grain: crate::granular_panel::GrainInfo {
                 meters: &d.meters,
                 sample: d.sample.as_ref(),

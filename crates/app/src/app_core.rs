@@ -910,6 +910,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ClosePianoRoll => self.close_piano_roll(),
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
             UiAction::SetTuner { device, on } => self.set_tuner(device, on),
+            UiAction::PreviewPlayer(device) => self.toggle_player_preview(&device),
             UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
             UiAction::CycleSamplingInput => self.cycle_sampling_input(),
             UiAction::EditSample {

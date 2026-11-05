@@ -54,6 +54,10 @@ pub struct MenuEnable {
     pub midi_out: bool,
     /// Rack: the primary device has a modulation matrix (Modulation Matrix opens it).
     pub mod_matrix: bool,
+    /// Rack: the primary device is a note player (Preview Player works).
+    pub player: bool,
+    /// A player preview runs (the item reads Stop Preview).
+    pub previewing: bool,
     /// Rack: Combine can work on the selection (the model would accept it).
     pub combine: bool,
     /// Rack: Uncombine can work on the selection (the model would accept it).
@@ -533,6 +537,12 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 Spec::Separator,
                 item("rack.midi_out_port", e.midi_out),
                 item("rack.mod_matrix", e.mod_matrix),
+                if e.previewing {
+                    item("rack.preview_player", e.player || e.previewing)
+                        .labelled("Stop Player Preview")
+                } else {
+                    item("rack.preview_player", e.player)
+                },
             ]);
             v
         }
@@ -1250,8 +1260,43 @@ mod tests {
                 "rack.patch_next",
                 "rack.midi_out_port",
                 "rack.mod_matrix",
+                "rack.preview_player",
             ]
         );
+    }
+
+    #[test]
+    fn the_player_preview_item_needs_a_player_and_reads_stop_while_one_runs() {
+        let item = |e: &MenuEnable| {
+            specs(ContextTarget::Device, e)
+                .into_iter()
+                .find_map(|s| match s {
+                    Spec::Item {
+                        command: "rack.preview_player",
+                        enabled,
+                        label,
+                        ..
+                    } => Some((enabled, label)),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let some = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        assert_eq!(item(&some), (false, None));
+        let player = MenuEnable {
+            player: true,
+            ..some
+        };
+        assert_eq!(item(&player), (true, None));
+        // While a preview runs the item is on for any selection and says what it does.
+        let running = MenuEnable {
+            previewing: true,
+            ..some
+        };
+        assert_eq!(item(&running), (true, Some("Stop Player Preview")));
     }
 
     #[test]

@@ -403,6 +403,8 @@ pub struct PanelInfo<'a> {
     pub grain: crate::granular_panel::GrainInfo<'a>,
     /// A sampling runs into this device: its SAMPLE button reads STOP.
     pub sampling: bool,
+    /// The preview of this note player runs: its play button on the name strip is lit.
+    pub previewing: bool,
 }
 
 /// Fold button centre in panel coordinates.
@@ -428,17 +430,30 @@ pub fn plate_rect(height: f64, folded: bool) -> Rect {
 /// the type label. `has_bypass` is whether the strip has the BYPASS switch (it ends the plate
 /// folded).
 pub fn name_rect(height: f64, folded: bool, has_bypass: bool) -> Rect {
+    name_rect_for(height, folded, has_bypass, false)
+}
+
+/// [`name_rect`] for a strip that may also carry the play button of a note player
+/// (`has_preview`, see [`preview_button_rect`]): folded, the name ends before it.
+pub fn name_rect_for(height: f64, folded: bool, has_bypass: bool, has_preview: bool) -> Rect {
     let r = plate_rect(height, folded);
     if folded {
         let x = fold_button_center(height, true).x + 12.0;
-        let caption_x = if has_bypass {
-            bypass_button_rect(height, true).x0 - 8.0
-        } else {
-            r.x1 - 8.0
-        };
+        let caption_x = folded_caption_x(height, has_bypass, has_preview);
         Rect::new(x, r.y0, (caption_x - 70.0).max(x + 60.0), r.y1)
     } else {
         Rect::new(r.x0 + 2.0, r.y0 + 4.0, r.x1 - 2.0, r.y0 + 36.0)
+    }
+}
+
+/// Where the type label of a folded strip ends: left of the switches the strip has.
+fn folded_caption_x(height: f64, has_bypass: bool, has_preview: bool) -> f64 {
+    if has_bypass && has_preview {
+        preview_button_rect(height, true).x0 - 8.0
+    } else if has_bypass {
+        bypass_button_rect(height, true).x0 - 8.0
+    } else {
+        plate_rect(height, true).x1 - 8.0
     }
 }
 
@@ -475,6 +490,32 @@ pub fn bypass_button_rect(height: f64, folded: bool) -> Rect {
     } else {
         let y1 = height - 24.0;
         Rect::new(plate.x0 + 6.0, y1 - 13.0, plate.x1 - 6.0, y1)
+    }
+}
+
+/// Width of the play button beside the BYPASS switch of a note player.
+const PREVIEW_W: f64 = 17.0;
+
+/// The play (preview) button of a note player's name strip, in panel coordinates: the same place
+/// on every player. Unfolded it takes the left of the row of the BYPASS switch (which gets
+/// narrower, see [`player_bypass_rect`]); folded it sits just before the switch.
+pub fn preview_button_rect(height: f64, folded: bool) -> Rect {
+    let b = bypass_button_rect(height, folded);
+    if folded {
+        Rect::new(b.x0 - 2.0 - PREVIEW_W, b.y0, b.x0 - 2.0, b.y1)
+    } else {
+        Rect::new(b.x0, b.y0, b.x0 + PREVIEW_W, b.y1)
+    }
+}
+
+/// The BYPASS switch of a note player's name strip: [`bypass_button_rect`] less the room the
+/// play button takes on an unfolded strip.
+pub fn player_bypass_rect(height: f64, folded: bool) -> Rect {
+    let b = bypass_button_rect(height, folded);
+    if folded {
+        b
+    } else {
+        Rect::new(b.x0 + PREVIEW_W + 2.0, b.y0, b.x1, b.y1)
     }
 }
 
@@ -591,6 +632,42 @@ fn strip_bypass(info: &PanelInfo<'_>) -> bool {
     info.device.is_some() && info.desc.is_some_and(autolayout::has_strip_bypass)
 }
 
+/// Whether the panel of `info` is that of a note player with the play button on its strip.
+fn preview_strip(info: &PanelInfo<'_>) -> bool {
+    strip_bypass(info)
+        && info
+            .desc
+            .is_some_and(|d| crate::browser::is_player(d.type_id))
+}
+
+/// The play button: a triangle, or a square in the accent colour while the preview runs.
+fn preview_button<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    previewing: bool,
+    accent: Color,
+) {
+    crate::plugin_panel::led_button(c, theme, r, "", None, true, accent);
+    let m = r.center();
+    let mut icon = BezPath::new();
+    if previewing {
+        c.fill_with(Circle::new(m, 6.5), accent.with_alpha(0.25));
+        icon.move_to(pt(m.x - 2.8, m.y - 2.8));
+        icon.line_to(pt(m.x + 2.8, m.y - 2.8));
+        icon.line_to(pt(m.x + 2.8, m.y + 2.8));
+        icon.line_to(pt(m.x - 2.8, m.y + 2.8));
+        icon.close_path();
+        c.fill_with(icon, mix(accent, Color::WHITE, 0.25));
+    } else {
+        icon.move_to(pt(m.x - 2.4, m.y - 3.4));
+        icon.line_to(pt(m.x + 3.2, m.y));
+        icon.line_to(pt(m.x - 2.4, m.y + 3.4));
+        icon.close_path();
+        c.fill_with(icon, theme.text_muted);
+    }
+}
+
 /// Whether the effect of `info` is bypassed (its `bypass` param is on).
 pub(crate) fn bypassed(info: &PanelInfo<'_>) -> bool {
     strip_bypass(info)
@@ -640,8 +717,22 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         chevron(c, fold, !info.folded, theme.text_muted);
     }
     let has_bypass = strip_bypass(info);
+    let has_preview = preview_strip(info);
+    if has_preview {
+        preview_button(
+            c,
+            theme,
+            preview_button_rect(info.height, info.folded),
+            info.previewing,
+            info.accent,
+        );
+    }
     if has_bypass {
-        let b = bypass_button_rect(info.height, info.folded);
+        let b = if has_preview {
+            player_bypass_rect(info.height, info.folded)
+        } else {
+            bypass_button_rect(info.height, info.folded)
+        };
         crate::plugin_panel::led_button(
             c,
             theme,
@@ -667,13 +758,9 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
     }
     if info.folded {
         let x = fold.x + 14.0;
-        let caption_x = if has_bypass {
-            bypass_button_rect(info.height, true).x0 - 8.0
-        } else {
-            r.x1 - 8.0
-        };
+        let caption_x = folded_caption_x(info.height, has_bypass, has_preview);
         if let Some(text) = info.editing_name {
-            let field = name_rect(info.height, true, has_bypass);
+            let field = name_rect_for(info.height, true, has_bypass, has_preview);
             let field = Rect::new(field.x0, field.y0 + 4.0, field.x1, field.y1 - 4.0);
             name_field(c, theme, field, text, info.accent, theme.name_size - 2.0);
         } else {
@@ -687,20 +774,31 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
                 .weight(700),
             );
         }
-        c.text(
-            &TextRun::new(
-                fit_label(info.caption, caption_x - x - 70.0, 7.0),
-                pt(caption_x, r.center().y + 3.0),
-                7.0,
-                theme.text_muted,
-            )
-            .align(Align::End)
-            .spacing(0.8),
-        );
+        // A player's strip is a play button shorter: the type label gives way to a long name
+        // (it is left out when less than a few letters of it would show).
+        let caption = if has_preview && info.editing_name.is_none() {
+            let name = TextRun::new(info.name, pt(x, 0.0), theme.name_size - 1.0, theme.text);
+            let room = caption_x - (x + c.text_width(&name.weight(700)) + 10.0);
+            (room >= 28.0).then(|| fit_label(info.caption, room, 7.0))
+        } else {
+            Some(fit_label(info.caption, caption_x - x - 70.0, 7.0))
+        };
+        if let Some(caption) = caption {
+            c.text(
+                &TextRun::new(
+                    caption,
+                    pt(caption_x, r.center().y + 3.0),
+                    7.0,
+                    theme.text_muted,
+                )
+                .align(Align::End)
+                .spacing(0.8),
+            );
+        }
         return;
     }
     if let Some(text) = info.editing_name {
-        let field = name_rect(info.height, false, has_bypass);
+        let field = name_rect_for(info.height, false, has_bypass, has_preview);
         let field = Rect::new(field.x0, field.y0, field.x1, field.y0 + 18.0);
         name_field(c, theme, field, text, info.accent, 9.0);
         plate_foot(c, theme, info, r);

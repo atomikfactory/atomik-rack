@@ -69,11 +69,13 @@ impl<S: EngineSink> AppCore<S> {
             .collect()
     }
 
-    /// `rack.preview_player`: previews the selected device, or stops the preview that runs.
+    /// `rack.preview_player`: previews the selected player, or stops the preview that runs (also
+    /// when the selection is not a player, since the menu reads Stop Player Preview then).
     pub fn preview_selected_player(&mut self) {
         match self.view.selected().cloned() {
-            Some(key) => self.toggle_player_preview(&key),
-            None => self.reject("Select a note player to preview".into()),
+            Some(key) if self.is_player_device(&key) => self.toggle_player_preview(&key),
+            _ if self.player_preview.is_some() => self.stop_player_preview(),
+            _ => self.reject("Select a note player to preview".into()),
         }
     }
 
@@ -376,6 +378,11 @@ mod tests {
         c.view_mut().set_selected(Some(key("arp")));
         c.preview_selected_player();
         assert_eq!(c.previewing_player(), Some(&key("arp")));
+        c.preview_selected_player();
+        assert_eq!(c.previewing_player(), None);
+        // With one running, the command stops it whatever is selected.
+        c.preview_selected_player();
+        c.view_mut().set_selected(Some(key("synth")));
         c.preview_selected_player();
         assert_eq!(c.previewing_player(), None);
     }

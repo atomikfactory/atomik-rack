@@ -100,6 +100,9 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::ToTrack(_) => s("Lay the slices out as notes on a new track"),
         Hit::ScButton(_) => s("Choose the sidechain source of this effect"),
         Hit::TunerButton(_) => s("Show or hide the tuner: it reads this track's input"),
+        Hit::Preview(_) => s(
+            "Preview this player: it and the players after it run while the song is stopped (click again to stop)",
+        ),
         Hit::Container(_, ContainerButton::Fold) => {
             s("Unfold the container's devices under its panel, or fold them away")
         }
