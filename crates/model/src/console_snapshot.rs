@@ -9,10 +9,14 @@
 //! VCA groups' level, mute, solo and membership. Params are stored sparsely: a param that is
 //! missing from a snapshot is its default, as in a device's own params.
 //!
+//! A snapshot may also hold **every parameter of the effect devices** on the insert chains and
+//! the returns ([`MixerState::effects`], chosen per snapshot with `SetSnapshotEffects`); without
+//! it only their bypass is kept. It carries an optional **note** and **colour**, for the chip.
+//!
 //! **What it does not hold**: the arrangement (clips, automation, tempo, markers), the cables and
 //! the structure of the rack (devices added, removed or re-cabled, the order and the names of the
-//! strips, the output routing, the insert chains' members), and the parameters of the effect
-//! devices themselves (only their bypass); including those is a follow-up (see the roadmap).
+//! strips, the output routing, the insert chains' members); including the last two is a
+//! follow-up (see the roadmap).
 //!
 //! **Drift.** A snapshot may name strips, effects and groups that were deleted since: recall skips
 //! them ([`RackDoc::snapshot_notes`] lists what it skips), and a strip or group that the snapshot
@@ -24,6 +28,14 @@
 //! app pushes them to the engine like any param edit and the engine's own 5 ms smoothers remove
 //! the clicks) plus one `Edit::ConsoleVcas` when the groups differ; the whole recall is one undo
 //! step. A [`SnapshotScope`] restricts it to some categories.
+//!
+//! **Morph.** `MorphSnapshots` sets the mix to a point between two snapshots: a continuous param
+//! moves along its own taper (a dB param linearly in dB, a frequency in octaves), a switch or a
+//! choice flips at the half way point, a VCA level moves in dB and the groups' mutes, solos and
+//! members flip at the half way point. It is the same ordinary param edits as a recall and a pure
+//! function of the two snapshots and the position, so the app plays a morph over a time by
+//! applying successive positions, all folded into one undo step; position 1 is exactly a recall
+//! of the second snapshot.
 //!
 //! **Compare** keeps the working mix in a hidden slot ([`CompareState`], not saved) while a
 //! snapshot is recalled, and flips between the two. The flip swaps the live mix with the slot, so
@@ -43,8 +55,10 @@ use std::collections::BTreeMap;
 
 /// Longest snapshot name, in characters.
 pub const MAX_SNAPSHOT_NAME_CHARS: usize = 32;
+/// Longest snapshot note, in characters.
+pub const MAX_SNAPSHOT_NOTE_CHARS: usize = 200;
 /// Most snapshots in a console.
-pub const MAX_SNAPSHOTS: usize = 16;
+pub const MAX_SNAPSHOTS: usize = 64;
 
 /// The param of an insert or return effect that a snapshot keeps.
 const BYPASS: &str = "bypass";
@@ -153,6 +167,8 @@ pub struct MixerState {
     pub devices: BTreeMap<DeviceKey, BTreeMap<String, f32>>,
     /// The VCA groups, in the console's order.
     pub vcas: Vec<SnapshotVca>,
+    /// The effect devices hold all their params, not only the bypass.
+    pub effects: bool,
 }
 
 /// One stored snapshot.
@@ -165,6 +181,11 @@ pub struct MixerSnapshot {
     pub name: String,
     /// What it holds.
     pub state: MixerState,
+    /// A free note shown with the chip (at most [`MAX_SNAPSHOT_NOTE_CHARS`] characters; empty
+    /// when there is none).
+    pub note: String,
+    /// The chip colour, `None` for the default.
+    pub color: Option<[u8; 3]>,
 }
 
 /// An A/B comparison in progress (see the module documentation). Not saved.
@@ -213,6 +234,37 @@ impl Console {
     }
 }
 
+impl MixerState {
+    /// The value this state holds for param `p` of `key`: `None` when the device is not in the
+    /// state or an effect that holds only its bypass has no value for `p`.
+    fn value(&self, key: &DeviceKey, p: &atomik_core::ParamDescriptor, strip: bool) -> Option<f32> {
+        let stored = self.devices.get(key)?;
+        if !strip && !self.effects && p.key != BYPASS {
+            return None;
+        }
+        Some(p.clamp(stored.get(p.key).copied().unwrap_or(p.default)))
+    }
+}
+
+/// A param value `at` (0..=1) of the way from `x` to `y`: along the param's own taper, a
+/// switch or a choice staying at `x` until the half way point.
+fn morph_value(p: &atomik_core::ParamDescriptor, x: f32, y: f32, at: f32) -> f32 {
+    if at <= 0.0 {
+        return x;
+    }
+    if at >= 1.0 {
+        return y;
+    }
+    if p.discrete {
+        return if at < 0.5 { x } else { y };
+    }
+    if p.taper == atomik_core::Taper::Exponential && p.min > 0.0 {
+        let (nx, ny) = (p.to_normalized(x), p.to_normalized(y));
+        return p.from_normalized(nx + (ny - nx) * at);
+    }
+    x + (y - x) * at
+}
+
 /// One param a recall sets: the stored value before and after (none is the default).
 struct ParamChange {
     key: DeviceKey,
@@ -236,9 +288,18 @@ impl Changes {
 }
 
 impl RackDoc {
-    /// The mixer state now: see the module documentation for what it covers.
+    /// The mixer state now: see the module documentation for what it covers. The effect devices
+    /// give their bypass only.
     pub fn capture_mixer(&self, registry: &Registry) -> MixerState {
-        let mut state = MixerState::default();
+        self.capture_mixer_with(registry, false)
+    }
+
+    /// The mixer state now; with `effects` the effect devices give all their params.
+    pub fn capture_mixer_with(&self, registry: &Registry, effects: bool) -> MixerState {
+        let mut state = MixerState {
+            effects,
+            ..MixerState::default()
+        };
         let strips = self
             .console
             .channels
@@ -246,16 +307,16 @@ impl RackDoc {
             .map(|c| &c.channel)
             .chain(self.console.buses.iter().map(|b| &b.bus))
             .chain(self.console.master.iter());
-        let mut effects: Vec<DeviceKey> = Vec::new();
+        let mut fx: Vec<DeviceKey> = Vec::new();
         for strip in strips {
-            if let Some(params) = self.captured_params(registry, strip, true) {
+            if let Some(params) = self.captured_params(registry, strip, true, effects) {
                 state.devices.insert(strip.clone(), params);
-                effects.extend(insert_chain(self, registry, strip));
+                fx.extend(insert_chain(self, registry, strip));
             }
         }
-        effects.extend(self.console.returns.iter().flatten().cloned());
-        for key in effects {
-            if let Some(params) = self.captured_params(registry, &key, false) {
+        fx.extend(self.console.returns.iter().flatten().cloned());
+        for key in fx {
+            if let Some(params) = self.captured_params(registry, &key, false, effects) {
                 state.devices.entry(key).or_insert(params);
             }
         }
@@ -276,13 +337,14 @@ impl RackDoc {
     }
 
     /// The params of `key` that a snapshot keeps and that are not at their default: all of a
-    /// strip's (`strip`), only the bypass of an effect. `None` when the device or its type is
-    /// unknown or an effect has no bypass.
+    /// strip's (`strip`), the bypass of an effect or, with `effects`, all of its params. `None`
+    /// when the device or its type is unknown or an effect has no bypass.
     fn captured_params(
         &self,
         registry: &Registry,
         key: &DeviceKey,
         strip: bool,
+        effects: bool,
     ) -> Option<BTreeMap<String, f32>> {
         let device = self.device(key)?;
         let desc = registry.get(&device.type_id)?.descriptor;
@@ -290,7 +352,7 @@ impl RackDoc {
             return None;
         }
         let mut out = BTreeMap::new();
-        for p in kept_params(desc, strip) {
+        for p in kept_params(desc, strip, effects) {
             let v = p.clamp(device.params.get(p.key).copied().unwrap_or(p.default));
             if v.to_bits() != p.default.to_bits() {
                 out.insert(p.key.to_owned(), v);
@@ -316,7 +378,7 @@ impl RackDoc {
                 continue;
             };
             let strip = is_console_type(&device.type_id);
-            for p in kept_params(factory.descriptor, strip) {
+            for p in kept_params(factory.descriptor, strip, state.effects) {
                 let bit = if strip {
                     category(p.key)
                 } else {
@@ -394,6 +456,97 @@ impl RackDoc {
             .is_some_and(|s| self.recall_changes(registry, &s.state, scope).is_empty())
     }
 
+    /// The mix at position `at` (0 is `a`, 1 is `b`) between two states: see the module
+    /// documentation. Devices and groups only one of the two knows keep that one's values; a
+    /// device that is gone is left out.
+    pub fn morph_state(
+        &self,
+        registry: &Registry,
+        a: &MixerState,
+        b: &MixerState,
+        at: f32,
+    ) -> MixerState {
+        let at = if at.is_nan() { 0.0 } else { at.clamp(0.0, 1.0) };
+        let mut out = MixerState {
+            effects: a.effects || b.effects,
+            ..MixerState::default()
+        };
+        let keys: std::collections::BTreeSet<&DeviceKey> =
+            a.devices.keys().chain(b.devices.keys()).collect();
+        for key in keys {
+            let Some(device) = self.device(key) else {
+                continue;
+            };
+            let Some(factory) = registry.get(&device.type_id) else {
+                continue;
+            };
+            let strip = is_console_type(&device.type_id);
+            let mut params = BTreeMap::new();
+            for p in kept_params(factory.descriptor, strip, out.effects) {
+                let value = match (a.value(key, p, strip), b.value(key, p, strip)) {
+                    (Some(x), Some(y)) => morph_value(p, x, y, at),
+                    (Some(x), None) | (None, Some(x)) => x,
+                    (None, None) => continue,
+                };
+                let value = p.clamp(value);
+                if value.to_bits() != p.default.to_bits() {
+                    params.insert(p.key.to_owned(), value);
+                }
+            }
+            out.devices.insert(key.clone(), params);
+        }
+        let ahead = at < 0.5;
+        for g in &a.vcas {
+            let Some(other) = b.vcas.iter().find(|o| o.id == g.id) else {
+                out.vcas.push(g.clone());
+                continue;
+            };
+            let near = if ahead { g } else { other };
+            let (x, y) = (g.level_db, other.level_db);
+            let level_db = if at <= 0.0 {
+                x
+            } else if at >= 1.0 {
+                y
+            } else {
+                x + (y - x) * at
+            };
+            out.vcas.push(SnapshotVca {
+                level_db,
+                ..near.clone()
+            });
+        }
+        out.vcas.extend(
+            b.vcas
+                .iter()
+                .filter(|g| !a.vcas.iter().any(|o| o.id == g.id))
+                .cloned(),
+        );
+        out
+    }
+
+    /// The state `MorphSnapshots { from, to, at }` sets; `None` for an unknown snapshot.
+    fn morph_between(
+        &self,
+        registry: &Registry,
+        from: u32,
+        to: u32,
+        at: f32,
+    ) -> Option<MixerState> {
+        let a = &self.console.snapshot(from)?.state;
+        let b = &self.console.snapshot(to)?.state;
+        Some(self.morph_state(registry, a, b, at))
+    }
+
+    /// True when `MorphSnapshots { from, to, at }` would change nothing (or a snapshot is
+    /// unknown): the app skips such steps while it plays a morph.
+    pub fn morph_matches(&self, registry: &Registry, from: u32, to: u32, at: f32) -> bool {
+        self.morph_between(registry, from, to, at)
+            .is_none_or(|state| {
+                self.recall_changes(registry, &state, SnapshotScope::ALL)
+                    .is_empty()
+            })
+    }
+
     /// What recalling snapshot `id` would skip because it no longer exists, one line each: the
     /// strips and effects, the VCA groups and the members of a group.
     pub fn snapshot_notes(&self, id: u32) -> Vec<String> {
@@ -423,14 +576,18 @@ impl RackDoc {
 }
 
 /// The descriptor params a snapshot keeps for a strip (every one but `internal.*`) or an effect
-/// (its bypass).
+/// (its bypass, or with `effects` every one but `internal.*`).
 pub(crate) fn kept_params(
     desc: &'static atomik_device_sdk::DeviceDescriptor,
     strip: bool,
+    effects: bool,
 ) -> impl Iterator<Item = &'static atomik_core::ParamDescriptor> {
-    desc.params
-        .iter()
-        .filter(move |p| (strip && !is_internal_param(p.key)) || (!strip && p.key == BYPASS))
+    desc.params.iter().filter(move |p| {
+        if is_internal_param(p.key) {
+            return false;
+        }
+        strip || effects || p.key == BYPASS
+    })
 }
 
 /// A snapshot name checked for the snapshot `except` (none for a new one), trimmed.
@@ -515,13 +672,19 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             let id = console.next_snapshot_id();
             let state = p.doc().capture_mixer(registry);
             edit_list(p, |list| {
-                list.push(MixerSnapshot { id, name, state });
+                list.push(MixerSnapshot {
+                    id,
+                    name,
+                    state,
+                    note: String::new(),
+                    color: None,
+                });
                 Ok(())
             })
         }
         ConsoleCommand::UpdateSnapshot { id } => {
-            snapshot_of(&p.doc().console, id)?;
-            let state = p.doc().capture_mixer(registry);
+            let effects = snapshot_of(&p.doc().console, id)?.state.effects;
+            let state = p.doc().capture_mixer_with(registry, effects);
             if p.doc().console.snapshot(id).map(|s| &s.state) == Some(&state) {
                 return Err(bad("the snapshot already holds this mix"));
             }
@@ -531,6 +694,91 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                 }
                 Ok(())
             })
+        }
+        ConsoleCommand::SetSnapshotEffects { id, effects } => {
+            let snapshot = snapshot_of(&p.doc().console, id)?;
+            if snapshot.state.effects == effects {
+                return Err(bad(if effects {
+                    "the snapshot already holds the effect parameters"
+                } else {
+                    "the snapshot holds no effect parameters"
+                }));
+            }
+            let live = p.doc().capture_mixer_with(registry, true);
+            let types: BTreeMap<DeviceKey, bool> = snapshot
+                .state
+                .devices
+                .keys()
+                .filter_map(|k| Some((k.clone(), is_console_type(&p.doc().device(k)?.type_id))))
+                .collect();
+            edit_list(p, |list| {
+                let Some(s) = list.iter_mut().find(|s| s.id == id) else {
+                    return Ok(());
+                };
+                s.state.effects = effects;
+                // Turning it on takes the effects as they are now, the strips stay as stored;
+                // turning it off keeps the bypass of each effect.
+                for (key, params) in &mut s.state.devices {
+                    if types.get(key).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    if !effects {
+                        params.retain(|k, _| k == BYPASS);
+                    } else if let Some(now) = live.devices.get(key) {
+                        *params = now.clone();
+                    }
+                }
+                Ok(())
+            })
+        }
+        ConsoleCommand::SetSnapshotNote { id, note } => {
+            let note = note.trim().to_owned();
+            if note.chars().count() > MAX_SNAPSHOT_NOTE_CHARS {
+                return Err(bad(format!(
+                    "a snapshot note has at most {MAX_SNAPSHOT_NOTE_CHARS} characters"
+                )));
+            }
+            if snapshot_of(&p.doc().console, id)?.note == note {
+                return Err(bad("the snapshot already has that note"));
+            }
+            edit_list(p, |list| {
+                if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+                    s.note = note;
+                }
+                Ok(())
+            })
+        }
+        ConsoleCommand::SetSnapshotColor { id, color } => {
+            if snapshot_of(&p.doc().console, id)?.color == color {
+                return Err(bad("the snapshot already has that colour"));
+            }
+            edit_list(p, |list| {
+                if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+                    s.color = color;
+                }
+                Ok(())
+            })
+        }
+        ConsoleCommand::MorphSnapshots { from, to, at } => {
+            if from == to {
+                return Err(bad("a morph needs two different snapshots"));
+            }
+            if !at.is_finite() || !(0.0..=1.0).contains(&at) {
+                return Err(bad("a morph position is between 0 and 1"));
+            }
+            if p.doc().console.compare.is_some() {
+                return Err(bad("end the compare before morphing"));
+            }
+            let state = p
+                .doc()
+                .morph_between(registry, from, to, at)
+                .ok_or_else(|| bad("a morph needs two existing snapshots"))?;
+            let changes = p.doc().recall_changes(registry, &state, SnapshotScope::ALL);
+            if changes.is_empty() {
+                return Err(bad("the mix is already there"));
+            }
+            apply(p, changes);
+            Ok(())
         }
         ConsoleCommand::RecallSnapshot { id, scope } => {
             let state = snapshot_of(&p.doc().console, id)?.state.clone();
@@ -587,7 +835,7 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             let snapshot = snapshot_of(&p.doc().console, id)?.state.clone();
             match p.doc().console.compare.clone() {
                 None => {
-                    let held = p.doc().capture_mixer(registry);
+                    let held = p.doc().capture_mixer_with(registry, snapshot.effects);
                     let changes = p
                         .doc()
                         .recall_changes(registry, &snapshot, SnapshotScope::ALL);
@@ -602,7 +850,7 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                     );
                 }
                 Some(c) if c.snapshot == id => {
-                    let live = p.doc().capture_mixer(registry);
+                    let live = p.doc().capture_mixer_with(registry, c.other.effects);
                     let changes = p
                         .doc()
                         .recall_changes(registry, &c.other, SnapshotScope::ALL);
@@ -696,6 +944,8 @@ mod tests {
                 id: i as u32 + 1,
                 name: (*n).into(),
                 state: MixerState::default(),
+                note: String::new(),
+                color: None,
             });
         }
         assert_eq!(c.default_snapshot_name(), "2");

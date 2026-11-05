@@ -320,16 +320,16 @@ fn names_are_trimmed_unique_and_bounded() {
 }
 
 #[test]
-fn there_are_at_most_sixteen_and_ids_are_not_reused() {
+fn there_are_at_most_sixty_four_and_ids_are_not_reused() {
     let (mut d, r) = project();
     for n in 0..MAX_SNAPSHOTS {
         d.apply(store(&format!("S{n}")), &r).unwrap();
     }
-    assert!(refused(&mut d, &r, store("one more")).contains("at most 16"));
+    assert!(refused(&mut d, &r, store("one more")).contains("at most 64"));
     d.apply(con(ConsoleCommand::DeleteSnapshot { id: 3 }), &r)
         .unwrap();
     d.apply(store("new"), &r).unwrap();
-    assert_eq!(d.doc().console.snapshots.last().unwrap().id, 17);
+    assert_eq!(d.doc().console.snapshots.last().unwrap().id, 65);
 }
 
 #[test]
@@ -789,11 +789,11 @@ fn a_bad_snapshot_is_refused_with_its_path() {
 }
 
 #[test]
-fn more_than_sixteen_in_a_file_are_refused() {
+fn more_than_sixty_four_in_a_file_are_refused() {
     let (d, r) = project();
     let mut text = save_project(d.doc());
     let one = "{\"id\": 1, \"name\": \"A\", \"devices\": {}}";
-    let many: Vec<String> = (1..=17)
+    let many: Vec<String> = (1..=65)
         .map(|n| {
             one.replace("\"id\": 1", &format!("\"id\": {n}"))
                 .replace("\"A\"", &format!("\"S{n}\""))
@@ -805,5 +805,5 @@ fn more_than_sixteen_in_a_file_are_refused() {
         1,
     );
     let e = load_project(&text, &r).unwrap_err().to_string();
-    assert!(e.contains("at most 16"), "{e}");
+    assert!(e.contains("at most 64"), "{e}");
 }

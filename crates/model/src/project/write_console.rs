@@ -129,6 +129,15 @@ pub(super) fn snapshot_json(s: &MixerSnapshot) -> String {
         json_str(&s.name),
         devices.join(", ")
     );
+    if s.state.effects {
+        out.push_str(", \"effects\": true");
+    }
+    if !s.note.is_empty() {
+        let _ = write!(out, ", \"note\": {}", json_str(&s.note));
+    }
+    if let Some([r, g, b]) = s.color {
+        let _ = write!(out, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
+    }
     if !s.state.vcas.is_empty() {
         let vcas: Vec<String> = s
             .state

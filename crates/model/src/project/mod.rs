@@ -271,12 +271,15 @@
 //! there are no groups, so a project without one differs from its version 25 file in the version
 //! line alone, and plays and bounces bit for bit as it did. **Version 26** files have no mixer
 //! snapshots: from version 27 the console may carry `"snapshots"` after its `"vcas"` (see
-//! [`crate::console_snapshot`]): `[{"id", "name", "devices", "vcas"?}…]`, at most 16; `"id"`
+//! [`crate::console_snapshot`]): `[{"id", "name", "devices", "vcas"?}…]`, at most 64; `"id"`
 //! counts from 1 and is unique, `"name"` is trimmed, non-empty, at most 32 characters and unique
 //! ignoring case, `"devices"` maps a device key to the params of that device that are not at
 //! their default (a strip's params, or the `"bypass"` of an insert or return effect; every
 //! captured device is listed, with `{}` when all its params are at the default), and `"vcas"`
 //! lists the groups as `{"id", "name", "level_db"?, "mute"?, "solo"?, "members"}`. A snapshot may
+//! also carry `"effects": true` (the effect devices then list all their params, not only the
+//! `"bypass"`), a `"note"` of at most 200 characters and a `"color"` (`"#rrggbb"`); all three are
+//! written only when set and are ignorable. A snapshot may
 //! name devices, params and groups that do not exist (they were deleted after it was taken;
 //! recall skips them), so the loader checks the shape and the numbers, not the references. The
 //! compare slot is not saved. The field is omitted when there are no snapshots, so a project
@@ -409,8 +412,8 @@ use crate::console::{
     MAX_BUS_NAME_CHARS, is_console_type,
 };
 use crate::console::{
-    MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MAX_VCA_NAME_CHARS, MAX_VCAS, MixerSnapshot,
-    MixerState, SnapshotVca, VcaGroup,
+    MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOT_NOTE_CHARS, MAX_SNAPSHOTS, MAX_VCA_NAME_CHARS, MAX_VCAS,
+    MixerSnapshot, MixerState, SnapshotVca, VcaGroup,
 };
 use crate::controller::{ControllerKind, ControllerLane, check_lanes};
 use crate::curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};

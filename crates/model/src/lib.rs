@@ -200,8 +200,8 @@ pub use console_insert::{
 };
 pub use console_settings::{ChannelSettingsClip, InsertClip};
 pub use console_snapshot::{
-    CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MixerSnapshot, MixerState, SnapshotScope,
-    SnapshotVca,
+    CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOT_NOTE_CHARS, MAX_SNAPSHOTS, MixerSnapshot,
+    MixerState, SnapshotScope, SnapshotVca,
 };
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
