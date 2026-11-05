@@ -6,10 +6,16 @@
 //! A chip is the snapshot's name. The chip of the snapshot the mix was last recalled from (or that
 //! the mix matches exactly) is lit; when the mix has moved since, it carries a small dot. While a
 //! compare is on, the A/B button is lit and the status says which side is live (`A: working mix`
-//! or `B: <name>`); the chip being compared with is outlined.
+//! or `B: <name>`); the chip being compared with is outlined. A snapshot with a colour has a bar
+//! of it along the foot of its chip, and its note shows in the status area while it is current.
+//!
+//! **Many snapshots.** The chips that do not fit the bar scroll: the wheel over the bar, or the
+//! arrows that appear at either end when there are chips out of sight, move the first visible
+//! chip by one, and the host reveals the current snapshot (`reveal`) when it changes.
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::console::small_button;
+use crate::console_vca::color_of;
 use crate::paint::{self, fit_label};
 use crate::seq_paint::{self as sp, SeqTheme};
 use atomik_model::RackDoc;
@@ -24,6 +30,9 @@ const GAP: f64 = 4.0;
 const PLUS_W: f64 = 24.0;
 const AB_W: f64 = 36.0;
 const END_W: f64 = 34.0;
+const ARROW_W: f64 = 14.0;
+/// Width of the field a note is typed in.
+const NOTE_FIELD_W: f64 = 260.0;
 /// Room kept for the status text before the chips stop being drawn.
 const STATUS_MIN_W: f64 = 120.0;
 
@@ -36,6 +45,12 @@ pub struct SnapView {
     pub name: String,
     /// The mix matches the snapshot exactly (everything it covers).
     pub matches: bool,
+    /// The note of the snapshot (empty for none).
+    pub note: String,
+    /// The colour of its chip.
+    pub color: Option<[u8; 3]>,
+    /// The snapshot holds the params of the effect devices, not only their bypass.
+    pub effects: bool,
 }
 
 /// The state of the compare, if one is on.
@@ -52,8 +67,14 @@ pub struct CompareView {
 pub struct SnapLayout {
     /// The label at the left.
     pub label: Rect,
-    /// A chip per snapshot that fits, by index into the view's list.
+    /// A chip per snapshot that fits from the first visible one, by index into the view's list.
     pub chips: Vec<(usize, Rect)>,
+    /// The first visible chip (the asked one, kept inside the list).
+    pub first: usize,
+    /// The arrow that scrolls to earlier chips (only when some are out of sight).
+    pub left: Option<Rect>,
+    /// The arrow that scrolls to later chips (only when some are out of sight).
+    pub right: Option<Rect>,
     /// The `+` button.
     pub store: Rect,
     /// The A/B button.
@@ -69,23 +90,42 @@ fn chip_width(name: &str) -> f64 {
     (paint::estimate_width(name, 9.0) + 18.0).clamp(CHIP_MIN_W, CHIP_MAX_W)
 }
 
-/// Lays the bar out inside `bar` (its height is [`BAR_H`]).
-pub fn layout(bar: Rect, snaps: &[SnapView], comparing: bool) -> SnapLayout {
+/// Lays the bar out inside `bar` (its height is [`BAR_H`]) with the chips from index `first` on:
+/// the chips that do not fit are left out (the arrows and the wheel scroll to them).
+pub fn layout(bar: Rect, snaps: &[SnapView], comparing: bool, first: usize) -> SnapLayout {
     let (y0, y1) = (bar.y0 + 3.0, bar.y1 - 3.0);
     let label = Rect::new(bar.x0 + 10.0, bar.y0, bar.x0 + 10.0 + LABEL_W, bar.y1);
     // The buttons after the chips and the status need room: chips that do not fit are left out.
     let tail = PLUS_W + GAP + AB_W + if comparing { GAP + END_W } else { 0.0 } + STATUS_MIN_W;
     let limit = bar.x1 - 8.0 - tail;
-    let mut x = label.x1 + 4.0;
-    let mut chips = Vec::new();
-    for (i, s) in snaps.iter().enumerate() {
-        let w = chip_width(&s.name);
-        if x + w > limit {
-            break;
+    let first = first.min(snaps.len().saturating_sub(1));
+    let start = label.x1 + 4.0;
+    let left = (first > 0).then(|| Rect::new(start, y0, start + ARROW_W, y1));
+    let chips_x0 = start + left.map_or(0.0, |_| ARROW_W + GAP);
+    let fit = |limit: f64| {
+        let mut x = chips_x0;
+        let mut chips = Vec::new();
+        for (i, s) in snaps.iter().enumerate().skip(first) {
+            let w = chip_width(&s.name);
+            if x + w > limit {
+                break;
+            }
+            chips.push((i, Rect::new(x, y0, x + w, y1)));
+            x += w + GAP;
         }
-        chips.push((i, Rect::new(x, y0, x + w, y1)));
-        x += w + GAP;
+        chips
+    };
+    let mut chips = fit(limit);
+    let mut right = None;
+    if first + chips.len() < snaps.len() {
+        chips = fit(limit - ARROW_W - GAP);
+        let x = chips.last().map_or(chips_x0, |(_, r)| r.x1 + GAP);
+        right = Some(Rect::new(x, y0, x + ARROW_W, y1));
     }
+    let mut x = right.map_or_else(
+        || chips.last().map_or(chips_x0, |(_, r)| r.x1 + GAP),
+        |r| r.x1 + GAP,
+    );
     let store = Rect::new(x, y0, x + PLUS_W, y1);
     x = store.x1 + GAP + 8.0;
     let compare = Rect::new(x, y0, x + AB_W, y1);
@@ -99,6 +139,9 @@ pub fn layout(bar: Rect, snaps: &[SnapView], comparing: bool) -> SnapLayout {
     SnapLayout {
         label,
         chips,
+        first,
+        left,
+        right,
         store,
         compare,
         end,
@@ -106,8 +149,22 @@ pub fn layout(bar: Rect, snaps: &[SnapView], comparing: bool) -> SnapLayout {
     }
 }
 
+/// The first visible chip that shows chip `index` with as little scrolling as possible, starting
+/// from `first`.
+pub fn reveal(bar: Rect, snaps: &[SnapView], comparing: bool, first: usize, index: usize) -> usize {
+    let mut first = first.min(index);
+    while first < index {
+        let l = layout(bar, snaps, comparing, first);
+        if l.chips.iter().any(|(i, _)| *i == index) {
+            break;
+        }
+        first += 1;
+    }
+    first
+}
+
 /// The text of the status area: the side that is live while comparing, else what recalling the
-/// active snapshot skips.
+/// active snapshot skips, else its note.
 pub fn status_text(
     snaps: &[SnapView],
     compare: Option<CompareView>,
@@ -127,8 +184,14 @@ pub fn status_text(
             "A: working mix".to_owned()
         });
     }
-    let first = notes.first()?;
     let name = active.map_or("", name_of);
+    let Some(first) = notes.first() else {
+        let note = active
+            .and_then(|id| snaps.iter().find(|s| s.id == id))
+            .map(|s| s.note.as_str())
+            .filter(|n| !n.is_empty())?;
+        return Some(format!("{name}: {note}"));
+    };
     Some(match notes.len() {
         1 => format!("{name}: {first}"),
         n => format!("{name}: {first} (+{} more)", n - 1),
@@ -159,6 +222,9 @@ pub fn views(doc: &RackDoc, registry: &atomik_device_sdk::Registry) -> Vec<SnapV
             id: s.id,
             name: s.name.clone(),
             matches: doc.snapshot_matches(s.id, registry, atomik_model::SnapshotScope::ALL),
+            note: s.note.clone(),
+            color: s.color,
+            effects: s.state.effects,
         })
         .collect()
 }
@@ -170,14 +236,16 @@ pub struct Paint<'a> {
     pub compare: Option<CompareView>,
     pub current: Option<u32>,
     pub notes: &'a [String],
-    /// The chip whose name is being typed, and the text.
-    pub editing: Option<(u32, &'a str)>,
+    /// The first visible chip.
+    pub first: usize,
+    /// The chip whose name (or, with the flag, note) is being typed, and the text.
+    pub editing: Option<(u32, &'a str, bool)>,
 }
 
 /// Paints the bar into `bar`.
 pub fn paint(c: &mut dyn Canvas, bar: Rect, p: &Paint<'_>) {
     let t = &p.st.base;
-    let l = layout(bar, p.snaps, p.compare.is_some());
+    let l = layout(bar, p.snaps, p.compare.is_some(), p.first);
     sp::rect(c, bar, p.st.header);
     sp::line(
         c,
@@ -199,15 +267,24 @@ pub fn paint(c: &mut dyn Canvas, bar: Rect, p: &Paint<'_>) {
     );
     for (i, r) in &l.chips {
         let s = &p.snaps[*i];
-        if let Some((id, text)) = p.editing
+        if let Some((id, text, note)) = p.editing
             && id == s.id
         {
-            edit_field(c, p.st, *r, text);
+            edit_field(c, p.st, *r, text, if note { NOTE_FIELD_W } else { 96.0 });
             continue;
         }
         let is_current = p.current == Some(s.id);
         let lit = is_current.then_some(t.highlight);
         small_button(c, p.st, *r, &s.name, lit, true, 9.0);
+        if let Some(color) = s.color {
+            c.fill_with(
+                RoundedRect::from_rect(
+                    Rect::new(r.x0 + 3.0, r.y1 - 3.5, r.x1 - 3.0, r.y1 - 1.5),
+                    1.0,
+                ),
+                color_of(color),
+            );
+        }
         if p.compare.is_some_and(|cv| cv.snapshot == s.id) {
             paint::outline(c, r.inset(1.0), 3.0, 1.4, t.cable_cv);
         }
@@ -220,6 +297,11 @@ pub fn paint(c: &mut dyn Canvas, bar: Rect, p: &Paint<'_>) {
                 ),
                 t.warning,
             );
+        }
+    }
+    for (arrow, label) in [(l.left, "<"), (l.right, ">")] {
+        if let Some(r) = arrow {
+            small_button(c, p.st, r, label, None, true, 10.0);
         }
     }
     small_button(
@@ -263,10 +345,10 @@ pub fn paint(c: &mut dyn Canvas, bar: Rect, p: &Paint<'_>) {
     }
 }
 
-/// The text field drawn over a chip while its name is typed.
-fn edit_field(c: &mut dyn Canvas, st: &SeqTheme, chip: Rect, text: &str) {
+/// The text field drawn over a chip while its name is typed, at least `width` wide.
+fn edit_field(c: &mut dyn Canvas, st: &SeqTheme, chip: Rect, text: &str, width: f64) {
     let t = &st.base;
-    let r = Rect::new(chip.x0, chip.y0, chip.x0 + chip.width().max(96.0), chip.y1);
+    let r = Rect::new(chip.x0, chip.y0, chip.x0 + chip.width().max(width), chip.y1);
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
     let room = r.width() - 12.0;
@@ -292,6 +374,9 @@ mod tests {
                 id: i as u32 + 1,
                 name: (*n).to_owned(),
                 matches: false,
+                note: String::new(),
+                color: None,
+                effects: false,
             })
             .collect()
     }
@@ -300,7 +385,7 @@ mod tests {
     fn chips_follow_each_other_and_the_store_button_follows_the_last() {
         let bar = Rect::new(0.0, 0.0, 1200.0, BAR_H);
         let s = snaps(&["A", "B", "Verse"]);
-        let l = layout(bar, &s, false);
+        let l = layout(bar, &s, false, 0);
         assert_eq!(l.chips.len(), 3);
         for w in l.chips.windows(2) {
             assert!(w[0].1.x1 < w[1].1.x0);
@@ -308,7 +393,7 @@ mod tests {
         assert!(l.chips[2].1.x1 < l.store.x0);
         assert!(l.store.x1 < l.compare.x0);
         assert!(l.end.is_none());
-        assert!(layout(bar, &s, true).end.is_some());
+        assert!(layout(bar, &s, true, 0).end.is_some());
     }
 
     #[test]
@@ -320,7 +405,7 @@ mod tests {
             "Snapshot three",
             "Snapshot four",
         ]);
-        let l = layout(bar, &s, true);
+        let l = layout(bar, &s, true, 0);
         assert!(l.chips.len() < s.len());
         assert!(l.end.is_some_and(|e| e.x1 <= bar.x1));
         assert!(l.compare.x1 <= bar.x1);

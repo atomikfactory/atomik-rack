@@ -100,7 +100,9 @@ use crate::theme::{Theme, mix};
 use crate::widget::{self, ValueDrag};
 use atomik_core::{ParamDescriptor, Taper, Unit};
 use atomik_device_sdk::{DeviceDescriptor, DeviceKind, Registry};
-use atomik_model::console::{MAX_BUS_NAME_CHARS, OutputAvail, output_options};
+use atomik_model::console::{
+    MAX_BUS_NAME_CHARS, MAX_SNAPSHOT_NOTE_CHARS, OutputAvail, output_options,
+};
 use atomik_model::{
     Command, ConsoleCommand, DeviceKey, FX_SLOTS, INSERT_SLOTS, INTERFACE_KEY, InsertEffect,
     OutputDest, RackDevice, RackDoc, SnapshotScope, bypass_inserts_commands, insert_bypass_states,
@@ -286,6 +288,8 @@ enum Hit {
     Vca(usize, VcaPart),
     /// Snapshot chip `i` (index into the snapshot list).
     Snap(usize),
+    /// The arrow of the snapshot bar that scrolls the chips left (true) or right.
+    SnapArrow(bool),
     Picker(usize),
     /// An insert chain slot (name or "+ add").
     Insert(Target, usize),
@@ -372,6 +376,14 @@ enum MenuItem {
     SnapMove(u32, usize),
     /// Delete this snapshot.
     SnapDelete(u32),
+    /// Morph the mix from the current snapshot to this one.
+    SnapMorph(u32),
+    /// Edit the note of this snapshot in place.
+    SnapNote(u32),
+    /// Hold all the params of the effect devices in this snapshot (true) or only their bypass.
+    SnapEffects(u32, bool),
+    /// Set the chip colour of this snapshot.
+    SnapColor(u32, Option<[u8; 3]>),
     Disabled,
 }
 
@@ -742,6 +754,8 @@ struct RenameState {
     vca: Option<u32>,
     /// A mixer snapshot (`RenameSnapshot`); `strip` and `target` are then empty.
     snapshot: Option<u32>,
+    /// With `snapshot`: the text is the note (`SetSnapshotNote`) rather than the name.
+    note: bool,
     text: String,
 }
 
@@ -768,6 +782,10 @@ pub struct ConsoleView {
     compare: Option<CompareView>,
     snap_hint: Option<u32>,
     snap_notes: Vec<String>,
+    /// The first chip of the snapshot bar that is shown, and the snapshot last scrolled into
+    /// view.
+    snap_first: usize,
+    snap_revealed: Option<u32>,
     return_names: Vec<String>,
     layouts: Vec<(&'static str, StripLayout)>,
     master_layout: Option<MasterLayout>,
@@ -850,6 +868,8 @@ impl ConsoleView {
             compare: None,
             snap_hint: None,
             snap_notes: Vec::new(),
+            snap_first: 0,
+            snap_revealed: None,
             return_names: Vec::new(),
             layouts: Vec::new(),
             master_layout: None,
@@ -914,6 +934,8 @@ impl ConsoleView {
     pub fn set_bounds(&mut self, bounds: Rect) {
         if bounds != self.bounds {
             self.bounds = bounds;
+            self.snap_revealed = None;
+            self.reveal_current_snapshot();
             self.clamp_scroll();
             self.repaint = true;
         }
@@ -1293,8 +1315,52 @@ impl ConsoleView {
     pub fn set_snapshot_hint(&mut self, id: Option<u32>) {
         if self.snap_hint != id {
             self.snap_hint = id;
+            self.reveal_current_snapshot();
             self.repaint = true;
         }
+    }
+
+    /// Scrolls the snapshot bar so that the chip of the current snapshot shows, when the current
+    /// snapshot changed since it last did.
+    fn reveal_current_snapshot(&mut self) {
+        let current = self.current_snapshot();
+        self.snap_first = self.snap_first.min(self.snaps.len().saturating_sub(1));
+        if current == self.snap_revealed {
+            return;
+        }
+        self.snap_revealed = current;
+        if let Some(i) = current.and_then(|id| self.snaps.iter().position(|s| s.id == id)) {
+            let first = cs::reveal(
+                self.snapshot_bar(),
+                &self.snaps,
+                self.compare.is_some(),
+                self.snap_first,
+                i,
+            );
+            if first != self.snap_first {
+                self.snap_first = first;
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// Scrolls the snapshot chips by `by` chips (negative towards the first).
+    fn scroll_snapshots(&mut self, by: isize) {
+        // Forward only while there are chips out of sight to the right.
+        if by > 0 && self.snapshot_layout().right.is_none() {
+            return;
+        }
+        let last = self.snaps.len().saturating_sub(1);
+        let first = self.snap_first.saturating_add_signed(by).min(last);
+        if first != self.snap_first {
+            self.snap_first = first;
+            self.repaint = true;
+        }
+    }
+
+    /// The first chip of the snapshot bar that is shown.
+    pub fn snapshot_first(&self) -> usize {
+        self.snap_first
     }
 
     /// The snapshot that counts as the current one: the one being compared with, else the first
@@ -1352,7 +1418,12 @@ impl ConsoleView {
     }
 
     fn snapshot_layout(&self) -> cs::SnapLayout {
-        cs::layout(self.snapshot_bar(), &self.snaps, self.compare.is_some())
+        cs::layout(
+            self.snapshot_bar(),
+            &self.snaps,
+            self.compare.is_some(),
+            self.snap_first,
+        )
     }
 
     fn master_x(&self) -> Option<f64> {
@@ -1742,6 +1813,11 @@ impl ConsoleView {
                 if let Some((i, _)) = l.chips.iter().find(|(_, r)| r.contains(p)) {
                     return Hit::Snap(*i);
                 }
+                for (left, r) in [(true, l.left), (false, l.right)] {
+                    if r.is_some_and(|r| r.contains(p)) {
+                        return Hit::SnapArrow(left);
+                    }
+                }
                 for (bt, r) in [
                     (ConsoleButton::StoreSnapshot, Some(l.store)),
                     (ConsoleButton::Compare, Some(l.compare)),
@@ -2036,6 +2112,7 @@ impl ConsoleView {
             self.snaps = snaps;
             self.compare = compare;
             self.snap_notes = notes;
+            self.reveal_current_snapshot();
             if self
                 .rename
                 .as_ref()
@@ -2509,6 +2586,9 @@ impl ConsoleView {
                     }
                 }
             }
+            (Hit::SnapArrow(left), PointerButton::Primary) => {
+                self.scroll_snapshots(if left { -1 } else { 1 })
+            }
             (Hit::Snap(i), PointerButton::Primary) => self.snap_down(i, clicks, doc, registry, out),
             (Hit::Snap(i), PointerButton::Secondary) => {
                 self.open_snapshot_menu(i, pos, doc, registry)
@@ -2690,11 +2770,44 @@ impl ConsoleView {
             }
         }
         items.push(("Compare with this".to_string(), MenuItem::SnapCompare(id)));
+        if comparing || self.current_snapshot() == Some(id) {
+            items.push(("Morph to this (no change)".to_string(), MenuItem::Disabled));
+        } else {
+            items.push(("Morph to this".to_string(), MenuItem::SnapMorph(id)));
+        }
         items.push((
             "Update from current mix".to_string(),
             MenuItem::SnapUpdate(id),
         ));
         items.push(("Rename".to_string(), MenuItem::SnapRename(id)));
+        items.push(("Edit note".to_string(), MenuItem::SnapNote(id)));
+        if s.effects {
+            items.push((
+                "Keep only the effect bypass".to_string(),
+                MenuItem::SnapEffects(id, false),
+            ));
+        } else {
+            items.push((
+                "Include the effect parameters".to_string(),
+                MenuItem::SnapEffects(id, true),
+            ));
+        }
+        // The colour steps through the palette; "No colour" clears it.
+        let palette = crate::marker_edit::PALETTE;
+        let next = match s
+            .color
+            .and_then(|c| palette.iter().position(|(_, p)| *p == c))
+        {
+            Some(at) => palette[(at + 1) % palette.len()],
+            None => palette[0],
+        };
+        items.push((
+            format!("Next colour ({})", next.0),
+            MenuItem::SnapColor(id, Some(next.1)),
+        ));
+        if s.color.is_some() {
+            items.push(("No colour".to_string(), MenuItem::SnapColor(id, None)));
+        }
         if i > 0 {
             items.push(("Move left".to_string(), MenuItem::SnapMove(id, i - 1)));
         }
@@ -2719,7 +2832,28 @@ impl ConsoleView {
             bus: false,
             vca: None,
             snapshot: Some(id),
+            note: false,
             text: s.name.clone(),
+        });
+        self.drag = Drag::None;
+        self.menu = None;
+        self.repaint = true;
+    }
+
+    /// Starts typing the note of snapshot `id`; Enter sends `SetSnapshotNote` (an empty note
+    /// clears it). Nothing happens for an unknown snapshot.
+    pub fn begin_edit_snapshot_note(&mut self, id: u32) {
+        let Some(s) = self.snaps.iter().find(|s| s.id == id) else {
+            return;
+        };
+        self.rename = Some(RenameState {
+            strip: DeviceKey(String::new()),
+            target: DeviceKey(String::new()),
+            bus: false,
+            vca: None,
+            snapshot: Some(id),
+            note: true,
+            text: s.note.clone(),
         });
         self.drag = Drag::None;
         self.menu = None;
@@ -2961,6 +3095,26 @@ impl ConsoleView {
             },
             (MenuItem::SnapCompare(id), _) => ConsoleCommand::Compare { id: *id },
             (MenuItem::SnapUpdate(id), _) => ConsoleCommand::UpdateSnapshot { id: *id },
+            (MenuItem::SnapMorph(id), _) => {
+                self.menu = None;
+                out.push(UiAction::RunCommand {
+                    id: "mixer.morph_snapshot".to_owned(),
+                    arg: Some(id.to_string()),
+                });
+                return;
+            }
+            (MenuItem::SnapNote(id), _) => {
+                self.begin_edit_snapshot_note(*id);
+                return;
+            }
+            (MenuItem::SnapEffects(id, effects), _) => ConsoleCommand::SetSnapshotEffects {
+                id: *id,
+                effects: *effects,
+            },
+            (MenuItem::SnapColor(id, color), _) => ConsoleCommand::SetSnapshotColor {
+                id: *id,
+                color: *color,
+            },
             (MenuItem::SnapRename(id), _) => {
                 self.begin_rename_snapshot(*id);
                 return;
@@ -3143,6 +3297,7 @@ impl ConsoleView {
             bus: false,
             vca: Some(v.id),
             snapshot: None,
+            note: false,
             text: v.name.clone(),
         });
         self.drag = Drag::None;
@@ -3245,6 +3400,7 @@ impl ConsoleView {
             bus: i >= self.n_channels,
             vca: None,
             snapshot: None,
+            note: false,
             text: s.name.clone(),
         });
         self.drag = Drag::None;
@@ -3262,6 +3418,22 @@ impl ConsoleView {
             return;
         }
         let name = r.text.trim();
+        if let (Some(id), true) = (r.snapshot, r.note) {
+            let current = self
+                .snaps
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.note.as_str());
+            if current.is_some_and(|c| c != name) {
+                out.push(UiAction::Command(Command::Console(
+                    ConsoleCommand::SetSnapshotNote {
+                        id,
+                        note: name.to_string(),
+                    },
+                )));
+            }
+            return;
+        }
         if let Some(id) = r.snapshot {
             let current = self
                 .snaps
@@ -3335,7 +3507,12 @@ impl ConsoleView {
 
     fn rename_push(&mut self, c: char) {
         if let Some(r) = &mut self.rename
-            && r.text.chars().count() < MAX_BUS_NAME_CHARS
+            && r.text.chars().count()
+                < if r.note {
+                    MAX_SNAPSHOT_NOTE_CHARS
+                } else {
+                    MAX_BUS_NAME_CHARS
+                }
         {
             r.text.push(c);
         }
@@ -3703,6 +3880,14 @@ impl ConsoleView {
             return;
         }
         if !self.bounds.contains(pos) {
+            return;
+        }
+        if self.snapshot_bar().contains(pos) {
+            self.scroll_snapshots(if delta.y > 0.0 || delta.x > 0.0 {
+                -1
+            } else {
+                1
+            });
             return;
         }
         let hit = self.hit(pos);
@@ -4547,7 +4732,7 @@ impl ConsoleView {
         let editing = self
             .rename
             .as_ref()
-            .and_then(|r| r.snapshot.map(|id| (id, r.text.as_str())));
+            .and_then(|r| r.snapshot.map(|id| (id, r.text.as_str(), r.note)));
         cs::paint(
             c,
             self.snapshot_bar(),
@@ -4557,6 +4742,7 @@ impl ConsoleView {
                 compare: self.compare,
                 current: self.current_snapshot(),
                 notes: &self.snap_notes,
+                first: self.snap_first,
                 editing,
             },
         );

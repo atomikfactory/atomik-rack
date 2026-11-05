@@ -1277,6 +1277,68 @@ fn the_snapshot_bar_of_the_console_stores_recalls_and_compares_through_the_shell
     assert!(s.core().doc().console.snapshots[0].name.ends_with("Chorus"));
 }
 
+#[test]
+fn the_morph_commands_run_through_the_shell_and_the_frames_play_the_morph() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    let channel = s.core().doc().console.channels[0].channel.clone();
+    let fader = |s: &Shell<NullBackend>| {
+        s.core()
+            .doc()
+            .param_value(&channel, "fader", s.core().registry())
+            .unwrap()
+    };
+    let set_fader = |s: &mut Shell<NullBackend>, value: f32| {
+        s.core_mut()
+            .apply_command(Command::SetParam {
+                key: channel.clone(),
+                param: "fader".into(),
+                value,
+                merge: None,
+            })
+            .unwrap();
+    };
+    set_fader(&mut s, 0.2);
+    s.execute(AppCommand::StoreSnapshot);
+    set_fader(&mut s, 0.8);
+    s.execute(AppCommand::StoreSnapshot);
+    // The ids and the arguments of the commands.
+    assert_eq!(
+        AppCommand::from_command("mixer.morph_snapshot", Some("2")),
+        Some(AppCommand::MorphSnapshot(Some(2)))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.morph_time", Some("4")),
+        Some(AppCommand::MorphTime(4))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.morph_time", Some("3")),
+        None
+    );
+    assert_eq!(
+        AppCommand::MorphTime(8).command_id(),
+        Some(("mixer.morph_time", Some("8")))
+    );
+    assert_eq!(AppCommand::MorphSnapshot(Some(1)).command_id(), None);
+    assert!(mixer_item(&s, AppCommand::MorphSnapshot(None)).enabled);
+    // Morph time 1 second from the second snapshot to the next (the first, wrapping round).
+    s.execute(AppCommand::MorphTime(1));
+    assert!(mixer_item(&s, AppCommand::MorphTime(1)).checked == Some(true));
+    s.execute(AppCommand::MorphSnapshot(None));
+    assert!(s.core().snapshot_morphing());
+    assert!(!mixer_item(&s, AppCommand::MorphSnapshot(None)).enabled);
+    s.frame_at(100.0);
+    s.frame_at(100.5);
+    let mid = fader(&s);
+    assert!(mid < 0.8 && mid > 0.2, "{mid}");
+    s.frame_at(101.0);
+    assert!(!s.core().snapshot_morphing());
+    assert_eq!(fader(&s), 0.2);
+    // The command with the id of a snapshot goes the same way.
+    s.execute(AppCommand::MorphSnapshot(Some(2)));
+    assert!(s.core().snapshot_morphing());
+}
+
 fn mixer_item(s: &Shell<NullBackend>, command: AppCommand) -> crate::commands::MenuItem {
     s.menu_model()
         .into_iter()
