@@ -2088,7 +2088,8 @@ learns nothing new.
   `bpm_for_beats` (a loop of N beats), `estimate_bpm` (a comb filter over onsets between 70 and
   180 BPM) and `quantize_audio` (markers that move each transient to the nearest grid line by a
   strength, the clip's start and end pinned, any markers replaced, a clip without warp switched on
-  at the song tempo at its start) are pure.
+  at the song tempo at its start; a reversed clip is quantized where it plays, mirrored in frames)
+  are pure.
 - **Render** ([render/src/warp.rs](../crates/render/src/warp.rs)). `render_warp(job, asset, cancel)`
   reads only the span of the asset the map uses (plus 8192 frames each side; a streamed asset
   through its source) and returns a `SongAsset::Memory` of the clip's whole span.
