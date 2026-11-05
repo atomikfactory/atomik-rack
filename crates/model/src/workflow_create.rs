@@ -846,6 +846,24 @@ pub fn player_stack(doc: &RackDoc, registry: &Registry, track: &crate::Track) ->
     stack
 }
 
+/// The players a preview of top-level note player `player` runs: the player itself and every
+/// note player its notes pass through, following the first Notes cable of each, down to the first
+/// device that is not a player (the instrument of the track, which is not part of the chain).
+/// Empty when `player` is not a top-level note player of the document. A cable that loops back
+/// ends the walk.
+pub fn preview_chain(doc: &RackDoc, registry: &Registry, player: &DeviceKey) -> Vec<DeviceKey> {
+    let mut chain = Vec::new();
+    let mut at = player.clone();
+    while is_player_device(doc, registry, &at) && !chain.contains(&at) {
+        chain.push(at.clone());
+        match notes_successor(doc, registry, &at) {
+            Some(next) => at = next,
+            None => break,
+        }
+    }
+    chain
+}
+
 /// The top of the player chain feeding `device`: up the cables into its Notes input while the
 /// feeder is a note player. `None` when no player feeds it (a track then enters at the
 /// device itself).

@@ -707,3 +707,30 @@ fn connecting_players_leaves_an_audio_track_alone() {
     assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
     assert_eq!(entry(&d, "audio-track"), None);
 }
+
+#[test]
+fn the_preview_chain_runs_from_the_player_down_to_the_instrument() {
+    let reg = registry();
+    let (d, [top, middle, bottom]) = stacked(&reg);
+    let chain = |k: &str| atomik_model::preview_chain(d.doc(), &reg, &key(k));
+    // A player runs itself and the players after it, never the ones above and never the synth.
+    assert_eq!(
+        chain(&top),
+        vec![key(&top), key(&middle), key(&bottom)],
+        "the top player runs the whole stack"
+    );
+    assert_eq!(chain(&middle), vec![key(&middle), key(&bottom)]);
+    assert_eq!(chain(&bottom), vec![key(&bottom)]);
+    // Not a player: nothing to run.
+    assert!(chain("synth").is_empty());
+    assert!(chain("nothing").is_empty());
+}
+
+#[test]
+fn the_preview_chain_of_an_uncabled_player_is_the_player_alone() {
+    let reg = registry();
+    let mut d = doc_with_synth(&reg);
+    run(&mut d, &reg, [add(0, SEQ, Some("seq"))]);
+    let chain = |d: &Document| atomik_model::preview_chain(d.doc(), &reg, &key("seq"));
+    assert_eq!(chain(&d), vec![key("seq")]);
+}

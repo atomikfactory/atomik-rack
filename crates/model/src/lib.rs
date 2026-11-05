@@ -175,7 +175,7 @@ pub use workflow::{
 pub use workflow_cmd::{ClipMove, TakeTarget, WorkflowCommand};
 pub use workflow_create::{
     CreateOptions, CreateSource, CreateTarget, RouteNote, SEND_SLOTS_FULL, effect_route_note,
-    first_free_send_slot, is_note_player, player_stack,
+    first_free_send_slot, is_note_player, player_stack, preview_chain,
 };
 pub use zones::{
     PAD_COUNT, PAD_KEY_BASE, ZoneDoc, auto_map, fill_empty_pads, pad_key, pad_of_key, pad_zones,
