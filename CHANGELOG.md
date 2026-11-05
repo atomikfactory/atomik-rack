@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.3.0-rc.2] - 2026-11-04
+
 ### Added
 - **Recording and editing follow-ups: dimmed masked notes and tails, a Piano Keys window, a Save question in its
   own words, fades in ticks and sparse edits of large clips.** The piano roll dims what the open clip does not
