@@ -208,6 +208,10 @@ pub struct AppCore<S: EngineSink> {
     /// The snapshot the mix was last stored, updated, recalled or compared with (see
     /// `app_core_snapshots.rs`); view state, forgotten when a document is replaced.
     snapshot_hint: Option<u32>,
+    /// The morph between two snapshots that is playing, and how long a morph takes (see
+    /// `app_core_snapshots.rs`).
+    snapshot_morph: Option<snapshots::SnapshotMorph>,
+    morph_seconds: f32,
     /// MIDI learn, the mapping runtime and the held mapped moves (see `app_core_midimap.rs`).
     midi: midimap::MidiControl,
     /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
@@ -482,6 +486,8 @@ impl<S: EngineSink> AppCore<S> {
             arrangement_track_changed: false,
             console_selection: Vec::new(),
             snapshot_hint: None,
+            snapshot_morph: None,
+            morph_seconds: snapshots::DEFAULT_MORPH_SECONDS,
             midi: midimap::MidiControl::new(hub),
             macros: macro_ops::MacroState::default(),
             surfaces: Vec::new(),
@@ -774,6 +780,13 @@ impl<S: EngineSink> AppCore<S> {
         // A device that goes away takes its latest plugin state into the undo history.
         self.plugins_flush_dirty(false);
         let merge = param_merge(&command);
+        // Any edit of the user's other than the morph's own steps takes the mix over.
+        if !matches!(
+            command,
+            Command::Console(atomik_model::ConsoleCommand::MorphSnapshots { .. })
+        ) {
+            self.snapshot_morph = None;
+        }
         let hint = self.snapshot_hint_after(&command);
         let joined = std::mem::take(&mut self.join_next);
         let tracks_before = self.tracks_before_command();
@@ -1383,6 +1396,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arranged_track = None;
         self.console_selection.clear();
         self.snapshot_hint = None;
+        self.snapshot_morph = None;
         self.console.set_snapshot_hint(None);
         self.midi_replaced();
         self.view.set_selected(None);

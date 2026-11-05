@@ -6,10 +6,31 @@
 //!
 //! The **current** snapshot is the one a compare is on, else the first the mix matches exactly,
 //! else the last one stored, updated, recalled or compared with (while it exists).
+//!
+//! A **morph** moves the mix from the current snapshot to another over a time (1, 2, 4 or 8
+//! seconds, Mixer > Morph Time). The core steps it once per frame ([`AppCore::transport_frame`]):
+//! each step is the model's `MorphSnapshots` at the position the clock gives, ordinary param edits
+//! the engine smooths, all folded into one undo step. Any other edit takes the mix over and ends
+//! the morph where it is; a morph does not start while another plays or a compare is on.
 
 use super::*;
 use crate::commands::SnapshotMenu;
 use atomik_model::{ConsoleCommand, SnapshotScope};
+
+/// The morph time a new core starts with, in seconds.
+pub(super) const DEFAULT_MORPH_SECONDS: f32 = 2.0;
+
+/// A morph that is playing.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct SnapshotMorph {
+    from: u32,
+    to: u32,
+    seconds: f64,
+    /// The clock reading of the first step.
+    started: Option<f64>,
+    /// Steps applied so far (the later ones join the first one's undo step).
+    steps: u32,
+}
 
 impl<S: EngineSink> AppCore<S> {
     /// The hint that follows `command` once it succeeds: the snapshot it stored, recalled,
@@ -62,6 +83,15 @@ impl<S: EngineSink> AppCore<S> {
             can_compare: !console.snapshots.is_empty(),
             comparing: console.compare.is_some(),
             can_delete: current.is_some(),
+            can_morph: console.snapshots.len() > 1
+                && current.is_some()
+                && console.compare.is_none()
+                && self.snapshot_morph.is_none(),
+            can_effects: current.is_some() && console.compare.is_none(),
+            effects: current
+                .and_then(|id| console.snapshot(id))
+                .is_some_and(|s| s.state.effects),
+            morph_seconds: self.morph_seconds.round().clamp(1.0, 8.0) as u8,
         }
     }
 
@@ -177,6 +207,115 @@ impl<S: EngineSink> AppCore<S> {
                 .apply_command(Command::Console(ConsoleCommand::DeleteSnapshot { id }))
                 .is_ok(),
             None => false,
+        }
+    }
+
+    /// Mixer > Snapshot Includes Effects: switches the effect parameters of snapshot `id` (the
+    /// current one by default) on or off, in one undo step. Turning them on takes the effects as
+    /// they are now.
+    pub fn toggle_snapshot_effects(&mut self, id: Option<u32>) -> bool {
+        let Some(id) = self.snapshot_or_current(id, "change") else {
+            return false;
+        };
+        let Some(held) = self.doc().console.snapshot(id).map(|s| s.state.effects) else {
+            return false;
+        };
+        self.apply_command(Command::Console(ConsoleCommand::SetSnapshotEffects {
+            id,
+            effects: !held,
+        }))
+        .is_ok()
+    }
+
+    /// Mixer > Morph Time: how long a morph takes, in seconds (clamped to 1..=8).
+    pub fn set_morph_seconds(&mut self, seconds: u8) {
+        self.morph_seconds = f32::from(seconds.clamp(1, 8));
+    }
+
+    /// Mixer > Morph to Next / Previous Snapshot, and the chip menu's Morph To: moves the mix
+    /// from the current snapshot to snapshot `to` (the neighbour of the current one when none is
+    /// given, `forward` picking which) over the morph time. False, with a message, when it
+    /// cannot start.
+    pub fn morph_snapshot(&mut self, to: Option<u32>, forward: bool) -> bool {
+        if self.snapshot_morph.is_some() {
+            self.reject("A morph is already playing; edit the mix to stop it".into());
+            return false;
+        }
+        if self.doc().console.compare.is_some() {
+            self.reject("End the compare before morphing".into());
+            return false;
+        }
+        let ids: Vec<u32> = self.doc().console.snapshots.iter().map(|s| s.id).collect();
+        let Some(from) = self.current_snapshot() else {
+            self.reject("Store or recall a snapshot first to morph from it".into());
+            return false;
+        };
+        let to = match to {
+            Some(to) => to,
+            None => {
+                let at = ids.iter().position(|i| *i == from).unwrap_or(0);
+                let n = ids.len();
+                ids[if forward {
+                    (at + 1) % n
+                } else {
+                    (at + n - 1) % n
+                }]
+            }
+        };
+        if to == from || !ids.contains(&to) {
+            self.reject("A morph needs a second snapshot to move to".into());
+            return false;
+        }
+        self.snapshot_morph = Some(SnapshotMorph {
+            from,
+            to,
+            seconds: f64::from(self.morph_seconds),
+            started: None,
+            steps: 0,
+        });
+        true
+    }
+
+    /// Whether a morph is playing (the event loop keeps its frame rate for it).
+    pub fn snapshot_morphing(&self) -> bool {
+        self.snapshot_morph.is_some()
+    }
+
+    /// One frame of a playing morph at `now_seconds` (any monotonic clock): the mix goes to the
+    /// position the elapsed time gives. A step that would change nothing is skipped, and the
+    /// morph ends at its end, or when the model refuses a step (a snapshot deleted meanwhile).
+    pub(super) fn snapshot_morph_tick(&mut self, now_seconds: f64) {
+        let Some(m) = self.snapshot_morph.as_mut() else {
+            return;
+        };
+        let started = *m.started.get_or_insert(now_seconds);
+        let at = ((now_seconds - started) / m.seconds).clamp(0.0, 1.0) as f32;
+        let (from, to, steps) = (m.from, m.to, m.steps);
+        let done = at >= 1.0;
+        if !self.doc().morph_matches(&self.registry, from, to, at) {
+            self.join_next = steps > 0;
+            let applied = self.apply_command(Command::Console(ConsoleCommand::MorphSnapshots {
+                from,
+                to,
+                at,
+            }));
+            self.join_next = false;
+            match applied {
+                Ok(()) => {
+                    if let Some(m) = self.snapshot_morph.as_mut() {
+                        m.steps += 1;
+                    }
+                }
+                Err(_) => {
+                    self.snapshot_morph = None;
+                    return;
+                }
+            }
+        }
+        if done {
+            self.snapshot_morph = None;
+            self.snapshot_hint = Some(to);
+            self.console.set_snapshot_hint(Some(to));
         }
     }
 }

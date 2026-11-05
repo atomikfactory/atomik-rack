@@ -227,6 +227,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Rewind and Forward repeat, and the taps of tap tempo are timed by it.
     pub fn transport_frame(&mut self, now_seconds: f64) {
         self.now_seconds = now_seconds;
+        self.snapshot_morph_tick(now_seconds);
         for action in self.transport_bar.tick(now_seconds) {
             self.handle_action(action);
         }

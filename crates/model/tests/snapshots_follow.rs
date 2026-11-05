@@ -137,6 +137,22 @@ fn a_snapshot_holds_the_effect_params_once_asked_to() {
 }
 
 #[test]
+fn the_effect_params_cannot_change_under_a_compare() {
+    let (mut d, r) = project();
+    run(&mut d, &r, [store("A"), set_param("channel", "fader", 0.3)]);
+    d.apply(con(ConsoleCommand::Compare { id: 1 }), &r).unwrap();
+    let e = refused(
+        &mut d,
+        &r,
+        con(ConsoleCommand::SetSnapshotEffects {
+            id: 1,
+            effects: true,
+        }),
+    );
+    assert!(e.contains("compare"), "{e}");
+}
+
+#[test]
 fn a_snapshot_without_the_effect_params_leaves_them_alone() {
     let (mut d, r) = project();
     run(

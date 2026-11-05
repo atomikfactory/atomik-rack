@@ -215,9 +215,16 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Store Snapshot", None),
             ("Update Snapshot", None),
             ("Recall Snapshot", None),
-            ("Recall Next Snapshot", None),
-            ("Recall Previous Snapshot", None),
-            ("Compare A/B", None),
+            ("Recall Next Snapshot", Some("Ctrl+Alt+PageDown")),
+            ("Recall Previous Snapshot", Some("Ctrl+Alt+PageUp")),
+            ("Morph to Next Snapshot", None),
+            ("Morph to Previous Snapshot", None),
+            ("1 Second", None),
+            ("2 Seconds", None),
+            ("4 Seconds", None),
+            ("8 Seconds", None),
+            ("Snapshot Includes Effects", None),
+            ("Compare A/B", Some("Ctrl+Alt+B")),
             ("End Compare", None),
             ("Delete Snapshot", None),
             ("Delay Compensation", None),
@@ -1095,47 +1102,77 @@ fn polarity_and_insert_bypass_are_mixer_menu_items_without_keys_that_enable_with
 #[test]
 fn the_snapshot_menu_items_run_through_the_shell_and_enable_with_the_snapshots() {
     let mut s = shell();
-    for (label, command, id) in [
+    for (label, command, id, key) in [
         (
             "Store Snapshot",
             AppCommand::StoreSnapshot,
             "mixer.store_snapshot",
+            None,
         ),
         (
             "Update Snapshot",
             AppCommand::UpdateSnapshot(None),
             "mixer.update_snapshot",
+            None,
         ),
         (
             "Recall Snapshot",
             AppCommand::RecallSnapshot(None),
             "mixer.recall_snapshot",
+            None,
         ),
         (
             "Recall Next Snapshot",
             AppCommand::RecallNextSnapshot,
             "mixer.recall_next_snapshot",
+            Some("Ctrl+Alt+PageDown"),
         ),
         (
             "Recall Previous Snapshot",
             AppCommand::RecallPreviousSnapshot,
             "mixer.recall_previous_snapshot",
+            Some("Ctrl+Alt+PageUp"),
+        ),
+        (
+            "Morph to Next Snapshot",
+            AppCommand::MorphSnapshot(None),
+            "mixer.morph_snapshot",
+            None,
+        ),
+        (
+            "Morph to Previous Snapshot",
+            AppCommand::MorphPreviousSnapshot,
+            "mixer.morph_previous_snapshot",
+            None,
+        ),
+        (
+            "Snapshot Includes Effects",
+            AppCommand::SnapshotEffects,
+            "mixer.snapshot_effects",
+            None,
         ),
         (
             "Compare A/B",
             AppCommand::CompareSnapshot(None),
             "mixer.compare_snapshot",
+            Some("Ctrl+Alt+B"),
         ),
-        ("End Compare", AppCommand::EndCompare, "mixer.end_compare"),
+        (
+            "End Compare",
+            AppCommand::EndCompare,
+            "mixer.end_compare",
+            None,
+        ),
         (
             "Delete Snapshot",
             AppCommand::DeleteSnapshot(None),
             "mixer.delete_snapshot",
+            None,
         ),
     ] {
         let item = mixer_item(&s, command);
         assert_eq!(item.label, label);
-        assert_eq!(item.shortcut, None, "no default key");
+        assert_eq!(item.shortcut.as_deref(), key, "{label}");
         assert_eq!(item.enabled, id == "mixer.store_snapshot", "{label}");
         assert_eq!(command.command_id(), Some((id, None)));
         assert_eq!(AppCommand::from_command(id, None), Some(command));

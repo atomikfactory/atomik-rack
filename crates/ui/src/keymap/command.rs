@@ -195,6 +195,8 @@ pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
 /// The values of `file.midi_resolution`: the ticks per quarter note of an exported MIDI file
 /// (`native` is the model's own 15 360).
 pub const MIDI_RESOLUTION_ARGS: &[&str] = &["native", "960", "480"];
+/// The values of `mixer.morph_time`: how long a morph between two snapshots takes, in seconds.
+pub const MORPH_TIME_ARGS: &[&str] = &["1", "2", "4", "8"];
 /// The values of `audio.input_channels`: the host inputs the project asks for.
 pub const INPUT_CHANNEL_ARGS: &[&str] = &["0", "1", "2", "4", "8", "16", "32"];
 /// The values of `audio.output_channels`: the host outputs the project asks for.
@@ -1095,6 +1097,23 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("mixer.link_faders", "Link Faders", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.morph_previous_snapshot",
+        "Morph to Previous Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.morph_snapshot",
+        "Morph to Next Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd("mixer.morph_time", "Morph Time", G::Mixer, C::Global)
+        .arg(MORPH_TIME_ARGS)
+        .menu(),
+    cmd(
         "mixer.paste_settings",
         "Paste Channel Settings",
         G::Mixer,
@@ -1184,6 +1203,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Mixer,
     )
     .rep(),
+    cmd(
+        "mixer.snapshot_effects",
+        "Snapshot Includes Effects",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
     cmd(
         "mixer.store_snapshot",
         "Store Snapshot",

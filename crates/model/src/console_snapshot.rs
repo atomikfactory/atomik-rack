@@ -697,6 +697,14 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
         }
         ConsoleCommand::SetSnapshotEffects { id, effects } => {
             let snapshot = snapshot_of(&p.doc().console, id)?;
+            if p.doc()
+                .console
+                .compare
+                .as_ref()
+                .is_some_and(|c| c.snapshot == id)
+            {
+                return Err(bad("end the compare before changing the snapshot"));
+            }
             if snapshot.state.effects == effects {
                 return Err(bad(if effects {
                     "the snapshot already holds the effect parameters"
