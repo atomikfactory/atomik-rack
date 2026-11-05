@@ -1291,24 +1291,21 @@ fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
     }
 }
 
-/// The modifiers that hold the copy role on this host (Ctrl, or Cmd on macOS).
+/// The modifiers that hold the copy role under the Windows/Linux role defaults (Ctrl). The test
+/// pins those roles, because the default copy role is Option on macOS, not Cmd or Ctrl.
 fn copy_modifiers() -> Modifiers {
-    if cfg!(target_os = "macos") {
-        Modifiers {
-            meta: true,
-            ..Modifiers::NONE
-        }
-    } else {
-        Modifiers {
-            ctrl: true,
-            ..Modifiers::NONE
-        }
+    Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
     }
 }
 
 #[test]
 fn dragging_a_name_with_the_copy_role_copies_the_channel_instead_of_moving_it() {
     let (doc, reg, mut v) = setup();
+    v.set_roles(atomik_ui::keymap::Roles::defaults(
+        atomik_ui::keymap::Os::Windows,
+    ));
     let p = v.name_center(&key("ch-bass")).unwrap();
     let last = v.strip_rect(&key("ch-keys")).unwrap();
     let end = Point::new(last.x1 - 5.0, p.y);
