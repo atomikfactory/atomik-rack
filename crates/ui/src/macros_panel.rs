@@ -134,6 +134,27 @@ pub enum MacrosAction {
     },
     /// Remove assignment `id`.
     Remove(u32),
+    /// Change the curve and the smoothing time of assignment `id`.
+    SetShape {
+        /// The assignment.
+        id: u32,
+        /// How the macro's travel maps onto the range.
+        curve: atomik_model::MacroCurve,
+        /// The glide time of a live move in milliseconds.
+        smooth_ms: u16,
+    },
+    /// Drive `param` of `device` with macro `index` of `bank`: a knob dropped on a macro knob of
+    /// the bank's rack panel (the Macros panel itself never sends it).
+    Assign {
+        /// The bank.
+        bank: DeviceKey,
+        /// The macro, 0-based.
+        index: u8,
+        /// The device that owns the knob.
+        device: DeviceKey,
+        /// The knob's param key.
+        param: String,
+    },
     /// Remove every assignment of the macro.
     Clear {
         /// The bank.

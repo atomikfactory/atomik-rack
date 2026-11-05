@@ -858,8 +858,11 @@ impl<S: EngineSink> AppCore<S> {
         match action {
             UiAction::Command(c) => {
                 // In MIDI Learn mode a change to a control arms it instead; otherwise a
-                // rejection is already reported to the view.
-                if !self.learn_swallows(&c) {
+                // rejection is already reported to the view. A turned knob of a param a macro
+                // drives moves the macro's range.
+                if !self.learn_swallows(&c)
+                    && let Some(c) = self.redirect_driven_edit(c)
+                {
                     let _ = self.apply_command(c);
                 }
             }
@@ -1496,6 +1499,7 @@ impl<S: EngineSink> AppCore<S> {
         // Containers are compiled away: the engine gets the expanded rack.
         let expanded = self.doc().expand(&self.registry);
         self.macro_sent = containers::macro_values(&expanded);
+        self.macros.glides.clear();
         self.meter_devices = plugins::metered_with_plugins(&expanded);
         self.plugin_devices = plugins::plugin_keys(&expanded);
         self.analysers

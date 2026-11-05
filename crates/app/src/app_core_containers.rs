@@ -377,13 +377,35 @@ impl<S: EngineSink> AppCore<S> {
             .cloned()
             .collect();
         for (device, param) in freed {
+            self.macros.glides.remove(&(device.clone(), param.clone()));
             if let Some(value) = self.stored_value(&device, &param) {
                 self.send_param(&device, &param, value);
             }
         }
         for ((device, param), value) in &now {
-            if self.macro_sent.get(&(device.clone(), param.clone())) != Some(value) {
-                self.send_param(device, param, *value);
+            let at = (device.clone(), param.clone());
+            let before = self.macro_sent.get(&at).copied();
+            if before == Some(*value) {
+                continue;
+            }
+            // A smoothed assignment glides from where the engine is now; anything else (a
+            // first value, no smoothing, a stepped param) jumps.
+            let from = self
+                .macros
+                .glides
+                .get(&at)
+                .map(|g| g.current(self.now_seconds))
+                .or(before);
+            match (from, self.macro_smoothing(device, param)) {
+                (Some(from), Some(seconds)) => {
+                    self.macros
+                        .glides
+                        .insert(at, super::macro_ops::Glide::new(from, *value, seconds));
+                }
+                _ => {
+                    self.macros.glides.remove(&at);
+                    self.send_param(device, param, *value);
+                }
             }
         }
         self.macro_sent = now;

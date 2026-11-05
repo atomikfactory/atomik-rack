@@ -68,6 +68,42 @@ pub(super) struct MacroState {
     results: Vec<ParamEntry>,
     /// How many params matched the last query (up to `MAX_RESULTS`).
     matches: usize,
+    /// The live glides of smoothed assignments, by flat device and param (see
+    /// [`AppCore::macro_glide_tick`]).
+    pub(super) glides: BTreeMap<(DeviceKey, String), Glide>,
+}
+
+/// One param on its way to the value a macro gave it, over the assignment's smoothing time.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Glide {
+    /// Where the glide began.
+    from: f32,
+    /// Where it ends.
+    to: f32,
+    /// The time it takes, in seconds.
+    seconds: f64,
+    /// When it began (`None` until the next frame stamps it).
+    started: Option<f64>,
+}
+
+impl Glide {
+    pub(super) fn new(from: f32, to: f32, seconds: f64) -> Self {
+        Self {
+            from,
+            to,
+            seconds,
+            started: None,
+        }
+    }
+
+    /// The value at `now` (the start until a frame has stamped the glide).
+    pub(super) fn current(&self, now: f64) -> f32 {
+        let Some(started) = self.started else {
+            return self.from;
+        };
+        let t = ((now - started) / self.seconds).clamp(0.0, 1.0) as f32;
+        self.from + (self.to - self.from) * t
+    }
 }
 
 /// Which pane a revealed param is in, for the shell to bring up.
@@ -80,6 +116,57 @@ pub enum Revealed {
 }
 
 impl<S: EngineSink> AppCore<S> {
+    // ------------------------------------------------------------------ smoothing
+
+    /// The glide time in seconds a live move of `param` of the flat device `device` takes, when
+    /// the assignment that drives it has a smoothing time and the param is not stepped.
+    pub(super) fn macro_smoothing(&self, device: &DeviceKey, param: &str) -> Option<f64> {
+        let a = self.doc().macros.driving(device, param)?;
+        if a.smooth_ms == 0 {
+            return None;
+        }
+        let type_id = self.doc().device(device)?.type_id.clone();
+        let stepped = self
+            .registry
+            .get(&type_id)?
+            .descriptor
+            .param_by_key(param)?
+            .discrete;
+        (!stepped).then(|| f64::from(a.smooth_ms) / 1000.0)
+    }
+
+    /// Whether some smoothed macro target is still on its way (the event loop keeps its frame
+    /// rate for it).
+    pub fn macro_gliding(&self) -> bool {
+        !self.macros.glides.is_empty()
+    }
+
+    /// One frame of the glides at `now_seconds` (any monotonic clock): each param moves along its
+    /// line to the value its macro gave it and gets exactly that value at the end. A glide whose
+    /// assignment is gone is dropped (the edit that removed it already sent the stored value).
+    pub(super) fn macro_glide_tick(&mut self, now_seconds: f64) {
+        if self.macros.glides.is_empty() {
+            return;
+        }
+        let mut moves = Vec::new();
+        let mut done = Vec::new();
+        for (at, g) in &mut self.macros.glides {
+            let started = *g.started.get_or_insert(now_seconds);
+            if now_seconds - started >= g.seconds {
+                moves.push((at.clone(), g.to));
+                done.push(at.clone());
+            } else {
+                moves.push((at.clone(), g.current(now_seconds)));
+            }
+        }
+        for at in done {
+            self.macros.glides.remove(&at);
+        }
+        for ((device, param), value) in moves {
+            self.send_param(&device, &param, value);
+        }
+    }
+
     // ------------------------------------------------------------------ banks and assignments
 
     /// The bank new assignments go to: the chosen one when it still exists, else the first.
@@ -156,6 +243,69 @@ impl<S: EngineSink> AppCore<S> {
             self.report(format!("Assigned to {name} (macro {})", a.index + 1));
         }
         done
+    }
+
+    /// Assigns `param` of `device` to macro `index` (0-based) of `bank` (a knob dropped on a macro
+    /// knob), makes `bank` the current one and says so. One undo step; the reason is shown when
+    /// the model refuses.
+    pub fn assign_to_bank_macro(
+        &mut self,
+        bank: &DeviceKey,
+        index: u8,
+        device: &DeviceKey,
+        param: &str,
+    ) -> bool {
+        self.set_macro_bank(bank.clone());
+        let done = self
+            .apply_command(Command::Macro(MacroCommand::Assign {
+                bank: Some(bank.clone()),
+                index,
+                device: device.clone(),
+                param: param.to_owned(),
+                min: None,
+                max: None,
+                invert: false,
+            }))
+            .is_ok();
+        if done {
+            let name = self.doc().macro_name(bank, index);
+            self.report(format!(
+                "Assigned to {name} (macro {})",
+                u16::from(index) + 1
+            ));
+        }
+        done
+    }
+
+    /// A direct edit of a param a bank macro drives (a turned knob in the rack) moves the range
+    /// of its assignment instead of being refused: the `SetParam` becomes a
+    /// [`MacroCommand::MoveRange`] with the same drag merge id. Any other command, a param no
+    /// macro drives and a container's macro (a refusal that stays) pass through unchanged; an edit
+    /// that would move nothing (the value is what the param shows, or the range is at the end of
+    /// the param's own range) is dropped without a message.
+    pub(super) fn redirect_driven_edit(&self, command: Command) -> Option<Command> {
+        let Command::SetParam {
+            key,
+            param,
+            value,
+            merge,
+        } = &command
+        else {
+            return Some(command);
+        };
+        if self.doc().bank_driver(key, param).is_none() || value.is_nan() {
+            return Some(command);
+        }
+        self.doc()
+            .moved_range(&self.registry, key, param, *value)
+            .map(|_| {
+                Command::Macro(MacroCommand::MoveRange {
+                    device: key.clone(),
+                    param: param.clone(),
+                    value: *value,
+                    merge: *merge,
+                })
+            })
     }
 
     /// Assigns the param to the first macro of the current bank that drives nothing yet (the first
@@ -291,6 +441,25 @@ impl<S: EngineSink> AppCore<S> {
             }
             MacrosAction::Remove(id) => {
                 let _ = self.apply_command(Command::Macro(MacroCommand::Remove { id }));
+            }
+            MacrosAction::SetShape {
+                id,
+                curve,
+                smooth_ms,
+            } => {
+                let _ = self.apply_command(Command::Macro(MacroCommand::SetShape {
+                    id,
+                    curve,
+                    smooth_ms,
+                }));
+            }
+            MacrosAction::Assign {
+                bank,
+                index,
+                device,
+                param,
+            } => {
+                self.assign_to_bank_macro(&bank, index, &device, &param);
             }
             MacrosAction::Clear { bank, index } => {
                 let _ = self.apply_command(Command::Macro(MacroCommand::Clear { bank, index }));
