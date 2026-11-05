@@ -119,7 +119,10 @@ fn count_is_capped_at_max_meter_values() {
     batches(&mut engine, 1, BATCH);
     let (values, _) = read(&handle, 1).unwrap();
     assert_eq!(values.len(), MAX_METER_VALUES);
-    assert_eq!(values[MAX_METER_VALUES - 1], 100.0 + 31.0);
+    assert_eq!(
+        values[MAX_METER_VALUES - 1],
+        100.0 + (MAX_METER_VALUES - 1) as f32
+    );
 }
 
 #[test]
