@@ -1555,8 +1555,9 @@ recording are unchanged: a track with one pass still gets one plain clip.
   clip end, the loop end or the start of a later clip; the engine releases held keys at a loop wrap
   and at stop as it always did (`song_chase.rs`). A project without the flag cuts notes at the end
   of their piece as before, so older projects play and bounce bit for bit as they did; a new project
-  (File, New) has it on. Tails are not yet drawn in the piano roll, and masked notes are not drawn
-  dim.
+  (File, New) has it on. The piano roll dims what the clip does not play, tails and masked notes
+  included; for a looped clip the dimmed part is what no repetition of the loop window plays
+  (`looped_masked_spans`).
 - **View** ([arrangement/takes.rs](../crates/ui/src/arrangement/takes.rs)). Under lane 0 of a track
   with groups the arrangement lays out a thin comp strip per group (each segment in the colour of
   its take) and, when the group is opened with the chevron in the strip's header, one row per take
@@ -4783,7 +4784,8 @@ creation chain in the **Creation chain** bullet.
   audio). A drag of the start edge of an
   audio clip also trims the other selected audio clips by the same ticks (`Drag::Audio` carries them). The snap
   resolutions and the snap mode (`arrangement_snap`, `piano_roll_snap`, `snap_mode`) and the piano roll's note
-  audition switch (`piano_roll_audition`, command `editor.audition_toggle`) are saved in `ui-state.json`.
+  audition switch (`piano_roll_audition`, command `editor.audition_toggle`) and the unit of the clip
+  inspector's fades (`fade_unit`, `ms` or `ticks`) are saved in `ui-state.json`.
 - **Daily keys: transport, panes, create.** `AppCore` gained `locate_bars`, `go_locator`,
   `stop_or_rewind` (a second Stop returns to the start), `nudge_tempo`
   ([app/src/app_core_workflow.rs](../crates/app/src/app_core_workflow.rs)); the numpad transport

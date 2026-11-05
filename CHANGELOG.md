@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Recording and note lane follow-ups: dimmed loops, several lanes recorded at once and a remembered fade unit.**
+  The piano roll dims the part of a looped clip's window that no repetition plays (a later clip of the lane hides
+  it every time round), as it already did for clips without a loop. **Record to Lane** (`sequencer.toggle_lane_record`,
+  in the track header menu, checked when the selected lane is armed) arms a note lane to record together with the
+  other armed lanes of its track: a record dot shows on the header of each armed lane (the chip of lane 0 gets a
+  record-coloured outline), and a take, a loop recording and a Layer or Engulf recording are written to every armed
+  lane exactly as they would be to one, in a single undo step; the take's ghost notes show on each. With no lane armed
+  a take goes to the selected lane as before, and an armed lane that is deleted, merged away or frozen drops out. The
+  armed lanes are view state and are not saved. The unit of the clip inspector's fades (ms or ticks, the tag at the
+  top right of a fade box) is kept in `ui-state.json` as `fade_unit`. The chip of lane 0 still has no S button: it
+  shares the header's second line with the track's own buttons and a third control would leave no room for its
+  label (use Solo Lane). The project format is unchanged (44).
 - **Rack editing follow-ups: "+" handles in containers, every device type in Create, Replace Device and a row
   dropped on a track header.** An unfolded container has a "+" on the seam below its INPUT strip and below each of
   its devices (so also above its OUTPUT strip): pressing one opens the device browser and the row chosen is added

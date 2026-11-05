@@ -46,7 +46,9 @@ the note's own length, and a groove made from a MIDI file chosen or dropped on t
 and restructuring follow-ups (a drag of the end edge of a selected clip with the scale-selection role scales every
 selected clip about the start of the selection, previewed and kept as one undo step; Extend to Next and Previous Clip
 on audio clips, which play on from their file and reach back only as far as it has audio; and a time range selected
-across several lanes of one or more tracks, copied, cut, deleted, pasted back on lanes of their own kind and bounced).
+across several lanes of one or more tracks, copied, cut, deleted, pasted back on lanes of their own kind and bounced),
+and recording and note lane follow-ups (the part of a looped clip that no repetition plays dimmed in the piano roll, the
+inspector's fade unit remembered between sessions, and a take written to every note lane armed with Record to Lane).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -66,8 +68,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **MIDI file follow-ups.** Per-note expression (MPE) kept, and typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
 - **Arrangement restructuring follow-ups.** Scaling a selection about its end by dragging its start edge (the end edge scales it about the start today), joining clips of different files by rendering them into one, and warp markers kept when audio clips join.
 - **Track organisation follow-ups.** Routing the tracks of a folder to an output bus and a folder-level fader (see Phase 4).
-- **Recording and editing follow-ups.** The masked parts of a looped clip dimmed in the piano roll (clips without a loop are today), and the inspector's fade unit remembered between sessions.
-- **Note lane follow-ups.** Recording to several lanes at once (today a take goes to the one selected lane), and an S button on the chip of lane 0 (the header's second line is full: use the Solo Lane menu item).
+- **Note lane follow-ups.** An S button on the chip of lane 0 (the chip shares the header's second line with the track's own buttons and has no room for a third control: use the Solo Lane menu item), a record button on each lane header instead of the menu item, and splitting the incoming notes between armed lanes by a rule (every armed lane gets the whole take today).
 
 ## Phase 3: Audio
 
