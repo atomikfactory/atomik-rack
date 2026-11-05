@@ -53,7 +53,21 @@
 //! # Not in here
 //!
 //! The commands that apply this to clips and keep the grooves in the song are in
-//! [`crate::groove_cmd`]. Audio clips are not touched; controller lane points stay where they are.
+//! [`crate::groove_cmd`]. Audio clips are not touched.
+//!
+//! # Grid per note
+//!
+//! With [`QuantizeParams::grid_by_length`] each note picks its own grid ([`grid_for_length`]):
+//! the note value nearest to the note's length, from a 1/32 note up to the grid of the
+//! parameters, which is the coarsest a note may snap to. A long note then lands on the big grid
+//! and a short one on a fine grid in one quantize, instead of every note on one value. A groove
+//! sets one grid (its step), so the option does nothing while a groove is named.
+//!
+//! # Controller lanes
+//!
+//! Controller lane points of a note clip follow their notes ([`QuantizeParams::controllers`],
+//! [`crate::controller_edit::follow_note_moves`]): a point between a note's old start (included)
+//! and its new start (excluded) moves by the same distance as the note.
 
 use crate::song::{MAX_TICK, Note, StepResolution};
 use atomik_core::{MeterMap, PPQ};
@@ -81,6 +95,8 @@ pub const GROOVE_STRENGTH_MAX: u8 = 100;
 pub const HUMANIZE_TIME_TICKS: i64 = PPQ / 4;
 /// What 1.0 of humanize velocity means: plus or minus half the velocity range.
 pub const HUMANIZE_VELOCITY_RANGE: f32 = 0.5;
+/// The finest grid a note takes when each note picks its own ([`grid_for_length`]): a 1/32 note.
+pub const PER_NOTE_GRID_MIN: i64 = PPQ / 8;
 /// The lowest velocity quantize leaves a note with (a MIDI velocity of 1).
 pub(crate) const MIN_VELOCITY: f32 = 1.0 / 127.0;
 
@@ -232,6 +248,12 @@ pub struct QuantizeParams {
     pub legato: bool,
     /// Another seed is another take of the same humanize amounts.
     pub seed: u32,
+    /// Each note snaps to a grid of its own, the note value nearest to its length (see
+    /// [`grid_for_length`]), with `grid` as the coarsest. Not used when `groove` names one.
+    pub grid_by_length: bool,
+    /// Controller lane points of the note clips move with their notes (see
+    /// [`crate::controller_edit::follow_note_moves`]).
+    pub controllers: bool,
 }
 
 impl Default for QuantizeParams {
@@ -249,6 +271,8 @@ impl Default for QuantizeParams {
             humanize_length: 0.0,
             legato: false,
             seed: 0,
+            grid_by_length: false,
+            controllers: true,
         }
     }
 }
@@ -292,6 +316,36 @@ impl QuantizeParams {
             && self.humanize_length == 0.0
             && !self.legato
     }
+}
+
+/// The grid a note of `length` ticks takes when each note picks its own: the nearest of `limit`
+/// and the straight note values from [`PER_NOTE_GRID_MIN`] up to it, nearest meaning the
+/// smallest ratio between the two lengths (so a note of 100 ticks is nearer to 128 than to 64);
+/// two equally near take the finer. A note shorter than the finest value takes the finest.
+pub fn grid_for_length(length: i64, limit: i64) -> i64 {
+    let limit = limit.clamp(1, QUANTIZE_GRID_MAX);
+    let length = i128::from(length.max(1));
+    let mut candidates = Vec::new();
+    let mut v = PER_NOTE_GRID_MIN;
+    while v < limit {
+        candidates.push(v);
+        v *= 2;
+    }
+    candidates.push(limit);
+    // The ratio of the longer to the shorter as a fraction: compared by cross multiplying.
+    let ratio = |c: i64| {
+        let c = i128::from(c);
+        (length.max(c), length.min(c))
+    };
+    let mut best = candidates[0];
+    for &c in &candidates[1..] {
+        let (an, ad) = ratio(c);
+        let (bn, bd) = ratio(best);
+        if an * bd < bn * ad {
+            best = c;
+        }
+    }
+    best
 }
 
 /// splitmix64 finaliser step. The same integer-only function as `atomik_dsp::rng`'s (the model
@@ -362,6 +416,20 @@ pub struct Quantized {
     pub notes: Vec<Note>,
     /// Where each input note went: `notes[new_index[i]]` is input note `i`.
     pub new_index: Vec<usize>,
+}
+
+impl Quantized {
+    /// The `(old start, new start)` of every input note whose start changed (`old` is the list
+    /// that was quantized), in input order.
+    pub fn moves(&self, old: &[Note]) -> Vec<(i64, i64)> {
+        old.iter()
+            .zip(&self.new_index)
+            .filter_map(|(o, &at)| {
+                let new = self.notes[at].tick;
+                (new != o.tick).then_some((o.tick, new))
+            })
+            .collect()
+    }
 }
 
 /// The target positions: the grid with its swing and groove.
@@ -454,12 +522,30 @@ pub fn quantize_notes_in(
     meter: Option<MeterMap<'_>>,
 ) -> Quantized {
     let grid = groove.map_or(params.grid, |g| g.step.ticks()).max(1);
-    let targets = Targets {
+    let delay = swing_delay(params.swing);
+    let targets_of = |grid: i64| Targets {
         grid,
-        delay: swing_delay(params.swing),
+        delay,
         groove,
         meter,
     };
+    // The grid of a note: one for the whole selection, or (without a groove) one per note.
+    let per_note = params.grid_by_length && groove.is_none();
+    let grid_of = |n: &Note| {
+        if per_note {
+            grid_for_length(n.length, grid)
+        } else {
+            grid
+        }
+    };
+    let by_grid: BTreeMap<i64, Targets<'_>> = notes
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| selected.is_none_or(|s| s.contains(i)))
+        .map(|(_, n)| grid_of(n))
+        .chain([grid])
+        .map(|g| (g, targets_of(g)))
+        .collect();
     let seed = u64::from(params.seed);
     let moved: Vec<Note> = notes
         .iter()
@@ -468,6 +554,8 @@ pub fn quantize_notes_in(
             if !selected.is_none_or(|s| s.contains(&i)) {
                 return *n;
             }
+            let grid = grid_of(n);
+            let targets = &by_grid[&grid];
             let t = origin + n.tick;
             let k = targets.nearest(t);
             let mut start = towards(t, targets.position(k), params.strength);
@@ -1075,5 +1163,104 @@ mod tests {
             ..params()
         };
         assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn a_note_takes_the_note_value_nearest_to_its_length_up_to_the_limit() {
+        let limit = PPQ; // 1/4
+        for (length, want) in [
+            (1, PER_NOTE_GRID_MIN),
+            (PPQ / 8, PER_NOTE_GRID_MIN),
+            (PPQ / 4, PPQ / 4),
+            (PPQ / 2, PPQ / 2),
+            (PPQ, PPQ),
+            (3 * PPQ, PPQ),
+            // A length is nearer in ratio to the value it is closer to on a log scale: the
+            // middle between a 1/16 and a 1/8 is about 0.354 of a quarter.
+            (PPQ * 36 / 100, PPQ / 2),
+            (PPQ * 35 / 100, PPQ / 4),
+        ] {
+            assert_eq!(grid_for_length(length, limit), want, "length {length}");
+        }
+        // The limit is the coarsest, even when it is not a straight value.
+        assert_eq!(grid_for_length(2 * PPQ, PPQ / 3), PPQ / 3);
+        // A limit finer than the finest value is the only choice.
+        assert_eq!(grid_for_length(PPQ, PPQ / 12), PPQ / 12);
+        // Nonsense lengths and limits stay inside the accepted grids.
+        assert_eq!(grid_for_length(-5, 0), 1);
+        assert_eq!(grid_for_length(i64::MAX, i64::MAX), QUANTIZE_GRID_MAX);
+    }
+
+    #[test]
+    fn grid_by_length_snaps_each_note_to_its_own_grid() {
+        // A quarter note and a 1/16 note, both a little late; the limit is a 1/4 grid.
+        let long = Note::new(PPQ + 400, PPQ, 60, 0.8);
+        let short = Note::new(2 * PPQ + 4 * S + 400, S, 62, 0.8);
+        let notes = [long, short];
+        let by_length = QuantizeParams {
+            grid: PPQ,
+            grid_by_length: true,
+            ..params()
+        };
+        let out = q(&notes, &by_length, None);
+        // The long note goes to the quarter line, the short one to the nearest 1/16 line.
+        assert_eq!(out[0].tick, PPQ);
+        assert_eq!(out[1].tick, 2 * PPQ + 4 * S + (400 + S / 2) / S * S);
+        // One grid for both: the short note goes to a quarter line as well.
+        let fixed = QuantizeParams {
+            grid_by_length: false,
+            ..by_length.clone()
+        };
+        let out = q(&notes, &fixed, None);
+        assert_eq!((out[0].tick, out[1].tick), (PPQ, 3 * PPQ));
+    }
+
+    #[test]
+    fn grid_by_length_leaves_unselected_notes_and_ignores_a_groove() {
+        let notes = [
+            Note::new(S + 100, S, 60, 0.8),
+            Note::new(PPQ + 100, PPQ, 62, 0.8),
+        ];
+        let by_length = QuantizeParams {
+            grid: PPQ,
+            grid_by_length: true,
+            ..params()
+        };
+        let only_second: BTreeSet<usize> = [1].into();
+        let out = quantize_notes(&notes, Some(&only_second), 0, 1, &by_length, None).notes;
+        assert_eq!(out[0], notes[0], "an unselected note stays");
+        assert_eq!(out[1].tick, PPQ);
+        // A groove sets the grid: the option changes nothing.
+        let groove = builtin_groove("Straight").unwrap();
+        let with = q(&notes, &by_length, Some(&groove));
+        let without = q(
+            &notes,
+            &QuantizeParams {
+                grid_by_length: false,
+                ..by_length
+            },
+            Some(&groove),
+        );
+        assert_eq!(with, without);
+    }
+
+    #[test]
+    fn snap_ends_with_a_grid_per_note_uses_the_grid_of_that_note() {
+        let short = Note::new(S + 50, S - 70, 60, 0.8);
+        let p = QuantizeParams {
+            grid: PPQ,
+            grid_by_length: true,
+            snap_ends: true,
+            ..params()
+        };
+        let out = q(&[short], &p, None);
+        assert_eq!((out[0].tick, out[0].length), (S, S));
+    }
+
+    #[test]
+    fn moves_lists_the_notes_whose_start_changed() {
+        let notes = [note(S + 300, 60), note(2 * S, 62), note(3 * S - 400, 64)];
+        let out = quantize_notes(&notes, None, 0, 1, &params(), None);
+        assert_eq!(out.moves(&notes), [(S + 300, S), (3 * S - 400, 3 * S)]);
     }
 }

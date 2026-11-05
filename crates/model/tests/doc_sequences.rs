@@ -1019,6 +1019,7 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 snap_ends: *ends,
                 legato: *ends,
                 humanize_length: if *grid % 2 == 0 { 0.5 } else { 0.0 },
+                grid_by_length: *grid % 3 == 0,
                 ..QuantizeParams::default()
             },
         }),

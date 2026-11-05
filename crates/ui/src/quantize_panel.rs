@@ -180,6 +180,7 @@ impl QuantizeValues {
             humanize_length: pct(self.humanize_length),
             legato: self.legato,
             seed: self.seed,
+            ..QuantizeParams::default()
         }
     }
 }

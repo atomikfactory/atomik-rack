@@ -1,6 +1,7 @@
 //! Planning of the quantize and groove commands (`ApplyQuantize`, `QuantizeNotes`, `SetGroove`,
 //! `RenameGroove`, `DeleteGroove`, `ExtractGroove`); the arithmetic is in [`crate::groove`].
 
+use crate::controller_edit::follow_note_moves;
 use crate::groove::{
     GROOVE_STRENGTH_MAX, Groove, MAX_GROOVES, QuantizeParams, builtin_groove, extract_groove,
     quantize_notes_in,
@@ -77,12 +78,18 @@ fn clip_edit(
     if out.notes == *notes {
         return Ok(None);
     }
+    let controllers = if params.controllers && !c.controllers.is_empty() {
+        follow_note_moves(&c.controllers, &out.moves(notes))
+    } else {
+        c.controllers.clone()
+    };
     Ok(Some(Edit::Clip {
         device,
         lane,
         old: Some(c.clone()),
         new: Some(Clip {
             content: ClipContent::Notes(out.notes.into()),
+            controllers,
             ..c.clone()
         }),
     }))
