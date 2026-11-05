@@ -38,7 +38,10 @@ use crate::event::Key;
 use crate::paint::{edit_button, fit_label};
 use crate::theme::{Theme, mix};
 use atomik_device_sdk::{ControlKind, DeviceDescriptor, RACK_UNIT};
-use atomik_model::{MAX_NAME_CHARS, MAX_PATTERNS, PatternDoc, SeqResolution, StepDoc};
+use atomik_model::{
+    Command, CurvePatternDoc, DeviceKey, MAX_NAME_CHARS, MAX_PATTERNS, PatternDoc, SeqResolution,
+    StepDoc,
+};
 use vello::kurbo::{BezPath, Circle, Rect, RoundedRect};
 use vello::peniko::Color;
 
@@ -554,6 +557,40 @@ pub fn pasted(target: &PatternDoc, clip: &PatternDoc) -> PatternDoc {
     PatternDoc {
         name: target.name.clone(),
         ..clip.clone()
+    }
+}
+
+/// The command that pastes a copied pattern into pattern `index` of `device`: the steps (see
+/// [`pasted`]) and, when the copy carried curves and the target is a CV sequencer
+/// (`target_curves` is `Some`), the curves too, as one undo step. `None` when nothing would
+/// change.
+pub fn paste_command(
+    device: &DeviceKey,
+    index: usize,
+    target: &PatternDoc,
+    target_curves: Option<&CurvePatternDoc>,
+    clip: &PatternDoc,
+    clip_curves: Option<&CurvePatternDoc>,
+) -> Option<Command> {
+    let pattern = pasted(target, clip);
+    let steps = (pattern != *target).then(|| Command::SetPattern {
+        device: device.clone(),
+        index: index as u8,
+        pattern,
+        merge: None,
+    });
+    let curves = match (target_curves, clip_curves) {
+        (Some(have), Some(copied)) if have != copied => Some(Command::SetCurves {
+            device: device.clone(),
+            index: index as u8,
+            curves: copied.clone(),
+            merge: None,
+        }),
+        _ => None,
+    };
+    match (steps, curves) {
+        (Some(a), Some(b)) => Some(Command::Batch(vec![a, b])),
+        (a, b) => a.or(b),
     }
 }
 

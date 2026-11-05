@@ -329,3 +329,176 @@ fn a_cv_sequencer_without_stored_curves_edits_from_flat() {
     assert_eq!(sets[0].1.rows[0][1].value, 50);
     assert!(sets[0].1.rows[0][0].value == 0 && sets[0].1.rows[1].iter().all(|s| s.value == 0));
 }
+
+// ------------------------------------------------------------------ copy and paste with curves
+
+use atomik_ui::SeqButton;
+use atomik_ui::seq_editor::PatternButton;
+
+/// The curves of pattern `index` of `seq` in `doc` (flat when none are stored).
+fn curves_of(doc: &RackDoc, index: usize) -> CurvePatternDoc {
+    doc.device(&key("seq"))
+        .unwrap()
+        .curves
+        .as_ref()
+        .map_or_else(CurvePatternDoc::default, |c| c.pattern(index))
+}
+
+fn click_at(v: &mut SeqEditorView, d: &Document, reg: &Registry, p: Point) -> Vec<UiAction> {
+    pointer(v, d, reg, p, false)
+}
+
+/// The command a paste emits: exactly one, applied to `d`.
+fn applied_paste(actions: &[UiAction], d: &mut Document, reg: &Registry) -> Command {
+    let commands: Vec<&Command> = actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Command(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(commands.len(), 1, "one command, one undo step: {actions:?}");
+    d.apply(commands[0].clone(), reg).unwrap();
+    commands[0].clone()
+}
+
+#[test]
+fn the_editor_copies_and_pastes_the_curves_with_the_pattern_as_one_step() {
+    let doc = cv_doc();
+    let reg = registry();
+    let mut d = Document::new(doc.clone());
+    let mut v = editor_of(&doc, &reg, "seq");
+    let copy = v.pattern_button_center(PatternButton::Copy);
+    assert!(click_at(&mut v, &d, &reg, copy).is_empty());
+    assert_eq!(v.curve_clipboard(), Some(&curves_of(&doc, 0)));
+    v.set_pattern_index(2);
+    v.sync(d.doc(), &reg);
+    let paste = v.pattern_button_center(PatternButton::Paste);
+    let acts = click_at(&mut v, &d, &reg, paste);
+    let command = applied_paste(&acts, &mut d, &reg);
+    let Command::Batch(parts) = command else {
+        panic!("a pattern and its curves go in one batch");
+    };
+    assert!(matches!(parts[0], Command::SetPattern { index: 2, .. }));
+    assert!(matches!(parts[1], Command::SetCurves { index: 2, .. }));
+    assert_eq!(curves_of(d.doc(), 2), curves_of(&doc, 0));
+    assert_eq!(
+        curves_of(d.doc(), 0),
+        curves_of(&doc, 0),
+        "the source stays"
+    );
+    d.undo().unwrap();
+    assert_eq!(curves_of(d.doc(), 2), CurvePatternDoc::default());
+    assert_eq!(
+        d.doc().device(&key("seq")).unwrap().steps,
+        doc.device(&key("seq")).unwrap().steps,
+        "the steps come back with the curves"
+    );
+}
+
+#[test]
+fn pasting_a_copy_without_curves_leaves_the_curves_alone() {
+    let doc = cv_doc();
+    let reg = registry();
+    let mut d = Document::new(doc.clone());
+    // Copy from the step sequencer: no curves in the clipboard.
+    let mut step = editor_of(&doc, &reg, "step");
+    let copy = step.pattern_button_center(PatternButton::Copy);
+    let _ = click_at(&mut step, &d, &reg, copy);
+    assert_eq!(step.curve_clipboard(), None);
+    // The same clipboard pasted in the CV sequencer (as the app mirrors it).
+    let mut v = editor_of(&doc, &reg, "seq");
+    v.set_clipboard(step.clipboard().cloned());
+    v.set_curve_clipboard(step.curve_clipboard().cloned());
+    v.set_pattern_index(1);
+    v.sync(d.doc(), &reg);
+    let paste = v.pattern_button_center(PatternButton::Paste);
+    let acts = click_at(&mut v, &d, &reg, paste);
+    let command = applied_paste(&acts, &mut d, &reg);
+    assert!(matches!(command, Command::SetPattern { index: 1, .. }));
+    assert_eq!(
+        d.doc().device(&key("seq")).unwrap().curves,
+        doc.device(&key("seq")).unwrap().curves
+    );
+}
+
+#[test]
+fn a_step_sequencer_does_not_copy_or_paste_curves() {
+    let doc = cv_doc();
+    let reg = registry();
+    let d = Document::new(doc.clone());
+    let mut cv = editor_of(&doc, &reg, "seq");
+    let copy = cv.pattern_button_center(PatternButton::Copy);
+    let _ = click_at(&mut cv, &d, &reg, copy);
+    let mut step = editor_of(&doc, &reg, "step");
+    step.set_clipboard(cv.clipboard().cloned());
+    step.set_curve_clipboard(cv.curve_clipboard().cloned());
+    step.set_pattern_index(2);
+    step.sync(d.doc(), &reg);
+    let paste = step.pattern_button_center(PatternButton::Paste);
+    let acts = click_at(&mut step, &d, &reg, paste);
+    assert!(set_curves(&acts).is_empty());
+    assert!(
+        acts.iter()
+            .all(|a| matches!(a, UiAction::Command(Command::SetPattern { .. })))
+    );
+}
+
+#[test]
+fn pasting_onto_identical_steps_and_curves_does_nothing() {
+    let doc = cv_doc();
+    let reg = registry();
+    let d = Document::new(doc.clone());
+    let mut v = editor_of(&doc, &reg, "seq");
+    let copy = v.pattern_button_center(PatternButton::Copy);
+    let _ = click_at(&mut v, &d, &reg, copy);
+    let paste = v.pattern_button_center(PatternButton::Paste);
+    assert!(click_at(&mut v, &d, &reg, paste).is_empty());
+    // Only the curves differ: only the curves are set.
+    let mut other = doc.clone();
+    let c = other
+        .devices
+        .iter_mut()
+        .find(|d| d.key == key("seq"))
+        .unwrap();
+    c.curves.as_mut().unwrap().patterns[0].rows[0][0].value = 7;
+    let d2 = Document::new(other.clone());
+    v.sync(d2.doc(), &reg);
+    let acts = click_at(&mut v, &d2, &reg, paste);
+    assert!(matches!(
+        acts.as_slice(),
+        [UiAction::Command(Command::SetCurves { index: 0, .. })]
+    ));
+}
+
+#[test]
+fn the_rack_panel_copies_and_pastes_the_curves_with_the_pattern() {
+    let doc = only("seq");
+    let reg = registry();
+    let mut d = Document::new(doc.clone());
+    let mut v: RackView = view(&doc, &reg);
+    let button = |v: &RackView, b: SeqButton| v.seq_button_center(&key("seq"), b).unwrap();
+    let click = |v: &mut RackView, d: &Document, p: Point| {
+        let mut a = v.handle(&down(p), d.doc(), &reg);
+        a.extend(v.handle(&up(p), d.doc(), &reg));
+        a
+    };
+    let p = button(&v, SeqButton::Copy);
+    assert!(commands(&click(&mut v, &d, p)).is_empty());
+    assert_eq!(v.pattern_curve_clipboard(), Some(&curves_of(&doc, 0)));
+    let p = button(&v, SeqButton::Slot(2));
+    let _ = click(&mut v, &d, p);
+    let p = button(&v, SeqButton::Paste);
+    let acts = click(&mut v, &d, p);
+    let command = applied_paste(&acts, &mut d, &reg);
+    assert!(
+        matches!(command, Command::Batch(ref c) if c.len() == 2),
+        "{command:?}"
+    );
+    assert_eq!(curves_of(d.doc(), 2), curves_of(&doc, 0));
+    v.sync(d.doc(), &reg);
+    // Copy on a pattern without curves of its own copies flat rows.
+    let p = button(&v, SeqButton::Copy);
+    let _ = click(&mut v, &d, p);
+    assert_eq!(v.pattern_curve_clipboard(), Some(&curves_of(d.doc(), 2)));
+}

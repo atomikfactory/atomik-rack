@@ -311,6 +311,8 @@ pub struct SeqEditorView {
     curves: Option<CurveDoc>,
     meters: Vec<f32>,
     clipboard: Option<PatternDoc>,
+    /// The curves copied with the pattern (a CV sequencer row A and B).
+    curve_clipboard: Option<CurvePatternDoc>,
     rename: Option<Rename>,
     /// A pattern that was just added or duplicated and becomes the edited one as soon as the
     /// document shows it.
@@ -352,6 +354,7 @@ impl SeqEditorView {
             curves: None,
             meters: Vec::new(),
             clipboard: None,
+            curve_clipboard: None,
             rename: None,
             want: None,
             scroll_x: 0.0,
@@ -495,6 +498,16 @@ impl SeqEditorView {
     /// Sets the pattern clipboard (the app mirrors it with the rack panel's).
     pub fn set_clipboard(&mut self, clip: Option<PatternDoc>) {
         self.clipboard = clip;
+    }
+
+    /// The curves copied with the pattern clipboard (only a CV sequencer COPY sets them).
+    pub fn curve_clipboard(&self) -> Option<&CurvePatternDoc> {
+        self.curve_clipboard.as_ref()
+    }
+
+    /// Sets the curves of the pattern clipboard (the app mirrors it with the rack panel).
+    pub fn set_curve_clipboard(&mut self, clip: Option<CurvePatternDoc>) {
+        self.curve_clipboard = clip;
     }
 
     /// The pattern name being edited in place.
@@ -872,8 +885,12 @@ impl SeqEditorView {
                     PatternButton::Add => "Add an empty pattern",
                     PatternButton::Duplicate => "Add a copy of the edited pattern",
                     PatternButton::Remove => "Remove the edited pattern",
-                    PatternButton::Copy => "Copy the edited pattern",
-                    PatternButton::Paste => "Paste the copied pattern into the edited one",
+                    PatternButton::Copy => {
+                        "Copy the edited pattern, with its curves on a CV sequencer"
+                    }
+                    PatternButton::Paste => {
+                        "Paste the copied pattern, and its curves, into the edited one"
+                    }
                     PatternButton::Clear => "Clear the steps of the edited pattern",
                 },
             ),
@@ -1189,13 +1206,22 @@ impl SeqEditorView {
                     }
                 }
             }
-            PatternButton::Copy => self.clipboard = Some(p.clone()),
+            PatternButton::Copy => {
+                self.clipboard = Some(p.clone());
+                self.curve_clipboard = self.is_cv.then(|| self.curve_pattern());
+            }
             PatternButton::Paste => {
                 if let Some(clip) = &self.clipboard {
-                    let q = seq_panel::pasted(p, clip);
-                    if q != *p {
-                        out.extend(self.set(q, None));
-                    }
+                    let curves = self.is_cv.then(|| self.curve_pattern());
+                    let command = seq_panel::paste_command(
+                        &device,
+                        edit,
+                        p,
+                        curves.as_ref(),
+                        clip,
+                        self.curve_clipboard.as_ref(),
+                    );
+                    out.extend(command.map(UiAction::Command));
                 }
             }
             PatternButton::Clear => {
