@@ -695,6 +695,13 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     enabled: e.lane.can_rename,
                     checked: Some(e.lane.soloed),
                 },
+                Spec::Item {
+                    command: "sequencer.toggle_lane_record",
+                    arg: None,
+                    label: None,
+                    enabled: e.lane.can_delete,
+                    checked: Some(e.lane.recording),
+                },
                 Spec::submenu(
                     "Lane Colour",
                     CLIP_COLORS
@@ -1706,6 +1713,7 @@ mod tests {
                 None,
                 Some("Duplicate Track"),
                 Some("Delete Track"),
+                None,
                 None,
                 None,
                 None,

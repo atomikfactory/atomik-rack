@@ -612,3 +612,34 @@ fn the_notes_menu_turns_note_audition_off_and_the_choice_is_kept() {
     assert!(s2.core().piano_roll().note_audition_on());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_inspector_fade_unit_is_kept_between_sessions() {
+    use atomik_ui::FadeUnit;
+    let dir = std::env::temp_dir().join(format!("atomik-fade-unit-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let (mut s, _) = roll_shell(Some(path.clone()));
+    assert_eq!(s.core().transport_bar().fade_unit(), FadeUnit::Ms);
+    s.core_mut()
+        .transport_bar_mut()
+        .set_fade_unit(FadeUnit::Ticks);
+    // Any event runs the save check.
+    tap(&mut s, "Shift+F");
+    tap(&mut s, "Shift+F");
+    s.flush_ui_state();
+    assert_eq!(
+        crate::ui_state::UiState::load(&path).fade_unit,
+        FadeUnit::Ticks
+    );
+    let (s2, _) = roll_shell(Some(path.clone()));
+    assert_eq!(s2.core().transport_bar().fade_unit(), FadeUnit::Ticks);
+    // An older file has no key and shows milliseconds.
+    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+    assert_eq!(
+        crate::ui_state::UiState::load(&path).fade_unit,
+        FadeUnit::Ms
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

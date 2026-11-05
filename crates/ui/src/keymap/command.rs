@@ -2213,6 +2213,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.toggle_lane_record",
+        "Record to Lane",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.toggle_lane_solo",
         "Solo Lane",
         G::Sequencer,

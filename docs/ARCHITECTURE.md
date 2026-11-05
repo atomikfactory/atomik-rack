@@ -2433,7 +2433,9 @@ show: the name, else "Notes", "Notes 2", ...
   double-click on a lane's label (or `sequencer.rename_note_lane`) types its name with the
   folder-name editor. The Track menu and the track header menu have Add Note Lane, Rename Note
   Lane..., Delete Note Lane (two lanes or more), Mute Lane, Solo Lane (`sequencer.toggle_lane_solo`,
-  also an S button on each lane header after the first), a Lane Colour submenu
+  also an S button on each lane header after the first), Record to Lane
+  (`sequencer.toggle_lane_record`: a take goes to every armed lane of its track, `Take::to_lanes`,
+  one undo step), a Lane Colour submenu
   (`sequencer.lane_color`, in the track header menu), Merge Note Lanes (Ctrl+R) and Explode
   Notes to Lanes (also in the clip menu); the piano roll's Notes menu has Extract Notes to a New
   Lane. A press on a lane's label and a drag (`Drag::LaneMove`, [lane_move.rs](../crates/ui/src/arrangement/lane_move.rs))
@@ -4491,7 +4493,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (456) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (457) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

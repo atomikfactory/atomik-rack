@@ -632,9 +632,34 @@ fn new_keeps_the_note_lane_of_each_armed_track() {
         None,
         atomik_core::MeterTable::constant(4, 4),
     );
-    assert_eq!(t.lanes().get(&DeviceKey("bass".into())), Some(&2));
-    assert_eq!(t.lanes().get(&DeviceKey("lead".into())), Some(&0));
+    assert_eq!(t.lanes().get(&DeviceKey("bass".into())), Some(&vec![2]));
+    assert_eq!(t.lanes().get(&DeviceKey("lead".into())), Some(&vec![0]));
     assert_eq!(t.devices().len(), 2);
+}
+
+#[test]
+fn to_lanes_records_one_track_to_several_lanes_sorted() {
+    let bass = DeviceKey("bass".into());
+    let t = Take::new(
+        [
+            (DEV, bass.clone(), 2),
+            (DeviceInstanceId(9), DeviceKey("lead".into()), 0),
+        ],
+        None,
+        atomik_core::MeterTable::constant(4, 4),
+    )
+    .to_lanes(&bass, &[3, 1, 3])
+    .to_lanes(&DeviceKey("lead".into()), &[])
+    .to_lanes(&DeviceKey("gone".into()), &[1]);
+    assert_eq!(t.lanes().get(&bass), Some(&vec![1, 3]));
+    assert_eq!(t.lanes().get(&DeviceKey("lead".into())), Some(&vec![0]));
+    assert_eq!(t.lanes().len(), 2);
+    let previews = t.track_previews(0);
+    let lanes: Vec<(String, usize)> = previews.iter().map(|p| (p.0.0.clone(), p.1)).collect();
+    assert_eq!(
+        lanes,
+        [("bass".into(), 1), ("bass".into(), 3), ("lead".into(), 0)]
+    );
 }
 
 #[test]

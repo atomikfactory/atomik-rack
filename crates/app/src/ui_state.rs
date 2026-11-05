@@ -14,7 +14,7 @@
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
-//!   "audio_editor_mode": "overview",
+//!   "audio_editor_mode": "overview", "fade_unit": "ms",
 //!   "console_notice_seen": false,
 //!   "plugin_windows": { "clap.vendor.synth": { "x": 120, "y": 80, "w": 900, "h": 600 } },
 //!   "windows": { "rack": { "detached": true, "geom": { "x": 40, "y": 60, "width": 1200.0,
@@ -28,7 +28,9 @@ use atomik_ui::big_meter::MeterMode;
 use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
 use atomik_ui::timeline::Snap;
-use atomik_ui::{AudioMode, DEFAULT_OCTAVE, DEFAULT_VELOCITY, FileBrowserView, OCTAVES, SnapMode};
+use atomik_ui::{
+    AudioMode, DEFAULT_OCTAVE, DEFAULT_VELOCITY, FadeUnit, FileBrowserView, OCTAVES, SnapMode,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -137,6 +139,9 @@ pub struct UiState {
     /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
     /// overview.
     pub audio_editor_mode: AudioMode,
+    /// The unit the clip inspector shows audio fades in (`"ms"` or `"ticks"`). An absent key
+    /// means milliseconds.
+    pub fade_unit: FadeUnit,
     /// Link faders in the console: a level of a strip in a VCA group moves the group's levels.
     /// An absent key means off.
     pub link_faders: bool,
@@ -198,6 +203,7 @@ impl Default for UiState {
             piano_keys_octave: DEFAULT_OCTAVE,
             piano_keys_velocity: DEFAULT_VELOCITY,
             audio_editor_mode: AudioMode::Overview,
+            fade_unit: FadeUnit::Ms,
             link_faders: false,
             meter_mode: MeterMode::Peak,
             morph_seconds: 2,
@@ -341,6 +347,7 @@ mod tests {
             piano_roll_snap_scale: true,
             piano_roll_fold: Fold::Used,
             audio_editor_mode: AudioMode::Slice,
+            fade_unit: FadeUnit::Ticks,
             file_browser_visible: true,
             ..UiState::default()
         };

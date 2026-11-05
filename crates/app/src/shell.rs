@@ -836,6 +836,9 @@ impl<B: AudioBackend> Shell<B> {
             roll.set_note_audition(self.ui.piano_roll_audition);
             roll.set_snap_mode(self.ui.snap_mode);
         }
+        self.core
+            .transport_bar_mut()
+            .set_fade_unit(self.ui.fade_unit);
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_snap(self.ui.arrangement_snap);
@@ -4685,6 +4688,11 @@ impl<B: AudioBackend> Shell<B> {
         if octave != self.ui.piano_keys_octave || velocity != self.ui.piano_keys_velocity {
             self.ui.piano_keys_octave = octave;
             self.ui.piano_keys_velocity = velocity;
+            self.ui_changed();
+        }
+        let fade_unit = self.core.transport_bar().fade_unit();
+        if fade_unit != self.ui.fade_unit {
+            self.ui.fade_unit = fade_unit;
             self.ui_changed();
         }
         let audition = self.core.piano_roll().note_audition_on();
