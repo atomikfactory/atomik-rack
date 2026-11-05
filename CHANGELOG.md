@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Start screen.** A box with the choices for a song to work on: **New Song** (the default song when one is chosen),
+  **Open**, the templates of the templates folder (the first eight) and the recent songs with the day each file was
+  last changed and its folder. It is shown when the app starts with no song to open, and any time from **File > Start
+  Screen**. The arrow keys move inside a column and between the two columns, Tab visits every row, Enter or Space
+  picks, and Esc closes it; a click works as well. A pick does what the File menu row does, so unsaved changes are
+  asked about first and a song that is gone leaves the list with a message. The option to reopen the last song at
+  start-up still comes first, and a project named on the command line skips the box. The check box **Show this
+  screen when Atomik Rack starts** is kept in `workflow.json` as `show_start_screen` (on by default). The headless
+  and MCP sessions never show it. The project format is unchanged. Not done yet: previews of the templates, pinned
+  songs, and a row for it in Settings.
 - **Wavetable synth follow-ups.** A sample dropped on the wavetable synth (from the file browser or the desktop) is
   a table: choose `imported` in a table pick list and the sample plays as a table, cut into frames of 2048 samples
   (a short sample is one cycle, a long one contributes 16 evenly spaced frames, and the part between the zone's
