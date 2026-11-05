@@ -736,11 +736,7 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             x_in: 0,
             x_out: 0,
             x_curve: FadeCurve::EqualPower,
-            warp: if audio.reverse {
-                None
-            } else {
-                warp_job(song, sample_rate, pass.0, pass.1 - pass.0, audio).map(Arc::new)
-            },
+            warp: warp_job(song, sample_rate, pass.0, pass.1 - pass.0, audio).map(Arc::new),
         }
     };
     let zones = crossfades(lane);

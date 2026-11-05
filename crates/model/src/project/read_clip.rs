@@ -602,11 +602,6 @@ pub(super) fn load_audio(
         None => WarpSettings::default(),
         Some(w) => load_warp(w, &path.field("warp"))?,
     };
-    if reverse && warp.active() {
-        return Err(path
-            .field("warp")
-            .error("a reversed clip cannot be warped or transposed"));
-    }
     Ok(AudioClipContent {
         asset: asset.to_owned(),
         source_offset,

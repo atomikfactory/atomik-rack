@@ -353,6 +353,9 @@ pub struct WarpJob {
     pub frames: u64,
     /// The document sample rate.
     pub sample_rate: u32,
+    /// The clip plays backwards: the buffer is the warped span turned around, so it plays
+    /// forward like any other.
+    pub reverse: bool,
 }
 
 impl WarpJob {
@@ -370,6 +373,7 @@ impl WarpJob {
         eat(&self.transpose_cents.to_le_bytes());
         eat(&self.frames.to_le_bytes());
         eat(&self.sample_rate.to_le_bytes());
+        eat(&[u8::from(self.reverse)]);
         for (a, b) in &self.knots {
             eat(&a.to_bits().to_le_bytes());
             eat(&b.to_bits().to_le_bytes());
@@ -468,6 +472,7 @@ pub fn warp_job(
         knots,
         frames,
         sample_rate,
+        reverse: a.reverse,
     })
 }
 

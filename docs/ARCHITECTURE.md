@@ -1904,7 +1904,8 @@ the clip (`AudioClipContent`) or a split of the clip.
   [docs/DECISIONS.md](DECISIONS.md#m-warp-on-import-default)). The import worker reads the tempo
   metadata of the file (`read_file_meta`, a bounded RIFF chunk walk: at most 256 chunk headers and
   512 bytes of a chunk, `acid` tempo, beats and one-shot flag, `smpl` loop count, a tempo in the
-  `bext` description) and sends it with the loaded asset (`Loaded::meta`). `AppCore::place` asks the
+  `bext` description; in an AIFF or AIFF-C file the `basc` beat count, a tempo written in an `ANNO`,
+  `NAME` or `COMT` text, and an `INST` loop flag) and sends it with the loaded asset (`Loaded::meta`). `AppCore::place` asks the
   pure function `import_warp(meta, frames, rate, song_bpm, bar_ticks, mode)`: a file that is not
   flagged a one-shot warps at the tempo it states (the exact tempo of its beat count when that is
   within 2 percent of the stated one), else at the tempo that makes its length 1, 2, 4 or 8 bars
@@ -1983,8 +1984,12 @@ learns nothing new.
   `warp_jobs` lists the jobs of the audible clips. `SplitClip`, `StripSilence` and comp pieces take
   their source offset from the map (`AudioClipContent::piece_from`) and re-base the markers
   (`WarpSettings::markers_after`, with a marker at 0 so the stretch in front of the first one is
-  kept). A reversed clip cannot be warped or transposed (the command, the loader and the UI refuse
-  it). `bpm_for_beats` (a loop of N beats), `estimate_bpm` (a comb filter over onsets between 70 and
+  kept). A reversed clip can be warped and transposed: `WarpJob::reverse` is part of the key, the
+  knots are the forward ones from the clip's source offset, and the renderer turns the finished
+  buffer around, so the engine plays it forward like any other (the reversed reading of the asset
+  stays the real-time fallback, without an interim time map). Trimming the start of such a clip
+  cuts the end of the stretched span and leaves the source offset and the markers alone.
+  `bpm_for_beats` (a loop of N beats), `estimate_bpm` (a comb filter over onsets between 70 and
   180 BPM) and `quantize_audio` (markers that move each transient to the nearest grid line by a
   strength, the clip's start and end pinned, any markers replaced, a clip without warp switched on
   at the song tempo at its start) are pure.
@@ -1998,7 +2003,7 @@ learns nothing new.
   fades, envelopes and crossfades apply to it like to any clip.
 - **Interim warp** ([engine/src/audio.rs](../crates/engine/src/audio.rs)). `song_input_live` (the
   app's builder; a bounce never calls it) gives a warped clip of a memory asset whose buffer is not
-  ready a region with `SongAudioRegion::warp`, an index into `SongAudioTrack::warp_maps` (the job's
+  ready (and that does not play backwards) a region with `SongAudioRegion::warp`, an index into `SongAudioTrack::warp_maps` (the job's
   `(clip frame, asset frame)` knots, one map per job). The engine reads the asset through the
   piecewise-linear map with four-point Hermite interpolation, on stack blocks, so a tempo ramp,
   markers and trims are right from the next batch; it is a resampling (the pitch follows the ratio,
@@ -5571,10 +5576,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   dropped from the operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or
   clip waits for a worker (the clip plays an interim resampled read meanwhile, at the right timing
-  but the wrong pitch for a transposed clip; a streamed asset plays unwarped); reverse and warp
-  exclude each other;
-  the stretch engines are offline only and the Tonal mode does not keep formants when transposing
-  (2.18).
+  but the wrong pitch for a transposed clip; a streamed asset plays unwarped, and so does a
+  reversed clip, backwards, until its buffer is ready); the stretch engines are offline only and
+  the Tonal mode does not keep formants when transposing (2.18).
 - **Tempo and meter.** Tempo ramps are linear in BPM only (no other curve shapes), meter changes
   only start on bar lines, and tempo-synced devices follow a ramp in steps of one 64-frame batch.
   The LFO of the modulation effects computes its synced phase from the absolute frame and the tempo

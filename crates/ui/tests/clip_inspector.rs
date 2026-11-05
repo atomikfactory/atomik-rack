@@ -201,7 +201,8 @@ fn a_narrow_bar_drops_the_name_then_fields_from_the_right_and_never_overlaps() {
             assert!(p.x < w, "{w}: {f:?} outside the bar");
         }
     }
-    assert_eq!(bar(&doc, &[10], 1500.0).inspector_fields().len(), 6);
+    // Every box: the five older ones (six fields) and then warp and tempo.
+    assert_eq!(bar(&doc, &[10], 1500.0).inspector_fields().len(), 8);
     assert_eq!(bar(&doc, &[10], 500.0).inspector_fields().len(), 0);
     // The name goes first: a width that holds every field but not the name.
     let mut b = bar(&doc, &[10], 1500.0);
@@ -209,6 +210,16 @@ fn a_narrow_bar_drops_the_name_then_fields_from_the_right_and_never_overlaps() {
     let mut b = bar(&doc, &[10], 1090.0);
     assert_eq!(b.inspector_fields().len(), 6);
     assert!(!texts(&mut b, &doc).iter().any(|s| s == "drums.wav"));
+    // The warp and tempo boxes only use room the older ones leave: they never push the name or
+    // the cluster out, and a bar too narrow for them keeps the six older fields.
+    for w in [1090.0, 1100.0, 1150.0] {
+        let fields = bar(&doc, &[10], w).inspector_fields();
+        assert!(fields.len() >= 6, "{w}");
+        assert!(
+            fields.len() != 7 || fields.contains(&InspectorField::Warp),
+            "{w}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------- edits
@@ -310,22 +321,112 @@ fn typed_semitones_become_cents() {
 }
 
 #[test]
-fn a_reversed_clip_cannot_be_transposed_and_says_so() {
+fn a_reversed_clip_can_be_transposed() {
     let mut doc = audio_doc();
     audio_mut(&mut doc, 10, |a| a.reverse = true);
     let mut b = bar(&doc, &[10], 1500.0);
     let p = b.inspector_point(InspectorField::TransposeWhole).unwrap();
+    let a = handle(&mut b, &doc, &[wheel(p, 1.0)]);
+    let set = contents(&a);
+    assert_eq!(set.len(), 1);
+    assert!(set[0].1.reverse && set[0].1.warp.transpose_cents == 100);
+}
+
+#[test]
+fn the_warp_button_switches_every_clip_on_then_off_as_one_step() {
+    let mut doc = audio_doc();
+    audio_mut(&mut doc, 10, |a| a.warp.enabled = true);
+    let mut b = bar(&doc, &[10, 11], 1500.0);
+    let p = b.inspector_point(InspectorField::Warp).unwrap();
+    // A mixed selection switches on.
+    let a = handle(&mut b, &doc, &[down(p), up(p)]);
+    let set = contents(&a);
+    assert_eq!(set.len(), 1, "the clip already warped is left alone");
+    assert_eq!(set[0].0, ClipId(11));
+    assert!(set[0].1.warp.enabled);
+    assert!(matches!(commands(&a).as_slice(), [Command::Song(_)]));
+    // Everything warped switches off, keeping the mode, tempo and markers.
+    audio_mut(&mut doc, 11, |a| a.warp.enabled = true);
+    audio_mut(&mut doc, 10, |a| a.warp.source_bpm = 93.0);
+    let mut b = bar(&doc, &[10, 11], 1500.0);
+    let a = handle(&mut b, &doc, &[down(p), up(p)]);
+    let set = contents(&a);
+    assert_eq!(set.len(), 2);
+    for (id, c, _) in &set {
+        assert!(!c.warp.enabled);
+        if id.0 == 10 {
+            assert_eq!(c.warp.source_bpm, 93.0);
+        }
+    }
+    assert!(matches!(commands(&a).as_slice(), [Command::Batch(_)]));
+}
+
+#[test]
+fn the_tempo_field_is_dimmed_until_a_clip_is_warped_and_says_so() {
+    let doc = audio_doc();
+    let mut b = bar(&doc, &[10, 11], 1500.0);
+    let p = b.inspector_point(InspectorField::Tempo).unwrap();
     let a = handle(
         &mut b,
         &doc,
         &[wheel(p, 1.0), down(p), mv(above(p, 30.0)), up(p)],
     );
     assert!(a.is_empty(), "{a:?}");
-    let help = b.help_at(p).unwrap();
-    assert!(help.text.contains("reversed"), "{}", help.text);
+    assert!(b.help_at(p).unwrap().text.contains("warp"));
     // The other fields still work.
     let q = b.inspector_point(InspectorField::Gain).unwrap();
     assert!(!handle(&mut b, &doc, &[wheel(q, 1.0)]).is_empty());
+}
+
+#[test]
+fn the_tempo_field_steps_and_types_the_source_tempo_of_the_warped_clips() {
+    let mut doc = audio_doc();
+    audio_mut(&mut doc, 10, |a| {
+        a.warp.enabled = true;
+        a.warp.source_bpm = 100.0;
+    });
+    let mut b = bar(&doc, &[10, 11], 1500.0);
+    let p = b.inspector_point(InspectorField::Tempo).unwrap();
+    // A wheel notch is one BPM; the clip that is not warped keeps its tempo.
+    let a = handle(&mut b, &doc, &[wheel(p, 1.0)]);
+    let set = contents(&a);
+    assert_eq!(set.len(), 1);
+    assert_eq!(set[0].0, ClipId(10));
+    assert!((set[0].1.warp.source_bpm - 101.0).abs() < 1e-9);
+    // Shift-fine (a hundredth) is not reachable by wheel here; typing sets any value.
+    handle(&mut b, &doc, &[down_mods(p, Modifiers::NONE, 2), up(p)]);
+    for c in "93.25".chars() {
+        handle(&mut b, &doc, &[key_down(Key::Char(c))]);
+    }
+    let a = handle(&mut b, &doc, &[key_down(Key::Enter)]);
+    let set = contents(&a);
+    assert_eq!(set.len(), 1);
+    assert!((set[0].1.warp.source_bpm - 93.25).abs() < 1e-9);
+    // Typing past the range clamps.
+    handle(&mut b, &doc, &[down_mods(p, Modifiers::NONE, 2), up(p)]);
+    for c in "5000".chars() {
+        handle(&mut b, &doc, &[key_down(Key::Char(c))]);
+    }
+    let a = handle(&mut b, &doc, &[key_down(Key::Enter)]);
+    assert!((contents(&a)[0].1.warp.source_bpm - 999.0).abs() < 1e-9);
+}
+
+#[test]
+fn a_tempo_drag_is_one_merge_group() {
+    let mut doc = audio_doc();
+    audio_mut(&mut doc, 10, |a| a.warp.enabled = true);
+    let mut b = bar(&doc, &[10], 1500.0);
+    let p = b.inspector_point(InspectorField::Tempo).unwrap();
+    let a = handle(
+        &mut b,
+        &doc,
+        &[down(p), mv(above(p, 10.0)), mv(above(p, 30.0)), up(p)],
+    );
+    let set = contents(&a);
+    assert!(set.len() >= 2, "{set:?}");
+    let merge = set[0].2;
+    assert!(merge.is_some() && set.iter().all(|s| s.2 == merge));
+    assert!(a.iter().any(|x| matches!(x, UiAction::EndMerge)));
 }
 
 #[test]
@@ -341,7 +442,9 @@ fn the_repitch_mode_disables_the_transposition() {
 #[test]
 fn a_mixed_selection_transposes_only_the_clips_that_can() {
     let mut doc = audio_doc();
-    audio_mut(&mut doc, 10, |a| a.reverse = true);
+    audio_mut(&mut doc, 10, |a| {
+        a.warp.mode = atomik_model::WarpMode::Repitch
+    });
     let mut b = bar(&doc, &[10, 11], 1500.0);
     let p = b.inspector_point(InspectorField::TransposeWhole).unwrap();
     let a = handle(&mut b, &doc, &[wheel(p, 1.0)]);
@@ -351,7 +454,7 @@ fn a_mixed_selection_transposes_only_the_clips_that_can() {
 }
 
 #[test]
-fn reverse_toggles_all_and_switches_the_warp_off() {
+fn reverse_toggles_all_and_keeps_the_warp() {
     let mut doc = audio_doc();
     audio_mut(&mut doc, 10, |a| {
         a.warp.enabled = true;
@@ -362,8 +465,11 @@ fn reverse_toggles_all_and_switches_the_warp_off() {
     let a = handle(&mut b, &doc, &[down(p), up(p)]);
     let set = contents(&a);
     assert_eq!(set.len(), 2);
-    for (_, c, _) in &set {
-        assert!(c.reverse && !c.warp.enabled && c.warp.transpose_cents == 0);
+    for (id, c, _) in &set {
+        // The warp and the transposition are kept: the stretched span plays backwards.
+        assert!(c.reverse);
+        assert_eq!(c.warp.enabled, id.0 == 10, "{id:?}");
+        assert_eq!(c.warp.transpose_cents, if id.0 == 10 { 200 } else { 0 });
     }
     assert!(matches!(commands(&a).as_slice(), [Command::Batch(_)]));
 }

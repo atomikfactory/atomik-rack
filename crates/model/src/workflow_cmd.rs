@@ -443,7 +443,7 @@ pub enum WorkflowCommand {
     /// twice as fast (half as long), 50 half as fast. Clip starts scale relative to the
     /// earliest start of the selection, lengths, loops, notes and controller and automation
     /// points scale with them (positions round to the nearest tick), and audio clips are warped
-    /// to follow (an audio clip that plays backwards rejects the command). The percentage is
+    /// to follow (a reversed one keeps playing backwards). The percentage is
     /// `SCALE_PERCENT_MIN..=SCALE_PERCENT_MAX` and not 100. One undo step.
     ScaleTempo {
         /// The clips.
@@ -469,8 +469,8 @@ pub enum WorkflowCommand {
     /// every clip twice as long). Each clip scales about its own fixed edge: its start stays
     /// where it is, or with `from_start` (the start edge was dragged) its end does. Notes,
     /// controller and automation points scale with the clip and an audio clip is warped to
-    /// follow (pitch kept unless its warp mode is Repitch; a clip that plays backwards
-    /// rejects the command). Same range and one undo step as `ScaleTempo`.
+    /// follow (pitch kept unless its warp mode is Repitch; a reversed one keeps playing
+    /// backwards). Same range and one undo step as `ScaleTempo`.
     StretchClips {
         /// The clips.
         ids: Vec<ClipId>,

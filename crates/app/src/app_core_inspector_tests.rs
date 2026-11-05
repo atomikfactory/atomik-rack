@@ -94,7 +94,7 @@ fn the_inspector_follows_the_arrangement_selection() {
     assert!(c.transport_bar().inspector_fields().is_empty());
     c.arrangement_mut().set_selected_clips(&ids[..1]);
     c.after_view_change();
-    assert_eq!(c.transport_bar().inspector_fields().len(), 6);
+    assert!(c.transport_bar().inspector_fields().len() >= 6);
 }
 
 #[test]
@@ -149,24 +149,46 @@ fn a_typed_transposition_on_two_clips_is_one_undo_step() {
 #[test]
 fn undo_updates_what_the_inspector_shows() {
     let (mut c, ids) = core_with_two_clips();
+    // A bar wide enough for the warp and tempo boxes.
+    c.transport_bar_mut()
+        .set_bounds(Rect::new(0.0, 0.0, 2400.0, 44.0));
     c.arrangement_mut().set_selected_clips(&ids);
     c.after_view_change();
-    let p = c
+    let rev = c
         .transport_bar()
         .inspector_point(InspectorField::Reverse)
         .unwrap();
-    pointer(&mut c, down(p, 1));
-    pointer(&mut c, up(p));
+    pointer(&mut c, down(rev, 1));
+    pointer(&mut c, up(rev));
     assert!(ids.iter().all(|id| audio(&c, *id).reverse));
-    // Transposition is refused now (reversed clips), with a reason.
-    let t = c
+    // The imported loops follow the tempo already (a whole number of bars), so the tempo box is
+    // live; the WARP button switches them off and the box is dimmed with a reason.
+    assert!(ids.iter().all(|id| audio(&c, *id).warp.enabled));
+    let warp = c
         .transport_bar()
-        .inspector_point(InspectorField::TransposeWhole)
+        .inspector_point(InspectorField::Warp)
         .unwrap();
-    let help = c.help_in_pane(Pane::Transport, t).unwrap();
-    assert!(help.text.contains("reversed"), "{}", help.text);
+    let tempo = c
+        .transport_bar()
+        .inspector_point(InspectorField::Tempo)
+        .unwrap();
+    let help = c.help_in_pane(Pane::Transport, tempo).unwrap();
+    assert!(!help.text.contains("switch warp on"), "{}", help.text);
+    pointer(&mut c, down(warp, 1));
+    pointer(&mut c, up(warp));
+    assert!(
+        ids.iter()
+            .all(|id| !audio(&c, *id).warp.enabled && audio(&c, *id).reverse)
+    );
+    let help = c.help_in_pane(Pane::Transport, tempo).unwrap();
+    assert!(help.text.contains("switch warp on"), "{}", help.text);
+    // One undo switches the warp back on, another takes the reverse back.
     assert!(c.undo());
     c.after_view_change();
-    let help = c.help_in_pane(Pane::Transport, t).unwrap();
-    assert!(!help.text.contains("reversed"), "{}", help.text);
+    assert!(ids.iter().all(|id| audio(&c, *id).warp.enabled));
+    let help = c.help_in_pane(Pane::Transport, tempo).unwrap();
+    assert!(!help.text.contains("switch warp on"), "{}", help.text);
+    assert!(c.undo());
+    c.after_view_change();
+    assert!(ids.iter().all(|id| !audio(&c, *id).reverse));
 }

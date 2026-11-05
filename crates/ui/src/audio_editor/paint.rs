@@ -310,7 +310,7 @@ fn waveform(v: &AudioEditorView, c: &mut dyn Canvas) {
     {
         sp::label(
             c,
-            "A reversed clip cannot be warped, so it cannot be sliced",
+            "A reversed clip cannot be sliced: un-reverse it to place markers",
             w.center().x,
             w.y0 + 14.0,
             10.0,

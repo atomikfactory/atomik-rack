@@ -1,4 +1,4 @@
-//! Tempo metadata of an audio file: a bounded scan of the RIFF chunks of a WAV file.
+//! Tempo metadata of an audio file: a bounded scan of the chunks of a WAV or AIFF file.
 //!
 //! The scan reads the chunk headers and the few chunks that carry loop information, never
 //! more than [`MAX_CHUNKS`] headers and [`MAX_BODY`] bytes of one chunk, and never allocates
@@ -11,6 +11,14 @@
 //! * `acid`: the loop's tempo, its beat count and the one-shot flag.
 //! * `smpl`: the number of sample loops (a file with one is loop-like).
 //! * `bext`: the description text, searched for a tempo written as `120 BPM`.
+//!
+//! In an AIFF or AIFF-C file (big-endian `FORM` chunks):
+//!
+//! * `basc`: the beat count of an Apple loop (a big-endian `u32` after a version `u32`); the
+//!   tempo then follows from the length of the audio.
+//! * `ANNO`, `NAME` and `COMT`: the text, searched for a tempo written as `120 BPM` (the
+//!   comment chunk is read as a whole, its time stamps and marker ids skipped).
+//! * `INST`: a sustain loop marks the file as loop-like.
 
 use crate::error::Result;
 use std::fs::File;
@@ -71,6 +79,9 @@ fn scan_meta<R: Read + Seek>(r: &mut R, len: u64) -> Result<FileMeta> {
     if len < 12 || r.read_exact(&mut head).is_err() {
         return Ok(meta);
     }
+    if &head[0..4] == b"FORM" && (&head[8..12] == b"AIFF" || &head[8..12] == b"AIFC") {
+        return scan_aiff(r, len);
+    }
     if &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
         return Ok(meta);
     }
@@ -109,6 +120,78 @@ fn scan_meta<R: Read + Seek>(r: &mut R, len: u64) -> Result<FileMeta> {
     Ok(meta)
 }
 
+/// Walks the chunks of an AIFF or AIFF-C file (big-endian sizes, padded to an even size).
+fn scan_aiff<R: Read + Seek>(r: &mut R, len: u64) -> Result<FileMeta> {
+    let mut meta = FileMeta::default();
+    let mut pos = 12u64;
+    for _ in 0..MAX_CHUNKS {
+        if pos.saturating_add(8) > len {
+            break;
+        }
+        let mut h = [0u8; 8];
+        r.seek(SeekFrom::Start(pos))?;
+        if r.read_exact(&mut h).is_err() {
+            break;
+        }
+        let id = [h[0], h[1], h[2], h[3]];
+        let size = u64::from(u32::from_be_bytes([h[4], h[5], h[6], h[7]]));
+        let body = pos + 8;
+        let avail = len.saturating_sub(body).min(size);
+        let take = usize::try_from(avail.min(MAX_BODY as u64)).unwrap_or(0);
+        if matches!(&id, b"basc" | b"ANNO" | b"NAME" | b"COMT" | b"INST") {
+            let mut buf = vec![0u8; take];
+            if r.read_exact(&mut buf).is_err() {
+                break;
+            }
+            match &id {
+                b"basc" => meta.beats = u32_be(&buf, 4).filter(|n| (1..=65_536).contains(n)),
+                b"INST" => read_inst(&buf, &mut meta),
+                b"COMT" => read_comments(&buf, &mut meta),
+                _ => read_text_tempo(&buf, &mut meta),
+            }
+        }
+        pos = body.saturating_add(size).saturating_add(size & 1);
+    }
+    Ok(meta)
+}
+
+fn u32_be(b: &[u8], at: usize) -> Option<u32> {
+    b.get(at..at + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+}
+
+/// `INST`: eight bytes of note data, then the play mode (`u16`) of the sustain loop: not zero
+/// when the file loops.
+fn read_inst(b: &[u8], meta: &mut FileMeta) {
+    if b.get(8..10).is_some_and(|m| m != [0, 0]) {
+        meta.has_loop = true;
+    }
+}
+
+/// `COMT`: a comment count (`u16`), then per comment a time stamp (`u32`), a marker id (`u16`),
+/// a text length (`u16`) and the text padded to an even size. The first comment that names a
+/// tempo wins.
+fn read_comments(b: &[u8], meta: &mut FileMeta) {
+    let count = b
+        .get(0..2)
+        .map_or(0, |c| usize::from(u16::from_be_bytes([c[0], c[1]])));
+    let mut at = 2usize;
+    for _ in 0..count.min(64) {
+        let Some(n) = b
+            .get(at + 6..at + 8)
+            .map(|c| usize::from(u16::from_be_bytes([c[0], c[1]])))
+        else {
+            return;
+        };
+        let end = (at + 8 + n).min(b.len());
+        read_text_tempo(&b[at + 8..end], meta);
+        at = at + 8 + n + (n & 1);
+        if meta.tempo_bpm.is_some() {
+            return;
+        }
+    }
+}
+
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
     b.get(at..at + 4)
         .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
@@ -140,10 +223,14 @@ fn read_smpl(b: &[u8], meta: &mut FileMeta) {
 /// `bext`: a 256 byte description first; a tempo is read from text like `120 BPM` or
 /// `BPM: 120`.
 fn read_bext(b: &[u8], meta: &mut FileMeta) {
+    read_text_tempo(&b[..b.len().min(256)], meta);
+}
+
+/// A tempo written in `text` as `120 BPM` or `BPM: 120`, unless `meta` has one already.
+fn read_text_tempo(text: &[u8], meta: &mut FileMeta) {
     if meta.tempo_bpm.is_some() {
         return;
     }
-    let text = &b[..b.len().min(256)];
     let end = text.iter().position(|c| *c == 0).unwrap_or(text.len());
     let lower: Vec<u8> = text[..end].iter().map(u8::to_ascii_lowercase).collect();
     let Some(at) = lower.windows(3).position(|w| w == b"bpm") else {
@@ -262,6 +349,104 @@ mod tests {
             body[..text.len()].copy_from_slice(text.as_bytes());
             let m = parse_meta(&wav(&[chunk(b"bext", &body)]));
             assert_eq!(m.tempo_bpm, want, "{text}");
+        }
+    }
+
+    fn aiff_chunk(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut v = id.to_vec();
+        v.extend((body.len() as u32).to_be_bytes());
+        v.extend(body);
+        if body.len() % 2 == 1 {
+            v.push(0);
+        }
+        v
+    }
+
+    fn aiff(form: &[u8; 4], chunks: &[Vec<u8>]) -> Vec<u8> {
+        let body: Vec<u8> = chunks.concat();
+        let mut v = b"FORM".to_vec();
+        v.extend((body.len() as u32 + 4).to_be_bytes());
+        v.extend(form);
+        v.extend(body);
+        v
+    }
+
+    fn comment(text: &str) -> Vec<u8> {
+        let mut b = 1u16.to_be_bytes().to_vec();
+        b.extend(0u32.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        b.extend((text.len() as u16).to_be_bytes());
+        b.extend(text.as_bytes());
+        if text.len() % 2 == 1 {
+            b.push(0);
+        }
+        aiff_chunk(b"COMT", &b)
+    }
+
+    #[test]
+    fn an_aiff_loop_gives_its_beat_count() {
+        let mut basc = 1u32.to_be_bytes().to_vec();
+        basc.extend(8u32.to_be_bytes());
+        basc.extend([0u8; 8]);
+        for form in [b"AIFF", b"AIFC"] {
+            let bytes = aiff(
+                form,
+                &[aiff_chunk(b"COMM", &[0; 18]), aiff_chunk(b"basc", &basc)],
+            );
+            let m = parse_meta(&bytes);
+            assert_eq!(m.beats, Some(8));
+            assert_eq!(m.tempo_bpm, None);
+        }
+        // A beat count of zero or beyond the cap is dropped.
+        for n in [0u32, 70_000] {
+            let mut b = 1u32.to_be_bytes().to_vec();
+            b.extend(n.to_be_bytes());
+            assert!(parse_meta(&aiff(b"AIFF", &[aiff_chunk(b"basc", &b)])).is_empty());
+        }
+    }
+
+    #[test]
+    fn an_aiff_text_chunk_names_a_tempo() {
+        for (chunk, want) in [
+            (aiff_chunk(b"ANNO", b"Drum loop 128 BPM"), Some(128.0)),
+            (aiff_chunk(b"NAME", b"bpm: 93.5 tight"), Some(93.5)),
+            (comment("groove at 110 bpm"), Some(110.0)),
+            (comment("a loop"), None),
+            (aiff_chunk(b"ANNO", b"0 bpm"), None),
+        ] {
+            let m = parse_meta(&aiff(b"AIFF", &[chunk]));
+            assert_eq!(m.tempo_bpm, want);
+        }
+    }
+
+    #[test]
+    fn an_aiff_instrument_loop_marks_the_file_as_loop_like() {
+        let mut inst = vec![0u8; 20];
+        inst[9] = 1;
+        assert!(parse_meta(&aiff(b"AIFF", &[aiff_chunk(b"INST", &inst)])).has_loop);
+        assert!(!parse_meta(&aiff(b"AIFF", &[aiff_chunk(b"INST", &[0; 20])])).has_loop);
+    }
+
+    #[test]
+    fn truncated_and_hostile_aiff_headers_never_panic() {
+        let full = aiff(
+            b"AIFF",
+            &[comment("100 bpm"), aiff_chunk(b"basc", &[0; 12])],
+        );
+        for cut in 0..full.len() {
+            let _ = parse_meta(&full[..cut]);
+        }
+        // A comment count and lengths that run past the chunk.
+        let mut b = u16::MAX.to_be_bytes().to_vec();
+        b.extend([0u8; 6]);
+        b.extend(u16::MAX.to_be_bytes());
+        let _ = parse_meta(&aiff(b"AIFF", &[aiff_chunk(b"COMT", &b)]));
+        for size in [u32::MAX, 0, 1 << 31] {
+            let mut v = b"FORM    AIFF".to_vec();
+            v.extend(b"COMT");
+            v.extend(size.to_be_bytes());
+            v.extend([7u8; 30]);
+            let _ = parse_meta(&v);
         }
     }
 

@@ -53,7 +53,7 @@ pub struct AudioMenu {
     pub envelope: bool,
     /// Every selected audio clip is warped (the Warp item is checked).
     pub warped: bool,
-    /// A selected audio clip can be warped or transposed (it is not reversed).
+    /// An audio clip is selected, so it can be warped or transposed.
     pub can_warp: bool,
 }
 
@@ -85,7 +85,7 @@ impl ArrangementView {
             reversed: !clips.is_empty() && clips.iter().all(|(_, a)| a.reverse),
             envelope: clips.iter().any(|(_, a)| !a.envelope.is_empty()),
             warped: !clips.is_empty() && clips.iter().all(|(_, a)| a.warp.enabled),
-            can_warp: clips.iter().any(|(_, a)| !a.reverse),
+            can_warp: !clips.is_empty(),
         }
     }
 
@@ -423,19 +423,10 @@ impl ArrangementView {
             "sequencer.audio_reverse" => {
                 let to = !self.audio_menu().reversed;
                 Box::new(move |_, a, _| {
-                    // A reversed clip cannot be warped or transposed, so reversing a warped
-                    // clip switches the warp off (its mode, tempo and markers stay).
-                    (a.reverse != to).then(|| {
-                        let mut warp = a.warp.clone();
-                        if to {
-                            warp.enabled = false;
-                            warp.transpose_cents = 0;
-                        }
-                        AudioClipContent {
-                            reverse: to,
-                            warp,
-                            ..a.clone()
-                        }
+                    // A warped clip keeps its warp: the stretched span plays backwards.
+                    (a.reverse != to).then(|| AudioClipContent {
+                        reverse: to,
+                        ..a.clone()
                     })
                 })
             }
@@ -507,7 +498,7 @@ impl ArrangementView {
             "sequencer.audio_warp" => {
                 let to = !self.audio_menu().warped;
                 Box::new(move |_, a, _| {
-                    (a.warp.enabled != to && !a.reverse).then(|| {
+                    (a.warp.enabled != to).then(|| {
                         let mut c = a.clone();
                         c.warp.enabled = to;
                         c
@@ -517,13 +508,11 @@ impl ArrangementView {
             "sequencer.audio_warp_mode" => {
                 let mode = atomik_model::WarpMode::from_id(arg?)?;
                 Box::new(move |_, a, _| {
-                    (a.warp.mode != mode && !(a.reverse && a.warp.transpose_cents != 0)).then(
-                        || {
-                            let mut c = a.clone();
-                            c.warp.mode = mode;
-                            c
-                        },
-                    )
+                    (a.warp.mode != mode).then(|| {
+                        let mut c = a.clone();
+                        c.warp.mode = mode;
+                        c
+                    })
                 })
             }
             "sequencer.audio_transpose" => {
@@ -542,7 +531,7 @@ impl ArrangementView {
                             atomik_model::WARP_TRANSPOSE_MAX_CENTS,
                         )
                     });
-                    (cents != a.warp.transpose_cents && !a.reverse).then(|| {
+                    (cents != a.warp.transpose_cents).then(|| {
                         let mut c = a.clone();
                         c.warp.transpose_cents = cents;
                         c

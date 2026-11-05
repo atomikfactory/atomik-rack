@@ -221,7 +221,7 @@ impl<S: EngineSink> AppCore<S> {
                     };
                     let length = clip.loop_length.map_or(clip.length, |n| n.min(clip.length));
                     let job = warp_job(&doc.song, doc.sample_rate, clip.start, length, a);
-                    if !a.reverse && job.is_some_and(|j| pending(j.key())) {
+                    if job.is_some_and(|j| pending(j.key())) {
                         out.push(clip.id);
                     }
                 }
@@ -274,31 +274,21 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Sets the panel's values on every selected audio clip (a reversed clip cannot be warped:
-    /// it keeps its settings), as one undo step.
+    /// Sets the panel's values on every selected audio clip, as one undo step.
     pub fn apply_warp(&mut self, values: &WarpValues) {
         let clips = self.selected_audio();
         if clips.is_empty() {
             return self.reject("Select an audio clip to warp".to_owned());
         }
-        let mut skipped = 0;
-        let mut changes = Vec::new();
-        for s in &clips {
-            let mut content = s.content.clone();
-            content.warp = values.apply_to(&s.content.warp);
-            if content.reverse && content.warp.active() {
-                skipped += 1;
-                continue;
-            }
-            changes.push((s, content, None));
-        }
-        if changes.is_empty() {
-            return self.reject("A reversed clip cannot be warped or transposed".to_owned());
-        }
+        let changes = clips
+            .iter()
+            .map(|s| {
+                let mut content = s.content.clone();
+                content.warp = values.apply_to(&s.content.warp);
+                (s, content, None)
+            })
+            .collect();
         self.set_contents(changes);
-        if skipped > 0 {
-            self.reject(format!("{skipped} reversed clip(s) left unwarped"));
-        }
     }
 
     /// Reset to Unstretched Tempo: warp off and the markers cleared on every selected audio clip,
@@ -318,7 +308,7 @@ impl<S: EngineSink> AppCore<S> {
                 let mut content = s.content.clone();
                 content.warp.enabled = false;
                 content.warp.markers.clear();
-                let length = if was_warped && !content.reverse {
+                let length = if was_warped {
                     let span = s.source_end(rate).saturating_sub(content.source_offset);
                     song.clip(s.id).map(|(_, _, clip)| {
                         crate::audio_import::ticks_for_frames(song, clip.start, span, rate)
