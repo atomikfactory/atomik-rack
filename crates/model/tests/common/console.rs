@@ -48,7 +48,7 @@ const fn socket(
     }
 }
 
-static CHANNEL_PARAMS: [ParamDescriptor; 70] = [
+static CHANNEL_PARAMS: [ParamDescriptor; 72] = [
     param(
         0,
         "input.gain",
@@ -706,6 +706,26 @@ static CHANNEL_PARAMS: [ParamDescriptor; 70] = [
     param(
         69,
         "eq.bypass",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        70,
+        "pcomp.key",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        71,
+        "pcomp.pre",
         0.0,
         1.0,
         0.0,
