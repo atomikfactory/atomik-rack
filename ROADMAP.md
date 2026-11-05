@@ -37,7 +37,10 @@ keeps working),
 and several songs follow-ups (a paste in one open song brings the audio of the clips, devices, tracks, strips or
 patch with it, a favourite, tag or recent song in one song shows in the others at once, a start after a crash
 brings back the songs that were open next to the first one in windows of their own, and a Save no longer deletes the
-audio of other projects from an `Audio` folder they share).
+audio of other projects from an `Audio` folder they share),
+and controller lanes without a note clip (a note track holds pitch bend, aftertouch and CC lanes of its own, drawn and
+edited in the piano roll with the same lane chips, recorded when a take has controller events and no notes, played by
+the engine, the bounce and the MIDI export, and kept in the project file).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -51,7 +54,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 2: The sequencer
 
 - **Automation recording follow-ups.** A touch that starts at the press instead of the first move (needs a press and release signal from every control, plugin windows included).
-- **MIDI controller data follow-ups.** Controller lanes without a note clip, and MPE (per-note expression) lanes.
+- **MIDI controller data follow-ups.** MPE (per-note expression) lanes, a way to see that a track holds controller lanes of its own in the arrangement (the lanes are reached from Track > Edit Track Controllers), a MIDI file import that writes a channel with controllers and no notes to the track's lanes, and a meter map that the track lane grid follows (it counts bars from the first meter).
 - **Loop recording and takes follow-ups.** Takes for automation passes (a loop recording of automation still lays layered clips), and a saved link between the take groups of several tracks (today the link is the track selection).
 - **Quantize and groove follow-ups.** Controller lane points that move with their notes, a groove from a MIDI file or an audio loop, and per-note-length quantize options (a length per note, not one for the whole selection).
 - **MIDI file follow-ups.** Per-note expression (MPE) kept, a groove taken from a MIDI file (see Quantize and groove follow-ups), and typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).

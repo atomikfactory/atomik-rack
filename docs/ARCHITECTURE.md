@@ -1272,8 +1272,18 @@ notes, and reach the track's device as the note events it already understands
   [controller_edit.rs](../crates/model/src/controller_edit.rs) (`ControllerSnapshot`, `paste_points`,
   `remove_points`, `move_points`, `thin_selection`), each giving the whole canonical list for one
   `SetClipControllers`.
+- **A track's own lanes** (format 44). `Track::controllers` holds lanes of the same shape outside any clip, in song
+  ticks, for a note track only (`validate` and the reader refuse them on an audio or automation track).
+  `SongCommand::SetTrackControllers { device, lanes, merge }` replaces the whole list as one `Swap::TrackControllers`
+  (sorted and checked like a clip's; refused on a frozen track; a point past the song end moves the end through
+  `song_end_growth`; a drag reuses its merge id, `MergeKey::TrackControllers`). `Track` is cloned whole by a
+  duplicate, so the lanes follow it; `MergeNoteLanes` uses `flatten_clip_controllers`, the clips' lanes alone, so the
+  track's lanes are not copied into the merged clips. The file field is `"controllers"` (written by
+  `write_controller_lanes`, the writer a clip uses too, before the track's `"lanes"`); it is not ignorable, which is
+  why the format moved to 44.
 - **Flattening** (`flatten_controllers`, [flatten.rs](../crates/model/src/song/flatten.rs)). The
-  notes' audible spans, offsets and loops apply. A lane says nothing before its first point, so a
+  notes' audible spans, offsets and loops apply. The track's own lanes join the clips' points by tick and win an equal
+  tick, with no pieces: they play whether or not a clip is audible. A lane says nothing before its first point, so a
   piece emits a point at its start only when the lane already has a value there; a ramp still
   running at the end of a piece gets a closing point. Swing does not touch controllers.
 - **Engine** ([controllers.rs](../crates/engine/src/controllers.rs)). `SongTrack::controllers`
@@ -1305,8 +1315,12 @@ notes, and reach the track's device as the note events it already understands
   event of an armed device to the record tap; a `Take` now keeps pitch bend, aftertouch and CC per
   loop lap next to the notes and writes them as the controller lanes of the lap's clip: `Step`
   points, a burst closer than `PPQ / 128` ticks folded into its last value, repeats dropped, values
-  clamped, the clip range widened to the points, and a lap with only controller data still makes a
-  clip. No MIDI learn is involved: the lanes need no mapping to a parameter.
+  clamped, the clip range widened to the points. A lap with only controller data makes no clip when the
+  take is built with `controllers_to_tracks` (the app always does): `Take::finish_all` returns it as a
+  `ControllerPass` (the lanes in song ticks, `Step`, and the song time the lap covered), and the app lays all the
+  passes of a track over `Track::controllers` with `controller_edit::replace_range` (what the lanes held in that time
+  goes, other kinds and other times stay) as one `SetTrackControllers`; without the flag, `finish` still makes a
+  clip of controllers alone. No MIDI learn is involved: the lanes need no mapping to a parameter.
 - **Editor** ([controller_lane.rs](../crates/ui/src/controller_lane.rs),
   [piano_roll.rs](../crates/ui/src/piano_roll.rs)). The CONTROLLERS field of the piano roll's scale
   bar opens an area under the velocity lane (hidden by default and not saved; closed, the roll lays
@@ -1343,6 +1357,17 @@ notes, and reach the track's device as the note events it already understands
   change the selected program change (the bank bytes pass through "none"), + SYSEX adds General MIDI System
   On at the playhead and CLEAR empties the clip's data. Every edit is one `SetClipMidi`; the bytes of a SysEx
   message cannot be typed yet.
+- **Track mode** (`PianoRollView::open_track`, `AppCore::open_track_controllers`). Track > Edit Track Controllers
+  (`sequencer.track_controllers`) opens the roll on a note track's own lanes: the first selected clip's track, else the
+  selected track or device, else the first note track. The roll keeps `clip_id` empty and `track` set, and its
+  `sync` builds a stand-in clip (start 0, the length of the song, the track's lanes, no notes) so the axis, ruler,
+  meter and the controller code read it like a clip. Every note edit starts from `clip_id` and so sends nothing; the
+  grid, keys, velocity lane, scale bar, quantize buttons and the fold and message chips are not drawn or hit, and the
+  area is always open and takes everything under the ruler. `ctl_command` and the drag send `SetTrackControllers`
+  instead of `SetClipControllers`; the clipboard (`paste_track_controllers`: song ticks from the playhead up to the
+  song end) and the Delete and Thin commands follow the same lanes. `AppCore::piano_roll_open` is true for a clip
+  or a track; the roll closes when the track goes or stops playing notes. The roll's grid counts bars from the
+  song's first meter.
 - **Parameter lanes** ([param_lane.rs](../crates/model/src/param_lane.rs)). A note clip can also carry
   `Clip.param_lanes: Vec<ParamLane>`: the points of one parameter of one device (`device`, `param`
   key, `AutomationPoint`s in content ticks, `Linear`, `Step` or `Bend`), sorted by `(device, param)`,
@@ -5848,8 +5873,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   the tempo the map has at the playhead after each tempo edit, as an Overwrite pass: at the end the
   events inside the written stretch are replaced by the thinned points (`tempo_pass_map`) in one
   `SetTempoMap` that joins the last tempo edit's undo step. The take does not retime itself.
-- **MIDI controller data.** Controller lanes belong to note clips: there is no lane without a note
-  clip, no per-note expression (MPE) data, and a recorded lane is one `Step` point per burst of
+- **MIDI controller data.** Controller lanes belong to note clips or, outside clips, to a note track
+  (Track > Edit Track Controllers, 2.12); a track's own lanes are shown only in the roll's track mode, not in the
+  arrangement. There is no per-note expression (MPE) data, and a recorded lane is one `Step` point per burst of
   events, not a smooth curve. A ramp is played as steps of 40 ticks. Pressure is kept as a
   modulation source in five instruments but no parameter reads it yet, and the only registered
   parameter is RPN 0 (the bend range); there is no NRPN. Points are selected, copied and thinned
@@ -5859,9 +5885,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   file does not carry audio tracks or automation lanes. The bytes of a SysEx message cannot be typed
   yet (the piano roll adds General MIDI System On, moves, deletes and clears messages). A
   file imported as one clip merges all its tracks and channels into that clip's controller lanes
-  (the last value at a tick wins), and a channel that has controllers but no notes is left out (a
-  controller lane needs a note clip, 2.12). The default export resolution is 15 360 ticks per quarter
-  note, which every reader should accept but a hardware sequencer may not; File > MIDI Export
+  (the last value at a tick wins), and a channel that has controllers but no notes is left out (the
+  import does not write a track's own controller lanes yet, 2.12). The default export resolution is 15 360 ticks
+  per quarter note, which every reader should accept but a hardware sequencer may not; File > MIDI Export
   Resolution offers 960 and 480. The file browser does not list `.mid` files, so a file can only be
   dropped from the operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or
