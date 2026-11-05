@@ -1322,6 +1322,7 @@ pub(crate) fn plan(
         | SongCommand::AddTake { .. }
         | SongCommand::PickTake { .. }
         | SongCommand::SetCompSegment { .. }
+        | SongCommand::SetLinkedComp { .. }
         | SongCommand::DeleteTake { .. }
         | SongCommand::DuplicateTake { .. }
         | SongCommand::MoveTake { .. }
