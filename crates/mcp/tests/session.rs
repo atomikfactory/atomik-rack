@@ -2097,16 +2097,16 @@ fn snapshots_are_stored_recalled_and_compared_by_command_and_the_bounce_hears_th
             .cloned()
             .unwrap_or_default()
     };
-    for id in [
-        "mixer.store_snapshot",
-        "mixer.update_snapshot",
-        "mixer.recall_next_snapshot",
-        "mixer.compare_snapshot",
-        "mixer.delete_snapshot",
+    for (id, shortcut) in [
+        ("mixer.store_snapshot", Value::Null),
+        ("mixer.update_snapshot", Value::Null),
+        ("mixer.recall_next_snapshot", json!("Ctrl+Alt+PageDown")),
+        ("mixer.compare_snapshot", json!("Ctrl+Alt+B")),
+        ("mixer.delete_snapshot", Value::Null),
     ] {
         let row = command_row(&mut s, id);
         assert_eq!(row["menu"], "Mixer", "{id}");
-        assert_eq!(row["shortcut"], Value::Null, "{id}");
+        assert_eq!(row["shortcut"], shortcut, "{id}");
     }
     assert!(snapshots(&mut s).is_empty());
     let reference = tmp("snap-reference.wav");

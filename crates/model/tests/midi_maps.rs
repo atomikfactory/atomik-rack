@@ -580,6 +580,166 @@ fn bad_preset_files_are_refused_with_their_json_path() {
     assert!(err(text.replacen("\"nth\": 0", "\"nth\": -1", 1)).contains("maps[0].target.nth"));
 }
 
+// ---- NRPN and RPN sources ----------------------------------------------------------------------
+
+#[test]
+fn nrpn_and_rpn_sources_are_learned_saved_and_loaded() {
+    let (mut d, r) = project();
+    let nrpn = MidiSource::any_port(Some(3), SourceKind::Nrpn(16_383));
+    let rpn = MidiSource::any_port(None, SourceKind::Rpn(2));
+    add_map(
+        &mut d,
+        &r,
+        mapping(nrpn.clone(), param("a", "filter.cutoff")),
+    );
+    run_map(
+        &mut d,
+        &r,
+        MidiMapCommand::Learn {
+            source: rpn.clone(),
+            target: param("b", "filter.cutoff"),
+        },
+    )
+    .unwrap();
+    assert_eq!(d.doc().midi_maps[1].options.mode, MapMode::Absolute);
+    // A relative NRPN encoder is allowed.
+    let mut relative = d.doc().midi_maps[0].clone();
+    relative.options.mode = MapMode::Relative(RelativeKind::TwosComplement);
+    run_map(&mut d, &r, MidiMapCommand::Set(relative)).unwrap();
+    // The number is 14 bit.
+    let too_big = MidiSource::any_port(None, SourceKind::Nrpn(16_384));
+    let e = run_map(
+        &mut d,
+        &r,
+        MidiMapCommand::Add(mapping(too_big, param("c", "filter.cutoff"))),
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("16384"), "{e}");
+
+    let text = save_project(d.doc());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["midi_maps"][0]["source"]["kind"], "nrpn");
+    assert_eq!(v["midi_maps"][0]["source"]["number"], 16_383);
+    assert_eq!(v["midi_maps"][1]["source"]["kind"], "rpn");
+    assert_eq!(v["midi_maps"][1]["source"]["number"], 2);
+    let loaded = load_project(&text, &r).unwrap();
+    assert_eq!(loaded.midi_maps, d.doc().midi_maps);
+    assert_eq!(save_project(&loaded), text);
+
+    let e = load_project(
+        &text.replacen("\"number\": 16383", "\"number\": 16384", 1),
+        &r,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(e.contains("midi_maps[0].source.number"), "{e}");
+    let e = load_project(
+        &text.replacen("\"kind\": \"rpn\"", "\"kind\": \"rpn\", \"x\": 1", 1),
+        &r,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(e.contains("midi_maps[1].source"), "{e}");
+}
+
+// ---- The preset of one device ------------------------------------------------------------------
+
+#[test]
+fn the_preset_of_a_device_follows_its_type_and_not_its_place_in_the_rack() {
+    let (d, r) = mapped();
+    // Only the mappings of `a` (one of them), as the preset of a poly synth.
+    let preset = d.doc().midi_preset_for_device("Synth", &key("a")).unwrap();
+    assert_eq!(preset.maps.len(), 1);
+    assert_eq!(
+        preset.maps[0].target,
+        PresetTarget::OfType {
+            type_id: SYNTH.into(),
+            param: "filter.cutoff".into()
+        }
+    );
+    assert!(preset.maps[0].source.port.is_none());
+    assert!(
+        d.doc().midi_preset_for_device("x", &key("b")).is_none(),
+        "a device without mappings has no preset"
+    );
+    assert!(
+        d.doc()
+            .midi_preset_for_device("x", &key("nothing"))
+            .is_none()
+    );
+
+    // Another project: three poly synths, the second one chosen.
+    let mut other = Document::new(new_project_doc());
+    run(
+        &mut other,
+        &r,
+        ["x", "y", "z"].map(|n| add(usize::MAX, SYNTH, Some(n))),
+    );
+    let on = |name: Option<&str>| {
+        let k = name.map(key);
+        let (maps, notes) = other.doc().resolve_preset_on(&r, &preset, k.as_ref());
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(maps.len(), 1);
+        maps[0].target.clone()
+    };
+    assert_eq!(on(Some("y")), param("y", "filter.cutoff"), "the chosen one");
+    assert_eq!(on(Some("z")), param("z", "filter.cutoff"));
+    assert_eq!(
+        on(None),
+        param("x", "filter.cutoff"),
+        "the first of the type"
+    );
+    // A chosen device of another type is not the target: the first of the type gets it.
+    let mut with_channel = other.clone();
+    run(
+        &mut with_channel,
+        &r,
+        [add(usize::MAX, CHANNEL, Some("ch"))],
+    );
+    let (maps, _) = with_channel
+        .doc()
+        .resolve_preset_on(&r, &preset, Some(&key("ch")));
+    assert_eq!(maps[0].target, param("x", "filter.cutoff"));
+    // A project without the plugin says so.
+    let empty = Document::new(new_project_doc());
+    let (maps, notes) = empty.doc().resolve_preset(&r, &preset);
+    assert!(maps.is_empty());
+    assert!(notes[0].contains(SYNTH), "{notes:?}");
+
+    // The file round-trips in a stable text.
+    let text = save_midi_preset(&preset);
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["maps"][0]["target"]["kind"], "device_type");
+    assert_eq!(v["maps"][0]["target"]["type"], SYNTH);
+    assert!(v["maps"][0]["target"].get("nth").is_none());
+    let loaded = load_midi_preset(&text).unwrap();
+    assert_eq!(loaded, preset);
+    assert_eq!(save_midi_preset(&loaded), text);
+    assert!(
+        load_midi_preset(&text.replace("\"type\": \"", "\"type\": \"\", \"extra\": \"")).is_err()
+    );
+}
+
+#[test]
+fn a_device_inside_a_container_has_a_preset_of_its_type() {
+    let r = console_registry();
+    let mut d = container_doc(&r);
+    add_map(
+        &mut d,
+        &r,
+        mapping(cc(0, 1), param("c/synth", "filter.cutoff")),
+    );
+    let preset = d
+        .doc()
+        .midi_preset_for_device("x", &key("c/synth"))
+        .unwrap();
+    assert_eq!(
+        preset.maps.len(),
+        1,
+        "unlike the preset by position, no container is needed"
+    );
+}
+
 // ---- The file ---------------------------------------------------------------------------------
 
 #[test]
@@ -666,7 +826,7 @@ fn bad_mappings_are_refused_on_load_with_their_json_path() {
     assert!(e.contains("midi_maps[0].source.number"), "{e}");
     let e = err(text.replacen("\"channel\": 0", "\"channel\": 16", 1));
     assert!(e.contains("midi_maps[0].source.channel"), "{e}");
-    let e = err(text.replacen("\"kind\": \"cc\"", "\"kind\": \"nrpn\"", 1));
+    let e = err(text.replacen("\"kind\": \"cc\"", "\"kind\": \"sysex\"", 1));
     assert!(e.contains("midi_maps[0].source.kind"), "{e}");
     let e = err(text.replacen("\"action\": \"play\"", "\"action\": \"explode\"", 1));
     assert!(e.contains("midi_maps[3].target.action"), "{e}");

@@ -52,6 +52,7 @@ mod midi_import;
 mod midi_map;
 mod midi_map_io;
 mod midi_out;
+mod midi_param;
 mod mod_matrix;
 pub mod note_tools;
 pub mod organise;
@@ -134,6 +135,10 @@ pub use midi_map::{
 };
 pub use midi_map_io::{MIDI_PRESET_FORMAT, load_midi_preset, save_midi_preset};
 pub use midi_out::{MAX_MIDI_OUT_PORT_CHARS, MIDI_OUT_TYPE, MidiOutDoc};
+pub use midi_param::{
+    MAX_PARAM_NUMBER, PARAM_BUTTON_THRESHOLD, ParamBank, ParamChange, ParamEvent, ParamParser,
+    ParamSpace, is_param_controller, is_param_selector,
+};
 pub use mod_matrix::{ModSlot, amount_param, engine_params};
 pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
 pub use plugin::{

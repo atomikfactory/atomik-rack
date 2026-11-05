@@ -396,9 +396,11 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_save_file",
             "a file dialog: use session_save with a path",
         ),
-        ShellRequest::PickExportMidiPreset | ShellRequest::PickImportMidiPreset => (
+        ShellRequest::PickExportMidiPreset
+        | ShellRequest::PickExportMidiDevicePreset
+        | ShellRequest::PickImportMidiPreset => (
             "pick_midi_preset",
-            "a file dialog: use session_midi_learn with action export or import and a file",
+            "a file dialog: use session_midi_learn with action export, export_device or import and a file",
         ),
         ShellRequest::PickExportAudio(_) => (
             "pick_export_audio",

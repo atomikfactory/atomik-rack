@@ -23,7 +23,7 @@ use crate::record::RecordTap;
 use crate::target::{NoteRouter, NoteTarget, Target};
 use atomik_core::NoteKind;
 use atomik_engine::{EngineError, FrameClock, LiveNoteSender, ScheduledNote};
-use atomik_midi_io::{MidiError, RunningStatus, event_frame, parse, parse_message};
+use atomik_midi_io::{MidiError, RunningStatus, event_frame, parse, parse_message, parse_mmc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
@@ -314,6 +314,14 @@ impl PortInput {
         let dropped = &self.dropped;
         let latency = link.latency.load(Ordering::Relaxed);
         let clock = link.clock.read();
+        // A mapping-role port also carries machine control (SysEx): play, stop, record and
+        // locate for the transport, handled by the UI thread.
+        if !link.plays_notes && bytes.first() == Some(&0xF0) {
+            if let Some(command) = parse_mmc(bytes) {
+                link.hub.push_mmc(command);
+            }
+            return;
+        }
         // The control path first: the mappings see every message, and a message a mapping
         // consumes (or any message while learning) plays no note.
         let consumed = parse_message(bytes, &mut self.control_state).is_some_and(|m| {
@@ -360,8 +368,13 @@ impl MidiConnection {
     pub fn open(name: &str, link: MidiLink) -> Result<Self, MidiError> {
         let mut input =
             midir::MidiInput::new("atomik-rack").map_err(|e| MidiError::Backend(e.to_string()))?;
-        // SysEx, clock and active sensing are out of scope.
-        input.ignore(midir::Ignore::All);
+        // SysEx, clock and active sensing are out of scope, except the SysEx of machine control
+        // on a port the user set to the mapping role.
+        input.ignore(if link.plays_notes {
+            midir::Ignore::All
+        } else {
+            midir::Ignore::TimeAndActiveSense
+        });
         let ports = input.ports();
         let names: Vec<String> = ports
             .iter()
@@ -798,6 +811,36 @@ mod tests {
         assert_eq!((seen[2].0, seen[3].0), (3, 4), "{seen:?}");
         assert!(matches!(seen[2].1, NoteKind::Off { key: 60 }));
         assert!(matches!(seen[3].1, NoteKind::Off { key: 62 }));
+    }
+
+    /// Machine control is read from a mapping-role port only; a keyboard port ignores SysEx.
+    #[test]
+    fn machine_control_comes_from_a_mapping_port_only() {
+        let (link, tap, _target) = link_with_tap();
+        tap.set_armed(&[DeviceInstanceId(3)]);
+        let hub = Arc::clone(&link.hub);
+        let mut pads = PortInput::new("Pads", link.with_plays_notes(false));
+        let mut keys = PortInput::new("Keys", link);
+        let play = [0xF0, 0x7F, 0x7F, 0x06, 0x02, 0xF7];
+        keys.on_message(&play);
+        let mut got = Vec::new();
+        hub.drain_mmc(&mut got);
+        assert!(
+            got.is_empty(),
+            "a keyboard port does not take machine control"
+        );
+        pads.on_message(&play);
+        pads.on_message(&[0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7]);
+        pads.on_message(&[0xF0, 0x7F, 0x7F, 0x06, 0x01, 0xF7]);
+        hub.drain_mmc(&mut got);
+        assert_eq!(got, [atomik_midi_io::Mmc::Play, atomik_midi_io::Mmc::Stop]);
+        // Nothing of it reached the notes or the mappings.
+        let mut out = Vec::new();
+        tap.drain(&mut out);
+        assert!(out.is_empty(), "{out:?}");
+        let mut seen = Vec::new();
+        hub.drain(&mut seen);
+        assert!(seen.is_empty(), "{seen:?}");
     }
 
     /// A port that only feeds the mappings plays nothing, but the mappings still see it and

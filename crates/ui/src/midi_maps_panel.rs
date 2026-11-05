@@ -2,11 +2,11 @@
 //! and switches, to edit or delete.
 //!
 //! ```text
-//! MIDI MAPPINGS                                     [ EXPORT ] [ IMPORT ] [ CLEAR ] [ CLOSE ]
+//! MIDI MAPPINGS                          [ DEVICE ] [ EXPORT ] [ IMPORT ] [ CLEAR ] [ CLOSE ]
 //! 3 mappings. Click a mode to change it, click or scroll a range to move it, Learn to pick
 //! another control. Moves of a mapped control are consumed: they play no notes.
-//!   SOURCE            TARGET               MIN   MAX  MODE        INV PICK CONS
-//!   CC 7 ch 1         channel fader         0%  100%  Absolute    ·   ●    ●   [LEARN] [x]
+//!   SOURCE   TARGET               PORT      CH  MIN   MAX  MODE        INV PICK CONS
+//!   CC 7     channel fader        Any port  1    0%  100%  Absolute    ·   ●    ●   [LEARN] [x]
 //! ```
 //!
 //! A modal view the app places over the window like the relink panel. It has no document: the
@@ -18,10 +18,17 @@
 //!   **consume** chips toggle; a click on a **range** cell moves it up by 5 %, a right click down,
 //!   and the wheel moves it too (Shift: 1 %). Each is [`MidiMapsAction::Edit`] with the whole
 //!   mapping changed, which the app turns into one undo step;
+//! * the **port** cell steps through "Any port" and the input ports the app lists
+//!   ([`MidiMapsView::set_ports`]), the **channel** cell through "Any" and 1 to 16 (a click goes
+//!   on, a right click back, the wheel too), so a learned source can be narrowed or widened
+//!   without learning it again. The source of a control surface keeps its surface: its port
+//!   cell is fixed;
 //! * **LEARN** is [`MidiMapsAction::Relearn`] (the app arms the mapping's target), the cross is
 //!   [`MidiMapsAction::Remove`];
 //! * the header buttons are [`MidiMapsAction::Export`], [`MidiMapsAction::Import`] (preset
-//!   files), [`MidiMapsAction::Clear`] and [`MidiMapsAction::Close`].
+//!   files), [`MidiMapsAction::ExportDevice`] (the mappings of the selected device as the preset
+//!   of its type, which fits any device of that type), [`MidiMapsAction::Clear`] and
+//!   [`MidiMapsAction::Close`].
 //!
 //! A mapping whose target is gone is painted in the warning colour and marked missing. The list
 //! scrolls with the wheel over the rows; only the rows in view are painted.
@@ -42,8 +49,8 @@ const HINT_H: f64 = 36.0;
 const COLUMNS_H: f64 = 20.0;
 const ROW_H: f64 = 26.0;
 const MARGIN: f64 = 16.0;
-const MAX_WIDTH: f64 = 980.0;
-const MIN_WIDTH: f64 = 640.0;
+const MAX_WIDTH: f64 = 1120.0;
+const MIN_WIDTH: f64 = 860.0;
 const BTN_H: f64 = 20.0;
 const RANGE_STEP: f64 = 0.05;
 const RANGE_STEP_FINE: f64 = 0.01;
@@ -70,6 +77,8 @@ pub enum MidiMapsAction {
     Relearn(u32),
     /// Pick a file and save the mappings as a preset.
     Export,
+    /// Pick a file and save the mappings of the selected device as the preset of its type.
+    ExportDevice,
     /// Pick a preset file and add its mappings.
     Import,
     /// Delete every mapping.
@@ -83,8 +92,11 @@ pub enum MidiMapsAction {
 enum Hit {
     Close,
     Export,
+    ExportDevice,
     Import,
     Clear,
+    Port(usize),
+    Channel(usize),
     Min(usize),
     Max(usize),
     Mode(usize),
@@ -118,6 +130,37 @@ pub fn cycle_mode(mode: MapMode, cc: bool, forward: bool) -> MapMode {
     }]
 }
 
+/// The port after (or before) `current` in "any port" followed by `ports`. A port the list does
+/// not hold (a controller that is unplugged) stays in the cycle while it is the current one.
+pub fn cycle_port(current: Option<&str>, ports: &[String], forward: bool) -> Option<String> {
+    let mut all: Vec<Option<&str>> = vec![None];
+    all.extend(ports.iter().map(|p| Some(p.as_str())));
+    if current.is_some() && !all.contains(&current) {
+        all.push(current);
+    }
+    let at = all.iter().position(|p| *p == current).unwrap_or(0);
+    let n = all.len();
+    all[if forward {
+        (at + 1) % n
+    } else {
+        (at + n - 1) % n
+    }]
+    .map(str::to_owned)
+}
+
+/// The channel after (or before) `current` in "any channel" followed by 1 to 16 (0..=15).
+pub fn cycle_channel(current: Option<u8>, forward: bool) -> Option<u8> {
+    let at = current.map_or(0, |c| usize::from(c.min(15)) + 1);
+    match if forward {
+        (at + 1) % 17
+    } else {
+        (at + 16) % 17
+    } {
+        0 => None,
+        n => Some(n as u8 - 1),
+    }
+}
+
 fn mode_text(mode: MapMode) -> &'static str {
     match mode {
         MapMode::Absolute => "Absolute",
@@ -140,6 +183,7 @@ pub struct MidiMapsView {
     bounds: Rect,
     scale: f64,
     rows: Vec<MidiMapRow>,
+    ports: Vec<String>,
     scroll: f64,
     hover: Option<Point>,
     repaint: bool,
@@ -159,6 +203,7 @@ impl MidiMapsView {
             bounds: Rect::new(0.0, 0.0, 1000.0, 600.0),
             scale: 1.0,
             rows: Vec::new(),
+            ports: Vec::new(),
             scroll: 0.0,
             hover: None,
             repaint: true,
@@ -188,6 +233,15 @@ impl MidiMapsView {
         self.rows = rows;
         self.clamp_scroll();
         self.repaint = true;
+    }
+
+    /// Sets the input ports the port cells step through (the names the settings list them
+    /// under). Cheap when nothing changed.
+    pub fn set_ports(&mut self, ports: Vec<String>) {
+        if ports != self.ports {
+            self.ports = ports;
+            self.repaint = true;
+        }
     }
 
     /// The listed rows.
@@ -256,6 +310,11 @@ impl MidiMapsView {
         self.header_button(3, 80.0)
     }
 
+    /// The DEVICE button.
+    pub fn device_rect(&self) -> Rect {
+        self.header_button(4, 80.0)
+    }
+
     /// The row of entry `i`, `None` when it is scrolled out of the list.
     pub fn row_rect(&self, i: usize) -> Option<Rect> {
         if i >= self.rows.len() {
@@ -268,7 +327,7 @@ impl MidiMapsView {
     }
 
     /// The x extents of the fixed columns, from the right edge of a row: remove, learn,
-    /// consume, pickup, invert, mode, max, min.
+    /// consume, pickup, invert, mode, max, min, channel, port.
     fn columns(&self, row: Rect) -> Columns {
         let mut right = row.x1 - PAD;
         let mut take = |w: f64, gap: f64| {
@@ -284,11 +343,15 @@ impl MidiMapsView {
         let mode = take(86.0, 10.0);
         let max = take(40.0, 4.0);
         let min = take(40.0, 12.0);
-        let flex = (min.0 - 12.0 - (row.x0 + PAD)).max(40.0);
-        let source_w = (flex * 0.42).floor();
+        let channel = take(40.0, 4.0);
+        let port = take(96.0, 12.0);
+        let flex = (port.0 - 12.0 - (row.x0 + PAD)).max(40.0);
+        let source_w = (flex * 0.34).floor();
         Columns {
             source: (row.x0 + PAD, row.x0 + PAD + source_w),
-            target: (row.x0 + PAD + source_w + 8.0, min.0 - 12.0),
+            target: (row.x0 + PAD + source_w + 8.0, port.0 - 12.0),
+            port,
+            channel,
             min,
             max,
             mode,
@@ -311,6 +374,7 @@ impl MidiMapsView {
             (Hit::Clear, self.clear_rect()),
             (Hit::Import, self.import_rect()),
             (Hit::Export, self.export_rect()),
+            (Hit::ExportDevice, self.device_rect()),
         ] {
             if r.contains(pos) {
                 return Some(hit);
@@ -337,6 +401,8 @@ impl MidiMapsView {
                 (Hit::Mode(i), c.mode),
                 (Hit::Max(i), c.max),
                 (Hit::Min(i), c.min),
+                (Hit::Channel(i), c.channel),
+                (Hit::Port(i), c.port),
             ]
             .into_iter()
             .find(|(_, x)| at(*x))
@@ -363,6 +429,20 @@ impl MidiMapsView {
             Hit::Export => {
                 return header(self.export_rect(), "Save these mappings as a preset file");
             }
+            Hit::ExportDevice => {
+                return header(
+                    self.device_rect(),
+                    "Save the mappings of the selected device as a preset that fits any device of its type",
+                );
+            }
+            Hit::Port(i) => (
+                i,
+                "Input port the control must come from: click for the next, right-click for the previous",
+            ),
+            Hit::Channel(i) => (
+                i,
+                "MIDI channel the control must be on: click for the next, right-click for the previous",
+            ),
             Hit::Remove(i) => (i, "Remove this mapping"),
             Hit::Learn(i) => (i, "Learn a new source for this control: move a knob or key"),
             Hit::Consume(i) => (i, "Consume: the message is not passed on to other mappings"),
@@ -391,6 +471,8 @@ impl MidiMapsView {
             Hit::Invert(_) => c.invert,
             Hit::Mode(_) => c.mode,
             Hit::Max(_) => c.max,
+            Hit::Port(_) => c.port,
+            Hit::Channel(_) => c.channel,
             _ => c.min,
         };
         Some(Help::new(self.cell(row, x), text))
@@ -437,6 +519,11 @@ impl MidiMapsView {
                             out.push(UiAction::MidiMaps(MidiMapsAction::Edit(edit)));
                         }
                     }
+                    Some(hit @ (Hit::Port(_) | Hit::Channel(_))) if delta.y != 0.0 => {
+                        if let Some(edit) = self.step_source(hit, delta.y > 0.0) {
+                            out.push(UiAction::MidiMaps(MidiMapsAction::Edit(edit)));
+                        }
+                    }
                     _ => {
                         self.scroll -= delta.y * ROW_H;
                         self.clamp_scroll();
@@ -446,6 +533,23 @@ impl MidiMapsView {
             _ => {}
         }
         out
+    }
+
+    /// The mapping of a port or channel cell with its source stepped on (or back). The source of
+    /// a control surface keeps its port: it hears that surface only.
+    fn step_source(&self, hit: Hit, forward: bool) -> Option<MidiMapping> {
+        let (Hit::Port(i) | Hit::Channel(i)) = hit else {
+            return None;
+        };
+        let mut m = self.rows.get(i)?.mapping.clone();
+        match hit {
+            Hit::Port(_) if m.source.surface.is_none() => {
+                m.source.port = cycle_port(m.source.port.as_deref(), &self.ports, forward);
+            }
+            Hit::Channel(_) => m.source.channel = cycle_channel(m.source.channel, forward),
+            _ => return None,
+        }
+        (m != self.rows[i].mapping).then_some(m)
     }
 
     fn nudge_range(&self, i: usize, max: bool, by: f64) -> Option<MidiMapping> {
@@ -471,6 +575,10 @@ impl MidiMapsView {
         match hit {
             Hit::Close => Some(MidiMapsAction::Close),
             Hit::Export => Some(MidiMapsAction::Export),
+            Hit::ExportDevice => Some(MidiMapsAction::ExportDevice),
+            Hit::Port(_) | Hit::Channel(_) => {
+                self.step_source(hit, forward).map(MidiMapsAction::Edit)
+            }
             Hit::Import => Some(MidiMapsAction::Import),
             Hit::Clear => Some(MidiMapsAction::Clear),
             Hit::Remove(i) => self
@@ -482,7 +590,7 @@ impl MidiMapsView {
                 .get(i)
                 .map(|r| MidiMapsAction::Relearn(r.mapping.id)),
             Hit::Mode(i) => edit(i, &|m| {
-                m.options.mode = cycle_mode(m.options.mode, m.source.is_cc(), forward);
+                m.options.mode = cycle_mode(m.options.mode, m.source.can_be_relative(), forward);
             }),
             Hit::Invert(i) => edit(i, &|m| m.options.invert = !m.options.invert),
             Hit::Pickup(i) => edit(i, &|m| m.options.pickup = !m.options.pickup),
@@ -521,6 +629,7 @@ impl MidiMapsView {
             Align::Start,
         );
         for (r, text) in [
+            (self.device_rect(), "DEVICE"),
             (self.export_rect(), "EXPORT"),
             (self.import_rect(), "IMPORT"),
             (self.clear_rect(), "CLEAR"),
@@ -550,7 +659,7 @@ impl MidiMapsView {
         }
         let plural = if count == 1 { "" } else { "s" };
         let hint = [
-            format!("{count} mapping{plural}. Click a mode or a range to change it (right click goes back, the wheel moves a range), LEARN picks another control."),
+            format!("{count} mapping{plural}. Click a mode, a range, a port or a channel to change it (right click goes back, the wheel too), LEARN picks another control."),
             "A mapped control is consumed: it plays no notes. PICKUP waits for the control to reach the value; INVERT swaps the ends.".to_owned(),
         ];
         for (n, line) in hint.iter().enumerate() {
@@ -576,6 +685,8 @@ impl MidiMapsView {
         for (text, x, align) in [
             ("SOURCE", hc.source.0, Align::Start),
             ("TARGET", hc.target.0, Align::Start),
+            ("PORT", (hc.port.0 + hc.port.1) / 2.0, Align::Center),
+            ("CH", (hc.channel.0 + hc.channel.1) / 2.0, Align::Center),
             ("MIN", (hc.min.0 + hc.min.1) / 2.0, Align::Center),
             ("MAX", (hc.max.0 + hc.max.1) / 2.0, Align::Center),
             ("MODE", (hc.mode.0 + hc.mode.1) / 2.0, Align::Center),
@@ -602,7 +713,7 @@ impl MidiMapsView {
             let text_y = row.y0 + 17.0;
             sp::label(
                 c,
-                &fit_label(&m.source.describe(), col.source.1 - col.source.0, 10.5),
+                &fit_label(&m.source.what(), col.source.1 - col.source.0, 10.5),
                 col.source.0,
                 text_y,
                 10.5,
@@ -624,6 +735,26 @@ impl MidiMapsView {
                 Align::Start,
             );
             let cell = |x: (f64, f64)| self.cell(row, x);
+            let port = match (&m.source.surface, &m.source.port) {
+                (Some(surface), _) => format!("[{surface}]"),
+                (None, Some(port)) => port.clone(),
+                (None, None) => "Any port".to_owned(),
+            };
+            let channel = m
+                .source
+                .channel
+                .map_or_else(|| "Any".to_owned(), |c| (u16::from(c) + 1).to_string());
+            for (x, text) in [(col.port, port), (col.channel, channel)] {
+                let r = cell(x);
+                sp::button(
+                    c,
+                    st,
+                    r,
+                    &fit_label(&text, r.width() - 8.0, 9.5),
+                    None,
+                    hovered(r),
+                );
+            }
             for (x, text) in [
                 (col.min, percent(m.options.min)),
                 (col.max, percent(m.options.max)),
@@ -656,6 +787,8 @@ impl MidiMapsView {
 struct Columns {
     source: (f64, f64),
     target: (f64, f64),
+    port: (f64, f64),
+    channel: (f64, f64),
     min: (f64, f64),
     max: (f64, f64),
     mode: (f64, f64),
@@ -672,6 +805,8 @@ impl MidiMapsView {
         let row = self.row_rect(i)?;
         let c = self.columns(row);
         let x = match what {
+            "port" => c.port,
+            "channel" => c.channel,
             "min" => c.min,
             "max" => c.max,
             "mode" => c.mode,
@@ -851,6 +986,144 @@ mod tests {
         assert!(wheel(&mut v, -1.0, false).is_empty());
     }
 
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|p| (*p).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_port_and_channel_cycle_through_their_choices_both_ways() {
+        let ports = names(&["Pads", "Keys"]);
+        assert_eq!(cycle_port(None, &ports, true), Some("Pads".into()));
+        assert_eq!(cycle_port(Some("Pads"), &ports, true), Some("Keys".into()));
+        assert_eq!(cycle_port(Some("Keys"), &ports, true), None);
+        assert_eq!(cycle_port(None, &ports, false), Some("Keys".into()));
+        assert_eq!(cycle_port(Some("Pads"), &ports, false), None);
+        // A port that is not listed (unplugged) stays reachable while it is the current one.
+        assert_eq!(cycle_port(Some("Gone"), &ports, true), None);
+        assert_eq!(cycle_port(Some("Gone"), &ports, false), Some("Keys".into()));
+        assert_eq!(cycle_port(None, &[], true), None);
+        assert_eq!(cycle_channel(None, true), Some(0));
+        assert_eq!(cycle_channel(Some(14), true), Some(15));
+        assert_eq!(cycle_channel(Some(15), true), None);
+        assert_eq!(cycle_channel(None, false), Some(15));
+        assert_eq!(cycle_channel(Some(0), false), None);
+        let mut seen = vec![];
+        let mut c = None;
+        for _ in 0..17 {
+            c = cycle_channel(c, true);
+            seen.push(c);
+        }
+        assert_eq!(seen.len(), 17);
+        assert_eq!(seen.last(), Some(&None), "back to any after 16 channels");
+    }
+
+    #[test]
+    fn clicking_the_port_and_channel_cells_edits_the_source() {
+        let mut v = two();
+        v.set_ports(names(&["Pads", "Keys"]));
+        let p = v.control_center(0, "channel").unwrap();
+        let m = one_edit(&mut v, p, PointerButton::Primary);
+        assert_eq!(
+            (m.id, m.source.channel),
+            (1, Some(1)),
+            "channel 1 to channel 2"
+        );
+        let m = one_edit(&mut v, p, PointerButton::Secondary);
+        assert_eq!(m.source.channel, None, "back past channel 1 is any channel");
+        let p = v.control_center(0, "port").unwrap();
+        let m = one_edit(&mut v, p, PointerButton::Primary);
+        assert_eq!(m.source.port.as_deref(), Some("Pads"));
+        assert_eq!(m.source.kind, SourceKind::Cc(7), "only the place changes");
+        let m = one_edit(&mut v, p, PointerButton::Secondary);
+        assert_eq!(m.source.port.as_deref(), Some("Keys"));
+        // The second row is untouched by the first one's edits.
+        let p = v.control_center(1, "channel").unwrap();
+        assert_eq!(one_edit(&mut v, p, PointerButton::Primary).id, 2);
+    }
+
+    #[test]
+    fn the_wheel_steps_the_port_and_channel_and_a_surface_keeps_its_port() {
+        let mut surfaced = row(1, SourceKind::Cc(7), MapMode::Absolute, false);
+        surfaced.mapping.source.surface = Some("Desk".into());
+        let mut v = view(vec![
+            surfaced,
+            row(2, SourceKind::Nrpn(5), MapMode::Absolute, false),
+        ]);
+        v.set_ports(names(&["Pads"]));
+        let wheel = |v: &mut MidiMapsView, p: Point, dy: f64| {
+            v.handle(&UiEvent::Wheel {
+                delta: Vec2::new(0.0, dy),
+                pos: p,
+                modifiers: Modifiers::NONE,
+            })
+        };
+        let port0 = v.control_center(0, "port").unwrap();
+        assert!(
+            wheel(&mut v, port0, 1.0).is_empty(),
+            "a surface source has no port to pick"
+        );
+        assert!(click(&mut v, port0, PointerButton::Primary).is_empty());
+        // Its channel can still be picked.
+        let ch0 = v.control_center(0, "channel").unwrap();
+        assert!(
+            matches!(&wheel(&mut v, ch0, 1.0)[..], [UiAction::MidiMaps(MidiMapsAction::Edit(m))]
+            if m.source.channel == Some(1) && m.source.surface.as_deref() == Some("Desk"))
+        );
+        let port1 = v.control_center(1, "port").unwrap();
+        assert!(
+            matches!(&wheel(&mut v, port1, 1.0)[..], [UiAction::MidiMaps(MidiMapsAction::Edit(m))]
+            if m.source.port.as_deref() == Some("Pads"))
+        );
+        assert!(
+            matches!(&wheel(&mut v, port1, -1.0)[..], [UiAction::MidiMaps(MidiMapsAction::Edit(m))]
+            if m.source.port.as_deref() == Some("Pads")),
+            "backwards from any wraps to the last"
+        );
+    }
+
+    #[test]
+    fn a_parameter_number_may_be_a_relative_encoder_in_the_mode_cycle() {
+        let mut v = view(vec![row(1, SourceKind::Nrpn(5), MapMode::Absolute, false)]);
+        let p = v.control_center(0, "mode").unwrap();
+        let m = one_edit(&mut v, p, PointerButton::Primary);
+        assert_eq!(
+            m.options.mode,
+            MapMode::Relative(RelativeKind::TwosComplement)
+        );
+        let mut list = DisplayList::new();
+        v.paint(&mut list);
+        assert!(list.texts().contains(&"NRPN 5"));
+    }
+
+    #[test]
+    fn the_cells_stay_inside_the_row_and_apart_from_each_other() {
+        for width in [860.0, 1000.0, 1200.0] {
+            let mut v = MidiMapsView::new(Theme::dark());
+            v.set_bounds(Rect::new(0.0, 0.0, width, 700.0));
+            v.set_rows(vec![row(1, SourceKind::Cc(7), MapMode::Absolute, false)]);
+            let row = v.row_rect(0).unwrap();
+            let c = v.columns(row);
+            let cells = [
+                c.source, c.target, c.port, c.channel, c.min, c.max, c.mode, c.invert, c.pickup,
+                c.consume, c.learn, c.remove,
+            ];
+            for (n, a) in cells.iter().enumerate() {
+                assert!(a.0 >= row.x0 && a.1 <= row.x1, "{width}: cell {n} {a:?}");
+                assert!(a.1 > a.0, "{width}: cell {n} is empty: {a:?}");
+                for b in &cells[n + 1..] {
+                    assert!(
+                        a.1 <= b.0 + 0.5 || b.1 <= a.0 + 0.5,
+                        "{width}: {a:?} overlaps {b:?}"
+                    );
+                }
+            }
+            assert!(
+                c.target.1 - c.target.0 >= 80.0,
+                "{width}: the target keeps some room"
+            );
+        }
+    }
+
     #[test]
     fn learn_remove_and_the_header_buttons_are_requests() {
         let mut v = two();
@@ -865,6 +1138,7 @@ mod tests {
             [MidiMapsAction::Remove(1)]
         );
         for (r, want) in [
+            (v.device_rect(), MidiMapsAction::ExportDevice),
             (v.export_rect(), MidiMapsAction::Export),
             (v.import_rect(), MidiMapsAction::Import),
             (v.clear_rect(), MidiMapsAction::Clear),
@@ -921,8 +1195,10 @@ mod tests {
             "MIDI MAPPINGS",
             "EXPORT",
             "CLOSE",
-            "CC 7 ch 1",
-            "Note C1 ch 1",
+            "CC 7",
+            "Note C1",
+            "Any port",
+            "1",
             "ch fader 1",
             "ch fader 2 (missing)",
             "Absolute",

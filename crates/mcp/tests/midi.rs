@@ -191,6 +191,46 @@ fn a_mapped_control_moves_the_fader_with_range_invert_and_takeover() {
 }
 
 #[test]
+fn an_nrpn_run_is_learnt_as_one_source_and_machine_control_plays_the_song() {
+    let mut s = server();
+    open_demo(&mut s);
+    learn(&mut s, json!({"action": "arm", "target": "channel fader"}));
+    // NRPN 300 on channel 1: the number is 2 * 128 + 44, the value 64 of 127.
+    let v = input(&mut s, "B0 63 02; B0 62 2C; B0 06 40");
+    assert_eq!(v["mappings"], 1);
+    let status = ok(&mut s, "session_status", json!({}));
+    assert_eq!(
+        status["document"]["midi_maps"][0]["source"],
+        "NRPN 300 ch 1"
+    );
+    learn(&mut s, json!({"action": "edit", "id": 1, "pickup": false}));
+    // The data entry of that number moves the fader; another number does not.
+    let before = fader(&mut s, "channel");
+    let v = input(&mut s, "B0 63 02; B0 62 2C; B0 06 00; B0 26 00");
+    assert_eq!(v["document_changed"], true, "{before}");
+    let v = input(&mut s, "B0 63 02; B0 62 2D; B0 06 7F");
+    assert_eq!(v["document_changed"], false, "NRPN 301 is not mapped");
+
+    // Machine control: play, stop, locate two seconds (a bar at 120 BPM).
+    let v = input(&mut s, "F0 7F 7F 06 02 F7");
+    assert_eq!(v["playing"], true);
+    let v = input(&mut s, "F0 7F 7F 06 01 F7");
+    assert_eq!(v["playing"], false);
+    let v = input(&mut s, "F0 7F 7F 06 44 06 01 00 00 02 00 00 F7");
+    assert!(v["position"].as_i64().unwrap() > 0, "{v}");
+    let r = call(
+        &mut s,
+        "session_midi_input",
+        json!({"messages": "F0 7F 7F 06 7E F7"}),
+    );
+    assert!(
+        r.is_error && r.first_text().contains("machine control"),
+        "{}",
+        r.first_text()
+    );
+}
+
+#[test]
 fn buttons_toggle_and_a_relative_encoder_turns_and_a_transport_key_plays() {
     let mut s = server();
     open_demo(&mut s);

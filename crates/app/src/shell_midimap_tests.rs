@@ -305,6 +305,73 @@ fn learn_on_a_panel_row_closes_the_panel_and_arms_the_target() {
 }
 
 #[test]
+fn the_port_and_channel_cells_edit_the_source_in_one_undo_step() {
+    let settings = AudioSettings {
+        midi_inputs: vec![crate::settings::MidiInputSetting::enabled("Pads")],
+        ..AudioSettings::default()
+    };
+    let session = LiveSession::new(NullBackend, settings, false);
+    let mut s = Shell::new(
+        AppCore::new(session),
+        ShellOptions {
+            os: Some(atomik_ui::keymap::Os::Windows),
+            profile: None,
+            in_window_menu: true,
+            settings_path: None,
+            ui_state_path: None,
+            library_path: None,
+            library_root: None,
+        },
+    );
+    s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));
+    add_synth(&mut s, "a");
+    learn_cc(&mut s, param("channel", "fader"), 7);
+    let mut m = s.core().doc().midi_maps[0].clone();
+    m.options.pickup = false;
+    s.core_mut().edit_midi_map(m);
+    assert_eq!(s.core().doc().midi_maps[0].source.port, None);
+    s.execute(AppCommand::MidiMappings);
+    let click = |s: &mut Shell<NullBackend>, what: &str, button: PointerButton| {
+        let at = s.midi_maps_view().unwrap().control_center(0, what).unwrap();
+        mouse(s, at, button);
+    };
+    click(&mut s, "port", PointerButton::Primary);
+    assert_eq!(
+        s.core().doc().midi_maps[0].source.port.as_deref(),
+        Some("Pads"),
+        "the ports of the settings are offered"
+    );
+    click(&mut s, "channel", PointerButton::Primary);
+    assert_eq!(s.core().doc().midi_maps[0].source.channel, Some(1));
+    // The mapping now hears channel 2 of Pads only.
+    let send = |s: &mut Shell<NullBackend>, port: &str, channel: u8, t: f64| {
+        let before = s.core().doc().clone();
+        s.core_mut()
+            .inject_midi(port, ChannelMessage::cc(channel, 7, 10));
+        s.core_mut().midi_control_frame(t);
+        s.core().doc() != &before
+    };
+    assert!(!send(&mut s, "Pads", 0, 0.0), "channel 1");
+    assert!(!send(&mut s, "Other", 1, 1.0), "another port");
+    assert!(
+        send(&mut s, "Pads", 1, 2.0),
+        "channel 2 of Pads moves the fader"
+    );
+    // Back to any port and channel with right clicks, each one undo step.
+    click(&mut s, "port", PointerButton::Secondary);
+    click(&mut s, "channel", PointerButton::Secondary);
+    let source = &s.core().doc().midi_maps[0].source;
+    assert_eq!((source.port.as_deref(), source.channel), (None, Some(0)));
+    assert!(s.core_mut().undo());
+    assert!(s.core_mut().undo());
+    assert_eq!(s.core().doc().midi_maps[0].source.channel, Some(1));
+    assert_eq!(
+        s.core().doc().midi_maps[0].source.port.as_deref(),
+        Some("Pads")
+    );
+}
+
+#[test]
 fn the_panels_header_asks_for_the_preset_dialogs() {
     let mut s = shell();
     add_synth(&mut s, "a");
@@ -327,6 +394,11 @@ fn the_panels_header_asks_for_the_preset_dialogs() {
     assert_eq!(
         click(&mut s, import),
         vec![ShellRequest::PickImportMidiPreset]
+    );
+    let device = s.midi_maps_view().unwrap().device_rect().center();
+    assert_eq!(
+        click(&mut s, device),
+        vec![ShellRequest::PickExportMidiDevicePreset]
     );
     // The menu commands ask the same, and Export says so when there is nothing.
     assert_eq!(

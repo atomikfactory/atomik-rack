@@ -1250,6 +1250,24 @@ impl App {
                         self.shell.export_midi_preset_to(&path);
                     }
                 }
+                ShellRequest::PickExportMidiDevicePreset => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export MIDI mappings of the selected device")
+                        .add_filter("MIDI mapping preset", &["json"])
+                        .set_file_name("device-mappings.json");
+                    if let Some(dir) = self.shell.midi_preset_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("json");
+                        }
+                        self.shell.export_midi_device_preset_to(&path);
+                    }
+                }
                 ShellRequest::PickImportMidiPreset => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Import MIDI mapping preset")
