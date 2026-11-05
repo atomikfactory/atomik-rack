@@ -122,6 +122,11 @@ swaps! {
         track_mut(doc, device)?.groove.clone_from(new);
         Ok(vec![SyncOp::SongChanged])
     };
+    /// A track's own controller lanes (song ticks).
+    TrackControllers { device: DeviceKey }: Vec<crate::controller::ControllerLane> => |doc, new| {
+        track_mut(doc, device)?.controllers.clone_from(new);
+        Ok(vec![SyncOp::SongChanged])
+    };
     /// Whether a note lane is soloed.
     LaneSolo { device: DeviceKey, lane: usize }: bool => |doc, new| {
         lane_mut(doc, device, *lane)?.solo = *new;

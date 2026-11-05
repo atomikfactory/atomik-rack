@@ -79,6 +79,9 @@ enum WfOp {
     /// The groove family (kind 0..5): add a groove, give a track a live groove (a built-in or the
     /// added one, a strength), clear it, rename the added groove, delete it.
     Groove(u8, usize, u8),
+    /// A note track's own controller lanes: a pitch bend lane (kind 0), a wheel lane (1), both (2)
+    /// or none (3), on a track, with a tick step that moves the points.
+    TrackCtl(u8, usize, u8),
     /// A note tool (kind 0..7) on a clip with a seed.
     NoteTool(usize, u8, u32),
     /// A note-lane workflow (kind 0..5): move or copy a lane (tracks a, b; lanes c, d), merge a
@@ -302,6 +305,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0u8..8, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
+        (0u8..4, 0usize..12, 0u8..8).prop_map(|(k, t, v)| WfOp::TrackCtl(k, t, v)),
         (0u8..10, 0usize..12, 0usize..12, 0usize..6, 0usize..6)
             .prop_map(|(k, a, b, c, d)| WfOp::Lanes(k, a, b, c, d)),
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
@@ -941,6 +945,31 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 to: (*b % 3 == 0).then_some(*d),
             }),
         },
+        WfOp::TrackCtl(kind, t, step) => {
+            let at = i64::from(*step) * PPQ;
+            let lane = |kind, a: f32, b: f32| {
+                atomik_model::controller::ControllerLane::new(
+                    kind,
+                    vec![point(at, a, Curve::Linear), point(at + PPQ, b, Curve::Step)],
+                )
+            };
+            let bend = lane(
+                atomik_model::controller::ControllerKind::PitchBend,
+                -0.5,
+                1.0,
+            );
+            let wheel = lane(atomik_model::controller::ControllerKind::Cc(1), 0.25, 0.75);
+            sc(SongCommand::SetTrackControllers {
+                device: tracks.get(*t % tracks.len().max(1))?.clone(),
+                lanes: match kind {
+                    0 => vec![bend],
+                    1 => vec![wheel],
+                    2 => vec![bend, wheel],
+                    _ => Vec::new(),
+                },
+                merge: None,
+            })
+        }
         WfOp::Groove(kind, t, strength) => {
             let song = |c| Command::Song(c);
             let custom = |name: &str| atomik_model::Groove {

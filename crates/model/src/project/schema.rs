@@ -129,6 +129,7 @@ impl Obj {
                 "song.tracks[].lanes[].take_groups[].takes[].scale",
             ],
             Obj::ControllerLane => &[
+                "song.tracks[].controllers[]",
                 "song.tracks[].lanes[].clips[].controllers[]",
                 "song.tracks[].lanes[].take_groups[].takes[].controllers[]",
             ],
@@ -407,6 +408,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Track, "direct_record", 39).ignorable(),
     field(Track, "groove", 43),
     field(Track, "groove_strength", 43),
+    field(Track, "controllers", 44),
     field(Track, "group", 22),
     field(Track, "color", 22),
     field(Track, "comment", 22),

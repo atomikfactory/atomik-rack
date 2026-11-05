@@ -96,30 +96,37 @@ pub(crate) fn write_note_clip_tail(w: &mut String, c: &Clip, notes: &[Note], ind
         let _ = write!(
             w,
             ",
-{indent}\"controllers\": ["
+{indent}\"controllers\": "
         );
-        for (n, lane) in c.controllers.iter().enumerate() {
-            let (kind, number) = match lane.kind {
-                ControllerKind::PitchBend => ("pitch_bend", String::new()),
-                ControllerKind::ChannelPressure => ("pressure", String::new()),
-                ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
-                ControllerKind::PolyPressure(k) => ("poly_pressure", format!(", \"number\": {k}")),
-            };
-            let sep = if n == 0 { "" } else { "," };
-            let _ = write!(
-                w,
-                "{sep}
-{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
-            );
-            list_each(w, &format!("{indent}  "), &lane.points, write_point);
-            let _ = write!(w, "}}");
-        }
+        write_controller_lanes(w, &c.controllers, indent);
+    }
+}
+
+/// Writes a list of controller lanes as a JSON array whose lines start at `indent` (the closing
+/// bracket too), without a trailing newline. A note clip's `"controllers"` and a track's own.
+pub(crate) fn write_controller_lanes(w: &mut String, lanes: &[ControllerLane], indent: &str) {
+    w.push('[');
+    for (n, lane) in lanes.iter().enumerate() {
+        let (kind, number) = match lane.kind {
+            ControllerKind::PitchBend => ("pitch_bend", String::new()),
+            ControllerKind::ChannelPressure => ("pressure", String::new()),
+            ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
+            ControllerKind::PolyPressure(k) => ("poly_pressure", format!(", \"number\": {k}")),
+        };
+        let sep = if n == 0 { "" } else { "," };
         let _ = write!(
             w,
-            "
-{indent}]"
+            "{sep}
+{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
         );
+        list_each(w, &format!("{indent}  "), &lane.points, write_point);
+        let _ = write!(w, "}}");
     }
+    let _ = write!(
+        w,
+        "
+{indent}]"
+    );
 }
 
 /// Writes a note clip's `"param_lanes"` after its notes tail (nothing without lanes). The clip

@@ -827,6 +827,7 @@ pub enum Command {
 /// | note tools (`ApplyNoteTool`) | `SongChanged` |
 /// | the groove library (`SetGroove`, `RenameGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged`, plus `SongChanged` when a track or clip has a live groove |
 /// | a track's or note clip's live groove (`SetTrackGroove`, `SetClipGroove`; also undo/redo) | `SongChanged` |
+/// | a track's own controller lanes (`SetTrackControllers`; also undo/redo) | `SongChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
 /// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveTracks`, `MoveGroup`, `MoveGroupTo`, `SetGroupFlags`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
@@ -1179,6 +1180,8 @@ enum MergeKey {
     TrackHeights(u64),
     /// `SetVcaLevel` on one VCA group.
     Vca(u64, u32),
+    /// `SetTrackControllers` on one track.
+    TrackControllers(u64, DeviceKey),
     /// `SetZones` on one device.
     Zones(u64, DeviceKey),
     /// `SetPattern` on one pattern of one device.
@@ -1368,6 +1371,11 @@ impl Document {
                 merge: Some(m),
                 ..
             }) => Some(MergeKey::LaneStatic(*m, device.clone(), param.clone())),
+            Command::Song(SongCommand::SetTrackControllers {
+                device,
+                merge: Some(m),
+                ..
+            }) => Some(MergeKey::TrackControllers(*m, device.clone())),
             Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
                 Some(MergeKey::TempoMap(*merge))
             }
@@ -1560,6 +1568,18 @@ impl Document {
                 if merged =>
             {
                 *new = *latest;
+            }
+            (
+                Some(Edit::Swap(Swap::TrackControllers {
+                    device: held, new, ..
+                })),
+                Edit::Swap(Swap::TrackControllers {
+                    device,
+                    new: latest,
+                    ..
+                }),
+            ) if merged && held == device => {
+                new.clone_from(latest);
             }
             (Some(Edit::TempoMap { new, .. }), Edit::TempoMap { new: latest, .. }) if merged => {
                 new.clone_from(latest);

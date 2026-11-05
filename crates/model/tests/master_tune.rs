@@ -102,7 +102,7 @@ fn the_loader_names_the_path_of_a_bad_value() {
 fn the_field_is_unknown_in_a_version_39_file() {
     let (mut d, r) = doc();
     one_step(&mut d, &r, Command::SetMasterTune(10.0));
-    let old = text(&d).replacen("\"version\": 43", "\"version\": 39", 1);
+    let old = text(&d).replacen("\"version\": 44", "\"version\": 39", 1);
     let e = load_project(&old, &r).unwrap_err().to_string();
     assert!(
         e.contains("tune_cents") && e.contains("unknown field"),

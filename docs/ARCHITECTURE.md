@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v43), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -257,7 +257,10 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 43 (older versions still load; version 43
+- **Project files** are `.atomik` JSON, format version 44 (older versions still load; version 44
+  adds a note track's own `"controllers"` (pitch bend, aftertouch and CC lanes outside the note clips, written
+  only when a track has any; a reader of 43 refuses them, since it would play the track without them; see
+  2.12); version 43
   adds a track's `"groove"` and `"groove_strength"` (the live groove, written only when a track has one;
   a reader of 42 refuses them, since it would play the notes ungrooved; see 2.14) and a folder's
   `"muted": true` and `"solo": true` (each written only when set, with the same refusal; see 2.16); version 42

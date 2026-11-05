@@ -419,6 +419,7 @@ fn lone_clip_track(clip: &Clip) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        controllers: Vec::new(),
         groove: None,
         frozen: None,
         lanes: vec![Lane::notes().with_clips(vec![Clip {

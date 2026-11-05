@@ -113,6 +113,7 @@ impl Track {
             chase: false,
             notes_to: None,
             direct_record: false,
+            controllers: Vec::new(),
             groove: None,
             frozen: None,
             lanes: vec![Lane::audio().with_clips(vec![frozen.clip()])],
@@ -398,6 +399,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::RenameLane { device, .. }
                 | SongCommand::SetLaneMuted { device, .. }
                 | SongCommand::SetLaneSolo { device, .. }
+                | SongCommand::SetTrackControllers { device, .. }
                 | SongCommand::SetLaneColor { device, .. } => track_frozen(device),
                 SongCommand::MoveTracks { devices, .. }
                 | SongCommand::MergeNoteLanes { devices } => devices.iter().find_map(track_frozen),

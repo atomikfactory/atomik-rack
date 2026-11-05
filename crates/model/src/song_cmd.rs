@@ -122,6 +122,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        controllers: Vec::new(),
         groove: None,
         frozen: None,
         lanes: vec![Lane::notes()],
@@ -148,6 +149,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        controllers: Vec::new(),
         groove: None,
         frozen: None,
         lanes: vec![Lane::audio()],
@@ -165,6 +167,7 @@ pub(crate) fn new_automation_track(device: DeviceKey, lane: Lane) -> Track {
         chase: true,
         notes_to: None,
         direct_record: false,
+        controllers: Vec::new(),
         groove: None,
         frozen: None,
         lanes: vec![lane],
@@ -1106,6 +1109,21 @@ pub(crate) fn plan(
                 device,
                 old: t.groove.clone(),
                 new: groove,
+            })
+        }
+        SongCommand::SetTrackControllers { device, lanes, .. } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            let controllers = canonical(lanes);
+            if (t.is_audio() || t.is_automation_only()) && !controllers.is_empty() {
+                return Err(bad(format!(
+                    "{device} plays no notes, so it has no controller lanes"
+                )));
+            }
+            check_lanes(&controllers, MAX_TICK).map_err(range)?;
+            Edit::Swap(Swap::TrackControllers {
+                device,
+                old: t.controllers.clone(),
+                new: controllers,
             })
         }
         SongCommand::AddNoteLane { device, name } => {
