@@ -58,8 +58,8 @@ pub struct FmPanel {
 }
 
 /// The sections in layout order.
-const SECTION_ORDER: [&str; 10] = [
-    "fm", "op1", "op2", "op3", "op4", "pitch", "lfo", "play", "master", "cv",
+const SECTION_ORDER: [&str; 12] = [
+    "fm", "op1", "op2", "op3", "op4", "wave", "pitch", "lfo", "play", "chorus", "master", "cv",
 ];
 
 /// The section of a param key: the single knobs gather in a few sections.
@@ -68,6 +68,9 @@ fn section_prefix(key: &str) -> &str {
         "sound" | "algorithm" | "feedback" | "index" | "wheel.to_index" => "fm",
         "voices" | "spread" | "bend.range" => "play",
         "pitch_cv_trim" | "pan_cv_trim" | "master.level_cv_trim" | "cv.index_amount" => "cv",
+        "oversample" => "master",
+        // The four operator waves share one row, so the operator rows stay as wide as before.
+        _ if key.starts_with("op") && key.ends_with(".wave") => "wave",
         _ => autolayout::group_prefix(key),
     }
 }
@@ -87,6 +90,15 @@ pub fn fm_label(key: &str) -> Option<&'static str> {
         "voices" => "Voices",
         "spread" => "Spread",
         "bend.range" => "Bend",
+        "play.poly_glide" => "Poly gl.",
+        "chorus.mix" => "Mix",
+        "chorus.rate" => "Rate",
+        "chorus.depth" => "Depth",
+        "oversample" => "Oversamp.",
+        "op1.wave" => "Op 1",
+        "op2.wave" => "Op 2",
+        "op3.wave" => "Op 3",
+        "op4.wave" => "Op 4",
         "pitch_cv_trim" => "Pitch",
         "cv.index_amount" => "Index",
         "master.level_cv_trim" => "Level",
@@ -120,6 +132,9 @@ pub fn fm_help(key: &str) -> Option<&'static str> {
             "decay" => "Time to fall from full level to the sustain level",
             "sustain" => "Level held while the key is down",
             "release" => "Time to fade after the key is released",
+            "wave" => {
+                "Waveform of this operator: sine, half, rectified, pulse, triangle or soft square"
+            }
             _ => return None,
         });
     }
@@ -138,6 +153,13 @@ pub fn fm_help(key: &str) -> Option<&'static str> {
         "lfo.to_index" => "How far the LFO sweeps the modulation index",
         "play.mode" => "Poly plays chords, mono one note, legato glides between overlapping notes",
         "play.glide" => "Time the pitch takes to slide to the next note in mono and legato",
+        "play.poly_glide" => "Also slide in poly: each new note starts from the one played before",
+        "chorus.mix" => "Chorus amount: 0 leaves the sound untouched",
+        "chorus.rate" => "Speed of the chorus sweep in Hz",
+        "chorus.depth" => "How far the chorus swings the delay",
+        "oversample" => {
+            "Runs the voices at twice the rate: brighter patches without aliasing, at twice the CPU"
+        }
         "voices" => "Most notes sounding at once in poly: the oldest is stolen past it",
         "spread" => "Pans the notes by key: low to the left, high to the right",
         "master.level" => "Output level",

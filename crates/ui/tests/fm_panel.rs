@@ -264,7 +264,10 @@ fn the_layout_places_every_param_once_below_the_band() {
         let rows: Vec<(f64, f64)> = spec
             .front
             .iter()
-            .filter(|c| desc.params[c.param].key.starts_with(&format!("op{n}.")))
+            .filter(|c| {
+                let k = desc.params[c.param].key;
+                k.starts_with(&format!("op{n}.")) && !k.ends_with(".wave")
+            })
             .map(|c| (c.rect.y0, c.rect.y1))
             .collect();
         assert_eq!(rows.len(), 12);
@@ -277,6 +280,24 @@ fn the_layout_places_every_param_once_below_the_band() {
         assert!(c.rect.y0 >= 0.0 && c.rect.y1 <= spec.height(), "{c:?}");
         assert!(c.rect.x1 <= content.x1 + 1e-6, "{c:?}");
     }
+}
+
+#[test]
+fn the_four_operator_waves_share_a_row_of_their_own() {
+    let reg = registry();
+    let desc = reg.get(FM_TYPE).unwrap().descriptor;
+    let spec = fm_layout(desc);
+    let waves: Vec<_> = spec
+        .front
+        .iter()
+        .filter(|c| desc.params[c.param].key.ends_with(".wave") && c.rect.width() > 0.0)
+        .filter(|c| desc.params[c.param].key.starts_with("op"))
+        .collect();
+    assert_eq!(waves.len(), 4);
+    let y = waves[0].rect.y0;
+    assert!(waves.iter().all(|c| (c.rect.y0 - y).abs() < 1e-6));
+    assert!(spec.front_sections.iter().any(|s| s.label == "WAVE"));
+    assert!(spec.front_sections.iter().any(|s| s.label == "CHORUS"));
 }
 
 #[test]

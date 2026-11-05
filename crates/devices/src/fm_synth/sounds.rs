@@ -15,11 +15,26 @@
 //! | Bass | mono with a short glide: a three-modulator stack with feedback, bright for a moment at each note |
 //! | Brass | a Y routing (two modulators into one) whose index opens over 90 ms, a light vibrato; the mod wheel brightens it |
 //! | Pad | two detuned pairs with slow envelopes; a slow LFO breathes the index |
+//! | Marimba | a short sine carrier struck by a quick ratio-4 modulator that dies at once |
+//! | Wide Keys | two detuned carriers with a short bright tine, widened by the chorus |
+//! | Glide Lead | a triangle-wave lead with poly glide: each note slides in from the last one |
+//! | Square Keys | four carriers at harmonic ratios, none modulated, in soft-square, triangle and half-sine waves, with chorus |
 
 use super::DESCRIPTOR;
 
 /// The names of the sounds, in selector order.
-pub const SOUND_NAMES: [&str; 6] = ["Init", "E. Piano", "Bell", "Bass", "Brass", "Pad"];
+pub const SOUND_NAMES: [&str; 10] = [
+    "Init",
+    "E. Piano",
+    "Bell",
+    "Bass",
+    "Brass",
+    "Pad",
+    "Marimba",
+    "Wide Keys",
+    "Glide Lead",
+    "Square Keys",
+];
 
 /// A factory sound.
 #[derive(Debug, Clone, Copy)]
@@ -31,7 +46,7 @@ pub struct Sound {
 }
 
 /// The sounds, in selector order.
-pub const SOUNDS: [Sound; 6] = [
+pub const SOUNDS: [Sound; 10] = [
     Sound {
         name: "Init",
         changes: &[],
@@ -226,6 +241,137 @@ pub const SOUNDS: [Sound; 6] = [
             ("op4.decay", 2_000.0),
             ("op4.sustain", 0.5),
             ("op4.release", 1_500.0),
+        ],
+    },
+    Sound {
+        name: "Marimba",
+        changes: &[
+            ("algorithm", 0.0),
+            ("spread", 0.3),
+            ("op1.level", 0.85),
+            ("op1.velocity", 0.4),
+            ("op1.attack", 0.8),
+            ("op1.decay", 900.0),
+            ("op1.sustain", 0.0),
+            ("op1.release", 180.0),
+            ("op2.coarse", 4.0),
+            ("op2.level", 0.3),
+            ("op2.velocity", 0.7),
+            ("op2.attack", 0.8),
+            ("op2.decay", 110.0),
+            ("op2.sustain", 0.0),
+            ("op2.release", 80.0),
+        ],
+    },
+    Sound {
+        name: "Wide Keys",
+        changes: &[
+            ("algorithm", 8.0),
+            ("spread", 0.5),
+            ("chorus.mix", 0.55),
+            ("chorus.rate", 0.6),
+            ("chorus.depth", 0.6),
+            ("op1.level", 0.6),
+            ("op1.velocity", 0.3),
+            ("op1.attack", 1.0),
+            ("op1.decay", 1_800.0),
+            ("op1.sustain", 0.15),
+            ("op1.release", 300.0),
+            ("op2.coarse", 1.0),
+            ("op2.detune", 6.0),
+            ("op2.level", 0.6),
+            ("op2.velocity", 0.3),
+            ("op2.attack", 1.0),
+            ("op2.decay", 1_800.0),
+            ("op2.sustain", 0.15),
+            ("op2.release", 300.0),
+            ("op3.coarse", 1.0),
+            ("op3.level", 0.2),
+            ("op3.velocity", 0.6),
+            ("op3.attack", 1.0),
+            ("op3.decay", 400.0),
+            ("op3.sustain", 0.0),
+            ("op3.release", 120.0),
+            ("op4.coarse", 3.0),
+            ("op4.level", 0.12),
+            ("op4.velocity", 0.7),
+            ("op4.attack", 1.0),
+            ("op4.decay", 150.0),
+            ("op4.sustain", 0.0),
+            ("op4.release", 100.0),
+        ],
+    },
+    Sound {
+        name: "Glide Lead",
+        changes: &[
+            ("algorithm", 2.0),
+            ("feedback", 0.2),
+            ("play.glide", 70.0),
+            ("play.poly_glide", 1.0),
+            ("chorus.mix", 0.3),
+            ("lfo.wave", 0.0),
+            ("lfo.rate", 5.5),
+            ("lfo.to_pitch", 0.1),
+            ("op1.level", 0.8),
+            ("op1.velocity", 0.3),
+            ("op1.attack", 8.0),
+            ("op1.decay", 300.0),
+            ("op1.sustain", 0.8),
+            ("op1.release", 180.0),
+            ("op2.wave", 4.0),
+            ("op2.coarse", 1.0),
+            ("op2.level", 0.35),
+            ("op2.velocity", 0.6),
+            ("op2.attack", 12.0),
+            ("op2.decay", 400.0),
+            ("op2.sustain", 0.7),
+            ("op2.release", 180.0),
+            ("op3.coarse", 2.0),
+            ("op3.level", 0.2),
+            ("op3.velocity", 0.5),
+            ("op3.attack", 10.0),
+            ("op3.decay", 300.0),
+            ("op3.sustain", 0.6),
+            ("op3.release", 150.0),
+        ],
+    },
+    Sound {
+        name: "Square Keys",
+        changes: &[
+            ("algorithm", 11.0),
+            ("spread", 0.3),
+            ("chorus.mix", 0.35),
+            ("chorus.rate", 0.5),
+            ("op1.wave", 5.0),
+            ("op1.level", 0.5),
+            ("op1.velocity", 0.2),
+            ("op1.attack", 2.0),
+            ("op1.decay", 600.0),
+            ("op1.sustain", 0.85),
+            ("op1.release", 200.0),
+            ("op2.wave", 4.0),
+            ("op2.coarse", 2.0),
+            ("op2.level", 0.2),
+            ("op2.velocity", 0.3),
+            ("op2.attack", 2.0),
+            ("op2.decay", 500.0),
+            ("op2.sustain", 0.7),
+            ("op2.release", 200.0),
+            ("op3.wave", 1.0),
+            ("op3.coarse", 3.0),
+            ("op3.level", 0.12),
+            ("op3.velocity", 0.4),
+            ("op3.attack", 2.0),
+            ("op3.decay", 400.0),
+            ("op3.sustain", 0.6),
+            ("op3.release", 200.0),
+            ("op4.coarse", 4.0),
+            ("op4.level", 0.08),
+            ("op4.velocity", 0.4),
+            ("op4.attack", 2.0),
+            ("op4.decay", 300.0),
+            ("op4.sustain", 0.5),
+            ("op4.release", 200.0),
         ],
     },
 ];
