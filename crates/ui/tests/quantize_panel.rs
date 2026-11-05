@@ -99,6 +99,9 @@ fn the_panel_paints_its_rows_values_and_buttons() {
         "Mine",
         "DELETE",
         "EXTRACT GROOVE FROM CLIP",
+        "GROOVE FROM MIDI FILE",
+        "Grid per note",
+        "Move controllers",
         "CLOSE",
     ] {
         assert!(has(&t, want), "{want} in {t:?}");
@@ -111,7 +114,7 @@ fn an_empty_library_and_no_target_say_so() {
     v.set_bounds(BOUNDS);
     let t = texts(&v);
     assert!(has(&t, "Applies to: nothing selected"));
-    assert!(has(&t, "None yet: extract one from a clip."));
+    assert!(has(&t, "None yet: extract one from a clip or a MIDI file."));
 }
 
 #[test]
@@ -314,18 +317,18 @@ fn delete_names_the_groove_of_its_row_and_the_list_scrolls() {
         click(&mut v, del.center()),
         [QuantizeAction::Delete("Mine".into())]
     );
-    // Six grooves: four rows show, the wheel over the list scrolls.
+    // Six grooves: three rows show, the wheel over the list scrolls.
     let mut grooves = vec![groove("Straight", true)];
     grooves.extend((1..=6).map(|i| groove(&format!("g{i}"), false)));
     v.set_grooves(grooves);
-    assert!(v.delete_rect(3).is_some() && v.delete_rect(4).is_none());
+    assert!(v.delete_rect(2).is_some() && v.delete_rect(3).is_none());
     let in_list = v.library_row_rect(0).unwrap().center();
     wheel(&mut v, in_list, -1.0);
     assert!(v.delete_rect(0).is_none(), "the first row scrolled out");
-    let del = v.delete_rect(4).expect("the fifth row scrolled in");
+    let del = v.delete_rect(3).expect("the fourth row scrolled in");
     assert_eq!(
         click(&mut v, del.center()),
-        [QuantizeAction::Delete("g5".into())]
+        [QuantizeAction::Delete("g4".into())]
     );
 }
 
@@ -549,9 +552,73 @@ fn the_panel_still_fits_a_small_window_with_the_new_rows() {
         v.clear_live_rect(),
         v.apply_rect(),
         v.extract_rect(),
+        v.midi_rect(),
     ] {
         assert!(r.x1 <= p.x1 && r.y1 <= p.y1, "{r:?} inside {p:?}");
     }
     assert!(v.live_rect().x0 >= v.apply_rect().x1);
     assert!(v.clear_live_rect().x0 >= v.live_rect().x1);
+}
+
+#[test]
+fn grid_per_note_and_move_controllers_are_switches_that_reach_the_models_parameters() {
+    let mut v = view();
+    // The defaults: one grid for all notes, controllers follow.
+    assert_eq!(v.value_text(QuantizeRow::GridByLength), "OFF");
+    assert_eq!(v.value_text(QuantizeRow::Controllers), "ON");
+    let p = v.params();
+    assert!(!p.grid_by_length && p.controllers);
+    // A click on the value flips each, and neither is a drag.
+    let per_note = v.value_rect(QuantizeRow::GridByLength).center();
+    clk!(v, per_note);
+    let controllers = v.value_rect(QuantizeRow::Controllers).center();
+    clk!(v, controllers);
+    assert_eq!(v.value_text(QuantizeRow::GridByLength), "ON");
+    assert_eq!(v.value_text(QuantizeRow::Controllers), "OFF");
+    let p = v.params();
+    assert!(p.grid_by_length && !p.controllers);
+    p.validate().unwrap();
+    v.handle(&down(per_note));
+    assert!(!v.is_dragging());
+    v.handle(&up(per_note));
+    // The buttons step them too.
+    let minus = v.minus_rect(QuantizeRow::Controllers).center();
+    clk!(v, minus);
+    assert!(v.params().controllers);
+    // Every row has its own place: no two rows overlap.
+    let rows = [
+        QuantizeRow::Grid,
+        QuantizeRow::GridByLength,
+        QuantizeRow::Strength,
+        QuantizeRow::Legato,
+        QuantizeRow::Controllers,
+    ];
+    for pair in rows.windows(2) {
+        assert!(v.row_rect(pair[0]).y1 <= v.row_rect(pair[1]).y0 + 1e-9);
+    }
+}
+
+#[test]
+fn a_groove_sets_the_grid_so_the_per_note_grid_is_dimmed_with_it() {
+    let mut v = view();
+    assert!(v.row_enabled(QuantizeRow::GridByLength));
+    v.select_groove("Swing 60%");
+    assert!(!v.row_enabled(QuantizeRow::GridByLength));
+    // A dimmed row does not step.
+    v.step(QuantizeRow::GridByLength, 1);
+    assert_eq!(v.value_text(QuantizeRow::GridByLength), "OFF");
+    // The controllers row has nothing to do with the grid.
+    assert!(v.row_enabled(QuantizeRow::Controllers));
+}
+
+#[test]
+fn the_midi_file_button_always_asks_for_a_file() {
+    let mut v = view();
+    assert_eq!(clk!(v, v.midi_rect().center()), [QuantizeAction::FromMidi]);
+    // It does not need a target, unlike EXTRACT beside it.
+    v.set_target(String::new(), false, false);
+    assert_eq!(clk!(v, v.midi_rect().center()), [QuantizeAction::FromMidi]);
+    assert!(clk!(v, v.extract_rect().center()).is_empty());
+    assert!(v.midi_rect().x0 >= v.extract_rect().x1);
+    assert!(v.help_at(v.midi_rect().center()).is_some());
 }

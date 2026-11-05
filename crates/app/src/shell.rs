@@ -307,6 +307,9 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Show an open-file dialog for a MIDI file (the quantize panel's GROOVE FROM MIDI FILE),
+    /// then call [`Shell::groove_from_midi_file`] with the picked path.
+    PickGrooveMidi,
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
@@ -1531,11 +1534,11 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
-    /// What the quantize panel asked for.
-    fn quantize_action(&mut self, action: QuantizeAction) {
+    /// What the quantize panel asked for; the requests are the dialogs it needs.
+    fn quantize_action(&mut self, action: QuantizeAction) -> Vec<ShellRequest> {
         let pane = self.live_pane(self.focus);
         let Some(view) = &self.quantize else {
-            return;
+            return Vec::new();
         };
         let (params, values) = (view.params(), view.values().clone());
         match action {
@@ -1572,8 +1575,29 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             QuantizeAction::Delete(name) => self.core.delete_groove(&name),
+            QuantizeAction::FromMidi => return vec![ShellRequest::PickGrooveMidi],
         }
         self.sync_quantize();
+        self.repaint = true;
+        Vec::new()
+    }
+
+    /// Makes a groove of the MIDI file at `path` (the file the quantize panel asked for, or one
+    /// dropped on it), measured with the step and slots of the panel; the new groove becomes
+    /// the chosen one. Without an open panel nothing happens.
+    pub fn groove_from_midi_file(&mut self, path: &Path) {
+        let Some(values) = self.quantize.as_ref().map(|v| v.values().clone()) else {
+            return;
+        };
+        if let Some(name) =
+            self.core
+                .groove_from_midi(path, values.extract_step, values.extract_slots)
+        {
+            self.sync_quantize();
+            if let Some(view) = &mut self.quantize {
+                view.select_groove(&name);
+            }
+        }
         self.repaint = true;
     }
 
@@ -3124,6 +3148,17 @@ impl<B: AudioBackend> Shell<B> {
     /// that is not a sampler) imports the files as new tracks at the snapped playhead.
     fn file_event(&mut self, window: WindowKind, event: &UiEvent) {
         self.repaint = true;
+        if self.quantize.is_some() {
+            // The open quantize panel takes the files: a MIDI file becomes a groove, nothing
+            // else is imported behind it.
+            if let UiEvent::FileDrop { paths, .. } = event {
+                match paths.iter().find(|p| crate::midi_file::is_midi_path(p)) {
+                    Some(path) => self.groove_from_midi_file(path),
+                    None => self.notify("Drop a MIDI file on the panel to make a groove from it"),
+                }
+            }
+            return;
+        }
         let target = match event {
             UiEvent::FileHover { pos, .. } | UiEvent::FileDrop { pos, .. } => {
                 self.file_target_in(window, *pos)
@@ -3851,13 +3886,14 @@ impl<B: AudioBackend> Shell<B> {
                 .as_mut()
                 .map(|v| v.handle(&text_form(event)))
                 .unwrap_or_default();
+            let mut requests = Vec::new();
             for action in actions {
                 if let UiAction::Quantize(a) = action {
-                    self.quantize_action(a);
+                    requests.extend(self.quantize_action(a));
                 }
             }
             self.sync_quantize();
-            return Vec::new();
+            return requests;
         }
         if self.start_screen.is_some() {
             self.repaint = true;

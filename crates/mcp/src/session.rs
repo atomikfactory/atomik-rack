@@ -406,7 +406,9 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_export_audio",
             "a file dialog: use session_export with a file (it writes the same file the dialog would)",
         ),
-        ShellRequest::PickImportMidi { .. } | ShellRequest::PickExportMidi(_) => (
+        ShellRequest::PickImportMidi { .. }
+        | ShellRequest::PickExportMidi(_)
+        | ShellRequest::PickGrooveMidi => (
             "pick_midi_file",
             "a file dialog: a headless session cannot show it (the MIDI file import and export are covered by the app tests)",
         ),

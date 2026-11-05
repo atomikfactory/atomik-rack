@@ -683,3 +683,127 @@ fn program_changes_and_sysex_travel_through_a_song_file_and_back_into_clips() {
     assert!(target.undo());
     assert!(target.doc().song.tracks.is_empty());
 }
+
+// ----- groove from a MIDI file ---------------------------------------------------------------
+
+const STEP: i64 = PPQ / 4;
+
+/// A MIDI file of one bar of 1/16 notes whose odd steps are `late` ticks late, the odd ones a
+/// little softer; written by the clip export of a scratch core.
+fn groove_file(tmp: &Tmp, name: &str, late: i64) -> PathBuf {
+    let mut c = core();
+    add_synth(&mut c, "lead", "Lead");
+    let notes = (0..8)
+        .map(|i| {
+            let (delay, velocity) = if i % 2 == 1 { (late, 60) } else { (0, 100) };
+            Note::new(i * STEP + delay, STEP / 2, 60, vel(velocity))
+        })
+        .collect();
+    let id = add_clip(&mut c, "lead", 0, notes);
+    let (t, _, clip) = c.doc().song.clip(id).unwrap();
+    let bytes = clip_file(
+        &c.doc().song,
+        clip,
+        &c.device_name(&t.device),
+        crate::midi_file::MidiResolution::Native,
+    );
+    let path = tmp.path(name);
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[test]
+fn a_groove_from_a_midi_file_measures_its_onsets_and_adds_it_to_the_song() {
+    let tmp = Tmp::new("groove");
+    let file = groove_file(&tmp, "Late seconds.mid", STEP / 4);
+    let mut c = core();
+    let name = c
+        .groove_from_midi(&file, StepResolution::Sixteenth, 2)
+        .expect("a groove");
+    assert_eq!(name, "Late seconds");
+    let groove = c.doc().song.groove("Late seconds").unwrap();
+    assert_eq!(groove.step, StepResolution::Sixteenth);
+    assert_eq!(groove.slots.len(), 2);
+    // The odd step is a quarter of a step late and softer than the average of all the notes.
+    assert!((groove.slots[0].offset).abs() < 1e-6);
+    assert!((groove.slots[1].offset - 0.25).abs() < 1e-3);
+    assert!(groove.slots[0].velocity > 1.0 && groove.slots[1].velocity < 1.0);
+    assert!(c.last_rejection().unwrap().contains("Late seconds.mid"));
+    // No clip was added and one undo takes the groove away.
+    assert!(c.doc().song.tracks.is_empty());
+    assert!(c.undo());
+    assert!(c.doc().song.groove("Late seconds").is_none());
+}
+
+#[test]
+fn a_taken_groove_name_gets_a_number_and_a_long_one_is_cut() {
+    let tmp = Tmp::new("groove-names");
+    let a = groove_file(&tmp, "beat.mid", STEP / 4);
+    let mut c = core();
+    for want in ["beat", "beat 2", "beat 3"] {
+        let name = c
+            .groove_from_midi(&a, StepResolution::Sixteenth, 2)
+            .unwrap();
+        assert_eq!(name, want);
+    }
+    // A built-in name is taken too.
+    let straight = groove_file(&tmp, "Straight.mid", 0);
+    let name = c
+        .groove_from_midi(&straight, StepResolution::Eighth, 2)
+        .unwrap();
+    assert_eq!(name, "Straight 2");
+    let long = groove_file(
+        &tmp,
+        "a very long file name that goes on and on for ever.mid",
+        0,
+    );
+    let name = c
+        .groove_from_midi(&long, StepResolution::Sixteenth, 4)
+        .unwrap();
+    // Cut to 32 characters and trimmed (the cut falls after a space here).
+    assert!((30..=32).contains(&name.chars().count()), "{name}");
+    assert!(name.starts_with("a very long file name"));
+    assert_eq!(c.doc().song.groove(&name).unwrap().slots.len(), 4);
+}
+
+#[test]
+fn a_midi_file_that_cannot_make_a_groove_is_reported_and_changes_nothing() {
+    let tmp = Tmp::new("groove-bad");
+    let mut c = core();
+    let before = c.doc().clone();
+    std::fs::write(tmp.path("junk.mid"), b"not midi").unwrap();
+    assert!(
+        c.groove_from_midi(&tmp.path("junk.mid"), StepResolution::Sixteenth, 2)
+            .is_none()
+    );
+    assert!(c.last_rejection().unwrap().starts_with("junk.mid:"));
+    assert!(
+        c.groove_from_midi(&tmp.path("missing.mid"), StepResolution::Sixteenth, 2)
+            .is_none()
+    );
+    // A file with a tempo and no notes has nothing to measure.
+    let only_tempo = SmfFile {
+        format: 0,
+        ppq: 96,
+        tracks: vec![SmfTrack {
+            events: vec![SmfEvent {
+                tick: 0,
+                message: SmfMessage::Tempo(500_000),
+            }],
+            end_tick: 0,
+        }],
+    };
+    std::fs::write(tmp.path("tempo.mid"), only_tempo.to_bytes()).unwrap();
+    assert!(
+        c.groove_from_midi(&tmp.path("tempo.mid"), StepResolution::Sixteenth, 2)
+            .is_none()
+    );
+    assert!(c.last_rejection().unwrap().starts_with("tempo.mid:"));
+    // Too many slots are refused by the groove, not applied.
+    let good = groove_file(&tmp, "good.mid", 0);
+    assert!(
+        c.groove_from_midi(&good, StepResolution::Sixteenth, 99)
+            .is_none()
+    );
+    assert_eq!(c.doc(), &before);
+}

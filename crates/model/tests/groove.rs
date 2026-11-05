@@ -4,10 +4,11 @@
 mod common;
 
 use atomik_device_sdk::Registry;
+use atomik_model::controller::{ControllerKind, ControllerLane};
 use atomik_model::groove::{GrooveSlot, builtin_groove};
 use atomik_model::song::flatten_notes;
 use atomik_model::{
-    ClipContent, ClipId, Command, Document, Groove, ModelError, Note, PROJECT_VERSION,
+    ClipContent, ClipId, Command, Curve, Document, Groove, ModelError, Note, PROJECT_VERSION,
     QuantizeParams, SongCommand, StepResolution, SyncOp, load_project, save_project,
 };
 use common::song::*;
@@ -566,4 +567,142 @@ fn a_quantize_at_the_last_tick_keeps_every_note_inside_the_song_and_the_file_sav
     .unwrap();
     let text = save_project(d.doc());
     assert_eq!(save_project(&load_project(&text, &reg).unwrap()), text);
+}
+
+// ----- controller lanes follow their notes, a grid per note --------------------------------
+
+fn controllers_of(d: &Document, id: u64) -> Vec<(i64, f32)> {
+    let (_, _, c) = d.doc().song.clip(ClipId(id)).unwrap();
+    c.controllers
+        .iter()
+        .flat_map(|l| l.points.iter().map(|p| (p.tick, p.value)))
+        .collect()
+}
+
+/// One clip with two late notes and a CC lane with a point on each note, one between them and
+/// one after both.
+fn with_controllers(reg: &Registry) -> Document {
+    let mut d = song_start(reg);
+    d.apply(add_track("lead"), reg).unwrap();
+    let mut clip = notes_clip(
+        0,
+        BAR,
+        vec![note(S + 300, S, 60, 0.8), note(3 * S + 200, S, 62, 0.8)],
+    );
+    clip.controllers = vec![ControllerLane::new(
+        ControllerKind::Cc(1),
+        vec![
+            point(S + 300, 0.1, Curve::Step),
+            point(S + 800, 0.2, Curve::Step),
+            point(3 * S + 200, 0.3, Curve::Step),
+            point(3 * S + 900, 0.4, Curve::Step),
+        ],
+    )];
+    d.apply(add_clip("lead", 0, clip), reg).unwrap();
+    d
+}
+
+#[test]
+fn quantize_moves_controller_points_with_their_notes_in_one_undo_step() {
+    let reg = registry();
+    let mut d = with_controllers(&reg);
+    let before = save_project(d.doc());
+    quantize(&mut d, &reg, &[1], QuantizeParams::default());
+    // The notes go to S and 3S (back 300 and back 200 ticks). A point between the old and the
+    // new start (the old start included) goes with its note; the ones after the old start stay.
+    let notes: Vec<i64> = notes_of(&d, 1).iter().map(|n| n.tick).collect();
+    assert_eq!(notes, [S, 3 * S]);
+    assert_eq!(
+        controllers_of(&d, 1),
+        [(S, 0.1), (S + 800, 0.2), (3 * S, 0.3), (3 * S + 900, 0.4)]
+    );
+    d.doc().validate().unwrap();
+    // One undo restores the notes and the controllers; redo does it again.
+    d.undo().unwrap();
+    assert_eq!(save_project(d.doc()), before);
+    d.redo().unwrap();
+    assert_eq!(controllers_of(&d, 1)[0], (S, 0.1));
+}
+
+#[test]
+fn controller_points_stay_when_the_option_is_off_and_for_unselected_notes() {
+    let reg = registry();
+    let mut d = with_controllers(&reg);
+    let original = controllers_of(&d, 1);
+    quantize(
+        &mut d,
+        &reg,
+        &[1],
+        QuantizeParams {
+            controllers: false,
+            ..QuantizeParams::default()
+        },
+    );
+    assert_eq!(controllers_of(&d, 1), original, "the option is off");
+
+    // Only the second note is quantized: only its points can move.
+    let mut d = with_controllers(&reg);
+    d.apply(
+        sc(SongCommand::QuantizeNotes {
+            clip: ClipId(1),
+            notes: vec![1],
+            quantize: QuantizeParams::default(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let after = controllers_of(&d, 1);
+    assert_eq!(&after[..2], &original[..2], "the first note's points stay");
+    assert_eq!(after[2], (3 * S, 0.3));
+    assert_eq!(after[3], original[3]);
+}
+
+#[test]
+fn a_note_that_moves_later_takes_the_points_it_passed() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    d.apply(add_track("lead"), &reg).unwrap();
+    // The note is 100 ticks early: it moves later to S, and the point 50 after its old start
+    // goes along; the one after the new start stays.
+    let mut clip = notes_clip(0, BAR, vec![note(S - 100, S, 60, 0.8)]);
+    clip.controllers = vec![ControllerLane::new(
+        ControllerKind::PitchBend,
+        vec![
+            point(S - 100, -0.5, Curve::Step),
+            point(S - 50, 0.5, Curve::Step),
+            point(S + 10, 0.25, Curve::Step),
+        ],
+    )];
+    d.apply(add_clip("lead", 0, clip), &reg).unwrap();
+    quantize(&mut d, &reg, &[1], QuantizeParams::default());
+    assert_eq!(
+        controllers_of(&d, 1),
+        [(S, -0.5), (S + 10, 0.25), (S + 50, 0.5)]
+    );
+}
+
+#[test]
+fn a_grid_per_note_snaps_a_long_note_to_the_big_grid_and_a_short_one_to_a_fine_grid() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    d.apply(add_track("lead"), &reg).unwrap();
+    let notes = vec![
+        note(PPQ + 400, PPQ, 60, 0.8),
+        note(2 * PPQ + 4 * S + 400, S, 62, 0.8),
+    ];
+    d.apply(add_clip("lead", 0, notes_clip(0, 2 * BAR, notes)), &reg)
+        .unwrap();
+    quantize(
+        &mut d,
+        &reg,
+        &[1],
+        QuantizeParams {
+            grid: PPQ,
+            grid_by_length: true,
+            ..QuantizeParams::default()
+        },
+    );
+    let ticks: Vec<i64> = notes_of(&d, 1).iter().map(|n| n.tick).collect();
+    assert_eq!(ticks, [PPQ, 2 * PPQ + 4 * S + (400 + S / 2) / S * S]);
+    d.doc().validate().unwrap();
 }

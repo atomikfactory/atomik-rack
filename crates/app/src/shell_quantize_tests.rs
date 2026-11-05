@@ -648,3 +648,174 @@ fn the_panel_sets_and_clears_a_live_groove_on_the_selected_clips_and_renames_a_g
     });
     assert!(!s.wants_text_input());
 }
+
+// ----- groove from a MIDI file ---------------------------------------------------------------
+
+/// A scratch folder with one MIDI file of eight 1/16 notes whose odd steps are a quarter of a
+/// step late (the file has 960 ticks per quarter note, so a step is 240 and a quarter step 60).
+struct MidiFile(std::path::PathBuf);
+
+impl MidiFile {
+    fn new(name: &str) -> Self {
+        use atomik_midi_io::smf::{SmfEvent, SmfFile, SmfMessage, SmfTrack};
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("atomik-shell-groove-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut events = Vec::new();
+        for i in 0..8u64 {
+            let at = i * 240 + if i % 2 == 1 { 60 } else { 0 };
+            for (tick, velocity) in [(at, 100), (at + 100, 0)] {
+                events.push(SmfEvent {
+                    tick,
+                    message: SmfMessage::NoteOn {
+                        channel: 0,
+                        key: 36,
+                        velocity,
+                    },
+                });
+            }
+        }
+        let file = SmfFile {
+            format: 0,
+            ppq: 960,
+            tracks: vec![SmfTrack {
+                events,
+                end_tick: 2000,
+            }],
+        };
+        let path = dir.join(name);
+        std::fs::write(&path, file.to_bytes()).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for MidiFile {
+    fn drop(&mut self) {
+        if let Some(dir) = self.0.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+#[test]
+fn the_midi_file_button_asks_for_a_file_and_the_picked_file_becomes_the_chosen_groove() {
+    let mut s = shell();
+    let _ = loose(&mut s);
+    s.execute(AppCommand::QuantizeOptions);
+    let p = s.quantize_view().unwrap().midi_rect().center();
+    assert_eq!(click(&mut s, p), vec![ShellRequest::PickGrooveMidi]);
+    assert!(s.core().doc().song.grooves.is_empty(), "nothing yet");
+    // The slots and the step of the panel are the measure.
+    step(&mut s, QuantizeRow::ExtractSlots, true);
+    step(&mut s, QuantizeRow::ExtractSlots, true);
+    let file = MidiFile::new("Funk.mid");
+    s.groove_from_midi_file(&file.0);
+    let song = &s.core().doc().song;
+    assert_eq!(song.grooves.len(), 1);
+    assert_eq!(song.grooves[0].name, "Funk");
+    assert_eq!(song.grooves[0].slots.len(), 4);
+    assert!((song.grooves[0].slots[1].offset - 0.25).abs() < 1e-3);
+    assert_eq!(
+        s.quantize_view().unwrap().values().groove.as_deref(),
+        Some("Funk"),
+        "the new groove is chosen"
+    );
+    assert_eq!(s.quantize_view().unwrap().library().len(), 1);
+    // One undo takes it away again.
+    s.core_mut().undo();
+    s.frame();
+    assert!(s.core().doc().song.grooves.is_empty());
+}
+
+#[test]
+fn a_midi_file_dropped_on_the_open_panel_makes_a_groove_and_imports_nothing() {
+    let mut s = shell();
+    let _ = loose(&mut s);
+    let tracks = s.core().doc().song.tracks.len();
+    s.execute(AppCommand::QuantizeOptions);
+    let file = MidiFile::new("Dropped.mid");
+    let pos = s.quantize_view().unwrap().panel().center();
+    s.handle(&UiEvent::FileDrop {
+        pos,
+        paths: vec![file.0.clone()],
+    });
+    let song = &s.core().doc().song;
+    assert_eq!(song.grooves.len(), 1);
+    assert_eq!(song.grooves[0].name, "Dropped");
+    assert_eq!(song.tracks.len(), tracks, "no track was made");
+    assert_eq!(
+        s.quantize_view().unwrap().values().groove.as_deref(),
+        Some("Dropped")
+    );
+    // A file that is not MIDI changes nothing and says what the panel takes.
+    s.handle(&UiEvent::FileDrop {
+        pos,
+        paths: vec![std::path::PathBuf::from("loop.wav")],
+    });
+    assert_eq!(s.core().doc().song.grooves.len(), 1);
+    assert_eq!(s.core().doc().song.tracks.len(), tracks);
+    // Without the panel the same drop still imports tracks.
+    s.execute(AppCommand::QuantizeOptions);
+    s.handle(&UiEvent::Key {
+        key: atomik_ui::Key::Escape,
+        modifiers: Modifiers::NONE,
+        pressed: true,
+    });
+    assert!(!s.quantize_open());
+    s.handle(&UiEvent::FileDrop {
+        pos,
+        paths: vec![file.0.clone()],
+    });
+    assert!(s.core().doc().song.tracks.len() > tracks);
+}
+
+#[test]
+fn a_picked_file_without_the_panel_open_does_nothing() {
+    let mut s = shell();
+    let file = MidiFile::new("Late.mid");
+    s.groove_from_midi_file(&file.0);
+    assert!(s.core().doc().song.grooves.is_empty());
+}
+
+#[test]
+fn the_panels_controller_switch_decides_whether_points_follow_their_notes() {
+    for follow in [true, false] {
+        let mut s = shell();
+        let id = loose(&mut s);
+        s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+        // A CC point on the start of the first note.
+        let first = notes(&s, id)[0].tick;
+        let lane = atomik_model::ControllerLane::new(
+            atomik_model::ControllerKind::Cc(1),
+            vec![atomik_model::song::AutomationPoint {
+                tick: first,
+                value: 0.5,
+                curve: atomik_model::song::Curve::Step,
+            }],
+        );
+        s.core_mut()
+            .apply_command(Command::Song(SongCommand::SetClipControllers {
+                clip: id,
+                lanes: vec![lane],
+                merge: None,
+            }))
+            .unwrap();
+        s.execute(AppCommand::QuantizeOptions);
+        if !follow {
+            let p = s
+                .quantize_view()
+                .unwrap()
+                .value_rect(QuantizeRow::Controllers)
+                .center();
+            click(&mut s, p);
+        }
+        press_apply(&mut s);
+        let moved = notes(&s, id)[0].tick;
+        assert_ne!(moved, first, "the note moved");
+        let (_, _, c) = s.core().doc().song.clip(id).unwrap();
+        let at = c.controllers[0].points[0].tick;
+        assert_eq!(at, if follow { moved } else { first }, "follow: {follow}");
+    }
+}

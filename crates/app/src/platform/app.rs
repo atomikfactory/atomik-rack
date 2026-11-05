@@ -1197,6 +1197,17 @@ impl App {
                         self.shell.import_keymap_from(&path);
                     }
                 }
+                ShellRequest::PickGrooveMidi => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Make a groove from a MIDI file")
+                        .add_filter("MIDI files", &["mid", "midi"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.groove_from_midi_file(&path);
+                    }
+                }
                 ShellRequest::PickRelinkFile => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Locate the audio file")

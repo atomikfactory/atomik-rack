@@ -13,6 +13,8 @@
 //!   range), replacing the points it lands on and dropping what falls past the clip.
 //! * [`remove_points`], [`move_points`] and [`thin_selection`] work on the selected points
 //!   only; points outside the selection stay as they are.
+//! * [`follow_note_moves`] carries the points of every lane along with the notes that a quantize
+//!   moved.
 
 use crate::automation_rec::thin_points;
 use crate::controller::{ControllerKind, ControllerLane, canonical};
@@ -312,6 +314,63 @@ fn thin_run(run: &[AutomationPoint], tolerance: f32) -> Vec<AutomationPoint> {
     out
 }
 
+/// Moves the controller points of `lanes` with the notes that moved: `moves` holds the
+/// `(old start, new start)` of each note that changed its start, in content ticks.
+///
+/// **The rule.** A point belongs to a moved note when it lies between the note's old start
+/// (included) and its new start (excluded), whichever comes first: a note that moved later takes
+/// the points from its old start up to the new one, a note that moved earlier takes the points
+/// from its old start back to the new one. A claimed point moves by the distance of its note, so
+/// it keeps its place relative to the note. When the spans of several notes cover a point, the
+/// note whose old start is nearest to the point claims it (the earlier old start when two are
+/// as near, then the first in `moves`). Points outside every span stay where they are. A moved
+/// point is clamped to `0..=MAX_TICK`, and when two points end on one tick the one that was later
+/// in the lane is kept, so the lanes stay valid. Values and curves never change.
+pub fn follow_note_moves(lanes: &[ControllerLane], moves: &[(i64, i64)]) -> Vec<ControllerLane> {
+    let moves: Vec<(i64, i64)> = moves.iter().copied().filter(|(a, b)| a != b).collect();
+    if moves.is_empty() {
+        return lanes.to_vec();
+    }
+    let claims = |tick: i64| {
+        moves
+            .iter()
+            .filter(|&&(from, to)| {
+                if to > from {
+                    (from..to).contains(&tick)
+                } else {
+                    tick <= from && tick > to
+                }
+            })
+            .min_by_key(|&&(from, _)| ((from - tick).abs(), from))
+            .map(|&(from, to)| to - from)
+    };
+    let out = lanes
+        .iter()
+        .map(|lane| {
+            let mut points: Vec<(i64, usize, AutomationPoint)> = lane
+                .points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let tick = (p.tick + claims(p.tick).unwrap_or(0)).clamp(0, MAX_TICK);
+                    (tick, i, *p)
+                })
+                .collect();
+            points.sort_by_key(|&(tick, i, _)| (tick, i));
+            // On one tick the later point of the lane wins.
+            let mut kept: Vec<AutomationPoint> = Vec::with_capacity(points.len());
+            for (tick, _, p) in points {
+                if kept.last().is_some_and(|k| k.tick == tick) {
+                    kept.pop();
+                }
+                kept.push(AutomationPoint { tick, ..p });
+            }
+            ControllerLane::new(lane.kind, kept)
+        })
+        .collect();
+    canonical(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,5 +615,112 @@ mod tests {
         let light = thin_selection(&l, CC, &all, 0.005).0[0].points.len();
         let heavy = thin_selection(&l, CC, &all, 0.05).0[0].points.len();
         assert!(heavy < light, "{heavy} < {light}");
+    }
+
+    fn tick_list(lanes: &[ControllerLane]) -> Vec<i64> {
+        lanes[0].points.iter().map(|p| p.tick).collect()
+    }
+
+    fn value_list(lanes: &[ControllerLane]) -> Vec<f32> {
+        lanes[0].points.iter().map(|p| p.value).collect()
+    }
+
+    #[test]
+    fn a_later_note_takes_the_points_from_its_old_start_up_to_the_new_one() {
+        let lanes = lane(
+            CC,
+            vec![
+                pt(90, 0.1, Curve::Step),
+                pt(100, 0.2, Curve::Step),
+                pt(110, 0.3, Curve::Step),
+                pt(150, 0.4, Curve::Step),
+            ],
+        );
+        // The note moved from 100 to 120: 100 and 110 go with it by 20, 90 and 150 stay.
+        let out = follow_note_moves(&lanes, &[(100, 120)]);
+        assert_eq!(tick_list(&out), [90, 120, 130, 150]);
+        assert_eq!(value_list(&out), [0.1, 0.2, 0.3, 0.4]);
+    }
+
+    #[test]
+    fn an_earlier_note_takes_the_points_from_its_old_start_back_to_the_new_one() {
+        let lanes = lane(
+            CC,
+            vec![
+                pt(85, 0.1, Curve::Step),
+                pt(100, 0.2, Curve::Step),
+                pt(110, 0.3, Curve::Step),
+            ],
+        );
+        // The note moved from 100 to 80: the points after 80 up to its old start (included) go
+        // with it, the one after the old start stays.
+        let out = follow_note_moves(&lanes, &[(100, 80)]);
+        assert_eq!(tick_list(&out), [65, 80, 110]);
+    }
+
+    #[test]
+    fn a_point_on_the_new_start_and_one_past_the_old_start_stay() {
+        let lanes = lane(
+            CC,
+            vec![pt(80, 0.1, Curve::Step), pt(101, 0.2, Curve::Step)],
+        );
+        assert_eq!(
+            tick_list(&follow_note_moves(&lanes, &[(100, 80)])),
+            [80, 101]
+        );
+        let lanes = lane(
+            CC,
+            vec![pt(99, 0.1, Curve::Step), pt(120, 0.2, Curve::Step)],
+        );
+        assert_eq!(
+            tick_list(&follow_note_moves(&lanes, &[(100, 120)])),
+            [99, 120]
+        );
+    }
+
+    #[test]
+    fn the_note_with_the_nearest_old_start_claims_a_point_two_spans_cover() {
+        let lanes = lane(
+            CC,
+            vec![pt(120, 0.1, Curve::Step), pt(145, 0.2, Curve::Step)],
+        );
+        // 120 is only in the first span; 145 is in both and nearer to the second old start.
+        let out = follow_note_moves(&lanes, &[(100, 160), (140, 200)]);
+        assert_eq!(tick_list(&out), [180, 205]);
+        // The same answer whichever order the moves come in.
+        let out = follow_note_moves(&lanes, &[(140, 200), (100, 160)]);
+        assert_eq!(tick_list(&out), [180, 205]);
+    }
+
+    #[test]
+    fn two_points_on_one_tick_keep_the_later_one_and_ticks_stay_in_range() {
+        let lanes = lane(
+            CC,
+            vec![pt(100, 0.1, Curve::Step), pt(120, 0.2, Curve::Step)],
+        );
+        let out = follow_note_moves(&lanes, &[(100, 120)]);
+        assert_eq!((tick_list(&out), value_list(&out)), (vec![120], vec![0.2]));
+
+        let lanes = lane(CC, vec![pt(20, 0.1, Curve::Step), pt(50, 0.2, Curve::Step)]);
+        let out = follow_note_moves(&lanes, &[(50, 0)]);
+        assert_eq!((tick_list(&out), value_list(&out)), (vec![0], vec![0.2]));
+    }
+
+    #[test]
+    fn every_lane_follows_and_values_and_curves_are_kept() {
+        let lanes = vec![
+            ControllerLane::new(
+                ControllerKind::PitchBend,
+                vec![pt(100, -0.5, Curve::Linear), pt(300, 0.5, Curve::Step)],
+            ),
+            ControllerLane::new(CC, vec![pt(105, 0.25, Curve::Linear)]),
+        ];
+        let out = follow_note_moves(&lanes, &[(100, 110), (150, 150)]);
+        assert_eq!(out[0].points[0], pt(110, -0.5, Curve::Linear));
+        assert_eq!(out[0].points[1], pt(300, 0.5, Curve::Step));
+        assert_eq!(out[1].points, [pt(115, 0.25, Curve::Linear)]);
+        // Notes that did not change their start move nothing.
+        assert_eq!(follow_note_moves(&lanes, &[(100, 100)]), lanes);
+        assert_eq!(follow_note_moves(&lanes, &[]), lanes);
     }
 }

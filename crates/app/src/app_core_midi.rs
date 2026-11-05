@@ -17,6 +17,12 @@
 //! - *Import MIDI as Song* always makes new tracks, from tick 0, and also takes the file's
 //!   tempo map and meter map (they replace the song's) and its markers (added to the song's).
 //!
+//! **Groove from a file.** [`AppCore::groove_from_midi`] reads a MIDI file the way an import does
+//! but adds no clip: the onsets and velocities of all its notes are measured against a step
+//! (as EXTRACT GROOVE FROM CLIP measures a clip) and the result is added to the song's groove
+//! library under the file's name. It is one undo step. The quantize panel's FROM MIDI FILE
+//! button picks the file, and a MIDI file dropped on the open panel does the same.
+//!
 //! A MIDI file dropped on the window always makes new tracks at the playhead (the selection does
 //! not matter). Dropped on the arrangement ([`AppCore::import_midi_at`]) it goes where it lands:
 //! on a note lane it is one clip on that lane at the snapped drop position (a file of several
@@ -27,7 +33,8 @@
 
 use super::*;
 use crate::midi_file::{self, MidiResolution, MidiSong, MidiTrack};
-use atomik_model::{ClipContent, ImportedTrack, MidiImport, WorkflowCommand};
+use atomik_model::groove::{MAX_GROOVE_NAME, builtin_groove, extract_groove};
+use atomik_model::{ClipContent, ImportedTrack, MidiImport, StepResolution, WorkflowCommand};
 
 /// The instrument a track made by a MIDI import plays.
 pub const IMPORT_INSTRUMENT: &str = "atomik.poly-synth";
@@ -280,6 +287,71 @@ impl<S: EngineSink> AppCore<S> {
             lane,
         };
         self.import_midi_as(path, mode, place);
+    }
+
+    /// Measures the feel of the MIDI file at `path` as a groove and adds it to the song's
+    /// library: all the notes of all its tracks and channels count, from the start of the file
+    /// (its bar 1 is the song's), measured against `step` in `slots` slots (see
+    /// `extract_groove`). The groove is called after the file (a taken name gets a number);
+    /// returns its name, `None` after a reported failure (an unreadable file, a file without
+    /// notes). One undo step.
+    pub fn groove_from_midi(
+        &mut self,
+        path: &Path,
+        step: StepResolution,
+        slots: usize,
+    ) -> Option<String> {
+        let file = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        let result = read_midi(path).and_then(|midi| {
+            let notes = midi.merged().notes;
+            if notes.is_empty() {
+                return Err("the file has no notes to measure".to_owned());
+            }
+            let name = self.free_groove_name(path);
+            let groove = extract_groove(&name, &notes, 0, step, slots)?;
+            self.apply_command(Command::Song(SongCommand::SetGroove(groove)))
+                .map_err(|e| e.to_string())?;
+            Ok((name, notes.len()))
+        });
+        match result {
+            Ok((name, count)) => {
+                self.report(format!(
+                    "Added the groove {name} from {count} notes of {file}"
+                ));
+                Some(name)
+            }
+            Err(e) => {
+                self.report(format!("{file}: {e}"));
+                None
+            }
+        }
+    }
+
+    /// The name for a groove made from the file at `path`: its name without the extension, cut
+    /// to what a groove name allows, and numbered when the song or the built-in grooves have it.
+    fn free_groove_name(&self, path: &Path) -> String {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Groove".to_owned());
+        let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>().trim().to_owned();
+        let taken = |n: &str| self.doc().song.groove(n).is_some() || builtin_groove(n).is_some();
+        let base = cut(&stem, MAX_GROOVE_NAME);
+        if !taken(&base) {
+            return base;
+        }
+        (2..)
+            .map(|i| {
+                let suffix = format!(" {i}");
+                let room = MAX_GROOVE_NAME - suffix.chars().count();
+                format!("{}{suffix}", cut(&stem, room))
+            })
+            .find(|n| !taken(n))
+            .expect("an unused name")
     }
 
     /// Reads the MIDI file at `path` and adds it as a new take of note take group `group` (Import

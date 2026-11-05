@@ -4,6 +4,7 @@
 //! QUANTIZE                                                               [ CLOSE ]
 //! Applies to: 3 clips
 //! Grid             [-]  1/16          [+]
+//! Grid per note    [-]  OFF           [+]
 //! Strength         [-]  100 %         [+]
 //! Swing            [-]  50 %          [+]
 //! Groove           [-]  Swing 66%     [+]
@@ -14,13 +15,14 @@
 //! Seed             [-]  0             [+]
 //! Snap note ends   [-]  OFF           [+]
 //! Legato           [-]  OFF           [+]
+//! Move controllers [-]  ON            [+]
 //! Groove name      [ Late 2nd                 ] [ RENAME ]
 //! [ APPLY ] [ LIVE ON CLIPS ] [ CLEAR LIVE ]
 //! GROOVES IN THIS SONG
 //!   Late 2nd           1/16  2 slots                                  [ DELETE ]
 //! Measure with        [-]  1/16          [+]
 //! Slots               [-]  2             [+]
-//! [ EXTRACT GROOVE FROM CLIP ]
+//! [ EXTRACT GROOVE FROM CLIP ] [ GROOVE FROM MIDI FILE ]
 //! ```
 //!
 //! A modal view the app places over the window like the relink panel. It has no document: the
@@ -35,6 +37,9 @@
 //! * The groove name is a [`TextField`]: it shows the name of the chosen groove of the song (a
 //!   built-in groove has no name to edit); `RENAME` or Enter emits [`QuantizeAction::Rename`].
 //! * `EXTRACT GROOVE FROM CLIP` emits [`QuantizeAction::Extract`] (not without a clip to measure).
+//! * `GROOVE FROM MIDI FILE` emits [`QuantizeAction::FromMidi`]: the app asks for a `.mid` file
+//!   and measures it with the same step and slots (a MIDI file dropped on the panel does the
+//!   same).
 //! * `DELETE` on a groove row emits [`QuantizeAction::Delete`].
 //! * `CLOSE` emits [`QuantizeAction::Close`].
 //!
@@ -46,8 +51,10 @@
 //!
 //! Every value has a `-` and a `+` button and answers the wheel. The settings live in
 //! [`QuantizeValues`], which the app keeps between openings. The groove row cycles through
-//! "None", the built-in grooves and the song's; a groove sets the grid, so the grid row is dimmed
-//! while one is chosen.
+//! "None", the built-in grooves and the song's; a groove sets the grid, so the grid row and the
+//! per-note grid row are dimmed while one is chosen. `Grid per note` lets every note pick its
+//! own grid, the note value nearest to its length up to the grid of the row above; `Move
+//! controllers` carries the controller points of a note clip along with its notes.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
@@ -70,7 +77,7 @@ const ROW_H: f64 = 26.0;
 const APPLY_H: f64 = 40.0;
 const LIB_HEAD_H: f64 = 24.0;
 const LIB_ROW_H: f64 = 22.0;
-const LIB_ROWS: usize = 4;
+const LIB_ROWS: usize = 3;
 const EXTRACT_H: f64 = 42.0;
 const MARGIN: f64 = 16.0;
 const MAX_WIDTH: f64 = 460.0;
@@ -138,6 +145,10 @@ pub struct QuantizeValues {
     pub seed: u32,
     /// Also snap note ends.
     pub snap_ends: bool,
+    /// Every note picks its own grid, up to the grid above.
+    pub grid_by_length: bool,
+    /// Controller points of a note clip move with its notes.
+    pub move_controllers: bool,
     /// The step an extracted groove is measured against.
     pub extract_step: StepResolution,
     /// The slots of an extracted groove.
@@ -158,6 +169,8 @@ impl Default for QuantizeValues {
             legato: false,
             seed: 0,
             snap_ends: false,
+            grid_by_length: false,
+            move_controllers: true,
             extract_step: StepResolution::Sixteenth,
             extract_slots: 2,
         }
@@ -180,6 +193,8 @@ impl QuantizeValues {
             humanize_length: pct(self.humanize_length),
             legato: self.legato,
             seed: self.seed,
+            grid_by_length: self.grid_by_length,
+            controllers: self.move_controllers,
         }
     }
 }
@@ -223,6 +238,9 @@ pub enum QuantizeAction {
     },
     /// Measure a groove from the clip and add it to the song.
     Extract,
+    /// Ask for a MIDI file and measure a groove from it (the app asks, then adds it to the
+    /// song).
+    FromMidi,
     /// Remove the song's groove of this name.
     Delete(String),
     /// Close the panel.
@@ -234,6 +252,8 @@ pub enum QuantizeAction {
 pub enum QuantizeRow {
     /// The grid.
     Grid,
+    /// Every note picks its own grid.
+    GridByLength,
     /// How far notes move.
     Strength,
     /// Swing.
@@ -254,6 +274,8 @@ pub enum QuantizeRow {
     SnapEnds,
     /// Stretch each note to reach the next.
     Legato,
+    /// Controller points follow their notes.
+    Controllers,
     /// The step an extracted groove is measured against.
     ExtractStep,
     /// The slots of an extracted groove.
@@ -262,8 +284,9 @@ pub enum QuantizeRow {
 
 impl QuantizeRow {
     /// The rows above the APPLY button.
-    const TOP: [QuantizeRow; 11] = [
+    const TOP: [QuantizeRow; 13] = [
         QuantizeRow::Grid,
+        QuantizeRow::GridByLength,
         QuantizeRow::Strength,
         QuantizeRow::Swing,
         QuantizeRow::Groove,
@@ -274,16 +297,24 @@ impl QuantizeRow {
         QuantizeRow::Seed,
         QuantizeRow::SnapEnds,
         QuantizeRow::Legato,
+        QuantizeRow::Controllers,
     ];
 
     /// A row that is an ON / OFF switch (a click on its value flips it; it is not dragged).
     fn is_toggle(self) -> bool {
-        matches!(self, QuantizeRow::SnapEnds | QuantizeRow::Legato)
+        matches!(
+            self,
+            QuantizeRow::GridByLength
+                | QuantizeRow::SnapEnds
+                | QuantizeRow::Legato
+                | QuantizeRow::Controllers
+        )
     }
 
     fn title(self) -> &'static str {
         match self {
             QuantizeRow::Grid => "Grid",
+            QuantizeRow::GridByLength => "Grid per note",
             QuantizeRow::Strength => "Strength",
             QuantizeRow::Swing => "Swing",
             QuantizeRow::Groove => "Groove",
@@ -294,6 +325,7 @@ impl QuantizeRow {
             QuantizeRow::Seed => "Seed",
             QuantizeRow::SnapEnds => "Snap note ends",
             QuantizeRow::Legato => "Legato",
+            QuantizeRow::Controllers => "Move controllers",
             QuantizeRow::ExtractStep => "Measure against",
             QuantizeRow::ExtractSlots => "Slots",
         }
@@ -465,6 +497,7 @@ impl QuantizeView {
                 Some(g) => format!("{} (groove)", step_label(g.step)),
                 None => GRIDS[v.grid.min(GRIDS.len() - 1)].0.to_owned(),
             },
+            QuantizeRow::GridByLength => if v.grid_by_length { "ON" } else { "OFF" }.to_owned(),
             QuantizeRow::Strength => format!("{} %", v.strength),
             QuantizeRow::Swing => format!("{} %", v.swing),
             QuantizeRow::Groove => v.groove.clone().unwrap_or_else(|| "None".to_owned()),
@@ -475,6 +508,7 @@ impl QuantizeView {
             QuantizeRow::Seed => v.seed.to_string(),
             QuantizeRow::SnapEnds => if v.snap_ends { "ON" } else { "OFF" }.to_owned(),
             QuantizeRow::Legato => if v.legato { "ON" } else { "OFF" }.to_owned(),
+            QuantizeRow::Controllers => if v.move_controllers { "ON" } else { "OFF" }.to_owned(),
             QuantizeRow::ExtractStep => step_label(v.extract_step).to_owned(),
             QuantizeRow::ExtractSlots => v.extract_slots.to_string(),
         }
@@ -489,7 +523,7 @@ impl QuantizeView {
     /// velocity does not without a groove).
     pub fn row_enabled(&self, row: QuantizeRow) -> bool {
         match row {
-            QuantizeRow::Grid => self.values.groove.is_none(),
+            QuantizeRow::Grid | QuantizeRow::GridByLength => self.values.groove.is_none(),
             QuantizeRow::GrooveVelocity => self.values.groove.is_some(),
             _ => true,
         }
@@ -507,6 +541,7 @@ impl QuantizeView {
             QuantizeRow::Grid => {
                 v.grid = (v.grid as i32 + dir).clamp(0, GRIDS.len() as i32 - 1) as usize;
             }
+            QuantizeRow::GridByLength => v.grid_by_length = !v.grid_by_length,
             QuantizeRow::Strength => v.strength = up(v.strength, 5, 0, 100),
             QuantizeRow::Swing => {
                 v.swing = up(v.swing, 1, i32::from(SWING_MIN), i32::from(SWING_MAX));
@@ -533,6 +568,7 @@ impl QuantizeView {
             }
             QuantizeRow::SnapEnds => v.snap_ends = !v.snap_ends,
             QuantizeRow::Legato => v.legato = !v.legato,
+            QuantizeRow::Controllers => v.move_controllers = !v.move_controllers,
             QuantizeRow::ExtractStep => {
                 let at = EXTRACT_STEPS
                     .iter()
@@ -734,6 +770,12 @@ impl QuantizeView {
         Rect::new(p.x0 + PAD, y, p.x0 + PAD + 230.0, y + BTN_H + 4.0)
     }
 
+    /// The GROOVE FROM MIDI FILE button, right of the extract one.
+    pub fn midi_rect(&self) -> Rect {
+        let e = self.extract_rect();
+        Rect::new(e.x1 + 8.0, e.y0, e.x1 + 8.0 + 180.0, e.y1)
+    }
+
     // ------------------------------------------------------------------ events
 
     /// What the button or value under `pos` does, for its tooltip (`None` during a drag and
@@ -780,6 +822,12 @@ impl QuantizeView {
             return help(
                 self.extract_rect(),
                 "Measure the feel of the selected clip as a new groove",
+            );
+        }
+        if self.midi_rect().contains(pos) {
+            return help(
+                self.midi_rect(),
+                "Measure the feel of a MIDI file as a new groove (a dropped MIDI file does it too)",
             );
         }
         for i in 0..self.library().len() {
@@ -909,6 +957,9 @@ impl QuantizeView {
         }
         if self.extract_rect().contains(pos) {
             return self.can_extract.then_some(QuantizeAction::Extract);
+        }
+        if self.midi_rect().contains(pos) {
+            return Some(QuantizeAction::FromMidi);
         }
         let rows = QuantizeRow::TOP
             .into_iter()
@@ -1091,7 +1142,7 @@ impl QuantizeView {
         if library.is_empty() {
             sp::label(
                 c,
-                "None yet: extract one from a clip.",
+                "None yet: extract one from a clip or a MIDI file.",
                 p.x0 + PAD,
                 lib + LIB_HEAD_H + 15.0,
                 10.0,
@@ -1146,6 +1197,8 @@ impl QuantizeView {
             None,
             self.can_extract && hovered(extract),
         );
+        let midi = self.midi_rect();
+        sp::button(c, st, midi, "GROOVE FROM MIDI FILE", None, hovered(midi));
         c.pop_clip();
         c.pop_transform();
     }

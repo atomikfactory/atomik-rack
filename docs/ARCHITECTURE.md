@@ -1615,8 +1615,19 @@ a note and is applied first.
   the range, both clamped to a valid note.
 - **Collisions.** A clip holds at most one note per `(tick, key)`. Notes that were not selected keep
   their places and claim them first; a moved note that lands on a taken `(tick, key)` moves on a
-  tick at a time to the next free one. No note is ever dropped. Controller lane points are not
-  moved.
+  tick at a time to the next free one. No note is ever dropped.
+- **Controller points follow their notes.** With `QuantizeParams::controllers` (on by default)
+  `groove_cmd::clip_edit` hands the `(old start, new start)` of every note that moved
+  (`Quantized::moves`) to `controller_edit::follow_note_moves` and puts the result in the same
+  `Edit::Clip`. A point between a note's old start (included) and its new start (excluded) moves by
+  the note's distance; where two spans cover a point the nearest old start claims it; a point that
+  ends on a tick another holds loses to the later one; ticks stay in `0..=MAX_TICK`. Values and
+  curves are untouched, and the lanes stay canonical. Points outside every span, device-parameter
+  lanes (`Clip::param_lanes`) and a track's own controller lanes do not move.
+- **A grid per note.** With `QuantizeParams::grid_by_length` (and no groove, whose step is the one
+  grid) each selected note snaps to `grid_for_length(length, params.grid)`: the straight note value
+  from a 1/32 note up to `params.grid` (or `params.grid` itself) whose ratio to the note's length is
+  nearest, the finer on a tie. The targets of every grid in use are built once per command.
 - **Commands** (`SongCommand`, each one undo step). `ApplyQuantize { clips, quantize }` plans one
   `Edit::Clip` per note clip that changes (audio and automation clips and the compiled clips of a
   take group are skipped; an error "quantize changes no note" when nothing changes, so an empty undo
@@ -1642,15 +1653,23 @@ a note and is applied first.
   each distinct clip groove for its own clips (which clip hides which is decided first, over all of them),
   then merges by `(tick, key)`. The rename and delete above follow on the clips too. The clip fields are
   `"groove"` and `"groove_strength"` after `"sysex"`, ignorable under format 43; a clip that names a groove
-  the song lacks (pasted from another song) loads without one. Controller lanes do not move with the
-  notes yet.
+  the song lacks (pasted from another song) loads without one. A live groove never moves controller
+  points (it moves note starts at play time, as above).
+- **A groove from a MIDI file.** `AppCore::groove_from_midi(path, step, slots)` reads the file as an
+  import does (`read_midi`), merges the notes of all its tracks and channels, measures them with
+  `extract_groove` from tick 0 and adds the groove through `SetGroove` under the file's name
+  (numbered when the song or the built-in grooves have it, cut to 32 characters). A file that cannot
+  be read, or has no notes, is reported and changes nothing. The quantize panel's `QuantizeAction::FromMidi`
+  becomes `ShellRequest::PickGrooveMidi` (the platform asks for a file and calls
+  `Shell::groove_from_midi_file`), and a `FileDrop` of a MIDI file on the open panel calls the same.
 - **Library in the project.** `Song.grooves` is the song's shared library, saved by project format
   21 as `"grooves"` (see section 2 above for the fields; names are unique, not a built-in name, and
   at most 32 characters; a version 20 file loads without it and the field is unknown there).
 - **Panel** ([quantize_panel.rs](../crates/ui/src/quantize_panel.rs),
   [app_core_quantize.rs](../crates/app/src/app_core_quantize.rs), `Shell`). `QuantizeView` is a
   modal like the relink panel with a `-` / `+` pair and the wheel per value (grid, strength, swing,
-  groove, groove velocity, humanize timing, velocity and length, seed, snap ends, legato), a text
+  groove, groove velocity, humanize timing, velocity and length, seed, snap ends, legato, grid per
+  note, move controllers), a text
   field that names and renames the chosen groove of the song (`RENAME` or Enter, `RenameGroove`;
   `Shell::wants_text_input` follows its focus), `LIVE ON CLIPS` and `CLEAR LIVE` (`SetClipGroove` on the
   target's clips at the panel's strength) and the groove library list. It has no document: the
