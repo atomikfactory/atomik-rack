@@ -125,3 +125,22 @@ fn a_project_with_a_feedback_loop_saves_and_loads_and_a_file_with_a_bare_loop_do
         Ok(_) => panic!("a loop without a delay stage must not load"),
     }
 }
+
+#[test]
+fn a_loop_inside_a_container_follows_the_same_rule() {
+    let reg = registry();
+    let mut d = three_devices(&reg);
+    d.apply(add(3, "atomik.container", Some("box")), &reg)
+        .unwrap();
+    d.apply(add_inner("box", 0, GAIN, "gain"), &reg).unwrap();
+    d.apply(add_inner("box", 1, FEEDBACK, "fb"), &reg).unwrap();
+    refused(&mut d, &reg, connect("box/gain:out_l", "box/gain:aux_l"));
+    d.apply(connect("box/gain:out_l", "box/fb:in_l"), &reg)
+        .unwrap();
+    d.apply(connect("box/fb:out_l", "box/gain:aux_l"), &reg)
+        .unwrap();
+    assert!(d.doc().validate().is_ok());
+    let text = save_project(d.doc());
+    let loaded = load_project(&text, &reg).expect("a loop inside a container loads");
+    assert_eq!(save_project(&loaded), text);
+}
