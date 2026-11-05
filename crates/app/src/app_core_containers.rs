@@ -155,7 +155,8 @@ pub(super) fn macro_values(expanded: &ExpandedRack) -> BTreeMap<(DeviceKey, Stri
 }
 
 /// The flat devices that publish values for the views: effects with a display, the players, the
-/// modulators and the granular sampler (its live grains).
+/// modulators, the granular sampler (its live grains) and the wavetable synth (its live
+/// positions).
 pub(super) fn metered_keys(expanded: &ExpandedRack) -> Vec<DeviceKey> {
     expanded
         .devices
@@ -165,6 +166,7 @@ pub(super) fn metered_keys(expanded: &ExpandedRack) -> Vec<DeviceKey> {
                 || atomik_devices::is_player(&d.type_id)
                 || atomik_devices::is_modulator(&d.type_id)
                 || d.type_id == super::samples::GRANULAR
+                || d.type_id == super::samples::WAVETABLE
         })
         .map(|d| d.key.clone())
         .collect()

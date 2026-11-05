@@ -34,7 +34,7 @@ use crate::sink::EngineSink;
 use atomik_core::NoteKind;
 use atomik_device_sdk::SampleBuffer;
 use atomik_model::DeviceKey;
-use atomik_render::samples::{build_sample_map, song_asset_buffer};
+use atomik_render::samples::{build_sample_map, finish_map, song_asset_buffer};
 use atomik_ui::SampleEditorView;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -44,10 +44,12 @@ pub(super) const GRANULAR: &str = "atomik.granular";
 /// The convolution reverb's device type: its impulse response is one sample, like the granular
 /// sampler's.
 pub(super) const CONVOLVER: &str = "atomik.convolver";
+/// The wavetable synth's device type: an imported table is one sample, cut into frames.
+pub(super) const WAVETABLE: &str = atomik_devices::wavetable_synth::DESCRIPTOR.type_id;
 
 /// Whether the device type plays exactly one sample (a drop replaces it).
 pub(super) fn takes_one_sample(type_id: &str) -> bool {
-    type_id == GRANULAR || type_id == CONVOLVER
+    type_id == GRANULAR || type_id == CONVOLVER || type_id == WAVETABLE
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -201,8 +203,13 @@ impl<S: EngineSink> AppCore<S> {
         if !self.registry.takes_samples(&device.type_id) {
             return;
         }
-        let (zones, name) = (device.zones.clone(), device.name.clone());
+        let (zones, name, type_id) = (
+            device.zones.clone(),
+            device.name.clone(),
+            device.type_id.clone(),
+        );
         let built = build_sample_map(&zones, |hash| self.zone_buffer(hash));
+        let built = finish_map(&type_id, built);
         for problem in built.rejected {
             self.reject(format!("sampler {name}: {problem}"));
         }
