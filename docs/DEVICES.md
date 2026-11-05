@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships sixty-two original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-four original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
@@ -8,7 +8,7 @@ a hardware synth or a virtual port), the effects (reverb, space reverb, convolut
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, tuner, pitch shifter,
+sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, tuner, pitch shifter, rotary speaker,
 the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
 envelope follower) and the two spiders), the note players (step sequencer, arpeggiator,
 note filter, key &
@@ -3944,6 +3944,45 @@ Sockets: `in_l`, `in_r` (Audio in), `pitch_cv_in` (CV in), `out_l`, `out_r` (Aud
 
 The latency follows `quality` (the device reports a variable latency); changing the quality
 restarts the device with empty buffers.
+
+### Rotary Speaker: `atomik.rotary-speaker` (Effect)
+
+A rotating-speaker cabinet: a horn rotor and a drum rotor in front of two microphones.
+Source: [rotary_speaker.rs](../crates/devices/src/rotary_speaker.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `speed_cv_in` (CV in), `out_l`, `out_r` (Audio out),
+`horn_cv_out` (CV out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `speed` | 0 to 2 (Stop, Slow, Fast) | 1 | choice |
+| `horn_slow`, `horn_fast` | 0.3 to 2, 3 to 10 | 0.8, 6.7 | Hz |
+| `drum_slow`, `drum_fast` | 0.2 to 1.5, 3 to 8 | 0.7, 5.8 | Hz |
+| `horn_ramp` | 50 to 3000 | 600 | ms |
+| `drum_ramp` | 200 to 8000 | 2500 | ms |
+| `crossover` | 200 to 1600 | 800 | Hz |
+| `drive` | 0 to 1 | 0.2 | percent |
+| `doppler` | 0 to 1 | 0.6 | percent |
+| `tremolo` | 0 to 1 | 0.5 | percent |
+| `spread` | 0 to 1 | 1 | percent |
+| `mix` | 0 to 1 | 1 | percent |
+| `bypass` | 0 or 1 | 0 | toggle |
+
+- The two inputs are summed to one source, driven through a soft clipper (`drive` 0 is bit-exact
+  off), split at `crossover` (24 dB per octave, the bands add up flat) and fed to the two rotors:
+  the high band to the horn, the low band to the drum.
+- Each rotor turns at the speed `speed` picks. A change of speed runs up or down with a one-pole
+  approach of `horn_ramp` or `drum_ramp` milliseconds, so the heavier drum follows the horn.
+  A `speed_cv_in` above 0.5 (back to the knob below 0.3) forces Fast: a gate is a speed switch.
+  After a reset the rotors start at their target speed. `horn_cv_out` is the sine of the horn
+  angle.
+- At each microphone the rotor gives a Doppler delay (a fixed 0.4 ms, moved by up to half of
+  0.6 ms for the horn and 0.8 ms for the drum times `doppler`, so the pitch rises as the rotor
+  comes toward the microphone) and a level that is full while it faces the microphone and falls
+  by `tremolo` (0.6 of it for the drum) while it faces away. `spread` puts the microphones 0 to
+  180 degrees apart; at 0 both outputs are equal.
+- The wet path is not delayed to match the dry path, and no latency is reported. `mix` 0 passes
+  the input bit for bit.
 
 ### Feedback Route: `atomik.feedback` (Utility)
 

@@ -4,7 +4,7 @@
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! The utility devices [`gain_tool`], [`stereo_tool`], [`feedback`] (the delay stage that makes a loop legal), [`gate`], [`dynamics`] (gate then
-//! compressor), [`duck`] (the sidechain tool), [`env_filter`], [`auto_filter`], [`transient_shaper`], [`de_esser`], [`tuner`], [`pitch_shifter`], the
+//! compressor), [`duck`] (the sidechain tool), [`env_filter`], [`auto_filter`], [`transient_shaper`], [`de_esser`], [`tuner`], [`pitch_shifter`], [`rotary_speaker`], the
 //! CV utilities [`cv_math`], [`cv_quantizer`], [`sample_hold`], [`slew_limiter`], [`gate_processor`] and
 //! [`envelope_follower`], and the two cable mergers in [`spider`] share the descriptor builders of the private `tool_support` module.
 //!
@@ -72,6 +72,7 @@ pub mod pitch_shifter;
 pub mod poly_synth;
 mod recent_peak;
 pub mod reverb;
+pub mod rotary_speaker;
 pub mod sample_hold;
 pub mod sampler;
 pub mod semi_modular;
@@ -166,6 +167,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(stereo_delay::factory())?;
     registry.register(stereo_tool::factory())?;
     registry.register(reverb::factory())?;
+    registry.register(rotary_speaker::factory())?;
     registry.register(space_reverb::factory())?;
     registry.register(vocoder::factory())?;
     registry.register_with_samples(convolver::factory())?;
@@ -221,7 +223,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 63] = [
+    const TYPE_IDS: [&str; 64] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -270,6 +272,7 @@ mod tests {
         "atomik.pitch-shifter",
         "atomik.poly-synth",
         "atomik.reverb",
+        "atomik.rotary-speaker",
         "atomik.sample-hold",
         "atomik.sampler",
         "atomik.semi-modular",
@@ -288,7 +291,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-three devices.
+    // Name kept; it now covers all sixty-four devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -335,6 +338,7 @@ mod tests {
             "atomik.gate",
             "atomik.gate-processor",
             "atomik.pitch-shifter",
+            "atomik.rotary-speaker",
             "atomik.sample-hold",
             "atomik.slew-limiter",
             "atomik.spider-audio",

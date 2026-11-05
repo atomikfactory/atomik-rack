@@ -241,6 +241,12 @@ proptest! {
         check_bounded("atomik.transient-shaper", &s)?;
     }
 
+    /// The rotary speaker: any params and loud noise.
+    #[test]
+    fn qa_rotary_speaker_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded("atomik.rotary-speaker", &s)?;
+    }
+
     /// The pitch shifter: any params and loud noise.
     #[test]
     fn qa_pitch_shifter_any_params_bounded_at_every_sample_rate(s in scene()) {
