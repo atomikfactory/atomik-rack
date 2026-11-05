@@ -405,6 +405,8 @@ pub enum AppCommand {
     FreezeTrackToDevice,
     /// Track ▸ Freeze with Tail: keep the decay of reverbs and delays past the end of the clips.
     FreezeTail,
+    /// Track ▸ Freeze with Strip: Freeze Track bakes the channel strip into the render.
+    FreezeStrip,
     /// Track ▸ Cancel Freeze: stop the running render and drop the waiting ones.
     FreezeCancel,
     /// Track ▸ Unfreeze Track: the original track, instrument and effects again.
@@ -861,6 +863,7 @@ impl AppCommand {
             AppCommand::FreezeTrack => ("sequencer.freeze_track", None),
             AppCommand::FreezeTrackToDevice => ("sequencer.freeze_track_to_device", None),
             AppCommand::FreezeTail => ("sequencer.freeze_tail", None),
+            AppCommand::FreezeStrip => ("sequencer.freeze_strip", None),
             AppCommand::FreezeCancel => ("sequencer.freeze_cancel", None),
             AppCommand::UnfreezeTrack => ("sequencer.unfreeze_track", None),
             AppCommand::UnfreezeTrackKeep => ("sequencer.unfreeze_track_keep", None),
@@ -1188,6 +1191,7 @@ impl AppCommand {
             ("sequencer.freeze_track", None) => AppCommand::FreezeTrack,
             ("sequencer.freeze_track_to_device", None) => AppCommand::FreezeTrackToDevice,
             ("sequencer.freeze_tail", None) => AppCommand::FreezeTail,
+            ("sequencer.freeze_strip", None) => AppCommand::FreezeStrip,
             ("sequencer.freeze_cancel", None) => AppCommand::FreezeCancel,
             ("sequencer.unfreeze_track", None) => AppCommand::UnfreezeTrack,
             ("sequencer.unfreeze_track_keep", None) => AppCommand::UnfreezeTrackKeep,
@@ -1857,6 +1861,8 @@ pub struct FreezeMenu {
     pub busy: bool,
     /// Freezes keep the tail of the chain (the item is checked).
     pub tail: bool,
+    /// Freeze Track bakes the channel strip into the render (the item is checked).
+    pub strip: bool,
     /// A selected track has players above its instrument (the player stack items work).
     pub players: bool,
     /// Every selected stack's track records Direct (the item is checked).
@@ -2808,6 +2814,11 @@ pub fn menus_with_songs(
                     AppCommand::FreezeTail,
                     state.freeze.tail,
                 ),
+                check(
+                    "Freeze with Strip",
+                    AppCommand::FreezeStrip,
+                    state.freeze.strip,
+                ),
                 enabled(
                     "Re-render Frozen Track",
                     AppCommand::RefreezeTrack,
@@ -3523,6 +3534,7 @@ mod tests {
             AppCommand::FreezeTrack,
             AppCommand::FreezeTrackToDevice,
             AppCommand::FreezeTail,
+            AppCommand::FreezeStrip,
             AppCommand::FreezeCancel,
             AppCommand::UnfreezeTrack,
             AppCommand::UnfreezeTrackKeep,
@@ -4264,6 +4276,7 @@ mod tests {
                 "Freeze Track",
                 "Freeze Track up to Selected Device",
                 "Freeze with Tail",
+                "Freeze with Strip",
                 "Re-render Frozen Track",
                 "Unfreeze Track",
                 "Unfreeze Track and Keep Audio",

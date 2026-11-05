@@ -211,6 +211,7 @@ fn a_frozen_track_is_not_moved() {
                 length: 2 * BAR,
                 audio: audio(1),
                 effects: Vec::new(),
+                strip: false,
             },
         }),
         &reg,

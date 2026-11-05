@@ -65,6 +65,7 @@ fn render(effects: Vec<atomik_model::DeviceKey>) -> Frozen {
         length: 2 * BAR,
         audio: audio(1),
         effects,
+        strip: false,
     }
 }
 
@@ -990,4 +991,273 @@ fn the_channel_of_a_frozen_track_and_the_frozen_effects_stay_where_they_are() {
         &reg,
     )
     .unwrap();
+}
+
+// ---------------------------------------------------------------------- containers and the strip
+
+fn combine(keys: &[&str]) -> Command {
+    Command::Container(atomik_model::ContainerCommand::Combine {
+        keys: keys.iter().map(|k| key(k)).collect(),
+        name: String::new(),
+    })
+}
+
+#[test]
+fn a_container_instrument_freezes_with_everything_inside_it() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    d.apply(combine(&["synth"]), &reg).unwrap();
+    let device = d.doc().song.tracks[0].device.clone();
+    assert!(d.doc().device(&device).unwrap().inner.is_some());
+    let chain = track_chain(d.doc(), &reg, &device).expect("a container instrument has a chain");
+    let before = d.doc().expand(&reg);
+    // The tap is where the inner instrument feeds the channel.
+    let tap = freeze_tap(&before, &device, &[]).unwrap();
+    assert!(
+        tap[0].device.0.starts_with(&format!("{}/", device.0)),
+        "{tap:?}"
+    );
+    d.apply(
+        sc(SongCommand::FreezeTrack {
+            device: device.clone(),
+            frozen: render(vec![]),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let x = d.doc().expand(&reg);
+    let player = freeze_key(&device);
+    for dev in &x.devices {
+        let inside = atomik_model::within(&device, &dev.key) && dev.key != player;
+        assert_eq!(dev.frozen, inside, "{}", dev.key);
+    }
+    // The splitter of the container is unplugged too; nothing touches the inside any more.
+    assert!(
+        x.devices
+            .iter()
+            .any(|d| d.frozen && d.key.0.ends_with("~split"))
+    );
+    assert!(x.cables.iter().all(|c| {
+        (c.from.device == player || !atomik_model::within(&device, &c.from.device))
+            && !atomik_model::within(&device, &c.to.device)
+    }));
+    for (from, input) in [("out_l", "in_l"), ("out_r", "in_r")] {
+        assert!(
+            x.cables.iter().any(|c| c.from.device == player
+                && c.from.socket == from
+                && c.to.device == chain.channel
+                && c.to.socket == input),
+            "{from} -> {input}"
+        );
+    }
+    // A device inside the container is as frozen as the container.
+    let inner = x
+        .devices
+        .iter()
+        .find(|dev| dev.frozen && !dev.key.0.ends_with("~split"))
+        .unwrap()
+        .key
+        .clone();
+    let before = d.doc().clone();
+    for command in [
+        set_param(&inner.0, "filter.cutoff", 500.0),
+        Command::Container(atomik_model::ContainerCommand::SetMacroKind {
+            container: device.clone(),
+            index: 0,
+            kind: atomik_model::MacroKind::Switch,
+        }),
+    ] {
+        let e = d.apply(command.clone(), &reg).expect_err("refused");
+        assert!(matches!(e, ModelError::Frozen(_)), "{command:?}: {e}");
+        assert_eq!(d.doc(), &before);
+    }
+    // The file reloads and undo brings the container back to life.
+    let text = save_project(d.doc());
+    assert_eq!(&load_project(&text, &reg).unwrap(), d.doc());
+    d.undo().unwrap();
+    assert!(d.doc().expand(&reg).devices.iter().all(|dev| !dev.frozen));
+}
+
+#[test]
+fn a_container_effect_freezes_and_the_effects_after_it_stay_live() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 2);
+    let fx = chain_keys(&d, &reg);
+    d.apply(combine(&[fx[0].0.as_str()]), &reg).unwrap();
+    let fx = chain_keys(&d, &reg);
+    assert_eq!(fx.len(), 2, "the container stays in the insert chain");
+    assert!(d.doc().device(&fx[0]).unwrap().inner.is_some());
+    let before = d.doc().expand(&reg);
+    // The tap is the inner output that feeds the container's output.
+    let tap = freeze_tap(&before, &key("synth"), &fx[..1]).unwrap();
+    assert!(
+        tap[0].device.0.starts_with(&format!("{}/", fx[0].0)),
+        "{tap:?}"
+    );
+    let own = atomik_model::SocketRef {
+        device: fx[0].clone(),
+        socket: "out_l".to_owned(),
+    };
+    assert_eq!(before.exits.get(&own), Some(&tap[0]));
+    freeze(&mut d, &reg, vec![fx[0].clone()]);
+    let x = d.doc().expand(&reg);
+    let player = freeze_key(&key("synth"));
+    for dev in &x.devices {
+        let frozen = dev.key.0 == "synth" || atomik_model::within(&fx[0], &dev.key);
+        assert_eq!(dev.frozen, frozen, "{}", dev.key);
+    }
+    for (from, input) in [("out_l", "in_l"), ("out_r", "in_r")] {
+        assert!(
+            x.cables.iter().any(|c| c.from.device == player
+                && c.from.socket == from
+                && c.to.device == fx[1]
+                && c.to.socket == input),
+            "{from} -> {}:{input}",
+            fx[1]
+        );
+    }
+    let text = save_project(d.doc());
+    assert_eq!(&load_project(&text, &reg).unwrap(), d.doc());
+}
+
+/// The synth track with its channel strip baked in (the whole insert chain frozen).
+fn freeze_strip(d: &mut Document, reg: &Registry) -> Result<Vec<SyncOp>, ModelError> {
+    let effects = chain_keys(d, reg);
+    d.apply(
+        sc(SongCommand::FreezeTrack {
+            device: key("synth"),
+            frozen: Frozen {
+                strip: true,
+                ..render(effects)
+            },
+        }),
+        reg,
+    )
+}
+
+#[test]
+fn baking_the_strip_unplugs_the_channel_and_feeds_what_it_fed_from_the_player() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 1);
+    let channel = channel_of(&d);
+    let before = d.doc().expand(&reg);
+    let consumers: Vec<_> = before
+        .cables
+        .iter()
+        .filter(|c| c.from.device == channel && c.from.socket == "out_l")
+        .map(|c| c.to.clone())
+        .collect();
+    assert!(!consumers.is_empty(), "the channel feeds the master");
+    freeze_strip(&mut d, &reg).unwrap();
+    let mut held: std::collections::BTreeSet<_> = chain_keys(&d, &reg).into_iter().collect();
+    held.insert(key("synth"));
+    held.insert(channel.clone());
+    assert_eq!(frozen_devices(d.doc()), held);
+    let x = d.doc().expand(&reg);
+    let player = freeze_key(&key("synth"));
+    for dev in &x.devices {
+        assert_eq!(dev.frozen, held.contains(&dev.key), "{}", dev.key);
+    }
+    assert!(
+        x.cables
+            .iter()
+            .all(|c| c.from.device != channel && c.to.device != channel)
+    );
+    for to in &consumers {
+        assert!(
+            x.cables
+                .iter()
+                .any(|c| c.from.device == player && c.from.socket == "out_l" && &c.to == to),
+            "{to:?} is fed by the player"
+        );
+    }
+    // The strip is as frozen as the instrument: no edit of it, and no free insert slot.
+    let again = d.doc().clone();
+    for command in [
+        set_param(&channel.0, "fader", -6.0),
+        Command::Console(ConsoleCommand::SetInsert {
+            channel: channel.clone(),
+            slot: 3,
+            effect: Some(InsertEffect::New {
+                type_id: "atomik.reverb".into(),
+            }),
+        }),
+    ] {
+        let e = d.apply(command.clone(), &reg).expect_err("refused");
+        assert!(matches!(e, ModelError::Frozen(_)), "{command:?}: {e}");
+        assert_eq!(d.doc(), &again);
+    }
+    // Round trip with the saved flag, and a plain freeze writes none.
+    let text = saved(&d);
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["song"]["tracks"][0]["frozen"]["strip"], true);
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(&loaded, d.doc());
+    assert_eq!(save_project(&loaded), text);
+    d.undo().unwrap();
+    let chain = chain_keys(&d, &reg);
+    freeze(&mut d, &reg, chain);
+    assert!(!saved(&d).contains("\"strip\""));
+}
+
+#[test]
+fn a_strip_bake_needs_the_whole_insert_chain_and_a_strip_that_can_go_silent() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 2);
+    let fx = chain_keys(&d, &reg);
+    let partial = d.apply(
+        sc(SongCommand::FreezeTrack {
+            device: key("synth"),
+            frozen: Frozen {
+                strip: true,
+                ..render(vec![fx[0].clone()])
+            },
+        }),
+        &reg,
+    );
+    assert!(partial.is_err(), "the strip follows the whole chain");
+    // The loader refuses the same combination.
+    freeze_strip(&mut d, &reg).unwrap();
+    let text = saved(&d).replace(
+        &format!("\"effects\": [\"{}\", \"{}\"]", fx[0].0, fx[1].0),
+        &format!("\"effects\": [\"{}\"]", fx[0].0),
+    );
+    assert_ne!(text, saved(&d));
+    assert!(load_project(&text, &reg).is_err());
+    d.undo().unwrap();
+    // A send that is on, or a parallel channel, would go silent: the strip says so.
+    assert_eq!(
+        atomik_model::strip_blocker(d.doc(), &reg, &key("synth")),
+        None
+    );
+    let channel = channel_of(&d);
+    d.apply(add(5, "atomik.reverb", Some("verb")), &reg)
+        .unwrap();
+    d.apply(
+        Command::Console(ConsoleCommand::SetReturn {
+            slot: 0,
+            effect: Some(key("verb")),
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.apply(set_param(&channel.0, "send1.on", 1.0), &reg)
+        .unwrap();
+    d.apply(set_param(&channel.0, "send1.level", 0.5), &reg)
+        .unwrap();
+    let why = atomik_model::strip_blocker(d.doc(), &reg, &key("synth")).unwrap();
+    assert!(why.contains("send"), "{why}");
+    d.apply(set_param(&channel.0, "send1.level", f32::MIN), &reg)
+        .unwrap();
+    assert_eq!(
+        atomik_model::strip_blocker(d.doc(), &reg, &key("synth")),
+        None
+    );
+    d.apply(
+        Command::Console(ConsoleCommand::CreateParallel { strip: channel }),
+        &reg,
+    )
+    .unwrap();
+    let why = atomik_model::strip_blocker(d.doc(), &reg, &key("synth")).unwrap();
+    assert!(why.contains("parallel"), "{why}");
 }

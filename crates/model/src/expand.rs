@@ -98,6 +98,10 @@ pub struct ExpandedRack {
     /// `(container path, macro index 0..8, targets)` for every macro that has targets, outermost
     /// container first (the order macros are evaluated in).
     pub macro_targets: Vec<(DeviceKey, u8, Vec<ResolvedTarget>)>,
+    /// For each top-level container, the flat output that feeds its `out_l` and its `out_r`: the
+    /// container's own socket mapped to the inner device's socket the signal comes from (a
+    /// bypassed container maps to what feeds its input). A freeze taps a container effect there.
+    pub exits: BTreeMap<SocketRef, SocketRef>,
 }
 
 impl ExpandedRack {
@@ -274,6 +278,18 @@ pub(crate) fn expand_with_loops(
     b.emit_devices(top);
     b.emit_cables(top);
     b.cables.sort();
+    let mut exits = BTreeMap::new();
+    for d in devices.iter().filter(|d| d.inner.is_some()) {
+        for socket in ["out_l", "out_r"] {
+            let from = SocketRef {
+                device: d.key.clone(),
+                socket: socket.to_owned(),
+            };
+            if let Ok(Some(source)) = b.source(top, &from, 0) {
+                exits.insert(from, source);
+            }
+        }
+    }
     let looped = b.looped;
     (
         ExpandedRack {
@@ -281,6 +297,7 @@ pub(crate) fn expand_with_loops(
             cables: b.cables,
             alias: b.alias,
             macro_targets: b.macro_targets,
+            exits,
         },
         looped,
     )

@@ -68,7 +68,7 @@ use crate::commands::FreezeMenu;
 use crate::freeze_worker::{self, Done, PluginEnv, Work};
 use atomik_model::{
     AssetMeta, AudioClipContent, Cable, ClipContent, Frozen, LoopConvert, MeterEvent, TempoEvent,
-    Track, WorkflowCommand, clips_span, track_chain,
+    Track, WorkflowCommand, clips_span, strip_blocker, track_chain,
 };
 use atomik_render::freeze::FreezeRequest;
 use std::collections::{BTreeSet, VecDeque};
@@ -132,6 +132,8 @@ pub(super) struct FreezeState {
     running: Option<Running>,
     queue: VecDeque<Job>,
     tail: bool,
+    /// **Freeze with Strip**: the render is taken at the output of the channel.
+    strip: bool,
     next_job: u64,
 }
 
@@ -141,6 +143,7 @@ impl Default for FreezeState {
             running: None,
             queue: VecDeque::new(),
             tail: true,
+            strip: false,
             next_job: 1,
         }
     }
@@ -226,6 +229,16 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.freeze.tail = !self.audio.freeze.tail;
     }
 
+    /// Whether Freeze Track bakes the channel strip into the render.
+    pub fn freeze_strip(&self) -> bool {
+        self.audio.freeze.strip
+    }
+
+    /// Switches **Freeze with Strip** (see the module docs).
+    pub fn toggle_freeze_strip(&mut self) {
+        self.audio.freeze.strip = !self.audio.freeze.strip;
+    }
+
     /// What the menus need to know about the selection and the render.
     pub fn freeze_menu(&self) -> FreezeMenu {
         let doc = self.doc();
@@ -265,6 +278,7 @@ impl<S: EngineSink> AppCore<S> {
                     .any(|d| doc.song.track(d).is_some_and(|t| t.frozen.is_some())),
             busy,
             tail: self.audio.freeze.tail,
+            strip: self.audio.freeze.strip,
         }
     }
 
@@ -386,6 +400,7 @@ impl<S: EngineSink> AppCore<S> {
                 request: FreezeRequest {
                     device,
                     effects: if dry { 0 } else { chain.effects.len() },
+                    strip: false,
                     clips: Some(ids),
                     span: (start, end),
                     tail_seconds: tail,
@@ -461,6 +476,7 @@ impl<S: EngineSink> AppCore<S> {
                 request: FreezeRequest {
                     device,
                     effects,
+                    strip: false,
                     clips: None,
                     span,
                     tail_seconds: tail,
@@ -582,6 +598,7 @@ impl<S: EngineSink> AppCore<S> {
                 request: FreezeRequest {
                     device,
                     effects: 0,
+                    strip: false,
                     clips: Some(vec![clip]),
                     span: (start, end),
                     tail_seconds: 0.0,
@@ -646,12 +663,13 @@ impl<S: EngineSink> AppCore<S> {
             .frozen
             .as_ref()
             .ok_or_else(|| format!("{name} is not frozen"))?;
-        let effects = frozen.effects.len();
+        let (effects, strip) = (frozen.effects.len(), frozen.strip);
         track_chain(doc, &self.registry, device)?;
         let span = clips_span(track).ok_or_else(|| format!("{name} has no clips to render"))?;
         let request = FreezeRequest {
             device: device.clone(),
             effects,
+            strip,
             clips: None,
             span,
             tail_seconds: self.tail_seconds(),
@@ -682,6 +700,11 @@ impl<S: EngineSink> AppCore<S> {
             ));
         }
         let chain = track_chain(doc, &self.registry, device)?;
+        // The strip is baked in by a freeze of the whole track only.
+        let strip = self.audio.freeze.strip && through == FreezeThrough::Track;
+        if strip && let Some(why) = strip_blocker(doc, &self.registry, device) {
+            return Err(why);
+        }
         let effects = match through {
             FreezeThrough::Track => chain.effects.len(),
             FreezeThrough::SelectedDevice => match self.view.selected() {
@@ -704,6 +727,7 @@ impl<S: EngineSink> AppCore<S> {
         let request = FreezeRequest {
             device: device.clone(),
             effects,
+            strip,
             clips: None,
             span,
             tail_seconds: self.tail_seconds(),
@@ -848,6 +872,7 @@ impl<S: EngineSink> AppCore<S> {
                         length: done.length,
                         audio,
                         effects,
+                        strip: job.request.strip,
                     },
                 }));
                 if applied.is_ok() {
@@ -878,6 +903,7 @@ impl<S: EngineSink> AppCore<S> {
                         length: done.length,
                         audio,
                         effects,
+                        strip: job.request.strip,
                     },
                 }));
                 if applied.is_ok() {

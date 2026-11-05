@@ -39,7 +39,9 @@ use crate::{RenderError, Rendered};
 use atomik_audio_file::AudioData;
 use atomik_device_sdk::Registry;
 use atomik_model::song::ClipId;
-use atomik_model::{DeviceKey, RackDoc, ticks_for_frames, track_chain};
+use atomik_model::{
+    DeviceKey, ExpandedRack, RackDoc, SocketRef, ticks_for_frames, track_chain, within,
+};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -61,6 +63,9 @@ pub struct FreezeRequest {
     pub device: DeviceKey,
     /// How many of the channel's insert effects the render includes (`0`: the instrument alone).
     pub effects: usize,
+    /// Take the render at the output of the channel, so the whole strip is baked into it. It
+    /// includes the whole insert chain: `effects` must be the length of the chain.
+    pub strip: bool,
     /// Render only these clips of the track (bounce in place), a muted note lane that holds one
     /// included; `None` renders the track, leaving its muted note lanes out.
     pub clips: Option<Vec<ClipId>>,
@@ -107,6 +112,13 @@ pub fn render_freeze(
         return Err(fail(format!("{} is frozen already", request.device)));
     }
     let chain = track_chain(doc, registry, &request.device).map_err(fail)?;
+    if request.strip && request.effects != chain.effects.len() {
+        return Err(fail(format!(
+            "a render with the strip of {} baked in includes all {} insert effect(s)",
+            request.device,
+            chain.effects.len()
+        )));
+    }
     if request.effects > chain.effects.len() {
         return Err(fail(format!(
             "the chain of {} has {} effect(s), not {}",
@@ -159,26 +171,36 @@ pub fn render_freeze(
         (g.muted, g.solo) = (false, false);
     }
     let expanded = rendered_doc.expand(registry);
-    let Some(tap) = atomik_model::freeze_tap(
+    let strip = request.strip.then_some(&chain.channel);
+    let Some(tap) = atomik_model::frozen_tap(
         &expanded,
         &request.device,
         &chain.effects[..request.effects],
+        strip,
     ) else {
         return Err(fail(format!(
             "{} is not cabled to a channel: there is nothing to render",
             request.device
         )));
     };
-    // The chain, in signal order: the instrument and the effects the render includes.
-    let probes: Vec<DeviceKey> = std::iter::once(request.device.clone())
-        .chain(chain.effects[..request.effects].iter().cloned())
+    // The chain: the instrument and the effects the render includes (every device inside a
+    // container among them), and the channel, which the insert effects are cabled through.
+    let members: Vec<&DeviceKey> = std::iter::once(&request.device)
+        .chain(&chain.effects[..request.effects])
+        .collect();
+    let probes: Vec<DeviceKey> = expanded
+        .devices
+        .iter()
+        .map(|d| &d.key)
+        .filter(|k| **k == chain.channel || members.iter().any(|m| within(m, k)))
+        .cloned()
         .collect();
     let extra = Extra {
-        taps: vec![tap],
+        taps: vec![tap.clone()],
         frames: Some(
             usize::try_from(end_frame + tail + LATENCY_MARGIN).map_err(|e| fail(e.to_string()))?,
         ),
-        probes,
+        probes: probes.clone(),
         meter_probes: Vec::new(),
         note_taps: Vec::new(),
         control,
@@ -202,7 +224,13 @@ pub fn render_freeze(
     else {
         return Ok(None);
     };
-    let latency = u64::from(latencies.iter().sum::<u32>());
+    let latency = u64::from(path_latency(
+        &expanded,
+        (&probes, &latencies),
+        // The channel adds its own delay only when the strip is baked in.
+        (&chain.channel, strip.is_some()),
+        &tap,
+    ));
     // The tap is the pair of channels after the document's.
     let base = usize::from(doc.output_channels);
     let right = channels.remove(base + 1);
@@ -242,4 +270,95 @@ pub fn render_freeze(
         tail_frames: frames.saturating_sub(span_frames),
         warnings,
     }))
+}
+
+/// The delay in frames of the chain at `tap`: the longest path of device latencies (`probes` and
+/// the latency each one reported) that ends at one of the tap's devices, following the flat
+/// cables between the probed devices. For a plain chain that is the sum of its devices; inside a
+/// container, parallel branches count once, as the longest. The channel is two stages on the way
+/// (its input up to the insert send, which adds nothing, and the rest up to its output); the
+/// second counts only when `count_channel` is set (the strip is baked in).
+fn path_latency(
+    x: &ExpandedRack,
+    (probes, latencies): (&[DeviceKey], &[u32]),
+    (channel, count_channel): (&DeviceKey, bool),
+    tap: &[SocketRef; 2],
+) -> u32 {
+    let index = |k: &DeviceKey| probes.iter().position(|p| p == k);
+    let n = probes.len();
+    // The node `n` is the input stage of the channel.
+    let mut own: Vec<u32> = probes
+        .iter()
+        .enumerate()
+        .map(|(i, k)| {
+            if k == channel && !count_channel {
+                0
+            } else {
+                latencies.get(i).copied().unwrap_or(0)
+            }
+        })
+        .collect();
+    own.push(0);
+    let channel_at = index(channel);
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n + 1];
+    let mut returned = false;
+    for c in &x.cables {
+        let from = match index(&c.from.device) {
+            Some(i) if Some(i) == channel_at && c.from.socket.starts_with("insert_send") => n,
+            other => match other {
+                Some(i) => i,
+                None => continue,
+            },
+        };
+        let to = match index(&c.to.device) {
+            Some(i) if Some(i) == channel_at => {
+                if c.to.socket.starts_with("insert_return") {
+                    returned = true;
+                    i
+                } else {
+                    n
+                }
+            }
+            Some(i) => i,
+            None => continue,
+        };
+        if from != to {
+            preds[to].push(from);
+        }
+    }
+    if let (Some(out), false) = (channel_at, returned) {
+        preds[out].push(n);
+    }
+    let mut memo: Vec<Option<u32>> = vec![None; n + 1];
+    let mut visiting = vec![false; n + 1];
+    tap.iter()
+        .filter_map(|t| index(&t.device))
+        .map(|i| longest(i, &own, &preds, (&mut memo, &mut visiting)))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The longest path of delays that ends at node `i` (a loop counts as nothing).
+fn longest(
+    i: usize,
+    own: &[u32],
+    preds: &[Vec<usize>],
+    (memo, visiting): (&mut Vec<Option<u32>>, &mut Vec<bool>),
+) -> u32 {
+    if let Some(done) = memo[i] {
+        return done;
+    }
+    if visiting[i] {
+        return 0;
+    }
+    visiting[i] = true;
+    let up = preds[i]
+        .iter()
+        .map(|p| longest(*p, own, preds, (memo, visiting)))
+        .max()
+        .unwrap_or(0);
+    visiting[i] = false;
+    let total = own[i].saturating_add(up);
+    memo[i] = Some(total);
+    total
 }

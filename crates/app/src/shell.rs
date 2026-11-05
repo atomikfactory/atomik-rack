@@ -5666,6 +5666,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::FreezeTrack
             | AppCommand::FreezeTrackToDevice
             | AppCommand::FreezeTail
+            | AppCommand::FreezeStrip
             | AppCommand::FreezeCancel
             | AppCommand::UnfreezeTrack
             | AppCommand::UnfreezeTrackKeep
@@ -5680,6 +5681,7 @@ impl<B: AudioBackend> Shell<B> {
                         self.core.freeze_tracks(FreezeThrough::SelectedDevice);
                     }
                     AppCommand::FreezeTail => self.core.toggle_freeze_tail(),
+                    AppCommand::FreezeStrip => self.core.toggle_freeze_strip(),
                     AppCommand::FreezeCancel => self.core.cancel_freeze(),
                     AppCommand::UnfreezeTrack => self.core.unfreeze_tracks(false),
                     AppCommand::UnfreezeTrackKeep => self.core.unfreeze_tracks(true),

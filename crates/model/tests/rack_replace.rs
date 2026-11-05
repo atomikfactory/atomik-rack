@@ -222,6 +222,7 @@ fn a_frozen_track_cannot_have_its_instrument_replaced() {
         length: 960,
         audio: common::audio::audio(1),
         effects: Vec::new(),
+        strip: false,
     });
     let reason = replace_reason(&frozen, &r, &key("synth"), &typ(WAVETABLE));
     assert!(reason.is_some_and(|m| m.contains("frozen")));

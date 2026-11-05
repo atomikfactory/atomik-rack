@@ -13,11 +13,20 @@
 //! effects on its console channel's insert loop ([`crate::insert_chain`], at most four). A freeze
 //! takes the track *through* the first `n` of them (`effects`, `0..=len`): the render is the
 //! signal at the output of the last of them (the instrument's output when `n` is 0), and the
-//! effects after it stay live, processing the frozen audio. The channel strip itself (fader, pan,
-//! width, sends, mute, solo, output) is never frozen, and neither are send effects: both keep
-//! working on the frozen audio. What the strip does in front of its insert point (input gain,
-//! filters, and dynamics and EQ unless they follow the insert) is part of the sound at the tap, so
-//! it is frozen with an insert chain of one or more effects.
+//! effects after it stay live, processing the frozen audio. Unless the freeze bakes the strip in,
+//! the channel strip itself (fader, pan, width, sends, mute, solo, output) is not frozen, and
+//! neither are send effects: both keep working on the frozen audio. What the strip does in front
+//! of its insert point (input gain, filters, and dynamics and EQ unless they follow the insert)
+//! is part of the sound at the tap, so it is frozen with an insert chain of one or more effects.
+//!
+//! A **container** instrument or effect freezes as one device: every device inside it is flagged
+//! and unplugged, and the tap is the inner output that feeds the container's output
+//! ([`ExpandedRack::exits`](crate::ExpandedRack::exits)).
+//!
+//! A freeze can also **bake the strip**: the tap is the channel's own output, the whole insert
+//! chain is included and the channel is flagged and unplugged like the instrument, so the
+//! consumers of the channel (the master or a bus) are fed by the render directly. A strip with a
+//! send on or a parallel channel is refused ([`strip_blocker`]).
 //!
 //! # How it is applied
 //!
@@ -74,6 +83,11 @@ pub struct Frozen {
     /// The effects of the channel's insert chain that the render includes, in chain order (the
     /// first `effects.len()` of [`insert_chain`]). Empty: the instrument alone.
     pub effects: Vec<DeviceKey>,
+    /// The render is taken at the output of the console channel, so the whole strip (input
+    /// stage, EQ, dynamics, inserts, fader and pan) is baked into it and the channel is not
+    /// built while the track is frozen. `effects` then lists the whole insert chain. `false`:
+    /// the render stops at the insert chain and the strip stays live.
+    pub strip: bool,
 }
 
 impl Frozen {
@@ -127,15 +141,15 @@ pub struct TrackChain {
     /// The console channel the track plays through.
     pub channel: DeviceKey,
     /// The effects of the channel's insert loop a freeze can include, in signal order (a
-    /// container effect ends the list: a container is not frozen).
+    /// container effect is one of them: it freezes with everything inside it).
     pub effects: Vec<DeviceKey>,
 }
 
 /// The chain of the track on `device`.
 ///
 /// # Errors
-/// The reason a track cannot be frozen: its device is a container or has no console channel, or
-/// is not cabled to it.
+/// The reason a track cannot be frozen: its device has no console channel, or is not cabled to it.
+/// A container instrument or effect is fine: it is frozen with every device inside it.
 pub fn track_chain(
     doc: &RackDoc,
     registry: &Registry,
@@ -144,9 +158,6 @@ pub fn track_chain(
     let dev = doc
         .device(device)
         .ok_or_else(|| format!("{device} has no device"))?;
-    if dev.inner.is_some() {
-        return Err(format!("{} is a container: it cannot be frozen", dev.name));
-    }
     let channel = doc
         .console
         .channels
@@ -164,26 +175,45 @@ pub fn track_chain(
     }
     let effects = insert_chain(doc, registry, &channel)
         .into_iter()
-        .take_while(|e| doc.device(e).is_some_and(|d| d.inner.is_none()))
         .take(INSERT_SLOTS)
         .collect();
     Ok(TrackChain { channel, effects })
 }
 
+/// Whether the flat device `flat` is the top-level device `key` or one of the devices inside it
+/// (a container's inner devices are keyed by their path under the container's key).
+pub fn within(key: &DeviceKey, flat: &DeviceKey) -> bool {
+    flat == key
+        || flat
+            .0
+            .strip_prefix(key.0.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// The outputs of the chain through `effects` in the flat rack `x`: the last effect's
-/// `out_l`/`out_r`, or, with no effect, the sockets of `device` that feed a console channel's
-/// `in_l` and `in_r` (both the same one for a mono feed). `None` when `device` feeds no channel.
+/// `out_l`/`out_r` (for a container effect, the inner outputs that feed them), or, with no
+/// effect, the sockets of `device` (or of a device inside it, when it is a container) that feed a
+/// console channel's `in_l` and `in_r` (both the same one for a mono feed). `None` when `device`
+/// feeds no channel.
 pub fn freeze_tap(
     x: &ExpandedRack,
     device: &DeviceKey,
     effects: &[DeviceKey],
 ) -> Option<[SocketRef; 2]> {
     if let Some(last) = effects.last() {
-        let out = |socket: &str| SocketRef {
-            device: last.clone(),
-            socket: socket.to_owned(),
+        let out = |socket: &str| {
+            let own = SocketRef {
+                device: last.clone(),
+                socket: socket.to_owned(),
+            };
+            match x.exits.get(&own) {
+                Some(inner) => Some(inner.clone()),
+                // A container with nothing feeding its output has nothing to tap.
+                None if x.alias.contains_key(last) => None,
+                None => Some(own),
+            }
         };
-        return Some([out("out_l"), out("out_r")]);
+        return Some([out("out_l")?, out("out_r")?]);
     }
     let channels: BTreeSet<&DeviceKey> = x
         .devices
@@ -195,7 +225,9 @@ pub fn freeze_tap(
         x.cables
             .iter()
             .find(|c| {
-                &c.from.device == device && channels.contains(&c.to.device) && c.to.socket == input
+                within(device, &c.from.device)
+                    && channels.contains(&c.to.device)
+                    && c.to.socket == input
             })
             .map(|c| c.from.clone())
     };
@@ -204,6 +236,69 @@ pub fn freeze_tap(
         (Some(m), None) | (None, Some(m)) => Some([m.clone(), m]),
         (None, None) => None,
     }
+}
+
+/// The tap of a freeze of `device` through `effects`: the output of the console `strip` channel
+/// when the strip is baked in (see [`Frozen::strip`]), else [`freeze_tap`].
+pub fn frozen_tap(
+    x: &ExpandedRack,
+    device: &DeviceKey,
+    effects: &[DeviceKey],
+    strip: Option<&DeviceKey>,
+) -> Option<[SocketRef; 2]> {
+    match strip {
+        Some(channel) => {
+            let out = |socket: &str| SocketRef {
+                device: channel.clone(),
+                socket: socket.to_owned(),
+            };
+            x.devices
+                .iter()
+                .any(|d| &d.key == channel)
+                .then(|| [out("out_l"), out("out_r")])
+        }
+        None => freeze_tap(x, device, effects),
+    }
+}
+
+/// Why the channel strip of the track on `device` cannot be baked into a render: a send that is
+/// on into a return slot that holds an effect, or a parallel channel fed from it, would go silent (their signal leaves the strip, which is
+/// not built while it is frozen). `None` when the strip can be baked.
+pub fn strip_blocker(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Option<String> {
+    let channel = doc
+        .console
+        .channels
+        .iter()
+        .find(|c| c.source.as_ref() == Some(device))?;
+    let dev = doc.device(&channel.channel)?;
+    let desc = registry.get(&dev.type_id)?.descriptor;
+    let value = |key: &str| {
+        desc.param_by_key(key)
+            .map(|p| p.clamp(dev.params.get(key).copied().unwrap_or(p.default)))
+    };
+    let name = doc
+        .device(device)
+        .map_or(device.0.as_str(), |d| d.name.as_str());
+    for k in 1..=crate::console::FX_SLOTS {
+        let on = value(&format!("send{k}.on")).is_some_and(|v| v >= 0.5);
+        // The bottom of the level range is off.
+        let audible = desc
+            .param_by_key(&format!("send{k}.level"))
+            .zip(value(&format!("send{k}.level")))
+            .is_some_and(|(p, v)| v > p.min);
+        // A send into a return slot with no effect plays nothing.
+        let returned = doc.console.returns[k - 1].is_some();
+        if on && audible && returned {
+            return Some(format!(
+                "{name} has a send on: switch it off, or freeze without the strip"
+            ));
+        }
+    }
+    doc.console
+        .parallels
+        .iter()
+        .any(|(parent, _)| parent == &channel.channel)
+        .then(|| format!("{name} feeds a parallel channel: freeze without the strip"))
 }
 
 /// The span `[start, end)` in ticks of everything on a track: the clips of every lane (muted
@@ -216,21 +311,35 @@ pub fn clips_span(track: &Track) -> Option<(i64, i64)> {
 }
 
 /// The devices of the frozen tracks that are not built: each frozen instrument and its frozen
-/// effects, as flat keys (they are all top-level devices).
+/// effects, and the channel of a track whose strip is baked in, as top-level keys (a container
+/// stands for every device inside it).
 pub fn frozen_devices(doc: &RackDoc) -> BTreeSet<DeviceKey> {
     let mut out = BTreeSet::new();
     for t in &doc.song.tracks {
         if let Some(f) = &t.frozen {
             out.insert(t.device.clone());
             out.extend(f.effects.iter().cloned());
+            if f.strip {
+                out.extend(strip_channel(doc, &t.device));
+            }
         }
     }
     out
 }
 
+/// The console channel the track on `device` plays through.
+fn strip_channel(doc: &RackDoc, device: &DeviceKey) -> Option<DeviceKey> {
+    doc.console
+        .channels
+        .iter()
+        .find(|c| c.source.as_ref() == Some(device))
+        .map(|c| c.channel.clone())
+}
+
 /// Applies the frozen tracks of `doc` to its expansion `x` (see the module docs): flags the
-/// frozen devices, drops their cables, re-sources what the last one fed to the track's `~freeze`
-/// player and appends the players. A document without a frozen track is untouched.
+/// frozen devices (and the devices inside a frozen container), drops their cables, re-sources what
+/// the last one fed to the track's `~freeze` player and appends the players. A document without a
+/// frozen track is untouched.
 pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
     let frozen: Vec<(&Track, &Frozen)> = doc
         .song
@@ -241,34 +350,38 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
     if frozen.is_empty() {
         return;
     }
-    // (last frozen device, its tap, the player)
-    let mut plans: Vec<(DeviceKey, Option<[SocketRef; 2]>, DeviceKey)> = Vec::new();
-    let mut omitted: BTreeSet<DeviceKey> = BTreeSet::new();
+    // (the top-level devices the render replaces, its tap, the player)
+    type Plan = (Vec<DeviceKey>, Option<[SocketRef; 2]>, DeviceKey);
+    let mut plans: Vec<Plan> = Vec::new();
     for (t, f) in &frozen {
-        omitted.insert(t.device.clone());
-        omitted.extend(f.effects.iter().cloned());
-        let last = f.effects.last().unwrap_or(&t.device).clone();
+        let mut keys = vec![t.device.clone()];
+        keys.extend(f.effects.iter().cloned());
+        let strip = f.strip.then(|| strip_channel(doc, &t.device)).flatten();
+        keys.extend(strip.clone());
         plans.push((
-            last,
-            freeze_tap(x, &t.device, &f.effects),
+            keys,
+            frozen_tap(x, &t.device, &f.effects, strip.as_ref()),
             freeze_key(&t.device),
         ));
     }
+    let omitted = |flat: &DeviceKey| plans.iter().any(|p| p.0.iter().any(|k| within(k, flat)));
     let mut cables: Vec<Cable> = Vec::with_capacity(x.cables.len());
     for mut c in std::mem::take(&mut x.cables) {
-        if omitted.contains(&c.to.device) {
+        if omitted(&c.to.device) {
             continue;
         }
-        if omitted.contains(&c.from.device) {
-            let Some((_, Some([l, r]), player)) = plans.iter().find(|p| p.0 == c.from.device)
-            else {
-                continue;
-            };
-            let socket = if c.from.socket == l.socket {
-                "out_l"
-            } else if c.from.socket == r.socket {
-                "out_r"
-            } else {
+        if omitted(&c.from.device) {
+            let found = plans.iter().find_map(|(_, tap, player)| {
+                let [l, r] = tap.as_ref()?;
+                if c.from == *l {
+                    Some((player, "out_l"))
+                } else if c.from == *r {
+                    Some((player, "out_r"))
+                } else {
+                    None
+                }
+            });
+            let Some((player, socket)) = found else {
                 continue;
             };
             c.from = SocketRef {
@@ -281,7 +394,7 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
     cables.sort();
     x.cables = cables;
     for d in &mut x.devices {
-        d.frozen = omitted.contains(&d.key);
+        d.frozen = omitted(&d.key);
     }
     for (_, _, player) in plans {
         x.devices.push(ExpandedDevice {
@@ -333,8 +446,13 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             .and_then(|(t, _)| track_frozen(&t.device))
     };
     let omitted = frozen_devices(doc);
-    let device_frozen =
-        |device: &DeviceKey| omitted.contains(device).then(|| frozen_error(doc, device));
+    // A device inside a frozen container is as frozen as the container.
+    let device_frozen = |device: &DeviceKey| {
+        omitted
+            .iter()
+            .any(|o| within(o, device))
+            .then(|| frozen_error(doc, device))
+    };
     let tempo = || {
         ModelError::Frozen(
             "a track is frozen: unfreeze it to change the tempo or the meter".to_owned(),
@@ -348,7 +466,13 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             .find(|c| &c.channel == channel)
             .and_then(|c| c.source.as_ref())
             .and_then(|s| doc.song.track(s))
-            .and_then(|t| t.frozen.as_ref().map(|f| (t, f.effects.len())))
+            .and_then(|t| {
+                // With the strip baked in, no insert slot is free to change.
+                t.frozen.as_ref().map(|f| {
+                    let held = if f.strip { usize::MAX } else { f.effects.len() };
+                    (t, held)
+                })
+            })
     };
     let channel_error =
         |channel: &DeviceKey| frozen_channel(channel).map(|(t, _)| frozen_error(doc, &t.device));
@@ -514,6 +638,11 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             },
             // A frozen track's devices (and the track itself) stay where they are.
             Command::Container(c) => match c {
+                ContainerCommand::AddInner { container, .. }
+                | ContainerCommand::SetSplits { container, .. }
+                | ContainerCommand::SetMacro { container, .. }
+                | ContainerCommand::RemoveMacroTarget { container, .. }
+                | ContainerCommand::SetMacroKind { container, .. } => device_frozen(container),
                 ContainerCommand::Combine { keys, .. } => keys
                     .iter()
                     .find_map(|k| device_frozen(k).or_else(|| track_frozen(k))),
@@ -631,6 +760,12 @@ fn check_frozen(
     if n > chain.effects.len() || chain.effects[..n] != frozen.effects[..] {
         return Err(bad(format!(
             "the frozen effects must be the first effects of the insert chain of {}",
+            chain.channel
+        )));
+    }
+    if frozen.strip && n != chain.effects.len() {
+        return Err(bad(format!(
+            "a render with the strip of {} baked in includes the whole insert chain",
             chain.channel
         )));
     }

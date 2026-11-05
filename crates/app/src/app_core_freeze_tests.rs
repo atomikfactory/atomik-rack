@@ -942,3 +942,137 @@ fn a_range_bounce_says_why_it_renders_nothing() {
     assert!(c.last_rejection().unwrap().contains("frozen"));
     assert!(!c.freeze_busy());
 }
+
+#[test]
+fn a_container_instrument_and_a_container_effect_can_be_frozen() {
+    let mut c = core_with(2);
+    let fx = atomik_model::track_chain(c.doc(), &c.registry, &key("lead"))
+        .unwrap()
+        .effects;
+    // The first effect and then the instrument go into containers.
+    c.apply_command(Command::Container(
+        atomik_model::ContainerCommand::Combine {
+            keys: vec![fx[0].clone()],
+            name: String::new(),
+        },
+    ))
+    .unwrap();
+    c.apply_command(Command::Container(
+        atomik_model::ContainerCommand::Combine {
+            keys: vec![key("lead")],
+            name: String::new(),
+        },
+    ))
+    .unwrap();
+    let device = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .map(|t| t.device.clone())
+        .find(|k| c.doc().device(k).is_some_and(|d| d.inner.is_some()))
+        .unwrap();
+    assert_ne!(device, key("bass"));
+    select_track(&mut c, &device.0);
+    assert!(
+        c.freeze_menu().can_freeze,
+        "a container track can be frozen"
+    );
+    c.freeze_tracks(FreezeThrough::Track);
+    c.wait_background();
+    let f = c.doc().song.track(&device).unwrap().frozen.clone().unwrap();
+    assert_eq!(f.effects.len(), 2, "the container effect and the delay");
+    assert!(!f.strip);
+    // Every device of the container is out of the engine now.
+    let x = c.doc().expand(&c.registry);
+    assert!(
+        x.devices
+            .iter()
+            .filter(|d| atomik_model::within(&device, &d.key) && !d.key.0.ends_with("~freeze"))
+            .all(|d| d.frozen)
+    );
+    // Rendering it again keeps the same part of the chain.
+    c.refreeze_tracks();
+    c.wait_background();
+    let again = c.doc().song.track(&device).unwrap().frozen.clone().unwrap();
+    assert_eq!(again.effects, f.effects);
+    c.unfreeze_tracks(false);
+    assert!(c.doc().song.track(&device).unwrap().frozen.is_none());
+}
+
+#[test]
+fn freeze_with_strip_bakes_the_whole_strip_and_refreezes_the_same_way() {
+    let mut c = core_with(1);
+    assert!(!c.freeze_strip() && !c.freeze_menu().strip);
+    c.toggle_freeze_strip();
+    assert!(c.freeze_strip() && c.freeze_menu().strip);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    let f = frozen(&c, "lead").unwrap();
+    assert!(f.strip);
+    assert_eq!(f.effects.len(), 1, "the whole insert chain");
+    let channel = c.doc().console.channels[0].channel.clone();
+    assert!(atomik_model::frozen_devices(c.doc()).contains(&channel));
+    // The channel is edited no more while the strip is frozen.
+    let e = c
+        .apply_command(Command::SetParam {
+            key: channel.clone(),
+            param: "fader".into(),
+            value: 0.3,
+            merge: None,
+        })
+        .unwrap_err();
+    assert!(e.to_string().contains("frozen"), "{e}");
+    select_track(&mut c, "lead");
+    c.refreeze_tracks();
+    c.wait_background();
+    assert!(
+        frozen(&c, "lead").unwrap().strip,
+        "re-rendered with the strip"
+    );
+    // Freezing up to a device leaves the strip alone, whatever the switch says.
+    c.unfreeze_tracks(false);
+    select_track(&mut c, "lead");
+    c.select(Some(key("lead")));
+    c.freeze_tracks(FreezeThrough::SelectedDevice);
+    c.wait_background();
+    assert!(!frozen(&c, "lead").unwrap().strip);
+}
+
+#[test]
+fn freeze_with_strip_says_why_a_send_in_use_stops_it() {
+    let mut c = core_with(0);
+    c.toggle_freeze_strip();
+    let channel = c.doc().console.channels[0].channel.clone();
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.reverb".to_owned(),
+        key: Some(key("verb")),
+    })
+    .unwrap();
+    c.apply_command(Command::Console(ConsoleCommand::SetReturn {
+        slot: 0,
+        effect: Some(key("verb")),
+    }))
+    .unwrap();
+    for (param, value) in [("send1.on", 1.0), ("send1.level", 0.0)] {
+        c.apply_command(Command::SetParam {
+            key: channel.clone(),
+            param: param.into(),
+            value,
+            merge: None,
+        })
+        .unwrap();
+    }
+    select_track(&mut c, "lead");
+    c.freeze_tracks(FreezeThrough::Track);
+    assert!(!c.freeze_busy(), "nothing was started");
+    assert!(
+        c.last_rejection().is_some_and(|m| m.contains("send")),
+        "{:?}",
+        c.last_rejection()
+    );
+    // Without the strip the same track freezes.
+    c.toggle_freeze_strip();
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    assert!(frozen(&c, "lead").is_some_and(|f| !f.strip));
+}

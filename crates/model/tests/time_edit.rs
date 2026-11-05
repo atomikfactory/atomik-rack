@@ -375,6 +375,7 @@ fn a_frozen_track_refuses_the_command() {
         length: BAR,
         audio: audio(1),
         effects: Vec::new(),
+        strip: false,
     });
     let mut d = Document::new(doc);
     let e = rejected(&mut d, &r, insert(0, BAR));

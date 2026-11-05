@@ -144,6 +144,7 @@ fn the_track_menu_follows_the_selection() {
             "Freeze Track",
             "Freeze Track up to Selected Device",
             "Freeze with Tail",
+            "Freeze with Strip",
             "Re-render Frozen Track",
             "Unfreeze Track",
             "Unfreeze Track and Keep Audio",

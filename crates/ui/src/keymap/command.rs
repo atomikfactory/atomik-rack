@@ -1748,6 +1748,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.freeze_strip",
+        "Freeze with Strip",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.freeze_tail",
         "Freeze with Tail",
         G::Sequencer,

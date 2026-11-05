@@ -386,6 +386,7 @@ pub(super) fn load_frozen(
         length,
         audio,
         effects,
+        strip: flag(obj, path, "strip")?,
     })
 }
 
@@ -404,6 +405,12 @@ pub(super) fn check_frozen_tracks(
         if n > chain.effects.len() || chain.effects[..n] != f.effects[..] {
             return Err(p.field("effects").error(format!(
                 "the frozen effects must be the first effects of the insert chain of {}",
+                chain.channel
+            )));
+        }
+        if f.strip && n != chain.effects.len() {
+            return Err(p.field("strip").error(format!(
+                "a render with the strip baked in includes the whole insert chain of {}",
                 chain.channel
             )));
         }
