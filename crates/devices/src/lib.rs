@@ -3,7 +3,7 @@
 //! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
-//! The utility devices [`gain_tool`], [`stereo_tool`], [`gate`], [`dynamics`] (gate then
+//! The utility devices [`gain_tool`], [`stereo_tool`], [`feedback`] (the delay stage that makes a loop legal), [`gate`], [`dynamics`] (gate then
 //! compressor), [`duck`] (the sidechain tool), [`env_filter`], [`auto_filter`], [`transient_shaper`], [`de_esser`], [`tuner`], [`pitch_shifter`], the
 //! CV utilities [`cv_math`], [`cv_quantizer`], [`sample_hold`], [`slew_limiter`], [`gate_processor`] and
 //! [`envelope_follower`], and the two cable mergers in [`spider`] share the descriptor builders of the private `tool_support` module.
@@ -42,6 +42,7 @@ pub mod echo;
 pub mod env_filter;
 pub mod envelope_follower;
 pub mod eq;
+pub mod feedback;
 pub mod fm_synth;
 pub mod gain_tool;
 pub mod gate;
@@ -181,6 +182,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(env_filter::factory())?;
     registry.register(envelope_follower::factory())?;
     registry.register(eq::factory())?;
+    registry.register(feedback::factory())?;
     registry.register(gain_tool::factory())?;
     registry.register(gate::factory())?;
     registry.register(gate_processor::factory())?;
@@ -219,7 +221,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 62] = [
+    const TYPE_IDS: [&str; 63] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -243,6 +245,7 @@ mod tests {
         "atomik.env-filter",
         "atomik.envelope-follower",
         "atomik.eq",
+        "atomik.feedback",
         "atomik.fm-synth",
         "atomik.gain-tool",
         "atomik.gate",
@@ -285,7 +288,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-two devices.
+    // Name kept; it now covers all sixty-three devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -327,6 +330,7 @@ mod tests {
             "atomik.dynamics",
             "atomik.env-filter",
             "atomik.envelope-follower",
+            "atomik.feedback",
             "atomik.gain-tool",
             "atomik.gate",
             "atomik.gate-processor",

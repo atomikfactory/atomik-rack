@@ -475,7 +475,7 @@ impl<'p> Builder<'p> {
                         &path,
                         e,
                         format!(
-                            "{:?} -> {:?} would create a cycle (feedback loops are not supported)",
+                            "{:?} -> {:?} would create a cycle (a loop must pass through a Feedback Route)",
                             cable.from, cable.to
                         ),
                     ));

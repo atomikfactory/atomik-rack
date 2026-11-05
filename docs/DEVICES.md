@@ -978,7 +978,7 @@ A stereo algorithmic reverb with three algorithms. Source:
 ### Behaviour (as built)
 
 - **Structure.** Pre-delay, a one-pole low cut, six early-reflection taps per side from a tapped
-  delay, and a late tail from an 8-line feedback delay network (Hermite-interpolated delay lines, a
+  delay, and a late tail from an 8-line feedback route network (Hermite-interpolated delay lines, a
   damping lowpass, a feedback gain and an in-loop allpass per line, mixed by an orthonormal 8×8
   Hadamard matrix). Two allpass diffusers per side feed the network. The left and right tails are
   taken with two orthogonal Hadamard sign rows, so they are uncorrelated at `width` 1; `width` 0
@@ -3944,6 +3944,42 @@ Sockets: `in_l`, `in_r` (Audio in), `pitch_cv_in` (CV in), `out_l`, `out_r` (Aud
 
 The latency follows `quality` (the device reports a variable latency); changing the quality
 restarts the device with empty buffers.
+
+### Feedback Route: `atomik.feedback` (Utility)
+
+The supported way to send audio back on itself. Source: [feedback.rs](../crates/devices/src/feedback.rs).
+
+Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+
+| Key | Range | Default | Unit |
+|---|---|---|---|
+| `time` | 0 to 1000 | 0 | ms |
+| `gain` | -60 to 0 | 0 | dB |
+
+- **A loop through this device is legal.** Every other loop is still refused ("would create a cycle").
+  Cable the end of the chain that should feed back into `in_l`/`in_r`, and `out_l`/`out_r` to where
+  the fed-back signal should enter (the input of an effect earlier in the loop, a mixer input, the
+  device itself for a plain repeating delay). A loop may pass through several of them. The outputs
+  belong to the first processing stage of the device and the inputs to the second, so the engine
+  runs the outputs first and the inputs last in each batch; the plan stays acyclic and the model
+  checks a cable per (device, stage) like any other.
+- **The delay is at least one engine batch (64 frames).** `time` 0 is that shortest delay; a larger
+  `time` is rounded to a whole number of frames, up to one second. The delay is counted in engine
+  batches, never in host buffers, so a bounce or a live run gives the same samples at every
+  buffer size and with any number of workers, and the n-th frame out is exactly the (n - delay)-th
+  frame in, multiplied by `gain`. The first delay's worth of output is silence.
+- **No latency is reported**: the delay is part of the sound, so the plugin delay compensation
+  leaves the loop alone and a path that joins it is not delayed to match.
+- `gain` scales what comes back (0 dB: a loop with no gain of its own rings for ever). What enters
+  is clamped to plus or minus 16 and denormals are flushed, so a loop with too much gain
+  saturates and stays finite.
+- A change of `time` or `gain` glides over about 50 ms: the delay moves like a tape delay and
+  never clicks. At rest the read is the exact frame, bit for bit.
+- It has no bypass (a bypassed device could not keep a loop acyclic). It allocates only when
+  prepared (a line of one second per side at the sample rate); reset clears it.
+- A project that holds a loop through it saves and loads like any other; the cable that closes the
+  loop is an ordinary cable. A loop that does not pass through it is refused when you cable it
+  and when a file is read.
 
 ### Audio Split/Merge: `atomik.spider-audio` (Utility)
 
