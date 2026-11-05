@@ -770,6 +770,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("file.close", "Close", G::Global, C::Global).menu(),
+    cmd("file.collect_files", "Collect Files", G::Global, C::Global).menu(),
     cmd(
         "file.convert_rate",
         "Convert Sample Rate",
