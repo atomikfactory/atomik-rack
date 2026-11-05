@@ -14,7 +14,10 @@
 //! keeps its own delay compensation (a built-in effect delays its dry signal by its latency, a
 //! plugin device does the same), so the strip stays time aligned with the other channels.
 //! [`inserts_bypassed`] reads the state of a chain and [`bypass_inserts_commands`] builds the
-//! commands of the strip's "bypass all inserts" switch.
+//! commands of the strip's "bypass all inserts" switch. The switch covers the strip's own
+//! dynamics and EQ sections too: a section that is in use (its `comp.on`, `gate.on` or `eq.on`
+//! is set) is taken out by its `dyn.bypass` or `eq.bypass` param, which keeps its settings and
+//! its place in the signal path (the compressor look-ahead delay stays).
 
 use crate::console::{INSERT_SLOTS, InsertEffect, is_console_type};
 use crate::console_cmd::{Planner, at, bad, wire};
@@ -68,6 +71,14 @@ const BYPASS: &str = "bypass";
 /// The strip's own, legacy `insert.bypass` param (not delay compensated; see `atomik.channel`).
 const STRIP_BYPASS: &str = "insert.bypass";
 
+/// The strip's own sections that bypass-all switches: the params that put the section to work
+/// and the param that bypasses it. A section is part of the switch while one of the first is on
+/// or its bypass is already set.
+const SECTIONS: [(&[&str], &str); 2] = [
+    (&["comp.on", "gate.on"], "dyn.bypass"),
+    (&["eq.on"], "eq.bypass"),
+];
+
 /// Whether `param` of `key` is on (set to 0.5 or more), the descriptor default when unset.
 fn param_on(doc: &RackDoc, registry: &Registry, key: &DeviceKey, param: &str) -> Option<bool> {
     let device = doc.device(key)?;
@@ -89,24 +100,47 @@ pub fn insert_bypass_states(
         .collect()
 }
 
+/// The sections of `device` (dynamics, EQ) that bypass-all switches, each as its bypass param
+/// and whether it is bypassed now. Empty for a device without the bypass params (the master)
+/// and for a section that is off and not bypassed.
+pub fn section_bypass_states(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+) -> Vec<(&'static str, bool)> {
+    SECTIONS
+        .iter()
+        .filter_map(|(works, bypass)| {
+            let bypassed = param_on(doc, registry, device, bypass)?;
+            let in_use = works
+                .iter()
+                .any(|p| param_on(doc, registry, device, p) == Some(true));
+            (in_use || bypassed).then_some((*bypass, bypassed))
+        })
+        .collect()
+}
+
 /// Whether `device`'s inserts are bypassed: `Some(true)` when every effect that can be
-/// bypassed is (or the strip's legacy `insert.bypass` is on), `Some(false)` when one plays, and
-/// `None` when there is nothing to bypass (no chain, or only effects without a bypass).
+/// bypassed, and every dynamics or EQ section in use, is (or the strip's legacy `insert.bypass`
+/// is on), `Some(false)` when one plays, and `None` when there is nothing to bypass (no chain
+/// or only effects without a bypass, and no section in use).
 pub fn inserts_bypassed(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Option<bool> {
     let legacy = param_on(doc, registry, device, STRIP_BYPASS).unwrap_or(false);
     let states = insert_bypass_states(doc, registry, device);
+    let sections = section_bypass_states(doc, registry, device);
     if legacy {
         return Some(true);
     }
-    if states.is_empty() {
+    if states.is_empty() && sections.is_empty() {
         return None;
     }
-    Some(states.iter().all(|(_, on)| *on))
+    Some(states.iter().all(|(_, on)| *on) && sections.iter().all(|(_, on)| *on))
 }
 
 /// The commands that bypass (`bypass` true) or restore every effect of `device`'s insert chain
-/// that can be bypassed, for one `Command::Batch` (one undo step). Restoring also clears the
-/// strip's legacy `insert.bypass`. Only what changes is included; empty when nothing does.
+/// that can be bypassed and its dynamics and EQ sections, for one `Command::Batch` (one undo
+/// step). Restoring also clears the strip's legacy `insert.bypass`. Only what changes is
+/// included; empty when nothing does.
 pub fn bypass_inserts_commands(
     doc: &RackDoc,
     registry: &Registry,
@@ -124,6 +158,12 @@ pub fn bypass_inserts_commands(
         .filter(|(_, on)| *on != bypass)
         .map(|(k, _)| set(&k, BYPASS, bypass))
         .collect();
+    commands.extend(
+        section_bypass_states(doc, registry, device)
+            .into_iter()
+            .filter(|(_, on)| *on != bypass)
+            .map(|(param, _)| set(device, param, bypass)),
+    );
     if !bypass && param_on(doc, registry, device, STRIP_BYPASS) == Some(true) {
         commands.push(set(device, STRIP_BYPASS, false));
     }

@@ -4580,9 +4580,11 @@ input. Source: [crates/devices/src/bus.rs](../crates/devices/src/bus.rs) (descri
 and [crates/devices/src/channel.rs](../crates/devices/src/channel.rs) (the one strip implementation
 both device types run). The console creates buses; you do not add one from the browser.
 
-- **Same strip, same keys.** The input trim and polarity (`input.gain`, `input.phase`) and the
+- **Same strip, same keys.** The input trim and polarity (`input.gain`, `input.phase`, `input.phase_r`), the
+  compressor look-ahead (`comp.lookahead`, which the bus reports as latency), the dynamics and EQ bypass
+  (`dyn.bypass`, `eq.bypass`) and the
   parallel compressor (`pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`,
-  `pcomp.release`, `pcomp.makeup`, `pcomp.mix`; off by default) are the channel's too. Params, ids,
+  `pcomp.release`, `pcomp.makeup`, `pcomp.mix`, `pcomp.peak`; off by default) are the channel's too. Params, ids,
   defaults, internal params (`internal.solo_silence`, `internal.tap_live`, the VCA feed `internal.vca_db`,
   `internal.vca_mute` and `internal.vca_solo`, the CV trims), the 8 sends (`send{k}.on/level/pre`),
   insert loop, key input, `gr_cv_out`, CV inputs, stages and latency adjust are exactly the

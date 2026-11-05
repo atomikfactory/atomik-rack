@@ -196,6 +196,7 @@ pub use console::{
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::{
     bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
+    section_bypass_states,
 };
 pub use console_settings::{ChannelSettingsClip, InsertClip};
 pub use console_snapshot::{

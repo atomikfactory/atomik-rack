@@ -7,6 +7,7 @@ use atomik_device_sdk::Registry;
 use atomik_model::{
     Cable, Command, ConsoleCommand, Document, INSERT_SLOTS, InsertEffect, ModelError,
     bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
+    section_bypass_states,
 };
 use common::*;
 
@@ -425,4 +426,68 @@ fn the_legacy_strip_bypass_counts_as_bypassed_and_is_cleared_on_restore() {
         inserts_bypassed(d.doc(), &reg, &key("channel")),
         Some(false)
     );
+}
+
+fn on_of(d: &Document, dev: &str, param: &str) -> bool {
+    d.doc()
+        .device(&key(dev))
+        .unwrap()
+        .params
+        .get(param)
+        .is_some_and(|v| *v >= 0.5)
+}
+
+#[test]
+fn bypass_all_also_takes_the_dynamics_and_the_eq_of_the_strip_out_and_back() {
+    let reg = console_registry();
+    let mut d = two_inserts(&reg);
+    let strip = key("channel");
+    // Sections that are off are not part of the switch.
+    assert!(section_bypass_states(d.doc(), &reg, &strip).is_empty());
+    d.apply(set_param("channel", "comp.on", 1.0), &reg).unwrap();
+    d.apply(set_param("channel", "eq.on", 1.0), &reg).unwrap();
+    assert_eq!(
+        section_bypass_states(d.doc(), &reg, &strip),
+        [("dyn.bypass", false), ("eq.bypass", false)]
+    );
+    d.apply(set_param("comp", "bypass", 1.0), &reg).unwrap();
+    d.apply(set_param("eq", "bypass", 1.0), &reg).unwrap();
+    assert_eq!(
+        inserts_bypassed(d.doc(), &reg, &strip),
+        Some(false),
+        "the sections still play"
+    );
+    let on = bypass_inserts_commands(d.doc(), &reg, &strip, true);
+    assert_eq!(on.len(), 2, "only the two sections change");
+    d.apply(Command::Batch(on), &reg).unwrap();
+    assert!(on_of(&d, "channel", "dyn.bypass") && on_of(&d, "channel", "eq.bypass"));
+    assert!(
+        on_of(&d, "channel", "comp.on") && on_of(&d, "channel", "eq.on"),
+        "the sections keep their own switches"
+    );
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), Some(true));
+    d.undo().unwrap();
+    assert!(!on_of(&d, "channel", "dyn.bypass") && !on_of(&d, "channel", "eq.bypass"));
+    d.redo().unwrap();
+    let off = bypass_inserts_commands(d.doc(), &reg, &strip, false);
+    assert_eq!(off.len(), 4, "two effects and two sections");
+    d.apply(Command::Batch(off), &reg).unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), Some(false));
+}
+
+#[test]
+fn a_strip_with_only_a_dynamics_section_in_use_can_still_be_bypassed() {
+    let reg = console_registry();
+    let mut d = rack(&reg);
+    let strip = key("channel");
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), None);
+    d.apply(set_param("channel", "gate.on", 1.0), &reg).unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), Some(false));
+    let on = bypass_inserts_commands(d.doc(), &reg, &strip, true);
+    assert_eq!(on.len(), 1);
+    d.apply(Command::Batch(on), &reg).unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), Some(true));
+    // A section that is bypassed stays part of the switch after it is switched off.
+    d.apply(set_param("channel", "gate.on", 0.0), &reg).unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), Some(true));
 }

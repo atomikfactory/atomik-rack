@@ -192,6 +192,32 @@ fn flattening_follows_offset_loop_and_hiding() {
 }
 
 #[test]
+fn a_join_keeps_the_sysex_limit_so_the_project_still_loads() {
+    let reg = registry();
+    let many = |at: i64| MidiData {
+        programs: Vec::new(),
+        sysex: (0..600).map(|i| sysex(at + i, &[1])).collect(),
+    };
+    let mut d = with_data(&reg, PPQ * 2, many(0));
+    let mut second = notes_clip(2 * PPQ, 2 * PPQ, vec![note(0, PPQ, 62, 0.8)]);
+    second.midi = many(0).into();
+    d.apply(add_clip("synth", 0, second), &reg).unwrap();
+    d.apply(
+        Command::Workflow(WorkflowCommand::JoinClips {
+            ids: vec![ClipId(1), ClipId(2)],
+        }),
+        &reg,
+    )
+    .unwrap();
+    let ids = clip_ids(d.doc());
+    let m = midi_of(&d, ids[0].0);
+    assert_eq!(m.sysex.len(), atomik_model::midi_data::MAX_SYSEX_EVENTS);
+    assert!(m.sysex.windows(2).all(|w| w[0].tick <= w[1].tick));
+    let text = save_project(d.doc());
+    load_project(&text, &reg).expect("the joined project loads");
+}
+
+#[test]
 fn a_join_and_a_loop_conversion_carry_the_data() {
     let reg = registry();
     let mut d = with_data(&reg, 2 * PPQ, data());

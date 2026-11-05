@@ -4752,7 +4752,14 @@ fn knob_cell(
         accent,
     );
     c.pop_transform();
-    if !pc.label.is_empty() {
+    if pc.param == TRIM_PARAM {
+        // The trim reads its value at rest, in the place of the label (the section is INPUT).
+        let text = trim_readout(c, v, r.width() - 2.0, st.base.text);
+        c.text(
+            &TextRun::new(text, pt(r.center().x, r.y1 - 3.0), 6.5, st.base.text)
+                .align(Align::Center),
+        );
+    } else if !pc.label.is_empty() {
         c.text(
             &TextRun::new(
                 pc.label.as_str(),
@@ -4763,6 +4770,21 @@ fn knob_cell(
             .align(Align::Center)
             .spacing(0.4),
         );
+    }
+}
+
+/// The param of the input trim knob, whose value the console shows at rest.
+const TRIM_PARAM: &str = "input.gain";
+
+/// The trim's value in dB with its sign, with the unit when `width` has room for it.
+fn trim_readout(c: &mut dyn Canvas, db: f32, width: f64, color: Color) -> String {
+    let db = if db.abs() < 0.05 { 0.0 } else { db };
+    let with_unit = format!("{db:+.1} dB");
+    let fits = c.text_width(&TextRun::new(with_unit.as_str(), pt(0.0, 0.0), 6.5, color));
+    if fits <= width {
+        with_unit
+    } else {
+        format!("{db:+.1}")
     }
 }
 
@@ -5056,7 +5078,22 @@ fn gr_bar(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, gr_db: f32) {
         Rect::new(inner.x1 - w, inner.y0, inner.x1, inner.y1),
         st.mute,
     );
+    // The reduction in dB takes the place of the GR label while the bar moves.
+    let label = Rect::new(r.x0, r.y0, r.x0 + GR_READOUT_W, r.y1);
+    c.fill_with(RoundedRect::from_rect(label, 1.5), st.base.lcd);
+    c.text(
+        &TextRun::new(
+            format!("-{gr_db:.1}"),
+            pt(r.x0 + 2.0, r.y1 - 1.5),
+            5.5,
+            st.base.text,
+        )
+        .weight(700),
+    );
 }
+
+/// Width of the numeric readout at the left end of a gain-reduction bar.
+const GR_READOUT_W: f64 = 20.0;
 
 fn gr_trough(c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
     c.fill_with(RoundedRect::from_rect(r, 1.5), st.base.lcd);

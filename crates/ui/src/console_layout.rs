@@ -415,7 +415,11 @@ enum Row {
     Chain,
 }
 
-const INPUT: &[Row] = &[Row::Grid(&[k("input.gain", "GAIN"), b("input.phase", "Ø")])];
+const INPUT: &[Row] = &[Row::Grid(&[
+    k("input.gain", "GAIN"),
+    b("input.phase", "Ø"),
+    b("input.phase_r", "Ø R"),
+])];
 const FILTERS: &[Row] = &[
     Row::Grid(&[b("hpf.on", "HPF"), b("lpf.on", "LPF")]),
     Row::Grid(&[k("hpf.freq", "HP"), k("lpf.freq", "LP")]),
@@ -442,10 +446,14 @@ const DYNAMICS: &[Row] = &[
         k("gate.range", "RANGE"),
         k("gate.hold", "HOLD"),
     ]),
-    Row::Grid(&[k("gate.release", "REL"), b("key.on", "KEY"), None]),
+    Row::Grid(&[
+        k("gate.release", "REL"),
+        b("key.on", "KEY"),
+        k("comp.lookahead", "LOOK"),
+    ]),
 ];
 const PARALLEL: &[Row] = &[
-    Row::Grid(&[b("pcomp.on", "PAR COMP"), None, None]),
+    Row::Grid(&[b("pcomp.on", "PAR COMP"), b("pcomp.peak", "PEAK"), None]),
     Row::Grid(&[
         k("pcomp.threshold", "THR"),
         k("pcomp.ratio", "RATIO"),
@@ -454,8 +462,15 @@ const PARALLEL: &[Row] = &[
 ];
 
 /// Params of the strip's descriptor that the console does not place (they are in the rack's
-/// channel panel) and that the MORE section must not pick up either.
-const RACK_ONLY: [&str; 3] = ["pcomp.attack", "pcomp.release", "pcomp.makeup"];
+/// channel panel) and that the MORE section must not pick up either. The two section bypasses
+/// are driven by the BYP ALL switch of the inserts.
+const RACK_ONLY: [&str; 5] = [
+    "pcomp.attack",
+    "pcomp.release",
+    "pcomp.makeup",
+    "dyn.bypass",
+    "eq.bypass",
+];
 
 const EQ: &[Row] = &[
     Row::Grid(&[b("eq.on", "EQ"), None, None]),

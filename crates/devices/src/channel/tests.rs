@@ -119,6 +119,16 @@ fn descriptor_keys_match_contract_exactly() {
         .map(|p| format!("pcomp.{p}")),
     );
     params.push("internal.tap_live".into());
+    params.extend(
+        [
+            "comp.lookahead",
+            "pcomp.peak",
+            "input.phase_r",
+            "dyn.bypass",
+            "eq.bypass",
+        ]
+        .map(String::from),
+    );
     let mut sockets: Vec<String> = [
         "in_l",
         "in_r",
@@ -1749,4 +1759,235 @@ fn the_drawn_strip_curve_matches_a_measured_sweep_within_a_tenth_of_a_db() {
         worst = worst.max(err);
     }
     assert!(worst < 0.1, "worst error {worst} dB");
+}
+
+// ---- strip upgrades follow-ups: look-ahead, per-side polarity, section bypass, detector
+
+/// A strip with a hard peak compressor with the fastest attack, left pan.
+fn lookahead_strip(ms: f32) -> DeviceHarness {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("comp.on", 1.0);
+    h.set_param("comp.peak", 1.0);
+    h.set_param("comp.fast", 1.0);
+    h.set_param("comp.threshold", -30.0);
+    h.set_param("comp.ratio", 20.0);
+    h.set_param("comp.release", 200.0);
+    h.set_param("comp.lookahead", ms);
+    h
+}
+
+/// A quiet tone that jumps to a loud one at `ONSET`.
+const ONSET: usize = 2_000;
+fn burst(n: usize) -> f32 {
+    sine(1_000.0, if n < ONSET { 0.01 } else { 0.9 })(n)
+}
+
+#[test]
+fn the_lookahead_is_reported_and_delays_the_strip_by_exactly_that_much() {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    assert_eq!(h.device().latency_frames(), 0, "off by default");
+    for ms in [1.0f32, 5.0, 10.0] {
+        let frames = (ms * 0.001 * 48_000.0).round() as u32;
+        // With the compressor off, on and bypassed the strip keeps the same alignment.
+        for (comp, bypass) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)] {
+            h.set_param("comp.on", comp);
+            h.set_param("dyn.bypass", bypass);
+            h.set_param("comp.lookahead", ms);
+            assert_eq!(h.device().latency_frames(), frames, "{ms} ms reported");
+            assert_eq!(
+                impulse_position(&mut h),
+                frames as usize,
+                "{ms} ms (comp {comp}, bypass {bypass}) really delayed"
+            );
+        }
+    }
+    h.set_param("comp.lookahead", 0.0);
+    assert_eq!(h.device().latency_frames(), 0);
+    h.set_param("latency.adjust", -100.0);
+    h.set_param("comp.lookahead", 2.0);
+    assert_eq!(
+        h.device().latency_frames(),
+        100 + 96,
+        "adds to the phantom latency"
+    );
+}
+
+#[test]
+fn a_lookahead_of_zero_changes_nothing_bit_for_bit() {
+    let plain = {
+        let mut h = lookahead_strip(0.0);
+        run_signal(&mut h, &["in_l", "in_r"], burst, 80, &["out_l"]).remove(0)
+    };
+    let mut off = channel();
+    off.set_param("pan", -1.0);
+    off.set_param("comp.on", 1.0);
+    off.set_param("comp.peak", 1.0);
+    off.set_param("comp.fast", 1.0);
+    off.set_param("comp.threshold", -30.0);
+    off.set_param("comp.ratio", 20.0);
+    off.set_param("comp.release", 200.0);
+    let base = run_signal(&mut off, &["in_l", "in_r"], burst, 80, &["out_l"]).remove(0);
+    assert_eq!(plain, base);
+}
+
+#[test]
+fn the_lookahead_has_the_compressor_down_before_the_loud_part_arrives() {
+    let peak_after_onset = |ms: f32| {
+        let mut h = lookahead_strip(ms);
+        let delay = h.device().latency_frames() as usize;
+        let y = run_signal(&mut h, &["in_l", "in_r"], burst, 80, &["out_l"]).remove(0);
+        let from = ONSET + delay;
+        y[from..from + 40]
+            .iter()
+            .fold(0.0f32, |m, v| m.max(v.abs()))
+    };
+    let none = peak_after_onset(0.0);
+    let ahead = peak_after_onset(5.0);
+    assert!(
+        none > 0.5,
+        "without it the first cycles get through: {none}"
+    );
+    assert!(
+        ahead < 0.5 * none,
+        "with it the onset is already reduced: {ahead} vs {none}"
+    );
+}
+
+#[test]
+fn a_reset_clears_the_lookahead_line() {
+    let mut h = lookahead_strip(10.0);
+    run_signal(&mut h, &["in_l", "in_r"], burst, 40, &["out_l"]);
+    h.device_mut().reset();
+    let y = run_signal(&mut h, &["in_l", "in_r"], |_| 0.0, 8, &["out_l"]).remove(0);
+    assert!(y.iter().all(|v| *v == 0.0), "no history survives a reset");
+}
+
+#[test]
+fn each_side_has_its_own_polarity() {
+    let sides = |phase: f32, phase_r: f32| {
+        let mut h = channel();
+        h.set_param("input.phase", phase);
+        h.set_param("input.phase_r", phase_r);
+        dc(&mut h, "in_l", 0.5);
+        dc(&mut h, "in_r", 0.5);
+        let o = settled(&mut h, &["out_l", "out_r"]);
+        (o[0] > 0.0, o[1] > 0.0)
+    };
+    assert_eq!(sides(0.0, 0.0), (true, true));
+    assert_eq!(sides(1.0, 0.0), (false, false), "the old switch flips both");
+    assert_eq!(sides(0.0, 1.0), (true, false), "the right side alone");
+    assert_eq!(sides(1.0, 1.0), (false, true), "the left side alone");
+}
+
+#[test]
+fn the_right_polarity_ramps_without_a_click_and_leaves_the_left_alone() {
+    let mut h = channel();
+    dc(&mut h, "in_l", 0.5);
+    dc(&mut h, "in_r", 0.5);
+    let before = settled(&mut h, &["out_l", "out_r"]);
+    h.set_param("input.phase_r", 1.0);
+    let o = h.render(8, &["out_l", "out_r"]);
+    assert!(
+        o[0].iter().all(|v| v.to_bits() == before[0].to_bits()),
+        "left is untouched"
+    );
+    assert!(
+        max_step(&o[1]) < 2.0 * before[1] / 100.0,
+        "a flip crosses zero over about 5 ms: {}",
+        max_step(&o[1])
+    );
+    assert!(approx(*o[1].last().unwrap(), -before[1], 1e-6));
+}
+
+#[test]
+fn the_parallel_compressor_detector_can_be_peak_or_rms() {
+    let out = |peak: Option<f32>| {
+        program_out(100, |h| {
+            h.set_param("pcomp.on", 1.0);
+            h.set_param("pcomp.mix", 1.0);
+            for (k, v) in pcomp_params() {
+                h.set_param(k, v);
+            }
+            if let Some(p) = peak {
+                h.set_param("pcomp.peak", p);
+            }
+        })
+    };
+    let (rms, peak) = (out(Some(0.0)), out(Some(1.0)));
+    assert_ne!(rms, peak, "the detector changes the gain");
+    assert!(peak.iter().all(|v| v.is_finite()));
+    assert_eq!(rms, out(None), "RMS is the default, as before the switch");
+}
+
+#[test]
+fn bypassing_the_dynamics_takes_the_section_out_without_clicking() {
+    let level = |bypass: f32| {
+        let mut h = channel();
+        h.set_param("pan", -1.0);
+        h.set_param("comp.on", 1.0);
+        h.set_param("comp.threshold", -40.0);
+        h.set_param("comp.ratio", 20.0);
+        h.set_param("dyn.bypass", bypass);
+        run_signal(
+            &mut h,
+            &["in_l", "in_r"],
+            sine(1_000.0, 0.5),
+            120,
+            &["out_l"],
+        )
+        .remove(0)
+    };
+    let (on, bypassed) = (level(0.0), level(1.0));
+    let tail = |v: &[f32]| {
+        v[v.len() - 480..]
+            .iter()
+            .fold(0.0f32, |m, x| m.max(x.abs()))
+    };
+    assert!(tail(&on) < 0.2, "the compressor works: {}", tail(&on));
+    assert!(approx(tail(&bypassed), 0.5, 0.01), "bypassed it is unity");
+    // The gate goes the same way.
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("gate.on", 1.0);
+    h.set_param("gate.threshold", -10.0);
+    h.set_param("gate.range", 80.0);
+    dc(&mut h, "in_l", 0.1);
+    h.render(200, &["out_l"]);
+    let closed = settled(&mut h, &["out_l"])[0];
+    assert!(closed < 0.01, "the gate is closed: {closed}");
+    h.set_param("dyn.bypass", 1.0);
+    let o = settled(&mut h, &["out_l"])[0];
+    assert!(
+        approx(o, 0.1, 1e-3),
+        "the bypassed gate lets it through: {o}"
+    );
+}
+
+#[test]
+fn bypassing_the_eq_takes_it_out_and_the_settings_come_back() {
+    let level = |on: f32, bypass: f32| {
+        let mut h = channel();
+        h.set_param("pan", -1.0);
+        h.set_param("eq.on", on);
+        h.set_param("eq.lf.gain", 12.0);
+        h.set_param("eq.lf.freq", 100.0);
+        h.set_param("eq.bypass", bypass);
+        dc(&mut h, "in_l", 0.1);
+        settled(&mut h, &["out_l"])[0]
+    };
+    assert!(level(1.0, 0.0) > 0.2, "the low shelf lifts DC");
+    assert!(approx(level(1.0, 1.0), 0.1, 1e-4), "bypassed it is flat");
+    assert!(approx(level(0.0, 0.0), 0.1, 1e-4));
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("eq.on", 1.0);
+    h.set_param("eq.lf.gain", 12.0);
+    dc(&mut h, "in_l", 0.1);
+    let eq = settled(&mut h, &["out_l"])[0];
+    h.set_param("eq.bypass", 1.0);
+    settled(&mut h, &["out_l"]);
+    h.set_param("eq.bypass", 0.0);
+    assert!(approx(settled(&mut h, &["out_l"])[0], eq, 1e-4));
 }

@@ -9,6 +9,24 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Channel strip follow-ups: compressor look-ahead, a polarity for each side, bypass-all over the dynamics and EQ,
+  a parallel detector choice, a trim readout and a gain-reduction number.** The strip compressor gets a
+  look-ahead of 0 to 10 ms (`comp.lookahead`, the LOOK knob in the console's DYNAMICS section): the strip delays the
+  audio of its dynamics section while the gains are computed from the signal as it arrives, so the compressor and
+  the gate act before a peak gets through. The delay is reported as the strip's latency, so the other channels are
+  lined up with it by the same compensation as any latent effect, and it stays when the compressor is off or
+  bypassed, so switching the section does not move the strip in time; at 0 the strip is bit-identical to before.
+  `input.phase_r` (the Ø R button next to Ø) inverts the right side on top of what Ø does, so Ø with Ø R inverts the
+  left side alone, each side with its own 5 ms ramp. `dyn.bypass` and `eq.bypass` take the dynamics (gate and
+  compressor) or the EQ out of the signal through the section's own crossfade without losing its settings, and
+  Mixer > Bypass All Inserts now also sets them for a section that is in use, in the same undo step as the effects,
+  and restores them with the effects (a strip with only a dynamics or EQ section in use can be bypassed too). The
+  parallel compressor gets a PEAK button for its detector (`pcomp.peak`; RMS stays the default). The console's trim
+  knob reads its value in dB at rest in the place of its label (it showed it only while dragging), and the
+  gain-reduction bar of the dynamics section writes the reduction in dB while it moves. The new params are appended
+  after the existing ones, so projects, patches and automation keep their ids (project format unchanged, 43). Not
+  done yet: a delay-compensated `insert.bypass` on the strip itself, bypass and a B for container effects, a parallel
+  compressor with a key input, an EQ or saturation on the parallel path, a pre-insert tap and a choice of tap.
 - **Mixer group follow-ups: a VCA that follows a folder, Link Faders, Create VCA in the menus, named group items and
   dragging a track header onto a group.** A VCA group can follow a track folder: Mixer > Create VCA from Folder (and
   the folder row's context menu) makes a group named after the folder whose members are the console channels of the
