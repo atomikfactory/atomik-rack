@@ -10,6 +10,7 @@ mod asset_usage;
 mod audio_edit;
 mod audio_join;
 mod audio_notes;
+pub mod audio_trim;
 mod audition;
 pub mod automation_rec;
 mod automation_view;

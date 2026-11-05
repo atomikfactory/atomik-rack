@@ -250,45 +250,67 @@ impl ClipSnapshot {
         doc: &RackDoc,
         device: &DeviceKey,
         lane: usize,
+        range: (i64, i64),
+    ) -> Result<Self, ModelError> {
+        Self::capture_ranges(doc, &[(device.clone(), lane)], range)
+    }
+
+    /// [`ClipSnapshot::capture_range`] for a range that spans several lanes (of one or more
+    /// tracks): the parts of the clips of every listed lane inside `[start, end)`, in one
+    /// snapshot that starts at `start`. A lane listed twice is read once, and a lane with no
+    /// clip inside the range contributes nothing.
+    ///
+    /// # Errors
+    /// As for [`ClipSnapshot::capture_range`]: an unknown track or lane rejects, and so does a
+    /// range with no clip inside it on any of the lanes.
+    pub fn capture_ranges(
+        doc: &RackDoc,
+        lanes: &[(DeviceKey, usize)],
         (start, end): (i64, i64),
     ) -> Result<Self, ModelError> {
         if start >= end {
             return Err(bad_song("the range must end after it starts"));
         }
-        let track = doc
-            .song
-            .track(device)
-            .ok_or_else(|| ModelError::UnknownKey(device.to_string()))?;
-        let lane_ref = track
-            .lanes
-            .get(lane)
-            .ok_or_else(|| ModelError::UnknownKey(format!("{device} lane {lane}")))?;
         let mut entries = Vec::new();
         let mut hashes = BTreeSet::new();
-        for c in &lane_ref.clips {
-            if c.end() <= start || c.start >= end {
+        let mut seen = BTreeSet::new();
+        for (device, lane) in lanes {
+            if !seen.insert((device.clone(), *lane)) {
                 continue;
             }
-            let mut inside = c.clone();
-            if c.start < start {
-                inside = crate::song_cmd::split_pair(doc, &inside, start)?.1;
+            let track = doc
+                .song
+                .track(device)
+                .ok_or_else(|| ModelError::UnknownKey(device.to_string()))?;
+            let lane_ref = track
+                .lanes
+                .get(*lane)
+                .ok_or_else(|| ModelError::UnknownKey(format!("{device} lane {lane}")))?;
+            for c in &lane_ref.clips {
+                if c.end() <= start || c.start >= end {
+                    continue;
+                }
+                let mut inside = c.clone();
+                if c.start < start {
+                    inside = crate::song_cmd::split_pair(doc, &inside, start)?.1;
+                }
+                if inside.end() > end {
+                    inside = crate::song_cmd::split_pair(doc, &inside, end)?.0;
+                }
+                if let ClipContent::Audio(a) = &inside.content {
+                    hashes.insert(a.asset.clone());
+                }
+                entries.push(ClipEntry {
+                    device: device.clone(),
+                    lane: lane_ref.kind.clone(),
+                    note_lane: if track.is_note_lane(*lane) { *lane } else { 0 },
+                    clip: Clip {
+                        id: ClipId(0),
+                        start: inside.start - start,
+                        ..inside
+                    },
+                });
             }
-            if inside.end() > end {
-                inside = crate::song_cmd::split_pair(doc, &inside, end)?.0;
-            }
-            if let ClipContent::Audio(a) = &inside.content {
-                hashes.insert(a.asset.clone());
-            }
-            entries.push(ClipEntry {
-                device: device.clone(),
-                lane: lane_ref.kind.clone(),
-                note_lane: if track.is_note_lane(lane) { lane } else { 0 },
-                clip: Clip {
-                    id: ClipId(0),
-                    start: inside.start - start,
-                    ..inside
-                },
-            });
         }
         if entries.is_empty() {
             return Err(bad_song("no clip lies inside the range"));
