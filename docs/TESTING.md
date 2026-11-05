@@ -489,7 +489,9 @@ the selection tests in `workflow_piano_roll.rs` drive the views with pointer eve
 (toggle and range roles per OS, select all, the neighbour keys, delete, duplicate, join, the group
 drag, the context-menu requests). `crates/app/src/app_core_clipboard_tests.rs` runs the clipboard in
 the app core with the recording sink (every paste is one undo step and compared as saved text; the
-clipboard survives New and Open; a cross-song paste registers its assets).
+clipboard survives New and Open; a cross-song paste registers its assets). `crates/app/src/workspace_tests.rs`
+pastes audio clips into another open song (the file is copied into its bundle and loads, or is listed missing),
+keeps the recent list and the library the same in every song, and recovers a crashed song's snapshot.
 `crates/app/src/shell_clipboard_tests.rs` presses the clipboard chords and right-clicks in a
 headless `Shell` on Windows and macOS, checks the menu items, their enabling and the derived
 shortcut text, runs a seeded random gesture script (no refused command, undo returns the empty rack)
