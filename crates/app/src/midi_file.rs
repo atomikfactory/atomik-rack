@@ -24,7 +24,8 @@
 //!   `<name> (end)` at its end. A clip file carries the tempo and time signature in effect where
 //!   the clip starts, a track file the whole tempo map, meter map and markers.
 //! - Program changes a clip carries are written on the track's channel, after the controllers of
-//!   their tick (so a bank select, which is the `CC 0` and `CC 32` controller lane, comes first),
+//!   their tick, each preceded by the bank select (`CC 0` MSB, `CC 32` LSB) that belongs to it
+//!   (a bank select an older project keeps in a controller lane is still written with the lane),
 //!   and so are the SysEx messages it carries (see `Clip::midi`).
 //! - A linear controller segment is sampled (every 1/16 quarter note, only the changes); a step
 //!   point is one event. Notes of one key that overlap are shortened so every note-off pairs with
@@ -36,12 +37,15 @@
 //! ends the earlier note there (and replaces it when both start at one tick), a hanging note
 //! ends with its track, a note is at least one tick long, two notes at the same tick and key keep
 //! the first. Controllers become `Step` points
-//! (the last value at a tick wins, bank select `CC 0` and `CC 32` included); channel-mode
-//! controllers (120 and above), data entry and (N)RPN numbers are skipped. Program changes (the
-//! last one at a tick wins) and the complete SysEx messages of a track that has notes are kept in
-//! the clip's `midi` data (at most as many as a clip holds); SysEx of a track without notes has no
-//! clip to live in and is dropped. Tempo, time signature and marker events from every track make
-//! the song-level data. Ticks are rescaled from the file's division with rounding.
+//! (the last value at a tick wins); channel-mode controllers (120 and above), data entry and
+//! (N)RPN numbers are skipped. Program changes (the last one at a tick wins) are kept in the
+//! clip's `midi` data (at most as many as a clip holds): a bank select (`CC 0`, `CC 32`) just
+//! before a program change at the same tick joins it as one bank and program event and leaves
+//! the controller lanes. The complete SysEx messages of a file track belong to its first clip; a
+//! track with SysEx but no notes becomes a clip without notes that carries them. Tempo, time
+//! signature and marker events from every track make the song-level data; a marker named
+//! `<name> (end)` after a marker named `<name>` closes that marker into a range, which is how
+//! the export writes a range. Ticks are rescaled from the file's division with rounding.
 
 use atomik_core::PPQ;
 use atomik_midi_io::smf::{SmfError, SmfEvent, SmfFile, SmfMessage, SmfTrack, read};
@@ -364,12 +368,30 @@ fn play_events(track: &Track, channel: u8, song: Option<&Song>, res: MidiResolut
     let mut out = note_events(&notes, channel, res);
     out.extend(controller_events(&flatten_controllers(track), channel));
     let extra = flatten_midi_data(track);
-    out.extend(
-        extra
-            .programs
-            .into_iter()
-            .map(|(tick, program)| timed(tick, 3, SmfMessage::Program { channel, program })),
-    );
+    for p in extra.programs {
+        // The bank select goes out just before the program change it belongs to.
+        for (controller, value) in [(0, p.bank_msb), (32, p.bank_lsb)] {
+            if let Some(value) = value {
+                out.push(timed(
+                    p.tick,
+                    3,
+                    SmfMessage::Controller {
+                        channel,
+                        controller,
+                        value,
+                    },
+                ));
+            }
+        }
+        out.push(timed(
+            p.tick,
+            3,
+            SmfMessage::Program {
+                channel,
+                program: p.program,
+            },
+        ));
+    }
     out.extend(
         extra
             .sysex
@@ -484,11 +506,16 @@ pub struct MidiSong {
     pub tempo: Option<Vec<TempoEvent>>,
     /// The meter map (first event at bar 1), `None` for a file without time signatures.
     pub meter: Option<Vec<MeterEvent>>,
-    /// The markers as `(tick, name)`.
+    /// The markers as `(tick, name)`, without the ones that make up a range.
     pub markers: Vec<(i64, String)>,
+    /// The ranges as `(start, end, name)`: a marker pair as the export writes it.
+    pub ranges: Vec<ImportedRange>,
     /// How many channels with controllers but no notes were left out.
     pub skipped: usize,
 }
+
+/// A range read from a file: `(start, end, name)` in model ticks.
+pub type ImportedRange = (i64, i64, String);
 
 /// A tick of the file in model ticks (rounded, at most [`MAX_TICK`]).
 fn model_tick(tick: u64, ppq: u16) -> i64 {
@@ -504,6 +531,9 @@ struct Channel {
     notes: Vec<Note>,
     lanes: BTreeMap<ControllerKind, Vec<AutomationPoint>>,
     programs: Vec<ProgramChange>,
+    /// The bank select bytes (`CC 0`, `CC 32`) last seen, with their tick: a program change at
+    /// that tick takes them.
+    bank: Option<(i64, Option<u8>, Option<u8>)>,
 }
 
 impl Channel {
@@ -524,6 +554,47 @@ impl Channel {
             self.notes.push(Note::new(start, tick - start, key, v));
         }
         self.open.insert(key, (tick, velocity));
+    }
+
+    /// A bank select byte (`CC 0` or `CC 32`) at `tick`.
+    fn bank_byte(&mut self, controller: u8, tick: i64, value: u8) {
+        let (msb, lsb) = self.bank_at(tick);
+        self.bank = Some(match controller {
+            0 => (tick, Some(value), lsb),
+            _ => (tick, msb, Some(value)),
+        });
+    }
+
+    /// The bank select bytes seen at `tick`.
+    fn bank_at(&self, tick: i64) -> (Option<u8>, Option<u8>) {
+        match self.bank {
+            Some((t, msb, lsb)) if t == tick => (msb, lsb),
+            _ => (None, None),
+        }
+    }
+
+    /// A program change: the bank select just before it at the same tick joins it, and its
+    /// controller points leave the lanes.
+    fn program(&mut self, tick: i64, program: u8) {
+        let (msb, lsb) = self.bank_at(tick);
+        for (controller, byte) in [(0u8, msb), (32, lsb)] {
+            if byte.is_none() {
+                continue;
+            }
+            let kind = ControllerKind::Cc(controller);
+            if let Some(points) = self.lanes.get_mut(&kind) {
+                points.retain(|p| p.tick != tick);
+                if points.is_empty() {
+                    self.lanes.remove(&kind);
+                }
+            }
+        }
+        self.programs.push(ProgramChange {
+            tick,
+            program,
+            bank_msb: msb,
+            bank_lsb: lsb,
+        });
     }
 
     fn point(&mut self, kind: ControllerKind, tick: i64, value: f32) {
@@ -643,10 +714,13 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                     channel,
                     controller,
                     value,
-                } if !skipped_controller(*controller) => channels
-                    .entry(*channel)
-                    .or_default()
-                    .point(ControllerKind::Cc(*controller), tick, level(*value)),
+                } if !skipped_controller(*controller) => {
+                    let c = channels.entry(*channel).or_default();
+                    if matches!(*controller, 0 | 32) {
+                        c.bank_byte(*controller, tick, *value);
+                    }
+                    c.point(ControllerKind::Cc(*controller), tick, level(*value))
+                }
                 SmfMessage::ChannelPressure { channel, pressure } => channels
                     .entry(*channel)
                     .or_default()
@@ -677,11 +751,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                     channels
                         .entry(*channel)
                         .or_default()
-                        .programs
-                        .push(ProgramChange {
-                            tick,
-                            program: *program,
-                        });
+                        .program(tick, *program);
                 }
                 SmfMessage::SysEx(data) => sysex.push(SysexEvent {
                     tick,
@@ -702,10 +772,23 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
             })
             .collect();
         // A SysEx message belongs to the file track, not to a channel: the first clip of the
-        // track carries it.
+        // track carries it, or a clip without notes when the track has none.
+        let base = title.unwrap_or_else(|| format!("Track {}", index + 1));
+        if finished.is_empty() && !sysex.is_empty() {
+            tracks.push(MidiTrack {
+                name: base,
+                notes: Vec::new(),
+                controllers: Vec::new(),
+                midi: limited(MidiData {
+                    programs: Vec::new(),
+                    sysex,
+                }),
+                end,
+            });
+            continue;
+        }
         let mut sysex = Some(sysex);
         let several = finished.len() > 1;
-        let base = title.unwrap_or_else(|| format!("Track {}", index + 1));
         for (channel, (notes, controllers, mut midi)) in finished {
             midi.sysex = sysex.take().unwrap_or_default();
             tracks.push(MidiTrack {
@@ -725,14 +808,50 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
         return Err(MidiFileError::NoNotes);
     }
     markers.sort_by_key(|m: &(i64, String)| m.0);
+    let (mut markers, mut ranges) = pair_ranges(markers);
     markers.truncate(MAX_IMPORTED_MARKERS);
+    ranges.truncate(MAX_IMPORTED_MARKERS);
     Ok(MidiSong {
         tracks,
         tempo: tempo_map(&tempi),
         meter: meter_map(&signatures),
         markers,
+        ranges,
         skipped,
     })
+}
+
+/// The suffix the export gives the marker that ends a range.
+const END_SUFFIX: &str = " (end)";
+
+/// Splits `markers` (sorted by tick) into the plain markers and the ranges: a marker named
+/// `<name> (end)` closes the latest earlier marker named `<name>` that no range has taken.
+fn pair_ranges(markers: Vec<(i64, String)>) -> (Vec<(i64, String)>, Vec<ImportedRange>) {
+    let mut taken = vec![false; markers.len()];
+    let mut ranges = Vec::new();
+    for (i, (end, name)) in markers.iter().enumerate() {
+        let Some(base) = name
+            .strip_suffix(END_SUFFIX)
+            .filter(|b| !b.trim().is_empty())
+        else {
+            continue;
+        };
+        let start = (0..i)
+            .rev()
+            .find(|&j| !taken[j] && markers[j].1 == base && markers[j].0 < *end);
+        if let Some(j) = start {
+            taken[i] = true;
+            taken[j] = true;
+            ranges.push((markers[j].0, *end, base.to_owned()));
+        }
+    }
+    ranges.sort_by_key(|r| r.0);
+    let rest = markers
+        .into_iter()
+        .zip(taken)
+        .filter_map(|(m, used)| (!used).then_some(m))
+        .collect();
+    (rest, ranges)
 }
 
 fn tempo_map(events: &[(i64, u32)]) -> Option<Vec<TempoEvent>> {
@@ -835,14 +954,21 @@ impl MidiSong {
 }
 
 impl MidiTrack {
-    /// The content tick just past the last note and controller point.
+    /// The content tick just past the last note, controller point, program change and SysEx
+    /// message.
     fn content_end(&self) -> i64 {
         let notes = self.notes.iter().map(|n| n.tick + n.length);
         let points = self
             .controllers
             .iter()
             .flat_map(|l| l.points.iter().map(|p| p.tick + 1));
-        notes.chain(points).max().unwrap_or(0)
+        let messages = self
+            .midi
+            .sysex
+            .iter()
+            .map(|s| s.tick + 1)
+            .chain(self.midi.programs.iter().map(|p| p.tick + 1));
+        notes.chain(points).chain(messages).max().unwrap_or(0)
     }
 
     /// A note clip at song tick `start`. Its length is the track's end when that covers the

@@ -279,7 +279,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )),
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
-        (0u8..3, 0usize..12, 0usize..12).prop_map(|(k, a, b)| WfOp::ClipLanes(k, a, b)),
+        (0u8..5, 0usize..12, 0usize..12).prop_map(|(k, a, b)| WfOp::ClipLanes(k, a, b)),
         (0u8..15, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
@@ -586,6 +586,26 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             (2, Some(clip), _) => Command::Song(SongCommand::SetClipParamLanes {
                 clip,
                 lanes: Vec::new(),
+                merge: None,
+            }),
+            (3, Some(clip), _) => Command::Song(SongCommand::SetClipMidi {
+                clip,
+                midi: atomik_model::MidiData {
+                    programs: vec![atomik_model::ProgramChange {
+                        bank_msb: Some(1),
+                        bank_lsb: None,
+                        ..atomik_model::ProgramChange::new(PPQ / 2, 9)
+                    }],
+                    sysex: vec![atomik_model::SysexEvent {
+                        tick: 0,
+                        data: vec![0x7E, 0x7F, 0x09, 0x01],
+                    }],
+                },
+                merge: None,
+            }),
+            (4, Some(clip), _) => Command::Song(SongCommand::SetClipMidi {
+                clip,
+                midi: atomik_model::MidiData::default(),
                 merge: None,
             }),
             _ => return None,

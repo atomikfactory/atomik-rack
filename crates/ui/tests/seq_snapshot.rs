@@ -110,6 +110,31 @@ fn record_piano_roll_controllers() -> DisplayList {
     dl
 }
 
+fn record_piano_roll_messages() -> DisplayList {
+    let (mut doc, reg) = (song_doc(), registry());
+    doc.song_mut().tracks[0].lanes[0].clips[0].midi = atomik_model::MidiData {
+        programs: vec![
+            atomik_model::ProgramChange::new(0, 5),
+            atomik_model::ProgramChange {
+                bank_msb: Some(3),
+                bank_lsb: Some(0),
+                ..atomik_model::ProgramChange::new(2 * PPQ, 9)
+            },
+        ],
+        sysex: vec![atomik_model::SysexEvent {
+            tick: PPQ,
+            data: vec![0x7E, 0x7F, 0x09, 0x01],
+        }],
+    }
+    .into();
+    let mut v = piano_roll(&doc, &reg);
+    v.set_messages_open(true);
+    v.set_playhead(PPQ);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    dl
+}
+
 fn record_transport() -> DisplayList {
     let (doc, reg) = (song_doc(), registry());
     let mut v = transport_bar(&doc, &reg);
@@ -167,6 +192,14 @@ fn piano_roll_with_the_controller_area_matches_golden() {
     check(
         "piano_roll_controllers_1x.json",
         &record_piano_roll_controllers().to_json(),
+    );
+}
+
+#[test]
+fn piano_roll_with_the_message_lane_matches_golden() {
+    check(
+        "piano_roll_messages_1x.json",
+        &record_piano_roll_messages().to_json(),
     );
 }
 

@@ -1229,6 +1229,19 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Replace a note clip's program changes and SysEx messages (see [`crate::midi_data`]). The
+    /// clip must be a note clip (empty data is allowed on any clip and a no-op there); the data
+    /// is put in canonical form (sorted, the last program change of a tick wins, empty SysEx
+    /// messages dropped) and checked against the limits. `merge` groups drags into one undo
+    /// step, in the same group as the other clip edits. Reports [`crate::SyncOp::SongChanged`].
+    SetClipMidi {
+        /// Clip id.
+        clip: ClipId,
+        /// The clip's whole program change and SysEx data after the edit.
+        midi: MidiData,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Replace a note clip's device-parameter lanes (see [`crate::param_lane`]). The clip must be
     /// a note clip (an empty list is allowed on any clip and a no-op there); every lane must name
     /// a device in the rack and one of its params, points are sorted by tick in `0..=MAX_TICK`

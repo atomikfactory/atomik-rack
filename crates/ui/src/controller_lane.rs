@@ -20,6 +20,10 @@
 //! Delete removes it, Copy and Cut put the points on the clipboard (Paste lays them into the lane
 //! shown at the playhead) and the THIN chip simplifies the selection, or the whole lane when
 //! nothing is selected.
+//!
+//! **Program changes and SysEx.** The MSG chip switches the area to the clip's program change and
+//! SysEx messages (see [`crate::midi_lane`]): the chip row then holds the steppers of the selected
+//! program change and the buttons that add and clear messages.
 
 use atomik_model::controller::{ControllerKind, ControllerLane, canonical};
 use atomik_model::{AutomationPoint, Curve};
@@ -60,6 +64,21 @@ pub enum Chip {
     Curve,
     /// Thin the selected points, or the whole lane when none is selected.
     Thin,
+    /// Show the clip's program changes and SysEx messages in place of a controller lane.
+    Messages,
+    /// Back from the messages to the controller lanes.
+    Back,
+    /// The program of the selected program change (arrows step it).
+    Program,
+    /// The bank select MSB of the selected program change (arrows step it; one step past 127 is
+    /// none).
+    BankMsb,
+    /// The bank select LSB of the selected program change.
+    BankLsb,
+    /// Add a SysEx message at the playhead.
+    AddSysex,
+    /// Delete every program change and SysEx message of the clip.
+    ClearMessages,
 }
 
 /// Which part of a stepper chip a press landed on.
@@ -86,6 +105,8 @@ pub struct LaneEditor {
     pub poly: u8,
     /// The curve of the points the pencil adds.
     pub curve: Curve,
+    /// The area shows the clip's program changes and SysEx messages, not a controller lane.
+    pub messages: bool,
 }
 
 impl Default for LaneEditor {
@@ -96,6 +117,7 @@ impl Default for LaneEditor {
             cc: 74,
             poly: 60,
             curve: Curve::Linear,
+            messages: false,
         }
     }
 }
@@ -133,8 +155,15 @@ impl LaneEditor {
                     Curve::Step => Curve::Linear,
                 };
             }
+            Chip::Messages => self.messages = true,
+            Chip::Back => self.messages = false,
             // An action, not a state: the roll sends the command.
-            Chip::Thin => {}
+            Chip::Thin
+            | Chip::Program
+            | Chip::BankMsb
+            | Chip::BankLsb
+            | Chip::AddSysex
+            | Chip::ClearMessages => {}
         }
     }
 
@@ -145,7 +174,14 @@ impl LaneEditor {
             Chip::Cc => self.kind == ControllerKind::Cc(self.cc) && !PRESETS.contains(&self.kind),
             Chip::Poly => matches!(self.kind, ControllerKind::PolyPressure(_)),
             Chip::Curve => self.curve == Curve::Step,
-            Chip::Thin => false,
+            Chip::Messages => self.messages,
+            Chip::Thin
+            | Chip::Back
+            | Chip::Program
+            | Chip::BankMsb
+            | Chip::BankLsb
+            | Chip::AddSysex
+            | Chip::ClearMessages => false,
         }
     }
 
@@ -190,6 +226,13 @@ pub fn chip_label(chip: Chip, ed: &LaneEditor) -> String {
             Curve::Step => "STEP".to_owned(),
         },
         Chip::Thin => "THIN".to_owned(),
+        Chip::Messages => "MSG".to_owned(),
+        Chip::Back => "< CTRL".to_owned(),
+        Chip::Program => "< PRG >".to_owned(),
+        Chip::BankMsb => "< MSB >".to_owned(),
+        Chip::BankLsb => "< LSB >".to_owned(),
+        Chip::AddSysex => "+ SYSEX".to_owned(),
+        Chip::ClearMessages => "CLEAR".to_owned(),
     }
 }
 
@@ -203,11 +246,37 @@ pub fn kind_name(kind: ControllerKind) -> String {
     }
 }
 
-/// Every chip, left to right.
-pub fn chips() -> impl Iterator<Item = Chip> {
+/// The chips of the header row, left to right: the controller lanes' or, with `messages`, the
+/// program change and SysEx messages'.
+pub fn chips(messages: bool) -> Vec<Chip> {
+    if messages {
+        return vec![
+            Chip::Back,
+            Chip::Program,
+            Chip::BankMsb,
+            Chip::BankLsb,
+            Chip::AddSysex,
+            Chip::ClearMessages,
+        ];
+    }
     (0..PRESETS.len())
         .map(Chip::Preset)
-        .chain([Chip::Cc, Chip::Poly, Chip::Curve, Chip::Thin])
+        .chain([
+            Chip::Cc,
+            Chip::Poly,
+            Chip::Curve,
+            Chip::Thin,
+            Chip::Messages,
+        ])
+        .collect()
+}
+
+/// True for the chips with arrows at their ends.
+fn is_stepper(chip: Chip) -> bool {
+    matches!(
+        chip,
+        Chip::Cc | Chip::Poly | Chip::Program | Chip::BankMsb | Chip::BankLsb
+    )
 }
 
 /// The rectangle of a chip in a header row that starts at `x0` and is `y0` from the top.
@@ -218,6 +287,13 @@ pub fn chip_rect(x0: f64, y0: f64, chip: Chip) -> Rect {
         Chip::Poly => (PRESETS.len() as f64 * 56.0 + 82.0, 78.0),
         Chip::Curve => (PRESETS.len() as f64 * 56.0 + 170.0, 46.0),
         Chip::Thin => (PRESETS.len() as f64 * 56.0 + 222.0, 46.0),
+        Chip::Messages => (PRESETS.len() as f64 * 56.0 + 274.0, 46.0),
+        Chip::Back => (0.0, 56.0),
+        Chip::Program => (62.0, 80.0),
+        Chip::BankMsb => (148.0, 80.0),
+        Chip::BankLsb => (234.0, 80.0),
+        Chip::AddSysex => (326.0, 70.0),
+        Chip::ClearMessages => (402.0, 52.0),
     };
     Rect::new(
         x0 + 6.0 + offset,
@@ -239,13 +315,14 @@ pub fn part_at(rect: Rect, x: f64) -> Part {
 }
 
 /// The chip at `(x, y)` of a header row (see [`chip_rect`]), with the part of a stepper.
-pub fn chip_at(x0: f64, y0: f64, x: f64, y: f64) -> Option<(Chip, Part)> {
-    chips().find_map(|chip| {
+pub fn chip_at(messages: bool, x0: f64, y0: f64, x: f64, y: f64) -> Option<(Chip, Part)> {
+    chips(messages).into_iter().find_map(|chip| {
         let r = chip_rect(x0, y0, chip);
         (x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1).then(|| {
-            let part = match chip {
-                Chip::Cc | Chip::Poly => part_at(r, x),
-                _ => Part::Body,
+            let part = if is_stepper(chip) {
+                part_at(r, x)
+            } else {
+                Part::Body
             };
             (chip, part)
         })
@@ -607,22 +684,50 @@ mod tests {
 
     #[test]
     fn chips_do_not_overlap_and_are_found_by_position() {
-        let all: Vec<Chip> = chips().collect();
-        assert_eq!(all.len(), 11);
-        for (i, a) in all.iter().enumerate() {
-            let ra = chip_rect(100.0, 500.0, *a);
-            for b in &all[i + 1..] {
-                let rb = chip_rect(100.0, 500.0, *b);
-                assert!(ra.x1 <= rb.x0 || rb.x1 <= ra.x0, "{a:?} overlaps {b:?}");
+        for messages in [false, true] {
+            let all = chips(messages);
+            assert_eq!(all.len(), if messages { 6 } else { 12 });
+            for (i, a) in all.iter().enumerate() {
+                let ra = chip_rect(100.0, 500.0, *a);
+                for b in &all[i + 1..] {
+                    let rb = chip_rect(100.0, 500.0, *b);
+                    assert!(ra.x1 <= rb.x0 || rb.x1 <= ra.x0, "{a:?} overlaps {b:?}");
+                }
+                let c = ra.center();
+                let (chip, _) = chip_at(messages, 100.0, 500.0, c.x, c.y).expect("found");
+                assert_eq!(chip, *a);
             }
-            let c = ra.center();
-            let (chip, _) = chip_at(100.0, 500.0, c.x, c.y).expect("found");
-            assert_eq!(chip, *a);
         }
         let cc = chip_rect(0.0, 0.0, Chip::Cc);
         assert_eq!(part_at(cc, cc.x0 + 3.0), Part::Down);
         assert_eq!(part_at(cc, cc.center().x), Part::Body);
         assert_eq!(part_at(cc, cc.x1 - 3.0), Part::Up);
-        assert!(chip_at(0.0, 0.0, 5000.0, 10.0).is_none());
+        assert!(chip_at(false, 0.0, 0.0, 5000.0, 10.0).is_none());
+        // The message steppers have arrows too, the other message chips do not.
+        let (_, part) = chip_at(
+            true,
+            0.0,
+            0.0,
+            chip_rect(0.0, 0.0, Chip::Program).x0 + 3.0,
+            10.0,
+        )
+        .expect("found");
+        assert_eq!(part, Part::Down);
+        let add = chip_rect(0.0, 0.0, Chip::AddSysex);
+        assert_eq!(
+            chip_at(true, 0.0, 0.0, add.x0 + 3.0, 10.0).unwrap().1,
+            Part::Body
+        );
+    }
+
+    #[test]
+    fn the_messages_chip_switches_the_area_and_back_returns() {
+        let mut ed = LaneEditor::default();
+        assert!(!ed.messages);
+        ed.press(Chip::Messages, Part::Body);
+        assert!(ed.messages && ed.is_active(Chip::Messages));
+        ed.press(Chip::Back, Part::Body);
+        assert!(!ed.messages);
+        assert_eq!(ed.kind, ControllerKind::PitchBend, "the lane is as it was");
     }
 }

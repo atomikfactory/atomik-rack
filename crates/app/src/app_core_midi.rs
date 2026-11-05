@@ -391,12 +391,19 @@ impl<S: EngineSink> AppCore<S> {
             tempo: midi.tempo.filter(|_| as_song),
             meter: midi.meter.filter(|_| as_song),
             markers: if as_song { midi.markers } else { Vec::new() },
+            ranges: if as_song { midi.ranges } else { Vec::new() },
         };
         let song_data = if as_song {
             let tempo = import.tempo.as_ref().map_or(0, Vec::len);
             let markers = import.markers.len();
+            let ranges = import.ranges.len();
+            let ranges = if ranges > 0 {
+                format!(" and {ranges} range{}", plural(ranges))
+            } else {
+                String::new()
+            };
             format!(
-                " with {tempo} tempo event{} and {markers} marker{}",
+                " with {tempo} tempo event{} and {markers} marker{}{ranges}",
                 plural(tempo),
                 plural(markers)
             )

@@ -786,6 +786,7 @@ fn merging_tracks_joins_notes_and_controllers() {
         tempo: None,
         meter: None,
         markers: Vec::new(),
+        ranges: Vec::new(),
         skipped: 0,
     }
     .merged();
@@ -1019,16 +1020,7 @@ fn midi_clip() -> Clip {
         ],
     );
     c.midi = MidiData {
-        programs: vec![
-            ProgramChange {
-                tick: 0,
-                program: 5,
-            },
-            ProgramChange {
-                tick: BAR,
-                program: 99,
-            },
-        ],
+        programs: vec![ProgramChange::new(0, 5), ProgramChange::new(BAR, 99)],
         sysex: vec![SysexEvent {
             tick: PPQ,
             data: vec![0x7E, 0x7F, 0x09, 0x01],
@@ -1079,33 +1071,152 @@ fn bank_selects_program_changes_and_sysex_survive_a_clip_round_trip() {
         events.iter().any(|e| e.tick == PPQ as u64
             && e.message == SmfMessage::SysEx(vec![0x7E, 0x7F, 0x09, 0x01]))
     );
+    // Read back, the bank select that sat just before the program change joins it.
     let back = read_song(&bytes).unwrap();
     let t = &back.tracks[0];
-    assert_eq!(t.midi, *original.midi);
-    assert_eq!(t.controllers, original.controllers);
-    let clip = t.clone().into_clip(0, &song);
-    assert_eq!(clip.midi, original.midi);
+    assert_eq!(
+        t.midi.programs[0],
+        ProgramChange {
+            bank_msb: Some(1),
+            bank_lsb: Some(2),
+            ..ProgramChange::new(0, 5)
+        }
+    );
+    assert_eq!(t.midi.programs[1], ProgramChange::new(BAR, 99));
+    assert_eq!(t.midi.sysex, original.midi.sysex);
+    assert!(t.controllers.is_empty(), "the bank select left the lanes");
+}
+
+fn banked_clip() -> Clip {
+    let mut c = clip(0, 2 * BAR, vec![note(0, PPQ, 60, 100)], Vec::new());
+    c.midi = MidiData {
+        programs: vec![
+            ProgramChange {
+                bank_msb: Some(3),
+                bank_lsb: Some(0),
+                ..ProgramChange::new(0, 5)
+            },
+            ProgramChange {
+                bank_msb: None,
+                bank_lsb: Some(9),
+                ..ProgramChange::new(BAR, 99)
+            },
+            ProgramChange::new(BAR + PPQ, 7),
+        ],
+        sysex: vec![SysexEvent {
+            tick: PPQ,
+            data: vec![0x7E, 0x7F, 0x09, 0x01],
+        }],
+    }
+    .into();
+    c
+}
+
+#[test]
+fn a_bank_and_program_event_is_written_as_its_controllers_then_the_program_and_read_back_whole() {
+    let song = empty_song(120.0);
+    let original = banked_clip();
+    let bytes = clip_file(&song, &original, "M", MidiResolution::Native);
+    let events = events_of(&bytes);
+    let messages: Vec<(u64, &SmfMessage)> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.message,
+                SmfMessage::Controller { .. } | SmfMessage::Program { .. }
+            )
+        })
+        .map(|e| (e.tick, &e.message))
+        .collect();
+    let cc = |controller, value| SmfMessage::Controller {
+        channel: 0,
+        controller,
+        value,
+    };
+    let pc = |program| SmfMessage::Program {
+        channel: 0,
+        program,
+    };
+    assert_eq!(
+        messages,
+        [
+            (0, &cc(0, 3)),
+            (0, &cc(32, 0)),
+            (0, &pc(5)),
+            (BAR as u64, &cc(32, 9)),
+            (BAR as u64, &pc(99)),
+            ((BAR + PPQ) as u64, &pc(7)),
+        ]
+    );
+    let back = read_song(&bytes).unwrap();
+    assert_eq!(back.tracks[0].midi, *original.midi);
+    assert!(back.tracks[0].controllers.is_empty());
+}
+
+#[test]
+fn a_bank_select_that_is_not_just_before_a_program_change_stays_a_controller() {
+    let cc = |t, controller, value| {
+        ev(
+            t,
+            SmfMessage::Controller {
+                channel: 0,
+                controller,
+                value,
+            },
+        )
+    };
+    let pc = |t, program| {
+        ev(
+            t,
+            SmfMessage::Program {
+                channel: 0,
+                program,
+            },
+        )
+    };
+    let bytes = smf(
+        96,
+        vec![vec![
+            ev(0, on(0, 60, 100)),
+            cc(0, 0, 4),
+            pc(0, 1),
+            // A bank select with no program change at its tick, and a program change with no
+            // bank select at its tick.
+            cc(10, 32, 6),
+            pc(20, 2),
+            ev(96, off(0, 60)),
+        ]],
+    );
+    let s = read_song(&bytes).unwrap();
+    let t = &s.tracks[0];
+    assert_eq!(t.midi.programs[0].bank_msb, Some(4));
+    assert_eq!(
+        t.midi.programs[1],
+        ProgramChange::new(model_tick(20, 96), 2)
+    );
+    assert_eq!(t.controllers.len(), 1);
+    assert_eq!(t.controllers[0].kind, ControllerKind::Cc(32));
 }
 
 #[test]
 fn program_changes_and_sysex_follow_the_track_into_a_song_file() {
     let mut song = empty_song(120.0);
-    song.tracks = vec![track("a", vec![midi_clip()])];
+    song.tracks = vec![track("a", vec![banked_clip()])];
     let bytes = song_file(&song, "S", &|k| k.0.clone(), MidiResolution::Ppq960);
     let back = read_song(&bytes).unwrap();
     assert_eq!(back.tracks.len(), 1);
-    assert_eq!(back.tracks[0].midi, *midi_clip().midi);
+    assert_eq!(back.tracks[0].midi, *banked_clip().midi);
     // At 960 the ticks are whole file ticks and come back exactly.
-    assert_eq!(back.merged().midi, *midi_clip().midi);
+    assert_eq!(back.merged().midi, *banked_clip().midi);
 }
 
 #[test]
-fn import_keeps_the_last_program_of_a_tick_and_sysex_only_of_tracks_with_notes() {
+fn import_keeps_the_last_program_of_a_tick_and_gives_a_sysex_only_track_a_clip_of_its_own() {
     let sysex = |t, b: u8| ev(t, SmfMessage::SysEx(vec![0x43, b]));
     let bytes = smf(
         96,
         vec![
-            // A conductor track: its SysEx has no clip to live in.
+            // A conductor track with SysEx and no notes: a clip without notes carries it.
             vec![sysex(0, 1), ev(0, SmfMessage::Tempo(500_000))],
             vec![
                 ev(
@@ -1146,38 +1257,105 @@ fn import_keeps_the_last_program_of_a_tick_and_sysex_only_of_tracks_with_notes()
         ],
     );
     let s = read_song(&bytes).unwrap();
-    assert_eq!(s.tracks.len(), 2);
+    assert_eq!(s.tracks.len(), 3);
+    let message = &s.tracks[0];
+    assert!(message.notes.is_empty() && message.midi.programs.is_empty());
+    assert_eq!(message.name, "Track 1");
+    assert_eq!(message.midi.sysex.len(), 1);
+    assert_eq!(s.tracks[1].midi.programs, [ProgramChange::new(0, 8)]);
+    assert_eq!(s.tracks[2].midi.programs, [ProgramChange::new(0, 40)]);
     assert_eq!(
-        s.tracks[0].midi.programs,
-        [ProgramChange {
-            tick: 0,
-            program: 8
-        }]
-    );
-    assert_eq!(
-        s.tracks[1].midi.programs,
-        [ProgramChange {
-            tick: 0,
-            program: 40
-        }]
-    );
-    assert_eq!(
-        s.tracks[0].midi.sysex.len(),
+        s.tracks[1].midi.sysex.len(),
         1,
         "the first clip of the track carries it"
     );
-    assert!(s.tracks[1].midi.sysex.is_empty());
+    assert!(s.tracks[2].midi.sysex.is_empty());
     assert_eq!(s.skipped, 1);
+    // Its clip covers the message and holds no notes.
+    let clip = s.tracks[0].clone().into_clip(0, &empty_song(120.0));
+    assert!(clip.content.is_notes() && clip.midi.sysex.len() == 1);
     // Merged into one clip: all programs, the later channel winning a shared tick.
     let m = s.merged();
-    assert_eq!(
-        m.midi.programs,
-        [ProgramChange {
-            tick: 0,
-            program: 40
-        }]
+    assert_eq!(m.midi.programs, [ProgramChange::new(0, 40)]);
+    assert_eq!(m.midi.sysex.len(), 2);
+}
+
+#[test]
+fn a_file_with_only_sysex_imports_as_a_clip_that_carries_it() {
+    let bytes = smf(
+        96,
+        vec![vec![
+            ev(0, SmfMessage::TrackName("Reset".into())),
+            ev(48, SmfMessage::SysEx(vec![0x7E, 0x7F, 0x09, 0x01])),
+        ]],
     );
-    assert_eq!(m.midi.sysex.len(), 1);
+    let s = read_song(&bytes).unwrap();
+    assert_eq!(s.tracks.len(), 1);
+    assert_eq!(s.tracks[0].name, "Reset");
+    let clip = s.tracks[0].clone().into_clip(0, &empty_song(120.0));
+    assert!(clip.length > PPQ / 2, "the clip reaches past the message");
+    assert_eq!(clip.midi.sysex[0].data, [0x7E, 0x7F, 0x09, 0x01]);
+}
+
+#[test]
+fn a_marker_pair_the_export_writes_is_read_back_as_a_range() {
+    let marker = |t, name: &str| ev(t, SmfMessage::Marker(name.to_owned()));
+    let bytes = smf(
+        96,
+        vec![vec![
+            marker(0, "Intro"),
+            marker(96, "Verse"),
+            marker(192, "Verse (end)"),
+            marker(192, "Chorus"),
+            marker(288, "Chorus (end)"),
+            // No start of this name: it stays a marker. A start with no end too.
+            marker(300, "Bridge (end)"),
+            marker(310, "Outro"),
+            ev(0, on(0, 60, 100)),
+            ev(10, off(0, 60)),
+        ]],
+    );
+    let s = read_song(&bytes).unwrap();
+    let ticks = |t: u64| t as i64 * PPQ / 96;
+    assert_eq!(
+        s.ranges,
+        [
+            (ticks(96), ticks(192), "Verse".to_owned()),
+            (ticks(192), ticks(288), "Chorus".to_owned()),
+        ]
+    );
+    let names: Vec<&str> = s.markers.iter().map(|m| m.1.as_str()).collect();
+    assert_eq!(names, ["Intro", "Bridge (end)", "Outro"]);
+}
+
+#[test]
+fn ranges_of_one_name_pair_nearest_start_first_and_a_song_round_trips_its_ranges() {
+    let (markers, ranges) = pair_ranges(vec![
+        (0, "A".into()),
+        (10, "A".into()),
+        (20, "A (end)".into()),
+        (30, "A (end)".into()),
+        (40, " (end)".into()),
+    ]);
+    assert_eq!(ranges, [(0, 30, "A".to_owned()), (10, 20, "A".to_owned())]);
+    assert_eq!(markers, [(40, " (end)".to_owned())]);
+    // The export writes ranges and the import reads them back.
+    let mut song = empty_song(120.0);
+    song.ranges = vec![RangeMarker {
+        id: 1,
+        start: BAR,
+        end: 3 * BAR,
+        name: "Verse".into(),
+        color: None,
+    }];
+    song.tracks = vec![track(
+        "a",
+        vec![clip(0, 4 * BAR, vec![note(0, PPQ, 60, 90)], Vec::new())],
+    )];
+    let bytes = song_file(&song, "S", &|k| k.0.clone(), MidiResolution::Native);
+    let back = read_song(&bytes).unwrap();
+    assert_eq!(back.ranges, [(BAR, 3 * BAR, "Verse".to_owned())]);
+    assert!(back.markers.is_empty());
 }
 
 #[test]

@@ -1320,7 +1320,15 @@ notes, and reach the track's device as the note events it already understands
   kind and the points relative to the first), Paste lays them into the lane shown from the playhead (values
   keep their place in the range of the target, points at or after the clip's content end are dropped, a
   point on an existing one replaces it) in one undo step and selects them. `editor.toggle_controllers`
-  (Shift+L) shows and hides the area.
+  (Shift+L) shows and hides the area. The MSG chip at the end of the chip row switches the area to the
+  clip's program changes and SysEx messages ([midi_lane.rs](../crates/ui/src/midi_lane.rs)): program
+  changes on an upper row (`P5`, or `B3.0 P5` with a bank select) and SysEx messages on a lower one
+  (`SYX 4`, the data length). A press on empty space of the upper row adds a program change (the program
+  in force there), a press on a marker selects it and a drag moves it on the grid (one undo step), the
+  eraser or the secondary button deletes it, Delete deletes the selected one, the PRG, MSB and LSB steppers
+  change the selected program change (the bank bytes pass through "none"), + SYSEX adds General MIDI System
+  On at the playhead and CLEAR empties the clip's data. Every edit is one `SetClipMidi`; the bytes of a SysEx
+  message cannot be typed yet.
 - **Parameter lanes** ([param_lane.rs](../crates/model/src/param_lane.rs)). A note clip can also carry
   `Clip.param_lanes: Vec<ParamLane>`: the points of one parameter of one device (`device`, `param`
   key, `AutomationPoint`s in content ticks, `Linear`, `Step` or `Bend`), sorted by `(device, param)`,
@@ -1429,8 +1437,8 @@ recording are unchanged: a track with one pass still gets one plain clip.
   focus; Paste with no row focused starts a group on the selected lane at the playhead.
 - **Editing a take.** A take has a clip id like any clip but lives in its group, so the clip editors
   open it by that id (`Song::clip_or_take`). The commands they send for a clip (`SetClipContent`,
-  `SetAudioClip`, `SetWarpMarkers`, `SetClipGrid`, `SetClipControllers`, `SetClipParamLanes`,
-  `SetClipScale`, and `PasteNotes` and `DuplicateNotes` for the piano roll's clipboard) are planned
+  `SetAudioClip`, `SetWarpMarkers`, `SetClipGrid`, `SetClipControllers`, `SetClipMidi`,
+  `SetClipParamLanes`, `SetClipScale`, and `PasteNotes` and `DuplicateNotes` for the piano roll's clipboard) are planned
   by `plan_take_edit` when the id is a take: the command is planned on a scratch document where the
   take is a clip of its lane, and the clip it comes out as replaces the take in its group, with the
   comp compiled again, in one undo step. A command that is not one of these (a split, a strip silence)
@@ -1659,15 +1667,18 @@ of them touching the engine or the audio thread.
   Audio and automation lanes are not exported; a range marker is a marker at its start named after it
   and one named `<name> (end)` at its end. The program changes and SysEx messages a clip carries
   (`flatten_midi_data`: the same pieces, offsets, loops and hiding as the controllers) are written on
-  the track's channel after the controllers of their tick, so a bank select, which is the `CC 0` and
-  `CC 32` lane, comes before its program change. *Import* makes one `MidiTrack` per
+  the track's channel after the controllers of their tick; a program change that has a bank select
+  (`bank_msb`, `bank_lsb`) writes `CC 0` and `CC 32` just before it (a bank select an older project keeps
+  in a controller lane is written with the lane, as before). *Import* makes one `MidiTrack` per
   MIDI track and channel that has notes (type 0 splits by channel): a note-on with velocity 0 is a
   note-off, a re-struck key ends the earlier note, a hanging note ends with its track, a note is at
   least one tick, two notes at one tick and key keep the first; controllers become `Step` points
-  (the last value at a tick wins, bank select included) with channel-mode, data-entry and (N)RPN
-  controllers skipped; program changes (the last at a tick wins) and the SysEx messages of a track
-  that has notes are kept in `Clip.midi` (at most 4096 changes, 1024 messages of 4096 bytes per clip;
-  the SysEx of a file track goes to its first clip, and a track without notes has none);
+  (the last value at a tick wins) with channel-mode, data-entry and (N)RPN controllers skipped; a
+  `CC 0` or `CC 32` just before a program change at the same tick joins it and leaves the lane;
+  program changes (the last at a tick wins) and the SysEx messages are kept in `Clip.midi` (at most
+  4096 changes, 1024 messages of 4096 bytes per clip; the SysEx of a file track goes to its first clip,
+  and a track with SysEx but no notes becomes a clip without notes that carries it); a marker named
+  `<name> (end)` closes the latest earlier marker named `<name>` into a range (`MidiImport.ranges`);
   tempo (as BPM rounded to 0.001), time signatures (a change in the middle of a bar takes effect at
   the next bar line, unsupported signatures are skipped) and markers (trimmed, 64 characters) come
   from every track. The file's ticks are rescaled with rounding and clamped to `MAX_TICK`.
@@ -1675,13 +1686,17 @@ of them touching the engine or the audio thread.
   ([midi_import.rs](../crates/model/src/midi_import.rs)) is the one model change: planned on a
   scratch copy like the other workflow commands, it adds per imported track an instrument (with its
   console channel, as `CreateInstrument` does), an unarmed song track, the device name and a note
-  clip, then replaces the tempo map and the meter map when given, adds markers with fresh ids, and
+  clip, then replaces the tempo map and the meter map when given, adds markers and ranges with fresh ids, and
   grows the song end to the next bar line when a clip reaches past it, all as **one undo step**; a
   rejected import changes nothing. A clip import is a plain `AddClip`. A clip's program changes and
   SysEx messages are the new data `Clip.midi` ([midi_data.rs](../crates/model/src/midi_data.rs), shared
-  through an `Arc`): saved as the optional, ignorable `"programs"` (`[tick, program]`) and `"sysex"`
+  through an `Arc`): saved as the optional, ignorable `"programs"` (`[tick, program]`, or
+  `[tick, program, bank MSB, bank LSB]` with `null` for a byte not sent) and `"sysex"`
   (`[tick, "7E 7F 09 01"]`) fields of a note clip under format 43, kept by moves, splits, duplicates,
-  loops, joins, loop conversion and tempo scaling, and played by nothing.
+  loops, joins, loop conversion and tempo scaling, and played by nothing. `SongCommand::SetClipMidi
+  { clip, midi, merge }` replaces the whole data in one undo step (a drag shares a merge id); the pure
+  edits (add, move, delete, step) are methods of `MidiData` and the functions of
+  [midi_lane.rs](../crates/ui/src/midi_lane.rs), which the piano roll's message lane uses (below).
 - **The app** ([app_core_midi.rs](../crates/app/src/app_core_midi.rs), `Shell`, the menu). File >
   Import MIDI puts the whole file (all tracks and channels merged) in one clip on the selected note
   track (the track selected in the arrangement, the track of a selected or open clip, or the
@@ -5546,10 +5561,8 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   one lane at a time: there is no selection across lanes and no duplicate of points.
 - **MIDI files.** Type 2 files and SMPTE divisions are refused, RPN and NRPN data and per-note
   expression are not kept, and a tempo ramp is exported as a staircase and imported as steps. A song
-  file does not carry audio tracks or automation lanes, and a range marker is two plain markers (it is
-  not read back as a range). Program changes and SysEx messages are kept in the clip but cannot be
-  edited or cleared yet, a bank select is a `CC 0` and `CC 32` lane (not part of the program change),
-  and the SysEx of a file track that has no notes is dropped. A
+  file does not carry audio tracks or automation lanes. The bytes of a SysEx message cannot be typed
+  yet (the piano roll adds General MIDI System On, moves, deletes and clears messages). A
   file imported as one clip merges all its tracks and channels into that clip's controller lanes
   (the last value at a tick wins), and a channel that has controllers but no notes is left out (a
   controller lane needs a note clip, 2.12). The default export resolution is 15 360 ticks per quarter

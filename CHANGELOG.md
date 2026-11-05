@@ -8,6 +8,24 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **MIDI file follow-ups: bank selects with their program change, editable program changes and SysEx, SysEx-only
+  tracks and ranges read back.** A program change now carries the bank select that goes with it (`CC 0` and
+  `CC 32`, either or both): a file's bank select just before a program change at the same tick joins it and
+  leaves the controller lanes, the export writes the two controllers just before the program change, and the
+  clip's data keeps them through moves, splits, joins and loops (a project from before keeps its bank selects in
+  the lanes, which are still written). The piano roll can edit a clip's program changes and SysEx: the MSG
+  chip in the controller area shows them as markers (program changes above, SysEx below); a click on the
+  program row adds a program change, a drag moves a marker on the grid, the secondary button or Delete removes
+  it, the PRG, MSB and LSB steppers change the selected program change, + SYSEX adds General MIDI System On at
+  the playhead and CLEAR empties the clip, each edit one undo step. A file track with SysEx and no notes (a
+  conductor track with a reset message, or a file with nothing else) is imported as a clip without notes that
+  carries the messages instead of being dropped. Range markers the export writes (a marker named after the
+  range and one named `<name> (end)`) are read back as ranges by Import MIDI as Song. The project format stays
+  43: a program change with a bank is saved as `[tick, program, bank MSB, bank LSB]`, the usual one as before,
+  and a clip's data is changed by the new `SetClipMidi` command. Not done yet: per-note expression (MPE), a
+  groove taken from a MIDI file, and typing the bytes of a SysEx message.
+
 ## [0.3.0-rc.2] - 2026-11-04
 
 ### Added

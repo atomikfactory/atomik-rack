@@ -1541,7 +1541,10 @@ through a scripted transport (laps, bursts, only-controller takes, the engine's 
 `crates/ui/tests/piano_roll_controllers.rs` drives the area with the pointer through a real
 `Document` (chips, draw, drag, delete, curve, cancel, snap, painted text, Shift-click and rubber-band
 selection, a group drag as one undo step, Select All, Delete and Escape on the points, the THIN chip and
-the thin and toggle commands) and `seq_snapshot.rs` keeps a golden of it. The pure edits are in
+the thin and toggle commands) and `seq_snapshot.rs` keeps a golden of it. The message lane (program
+changes and SysEx) is driven the same way by `crates/ui/tests/piano_roll_messages.rs` (the MSG chip, add,
+drag, steppers, delete, clear) with its own golden, and its pure edits are tested in
+`crates/ui/src/midi_lane.rs` and `crates/model/src/midi_data.rs`. The pure edits are in
 `crates/model/src/controller_edit.rs` (capture, paste with range mapping and clipping, group move,
 thinning of ramps and held values), the clipboard in `crates/app/src/app_core_clipboard_tests.rs`
 (copy, cut and paste of points, the playhead advance, the paste into another lane kind, points

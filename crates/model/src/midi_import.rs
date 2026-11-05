@@ -9,15 +9,15 @@
 //! MIDI track when the name is not blank, and one clip on its note lane. The clip is validated
 //! like `AddClip` (notes sorted, controller lanes canonical, ticks in range).
 //!
-//! A tempo or meter map replaces the song's; markers are **added** to the existing ones (new
-//! ids). When a clip reaches past the song end, the end moves to the next bar line after it
+//! A tempo or meter map replaces the song's; markers and ranges are **added** to the existing ones
+//! (new ids). When a clip reaches past the song end, the end moves to the next bar line after it
 //! (the song end only ever grows here).
 
 use crate::DeviceKey;
 use crate::console_cmd::Planner;
 use crate::history::{Edit, Swap};
-use crate::song::{Clip, Marker, MeterEvent, SongCommand, TempoEvent};
-use crate::song_cmd::{check_markers, check_meter_map, check_tempo_map, new_track};
+use crate::song::{Clip, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent};
+use crate::song_cmd::{check_markers, check_meter_map, check_ranges, check_tempo_map, new_track};
 use crate::workflow_create::{CreateOptions, CreateSource, create_instrument};
 use crate::{Command, Document, ModelError, RackDoc, rules};
 use atomik_device_sdk::Registry;
@@ -44,6 +44,8 @@ pub struct MidiImport {
     pub meter: Option<Vec<MeterEvent>>,
     /// Markers to add, as `(tick, name)` (names trimmed, non-empty, at most 64 characters).
     pub markers: Vec<(i64, String)>,
+    /// Ranges to add, as `(start, end, name)` (`start < end`; names as for markers).
+    pub ranges: Vec<(i64, i64, String)>,
 }
 
 /// Plans the import (module docs).
@@ -56,6 +58,7 @@ pub(crate) fn plan(
         && import.tempo.is_none()
         && import.meter.is_none()
         && import.markers.is_empty()
+        && import.ranges.is_empty()
     {
         return Err(ModelError::BadSong(
             "the MIDI import has nothing in it".into(),
@@ -135,6 +138,28 @@ pub(crate) fn plan(
         p.push(Edit::Markers {
             old,
             new: check_markers(new)?,
+        });
+    }
+    if !import.ranges.is_empty() {
+        let old = p.doc().song.ranges.clone();
+        let first = p.doc().song.next_range_id();
+        let mut new = old.clone();
+        new.extend(
+            import
+                .ranges
+                .into_iter()
+                .zip(first..)
+                .map(|((start, end, name), id)| RangeMarker {
+                    id,
+                    start,
+                    end,
+                    name,
+                    color: None,
+                }),
+        );
+        p.push(Edit::Ranges {
+            old,
+            new: check_ranges(new)?,
         });
     }
     // The song End follows the clips: applying the step moves it out to the next bar line.

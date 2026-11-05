@@ -197,7 +197,8 @@ pub(super) fn load_clip(
     })
 }
 
-/// Reads a note clip's optional `"programs"` (`[tick, program]`) and `"sysex"` (`[tick, "hex"]`)
+/// Reads a note clip's optional `"programs"` (`[tick, program]`, or `[tick, program, msb, lsb]` with
+/// `null` for a missing bank byte) and `"sysex"` (`[tick, "hex"]`)
 /// lists (see [`crate::midi_data`]).
 fn load_midi_data(
     obj: &serde_json::Map<String, Value>,
@@ -208,10 +209,26 @@ fn load_midi_data(
         let list = path.field("programs");
         for (i, item) in array(v, &list)?.iter().enumerate() {
             let q = list.index(i);
-            let a = tuple(item, &q, 2, "a program change [tick, program]")?;
+            let a = match item.as_array() {
+                Some(a) if a.len() == 4 => a.as_slice(),
+                _ => tuple(
+                    item,
+                    &q,
+                    2,
+                    "a program change [tick, program] or [tick, program, bank MSB, bank LSB]",
+                )?,
+            };
+            let bank = |at: usize| -> Result<Option<u8>, ModelError> {
+                match a.get(at) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(v) => Ok(Some(uint(v, &q.index(at), 127)? as u8)),
+                }
+            };
             data.programs.push(crate::ProgramChange {
                 tick: tick(&a[0], &q.index(0))?,
                 program: uint(&a[1], &q.index(1), 127)? as u8,
+                bank_msb: bank(2)?,
+                bank_lsb: bank(3)?,
             });
         }
     }

@@ -150,7 +150,8 @@ fn write_param_lanes(w: &mut String, c: &Clip, indent: &str) {
 }
 
 /// Writes a note clip's `"programs"` and `"sysex"` after its parameter lanes (nothing for a clip
-/// without any). A SysEx message is `[tick, "7E 7F 09 01"]` (hex bytes between `F0` and `F7`). The
+/// without any). A program change is `[tick, program]`, or `[tick, program, msb, lsb]` when a bank
+/// select goes with it (`null` for the byte it lacks). A SysEx message is `[tick, "7E 7F 09 01"]` (hex bytes between `F0` and `F7`). The
 /// clip file of the library leaves them out.
 fn write_midi_data(w: &mut String, c: &Clip, indent: &str) {
     if !c.midi.programs.is_empty() {
@@ -160,7 +161,19 @@ fn write_midi_data(w: &mut String, c: &Clip, indent: &str) {
 {indent}\"programs\": "
         );
         list_each(w, indent, &c.midi.programs, |w, p| {
-            let _ = write!(w, "[{}, {}]", p.tick, p.program);
+            if p.has_bank() {
+                let byte = |b: Option<u8>| b.map_or("null".to_owned(), |b| b.to_string());
+                let _ = write!(
+                    w,
+                    "[{}, {}, {}, {}]",
+                    p.tick,
+                    p.program,
+                    byte(p.bank_msb),
+                    byte(p.bank_lsb)
+                );
+            } else {
+                let _ = write!(w, "[{}, {}]", p.tick, p.program);
+            }
         });
     }
     if !c.midi.sysex.is_empty() {

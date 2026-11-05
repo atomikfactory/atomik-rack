@@ -2,14 +2,17 @@
 //!
 //! A clip imported from a MIDI file keeps the messages the engine does not play but a MIDI file
 //! export must write back: program changes (the instrument a channel switches to; the bank
-//! select that goes with one is the `CC 0` and `CC 32` controller lane, which a clip already
-//! holds) and system exclusive messages (device specific data). They are plain data in content
+//! select that goes with one rides in the same event, see [`ProgramChange::bank_msb`]; a clip from
+//! an older project keeps its bank selects in the `CC 0` and `CC 32` controller lanes, which are
+//! still written) and system exclusive messages (device specific data). They are plain data in content
 //! ticks, like the notes and controller lanes: they follow the clip's offset, loop and audible
 //! span when a file is exported. Nothing in the model or the engine acts on them.
 //!
 //! A clip without any of it (the usual clip) stores nothing, so projects written before this
 //! data existed load unchanged and an older reader may drop it (the saved fields are
 //! optional).
+
+use crate::song::MAX_TICK;
 
 /// The most program changes one clip keeps.
 pub const MAX_PROGRAM_CHANGES: usize = 4096;
@@ -18,13 +21,34 @@ pub const MAX_SYSEX_EVENTS: usize = 1024;
 /// The longest SysEx message kept, in data bytes (without the framing `F0` and `F7`).
 pub const MAX_SYSEX_BYTES: usize = 4096;
 
-/// A program change at a content tick.
+/// A program change at a content tick, with the bank select that goes with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProgramChange {
     /// Content tick, `0..=MAX_TICK`.
     pub tick: i64,
     /// The program, `0..=127`.
     pub program: u8,
+    /// The bank select MSB (`CC 0`) sent just before the program change, `0..=127`.
+    pub bank_msb: Option<u8>,
+    /// The bank select LSB (`CC 32`) sent just before the program change, `0..=127`.
+    pub bank_lsb: Option<u8>,
+}
+
+impl ProgramChange {
+    /// A program change without a bank select.
+    pub fn new(tick: i64, program: u8) -> Self {
+        Self {
+            tick,
+            program,
+            bank_msb: None,
+            bank_lsb: None,
+        }
+    }
+
+    /// True when a bank select goes with the program.
+    pub fn has_bank(&self) -> bool {
+        self.bank_msb.is_some() || self.bank_lsb.is_some()
+    }
 }
 
 /// A SysEx message at a content tick.
@@ -92,6 +116,9 @@ impl MidiData {
             if p.program > 127 {
                 return Err(format!("program change {i}: program beyond 127"));
             }
+            if p.bank_msb.is_some_and(|b| b > 127) || p.bank_lsb.is_some_and(|b| b > 127) {
+                return Err(format!("program change {i}: bank select beyond 127"));
+            }
             if i > 0 && self.programs[i - 1].tick >= p.tick {
                 return Err(format!(
                     "program changes must be sorted by tick without duplicates (change {i})"
@@ -130,10 +157,7 @@ impl MidiData {
         let mut programs = Vec::new();
         let before = self.programs.partition_point(|p| p.tick <= from);
         if let Some(p) = self.programs[..before].last() {
-            programs.push(ProgramChange {
-                tick: from,
-                program: p.program,
-            });
+            programs.push(ProgramChange { tick: from, ..*p });
         }
         programs.extend(
             self.programs[before..]
@@ -183,6 +207,83 @@ impl MidiData {
         *self = std::mem::take(self).canonical();
     }
 
+    /// The data with `change` added, replacing the program change at its tick; the index it has
+    /// in the result. Refused (`None`) beyond [`MAX_PROGRAM_CHANGES`] or outside the tick range.
+    pub fn with_program(&self, change: ProgramChange) -> Option<(MidiData, usize)> {
+        if !(0..=MAX_TICK).contains(&change.tick) {
+            return None;
+        }
+        let mut out = self.clone();
+        match out.programs.iter().position(|p| p.tick == change.tick) {
+            Some(i) => out.programs[i] = change,
+            None if out.programs.len() >= MAX_PROGRAM_CHANGES => return None,
+            None => out.programs.push(change),
+        }
+        let out = out.canonical();
+        let index = out.programs.iter().position(|p| p.tick == change.tick)?;
+        Some((out, index))
+    }
+
+    /// The data without program change `index`.
+    pub fn without_program(&self, index: usize) -> MidiData {
+        let mut out = self.clone();
+        if index < out.programs.len() {
+            out.programs.remove(index);
+        }
+        out
+    }
+
+    /// The data with program change `index` moved to `tick` (it replaces one already there);
+    /// the data and the index the moved change has. `None` for an index the data lacks.
+    pub fn with_program_moved(&self, index: usize, tick: i64) -> Option<(MidiData, usize)> {
+        let moved = ProgramChange {
+            tick: tick.clamp(0, MAX_TICK),
+            ..*self.programs.get(index)?
+        };
+        self.without_program(index).with_program(moved)
+    }
+
+    /// The data with SysEx message `data` added at `tick`; the index it has in the result
+    /// (after the messages already at that tick). `None` when the message is empty, longer than
+    /// [`MAX_SYSEX_BYTES`], has a byte above 127, the tick is outside the range or the clip
+    /// already holds [`MAX_SYSEX_EVENTS`].
+    pub fn with_sysex(&self, tick: i64, data: Vec<u8>) -> Option<(MidiData, usize)> {
+        if !(0..=MAX_TICK).contains(&tick)
+            || data.is_empty()
+            || data.len() > MAX_SYSEX_BYTES
+            || data.iter().any(|b| *b > 127)
+            || self.sysex.len() >= MAX_SYSEX_EVENTS
+        {
+            return None;
+        }
+        let mut out = self.clone();
+        let index = out.sysex.partition_point(|s| s.tick <= tick);
+        out.sysex.insert(index, SysexEvent { tick, data });
+        Some((out, index))
+    }
+
+    /// The data without SysEx message `index`.
+    pub fn without_sysex(&self, index: usize) -> MidiData {
+        let mut out = self.clone();
+        if index < out.sysex.len() {
+            out.sysex.remove(index);
+        }
+        out
+    }
+
+    /// The data with SysEx message `index` moved to `tick`; the data and its new index. `None`
+    /// for an index the data lacks.
+    pub fn with_sysex_moved(&self, index: usize, tick: i64) -> Option<(MidiData, usize)> {
+        let message = self.sysex.get(index)?.clone();
+        self.without_sysex(index).with_sysex(tick, message.data)
+    }
+
+    /// The program in force at content `tick`: the last change at or before it.
+    pub fn program_at(&self, tick: i64) -> Option<&ProgramChange> {
+        let n = self.programs.partition_point(|p| p.tick <= tick);
+        self.programs[..n].last()
+    }
+
     fn shift_by(&mut self, delta: i64) {
         for p in &mut self.programs {
             p.tick += delta;
@@ -223,7 +324,7 @@ mod tests {
     use super::*;
 
     fn prog(tick: i64, program: u8) -> ProgramChange {
-        ProgramChange { tick, program }
+        ProgramChange::new(tick, program)
     }
 
     fn sx(tick: i64, data: &[u8]) -> SysexEvent {
@@ -327,6 +428,62 @@ mod tests {
         a.append(d);
         assert_eq!(a.programs, [prog(0, 9), prog(10, 1), prog(11, 2)]);
         assert_eq!(a.sysex.len(), 1);
+    }
+
+    #[test]
+    fn program_edits_keep_the_data_canonical() {
+        let d = MidiData {
+            programs: vec![prog(0, 4), prog(100, 5)],
+            sysex: vec![sx(50, &[1])],
+        };
+        let banked = ProgramChange {
+            bank_msb: Some(2),
+            bank_lsb: Some(7),
+            ..prog(100, 9)
+        };
+        let (d2, i) = d.with_program(banked).unwrap();
+        assert_eq!(
+            (i, d2.programs.len()),
+            (1, 2),
+            "replaces the change at the tick"
+        );
+        assert_eq!(d2.programs[1], banked);
+        let (d3, i) = d2.with_program(prog(50, 1)).unwrap();
+        assert_eq!((i, d3.programs.len()), (1, 3));
+        let (d4, i) = d3.with_program_moved(1, 100).unwrap();
+        assert_eq!(
+            (i, d4.programs.len()),
+            (1, 2),
+            "a move onto a change replaces it"
+        );
+        assert_eq!(d4.programs[1].program, 1);
+        assert_eq!(d4.without_program(0).programs.len(), 1);
+        assert_eq!(d4.without_program(9), d4);
+        assert!(d.with_program(prog(-1, 1)).is_none());
+        assert_eq!(d.program_at(99), Some(&prog(0, 4)));
+        assert_eq!(d.program_at(100), Some(&prog(100, 5)));
+        assert!(MidiData::default().program_at(5).is_none());
+        let mut bad = d.clone();
+        bad.programs[0].bank_lsb = Some(200);
+        assert!(bad.check(1000).unwrap_err().contains("bank"));
+    }
+
+    #[test]
+    fn sysex_edits_validate_and_order() {
+        let d = MidiData::default();
+        let (d, i) = d.with_sysex(40, vec![1, 2]).unwrap();
+        assert_eq!(i, 0);
+        let (d, i) = d.with_sysex(40, vec![3]).unwrap();
+        assert_eq!(i, 1, "after the messages already at the tick");
+        let (d, i) = d.with_sysex(10, vec![4]).unwrap();
+        assert_eq!((i, d.sysex.len()), (0, 3));
+        assert!(d.with_sysex(5, Vec::new()).is_none());
+        assert!(d.with_sysex(5, vec![0x80]).is_none());
+        assert!(d.with_sysex(-1, vec![1]).is_none());
+        let (moved, i) = d.with_sysex_moved(0, 99).unwrap();
+        assert_eq!((i, moved.sysex[2].data.clone()), (2, vec![4]));
+        assert_eq!(moved.without_sysex(2).sysex.len(), 2);
+        assert!(d.with_sysex_moved(7, 0).is_none());
     }
 
     #[test]

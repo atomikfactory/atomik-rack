@@ -33,6 +33,7 @@ use crate::viewport::{Tool, ViewportState};
 mod inspector;
 pub use inspector::{NOTE_INSPECTOR_HEIGHT, NoteField};
 
+use crate::midi_lane as ml;
 use atomik_device_sdk::Registry;
 use atomik_model::controller_edit;
 use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
@@ -292,6 +293,18 @@ enum Drag {
         merge: u64,
         moved: bool,
     },
+    /// A drag of a program change or SysEx marker in the message lane.
+    Msg {
+        /// The clip's data at the press (every step derives from it).
+        original: atomik_model::MidiData,
+        /// The data as last sent.
+        current: atomik_model::MidiData,
+        /// The message grabbed.
+        which: ml::MsgRef,
+        start: Point,
+        merge: u64,
+        moved: bool,
+    },
     /// A rubber band in the controller lane: the points inside join `base`.
     CtlBand {
         start: Point,
@@ -378,6 +391,8 @@ pub struct PianoRollView {
     ctl: LaneEditor,
     /// The selected points of the lane being edited (indices into its points).
     ctl_sel: BTreeSet<usize>,
+    /// The program change or SysEx message selected in the message lane.
+    msg_sel: Option<ml::MsgRef>,
     /// The controller points own Select All, Delete, Copy and Cut: set by a press in the lane,
     /// cleared by a press anywhere else.
     ctl_focus: bool,
@@ -502,6 +517,7 @@ impl PianoRollView {
             hover: Hit::None,
             ctl: LaneEditor::default(),
             ctl_sel: BTreeSet::new(),
+            msg_sel: None,
             ctl_focus: false,
             ctl_thinning: ThinLevel::Normal.fraction(),
             next_merge: MERGE_BASE,
@@ -523,6 +539,7 @@ impl PianoRollView {
         if self.clip_id != Some(id) {
             self.selection.clear();
             self.ctl_sel.clear();
+            self.msg_sel = None;
             self.ctl_focus = false;
             self.latent = None;
         }
@@ -886,6 +903,72 @@ impl PianoRollView {
         self.ctl.open && self.ctl_focus && !self.ctl_sel.is_empty()
     }
 
+    /// True while the message lane is shown and a program change or SysEx message is selected in
+    /// it: Delete then removes the message.
+    pub fn message_focus(&self) -> bool {
+        self.ctl.open && self.ctl.messages && self.ctl_focus && self.msg_sel.is_some()
+    }
+
+    /// Whether the controller area shows the program changes and SysEx messages.
+    pub fn messages_open(&self) -> bool {
+        self.ctl.open && self.ctl.messages
+    }
+
+    /// Shows the program changes and SysEx messages in the controller area (opening it), or goes
+    /// back to the controller lanes.
+    pub fn set_messages_open(&mut self, on: bool) {
+        if on {
+            self.set_controllers_open(true);
+        }
+        self.ctl.messages = on;
+        self.msg_sel = None;
+        self.ctl_focus = false;
+        self.repaint = true;
+    }
+
+    /// The program change or SysEx message selected in the message lane.
+    pub fn selected_message(&self) -> Option<ml::MsgRef> {
+        self.msg_sel
+    }
+
+    /// The centre of a message's marker in the message lane (tests click it), `None` while the
+    /// lane is hidden or the clip lacks the message.
+    pub fn message_point(&self, m: ml::MsgRef) -> Option<Point> {
+        if !self.messages_open() {
+            return None;
+        }
+        let data = &self.clip.as_ref()?.midi;
+        let label = ml::label_of(data, m)?;
+        let tick = match m {
+            ml::MsgRef::Program(i) => data.programs.get(i)?.tick,
+            ml::MsgRef::Sysex(i) => data.sysex.get(i)?.tick,
+        };
+        Some(ml::marker_rect(self.controller_rect(), self.axis.tick_to_x(tick), m, &label).center())
+    }
+
+    /// A point of the program row at content `tick`, clear of the markers it can hit (tests
+    /// click it to add a program change).
+    pub fn message_row_point(&self, tick: i64) -> Point {
+        let body = self.controller_rect();
+        Point::new(
+            self.axis.tick_to_x(tick),
+            body.y0 + ml::PROGRAM_ROW + ml::MARKER_HEIGHT / 2.0,
+        )
+    }
+
+    /// Forgets a selected message that the clip no longer has.
+    fn prune_message_selection(&mut self) {
+        let data = self.clip.as_ref().map(|c| &c.midi);
+        let keep = match (self.msg_sel, data) {
+            (Some(ml::MsgRef::Program(i)), Some(d)) => i < d.programs.len(),
+            (Some(ml::MsgRef::Sysex(i)), Some(d)) => i < d.sysex.len(),
+            _ => false,
+        };
+        if !keep {
+            self.msg_sel = None;
+        }
+    }
+
     /// Selects `points` (indices into the lane shown) and makes the controller points the focus
     /// of the clipboard keys (the app does this for what a paste laid in). Indices the lane does
     /// not have are dropped at the next sync with a changed clip.
@@ -1185,6 +1268,7 @@ impl PianoRollView {
             self.meter = meter;
             self.bars = Bars::single(meter);
             self.prune_controller_selection();
+            self.prune_message_selection();
             self.resolve_selection(before, touched);
             if let Some(s) = self.scale() {
                 self.root_pref = s.root;
@@ -1496,7 +1580,7 @@ impl PianoRollView {
         if self.ctl.open && pos.y >= self.velocity_rect().y1 {
             let a = self.controller_area();
             if pos.y < a.y0 + CTL_HEADER_HEIGHT {
-                return match cl::chip_at(self.axis.x0, a.y0, pos.x, pos.y) {
+                return match cl::chip_at(self.ctl.messages, self.axis.x0, a.y0, pos.x, pos.y) {
                     Some((chip, part)) => Hit::CtlChip(chip, part),
                     None => Hit::None,
                 };
@@ -1560,6 +1644,15 @@ impl PianoRollView {
                     Chip::Curve => "Curve of new points: click to switch ramp and step",
                     Chip::Thin => {
                         "Thin the selected points, or the whole lane: drops points the line through                          their neighbours reproduces"
+                    }
+                    Chip::Messages => "Show the clip's program changes and SysEx messages",
+                    Chip::Back => "Back to the controller lanes",
+                    Chip::Program => "Program of the selected program change: the arrows step it",
+                    Chip::BankMsb => "Bank select MSB (CC 0) sent before the program change",
+                    Chip::BankLsb => "Bank select LSB (CC 32) sent before the program change",
+                    Chip::AddSysex => "Add a SysEx message (GM System On) at the playhead",
+                    Chip::ClearMessages => {
+                        "Delete every program change and SysEx message of the clip"
                     }
                 };
                 Some(Help::new(rect, text))
@@ -1819,6 +1912,9 @@ impl PianoRollView {
             self.ctl_sel.clear();
             self.ctl_focus = false;
         }
+        if !matches!(hit, Hit::CtlBody | Hit::CtlChip(..)) {
+            self.msg_sel = None;
+        }
         match hit {
             Hit::Top(Some(TopItem::Tool(t))) if primary => self.set_tool(t),
             Hit::Top(Some(TopItem::Snap)) if primary => {
@@ -1851,10 +1947,19 @@ impl PianoRollView {
                     out.extend(action);
                 }
             }
+            Hit::CtlChip(chip @ (Chip::Program | Chip::BankMsb | Chip::BankLsb), part)
+                if primary =>
+            {
+                self.msg_step(chip, part, out);
+            }
+            Hit::CtlChip(Chip::AddSysex, _) if primary => self.msg_add_sysex(out),
+            Hit::CtlChip(Chip::ClearMessages, _) if primary => self.msg_clear(out),
             Hit::CtlChip(chip, part) if primary => {
                 self.ctl.press(chip, part);
                 self.ctl_sel.clear();
+                self.msg_sel = None;
             }
+            Hit::CtlBody if self.ctl.messages => self.msg_down(pos, button, modifiers, tool, out),
             Hit::CtlBody => self.ctl_down(pos, button, modifiers, tool, out),
             Hit::Top(Some(TopItem::ScaleDetect)) if primary => self.detect_scale(out),
             Hit::Top(Some(TopItem::ScaleSnap)) if primary => self.snap_scale = !self.snap_scale,
@@ -2355,6 +2460,165 @@ impl PianoRollView {
         self.repaint = true;
     }
 
+    /// The open clip's program change and SysEx data.
+    fn clip_midi(&self) -> atomik_model::MidiData {
+        self.clip
+            .as_ref()
+            .map(|c| (*c.midi).clone())
+            .unwrap_or_default()
+    }
+
+    /// One `SetClipMidi` for the open clip.
+    fn midi_command(&self, midi: atomik_model::MidiData, merge: Option<u64>) -> Option<UiAction> {
+        Some(UiAction::Command(Command::Song(SongCommand::SetClipMidi {
+            clip: self.clip_id?,
+            midi,
+            merge,
+        })))
+    }
+
+    /// A press in the message lane (see the module docs of `midi_lane`).
+    fn msg_down(
+        &mut self,
+        pos: Point,
+        button: PointerButton,
+        modifiers: Modifiers,
+        tool: Tool,
+        out: &mut Vec<UiAction>,
+    ) {
+        let primary = button == PointerButton::Primary;
+        if self.clip.is_none() {
+            return;
+        }
+        self.ctl_focus = true;
+        let data = self.clip_midi();
+        let body = self.controller_rect();
+        let axis = self.axis;
+        let hit = ml::hit(&data, body, |t| axis.tick_to_x(t), pos.x, pos.y);
+        match hit {
+            Some(m) if !primary || tool == Tool::Eraser => {
+                self.msg_sel = None;
+                let next = match m {
+                    ml::MsgRef::Program(i) => data.without_program(i),
+                    ml::MsgRef::Sysex(i) => data.without_sysex(i),
+                };
+                out.extend(self.midi_command(next, None));
+            }
+            Some(m) => {
+                self.msg_sel = Some(m);
+                let merge = self.merge_id();
+                self.drag = Drag::Msg {
+                    current: data.clone(),
+                    original: data,
+                    which: m,
+                    start: pos,
+                    merge,
+                    moved: false,
+                };
+            }
+            None if primary
+                && matches!(tool, Tool::Select | Tool::Pencil)
+                && ml::on_program_row(body, pos.y) =>
+            {
+                let tick = self.ctl_tick(pos.x, modifiers);
+                if let Some((next, i)) = ml::add_program(&data, tick) {
+                    self.msg_sel = Some(ml::MsgRef::Program(i));
+                    out.extend(self.midi_command(next, None));
+                }
+            }
+            None => self.msg_sel = None,
+        }
+    }
+
+    /// A pointer move while a message marker is dragged: the message follows on the grid.
+    fn msg_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        let tick = self.ctl_tick(pos.x, modifiers);
+        let id = self.clip_id;
+        let Drag::Msg {
+            original,
+            current,
+            which,
+            start,
+            merge,
+            moved,
+        } = &mut self.drag
+        else {
+            return;
+        };
+        *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+        if !*moved {
+            return;
+        }
+        let planned = match *which {
+            ml::MsgRef::Program(i) => original
+                .with_program_moved(i, tick)
+                .map(|(d, n)| (d, ml::MsgRef::Program(n))),
+            ml::MsgRef::Sysex(i) => original
+                .with_sysex_moved(i, tick)
+                .map(|(d, n)| (d, ml::MsgRef::Sysex(n))),
+        };
+        let Some((next, picked)) = planned else {
+            return;
+        };
+        let mut sel = None;
+        if next != *current {
+            if let Some(id) = id {
+                out.push(UiAction::Command(Command::Song(SongCommand::SetClipMidi {
+                    clip: id,
+                    midi: next.clone(),
+                    merge: Some(*merge),
+                })));
+            }
+            *current = next;
+            sel = Some(picked);
+        }
+        if sel.is_some() {
+            self.msg_sel = sel;
+        }
+        self.repaint = true;
+    }
+
+    /// A press on a stepper chip of the message lane: steps the selected program change.
+    fn msg_step(&mut self, chip: Chip, part: Part, out: &mut Vec<UiAction>) {
+        let Some(ml::MsgRef::Program(i)) = self.msg_sel else {
+            return;
+        };
+        if let Some(next) = ml::step(&self.clip_midi(), i, chip, part) {
+            out.extend(self.midi_command(next, None));
+        }
+    }
+
+    /// The + SYSEX chip: a General MIDI System On message at the playhead (the clip start while
+    /// the playhead is outside the clip).
+    fn msg_add_sysex(&mut self, out: &mut Vec<UiAction>) {
+        let tick = self.playhead_content().filter(|t| *t >= 0).unwrap_or(0);
+        if let Some((next, i)) = self.clip_midi().with_sysex(tick, ml::GM_SYSTEM_ON.to_vec()) {
+            self.msg_sel = Some(ml::MsgRef::Sysex(i));
+            out.extend(self.midi_command(next, None));
+        }
+    }
+
+    /// The CLEAR chip: no program change and no SysEx message left in the clip.
+    fn msg_clear(&mut self, out: &mut Vec<UiAction>) {
+        self.msg_sel = None;
+        if !self.clip_midi().is_empty() {
+            out.extend(self.midi_command(atomik_model::MidiData::default(), None));
+        }
+    }
+
+    /// The text of a chip of the header row.
+    fn chip_text(&self, chip: Chip) -> String {
+        let data = self.clip.as_ref().map(|c| &c.midi);
+        let selected = match (self.msg_sel, data) {
+            (Some(ml::MsgRef::Program(i)), Some(d)) => d.programs.get(i),
+            _ => None,
+        };
+        match chip {
+            Chip::Program | Chip::BankMsb | Chip::BankLsb => ml::chip_text(chip, selected),
+            _ => cl::chip_label(chip, &self.ctl),
+        }
+    }
+
     /// Thins the selected points of the lane shown (the whole lane when none is selected) with
     /// `fraction` of the range; `None` when the lane has nothing to thin.
     fn thin_controllers(&mut self, fraction: f32) -> Option<Vec<UiAction>> {
@@ -2394,6 +2658,10 @@ impl PianoRollView {
         }
         if matches!(self.drag, Drag::CtlBand { .. }) {
             self.ctl_band_move(pos);
+            return;
+        }
+        if matches!(self.drag, Drag::Msg { .. }) {
+            self.msg_move(pos, modifiers, out);
             return;
         }
         if let Drag::Snap { steps } = &mut self.drag {
@@ -2456,6 +2724,7 @@ impl PianoRollView {
             Drag::None
             | Drag::Ctl { .. }
             | Drag::CtlBand { .. }
+            | Drag::Msg { .. }
             | Drag::Playhead { .. }
             | Drag::Snap { .. } => {}
             Drag::Pan { last } => {
@@ -2717,8 +2986,10 @@ impl PianoRollView {
                 }
             }
             Drag::Velocity { .. } | Drag::VelocityDraw { .. } => out.push(UiAction::EndMerge),
-            Drag::Ctl { moved: true, .. } => out.push(UiAction::EndMerge),
-            Drag::Ctl { .. } => {}
+            Drag::Ctl { moved: true, .. } | Drag::Msg { moved: true, .. } => {
+                out.push(UiAction::EndMerge)
+            }
+            Drag::Ctl { .. } | Drag::Msg { .. } => {}
         }
     }
 
@@ -2791,6 +3062,16 @@ impl PianoRollView {
                     self.selection.set(0..self.notes().len());
                 }
                 CommandOutcome::Handled(Vec::new())
+            }
+            "edit.delete" if self.message_focus() => {
+                let data = self.clip_midi();
+                let next = match self.msg_sel.take() {
+                    Some(ml::MsgRef::Program(i)) => data.without_program(i),
+                    Some(ml::MsgRef::Sysex(i)) => data.without_sysex(i),
+                    None => data,
+                };
+                self.ctl_focus = false;
+                CommandOutcome::Handled(self.midi_command(next, None).into_iter().collect())
             }
             "edit.delete" if self.controller_focus() => {
                 let kind = self.ctl.kind;
@@ -3916,7 +4197,7 @@ impl PianoRollView {
             .weight(700)
             .spacing(1.0),
         );
-        for chip in cl::chips() {
+        for chip in cl::chips(self.ctl.messages) {
             let r = cl::chip_rect(self.axis.x0, area.y0, chip);
             let active = self.ctl.is_active(chip);
             let hovered = matches!(self.hover, Hit::CtlChip(h, _) if h == chip);
@@ -3930,7 +4211,12 @@ impl PianoRollView {
                 Chip::Poly => lanes
                     .iter()
                     .any(|l| matches!(l.kind, ControllerKind::PolyPressure(_))),
-                Chip::Curve | Chip::Thin => false,
+                Chip::Messages => self.clip.as_ref().is_some_and(|c| !c.midi.is_empty()),
+                Chip::Program | Chip::BankMsb | Chip::BankLsb => {
+                    matches!(self.msg_sel, Some(ml::MsgRef::Program(_)))
+                }
+                Chip::ClearMessages => self.clip.as_ref().is_some_and(|c| !c.midi.is_empty()),
+                Chip::Curve | Chip::Thin | Chip::Back | Chip::AddSysex => false,
             };
             sp::lcd(
                 c,
@@ -3947,20 +4233,24 @@ impl PianoRollView {
             };
             sp::label(
                 c,
-                &cl::chip_label(chip, &self.ctl),
+                &self.chip_text(chip),
                 r.center().x,
                 r.center().y + 3.5,
                 9.0,
                 colour,
                 Align::Center,
             );
-            if has_data && !active {
+            if has_data && !active && !self.ctl.messages {
                 sp::rect(
                     c,
                     Rect::new(r.x1 - 6.0, r.y0 + 2.0, r.x1 - 3.0, r.y0 + 5.0),
                     self.accent,
                 );
             }
+        }
+        if self.ctl.messages {
+            self.paint_messages(c, area, body);
+            return;
         }
         // The side panel: the lane's name and its value range.
         let side = Rect::new(area.x0, body.y0, body.x0, body.y1);
@@ -4085,6 +4375,106 @@ impl PianoRollView {
             let r = Rect::from_points(*start, *pos);
             c.fill_with(r, st.selection.with_alpha(0.12));
             c.stroke_with(r, 1.0, st.selection.with_alpha(0.8));
+        }
+        if let Some(tick) = self
+            .clip
+            .as_ref()
+            .and_then(|clip| seq_edit::song_to_content(clip, self.playhead))
+        {
+            let x = self.axis.tick_to_x(tick).round() + 0.5;
+            sp::line(c, x, body.y0, x, body.y1, st.playhead);
+        }
+        sp::line(
+            c,
+            body.x0,
+            body.y0 + 0.5,
+            body.x1,
+            body.y0 + 0.5,
+            st.separator,
+        );
+        c.pop_clip();
+        sp::line(
+            c,
+            side.x0,
+            body.y0 + 0.5,
+            side.x1,
+            body.y0 + 0.5,
+            st.separator,
+        );
+    }
+
+    /// The clip's program changes (upper row) and SysEx messages (lower row) in place of a
+    /// controller lane.
+    fn paint_messages(&self, c: &mut dyn Canvas, area: Rect, body: Rect) {
+        let st = &self.st;
+        let t = &st.base;
+        let side = Rect::new(area.x0, body.y0, body.x0, body.y1);
+        sp::rect(c, side, st.header);
+        for (name, row) in [("PRG", ml::PROGRAM_ROW), ("SYSEX", ml::SYSEX_ROW)] {
+            sp::label(
+                c,
+                name,
+                side.x0 + 8.0,
+                body.y0 + row + ml::MARKER_HEIGHT / 2.0 + 3.0,
+                8.0,
+                t.text_muted,
+                Align::Start,
+            );
+        }
+        c.push_clip(&body.into());
+        sp::rect(c, body, st.lane_auto);
+        sp::grid(c, st, &self.axis, body, &self.bars);
+        let (a, z) = self.region();
+        let (xa, xz) = (self.axis.tick_to_x(a), self.axis.tick_to_x(z));
+        if xa > body.x0 {
+            sp::rect(
+                c,
+                Rect::new(body.x0, body.y0, xa.min(body.x1), body.y1),
+                st.outside,
+            );
+        }
+        if xz < body.x1 {
+            sp::rect(
+                c,
+                Rect::new(xz.max(body.x0), body.y0, body.x1, body.y1),
+                st.outside,
+            );
+        }
+        if let Some(clip) = &self.clip {
+            let midi = &clip.midi;
+            let marks = midi
+                .programs
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (ml::MsgRef::Program(i), p.tick, ml::program_label(p)))
+                .chain(
+                    midi.sysex
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| (ml::MsgRef::Sysex(i), s.tick, ml::sysex_label(s))),
+                );
+            for (m, tick, label) in marks {
+                let x = self.axis.tick_to_x(tick);
+                if x < body.x0 - 80.0 || x > body.x1 + 6.0 {
+                    continue;
+                }
+                let r = ml::marker_rect(body, x, m, &label);
+                let selected = self.msg_sel == Some(m);
+                let fill = if selected { st.selection } else { self.accent };
+                let rr = RoundedRect::from_rect(r, 3.0);
+                c.fill_with(rr, fill.with_alpha(if selected { 0.9 } else { 0.35 }));
+                c.stroke_with(rr, 1.0, fill);
+                sp::line(c, x.round() + 0.5, r.y0, x.round() + 0.5, r.y1, fill);
+                sp::label(
+                    c,
+                    &label,
+                    r.x0 + 5.0,
+                    r.center().y + 3.0,
+                    9.0,
+                    t.text,
+                    Align::Start,
+                );
+            }
         }
         if let Some(tick) = self
             .clip

@@ -394,7 +394,7 @@
 //! (`0..=99`; 100, the usual value, is not written). Both are written only when the track has a groove,
 //! so a project without one differs from its version 42 file in the version line alone. A reader of 42
 //! would play the track's notes ungrooved, so the fields are not ignorable. Version 43 also adds, under
-//! the same version, a note clip's `"programs"` (`[tick, program]`) and `"sysex"` (`[tick, "7E 7F 09 01"]`,
+//! the same version, a note clip's `"programs"` (`[tick, program]`, or `[tick, program, bank MSB, bank LSB]` with `null` for a missing byte) and `"sysex"` (`[tick, "7E 7F 09 01"]`,
 //! the hex bytes between `F0` and `F7`), written after the parameter lanes only when the clip has any (see
 //! [`crate::midi_data`]); they are ignorable, since nothing plays them. A notes lane may also carry
 //! `"solo": true` and `"color": "#rrggbb"` after its `"muted"` (only while set; both ignorable: a reader
