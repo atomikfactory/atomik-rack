@@ -4259,6 +4259,9 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
 | `scale` | 0 to 15, the 16 scales of the piano roll (chromatic first) | 1 (major) | choice |
 | `root` | 0 to 11: C to B | 0 | choice |
 | `transpose` | -24 to 24 | 0 | semitones |
+| `scale.custom` | off, on | off | toggle |
+| `scale.note.0` to `scale.note.11` | off, on: one per pitch class from C | C major | toggle |
+| `hysteresis` | 0 to 1 | 0 | semitones (shown as percent) |
 
 - The pitch CV is the one of the sequencers, `(key - 60) / 24`: 0 is middle C, +-1 two octaves
   either way, one semitone 1/24. An input beyond +-1 still quantizes (limited to +-8).
@@ -4266,6 +4269,11 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
   the lowest one above; an exact tie goes down), then moved by `transpose`. The scale list is the
   one of the piano roll, `ScaleKind` in `atomik_core::theory`, each on the chosen root. A chromatic
   scale rounds to the nearest semitone.
+- `scale.custom` swaps the scale kind and root for the twelve `scale.note.N` toggles, saved with the
+  device in the project. A custom scale with no note on restricts nothing.
+- `hysteresis` keeps the quantizer on its key until the input has moved that many semitones past
+  the middle between two scale keys (at 0 it is the plain nearest key; a key that is not in the
+  scale any more is never held), so a wobbling input does not chatter.
 - `trig_out` is a 1 ms pulse at every change of the quantized key (the first sample after a start
   only sets the key). No latency.
 
@@ -4282,6 +4290,7 @@ Sockets: `cv_in`, `trig_in` (CV in), `cv_out`, `clock_out` (CV out).
 | `rate` | 0.1 to 200 | 4 | Hz |
 | `division` | 0 to 11: 1/32 to 1/1 with triplets and dotted values | 5 (1/8) | choice |
 | `level` | -1 to 1 | 1 | percent |
+| `mode` | 0 to 1: sample, track | 0 | choice |
 
 - `trigger` ticks at every rising edge of `trig_in` (high above 0.5, low below 0.3). `free` ticks at
   `rate`. `tempo` ticks at the note value `division` of the transport tempo; while the transport
@@ -4294,6 +4303,9 @@ Sockets: `cv_in`, `trig_in` (CV in), `cv_out`, `clock_out` (CV out).
 - `cv_out` is the held value times `level` (applied to the output, so a change is heard at once; a
   negative level inverts). It is 0 before the first tick. `clock_out` is a 1 ms pulse at every
   tick. No latency.
+- `mode` `track` follows `cv_in` while the clock is on and holds the last value while it is off:
+  with the `trigger` clock it tracks while `trig_in` is high, with `free` and `tempo` for the first
+  half of each cycle. `clock_out` still pulses at the start of every tracking stretch.
 
 ### Slew Limiter: `atomik.slew-limiter` (Utility)
 

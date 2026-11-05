@@ -19,6 +19,11 @@
 //!   a generator seeded by the project seed, so a bounce repeats exactly.
 //! * **`level`** (-1..+1) scales the output; a negative level inverts it. It acts on the output,
 //!   so a change is heard at once and not at the next tick.
+//! * **Mode.** `mode` `sample` is the sample-and-hold above. `track` follows `cv_in` while the
+//!   clock is on and holds the last value while it is off. With the `trigger` clock it tracks
+//!   while `trig_in` is high; with `free` and `tempo` it tracks for the first half of every
+//!   cycle. In both modes `clock_out` pulses at each tick (the start of a tracking stretch). With
+//!   no cable on `cv_in` the tracked value is the noise sampled at the tick.
 //! * Before the first tick the output is 0. No latency; allocation-free.
 
 use crate::tool_support::{
@@ -35,6 +40,7 @@ const P_CLOCK: u32 = 0;
 const P_RATE: u32 = 1;
 const P_DIVISION: u32 = 2;
 const P_LEVEL: u32 = 3;
+const P_MODE: u32 = 4;
 
 const CV_IN: SocketId = SocketId(0);
 const TRIG_IN: SocketId = SocketId(1);
@@ -51,11 +57,14 @@ const CLOCK_TEMPO: u8 = 2;
 
 static CLOCKS: [&str; 3] = ["trigger", "free", "tempo"];
 
-static PARAMS: [ParamDescriptor; 4] = [
+static MODES: [&str; 2] = ["sample", "track"];
+
+static PARAMS: [ParamDescriptor; 5] = [
     choice(P_CLOCK, "clock", "Clock", &CLOCKS, 0.0),
     expo(P_RATE, "rate", "Rate", 0.1, 200.0, 4.0, Unit::Hz),
     choice(P_DIVISION, "division", "Division", &DIVISIONS, 5.0),
     linear(P_LEVEL, "level", "Level", -1.0, 1.0, 1.0, Unit::Percent),
+    choice(P_MODE, "mode", "Mode", &MODES, 0.0),
 ];
 
 static SOCKETS: [SocketDescriptor; 4] = [
@@ -91,6 +100,8 @@ pub struct SampleHold {
     rate: f32,
     beats: f64,
     level: f32,
+    /// Track-and-hold instead of sample-and-hold.
+    track: bool,
     sample_rate: f32,
     seed: u64,
     rng: Rng,
@@ -113,6 +124,7 @@ impl SampleHold {
             rate: 4.0,
             beats: crate::stereo_delay::SYNC_BEATS[5],
             level: 1.0,
+            track: false,
             sample_rate: 48_000.0,
             seed: 0,
             rng: Rng::new(0),
@@ -159,6 +171,7 @@ impl Device for SampleHold {
                 self.beats = crate::stereo_delay::SYNC_BEATS[i];
             }
             P_LEVEL => self.level = v.clamp(-1.0, 1.0),
+            P_MODE => self.track = v >= 0.5,
             _ => {}
         }
     }
@@ -183,17 +196,23 @@ impl Device for SampleHold {
         let mut clock_out = [0.0f32; BATCH];
         for n in 0..BATCH {
             let edge = self.trig.rose(trig[n]);
+            // Whether track mode follows the input at this sample.
+            let tracking;
             let tick = match self.clock {
-                CLOCK_TRIGGER => edge,
+                CLOCK_TRIGGER => {
+                    tracking = self.trig.is_high();
+                    edge
+                }
                 _ if locked => {
-                    let c = ((ctx.time.tick + n as f64 * ctx.time.ticks_per_frame) / cycle_ticks)
-                        .floor() as i64;
+                    let at = (ctx.time.tick + n as f64 * ctx.time.ticks_per_frame) / cycle_ticks;
+                    let c = at.floor() as i64;
+                    tracking = at - (c as f64) < 0.5;
                     let fire = self.cycle != Some(c);
                     self.cycle = Some(c);
                     fire
                 }
                 _ => {
-                    if self.first {
+                    let fire = if self.first {
                         self.phase = 0.0;
                         true
                     } else {
@@ -204,7 +223,9 @@ impl Device for SampleHold {
                         } else {
                             false
                         }
-                    }
+                    };
+                    tracking = self.phase < 0.5;
+                    fire
                 }
             };
             if self.clock != CLOCK_TRIGGER {
@@ -217,6 +238,9 @@ impl Device for SampleHold {
                     self.rng.next_bipolar()
                 };
                 self.pulse_left = self.pulse_len;
+            }
+            if self.track && tracking && cabled && !tick {
+                self.held = finite(cv[n]).clamp(-1.0, 1.0);
             }
             if self.pulse_left > 0 {
                 clock_out[n] = 1.0;
@@ -261,7 +285,7 @@ mod tests {
     fn descriptor_lists_the_keys_in_order() {
         assert_keys(
             &DESCRIPTOR,
-            &["clock", "rate", "division", "level"],
+            &["clock", "rate", "division", "level", "mode"],
             &["cv_in", "trig_in", "cv_out", "clock_out"],
         );
         assert_eq!(DESCRIPTOR.kind, DeviceKind::Utility);
@@ -297,6 +321,77 @@ mod tests {
         h.process();
         assert_eq!(h.output("cv_out")[0], 40.0 / 1000.0);
         assert_eq!(h.output("cv_out")[BATCH - 1], 40.0 / 1000.0);
+    }
+
+    #[test]
+    fn track_mode_follows_the_input_while_the_trigger_is_high_and_holds_when_low() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        let mut trig = [0.0f32; BATCH];
+        trig[10..30].fill(1.0);
+        *h.input_mut("trig_in") = trig;
+        *h.input_mut("cv_in") = ramp_batch(0);
+        h.process();
+        let out = *h.output("cv_out");
+        assert!(
+            out[..10].iter().all(|v| *v == 0.0),
+            "nothing before the gate"
+        );
+        for n in 10..30 {
+            assert_eq!(out[n], n as f32 / 1000.0, "follows at {n}");
+        }
+        for n in 30..BATCH {
+            assert_eq!(out[n], 29.0 / 1000.0, "holds at {n}");
+        }
+        // The next batch keeps holding while the input moves on.
+        *h.input_mut("trig_in") = [0.0; BATCH];
+        *h.input_mut("cv_in") = ramp_batch(BATCH);
+        h.process();
+        assert!(h.output("cv_out").iter().all(|v| *v == 29.0 / 1000.0));
+        // A gate that stays high follows through several batches.
+        *h.input_mut("trig_in") = [1.0; BATCH];
+        h.process();
+        assert_eq!(
+            h.output("cv_out")[BATCH - 1],
+            (2 * BATCH - 1) as f32 / 1000.0
+        );
+        // The clock output still pulses at the rise.
+        assert_eq!(h.output("clock_out")[0], 1.0);
+    }
+
+    #[test]
+    fn track_mode_with_a_free_clock_tracks_the_first_half_of_each_cycle() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        h.set_param("clock", 1.0);
+        h.set_param("rate", 100.0); // 480 samples a cycle at 48 kHz
+        let mut seen = Vec::new();
+        for b in 0..16 {
+            *h.input_mut("cv_in") = ramp_batch(b * BATCH);
+            h.process();
+            seen.extend_from_slice(h.output("cv_out"));
+        }
+        let held: Vec<f32> = seen[240..480].to_vec();
+        assert!(
+            held.iter().all(|v| *v == held[0]),
+            "held over the second half"
+        );
+        assert!(seen[1] != seen[2], "followed over the first half");
+        assert!(seen[500] != seen[510], "follows again in the next cycle");
+    }
+
+    #[test]
+    fn sample_mode_ignores_the_input_between_ticks_as_before() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        h.set_param("mode", 0.0);
+        let mut trig = [0.0f32; BATCH];
+        trig[5] = 1.0;
+        trig[6..30].fill(1.0);
+        *h.input_mut("trig_in") = trig;
+        *h.input_mut("cv_in") = ramp_batch(0);
+        h.process();
+        assert_eq!(h.output("cv_out")[BATCH - 1], 5.0 / 1000.0);
     }
 
     #[test]

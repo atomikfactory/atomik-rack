@@ -192,6 +192,12 @@ impl GateIn {
         self.update(x) && !was
     }
 
+    /// Whether the gate is high as of the last sample fed.
+    #[inline]
+    pub(crate) fn is_high(&self) -> bool {
+        self.high
+    }
+
     /// Back to low.
     pub(crate) fn reset(&mut self) {
         self.high = false;
