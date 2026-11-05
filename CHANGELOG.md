@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **FM synth follow-ups.** Each operator picks a wave: the sine (the old sound, bit for bit), a half sine, the
+  rectified sine, a squeezed sine, a triangle or a soft square. Poly glide makes a new note in poly mode slide in from
+  the key played before it (the Glide time sets how fast, a stolen voice included). A stereo chorus (mix, rate, depth)
+  follows the master level and is skipped at mix 0. Oversampling runs the voices at twice the sample rate behind a
+  halfband filter: a bright patch keeps more of its index on a high key without aliasing, at about twice the CPU and
+  29 frames of latency that the device reports. Four factory sounds are new (Marimba, Wide Keys, Glide Lead, Square
+  Keys), the panel has a WAVE and a CHORUS section, and the sound and the algorithm open a pick list on a click (a
+  right-click still steps back; the organ and grain sampler sounds do the same). The new params default to the old
+  behaviour, so existing projects sound the same and the project format stays 43. Not done yet: six operators, an
+  envelope with more than four stages, a unison stage, a mod matrix, and a display of the modulated indices of a
+  sounding voice.
 - **Grain sampler follow-ups.** A click or a drag on the waveform of the grain sampler sets the position to the place
   under the pointer (one undo step per drag, Escape puts the start value back). The Mode choice adds mono and legato:
   one voice plays the last key and returns to a key still held when another is let go, and legato keeps the grains

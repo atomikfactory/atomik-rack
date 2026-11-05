@@ -617,18 +617,20 @@ peak of 1.
 
 ## FM Synth: `atomik.fm-synth` (Instrument)
 
-A four-operator FM synthesizer with up to 16 voices. Each voice has four sine operators that
-phase-modulate each other through one of twelve routings (algorithms), each with its own frequency
-ratio (or a fixed frequency), envelope with a delay, velocity sensitivity and key scaling; a damped
-feedback path on operator 4; a pitch envelope, an LFO, the mod wheel on the modulation index, poly
-(with voice stealing), mono and legato play with glide, and six factory sounds. There is no filter:
-an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation
+A four-operator FM synthesizer with up to 16 voices. Each voice has four operators (a sine, or one
+of five other waves) that phase-modulate each other through one of twelve routings (algorithms),
+each with its own frequency ratio (or a fixed frequency), envelope with a delay, velocity
+sensitivity and key scaling; a damped feedback path on operator 4; a pitch envelope, an LFO, the
+mod wheel on the modulation index, poly (with voice stealing), mono and legato play with glide
+(poly too, when asked), a chorus, an optional 2x oversampling and ten factory sounds. There is no
+filter: an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation
 synthesis. The routings, the frequency rule and the bandwidth limiter are in
 [dsp/src/fm.rs](../crates/dsp/src/fm.rs).
 
 ### Operators and algorithms
 
-Operator *n* is a sine whose phase is moved by the outputs of the operators the algorithm routes
+Operator *n* is a wave (a sine unless `opN.wave` says otherwise) whose phase is moved by the outputs
+of the operators the algorithm routes
 into it, always from higher numbers to lower, so a voice computes operator 4 first. An operator that
 modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is the
 volume of a carrier and the modulation depth of a modulator (full level at index 1 is 8 radians).
@@ -667,11 +669,13 @@ In every routing operator 4 is the feedback operator.
 ### Params
 
 Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve params each, ids 4
-to 51), then the rest (ids 52 to 68). The ids are the indices.
+to 51), then the rest (ids 52 to 68), then the params added later (ids 69 to 78: the operator waves,
+poly glide, the chorus and oversampling), appended so that older patches load unchanged. The ids
+are the indices.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `sound` | 0–5: Init, E. Piano, Bell, Bass, Brass, Pad | 0 | choice | Linear | yes |
+| `sound` | 0–9: Init, E. Piano, Bell, Bass, Brass, Pad, Marimba, Wide Keys, Glide Lead, Square Keys | 0 | choice | Linear | yes |
 | `algorithm` | 0–11: the names above | 0 (Stack) | choice | Linear | yes |
 | `feedback` | 0 to 1 | 0 | percent | Linear | no |
 | `index` | 0 to 2 | 1 | none | Linear | no |
@@ -705,6 +709,12 @@ to 51), then the rest (ids 52 to 68). The ids are the indices.
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
+| `opN.wave` (ids 69 to 72) | 0–5: sine, half, abs, pulse, triangle, soft sq | 0 | choice | Linear | yes |
+| `play.poly_glide` | 0 to 1 | 0 | toggle | Linear | yes |
+| `chorus.mix` | 0 to 1 | 0 | percent | Linear | no |
+| `chorus.rate` | 0.05 to 5 | 0.8 | Hz | Exponential | no |
+| `chorus.depth` | 0 to 1 | 0.5 | percent | Linear | no |
+| `oversample` | 0–1: off, 2x | 0 | choice | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -713,6 +723,12 @@ to 51), then the rest (ids 52 to 68). The ids are the indices.
   `fine`) / 8) Hz whatever the key, 1 Hz at step 0 and a decade every eight steps (about 9.9 kHz at
   the top); pitch bend, the pitch envelope, the LFO and the pitch CV do not move it. Operator
   frequencies are held under 0.45 of the sample rate. The phase accumulators are `f64`.
+- **Waves.** `opN.wave` picks the shape one operator runs: a sine (0, the original sound, bit for bit),
+  a half sine (1), the rectified sine (2), a full sine squeezed into the first half of the cycle
+  (3), a triangle (4) and a sine pushed towards a square (5). Every shape stays within ±1 and has
+  no DC offset, so a carrier goes silent when it stops and a modulator only moves the phase. The
+  shapes are richer than the sine; the bandwidth limiter below counts the partials of a sine, so a
+  patch built on them can still alias a little at the plain rate: turn `oversample` on.
 - **Envelope.** Each operator has an ADSR and a `delay` in ms before its attack starts. A voice
   sounds until the envelopes of its carriers are idle; a note off during a carrier's delay cancels
   the note. A same-key retrigger restarts every envelope from its current level and ignores the
@@ -734,6 +750,15 @@ to 51), then the rest (ids 52 to 68). The ids are the indices.
   A bright patch therefore plays duller on a high key instead of aliasing, continuously in the
   pitch. The bounce test measures the worst non-harmonic partial of a patch with everything open at
   keys 84 to 112: under −55 dB below the strongest partial.
+- **Oversampling.** With `oversample` on, the voices run at twice the sample rate (envelope and delay
+  times, glide, the pitch envelope and the limiter all follow) and their sum goes through a
+  linear-phase halfband decimator ([dsp/src/oversample.rs](../crates/dsp/src/oversample.rs)). What
+  the doubled rate carries past the output's Nyquist is filtered away instead of folding back, so
+  the limiter lets the highest partial reach 1.25 times as far (0.5 of the output rate, short of the
+  filter's transition band): a bright patch keeps more of its index on a high key. The cost is about
+  twice the voice CPU and the filter's 29 frames of latency, which the device reports (so the
+  engine can align it with the other tracks). Switching it fades the sounding voices out, since a
+  rate change cannot be click free.
 - **Pitch.** Semitones = key (gliding in the mono modes) + bend + `pitch.env_amount` ×
   e^(−t/`pitch.env_decay`) (restarted at each note) + LFO × `lfo.to_pitch` + `pitch_cv_trim` × 24 ×
   `pitch_cv_in`.
@@ -741,7 +766,13 @@ to 51), then the rest (ids 52 to 68). The ids are the indices.
   out over 2 ms. `mono`: one voice, the last key wins, every key retriggers the envelopes, and
   releasing a key returns to the key still held. `legato`: as mono, but a key played while another
   is held changes the pitch only. `play.glide` is the time constant in ms of the slide to the new
-  pitch (0 is none). Switching to a mono mode releases the other voices.
+  pitch (0 is none). Switching to a mono mode releases the other voices. With `play.poly_glide` on,
+  the glide also works in poly: a note that starts a voice (a stolen one too) slides in from the key
+  played before it; the voices that already sound keep their pitch.
+- **Chorus.** `chorus.mix` crossfades the stereo output into a chorus: a modulated delay centred at
+  12 ms and swung by `chorus.depth` × 6 ms at `chorus.rate`, the two sides sweeping against each
+  other. It follows the master level and the soft limiter. At 0 the stage is skipped and the output
+  is the dry signal bit for bit.
 - **Stereo.** `spread` pans a voice by its key (middle C centre, 36 semitones away is the edge); the
   tremolo is `lfo.to_amp` × (1 − LFO)/2 of the amplitude.
 - **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly
@@ -765,6 +796,10 @@ everything it changed; the player tweaks from there and the project file holds p
 | Bass | Mono with a 30 ms glide: a stack with feedback, bright for a moment at each note. |
 | Brass | Y routing whose index opens over 90 ms, a light vibrato, the mod wheel brightens it. |
 | Pad | Two detuned pairs (±7 cents) with attacks of 0.7 to 1.2 s; a slow triangle LFO breathes the index. |
+| Marimba | A short sine carrier struck by a ratio-4 modulator that dies within 110 ms. |
+| Wide Keys | Two detuned carriers under a short bright tine, widened by the chorus. |
+| Glide Lead | A triangle-wave lead with poly glide: each note slides in from the last (70 ms) and a light chorus. |
+| Square Keys | Additive routing: four carriers at the ratios 1 to 4 in soft-square, triangle and half-sine waves, with chorus. |
 
 ### Tests
 
@@ -774,7 +809,10 @@ detune to a fraction of a hertz, the feedback (against the reference, bounded, t
 on five registers), voice stealing and the voice limit, the envelopes and their delays, velocity and
 key scaling, the index from the wheel, the LFO and the CV, the mono modes and the glide, aliasing of
 a bright patch on high keys (with an unlimited reference that does alias), determinism and reset,
-every param at its extremes, and the factory sounds. A proptest (`qa_devices`) drives random params,
+every param at its extremes, the factory sounds, the waves (bounded, periodic, no DC, the harmonics
+of the triangle and the soft square), poly glide (also through a steal), the chorus (off at zero,
+tail, restart) and the oversampling (pitch, level and timing kept, a brighter patch without aliasing,
+a switch during a note, the reported latency). A proptest (`qa_devices`) drives random params,
 CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in
 [crates/ui/tests/fm_panel.rs](../crates/ui/tests/fm_panel.rs) and the demo patch
 `examples/patches/fm-demo.json` bounces in
