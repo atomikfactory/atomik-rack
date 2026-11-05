@@ -1142,3 +1142,14 @@ proptest! {
         run_sequence(&steps)?;
     }
 }
+
+#[test]
+fn moving_a_channel_after_a_folder_with_a_following_group_keeps_the_invariants() {
+    run_sequence(&[
+        Step::Wf(WfOp::Folder(vec![5, 2])),
+        Step::Console(ConsoleOp::VcaForFolder(0)),
+        Step::Console(ConsoleOp::FollowFolder(0, None)),
+        Step::Console(ConsoleOp::MoveChannel(30, 1)),
+    ])
+    .expect("the sequence keeps the invariants");
+}
