@@ -11,7 +11,11 @@ channel, in 14 bits, with data increment and decrement as steps; MMC play, stop,
 a port set to the mapping role; a port cell and a channel cell in each row of the mapping panel; and the mappings
 of one device saved as the preset of its type, which a plugin of that type takes wherever it sits in the rack),
 and track organisation follow-ups (note clips in tracks under 32 px as stacked bars, a track comment of several lines
-in a text box, and the controller lane of the piano roll folding to its chip row).
+in a text box, and the controller lane of the piano roll folding to its chip row),
+and console follow-ups (buses and mixer channels with no source device in the strip clipboard, Cut, Copy, Paste and
+Duplicate rows in the strip context menu, a colour for each bus shown in the output selector, VU and PPM ballistics
+for the strip meters, a peak reset on the master readouts, a release Auto on the master bus compressor, and a total
+latency readout beside the largest strip latency).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -47,7 +51,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 4: Mixing and control
 
 - **Mixer groups follow-ups.** Automation of the group fader (a group is not a device today, so its level is not a lane target; it needs a device or a new lane target kind), groups of groups, a VCA that routes its members to a bus (a group bus), and a group chip on the device headers of the rack.
-- **Console editing follow-ups.** Copying buses, the master and mixer channels with no source device (only strips that carry an instrument or a track are copied), strip clipboard entries in the strip context menu, bus colours in the output selector, a remote-control base for the strip surface, auto make-up and an E band mode on the strip, key-input auto-on for channels and buses, VU and PPM ballistics, a peak reset and a release Auto on the master, a level CV on the master, a total delay compensation readout, and sorting the selected device groups.
+- **Console editing follow-ups.** Copying the master's settings (the master cannot be selected as a strip yet), a remote-control base for the strip surface, auto make-up and an E band mode on the strip, key-input auto-on for channels and buses, a level CV on the master, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), bypass and a B for container effects (a container has no bypass), a parallel compressor with a key input, a pre-insert tap and a choice of tap, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Snapshots that capture the output routing and the insert chains' members, snapshot recall as an automation lane or a marker action, a morph that starts from the mix as it is and not from the current snapshot, a morph time that is kept between sessions, and A/B comparison of a single strip.
 - **MIDI learn and control surface follow-ups.** Several surfaces at once, a generic driver, command mappings, NRPN and RPN sources, MMC input as a transport, the mapping panel's port and channel fields and the preset of one device are done. Still to come: the older hardware-user-interface protocol (HUI) and other surface protocols, OSC as a transport for surfaces and tablets, level meters, flip and the function keys on the eight-fader driver, a second unit (an extender) and a choice of what the V-pots drive (sends, plugin parameters), mapping the parameters of a plugin whose editor window is open (today the parameter pane, the console and the rack are learnable), a merge group for the tempo and for several controls moved at once, an MMC device number and a switch to turn MMC off per port, and NRPN and RPN sources on a control surface's own driver (the generic driver feeds them like a port).

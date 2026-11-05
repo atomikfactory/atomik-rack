@@ -2828,9 +2828,13 @@ planned on a scratch copy.
   selected channels plus each channel's `ChannelSettingsClip` of every section, because a device
   snapshot leaves console devices out and a pasted instrument gets a fresh channel. A paste is
   `PasteDevices`, then `MoveChannel` to put the new channels after the selected strip and
-  `PasteSettings` onto each, the later two joined into the paste's undo step. Buses, the master and
-  channels with no source are not copied. Ctrl-drag of a name plate emits `UiAction::CopyStrips`, which
-  runs the same paste at the drop position. A chain holds up to `INSERT_SLOTS` (16) effects; the
+  `PasteSettings` onto each, the later two joined into the paste's undo step. A bus and a channel with
+  no source have nothing behind them: they are copied as a name and a settings clip (`LooseStrip`), and
+  the paste makes a new mixer channel (`AddMixChannel`) or a bus on the master (`CreateBus`, a free
+  name such as `Drums 2` when the name is taken) before pasting the settings. The master is not
+  copied. The strip context menu has Cut, Copy, Paste and Duplicate rows for the same commands.
+  Ctrl-drag of a name plate emits `UiAction::CopyStrips`, which runs the same paste at the drop
+  position. A chain holds up to `INSERT_SLOTS` (16) effects; the
   console draws four rows and scrolls the rest.
 - **Parallel channel.** Every channel and bus has `parallel_out_l/r`, the signal after the width,
   before the fader and the pan, with the mute. `CreateParallel { strip }` makes a source-less channel
@@ -2898,6 +2902,24 @@ planned on a scratch copy.
   the warning colour and the "Leaves the master" tooltip.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
+- **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band
+  of its name plate opens the picker, `ColorTarget::Devices`), else the default bus colour. The output
+  selector of a strip that plays into a bus shows a swatch in that bus's colour, and so do the bus
+  rows of the selector's menu.
+- **Meter modes and peak reset.** Mixer > Meter Mode (`mixer.meter_mode`, kept in `ui-state.json` as
+  `meter_mode`, peak by default) picks the ballistics the strip meters draw: peak (instant attack, 24 dB/s
+  release), PPM (the peak bars and their hold fall 24 dB in 2.8 s) or VU (the RMS bars integrate over
+  300 ms, 99 % of a steady level in that time, rising and falling alike); the maths is in
+  [crates/ui/src/console_meter.rs](../crates/ui/src/console_meter.rs). The master's L and R peak
+  readouts show the highest peak until it is reset: a click on either of them drops the readouts, the
+  holds and the clip lamps of every meter.
+- **Total latency.** The toolbar's `LATENCY` readout is the largest strip latency; when the master's
+  inserts or look-ahead add more, `TOTAL` follows with the latency of the whole mix up to the
+  interface outputs (`PdcReport::output_latency`).
+- **Master release Auto.** `comp.auto` (appended after `internal.tap_live`, off by default, and
+  an AUTO button beside the release knob) makes the bus compressor's release follow the program: a slow
+  average of the gain reduction blends it between 60 ms (brief peaks) and 1.2 s (sustained reduction of
+  6 dB or more); `comp.release` is not used while it is on (`Compressor::set_release_auto`).
 
 ### Mixer groups: VCA faders
 

@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Console follow-ups: buses and mixer channels in the strip clipboard, meter modes, a peak reset, bus colours and a
+  release Auto.** Copy, Cut, Paste and Duplicate in the console now take output buses and channels with no source
+  device: they are copied as a name and their settings, and a paste makes a new mixer channel, or a bus on the master
+  with a free name (`Drums 2`), in the same undo step as the strips that carry an instrument or a track. The strip
+  context menu has Cut, Copy, Paste and Duplicate rows. Mixer > Meter Mode picks the ballistics of the strip meters:
+  peak (the default), PPM (the peak bars fall 24 dB in 2.8 s) or VU (the RMS bars integrate over 300 ms); it is kept
+  in `ui-state.json`. The master's L and R peak readouts keep the highest peak, and a click on either one resets
+  them with the holds and the clip lamps. A bus takes the colour of its device (click the band of its name plate to
+  pick one), and the output selector and its menu show a swatch in the colour of the bus a strip plays into. The
+  toolbar's latency readout adds `TOTAL` with the latency of the whole mix when the master's chain adds some. The
+  master bus compressor has an Auto release (`comp.auto`, an AUTO button beside the release knob, off by default and
+  not saved while off): a slow average of the gain reduction blends the release between 60 ms and 1.2 s. Project
+  format unchanged (43). The master's settings cannot be copied yet (the master cannot be selected as a strip), and
+  the remote-control base for the strip surface, auto make-up, the E band mode, key-input auto-on and a level CV on
+  the master are not built.
 - **Track organisation follow-ups: stacked bars in small tracks, comments of several lines and folding the
   controller lane.** In a track under 32 px a note clip drops its header band and draws its notes as stacked bars
   over the whole clip (the name is small text on them, and the mute button is left out). A track comment is typed in
