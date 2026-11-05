@@ -376,6 +376,9 @@ may break APIs and the patch and project formats.
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.
+- A plain **Save** no longer deletes audio from an `Audio` folder that several project files share. The unused
+  audio of a bundle folder is tidied only when no other project file sits in the folder (or directly in one of
+  its subfolders); where one does, the folder is left as it is. Collect Files gives a song audio of its own.
 
 ## [0.3.0-rc.2] - 2026-11-04
 

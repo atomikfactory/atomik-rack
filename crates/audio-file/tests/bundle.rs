@@ -456,3 +456,58 @@ fn collect_from_copies_only_the_wanted_assets_and_reports_the_rest() {
     assert!(again.copied.is_empty() && again.bytes == 0);
     assert_eq!(again.present.len(), 4);
 }
+
+fn ramp(len: usize, step: f32) -> AudioData {
+    AudioData::new(
+        48_000,
+        vec![(0..len).map(|i| i as f32 * step).collect::<Vec<f32>>()],
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_folder_with_another_project_file_counts_as_shared() {
+    let dir = std::env::temp_dir().join(format!("atomik-bundle-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("nested")).unwrap();
+    let bundle = Bundle::create(&dir).unwrap();
+    let mine = dir.join("mine.atomik");
+    std::fs::write(&mine, "x").unwrap();
+    assert!(
+        !bundle.shared_with_other_projects(&mine),
+        "its own file alone is not sharing"
+    );
+    std::fs::write(dir.join("notes.txt"), "x").unwrap();
+    assert!(
+        !bundle.shared_with_other_projects(&mine),
+        "other files do not count"
+    );
+    std::fs::write(dir.join("nested").join("deep.atomik"), "x").unwrap();
+    assert!(
+        bundle.shared_with_other_projects(&mine),
+        "a project one folder down counts"
+    );
+    std::fs::remove_file(dir.join("nested").join("deep.atomik")).unwrap();
+    std::fs::write(dir.join("other.atomik"), "x").unwrap();
+    assert!(bundle.shared_with_other_projects(&mine));
+    // A project saved from elsewhere into this folder: every project file here is another.
+    assert!(bundle.shared_with_other_projects(&dir.join("elsewhere").join("mine.atomik")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_shared_audio_folder_is_recognised_for_a_bundle_the_project_lives_in_alone() {
+    let dir = std::env::temp_dir().join(format!("atomik-bundle-alone-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut bundle = Bundle::create(&dir).unwrap();
+    let keep = bundle.add_recording(&ramp(100, 0.001), "keep").unwrap();
+    let stray = bundle.add_recording(&ramp(100, 0.002), "stray").unwrap();
+    let mine = dir.join("mine.atomik");
+    std::fs::write(&mine, "x").unwrap();
+    assert!(!bundle.shared_with_other_projects(&mine));
+    let wanted: BTreeSet<String> = [keep.hash.clone()].into();
+    bundle.remove_orphans(&wanted).unwrap();
+    assert!(bundle.exists(&keep.hash));
+    assert!(!bundle.exists(&stray.hash));
+    let _ = std::fs::remove_dir_all(&dir);
+}

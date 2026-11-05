@@ -121,7 +121,11 @@ impl Job {
                 .map_err(|e| io_error(bundle.root(), e))?;
         }
         save_text_atomic(&self.file, &text).map_err(|e| io_error(&self.file, e))?;
-        if let Some(bundle) = &mut dest {
+        // Only a bundle folder that belongs to this project alone is tidied: where other project
+        // files share the `Audio/` folder, what this one does not use may be theirs.
+        if let Some(bundle) = &mut dest
+            && !bundle.shared_with_other_projects(&self.file)
+        {
             bundle
                 .remove_orphans(&self.keep)
                 .map_err(|e| io_error(bundle.root(), e))?;
