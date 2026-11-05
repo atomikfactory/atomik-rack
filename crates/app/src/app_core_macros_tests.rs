@@ -1070,3 +1070,36 @@ fn a_knob_dropped_on_a_macro_assigns_it_to_that_bank_and_macro() {
     c.macros_action(drop(&first, 1, &first, "macro2"));
     assert!(c.last_rejection().is_some());
 }
+
+#[test]
+fn a_panel_range_drag_is_one_undo_step_and_the_end_closes_the_gesture() {
+    let mut c = assigned();
+    let before = c.document().undo_depth();
+    for (n, max) in [2500.0, 3000.0, 3500.0].into_iter().enumerate() {
+        assert!(!c.macros_action(MacrosAction::DragRange {
+            id: 1,
+            min: 200.0,
+            max,
+            invert: false,
+            merge: (20 << 40) + 1,
+        }));
+        assert_eq!(c.doc().macros.assigns[0].max, max, "step {n}");
+    }
+    c.macros_action(MacrosAction::EndDrag);
+    assert_eq!(c.document().undo_depth(), before + 1);
+    assert!(c.undo());
+    assert_eq!(c.doc().macros.assigns[0].max, 2000.0);
+    // A shape change from the panel is its own step.
+    c.macros_action(MacrosAction::SetShape {
+        id: 1,
+        curve: atomik_model::MacroCurve::Log,
+        smooth_ms: 100,
+    });
+    let a = &c.doc().macros.assigns[0];
+    assert_eq!((a.curve, a.smooth_ms), (atomik_model::MacroCurve::Log, 100));
+    let row = c.macro_bank_rows()[0].macros[0].assigns[0].clone();
+    assert_eq!(
+        (row.curve, row.smooth_ms),
+        (atomik_model::MacroCurve::Log, 100)
+    );
+}

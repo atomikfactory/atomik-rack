@@ -53,6 +53,7 @@ mod inline;
 mod io_input;
 mod jacks;
 mod live_panels;
+mod macro_drag;
 mod navigator;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
@@ -464,6 +465,14 @@ enum Drag {
     Pad {
         device: DeviceKey,
         key: u8,
+    },
+    /// A knob is dragged with the assign-to-macro role held (see [`macro_drag`]): the param, the
+    /// press and the pointer, rack coordinates.
+    Assign {
+        device: DeviceKey,
+        param: String,
+        from: Point,
+        at: Point,
     },
     /// An EQ handle is dragged (see [`EqDrag`]).
     Eq(EqDrag),
@@ -3404,6 +3413,20 @@ impl RackView {
                 self.scroll_by(last - pos);
             }
             Drag::Navigator { .. } => self.navigator_follow(pos),
+            Drag::Assign {
+                device,
+                param,
+                from,
+                ..
+            } => {
+                self.drag = Drag::Assign {
+                    device,
+                    param,
+                    from,
+                    at: rp,
+                };
+                self.repaint = true;
+            }
             Drag::Pad { .. } => {}
             Drag::Sens {
                 dev,
@@ -3812,9 +3835,19 @@ impl RackView {
             });
             return;
         }
-        // A param a macro drives is locked, but its right-click menu stays (Remove from Macro).
+        // A knob dragged with the assign role held is dropped on a macro knob.
+        if button == PointerButton::Primary
+            && self.assign_drag_wanted(modifiers)
+            && self.assign_down(i, slot)
+        {
+            return;
+        }
+        // A param a container's macro drives is locked, and so is one a bank drives inside an
+        // open container; the right-click menu stays (Remove from Macro). A param a bank drives
+        // at the top level is edited like any other: the app moves the range of its assignment.
         if self.driven_by(i, p.key).is_some()
-            && !(self.scope.is_empty() && button == PointerButton::Secondary)
+            && !(self.scope.is_empty()
+                && (button == PointerButton::Secondary || !inline::is_inner(&self.devices[i].key)))
         {
             self.notify_driven(i, p.key);
             return;
@@ -3921,6 +3954,7 @@ impl RackView {
             Drag::None | Drag::Pan { .. } | Drag::Navigator { .. } => {}
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
+            Drag::Assign { device, param, .. } => self.assign_up(&device, &param, pos, out),
             Drag::Eq(_) => out.push(UiAction::EndMerge),
             Drag::Drum(d) => self.drum_up(&d, out),
             Drag::Value { .. } => {
@@ -3965,7 +3999,9 @@ impl RackView {
 
     fn step_control(&self, i: usize, slot: usize, notches: f64, fine: bool) -> Option<UiAction> {
         let (p, kind, value) = self.param_of(i, slot)?;
-        if self.driven_by(i, p.key).is_some() {
+        if self.driven_by(i, p.key).is_some()
+            && !(self.scope.is_empty() && !inline::is_inner(&self.devices[i].key))
+        {
             return None;
         }
         let new = match kind {
@@ -4788,6 +4824,7 @@ impl RackView {
         self.paint_macro_menu(c);
         self.paint_plugin_menu(c);
         self.paint_drag_feedback(c);
+        self.paint_assign_drag(c);
         self.paint_handle(c);
     }
 }

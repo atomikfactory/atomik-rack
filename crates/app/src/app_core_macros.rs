@@ -401,6 +401,8 @@ impl<S: EngineSink> AppCore<S> {
             min: a.min,
             max: a.max,
             invert: a.invert,
+            curve: a.curve,
+            smooth_ms: a.smooth_ms,
             param_min,
             param_max,
             step,
@@ -439,6 +441,22 @@ impl<S: EngineSink> AppCore<S> {
                     merge: None,
                 }));
             }
+            MacrosAction::DragRange {
+                id,
+                min,
+                max,
+                invert,
+                merge,
+            } => {
+                let _ = self.apply_command(Command::Macro(MacroCommand::SetRange {
+                    id,
+                    min,
+                    max,
+                    invert,
+                    merge: Some(merge),
+                }));
+            }
+            MacrosAction::EndDrag => self.handle_action(UiAction::EndMerge),
             MacrosAction::Remove(id) => {
                 let _ = self.apply_command(Command::Macro(MacroCommand::Remove { id }));
             }

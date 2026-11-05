@@ -405,3 +405,51 @@ fn following_the_selection_and_showing_a_lane_add_an_empty_lane() {
     let v = macros(&mut s, json!({"action": "follow", "on": false}));
     assert_eq!(v["follow_selection"], false);
 }
+
+#[test]
+fn the_shape_action_sets_the_curve_and_the_smoothing_and_the_listing_shows_them() {
+    let mut s = server();
+    open_demo(&mut s);
+    macros(
+        &mut s,
+        json!({"action": "assign", "device": "lead", "param": "filter.cutoff", "macro": 1}),
+    );
+    let id = assignments(&macros(&mut s, json!({"action": "new_bank"})))[0]["id"].clone();
+    // Linear and no smoothing are not listed.
+    let first = assignments(&macros(&mut s, json!({"action": "bank"})));
+    assert!(first[0].get("curve").is_none() && first[0].get("smooth_ms").is_none());
+    let v = macros(
+        &mut s,
+        json!({"action": "shape", "id": id, "curve": "exp", "smooth_ms": 120}),
+    );
+    assert_eq!(v["done"], true, "{v}");
+    let a = assignments(&v);
+    assert_eq!(
+        (a[0]["curve"].clone(), a[0]["smooth_ms"].clone()),
+        (json!("exp"), json!(120))
+    );
+    // What is left out stays.
+    let v = macros(&mut s, json!({"action": "shape", "id": id, "curve": "log"}));
+    let a = assignments(&v);
+    assert_eq!(
+        (a[0]["curve"].clone(), a[0]["smooth_ms"].clone()),
+        (json!("log"), json!(120))
+    );
+    // Refusals name the problem.
+    let bad = |s: &mut Server, args: Value| call(s, "session_macros", args).first_text().to_owned();
+    assert!(
+        bad(
+            &mut s,
+            json!({"action": "shape", "id": id, "curve": "sine"})
+        )
+        .contains("sine")
+    );
+    assert!(
+        bad(&mut s, json!({"action": "shape", "id": 99, "curve": "exp"})).contains("no assignment")
+    );
+    let v = macros(
+        &mut s,
+        json!({"action": "shape", "id": id, "smooth_ms": 9000}),
+    );
+    assert_eq!(v["done"], false, "{v}");
+}
