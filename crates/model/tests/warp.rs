@@ -809,7 +809,8 @@ fn quantize_reports_what_it_cannot_do() {
         reverse: true,
         ..a.clone()
     };
-    assert!(quantize_audio(song, SR, c.start, c.length, &rev, &[6_300], &q).is_err());
+    assert!(quantize_audio(song, SR, c.start, c.length, &rev, &[6_300], &q).is_ok());
+    assert!(quantize_audio(song, SR, c.start, c.length, &rev, &[], &q).is_err());
     let bad = AudioQuantize {
         grid: 0,
         strength: 1.0,
@@ -970,5 +971,78 @@ proptest::proptest! {
                 proptest::prop_assert!(w[0].tick < w[1].tick && w[0].source < w[1].source);
             }
         }
+    }
+}
+
+#[test]
+fn quantize_moves_the_transients_of_a_reversed_clip_by_where_they_play() {
+    let (reg, mut d) = setup();
+    let id = put(&mut d, &reg, 0, 4 * PPQ, audio(1));
+    let c = doc_clip(d.doc(), id).clone();
+    let mut a = audio_of(&d, id);
+    a.reverse = true;
+    let hits: Vec<u64> = vec![0, 6_300, 11_500, 18_000, 24_400, 36_200, 47_700, 60_000];
+    let grid = PPQ / 4;
+    let q = quantize_audio(
+        &d.doc().song,
+        SR,
+        c.start,
+        c.length,
+        &a,
+        &hits,
+        &AudioQuantize {
+            grid,
+            strength: 1.0,
+            ..AudioQuantize::default()
+        },
+    )
+    .unwrap();
+    assert!(q.reverse && q.warp.enabled);
+    q.warp.validate().unwrap();
+    d.apply(
+        sc(SongCommand::SetAudioClip {
+            id,
+            start: c.start,
+            length: c.length,
+            muted: false,
+            content: q.clone(),
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    // The clip plays backwards: a hit plays where the forward map puts it, mirrored in the clip.
+    for &h in &hits[1..] {
+        let played = c.start + c.length - plays_at(&d, id, h);
+        assert_eq!(played % grid, 0, "hit at {h} plays at tick {played}");
+    }
+    // The span of the file the clip plays does not change.
+    let song = &d.doc().song;
+    assert!(near(
+        source_at_tick(song, SR, 0, &q, c.start + c.length),
+        4.0 * BEAT_F,
+        1.0
+    ));
+    // Strength 0 moves nothing.
+    let zero = quantize_audio(
+        &d.doc().song,
+        SR,
+        c.start,
+        c.length,
+        &a,
+        &hits,
+        &AudioQuantize {
+            grid,
+            strength: 0.0,
+            ..AudioQuantize::default()
+        },
+    )
+    .unwrap();
+    for h in [6_300.0, 24_400.0, 47_700.0] {
+        assert!(near(
+            tick_at_source(song, SR, 0, &zero, h),
+            tick_at_source(song, SR, 0, &a, h),
+            2.0
+        ));
     }
 }
