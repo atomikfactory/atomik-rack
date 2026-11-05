@@ -381,12 +381,8 @@ impl<S: EngineSink> AppCore<S> {
         }
         let song = &self.doc().song;
         let mut changes = Vec::new();
-        let (mut guessed, mut reversed) = (0, 0);
+        let mut guessed = 0;
         for s in &clips {
-            if s.content.reverse {
-                reversed += 1;
-                continue;
-            }
             let Some((_, _, clip)) = song.clip(s.id) else {
                 continue;
             };
@@ -402,15 +398,13 @@ impl<S: EngineSink> AppCore<S> {
             changes.push((s, content, None));
         }
         if changes.is_empty() {
-            return self.reject("A reversed clip cannot be warped".to_owned());
+            return;
         }
         self.set_contents(changes);
         if guessed > 0 {
             self.reject(format!(
                 "No tempo found in {guessed} clip(s): they were set to the song tempo, edit it in Warp Settings"
             ));
-        } else if reversed > 0 {
-            self.reject(format!("{reversed} reversed clip(s) left unwarped"));
         }
     }
 
@@ -434,7 +428,7 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             };
             let frames = meta.frames.saturating_sub(s.content.source_offset);
-            let (Some(bpm), false) = (bpm_for_beats(frames, beats, rate), s.content.reverse) else {
+            let Some(bpm) = bpm_for_beats(frames, beats, rate) else {
                 failed += 1;
                 continue;
             };
