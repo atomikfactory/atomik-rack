@@ -265,3 +265,226 @@ fn save_speed_for_a_large_project() {
         std::fs::metadata(&file).unwrap().len()
     );
 }
+
+/// Imports a ramp of `frames` frames and returns its asset id.
+fn import_ramp(c: &mut AppCore<RecordingSink>, t: &Tmp, name: &str, frames: usize) -> String {
+    let before: BTreeSet<String> = c.doc().assets.keys().cloned().collect();
+    let data: Vec<f32> = (0..frames).map(|i| i as f32 / frames as f32).collect();
+    let path = t.path(name);
+    write_wav_f32(&path, &AudioData::new(48_000, vec![data]).unwrap()).unwrap();
+    c.import_audio(vec![path], ImportTarget::NewTracks, 0);
+    c.wait_background();
+    c.doc()
+        .assets
+        .keys()
+        .find(|h| !before.contains(*h))
+        .cloned()
+        .unwrap()
+}
+
+fn wav_of(root: &Path, hash: &str) -> PathBuf {
+    root.join("Audio").join(format!("{hash}.wav"))
+}
+
+/// A project with one audio file in `<tmp>/proj/` (the bundle folder holding `proj.atomik`), and
+/// the id of that file.
+fn project_with_audio(t: &Tmp) -> (AppCore<RecordingSink>, String) {
+    let mut c = core();
+    let hash = import_ramp(&mut c, t, "one.wav", 4_800);
+    std::fs::create_dir_all(t.path("proj")).unwrap();
+    c.save_as(&t.path("proj").join("proj.atomik")).unwrap();
+    (c, hash)
+}
+
+#[test]
+fn collecting_files_gives_a_project_that_shares_an_audio_folder_audio_of_its_own() {
+    let t = Tmp::new("collect-shared");
+    let (_, hash) = project_with_audio(&t);
+    let shared = t.path("proj");
+    let other = Bundle::open(&shared)
+        .unwrap()
+        .add_recording(
+            &AudioData::new(48_000, vec![vec![0.25; 900]]).unwrap(),
+            "other",
+        )
+        .unwrap();
+    // A second project file in the same folder: its bundle is the shared folder.
+    let file = shared.join("song.atomik");
+    std::fs::copy(shared.join("proj.atomik"), &file).unwrap();
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    assert_eq!(c.bundle_root(), Some(shared.as_path()));
+
+    c.collect_files().unwrap();
+    c.wait_background();
+
+    let own = shared.join("song");
+    assert_eq!(c.bundle_root(), Some(own.as_path()));
+    assert_eq!(c.file(), Some(file.as_path()), "the project file stays");
+    assert!(!c.is_dirty());
+    assert!(
+        std::fs::read(wav_of(&own, &hash)).unwrap()
+            == std::fs::read(wav_of(&shared, &hash)).unwrap(),
+        "the audio is copied bit for bit"
+    );
+    assert!(
+        !wav_of(&own, &other.hash).exists(),
+        "audio of others stays behind"
+    );
+    assert!(
+        wav_of(&shared, &other.hash).exists(),
+        "the shared folder is not touched"
+    );
+    assert!(wav_of(&shared, &hash).exists());
+    let message = c.last_rejection().unwrap();
+    assert!(message.starts_with("Collected 1 audio file ("), "{message}");
+    assert!(message.contains("into song"), "{message}");
+    assert_eq!(
+        atomik_render::bundle::existing_bundle_root(&file),
+        Some(own)
+    );
+}
+
+#[test]
+fn collecting_files_finds_audio_a_moved_project_left_in_the_folder_above() {
+    let t = Tmp::new("collect-moved");
+    let (_, hash) = project_with_audio(&t);
+    let above = t.path("moved");
+    let holder = Bundle::create(&above).unwrap();
+    let wanted = BTreeSet::from([hash.clone()]);
+    holder.collect_from(&[t.path("proj")], &wanted).unwrap();
+    let file = above.join("sub").join("song.atomik");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::copy(t.path("proj").join("proj.atomik"), &file).unwrap();
+
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    assert_eq!(
+        c.missing_assets().len(),
+        1,
+        "the project opens without its audio"
+    );
+
+    c.collect_files().unwrap();
+    c.wait_background();
+
+    let own = above.join("sub").join("song");
+    assert!(wav_of(&own, &hash).is_file());
+    assert!(
+        c.missing_assets().is_empty(),
+        "the audio loads from the new bundle"
+    );
+    assert!(c.song_assets().contains_key(&hash));
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .starts_with("Collected 1 audio file")
+    );
+}
+
+#[test]
+fn collecting_files_in_a_project_that_has_them_all_changes_no_audio() {
+    let t = Tmp::new("collect-nothing");
+    let (mut c, hash) = project_with_audio(&t);
+    let root = t.path("proj");
+    let before = std::fs::read(wav_of(&root, &hash)).unwrap();
+    c.collect_files().unwrap();
+    c.wait_background();
+    assert_eq!(c.bundle_root(), Some(root.as_path()));
+    assert!(std::fs::read(wav_of(&root, &hash)).unwrap() == before);
+    assert_eq!(
+        c.last_rejection(),
+        Some("All 1 audio file is already in proj")
+    );
+}
+
+#[test]
+fn collecting_files_names_the_audio_it_cannot_find() {
+    let t = Tmp::new("collect-lost");
+    let (_, _) = project_with_audio(&t);
+    let file = t.path("away").join("song.atomik");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::copy(t.path("proj").join("proj.atomik"), &file).unwrap();
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    c.collect_files().unwrap();
+    c.wait_background();
+    assert_eq!(
+        c.last_rejection(),
+        Some("Nothing was collected into song; 1 not found: one.wav")
+    );
+    assert_eq!(
+        c.missing_assets().len(),
+        1,
+        "it stays missing and relinkable"
+    );
+}
+
+#[test]
+fn collecting_files_needs_a_project_file_and_some_audio() {
+    let t = Tmp::new("collect-refused");
+    let mut c = core();
+    import_ramp(&mut c, &t, "one.wav", 480);
+    assert!(matches!(c.collect_files(), Err(AppError::NoPath)));
+    let mut plain = core();
+    plain.save_as(&t.path("plain.atomik")).unwrap();
+    plain.collect_files().unwrap();
+    assert_eq!(
+        plain.last_rejection(),
+        Some("The project uses no audio files")
+    );
+    assert!(!t.path("plain").exists(), "no bundle is made for nothing");
+}
+
+#[test]
+fn save_as_copies_only_the_audio_the_project_uses() {
+    let t = Tmp::new("saveas-used");
+    let (_, hash) = project_with_audio(&t);
+    let shared = t.path("proj");
+    let other = Bundle::open(&shared)
+        .unwrap()
+        .add_recording(
+            &AudioData::new(48_000, vec![vec![0.25; 900]]).unwrap(),
+            "other",
+        )
+        .unwrap();
+    let file = shared.join("song.atomik");
+    std::fs::copy(shared.join("proj.atomik"), &file).unwrap();
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    let out = t.path("out");
+    std::fs::create_dir_all(&out).unwrap();
+    c.save_as(&out.join("copy.atomik")).unwrap();
+    let root = out.join("copy");
+    assert!(wav_of(&root, &hash).is_file());
+    assert!(!wav_of(&root, &other.hash).exists());
+    assert!(
+        wav_of(&shared, &other.hash).exists(),
+        "the source keeps its files"
+    );
+}
+
+#[test]
+fn a_background_collect_runs_on_the_worker_and_reports_when_it_is_applied() {
+    let t = Tmp::new("collect-bg");
+    let (_, hash) = project_with_audio(&t);
+    let shared = t.path("proj");
+    let file = shared.join("song.atomik");
+    std::fs::copy(shared.join("proj.atomik"), &file).unwrap();
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    c.set_background_save(true);
+    c.collect_files().unwrap();
+    c.settle_save();
+    assert!(wav_of(&shared.join("song"), &hash).is_file());
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .starts_with("Collected 1 audio file")
+    );
+}

@@ -59,7 +59,7 @@ impl ArchiveState {
 }
 
 /// `1.5 GB` or `640 KB`: the size of an archive for a message.
-fn size_text(bytes: u64) -> String {
+pub(super) fn size_text(bytes: u64) -> String {
     const UNITS: [(&str, f64); 3] = [("GB", 1e9), ("MB", 1e6), ("KB", 1e3)];
     for (unit, size) in UNITS {
         if bytes as f64 >= size {
