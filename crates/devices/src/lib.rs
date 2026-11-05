@@ -1,4 +1,4 @@
-//! Atomik Rack built-in devices: [`poly_synth`], [`mono_bass`], [`dual_layer`], [`semi_modular`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`granular`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`echo`], [`reverb`], the effects
+//! Atomik Rack built-in devices: [`poly_synth`], [`mono_bass`], [`dual_layer`], [`semi_modular`], [`organ`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`granular`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`echo`], [`reverb`], the effects
 //! [`compressor`], [`eq`], [`distortion`], [`guitar_amp`], [`modulation`] and [`mastering`], the analysers
 //! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
@@ -67,6 +67,7 @@ mod note_queue;
 pub mod note_repeater;
 mod note_shape;
 pub mod note_split;
+pub mod organ;
 pub mod phase_meter;
 pub mod pitch_shifter;
 pub mod poly_synth;
@@ -152,6 +153,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register_with_mods(poly_synth::factory(), &poly_synth::MOD_TABLES)?;
     registry.register_with_mods(mono_bass::factory(), &poly_synth::MOD_TABLES)?;
     registry.register(dual_layer::factory())?;
+    registry.register(organ::factory())?;
     registry.register(wavetable_synth::factory())?;
     registry.register(fm_synth::factory())?;
     registry.register_with_samples(sampler::factory())?;
@@ -223,7 +225,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 64] = [
+    const TYPE_IDS: [&str; 65] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -268,6 +270,7 @@ mod tests {
         "atomik.note-filter",
         "atomik.note-repeater",
         "atomik.note-split",
+        "atomik.organ",
         "atomik.phase-meter",
         "atomik.pitch-shifter",
         "atomik.poly-synth",
@@ -291,7 +294,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-four devices.
+    // Name kept; it now covers all sixty-five devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
