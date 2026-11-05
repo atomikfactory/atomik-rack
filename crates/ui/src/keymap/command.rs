@@ -1336,6 +1336,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.patch_next", "Next Patch", G::Rack, C::Rack).rep(),
     cmd("rack.patch_pick", "Pick Patch", G::Rack, C::Rack),
     cmd("rack.patch_prev", "Previous Patch", G::Rack, C::Rack).rep(),
+    cmd("rack.preview_player", "Preview Player", G::Rack, C::Rack),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
     cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
     cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),

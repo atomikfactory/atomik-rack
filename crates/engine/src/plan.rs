@@ -14,6 +14,7 @@ use crate::console::{
 use crate::fault::FaultState;
 use crate::graph::rules::{self, CableMap, Lookup};
 use crate::graph::{DeviceInstanceId, Endpoint, Graph, GraphError};
+use crate::preview_clock::PreviewClock;
 use atomik_core::{
     BATCH, Batch, MAX_EVENTS_PER_BATCH, NoteBuffer, NoteEvent, NoteKind, ParamId, TimeInfo,
 };
@@ -82,6 +83,9 @@ pub(crate) struct Node {
     /// A tap on the notes the device receives (Direct Record, Send to Track): every note on or
     /// off of its notes input is copied into the queue before the device runs.
     pub(crate) note_tap: Option<std::sync::Arc<atomik_device_sdk::MidiTap>>,
+    /// The preview clock of a note player that previews while the song stands still (see
+    /// [`crate::preview_clock`]); a plain value, so no allocation anywhere.
+    pub(crate) preview: Option<PreviewClock>,
 }
 
 /// The cable routes of one stage of one device in one routing (a single-stage
@@ -210,6 +214,7 @@ impl Node {
             fresh_fault: false,
             busy_ns: 0,
             note_tap: None,
+            preview: None,
         }
     }
 }
@@ -330,7 +335,20 @@ impl Node {
             return false;
         }
         let started = crate::timing::start();
+        // A previewing player runs on its own clock while the song stands still; the song
+        // transport starting ends the preview and the song's time is used from here on.
+        let song_time = time;
+        let time = match self.preview {
+            Some(clock) => clock.time_for(song_time).unwrap_or_else(|| {
+                self.preview = None;
+                song_time
+            }),
+            None => song_time,
+        };
         let outcome = catch_unwind(AssertUnwindSafe(|| self.run_device(time, stage, last)));
+        if last && let Some(clock) = &mut self.preview {
+            clock.advance(song_time.ticks_per_frame);
+        }
         if let Some(started) = started {
             self.busy_ns = self.busy_ns.wrapping_add(crate::timing::elapsed(started));
         }

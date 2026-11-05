@@ -322,6 +322,8 @@ pub struct LiveSession<B: AudioBackend> {
     tap: Arc<RecordTap>,
     /// The note taps the take installed (Direct Record), by device.
     note_taps: Vec<(DeviceInstanceId, Arc<atomik_device_sdk::MidiTap>)>,
+    /// The note players that run a preview clock in the engine ([`EngineSink::set_previews`]).
+    previewing: Vec<DeviceInstanceId>,
     hub: Arc<ControlHub>,
     /// The overflow counter of the audio recording tap that runs (or ran last).
     audio_tap_overflow: Option<Arc<AtomicU64>>,
@@ -386,6 +388,7 @@ impl<B: AudioBackend> LiveSession<B> {
             latency: Arc::new(AtomicU64::new(FALLBACK_LATENCY_FRAMES)),
             tap: Arc::new(RecordTap::new()),
             note_taps: Vec::new(),
+            previewing: Vec::new(),
             hub: Arc::new(ControlHub::new()),
             audio_tap_overflow: None,
             tap_overflow_base: 0,
@@ -550,6 +553,8 @@ impl<B: AudioBackend> LiveSession<B> {
 
     /// Stops MIDI and the stream and drops the engine on this thread.
     pub fn shutdown(&mut self) {
+        // The next engine starts with no preview clock on any device.
+        self.previewing.clear();
         if let Some(r) = self.running.take() {
             let Running {
                 mut handle,
@@ -1283,6 +1288,27 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
                 && let Ok(tap) = r.handle.tap_notes(*id)
             {
                 self.note_taps.push((*id, tap));
+            }
+        }
+    }
+
+    fn set_previews(&mut self, devices: &[DeviceInstanceId]) {
+        let Some(r) = &mut self.running else {
+            self.previewing.clear();
+            return;
+        };
+        // The ones that go first, then the ones that start (a full control queue leaves a clock
+        // as it was: the next call brings the sets in line again).
+        self.previewing.retain(|id| {
+            let keep = devices.contains(id);
+            if !keep && r.handle.preview_player(*id, false).is_err() {
+                return true;
+            }
+            keep
+        });
+        for id in devices {
+            if !self.previewing.contains(id) && r.handle.preview_player(*id, true).is_ok() {
+                self.previewing.push(*id);
             }
         }
     }

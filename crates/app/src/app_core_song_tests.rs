@@ -118,6 +118,7 @@ fn kinds(calls: &[SinkCall]) -> Vec<&'static str> {
             SinkCall::LiveNote { .. } => "live",
             SinkCall::PlayNote { .. } => "play",
             SinkCall::Recording(_) => "recording",
+            SinkCall::PlayerPreviews(_) => "player-previews",
             SinkCall::Hold(_) => "hold",
             SinkCall::PreviewStart { .. } => "preview-start",
             SinkCall::PreviewStop => "preview-stop",

@@ -4135,6 +4135,7 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a device first"),
             },
             ("rack.reset_device", None) => self.core.reset_selected_device(),
+            ("rack.preview_player", None) => self.core.preview_selected_player(),
             ("rack.combine", None) => {
                 self.core.combine_selection();
             }
@@ -4716,6 +4717,12 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .primary()
                     .is_some_and(|d| core.has_mod_matrix(&d)),
+            player: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.is_player_device(&d)),
+            previewing: core.previewing_player().is_some(),
             midi_out: pane == Pane::Rack
                 && core
                     .view()

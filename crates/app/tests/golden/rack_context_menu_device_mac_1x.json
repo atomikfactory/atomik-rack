@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[232.00,699.00,492.00,1295.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[230.00,696.00,490.00,1292.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[230.00,696.00,490.00,1292.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[232.00,699.00,492.00,1319.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[230.00,696.00,490.00,1316.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[230.00,696.00,490.00,1316.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[262.00,716.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Cmd+X","at":[476.00,716.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[262.00,740.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -39,5 +39,6 @@
 {"text":"Cmd+Right","at":[476.00,1223.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"fill":{"rect":[240.00,1235.00,480.00,1236.00]},"brush":"#ffffff1c"},
 {"text":"Choose MIDI Out Port","at":[262.00,1256.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Modulation Matrix","at":[262.00,1280.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
+{"text":"Modulation Matrix","at":[262.00,1280.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Preview Player","at":[262.00,1304.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
 ]}

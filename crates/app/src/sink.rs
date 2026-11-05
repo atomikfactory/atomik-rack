@@ -79,6 +79,11 @@ pub trait EngineSink {
     /// player stack generates for its instrument, for Direct Record. The notes come back from
     /// [`Self::drain_recorded`] with the device id. The default does nothing (no engine).
     fn set_note_taps(&mut self, _devices: &[DeviceInstanceId]) {}
+    /// [`atomik_engine::EngineHandle::preview_player`]: the note players that run a preview clock
+    /// (the song transport stands still and they play from their pattern start); empty stops
+    /// every preview. A device already previewing keeps its clock, one that is not starts a new
+    /// one. The default does nothing (no engine).
+    fn set_previews(&mut self, _devices: &[DeviceInstanceId]) {}
     /// Moves the captured live notes into `out` (oldest first).
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>);
     /// [`atomik_engine::EngineHandle::hold_automation`]: the song player leaves these
@@ -299,6 +304,8 @@ pub enum SinkCall {
     },
     /// [`EngineSink::set_recording`].
     Recording(Vec<DeviceInstanceId>),
+    /// [`EngineSink::set_previews`]: the players that preview afterwards.
+    PlayerPreviews(Vec<DeviceInstanceId>),
     /// [`EngineSink::preview_start`] (the stream itself is held in
     /// [`RecordingSink::previews`]).
     PreviewStart {
@@ -336,6 +343,8 @@ pub struct RecordingSink {
     pub armed: Vec<DeviceInstanceId>,
     /// The devices whose received notes are tapped ([`EngineSink::set_note_taps`]).
     pub note_taps: Vec<DeviceInstanceId>,
+    /// The note players that preview ([`EngineSink::set_previews`]).
+    pub player_previews: Vec<DeviceInstanceId>,
     /// The engine frame [`EngineSink::play_note`] stamps on a note it captures (tests move it).
     pub live_frame: u64,
     /// What [`EngineSink::fill_latencies`] reports per device (tests script latencies).
@@ -521,6 +530,11 @@ impl EngineSink for RecordingSink {
 
     fn set_note_taps(&mut self, devices: &[DeviceInstanceId]) {
         self.note_taps = devices.to_vec();
+    }
+
+    fn set_previews(&mut self, devices: &[DeviceInstanceId]) {
+        self.player_previews = devices.to_vec();
+        self.calls.push(SinkCall::PlayerPreviews(devices.to_vec()));
     }
 
     fn hold_automation(&mut self, lanes: &[(DeviceInstanceId, ParamId)]) {

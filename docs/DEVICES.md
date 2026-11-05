@@ -4404,7 +4404,55 @@ same. The code is `PlayerBypass` in
   switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing
   doubles on either side.
 - **The strip switch.** A player panel has the same small **BYPASS** LED button in the name strip as
-  an effect, and the panel body is veiled while it is on.
+  an effect, and the panel body is veiled while it is on. The [play button](#player-preview) of the
+  player sits just left of it.
+
+## Player preview
+
+Every note player has a small **play button** on its name strip, in the same place on all eight: the
+left of the row of the BYPASS switch (folded, just before the switch). It runs the player so that
+its notes can be heard through the instrument of its track **without playing the song**.
+
+- **What runs.** Pressed while the song transport is stopped, the player and the players after it in
+  the stack, down to the instrument, run on a clock of their own at the song tempo, starting at the
+  player's pattern start (tick 0), whatever the song position. The notes go through the stack to the
+  track's instrument and its mixer channel, so what you hear is what the track would play. Nothing
+  else in the song plays, the song position does not move, and nothing is saved or put in the undo
+  history. The players above it in the stack do not run. A player that is not in a stack runs alone
+  (a player inside a container too, with the players after it left out).
+- **Stopping.** A second press of the button stops it; so does **Play** on the transport (the song
+  takes over at once and a recording starts the same way), a followed MIDI clock starting, opening or
+  restarting the audio engine and opening another song. Deleting the previewed player stops it and
+  sends an all notes off to the devices that take notes, because the player can no longer close what
+  it had sounding. Stopping puts the players back on the stopped transport, which makes each of them
+  close the notes it holds: no note hangs. Only one preview runs: pressing another player's button
+  stops the first and starts the new one from its pattern start. While the song plays, the button
+  does nothing but say so (the players already run with the song).
+- **The command.** `rack.preview_player` ("Preview Player", "Stop Player Preview" while one runs) is
+  in the context menu of a device and acts on the selected player; it has no default key. The
+  button selects its player, which is what sends live notes to it.
+- **Generating players.** The step sequencer, the drum generator and the CV sequencer play their
+  pattern on the preview clock by themselves (the CV sequencer's curves run too, and the drum
+  generator's hits go to the drum machine it is cabled to).
+- **Note-processing players.** The arpeggiator, the note repeater, the note delay, Key & Chord and
+  the note filter work on the notes they are given: with the player selected (the button does it),
+  the notes played on the Piano Keys or a MIDI keyboard go to it as they do with the transport
+  stopped, and its output is what you hear. What the preview does for each: the arpeggiator takes
+  the preview clock as its position, so its steps, rate and pattern line up from tick 0 as they do
+  when the song plays (with its `run` set to always it also runs by itself while the song is
+  stopped, and keeps doing so after the preview ends); the note delay applies the swing of its grid,
+  which it only does while the transport runs; the note repeater, Key & Chord and the note filter
+  need no clock (their timing comes from the notes), so the preview changes nothing for them and
+  they can be played with the song stopped, as they already are.
+- **Engine.** One flag per device on the control path (`EngineHandle::preview_player`), a plain
+  value on the engine's node of the device: no allocation, lock or wait on the audio thread. The
+  clock is `PreviewClock` in `crates/engine/src/preview_clock.rs`: the song's time with the transport
+  playing from the clock's own tick, advanced by one batch of ticks at the song tempo per batch, and
+  without the loop. The song transport starting makes the node drop the clock by itself. A bounce
+  never previews. A new plan (`submit_plan`) or a rebuilt engine drops every clock. Tests:
+  `crates/engine/tests/player_preview.rs` (exact frames at any block size and worker count, the note
+  off at the stop, the restart, the song starting), the unit tests of the clock, the app tests in
+  `app_core_preview.rs` and `crates/ui/tests/player_preview.rs` (the button).
 
 ## Effect bypass
 
