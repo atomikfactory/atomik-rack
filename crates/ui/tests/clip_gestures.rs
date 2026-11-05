@@ -91,6 +91,14 @@ fn dragging_the_left_edge_of_a_note_clip_trims_its_start() {
     assert_eq!(t.len(), 1);
     assert_eq!((t[0].0.clone(), t[0].1), (vec![ClipId(1)], BAR));
     assert!(t[0].2.is_some(), "the drag shares one merge group");
+    // The app has applied the trim by the next event; the view reads the clip from the document.
+    let mut d = atomik_model::Document::new(doc);
+    for act in &a {
+        if let UiAction::Command(c) = act {
+            d.apply(c.clone(), &reg).expect("the trim is accepted");
+        }
+    }
+    let doc = d.doc().clone();
     // Back to the start: the next move undoes the difference, not the whole.
     let a = run(|e| v.handle(e, &doc, &reg), &[mv(p), up(p)]);
     assert_eq!(trims(&a)[0].1, -BAR);

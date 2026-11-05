@@ -198,6 +198,10 @@ may break APIs and the patch and project formats.
   and a clip's data is changed by the new `SetClipMidi` command. Not done yet: per-note expression (MPE), a
   groove taken from a MIDI file, and typing the bytes of a SysEx message.
 
+### Fixed
+- Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
+  tick 0 that the document refuses; the drag measures from what the document holds.
+
 ## [0.3.0-rc.2] - 2026-11-04
 
 ### Added
