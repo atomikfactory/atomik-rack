@@ -1419,6 +1419,21 @@ pub enum SongCommand {
         /// End tick (exclusive).
         end: i64,
     },
+    /// Comp several take groups at once (the groups of linked tracks): in each group `[start,
+    /// end)`, cut back to the group's own range, plays from take number `take`, like
+    /// `SetCompSegment`. A group with no such take, or whose range does not meet `[start, end)`,
+    /// or whose comp would not change, is left alone; it is an error when no group changes or a
+    /// group id is unknown or listed twice. One undo step for all the groups.
+    SetLinkedComp {
+        /// Group ids (at most 64).
+        groups: Vec<u32>,
+        /// Take index in every group.
+        take: usize,
+        /// First tick.
+        start: i64,
+        /// End tick (exclusive).
+        end: i64,
+    },
     /// Delete a take: the ranges it played go to the take below it (above it for the bottom
     /// take). Deleting the last take removes the group and its clips. One undo step.
     DeleteTake {

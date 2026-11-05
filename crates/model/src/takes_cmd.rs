@@ -17,6 +17,9 @@ use atomik_device_sdk::Registry;
 /// Most takes one group may hold.
 pub const MAX_TAKES: usize = 256;
 
+/// Most groups one linked comp may name.
+pub const MAX_LINKED_GROUPS: usize = 64;
+
 /// What happens to a group's compiled lane clips.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Clips {
@@ -320,6 +323,57 @@ pub(crate) fn plan(
             set_segment(&mut new.comp, take, start, end);
             check_comp(&new.comp, g.takes.len(), range_).map_err(range)?;
             build(doc, &device, lane, Some(g), Some(new), Clips::Recompile)
+        }
+        SongCommand::SetLinkedComp {
+            groups,
+            take,
+            start,
+            end,
+        } => {
+            if start >= end {
+                return Err(range(format!("comp segment [{start}, {end}) is empty")));
+            }
+            if groups.is_empty() || groups.len() > MAX_LINKED_GROUPS {
+                return Err(range(format!(
+                    "a linked comp holds 1 to {MAX_LINKED_GROUPS} groups, not {}",
+                    groups.len()
+                )));
+            }
+            // Each group is planned on the document the previous ones left, so the clip ids the
+            // compiled comps take do not collide.
+            let mut scratch = doc.clone();
+            let mut edits = Vec::new();
+            for (i, id) in groups.iter().enumerate() {
+                if groups[..i].contains(id) {
+                    return Err(bad(format!("take group {id} is listed twice")));
+                }
+                let (device, lane, g) = find(&scratch, *id)?;
+                let (rs, re) = g.range();
+                let (s, e) = (start.max(rs), end.min(re));
+                if take >= g.takes.len() || s >= e {
+                    continue;
+                }
+                let mut new = g.clone();
+                set_segment(&mut new.comp, take, s, e);
+                if new.comp == g.comp {
+                    continue;
+                }
+                check_comp(&new.comp, g.takes.len(), (rs, re)).map_err(range)?;
+                let edit = build(
+                    &scratch,
+                    &device,
+                    lane,
+                    Some(g),
+                    Some(new),
+                    Clips::Recompile,
+                )?;
+                edit.perform(&mut scratch)?;
+                edits.push(edit);
+            }
+            if edits.is_empty() {
+                return Err(bad("no linked group changes"));
+            }
+            Ok(Edit::Compound(edits))
         }
         SongCommand::DeleteTake { group, take } => {
             let (device, lane, g) = find(doc, group)?;

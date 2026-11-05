@@ -75,7 +75,9 @@ fn tool(t: Tool, rect: Rect) -> Help {
         Tool::Select => "Select tool: click to select, drag to move, resize or box select",
         Tool::Pencil => "Pencil tool: click to draw a clip or an automation point",
         Tool::Eraser => "Eraser tool: click a clip or a point to delete it",
-        Tool::Razor => "Razor tool: click a clip to split it at the snapped position",
+        Tool::Razor => {
+            "Razor tool: click a clip to split it, or a take row to cut the comp, at the snapped position"
+        }
         Tool::Speaker => {
             "Speaker tool: press on an audio clip to hear it as it is in its file, release to stop"
         }

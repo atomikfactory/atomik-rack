@@ -118,6 +118,8 @@ enum TakeOp {
     Move(usize, usize, usize),
     Unused(usize),
     Silence(usize, i64, i64),
+    /// A comp over every group at once.
+    Linked(usize, i64, i64),
     /// A clip command on a take (what a clip editor open on it sends).
     EditTake(usize, usize, u8),
 }
@@ -138,6 +140,7 @@ fn take_op() -> impl Strategy<Value = TakeOp> {
         (0usize..4, 0usize..4, 0usize..4).prop_map(|(g, t, to)| TakeOp::Move(g, t, to)),
         (0usize..4).prop_map(TakeOp::Unused),
         (0usize..4, span()).prop_map(|(g, (s, l))| TakeOp::Silence(g, s, s + l)),
+        (0usize..4, span()).prop_map(|(t, (s, l))| TakeOp::Linked(t, s, s + l)),
         (0usize..4, 0usize..4, 0u8..100).prop_map(|(g, t, k)| TakeOp::EditTake(g, t, k)),
     ]
 }
@@ -231,6 +234,12 @@ fn resolve_take(op: &TakeOp, doc: &RackDoc) -> Option<SongCommand> {
         }
         TakeOp::Unused(g) => SongCommand::DeleteUnusedTakes {
             group: pick(&all, *g)?.0,
+        },
+        TakeOp::Linked(t, start, end) => SongCommand::SetLinkedComp {
+            groups: all.iter().map(|g| g.0).collect(),
+            take: *t,
+            start: *start,
+            end: *end,
         },
         TakeOp::Silence(g, start, end) => SongCommand::SetCompSilence {
             group: pick(&all, *g)?.0,

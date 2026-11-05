@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Takes: a razor and comping several tracks at once.** With the Razor tool, a click in a take row cuts the comp
+  at the pointer: from there to the end of the comp segment under it (or to the next segment when the comp is silent)
+  plays from that take; a drag with the razor comps the dragged range like a plain drag, and a click that would change
+  nothing sends nothing. When several tracks are selected and the track of the group is one of them, a comp drag or a
+  razor cut in a take row applies the same take number and range to the groups on the same lane of every selected
+  track, as one undo step (`SetLinkedComp`; a group without that take is left alone, and the rows of the linked
+  groups preview the range). Project format unchanged (43): nothing new is saved. The link is the track selection, not
+  a saved property of the groups, and takes for automation passes are not built yet.
 - **Quantize and groove follow-ups: a live groove per clip, a groove name field, length options, a QUANT button in
   the arrangement and swing that follows the bar lines.** A note clip can play a groove of its own instead of its
   track's (`LIVE ON CLIPS` in the quantize panel at the panel's strength, `CLEAR LIVE` to hand it back; the notes are

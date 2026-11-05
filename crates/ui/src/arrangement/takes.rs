@@ -11,6 +11,13 @@
 //! * **Comping** is a drag across a take row: the snapped range between the press and the
 //!   release becomes that take's part of the comp (`SetCompSegment`), one undo step; a click
 //!   without a drag in the row picks the whole take. Escape cancels a drag.
+//! * With the **razor** tool a click in a take row cuts the comp there: from the click to the end
+//!   of the segment under it (or to the next segment, or the end of the group when the comp is
+//!   silent there) plays from that take. A drag with the razor comps the range like a plain drag.
+//! * **Linked comping**: when several tracks are selected and the track of the group is one of
+//!   them, a comp drag or a razor cut in one take row applies the same take number and range to
+//!   the groups on the same lane of every selected track (`SetLinkedComp`, one undo step); the
+//!   rows of those groups preview the range.
 //! * The **comp strip** is edited too. A drag across it silences the range (`SetCompSilence`); a
 //!   drag of a cut between two takes moves the cut (`SetCompSegment` for the take that grows);
 //!   when a cut has a crossfade its tail has a handle that sets the length (`SetCompXfade`). A
@@ -33,8 +40,9 @@ use crate::event::Modifiers;
 use crate::seq_paint as sp;
 use crate::theme::mix;
 use crate::timeline::{PPQ, snap_round};
+use crate::viewport::Tool;
 use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
-use atomik_model::takes::clear_segment;
+use atomik_model::takes::{clear_segment, set_segment};
 use atomik_model::{Clip, ClipContent, SongCommand, TakeGroup};
 use std::collections::BTreeSet;
 use vello::kurbo::{BezPath, Point, RoundedRect};
@@ -71,6 +79,8 @@ const XFADES: &[(&str, Option<i64>)] = &[
 pub(super) enum CompDrag {
     /// A drag across a take row: the range plays from that take.
     Swipe,
+    /// The razor in a take row: a click cuts the comp at the pointer, a drag is a swipe.
+    Razor,
     /// A drag across the strip: the range goes silent.
     Silence,
     /// A cut between takes `left` and `right` at tick `at`: the drag moves it, between the outer
@@ -95,6 +105,8 @@ pub(super) struct TakesUi {
     /// between take rows move it, and Copy, Paste and Open work on it. It counts only while no
     /// clip is selected ([`ArrangementView::take_focus`]).
     pub focus: Option<(u32, usize)>,
+    /// The other groups a comp drag in progress applies to (see [`ArrangementView::linked_groups`]).
+    pub linked: Vec<u32>,
 }
 
 impl ArrangementView {
@@ -224,6 +236,28 @@ impl ArrangementView {
     pub(super) fn takes_sync(&mut self) {
         let song = &self.song;
         self.tk.open.retain(|id| song.take_group(*id).is_some());
+    }
+
+    /// The groups a comp gesture on group `group` also applies to: those on the same lane of
+    /// the other selected tracks, when more than one track is selected and the group's own track
+    /// is one of them. Empty otherwise.
+    pub(super) fn linked_groups(&self, group: u32) -> Vec<u32> {
+        let Some((track, lane, _)) = self.song.take_group(group) else {
+            return Vec::new();
+        };
+        let selected = self.selected_tracks();
+        if selected.len() < 2 || !selected.contains(&track.device) {
+            return Vec::new();
+        }
+        let own = track.device.clone();
+        selected
+            .iter()
+            .filter(|d| **d != own)
+            .filter_map(|d| self.song.tracks.iter().find(|t| t.device == *d))
+            .filter_map(|t| t.lanes.get(lane))
+            .flat_map(|l| l.take_groups.iter().map(|g| g.id))
+            .take(atomik_model::MAX_LINKED_GROUPS - 1)
+            .collect()
     }
 
     fn group(&self, id: u32) -> Option<&TakeGroup> {
@@ -407,7 +441,10 @@ impl ArrangementView {
                 }));
             }
             Hit::TakeSpan(group, take) => {
+                let linked = self.linked_groups(*group);
                 self.set_take_focus(*group, *take);
+                self.tk.linked = linked;
+                let razor = self.vp.effective_tool(modifiers) == Tool::Razor;
                 let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
                 self.drag = Drag::Comp {
                     start: pos,
@@ -416,7 +453,11 @@ impl ArrangementView {
                     t0: t,
                     t1: t,
                     moved: false,
-                    mode: CompDrag::Swipe,
+                    mode: if razor {
+                        CompDrag::Razor
+                    } else {
+                        CompDrag::Swipe
+                    },
                 };
             }
             Hit::TakeStrip(group) => {
@@ -456,7 +497,7 @@ impl ArrangementView {
                 // A cut stays inside the two segments it divides.
                 CompDrag::Cut { lo, hi, .. } => t.clamp(lo + 1, (hi - 1).max(lo + 1)),
                 CompDrag::Xfade { at, .. } => t.max(at),
-                CompDrag::Swipe | CompDrag::Silence => t,
+                CompDrag::Swipe | CompDrag::Razor | CompDrag::Silence => t,
             };
             self.repaint = true;
         }
@@ -473,25 +514,46 @@ impl ArrangementView {
         mode: CompDrag,
         out: &mut Vec<crate::action::UiAction>,
     ) {
+        let linked = std::mem::take(&mut self.tk.linked);
         let Some(g) = self.group(group) else {
             return;
         };
         let (rs, re) = g.range();
         match mode {
-            CompDrag::Swipe => {
-                if !moved {
-                    out.push(song_cmd(SongCommand::PickTake { group, take }));
+            CompDrag::Swipe | CompDrag::Razor if moved || mode == CompDrag::Razor => {
+                let (start, end) = if moved {
+                    (t0.min(t1).max(rs), t0.max(t1).min(re))
+                } else {
+                    (t0.max(rs), razor_end(g, t0))
+                };
+                if start >= end {
                     return;
                 }
-                let (start, end) = (t0.min(t1).max(rs), t0.max(t1).min(re));
-                if start < end {
+                if linked.is_empty() {
+                    let mut comp = g.comp.clone();
+                    set_segment(&mut comp, take, start, end);
+                    if !moved && comp == g.comp {
+                        return;
+                    }
                     out.push(song_cmd(SongCommand::SetCompSegment {
                         group,
                         take,
                         start,
                         end,
                     }));
+                } else {
+                    let mut groups = vec![group];
+                    groups.extend(linked);
+                    out.push(song_cmd(SongCommand::SetLinkedComp {
+                        groups,
+                        take,
+                        start,
+                        end,
+                    }));
                 }
+            }
+            CompDrag::Swipe | CompDrag::Razor => {
+                out.push(song_cmd(SongCommand::PickTake { group, take }));
             }
             CompDrag::Silence => {
                 let (start, end) = (t0.min(t1).max(rs), t0.max(t1).min(re));
@@ -894,11 +956,11 @@ impl ArrangementView {
                     t0,
                     t1,
                     moved: true,
-                    mode: CompDrag::Swipe,
+                    mode: CompDrag::Swipe | CompDrag::Razor,
                     ..
                 } = &self.drag
-                    && dg == group
                     && dt == take
+                    && (dg == group || self.tk.linked.contains(group))
                 {
                     let r = self.span_rect(lr, *t0.min(t1), *t0.max(t1));
                     c.fill_with(r, st.selection.with_alpha(0.25));
@@ -1105,4 +1167,21 @@ fn take_loop_rows(group: u32, take: usize, clip: &Clip) -> Vec<(String, SongComm
         rows.push(row("Play Take Once".into(), 1));
     }
     rows
+}
+
+/// The end of the part of the comp a razor click at `at` cuts: the end of the segment under it,
+/// or, where the comp is silent, the start of the next segment (the end of the group's range when
+/// there is none). At or past the end of the range it is `at`, so nothing is cut.
+fn razor_end(g: &TakeGroup, at: i64) -> i64 {
+    let (_, re) = g.range();
+    if let Some(s) = g.comp.iter().find(|s| s.start <= at && at < s.end) {
+        return s.end.min(re);
+    }
+    g.comp
+        .iter()
+        .map(|s| s.start)
+        .filter(|s| *s > at)
+        .min()
+        .unwrap_or(re)
+        .min(re)
 }

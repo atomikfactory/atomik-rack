@@ -3190,7 +3190,12 @@ impl ArrangementView {
             | Hit::TakeStrip(_)
                 if primary =>
             {
-                self.selected_track = None;
+                // A comp in one of several selected tracks keeps them selected: it is linked.
+                let linked =
+                    matches!(hit, Hit::TakeSpan(g, _) if !self.linked_groups(g).is_empty());
+                if !linked {
+                    self.selected_track = None;
+                }
                 self.takes_down(&hit, pos, modifiers, doc, registry, out);
             }
             Hit::FolderToggle(_)
