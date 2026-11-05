@@ -353,13 +353,16 @@ fn open_menu(s: &mut Shell<NullBackend>, at: Point) -> Vec<(String, Option<Strin
         })
         .unwrap_or_default()
 }
-/// [`open_menu`] with the items of the submenus too (the rack menus hold Create in one).
+/// [`open_menu`] with the items of the submenus too (the rack menus hold Create in one). The
+/// rows that name a device type (`create.device`, and the choices of Replace Device) are left
+/// out: `shell_rack_menu_tests.rs` checks them.
 fn open_menu_all(s: &mut Shell<NullBackend>, at: Point) -> Vec<(String, Option<String>, bool)> {
     press(s, at, PointerButton::Secondary, Modifiers::NONE);
     s.context_menu()
         .map(|m| {
             m.all_items()
                 .into_iter()
+                .filter(|i| i.command != "create.device" && i.arg.is_none())
                 .map(|i| (i.command.clone(), i.shortcut.clone(), i.enabled))
                 .collect()
         })

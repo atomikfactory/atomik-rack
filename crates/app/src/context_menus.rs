@@ -10,6 +10,7 @@ use atomik_ui::ContextTarget;
 use atomik_ui::JackMenu;
 use atomik_ui::JackOp;
 use atomik_ui::arrangement::{AudioMenu, LaneMenu, OrgMenu};
+use atomik_ui::browser::DeviceGroup;
 use atomik_ui::chord_edit::{
     ARP_GATES, ARP_OCTAVES, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection, strum_ticks,
 };
@@ -487,6 +488,112 @@ fn create_submenu() -> Spec {
             item("create.player", true),
         ],
     )
+}
+
+/// The device types the Create and Replace Device submenus list, by family (see
+/// [`atomik_ui::browser::device_groups`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeviceMenus {
+    /// Every type that can be created, for the Create submenu.
+    pub create: Vec<DeviceGroup>,
+    /// The types the selected device can be replaced by, for the Replace Device submenu.
+    pub replace: Vec<DeviceGroup>,
+}
+
+/// The most rows a list of device types shows in one panel; a longer list is split into
+/// submenus of [`CHUNK_ROWS`] types each, named by their first and last device.
+const MAX_ROWS: usize = 14;
+/// How many types each part of a split list holds.
+const CHUNK_ROWS: usize = 12;
+
+/// The rows listing `types`: one item each running `command` with the type id as its argument,
+/// split into named parts when there are more than [`MAX_ROWS`].
+fn type_rows(command: &str, types: &[(&'static str, &'static str)]) -> Vec<Entry> {
+    let item = |(type_id, name): &(&'static str, &'static str)| {
+        Entry::Item(MenuItemDef {
+            command: command.to_string(),
+            arg: Some((*type_id).to_string()),
+            label: (*name).to_string(),
+            shortcut: None,
+            enabled: true,
+            checked: None,
+        })
+    };
+    if types.len() <= MAX_ROWS {
+        return types.iter().map(item).collect();
+    }
+    types
+        .chunks(CHUNK_ROWS)
+        .map(|part| {
+            Entry::Submenu(SubmenuDef {
+                label: format!("{} - {}", part[0].1, part[part.len() - 1].1),
+                enabled: true,
+                entries: part.iter().map(item).collect(),
+            })
+        })
+        .collect()
+}
+
+/// The rows of a device submenu: a submenu per family (the types themselves when there is
+/// only one family).
+fn group_rows(command: &str, groups: &[DeviceGroup]) -> Vec<Entry> {
+    match groups {
+        [] => Vec::new(),
+        [only] => type_rows(command, &only.types),
+        many => many
+            .iter()
+            .map(|g| {
+                Entry::Submenu(SubmenuDef {
+                    label: g.name.to_string(),
+                    enabled: true,
+                    entries: type_rows(command, &g.types),
+                })
+            })
+            .collect(),
+    }
+}
+
+/// The `specs` of `target` with the device types of `menus` added: the families of the Create
+/// submenu are followed by a submenu per family listing the types (`create.device`), and the
+/// device menu gets a Replace Device submenu after it (`rack.replace_device`), greyed when
+/// nothing can replace the selected device.
+pub fn with_device_menus(
+    target: ContextTarget,
+    specs: Vec<Spec>,
+    menus: &DeviceMenus,
+) -> Vec<Spec> {
+    let mut out = Vec::with_capacity(specs.len() + 1);
+    for spec in specs {
+        match spec {
+            Spec::Submenu {
+                label: "Create",
+                enabled,
+                mut items,
+            } => {
+                let rows = group_rows("create.device", &menus.create);
+                if !rows.is_empty() {
+                    items.push(Spec::Separator);
+                    items.push(Spec::Rows(rows));
+                }
+                out.push(Spec::Submenu {
+                    label: "Create",
+                    enabled,
+                    items,
+                });
+                if target != ContextTarget::Device {
+                    continue;
+                }
+                let rows = group_rows("rack.replace_device", &menus.replace);
+                if rows.is_empty() {
+                    out.push(item("rack.replace_device", false));
+                } else {
+                    out.push(Spec::submenu("Replace Device", vec![Spec::Rows(rows)]));
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The items of the menu opened on `target`.
@@ -1459,6 +1566,103 @@ mod tests {
         // No other menu has one.
         assert_eq!(create_rows(ContextTarget::TrackHeader), None);
         assert_eq!(create_rows(ContextTarget::Lane), None);
+    }
+
+    fn group(name: &'static str, n: usize) -> DeviceGroup {
+        const NAMES: [&str; 30] = [
+            "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
+            "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD",
+        ];
+        DeviceGroup {
+            name,
+            types: NAMES[..n].iter().map(|n| (*n, *n)).collect(),
+        }
+    }
+
+    #[test]
+    fn a_short_family_lists_its_types_and_a_long_one_is_split_into_named_parts() {
+        let short = type_rows("create.device", &group("X", 14).types);
+        assert_eq!(short.len(), 14);
+        assert!(short.iter().all(|e| matches!(e, Entry::Item(_))));
+        let long = type_rows("create.device", &group("X", 30).types);
+        let parts: Vec<(&str, usize)> = long
+            .iter()
+            .map(|e| match e {
+                Entry::Submenu(s) => (s.label.as_str(), s.entries.len()),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(parts, [("A - L", 12), ("M - X", 12), ("Y - AD", 6)]);
+        // Every row carries its type as the argument.
+        if let Entry::Submenu(s) = &long[2]
+            && let Entry::Item(i) = &s.entries[0]
+        {
+            assert_eq!(
+                (i.command.as_str(), i.arg.as_deref()),
+                ("create.device", Some("Y"))
+            );
+        }
+    }
+
+    #[test]
+    fn the_device_menus_add_the_types_to_create_and_a_replace_submenu_to_the_device_menu() {
+        let menus = DeviceMenus {
+            create: vec![group("Instruments", 3), group("Effects", 2)],
+            replace: vec![group("Effects", 2)],
+        };
+        let e = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        let device = with_device_menus(
+            ContextTarget::Device,
+            specs(ContextTarget::Device, &e),
+            &menus,
+        );
+        let walked = |specs: &[Spec], command: &str| -> usize {
+            fn count(specs: &[Spec], command: &str, n: &mut usize) {
+                for s in specs {
+                    match s {
+                        Spec::Item { command: c, .. } if *c == command => *n += 1,
+                        Spec::Submenu { items, .. } => count(items, command, n),
+                        Spec::Rows(rows) => *n += rows_with(rows, command),
+                        _ => {}
+                    }
+                }
+            }
+            let mut n = 0;
+            count(specs, command, &mut n);
+            n
+        };
+        fn rows_with(rows: &[Entry], command: &str) -> usize {
+            rows.iter()
+                .map(|r| match r {
+                    Entry::Item(i) => usize::from(i.command == command),
+                    Entry::Submenu(s) => rows_with(&s.entries, command),
+                    Entry::Separator => 0,
+                })
+                .sum()
+        }
+        assert_eq!(walked(&device, "create.device"), 5);
+        assert_eq!(walked(&device, "rack.replace_device"), 2);
+        // The rack background menu takes the types but has no Replace Device.
+        let rack = with_device_menus(ContextTarget::Rack, specs(ContextTarget::Rack, &e), &menus);
+        assert_eq!(walked(&rack, "create.device"), 5);
+        assert_eq!(walked(&rack, "rack.replace_device"), 0);
+        // With nothing to replace with, the device menu keeps a greyed row.
+        let none = with_device_menus(
+            ContextTarget::Device,
+            specs(ContextTarget::Device, &e),
+            &DeviceMenus::default(),
+        );
+        assert!(none.iter().any(|s| matches!(
+            s,
+            Spec::Item {
+                command: "rack.replace_device",
+                enabled: false,
+                ..
+            }
+        )));
     }
 
     #[test]

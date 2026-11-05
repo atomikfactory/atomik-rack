@@ -3339,6 +3339,29 @@ impl<B: AudioBackend> Shell<B> {
         self.file_event(WindowKind::Main, &UiEvent::FileHoverCancel);
     }
 
+    /// A row of the device browser dragged out of the rack over a track header of the
+    /// arrangement: the header of a track whose device the row can replace is outlined while
+    /// the pointer is on it, and on release the device and what replaces it are returned (the
+    /// caller does the replacement after the rack has seen the release). Nothing when no row
+    /// is being dragged, or the pointer is elsewhere.
+    fn browser_row_over_header(
+        &mut self,
+        pos: Point,
+        released: bool,
+    ) -> Option<(DeviceKey, atomik_model::CreateSource)> {
+        let over = self.capture_over == Some(Pane::Arrangement);
+        let source = self.core.view().dragged_replacement();
+        let device = self
+            .core
+            .header_replace_hover((over && source.is_some()).then_some(pos), source.as_ref());
+        if released {
+            self.core.header_replace_hover(None, None);
+            return device.zip(source);
+        }
+        self.repaint = true;
+        None
+    }
+
     /// The pane files at a point of `window` go to, if it takes files.
     fn file_target_in(&self, window: WindowKind, pos: Point) -> Option<Pane> {
         match self.hit_in(window, pos)? {
@@ -4013,7 +4036,16 @@ impl<B: AudioBackend> Shell<B> {
             match capture {
                 Capture::Pane(pane) => {
                     self.capture_over = self.hit_in(window, pos).and_then(Result::ok);
+                    let replaced = if pane == Pane::Rack && window == WindowKind::Main {
+                        self.browser_row_over_header(pos, released)
+                    } else {
+                        None
+                    };
                     self.forward(pane, event);
+                    if let Some((device, source)) = replaced {
+                        self.core.replace_device_with(device, source);
+                        self.core.view_mut().browser_row_taken();
+                    }
                 }
                 Capture::Divider { grab } => self.drag_divider(pos, grab, released),
                 Capture::FileDrag => {
@@ -4241,6 +4273,8 @@ impl<B: AudioBackend> Shell<B> {
                 self.repaint = true;
                 self.core.jack_op(op);
             }
+            ("create.device", Some(type_id)) => self.core.create_device_of_type(type_id),
+            ("rack.replace_device", Some(type_id)) => self.core.replace_selected_device(type_id),
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
             ("sequencer.scale_tempo", Some("dialog")) => self.open_scale(),
@@ -4935,7 +4969,11 @@ impl<B: AudioBackend> Shell<B> {
     /// Opens the context menu of `target` at the window point `at`, built from the registry.
     fn open_context_menu(&mut self, pane: Pane, target: ContextTarget, at: Point) {
         let enable = self.menu_enable(pane);
-        let specs = context_menus::specs(target, &enable);
+        let mut specs = context_menus::specs(target, &enable);
+        // The rack menus list the device types by family.
+        if pane == Pane::Rack {
+            specs = context_menus::with_device_menus(target, specs, &self.core.device_menus());
+        }
         // It opens in the window that shows the pane, sized to that window.
         let (window, size) = self.menu_window(pane);
         let menu = ContextMenu::build(
@@ -7347,6 +7385,14 @@ impl<B: AudioBackend> Shell<B> {
                     library_ok,
                 ))
             }
+            // A browser row over a track header it can replace the device of: the rack's own
+            // cursor, not the not-allowed one of another pane.
+            (_, Capture::Pane(Pane::Rack))
+                if self.capture_over == Some(Pane::Arrangement)
+                    && self.core.arrangement().header_drop_target().is_some() =>
+            {
+                Some(self.core.view().cursor())
+            }
             (_, Capture::Pane(pane)) => {
                 let hint = match pane {
                     Pane::Rack => self.core.view().cursor(),
@@ -7731,6 +7777,10 @@ mod console_tests;
 #[cfg(test)]
 #[path = "shell_jacks_tests.rs"]
 mod jacks_tests;
+
+#[cfg(test)]
+#[path = "shell_rack_menu_tests.rs"]
+mod rack_menu_tests;
 
 #[cfg(test)]
 #[path = "shell_midimap_tests.rs"]
