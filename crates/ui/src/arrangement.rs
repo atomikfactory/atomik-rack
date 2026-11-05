@@ -629,6 +629,9 @@ enum Drag {
         originals: Vec<Clip>,
         /// The start edge is grabbed (the end stays), else the end edge.
         from_start: bool,
+        /// The whole selection scales about its earliest start (the scale-selection role)
+        /// instead of each clip about its own fixed edge.
+        whole: bool,
         moved: bool,
         /// The host holds a preview that the release accepts.
         open: bool,
@@ -3651,6 +3654,17 @@ impl ArrangementView {
             self.open_fade_menu(track, &clip, a, part == ClipPart::FadeOut, pos);
             return;
         }
+        // The scale-selection role on a clip's end edge: the whole selection scales about its
+        // start, the grabbed edge following the pointer.
+        if primary && part == ClipPart::Edge && id != FROZEN_CLIP && self.scale_role(modifiers) {
+            if !self.selection.contains(&id) {
+                self.selection.select_only(id);
+            }
+            self.point_sel = None;
+            self.selected_track = None;
+            self.begin_scale(clip, pos);
+            return;
+        }
         // The stretch role on a clip's start or end edge: the clip's length changes by a ratio
         // and everything in it follows (the body keeps the alternate tool).
         if primary
@@ -4935,6 +4949,11 @@ impl ArrangementView {
                     id,
                     ..
                 }) if id != FROZEN_CLIP && self.stretch_hover() => CursorHint::Stretch,
+                Some(Hit::Clip {
+                    part: ClipPart::Edge,
+                    id,
+                    ..
+                }) if id != FROZEN_CLIP && self.scale_hover() => CursorHint::Stretch,
                 Some(Hit::Clip {
                     part:
                         ClipPart::Edge

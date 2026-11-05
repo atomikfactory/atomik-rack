@@ -195,6 +195,11 @@ impl ViewportState {
         }
     }
 
+    /// The modifiers held now.
+    pub fn held(&self) -> Modifiers {
+        self.held
+    }
+
     /// The tool shown as active on the toolbar (the modifiers held now count).
     pub fn shown_tool(&self) -> Tool {
         self.effective_tool(self.held)
