@@ -202,19 +202,59 @@ fn set_param(actions: &[UiAction]) -> Vec<(String, f32)> {
 }
 
 #[test]
-fn the_table_choice_cycles_through_the_tables() {
+fn the_table_choice_opens_a_pick_list_with_every_table() {
     let (doc, mut v) = setup(&[]);
     let reg = registry();
+    let desc = reg.get(WAVETABLE_TYPE).unwrap().descriptor;
+    for (param, table) in [("osc1.table", 5usize), ("osc2.table", 12)] {
+        let names = match desc.param_by_key(param).unwrap().unit {
+            atomik_core::Unit::Choice(n) => n,
+            _ => panic!("{param} is a choice"),
+        };
+        assert_eq!(names.len(), 13, "twelve tables and the imported one");
+        let at = v.choice_center(&key("wt"), param).unwrap();
+        // The press opens the list and sets nothing.
+        let a = v.handle(&down(at), &doc, &reg);
+        assert!(set_param(&a).is_empty(), "{param}");
+        let _ = v.handle(&up(at), &doc, &reg);
+        let labels = v.choice_menu_labels();
+        assert_eq!(labels.len(), names.len(), "{param}: a row per table");
+        assert_eq!(labels[table], names[table]);
+        assert_eq!(labels[12], "imported");
+        // A press on a row sets that table and closes the list.
+        let at_row = v.choice_menu_row_center(table).unwrap();
+        let a = v.handle(&down(at_row), &doc, &reg);
+        assert_eq!(set_param(&a), vec![(param.to_string(), table as f32)]);
+        let _ = v.handle(&up(at_row), &doc, &reg);
+        assert!(v.choice_menu_labels().is_empty(), "{param}: closed");
+    }
+}
+
+#[test]
+fn a_right_click_still_steps_the_table_back_and_the_short_choices_step_forward() {
+    let (doc, mut v) = setup(&[("osc1.table", 4.0)]);
+    let reg = registry();
     let at = v.control_center(&key("wt"), "osc1.table").unwrap();
-    let a = v.handle(&down(at), &doc, &reg);
-    assert_eq!(set_param(&a), vec![("osc1.table".to_string(), 1.0)]);
+    let a = v.handle(&down_with(at, PointerButton::Secondary, 1), &doc, &reg);
+    assert_eq!(set_param(&a), vec![("osc1.table".to_string(), 3.0)]);
     let _ = v.handle(&up(at), &doc, &reg);
-    // From the last table a click never leaves the range.
-    let (doc, mut v) = setup(&[("osc1.table", 11.0)]);
-    let at = v.control_center(&key("wt"), "osc1.table").unwrap();
+    assert!(v.choice_menu_labels().is_empty());
+    // The unison mode has two entries: a click steps.
+    let at = v.control_center(&key("wt"), "unison.mode").unwrap();
     let a = v.handle(&down(at), &doc, &reg);
-    let s = set_param(&a);
-    assert!(s.iter().all(|(_, x)| (0.0..=11.0).contains(x)), "{s:?}");
+    assert_eq!(set_param(&a), vec![("unison.mode".to_string(), 1.0)]);
+    let _ = v.handle(&up(at), &doc, &reg);
+    assert!(v.choice_menu_labels().is_empty());
+}
+
+#[test]
+fn only_the_table_choices_of_the_wavetable_synth_open_a_pick_list() {
+    use atomik_ui::master_panel::is_pick_list;
+    let reg = registry();
+    let desc = reg.get(WAVETABLE_TYPE).unwrap().descriptor;
+    let opens = |key: &str| is_pick_list(desc.param_by_key(key).unwrap());
+    assert!(opens("osc1.table") && opens("osc2.table"));
+    assert!(!opens("filter.mode") && !opens("lfo.wave") && !opens("unison.mode"));
 }
 
 #[test]
@@ -253,6 +293,73 @@ fn double_click_resets_a_knob_to_its_default() {
     let c = v.control_center(&key("wt"), "unison.detune").unwrap();
     let a = v.handle(&down_with(c, PointerButton::Primary, 2), &doc, &reg);
     assert_eq!(set_param(&a), vec![("unison.detune".to_string(), 20.0)]);
+}
+
+// ------------------------------------------------------------------ the live position
+
+#[test]
+fn the_displays_follow_the_published_position_and_fall_back_to_the_knobs() {
+    let (doc, mut v) = setup(&[]);
+    let idle = json_of(&mut v, &doc);
+    // Nothing sounds: the device publishes -1 and the display is the knob's.
+    v.set_device_meter_values(&key("wt"), &[-1.0, -1.0]);
+    assert_eq!(json_of(&mut v, &doc), idle);
+    // A voice sounds at another frame than the knobs say.
+    v.set_device_meter_values(&key("wt"), &[0.6, -1.0]);
+    let live = json_of(&mut v, &doc);
+    assert_ne!(live, idle);
+    v.set_device_meter_values(&key("wt"), &[0.6, 0.9]);
+    let both = json_of(&mut v, &doc);
+    assert_ne!(both, live, "oscillator 2 follows its own value");
+    // The percentage stays the knob's.
+    let t = texts_of(&mut v, &doc);
+    assert!(
+        t.iter().any(|x| x == "0 %") && t.iter().any(|x| x == "25 %"),
+        "{t:?}"
+    );
+    // The published value equal to the knob is the same picture as idle.
+    v.set_device_meter_values(&key("wt"), &[0.0, 0.25]);
+    assert_eq!(json_of(&mut v, &doc), idle);
+    // Back to idle.
+    v.set_device_meter_values(&key("wt"), &[0.6, 0.9]);
+    let _ = json_of(&mut v, &doc);
+    v.set_device_meter_values(&key("wt"), &[-1.0, -1.0]);
+    assert_eq!(json_of(&mut v, &doc), idle);
+}
+
+#[test]
+fn an_unchanged_or_tiny_move_of_the_published_position_asks_for_no_repaint() {
+    let (doc, mut v) = setup(&[]);
+    v.set_device_meter_values(&key("wt"), &[0.5, 0.5]);
+    let _ = json_of(&mut v, &doc);
+    v.set_device_meter_values(&key("wt"), &[0.5, 0.5]);
+    assert!(!v.needs_repaint());
+    // Below the display's resolution.
+    v.set_device_meter_values(&key("wt"), &[0.5004, 0.4996]);
+    assert!(!v.needs_repaint());
+    v.set_device_meter_values(&key("wt"), &[0.52, 0.5]);
+    assert!(v.needs_repaint());
+}
+
+#[test]
+fn the_imported_table_is_named_and_asks_for_a_sample_until_one_is_dropped() {
+    let (doc, mut v) = setup(&[("osc1.table", 12.0)]);
+    let t = texts_of(&mut v, &doc);
+    assert!(t.iter().any(|x| x == "imported"), "{t:?}");
+    assert!(t.iter().any(|x| x == "drop a sample"), "{t:?}");
+    // With a sample on the device the hint is gone.
+    let mut doc = wavetable_only(&[("osc1.table", 12.0)]);
+    doc.devices[0]
+        .zones
+        .push(atomik_model::ZoneDoc::new("a".repeat(64), 4_096));
+    let reg = registry();
+    let mut v = view(&doc, &reg);
+    let t = texts_of(&mut v, &doc);
+    assert!(t.iter().any(|x| x == "imported"), "{t:?}");
+    assert!(!t.iter().any(|x| x == "drop a sample"), "{t:?}");
+    // The live position does not make the missing curve appear or panic.
+    v.set_device_meter_values(&key("wt"), &[0.7, 0.2]);
+    let _ = json_of(&mut v, &doc);
 }
 
 #[test]

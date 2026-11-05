@@ -154,7 +154,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register_with_mods(mono_bass::factory(), &poly_synth::MOD_TABLES)?;
     registry.register(dual_layer::factory())?;
     registry.register(organ::factory())?;
-    registry.register(wavetable_synth::factory())?;
+    registry.register_with_samples(wavetable_synth::factory())?;
     registry.register(fm_synth::factory())?;
     registry.register_with_samples(sampler::factory())?;
     registry.register_with_mods(semi_modular::factory(), &semi_modular::MOD_TABLES)?;
@@ -309,7 +309,8 @@ mod tests {
                     || id == "atomik.granular"
                     || id == "atomik.drum-machine"
                     || id == "atomik.loop-slicer"
-                    || id == "atomik.convolver",
+                    || id == "atomik.convolver"
+                    || id == "atomik.wavetable-synth",
                 "{id}"
             );
             assert_eq!(

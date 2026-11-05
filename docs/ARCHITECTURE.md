@@ -5536,12 +5536,18 @@ factory tables (additive spectra, or a time-domain drawing read back with an FFT
 once per octave of bandwidth with an inverse FFT of the truncated spectrum, and hands out a
 `&'static WavetableBank` built once per process (`factory_bank`, on the thread that first creates
 the device, never the audio thread). A device holds that reference, so a table change is a plain
-param change and the audio thread only reads. The panel
+param change and the audio thread only reads; a change fades from the old table to the new in each
+voice. A sample dropped on the device becomes a thirteenth table (`imported`): the device takes
+one sample like the convolver (`register_with_samples`), and where the sample map is made
+(`atomik_render::samples::finish_map`, for the app and the bounce alike) `attach_table` builds the
+stored table of the first zone with `wavetable::build_pyramid` and appends it to the map as one more
+buffer, so the audio thread only reads it. The device publishes the modulated frame position of its
+newest voice through `meter_values`. The panel
 ([ui/src/wavetable_panel.rs](../crates/ui/src/wavetable_panel.rs)) is the generated control layout,
-with its sections put in an order that packs into six rack units
+with its sections put in an order that packs into seven rack units
 (`autolayout::auto_layout_with_order`), and a strip at the left whose two displays draw one cycle of
 each oscillator's current frame with `wavetable::display_frame` (the UI crate depends on the DSP
-crate for this; it holds no table data).
+crate for this; it holds no table data) at the published position while a voice sounds.
 
 The FM synth `atomik.fm-synth` is plain arithmetic: [dsp/src/fm.rs](../crates/dsp/src/fm.rs) holds
 the twelve operator routings (the panel draws its diagram from the same table), the ratio and

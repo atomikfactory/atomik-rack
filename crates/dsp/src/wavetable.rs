@@ -35,6 +35,20 @@ use crate::sample_read::hermite4;
 pub const FRAMES: usize = 16;
 /// Number of factory tables.
 pub const TABLE_COUNT: usize = 12;
+/// The device's table choices: the factory tables, then the imported one (index
+/// [`IMPORTED_TABLE`]).
+pub const TABLE_CHOICES: [&str; TABLE_COUNT + 1] = {
+    let mut names = [""; TABLE_COUNT + 1];
+    let mut i = 0;
+    while i < TABLE_COUNT {
+        names[i] = TABLE_NAMES[i];
+        i += 1;
+    }
+    names[TABLE_COUNT] = "imported";
+    names
+};
+/// Index of the imported table in [`TABLE_CHOICES`] (one past the last factory table).
+pub const IMPORTED_TABLE: usize = TABLE_COUNT;
 /// Highest harmonic a frame defines (a 2048-sample cycle has room for 1023).
 pub const MAX_HARMONICS: usize = 1023;
 /// Number of mip levels.
@@ -67,6 +81,9 @@ const FRAME_FLOATS: usize = 10224;
 const LEVEL_OFFSET: [usize; LEVELS] = [
     0, 2048, 4096, 6144, 8192, 9216, 9728, 9984, 10112, 10176, 10208,
 ];
+/// Floats of a whole table: [`FRAMES`] frames over all their mip levels (see
+/// [`build_pyramid`]).
+pub const PYRAMID_LEN: usize = FRAMES * FRAME_FLOATS;
 /// Size of the time-domain drawing of the hard-sync sweep (four times the cycle, to keep the
 /// jumps from folding into the harmonics we keep).
 const SYNC_DRAW_LEN: usize = 4096;
@@ -103,40 +120,118 @@ impl Wavetable {
         &self.data[at..at + LEVEL_LEN[level.min(LEVELS - 1)]]
     }
 
+    /// Every frame over all its mip levels, as [`read_pyramid`] reads them.
+    pub fn pyramid(&self) -> &[f32] {
+        &self.data
+    }
+
     /// Reads the table at frame `position` (`0..=1`, clamped) and `phase` (cycles, any value:
     /// only the fractional part counts) from mip `level`. Allocation-free.
     #[inline]
     pub fn read(&self, level: usize, position: f32, phase: f64) -> f32 {
-        let level = level.min(LEVELS - 1);
-        let len = LEVEL_LEN[level];
-        let x = (phase - phase.floor()) * len as f64;
-        let i = (x as usize).min(len - 1);
-        let frac = (x - i as f64) as f32;
-        let at = position.clamp(0.0, 1.0) * (FRAMES - 1) as f32;
-        let a = (at as usize).min(FRAMES - 2);
-        let blend = at - a as f32;
-        let first = self.read_frame(level, a, i, frac);
-        if blend == 0.0 {
-            return first;
-        }
-        let second = self.read_frame(level, a + 1, i, frac);
-        first + (second - first) * blend
+        read_pyramid(&self.data, level, position, phase)
     }
+}
 
-    #[inline]
-    fn read_frame(&self, level: usize, frame: usize, i: usize, frac: f32) -> f32 {
-        let len = LEVEL_LEN[level];
-        let mask = len - 1;
-        let base = frame * FRAME_FLOATS + LEVEL_OFFSET[level];
-        let cycle = &self.data[base..base + len];
-        hermite4(
-            cycle[(i + len - 1) & mask],
-            cycle[i],
-            cycle[(i + 1) & mask],
-            cycle[(i + 2) & mask],
-            frac,
-        )
+/// Reads a table stored as [`PYRAMID_LEN`] floats (a [`Wavetable::pyramid`], or one made by
+/// [`build_pyramid`]) at frame `position` (`0..=1`, clamped) and `phase` (cycles) from mip
+/// `level`. Allocation-free; any other length reads as silence.
+#[inline]
+pub fn read_pyramid(data: &[f32], level: usize, position: f32, phase: f64) -> f32 {
+    if data.len() != PYRAMID_LEN {
+        return 0.0;
     }
+    let level = level.min(LEVELS - 1);
+    let len = LEVEL_LEN[level];
+    let x = (phase - phase.floor()) * len as f64;
+    let i = (x as usize).min(len - 1);
+    let frac = (x - i as f64) as f32;
+    let at = position.clamp(0.0, 1.0) * (FRAMES - 1) as f32;
+    let a = (at as usize).min(FRAMES - 2);
+    let blend = at - a as f32;
+    let first = read_frame(data, level, a, i, frac);
+    if blend == 0.0 {
+        return first;
+    }
+    let second = read_frame(data, level, a + 1, i, frac);
+    first + (second - first) * blend
+}
+
+#[inline]
+fn read_frame(data: &[f32], level: usize, frame: usize, i: usize, frac: f32) -> f32 {
+    let len = LEVEL_LEN[level];
+    let mask = len - 1;
+    let base = frame * FRAME_FLOATS + LEVEL_OFFSET[level];
+    let cycle = &data[base..base + len];
+    hermite4(
+        cycle[(i + len - 1) & mask],
+        cycle[i],
+        cycle[(i + 1) & mask],
+        cycle[(i + 2) & mask],
+        frac,
+    )
+}
+
+/// Builds a table from audio: `source` is mono samples cut into frames of [`CYCLE_LEN`]
+/// samples (a remainder shorter than a frame is dropped). A source with a single frame or less
+/// is one cycle of any length, resampled to the frame length. A source of more than [`FRAMES`]
+/// frames contributes [`FRAMES`] evenly spaced ones; fewer frames repeat the nearest one.
+/// Each frame is analysed, scaled so its full-bandwidth waveform peaks at 1 (a silent frame
+/// stays silent) and stored over every mip level like the factory tables, so the result plays
+/// without aliasing. Non-finite samples read as 0. `None` for fewer than two samples.
+///
+/// The result is [`PYRAMID_LEN`] floats for [`read_pyramid`]. It runs a few hundred FFTs: call
+/// it off the audio thread.
+pub fn build_pyramid(source: &[f32]) -> Option<Vec<f32>> {
+    if source.len() < 2 {
+        return None;
+    }
+    let clean = |x: f32| if x.is_finite() { f64::from(x) } else { 0.0 };
+    let whole = source.len() / CYCLE_LEN;
+    let mut synth = Synth::new();
+    let mut data = vec![0.0f32; PYRAMID_LEN];
+    let mut frame_cache: Vec<(usize, Spectrum, f64)> = Vec::new();
+    for frame in 0..FRAMES {
+        let pick = if whole <= 1 {
+            0
+        } else {
+            (frame * (whole - 1) + (FRAMES - 1) / 2) / (FRAMES - 1)
+        };
+        let at = match frame_cache.iter().position(|(p, _, _)| *p == pick) {
+            Some(at) => at,
+            None => {
+                let x: Vec<f64> = if whole == 0 {
+                    // One short cycle, stretched over the frame (linear, wrapping).
+                    let n = source.len();
+                    (0..CYCLE_LEN)
+                        .map(|k| {
+                            let pos = k as f64 * n as f64 / CYCLE_LEN as f64;
+                            let i = (pos as usize).min(n - 1);
+                            let f = pos - i as f64;
+                            let (a, b) = (clean(source[i]), clean(source[(i + 1) % n]));
+                            a + (b - a) * f
+                        })
+                        .collect()
+                } else {
+                    source[pick * CYCLE_LEN..(pick + 1) * CYCLE_LEN]
+                        .iter()
+                        .map(|&v| clean(v))
+                        .collect()
+                };
+                let spec = from_time(&x);
+                let gain = synth.peak_gain(&spec);
+                frame_cache.push((pick, spec, gain));
+                frame_cache.len() - 1
+            }
+        };
+        let (_, spec, gain) = &frame_cache[at];
+        for level in 0..LEVELS {
+            let base = frame * FRAME_FLOATS + LEVEL_OFFSET[level];
+            let out = &mut data[base..base + LEVEL_LEN[level]];
+            synth.render(spec, LEVEL_HARMONICS[level], *gain, out);
+        }
+    }
+    Some(data)
 }
 
 /// The factory tables.
@@ -1031,5 +1126,139 @@ mod tests {
         // Reads wrap and clamp.
         assert_eq!(b.read(2, 0, 1.25), b.read(2, 0, 0.25));
         assert_eq!(b.read(99, 0, 0.3), b.read(WAVE_COUNT - 1, 0, 0.3));
+    }
+
+    fn sine_frames(frames: usize) -> Vec<f32> {
+        (0..frames * CYCLE_LEN)
+            .map(|n| {
+                let f = n / CYCLE_LEN;
+                let p = (n % CYCLE_LEN) as f64 / CYCLE_LEN as f64;
+                // Frame f is a sine with f + 1 cycles, at a different level per frame.
+                (0.3 * (f as f64 + 1.0) / frames as f64 * sin_cycles(p * (f as f64 + 1.0))) as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_choices_are_the_factory_tables_then_the_imported_one() {
+        assert_eq!(&TABLE_CHOICES[..TABLE_COUNT], &TABLE_NAMES[..]);
+        assert_eq!(TABLE_CHOICES[IMPORTED_TABLE], "imported");
+        assert_eq!(IMPORTED_TABLE, TABLE_COUNT);
+    }
+
+    #[test]
+    fn a_factory_table_reads_the_same_through_its_pyramid() {
+        let t = bank().table(3);
+        assert_eq!(t.pyramid().len(), PYRAMID_LEN);
+        for (level, position, phase) in [(0, 0.0, 0.1), (2, 0.4, 0.77), (5, 1.0, 0.5)] {
+            assert_eq!(
+                t.read(level, position, phase),
+                read_pyramid(t.pyramid(), level, position, phase)
+            );
+        }
+        // A buffer of the wrong size reads as silence.
+        assert_eq!(read_pyramid(&[0.5; 10], 0, 0.0, 0.3), 0.0);
+    }
+
+    #[test]
+    fn an_imported_single_cycle_plays_as_that_cycle_normalised() {
+        let src: Vec<f32> = (0..CYCLE_LEN)
+            .map(|n| 0.25 * sin_cycles(3.0 * n as f64 / CYCLE_LEN as f64) as f32)
+            .collect();
+        let table = build_pyramid(&src).unwrap();
+        assert_eq!(table.len(), PYRAMID_LEN);
+        // The full-bandwidth frame is the cycle scaled to peak 1: a sine of three cycles.
+        for position in [0.0, 0.5, 1.0] {
+            for k in 0..64 {
+                let p = f64::from(k) / 64.0;
+                let want = sin_cycles(3.0 * p) as f32;
+                let got = read_pyramid(&table, 0, position, p);
+                assert!((got - want).abs() < 0.01, "{position} {p}: {got} {want}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_imported_table_with_many_frames_morphs_through_evenly_spaced_frames() {
+        let table = build_pyramid(&sine_frames(64)).unwrap();
+        // Frame 0 is one cycle, the last is 64 cycles; the middle frames lie in between.
+        let count = |position: f32| {
+            let n = 4096;
+            let mut crossings = 0;
+            let mut last = read_pyramid(&table, 0, position, 0.0);
+            for k in 1..=n {
+                let v = read_pyramid(&table, 0, position, f64::from(k) / f64::from(n));
+                if (last < 0.0) != (v < 0.0) {
+                    crossings += 1;
+                }
+                last = v;
+            }
+            crossings
+        };
+        assert!(count(0.0) <= 3, "{}", count(0.0));
+        assert!(count(1.0) >= 120, "{}", count(1.0));
+        assert!(count(0.5) > count(0.0) && count(0.5) < count(1.0));
+        // A table of two frames repeats the nearest ones: the first eight frames are the first.
+        let two = build_pyramid(&sine_frames(2)).unwrap();
+        assert_eq!(
+            read_pyramid(&two, 0, 0.0, 0.3),
+            read_pyramid(&two, 0, 0.4, 0.3)
+        );
+        assert_ne!(
+            read_pyramid(&two, 0, 0.0, 0.3),
+            read_pyramid(&two, 0, 1.0, 0.3)
+        );
+    }
+
+    #[test]
+    fn an_imported_table_is_band_limited_at_every_level() {
+        // A saw has every harmonic: the top levels keep only their share.
+        let saw: Vec<f32> = (0..CYCLE_LEN)
+            .map(|n| 2.0 * n as f32 / CYCLE_LEN as f32 - 1.0)
+            .collect();
+        let table = build_pyramid(&saw).unwrap();
+        for level in 0..LEVELS {
+            let len = LEVEL_LEN[level];
+            let cycle: Vec<f64> = (0..len)
+                .map(|i| f64::from(read_pyramid(&table, level, 0.0, i as f64 / len as f64)))
+                .collect();
+            // Energy above the level's top harmonic.
+            let top = LEVEL_HARMONICS[level];
+            let mut above = 0.0;
+            for h in (top + 1)..(len / 2) {
+                let w = h as f64 / len as f64;
+                let (mut re, mut im) = (0.0, 0.0);
+                for (i, v) in cycle.iter().enumerate() {
+                    let p = i as f64 / len as f64;
+                    re += v * sin_cycles(w * len as f64 * p);
+                    im += v * cos_cycles(w * len as f64 * p);
+                }
+                above += (re * re + im * im) / (len * len) as f64;
+            }
+            assert!(above < 1e-3, "level {level}: {above}");
+        }
+    }
+
+    #[test]
+    fn silence_and_garbage_import_without_trouble() {
+        assert!(build_pyramid(&[]).is_none());
+        assert!(build_pyramid(&[0.3]).is_none());
+        let silent = build_pyramid(&vec![0.0; 3 * CYCLE_LEN]).unwrap();
+        assert!(silent.iter().all(|&v| v == 0.0));
+        let mut bad = sine_frames(4);
+        bad[7] = f32::NAN;
+        bad[900] = f32::INFINITY;
+        let table = build_pyramid(&bad).unwrap();
+        assert!(table.iter().all(|v| v.is_finite()));
+        // A short fragment stretches into one cycle.
+        let short = build_pyramid(&[0.0, 1.0, 0.0, -1.0]).unwrap();
+        assert!(short.iter().any(|&v| v.abs() > 0.5));
+    }
+
+    #[test]
+    fn building_a_pyramid_is_deterministic() {
+        let a = build_pyramid(&sine_frames(8)).unwrap();
+        let b = build_pyramid(&sine_frames(8)).unwrap();
+        assert_eq!(a, b);
     }
 }

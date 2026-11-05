@@ -481,10 +481,11 @@ every host block size.
 ## Wavetable Synth: `atomik.wavetable-synth` (Instrument)
 
 A wavetable synthesizer with up to 16 voices. Each voice has two wavetable oscillators (each reads
-one of twelve factory tables at a frame position you can morph), a sub sine and noise, up to seven
-unison copies of each oscillator spread across the stereo field, a stereo pair of 12 dB/oct
-state-variable filters, an amp envelope and a mod envelope. One global LFO and the mod envelope can
-move both frame positions, the cutoff and the pitch. Source:
+one of twelve factory tables, or a table imported from a sample, at a frame position you can morph),
+a sub sine and noise, up to seven unison copies of each oscillator spread across the stereo field
+(oscillator 2 can have its own unison settings), a stereo pair of 12 dB/oct state-variable
+filters, an amp envelope and a mod envelope. One global LFO and the mod envelope can move both frame
+positions, the cutoff and the pitch. Source:
 [crates/devices/src/wavetable_synth.rs](../crates/devices/src/wavetable_synth.rs); the tables are in
 [crates/dsp/src/wavetable.rs](../crates/dsp/src/wavetable.rs).
 
@@ -512,6 +513,28 @@ peak of 1.
 | 9 | `fm 1:3` | Phase modulation, modulator at three times the carrier, index 0 to 5 |
 | 10 | `digital` | Four seeded random spectra (harmonics 1 to 48) crossfaded |
 | 11 | `organ` | Drawbar partials 1, 2, 3, 4, 5, 6 and 8 whose levels swell in turn |
+| 12 | `imported` | The sample dropped on the device, cut into frames (see "Imported table") |
+
+The table choice opens a pick list on a click (a right-click steps back). A change of table does
+not click: every sounding voice keeps reading the old table and fades it out over 12 ms while the
+new one fades in, at the same phase.
+
+### Imported table
+
+Drop a WAV (or any sample file the sampler reads) on the panel, or choose it in the file browser,
+and the `imported` table plays it. The device takes one sample: a second drop replaces the first
+(one undo step), a second file of a multi-file drop is named and left out. The sample reaches the
+device through its sample map like the convolver's impulse; it is saved with the project's audio and
+its trim (`start` and `end` of the zone, as set in the sample editor) picks the part that is used.
+The channels are averaged. The part is cut into frames of 2048 samples (a remainder shorter than a
+frame is dropped): a sample of one frame or less is one cycle of any length, stretched to the frame
+length; a sample of more than 16 frames contributes 16 evenly spaced frames (the table always has
+16, so `position` morphs through them); one with fewer repeats the nearest frame. Each frame is
+analysed, scaled to a peak of 1 and stored once per octave of bandwidth like the factory tables, so
+an imported table does not alias either. The table is built where the sample map is built (off
+the audio thread, a few hundred small FFTs), live and in a bounce alike. While the device has no
+sample, the imported table is silent and its display asks for one. A new sample replaces the table
+at once, without a fade. Not done: a table editor, and the frames of a long sample beyond 16.
 
 ### Sockets
 
@@ -532,13 +555,13 @@ peak of 1.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
-| `osc1.table` | 0–11: the table names above | 0 (`saw>square`) | choice | Linear | yes |
+| `osc1.table` | 0–12: the table names above | 0 (`saw>square`) | choice | Linear | yes |
 | `osc1.position` | 0 to 1 | 0 | percent | Linear | no |
 | `osc1.octave` | −3 to 3 | 0 | octaves | Linear | yes |
 | `osc1.semi` | −12 to 12 | 0 | semitones | Linear | yes |
 | `osc1.fine` | −50 to 50 | 0 | cents | Linear | no |
 | `osc1.level` | 0 to 1 | 0.7 | percent | Linear | no |
-| `osc2.table` | 0–11 | 1 (`pulse width`) | choice | Linear | yes |
+| `osc2.table` | 0–12 | 1 (`pulse width`) | choice | Linear | yes |
 | `osc2.position` | 0 to 1 | 0.25 | percent | Linear | no |
 | `osc2.octave` | −3 to 3 | 0 | octaves | Linear | yes |
 | `osc2.semi` | −12 to 12 | 0 | semitones | Linear | yes |
@@ -546,7 +569,7 @@ peak of 1.
 | `osc2.level` | 0 to 1 | 0.5 | percent | Linear | no |
 | `mix.sub` | 0 to 1 (a sine one octave below the key) | 0 | percent | Linear | no |
 | `mix.noise` | 0 to 1 (white noise) | 0 | percent | Linear | no |
-| `unison.voices` | 1 to 7 copies of each oscillator | 1 | none | Linear | yes |
+| `unison.voices` | 1 to 7 copies of each oscillator (of oscillator 1 when the mode is `separate`) | 1 | none | Linear | yes |
 | `unison.detune` | 0 to 100 (the widest copy, each way) | 20 | cents | Linear | no |
 | `unison.spread` | 0 to 1 (the widest copy, each way) | 0.5 | percent | Linear | no |
 | `filter.mode` | 0–2: LP12, BP12, HP12 | 0 (LP12) | choice | Linear | yes |
@@ -581,6 +604,13 @@ peak of 1.
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
+| `unison.mode` | 0–1: shared, separate | 0 (shared) | choice | Linear | yes |
+| `osc2.unison_voices` | 1 to 7 (used when the mode is `separate`) | 1 | none | Linear | yes |
+| `osc2.unison_detune` | 0 to 100 (the widest copy, each way) | 20 | cents | Linear | no |
+| `osc2.unison_spread` | 0 to 1 (the widest copy, each way) | 0.5 | percent | Linear | no |
+
+The last four params were added after the first release; a project that does not have them plays as
+before (the unison mode is `shared`, so both oscillators use `unison.*`).
 
 ### Behaviour (as built)
 
@@ -602,14 +632,23 @@ peak of 1.
 - **Unison.** With *n* copies, copy *i* sits at x = 2i/(n − 1) − 1 (0 for a lone copy): detuned by x
   × `unison.detune` cents and balanced by x × `unison.spread` (unity at the centre, as the pan CV
   does). Each copy has its own phase: the first starts at phase 0, the others at seeded random
-  phases. The copies are scaled by 1/√n.
+  phases. The copies are scaled by 1/√n. With `unison.mode` at `shared` both oscillators use the
+  three `unison.*` settings; at `separate` oscillator 2 uses `osc2.unison_voices`,
+  `osc2.unison_detune` and `osc2.unison_spread` and oscillator 1 keeps `unison.*`. The band limit
+  follows each oscillator's own widest copy.
+- **Position display.** The device publishes two values through `meter_values`: the modulated frame
+  position (0 to 1, the knob plus the envelope, LFO and CV) of oscillator 1 and of oscillator 2 in
+  the newest sounding voice, or −1 for both while no voice sounds. The panel draws that frame (and
+  lights its ticks) in place of the knob's while a voice sounds, and keeps the knob's frame as a
+  faint curve.
 - **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly
   synth's soft limiter (linear up to ±2, saturating towards ±4): the output is always finite and |x|
   ≤ 4.
 - **Cost and start-up.** The 12 tables are built once per process, the first time a wavetable synth
   is created (a fraction of a second); every later instance shares them (about 8 MB). `process`
-  allocates nothing. A table change is an ordinary param change; a click may be heard when it
-  happens on a sounding note.
+  allocates nothing. A table change is an ordinary param change; the voices crossfade to the new
+  table over 12 ms (the old table is read as well for that long, so those samples cost about twice
+  as much). An imported table adds about 650 kB per sample, held by the sample map.
 - **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed
   and the device instance, so renders are reproducible.
 

@@ -1006,3 +1006,70 @@ fn a_drop_onto_the_convolution_reverb_is_its_one_impulse_response() {
     let zones = c.doc().device(&key("cnv")).unwrap().zones.clone();
     assert_eq!((zones.len(), zones[0].end), (1, 2_400));
 }
+
+#[test]
+fn a_drop_onto_the_wavetable_synth_is_its_one_table_and_reaches_the_engine_as_one() {
+    let t = Tmp::new("wavetable-drop");
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.wavetable-synth".into(),
+        key: Some(key("wts")),
+    })
+    .unwrap();
+    c.sink_mut().take();
+    let drop = |c: &mut AppCore<RecordingSink>, paths: Vec<PathBuf>| {
+        c.handle_action(UiAction::ImportSamples {
+            paths,
+            device: key("wts"),
+            at_key: None,
+        });
+        c.wait_background();
+    };
+    // Four frames of 2048 samples; a second file is named and left out.
+    drop(
+        &mut c,
+        vec![
+            wav(&t, "table.wav", 4 * 2_048, 1.0),
+            wav(&t, "second.wav", 2_048, 0.5),
+        ],
+    );
+    assert!(c.last_rejection().unwrap().contains("second.wav"));
+    let zones = c.doc().device(&key("wts")).unwrap().zones.clone();
+    assert_eq!((zones.len(), zones[0].end), (1, 4 * 2_048));
+    let sent = sample_calls(&c.sink_mut().take());
+    assert_eq!(sent.len(), 1);
+    let map = sent[0].1.as_ref().unwrap();
+    assert_eq!(map.zones().len(), 1);
+    // The sample, then the table made from it.
+    assert_eq!(map.buffers().len(), 2);
+    assert_eq!(
+        map.buffers()[1].frames,
+        atomik_dsp::wavetable::PYRAMID_LEN as u64
+    );
+    // A new drop replaces it, in one undo step.
+    drop(&mut c, vec![wav(&t, "other.wav", 2_048, 0.5)]);
+    let zones = c.doc().device(&key("wts")).unwrap().zones.clone();
+    assert_eq!((zones.len(), zones[0].end), (1, 2_048));
+    assert!(c.undo());
+    let back = c.doc().device(&key("wts")).unwrap().zones.clone();
+    assert_eq!(back[0].end, 4 * 2_048);
+}
+
+#[test]
+fn the_wavetable_panel_gets_the_positions_its_device_publishes() {
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.wavetable-synth".into(),
+        key: Some(key("wts")),
+    })
+    .unwrap();
+    let id = c.device_id(&key("wts")).unwrap();
+    c.sink_mut().device_values.insert(id, (vec![0.4, -1.0], 1));
+    c.frame();
+    assert_eq!(c.view().device_meters(&key("wts")), &[0.4, -1.0]);
+    c.sink_mut().device_values.insert(id, (vec![0.5, 0.75], 2));
+    c.frame();
+    assert_eq!(c.view().device_meters(&key("wts")), &[0.5, 0.75]);
+}

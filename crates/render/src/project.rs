@@ -34,7 +34,7 @@
 use crate::build::{BuildOptions, SuppliedDevices, build_with_devices};
 use crate::patch::Warning;
 use crate::plugins::{MissingPlugins, PluginHost};
-use crate::samples::{build_sample_map, song_asset_buffer};
+use crate::samples::{build_sample_map, finish_map, song_asset_buffer};
 use crate::warp::WarpStore;
 use crate::{RenderError, Rendered};
 use atomik_core::{BATCH, PPQ, Tempo, Ticks};
@@ -779,6 +779,7 @@ pub fn sampler_maps(
                 .or_insert_with(|| song_asset_buffer(found))
                 .clone()
         });
+        let built = finish_map(&device.type_id, built);
         warnings.extend(built.rejected.into_iter().map(|message| Warning {
             path: format!("devices.{}.zones", device.key),
             message,

@@ -23,6 +23,18 @@ pub struct BuiltMap {
     pub rejected: Vec<String>,
 }
 
+/// Gives a device its final map: a wavetable synth gets its imported table attached to the map
+/// of its sample (see [`atomik_devices::wavetable_synth::attach_table`]); every other device
+/// keeps the map as built. The app and the bounce both call it, so the table sounds the same
+/// live and offline. Builds a few hundred FFTs for a wavetable synth: call it off the audio
+/// thread.
+pub fn finish_map(type_id: &str, mut built: BuiltMap) -> BuiltMap {
+    if type_id == atomik_devices::wavetable_synth::DESCRIPTOR.type_id {
+        built.map = built.map.map(atomik_devices::wavetable_synth::attach_table);
+    }
+    built
+}
+
 /// The buffer of a memory song asset, sharing its sample data; `None` for a streamed asset
 /// (samplers always play from RAM) or malformed data.
 pub fn song_asset_buffer(asset: &SongAsset) -> Option<Arc<SampleBuffer>> {
@@ -165,5 +177,21 @@ mod tests {
         }
         let streamed = SongAsset::stream(10, 1, Arc::new(Nothing));
         assert!(song_asset_buffer(&streamed).is_none());
+    }
+
+    #[test]
+    fn a_wavetable_synth_gets_its_table_and_other_devices_keep_their_map() {
+        let a = buffer(4_096);
+        let zones = [zone('a', 4_096, (0, 127))];
+        let plain = |ty: &str| finish_map(ty, build_sample_map(&zones, |_| Some(Arc::clone(&a))));
+        let sampler = plain("atomik.sampler").map.unwrap();
+        assert_eq!(sampler.buffers().len(), 1);
+        let table = plain("atomik.wavetable-synth").map.unwrap();
+        assert_eq!(table.buffers().len(), 2);
+        assert!(Arc::ptr_eq(&table.buffers()[0], &a));
+        assert_eq!(table.zones(), sampler.zones());
+        // No map stays no map.
+        let none = finish_map("atomik.wavetable-synth", build_sample_map(&[], |_| None));
+        assert!(none.map.is_none());
     }
 }
