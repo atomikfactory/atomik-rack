@@ -179,7 +179,9 @@ pub fn granular_label(key: &str) -> Option<&'static str> {
 /// device does not have.
 pub fn granular_help(key: &str) -> Option<&'static str> {
     Some(match key {
-        "sound" => "Factory sound: click for the next, right-click for the previous. One undo step",
+        "sound" => {
+            "Factory sound: click to pick from the list, right-click for the previous. One undo step"
+        }
         "voices" => "Most notes sounding at once: the oldest is stolen past it",
         "master.level" => "Output level",
         "grain.density" => "Grains started a second: few are separate slices, many blur to a cloud",

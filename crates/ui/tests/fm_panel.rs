@@ -348,14 +348,42 @@ fn set_param(actions: &[UiAction]) -> Vec<(String, f32)> {
 }
 
 #[test]
-fn the_algorithm_and_sound_choices_cycle() {
+fn the_algorithm_and_sound_choices_open_a_pick_list() {
     let (doc, mut v) = setup(&[]);
     let reg = registry();
-    for (param, want) in [("algorithm", 1.0), ("sound", 1.0)] {
-        let at = v.control_center(&key("fm"), param).unwrap();
+    let desc = reg.get(FM_TYPE).unwrap().descriptor;
+    for (param, row) in [("algorithm", 5usize), ("sound", 8)] {
+        let names = match desc.param_by_key(param).unwrap().unit {
+            atomik_core::Unit::Choice(n) => n,
+            _ => panic!("{param} is a choice"),
+        };
+        let at = v.choice_center(&key("fm"), param).unwrap();
+        // The press opens the list and sets nothing.
         let a = v.handle(&down(at), &doc, &reg);
+        assert!(set_param(&a).is_empty(), "{param}");
+        let _ = v.handle(&up(at), &doc, &reg);
+        let labels = v.choice_menu_labels();
+        assert_eq!(labels.len(), names.len(), "{param}: a row per choice");
+        assert_eq!(labels[row], names[row]);
+        // A press on a row sets that choice and closes the list.
+        let at_row = v.choice_menu_row_center(row).unwrap();
+        let a = v.handle(&down(at_row), &doc, &reg);
+        assert_eq!(set_param(&a), vec![(param.to_string(), row as f32)]);
+        let _ = v.handle(&up(at_row), &doc, &reg);
+        assert!(v.choice_menu_labels().is_empty(), "{param}: closed");
+    }
+}
+
+#[test]
+fn a_right_click_still_steps_the_sound_and_algorithm_back() {
+    let (doc, mut v) = setup(&[("algorithm", 3.0), ("sound", 2.0)]);
+    let reg = registry();
+    for (param, want) in [("algorithm", 2.0), ("sound", 1.0)] {
+        let at = v.control_center(&key("fm"), param).unwrap();
+        let a = v.handle(&down_with(at, PointerButton::Secondary, 1), &doc, &reg);
         assert_eq!(set_param(&a), vec![(param.to_string(), want)]);
         let _ = v.handle(&up(at), &doc, &reg);
+        assert!(v.choice_menu_labels().is_empty());
     }
 }
 
@@ -410,4 +438,19 @@ fn preview_pngs() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, png).unwrap();
     }
+}
+
+#[test]
+fn only_long_or_named_choices_open_a_pick_list() {
+    use atomik_ui::master_panel::is_pick_list;
+    let reg = registry();
+    let desc = reg.get(FM_TYPE).unwrap().descriptor;
+    let opens = |key: &str| is_pick_list(desc.param_by_key(key).unwrap());
+    assert!(opens("sound") && opens("algorithm"));
+    // The short choices keep stepping on a click.
+    assert!(!opens("lfo.wave") && !opens("play.mode") && !opens("oversample"));
+    assert!(
+        !opens("op1.wave"),
+        "six waves are stepped, they are not a sound or an algorithm"
+    );
 }

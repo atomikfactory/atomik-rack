@@ -554,15 +554,23 @@ fn set_param(actions: &[UiAction]) -> Vec<(String, f32)> {
 }
 
 #[test]
-fn the_sound_and_window_choices_cycle() {
+fn the_sound_opens_a_pick_list_and_the_window_choice_cycles() {
     let (doc, mut v) = setup(Vec::new(), &[]);
     let reg = registry();
-    for (param, want) in [("sound", 1.0), ("grain.window", 1.0)] {
-        let at = v.control_center(&key("grain"), param).unwrap();
-        let a = v.handle(&down(at), &doc, &reg);
-        assert_eq!(set_param(&a), vec![(param.to_string(), want)]);
-        let _ = v.handle(&up(at), &doc, &reg);
-    }
+    let at = v.control_center(&key("grain"), "grain.window").unwrap();
+    let a = v.handle(&down(at), &doc, &reg);
+    assert_eq!(set_param(&a), vec![("grain.window".to_string(), 1.0)]);
+    let _ = v.handle(&up(at), &doc, &reg);
+    // The sound is a long list of names: a click opens it and a row sets the choice.
+    let at = v.choice_center(&key("grain"), "sound").unwrap();
+    let a = v.handle(&down(at), &doc, &reg);
+    assert!(set_param(&a).is_empty());
+    let _ = v.handle(&up(at), &doc, &reg);
+    assert!(v.choice_menu_labels().len() >= 6);
+    let row = v.choice_menu_row_center(2).unwrap();
+    let a = v.handle(&down(row), &doc, &reg);
+    assert_eq!(set_param(&a), vec![("sound".to_string(), 2.0)]);
+    let _ = v.handle(&up(row), &doc, &reg);
 }
 
 #[test]

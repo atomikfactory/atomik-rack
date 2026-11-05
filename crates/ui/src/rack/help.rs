@@ -198,6 +198,12 @@ impl RackView {
                     rect,
                     Cow::Owned(format!("{label}: click to switch on or off")),
                 )),
+                ControlKind::Choice if crate::master_panel::is_pick_list(p) => Some(Help::new(
+                    rect,
+                    Cow::Owned(format!(
+                        "{label}: click to pick from the list, right-click for the previous"
+                    )),
+                )),
                 ControlKind::Choice => Some(Help::new(
                     rect,
                     Cow::Owned(format!("{label}: click to step through the choices")),

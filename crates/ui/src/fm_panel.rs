@@ -139,8 +139,10 @@ pub fn fm_help(key: &str) -> Option<&'static str> {
         });
     }
     Some(match key {
-        "sound" => "Factory sound: click for the next, right-click for the previous. One undo step",
-        "algorithm" => "How the four operators are routed: who modulates whom, and who is heard",
+        "sound" => {
+            "Factory sound: click to pick from the list, right-click for the previous. One undo step"
+        }
+        "algorithm" => "How the four operators are routed: click to pick from the list of routings",
         "feedback" => "Operator 4 modulates itself: a sine turns saw-like. Eased back on high keys",
         "index" => "Modulation index of every modulator at once: the brightness of the sound",
         "wheel.to_index" => "How far the mod wheel opens the modulation index",
