@@ -31,11 +31,17 @@ fn suffix(scale: f64) -> &'static str {
         .1
 }
 
+/// Checks every scale before failing, so one run writes the diff images of all of them.
 fn each(scales: &[f64], name: &str, size: Size, paint: impl Fn(&mut dyn Canvas, f64)) {
+    let mut failed = Vec::new();
     for &scale in scales {
         let image = render(size, scale, |c| paint(c, scale));
-        check(&format!("{name}_{}", suffix(scale)), &image);
+        let case = format!("{name}_{}", suffix(scale));
+        if std::panic::catch_unwind(|| check(&case, &image)).is_err() {
+            failed.push(case);
+        }
     }
+    assert!(failed.is_empty(), "pixel goldens differ: {failed:?}");
 }
 
 #[test]

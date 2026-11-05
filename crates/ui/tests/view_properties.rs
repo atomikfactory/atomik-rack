@@ -395,6 +395,28 @@ fn a_double_click_on_an_empty_audio_lane_draws_nothing() {
 }
 
 #[test]
+fn an_undo_in_the_middle_of_a_start_trim_does_not_send_a_trim_before_tick_zero() {
+    // The trim sends the change since its last move; an undo mid-drag takes the trim back, and
+    // the next move must measure from what the document holds, not from what was sent.
+    let (doc, reg) = (song_doc(), registry());
+    let (a, b) = arrangement_pair(&doc, &reg);
+    let steps = [
+        Step::Wheel(0.0, 0.0, 0.0, 2.919_028_531_575_441, 3),
+        Step::Down(
+            210.015_296_455_336_68,
+            198.426_340_121_755_74,
+            0,
+            false,
+            false,
+        ),
+        Step::Move(611.601_282_294_467, 0.0, 0),
+        Step::Undo,
+        Step::Move(0.0, 0.0, 0),
+    ];
+    run(a, b, doc, &reg, &steps).expect("the trim stays valid after an undo");
+}
+
+#[test]
 fn a_note_dropped_on_another_replaces_it_and_stays_selected() {
     use atomik_model::Note;
     use atomik_ui::seq_edit::normalize_notes;

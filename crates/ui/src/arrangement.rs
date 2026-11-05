@@ -4583,6 +4583,11 @@ impl ArrangementView {
                     return;
                 }
                 let grabbed = originals[0].start;
+                // The deltas are relative to the document, so an undo (or any other edit) in the
+                // middle of the drag must not leave `applied` describing a trim that is gone.
+                if let Some((_, _, now)) = self.song.clip(originals[0].id) {
+                    *applied = now.start - grabbed;
+                }
                 let delta = axis.dx_to_ticks(pos.x - start.x);
                 let wanted = seq_edit::drag_start_by(snap_mode, grabbed, delta, step) - grabbed;
                 // Every start stays at tick 0 or later and every clip at least `min` long.
@@ -5982,6 +5987,12 @@ impl ArrangementView {
                 emitted: true,
                 ..
             } => {
+                // What the document holds now, not what the drag last sent (an undo may have
+                // taken it back).
+                let applied = self
+                    .song
+                    .clip(originals[0].id)
+                    .map_or(applied, |(_, _, now)| now.start - originals[0].start);
                 if applied != 0 {
                     out.push(workflow_cmd(WorkflowCommand::TrimClips {
                         ids: originals.iter().map(|c| c.id).collect(),
