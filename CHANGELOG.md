@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **CV utility follow-ups: a custom scale and hysteresis on the CV Quantizer, and a track mode on Sample and Hold.**
+  The CV Quantizer has a **Custom scale** switch (`scale.custom`) that replaces the scale and root with twelve note
+  switches (`scale.note.0` to `scale.note.11`, one per pitch class from C, starting as C major) saved with the
+  device in the project; a custom scale with no note on restricts nothing. A **Hysteresis** knob (`hysteresis`, 0
+  to 1 semitone) keeps the quantizer on its key until the input has moved that far past the middle between two scale
+  keys, so a wobbling input does not chatter between them (at 0 it is the plain nearest key, as before). Sample and
+  Hold has a **Mode** choice (`mode`): `track` follows the input while the clock is on and holds the last value while
+  it is off, with `trig_in` high for the trigger clock and the first half of each cycle for the free and tempo
+  clocks. The new params are appended and the project format is unchanged (44). Still to come: a delay and length in
+  note values on the Gate Processor.
 - **Channel strip follow-ups: a key and a tap for the parallel compressor.** The parallel compressor listens to the
   strip's key input while **KEY** is lit in the PARALLEL section (`pcomp.key`, with a key cabled; the dynamics
   section keeps its own KEY), and `pcomp.pre`, in the rack's channel panel, compresses the signal the insert chain
