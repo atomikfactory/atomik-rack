@@ -365,6 +365,9 @@ pub struct PianoRollView {
     snap: Snap,
     vp: ViewportState,
     clip_id: Option<ClipId>,
+    /// The note track whose own controller lanes the roll edits instead of a clip (the track
+    /// mode: see [`Self::open_track`]). `clip` then holds a stand-in clip that covers the song.
+    track: Option<DeviceKey>,
     clip: Option<Clip>,
     /// The document revision and clip id [`Self::sync_at`] last read the clip at.
     clip_rev: Option<(u64, Option<ClipId>)>,
@@ -502,6 +505,7 @@ impl PianoRollView {
             snap: Snap::default(),
             vp: ViewportState::new(),
             clip_id: None,
+            track: None,
             clip_rev: None,
             masked: Vec::new(),
             doc_rev: None,
@@ -546,6 +550,7 @@ impl PianoRollView {
             self.latent = None;
         }
         self.clip_id = Some(id);
+        self.track = None;
         self.clip = None;
         self.clip_rev = None;
         self.drag = Drag::None;
@@ -554,9 +559,39 @@ impl PianoRollView {
         self.repaint = true;
     }
 
+    /// Opens the controller lanes a note track holds outside its clips (`Track::controllers`, in
+    /// song ticks). The roll then shows the ruler and the controller area over the whole song,
+    /// the area always open and unfolded, and edits go to the track (`SetTrackControllers`);
+    /// there are no notes to draw, so the grid, the keys and the velocity lane are not shown.
+    pub fn open_track(&mut self, device: DeviceKey) {
+        if self.track.as_ref() != Some(&device) {
+            self.ctl_sel.clear();
+            self.msg_sel = None;
+            self.ctl_focus = false;
+        }
+        self.selection.clear();
+        self.latent = None;
+        self.track = Some(device);
+        self.clip_id = None;
+        self.clip = None;
+        self.clip_rev = None;
+        self.device = None;
+        self.drag = Drag::None;
+        self.ctl.messages = false;
+        self.fit_pending = true;
+        self.rows_dirty = true;
+        self.repaint = true;
+    }
+
+    /// The note track whose own controller lanes the roll shows (see [`Self::open_track`]).
+    pub fn track(&self) -> Option<&DeviceKey> {
+        self.track.as_ref()
+    }
+
     /// Closes the roll (it then ignores input and paints an empty state).
     pub fn close(&mut self) {
         self.clip_id = None;
+        self.track = None;
         self.clip = None;
         self.clip_rev = None;
         self.device = None;
@@ -856,18 +891,28 @@ impl PianoRollView {
     /// Whether the controller lane (pitch bend, aftertouch and CC lanes) is shown: the area is
     /// open and not folded to its chip row.
     pub fn controllers_open(&self) -> bool {
-        self.ctl.open && !self.ctl.folded
+        self.ctl_shown() && !self.ctl_is_folded()
+    }
+
+    /// The controller area is shown: switched on, or always in the track mode.
+    fn ctl_shown(&self) -> bool {
+        self.ctl.open || self.track.is_some()
+    }
+
+    /// The controller area is folded to its chip row (never in the track mode).
+    fn ctl_is_folded(&self) -> bool {
+        self.ctl.folded && self.track.is_none()
     }
 
     /// Whether the controller area is folded to its chip row.
     pub fn controllers_folded(&self) -> bool {
-        self.ctl.folded
+        self.ctl_is_folded()
     }
 
     /// Folds the controller lane away (the chip row stays) or unfolds it, the way an automation
     /// lane folds in the arrangement.
     pub fn set_controllers_folded(&mut self, folded: bool) {
-        if folded != self.ctl.folded {
+        if folded != self.ctl.folded && self.track.is_none() {
             self.ctl.folded = folded;
             self.ctl_sel.clear();
             self.ctl_focus = false;
@@ -879,7 +924,7 @@ impl PianoRollView {
 
     /// Shows or hides the controller area under the velocity lane.
     pub fn set_controllers_open(&mut self, open: bool) {
-        if open != self.ctl.open {
+        if open != self.ctl.open && self.track.is_none() {
             self.ctl.open = open;
             self.clamp_scroll();
             self.repaint = true;
@@ -921,23 +966,27 @@ impl PianoRollView {
     /// True while the controller points are what Select All, Delete, Copy and Cut act on: the
     /// area is shown, a press in its lane made them the focus and some point is selected.
     pub fn controller_focus(&self) -> bool {
-        self.ctl.open && self.ctl_focus && !self.ctl_sel.is_empty()
+        self.ctl_shown() && self.ctl_focus && !self.ctl_sel.is_empty()
     }
 
     /// True while the message lane is shown and a program change or SysEx message is selected in
     /// it: Delete then removes the message.
     pub fn message_focus(&self) -> bool {
-        self.ctl.open && self.ctl.messages && self.ctl_focus && self.msg_sel.is_some()
+        self.ctl_shown() && self.ctl.messages && self.ctl_focus && self.msg_sel.is_some()
     }
 
     /// Whether the controller area shows the program changes and SysEx messages.
     pub fn messages_open(&self) -> bool {
-        self.ctl.open && self.ctl.messages
+        self.ctl_shown() && self.ctl.messages
     }
 
     /// Shows the program changes and SysEx messages in the controller area (opening it), or goes
     /// back to the controller lanes.
     pub fn set_messages_open(&mut self, on: bool) {
+        // The messages belong to clips: the track mode has none.
+        if on && self.track.is_some() {
+            return;
+        }
         if on {
             self.set_controllers_open(true);
         }
@@ -1037,7 +1086,11 @@ impl PianoRollView {
 
     /// The height the controller area takes at the bottom of the roll (0 while it is hidden).
     fn ctl_height(&self) -> f64 {
-        if !self.ctl.open {
+        if self.track.is_some() {
+            // The track mode gives the area everything under the ruler.
+            let top = self.bounds.y0 + HEADER_HEIGHT + ROLL_RULER_HEIGHT;
+            (self.bounds.y1 - top).max(CTL_HEADER_HEIGHT)
+        } else if !self.ctl.open {
             0.0
         } else if self.ctl.folded {
             CTL_HEADER_HEIGHT
@@ -1254,6 +1307,10 @@ impl PianoRollView {
     }
 
     fn sync_from(&mut self, doc: &RackDoc, _registry: &Registry, revision: Option<u64>) {
+        if let Some(device) = self.track.clone() {
+            self.sync_track(doc, &device, revision);
+            return;
+        }
         let Some(id) = self.clip_id else {
             return;
         };
@@ -1303,6 +1360,51 @@ impl PianoRollView {
             self.repaint = true;
         }
         self.seen = self.selection.items().clone();
+        self.sync_rest(doc);
+    }
+
+    /// The track mode's sync: the stand-in clip is the track's own controller lanes over the
+    /// whole song (it has no notes), and is absent when the track is gone or plays no notes.
+    fn sync_track(&mut self, doc: &RackDoc, device: &DeviceKey, revision: Option<u64>) {
+        if let Some(rev) = revision
+            && self.clip_rev == Some((rev, None))
+            && self.clip.is_some()
+        {
+            self.sync_rest(doc);
+            return;
+        }
+        self.clip_rev = revision.map(|rev| (rev, None));
+        let found = doc
+            .song
+            .track(device)
+            .filter(|t| !t.is_audio() && !t.is_automation_only());
+        let clip = found.map(|t| Clip {
+            id: ClipId(0),
+            start: 0,
+            length: doc.song.end.max(PPQ),
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            name: None,
+            color: None,
+            scale: None,
+            controllers: t.controllers.clone(),
+            param_lanes: Vec::new(),
+            midi: Default::default(),
+            groove: None,
+            grid: None,
+            content: ClipContent::Notes(atomik_model::NoteList::new()),
+        });
+        let meter = Meter::at(&doc.song, 0);
+        let same = self.clip == clip && self.device.is_some() == clip.is_some();
+        if !same || meter != self.meter {
+            self.device = clip.is_some().then(|| device.clone());
+            self.clip = clip;
+            self.meter = meter;
+            self.bars = Bars::single(meter);
+            self.prune_controller_selection();
+            self.repaint = true;
+        }
         self.sync_rest(doc);
     }
 
@@ -1588,6 +1690,8 @@ impl PianoRollView {
             return Hit::None;
         }
         if pos.y < b.y0 + HEADER_HEIGHT {
+            // The track mode has no notes to quantize and no scale: those buttons are not there.
+            let track = self.track.is_some();
             let item = [
                 TopItem::Snap,
                 TopItem::Quantize,
@@ -1595,8 +1699,9 @@ impl PianoRollView {
                 TopItem::Close,
             ]
             .into_iter()
+            .filter(|i| !track || matches!(i, TopItem::Snap | TopItem::Close))
             .chain(Tool::NOTE.into_iter().map(TopItem::Tool))
-            .chain(TopItem::SCALE_BAR)
+            .chain(TopItem::SCALE_BAR.into_iter().filter(|_| !track))
             .find(|i| self.top_rect(*i).contains(pos));
             return Hit::Top(item);
         }
@@ -1604,10 +1709,11 @@ impl PianoRollView {
         if pos.y < g.y0 {
             return if pos.x >= g.x0 { Hit::Ruler } else { Hit::None };
         }
-        if self.ctl.open && pos.y >= self.velocity_rect().y1 {
+        if self.ctl_shown() && pos.y >= self.velocity_rect().y1 {
             let a = self.controller_area();
             if pos.y < a.y0 + CTL_HEADER_HEIGHT {
-                if cl::fold_rect(a.x0, a.y0).inflate(2.0, 2.0).contains(pos) {
+                if self.track.is_none() && cl::fold_rect(a.x0, a.y0).inflate(2.0, 2.0).contains(pos)
+                {
                     return Hit::CtlFold;
                 }
                 return match cl::chip_at(self.ctl.messages, self.axis.x0, a.y0, pos.x, pos.y) {
@@ -1667,7 +1773,7 @@ impl PianoRollView {
             Hit::CtlFold => {
                 let a = self.controller_area();
                 let rect = cl::fold_rect(a.x0, a.y0);
-                let text = if self.ctl.folded {
+                let text = if self.ctl_is_folded() {
                     "Unfold the controller lane"
                 } else {
                     "Fold the controller lane away, keeping the lane chips"
@@ -2292,8 +2398,18 @@ impl PianoRollView {
         t.max(0)
     }
 
-    /// One `SetClipControllers` for the open clip.
+    /// One `SetClipControllers` for the open clip, or in the track mode one
+    /// `SetTrackControllers` for the track.
     fn ctl_command(&self, lanes: Vec<ControllerLane>, merge: Option<u64>) -> Option<UiAction> {
+        if let Some(device) = &self.track {
+            return Some(UiAction::Command(Command::Song(
+                SongCommand::SetTrackControllers {
+                    device: device.clone(),
+                    lanes,
+                    merge,
+                },
+            )));
+        }
         Some(UiAction::Command(Command::Song(
             SongCommand::SetClipControllers {
                 clip: self.clip_id?,
@@ -2412,6 +2528,7 @@ impl PianoRollView {
         let (top, h) = self.ctl_range();
         let curve = self.ctl.new_curve();
         let id = self.clip_id;
+        let track = self.track.clone();
         let Drag::Ctl {
             original,
             current,
@@ -2454,7 +2571,15 @@ impl PianoRollView {
         };
         let mut sel = None;
         if next != *current {
-            if let Some(id) = id {
+            if let Some(device) = track {
+                out.push(UiAction::Command(Command::Song(
+                    SongCommand::SetTrackControllers {
+                        device,
+                        lanes: next.clone(),
+                        merge: Some(*merge),
+                    },
+                )));
+            } else if let Some(id) = id {
                 out.push(UiAction::Command(Command::Song(
                     SongCommand::SetClipControllers {
                         clip: id,
@@ -3101,7 +3226,7 @@ impl PianoRollView {
         let step = self.step(Modifiers::NONE).unwrap_or(OFF_LENGTH);
         match id {
             "edit.select_all" => {
-                if self.ctl.open && self.ctl_focus {
+                if self.ctl_shown() && self.ctl_focus {
                     self.ctl_sel = (0..self.ctl_points().len()).collect();
                 } else {
                     self.selection.set(0..self.notes().len());
@@ -3143,7 +3268,7 @@ impl PianoRollView {
                         None => return CommandOutcome::Declined,
                     },
                 };
-                if !self.ctl.open || self.ctl_points().is_empty() {
+                if !self.ctl_shown() || self.ctl_points().is_empty() {
                     return CommandOutcome::Declined;
                 }
                 match self.thin_controllers(fraction) {
@@ -3841,11 +3966,15 @@ impl PianoRollView {
         c.push_clip(&self.outer.into());
         sp::rect(c, self.outer, self.st.background);
         if self.clip.is_some() {
-            self.paint_grid(c);
-            self.paint_ruler(c);
-            self.paint_keyboard(c);
-            self.paint_velocity(c);
-            if self.ctl.open {
+            if self.track.is_none() {
+                self.paint_grid(c);
+                self.paint_ruler(c);
+                self.paint_keyboard(c);
+                self.paint_velocity(c);
+            } else {
+                self.paint_ruler(c);
+            }
+            if self.ctl_shown() {
                 self.paint_controllers(c);
             }
         } else {
@@ -3861,7 +3990,7 @@ impl PianoRollView {
             );
         }
         self.paint_top_bar(c);
-        if self.clip.is_some() {
+        if self.clip.is_some() && self.track.is_none() {
             self.paint_scale_bar(c);
             self.paint_inspector(c);
         }
@@ -4293,23 +4422,26 @@ impl PianoRollView {
                 );
             }
         }
-        // The fold button: a chevron that points down while the lane is shown.
-        let fold = cl::fold_rect(area.x0, area.y0);
-        let mid = fold.center();
-        let hot = self.hover == Hit::CtlFold;
-        let mut chevron = BezPath::new();
-        if self.ctl.folded {
-            chevron.move_to(pt(mid.x - 2.0, mid.y - 4.0));
-            chevron.line_to(pt(mid.x + 3.0, mid.y));
-            chevron.line_to(pt(mid.x - 2.0, mid.y + 4.0));
-        } else {
-            chevron.move_to(pt(mid.x - 4.0, mid.y - 2.0));
-            chevron.line_to(pt(mid.x, mid.y + 3.0));
-            chevron.line_to(pt(mid.x + 4.0, mid.y - 2.0));
+        // The fold button: a chevron that points down while the lane is shown (the track mode
+        // has none: its lane is never folded).
+        if self.track.is_none() {
+            let fold = cl::fold_rect(area.x0, area.y0);
+            let mid = fold.center();
+            let hot = self.hover == Hit::CtlFold;
+            let mut chevron = BezPath::new();
+            if self.ctl.folded {
+                chevron.move_to(pt(mid.x - 2.0, mid.y - 4.0));
+                chevron.line_to(pt(mid.x + 3.0, mid.y));
+                chevron.line_to(pt(mid.x - 2.0, mid.y + 4.0));
+            } else {
+                chevron.move_to(pt(mid.x - 4.0, mid.y - 2.0));
+                chevron.line_to(pt(mid.x, mid.y + 3.0));
+                chevron.line_to(pt(mid.x + 4.0, mid.y - 2.0));
+            }
+            let colour = if hot { t.text } else { t.text_muted };
+            c.stroke(&chevron.into(), &Stroke::new(1.4), &colour.into());
         }
-        let colour = if hot { t.text } else { t.text_muted };
-        c.stroke(&chevron.into(), &Stroke::new(1.4), &colour.into());
-        if self.ctl.folded {
+        if self.ctl_is_folded() {
             return;
         }
         if self.ctl.messages {
@@ -4709,7 +4841,11 @@ impl PianoRollView {
         sp::rect(c, Rect::new(r.x0, r.y0, r.x0 + 4.0, r.y1), self.accent);
         c.text(
             &TextRun::new(
-                "PIANO ROLL",
+                if self.track.is_some() {
+                    "TRACK CONTROLLERS"
+                } else {
+                    "PIANO ROLL"
+                },
                 pt(r.x0 + 14.0, r.y0 + 18.0),
                 8.0,
                 t.text_muted,
@@ -4723,11 +4859,15 @@ impl PianoRollView {
                 clip.start / bar + 1,
                 (clip.start + clip.length + bar - 1) / bar,
             );
-            let text = format!(
-                "{}  ·  bars {b0}–{b1}  ·  {} notes",
-                self.title,
-                self.notes().len()
-            );
+            let text = if self.track.is_some() {
+                format!("{}  ·  bars {b0}–{b1}  ·  outside the clips", self.title)
+            } else {
+                format!(
+                    "{}  ·  bars {b0}–{b1}  ·  {} notes",
+                    self.title,
+                    self.notes().len()
+                )
+            };
             let text = fit_label(
                 &text,
                 (self.top_rect(TopItem::Tool(Tool::Select)).x0 - r.x0 - 100.0).max(20.0),
@@ -4781,42 +4921,44 @@ impl PianoRollView {
                 Align::Center,
             );
         }
-        let qr = self.top_rect(TopItem::Quantize);
-        sp::button(
-            c,
-            st,
-            qr,
-            "",
-            None,
-            self.hover == Hit::Top(Some(TopItem::Quantize)),
-        );
-        sp::label(
-            c,
-            "QUANT",
-            qr.center().x,
-            qr.center().y + 3.5,
-            9.0,
-            t.text,
-            Align::Center,
-        );
-        let or = self.top_rect(TopItem::QuantizeOptions);
-        sp::button(
-            c,
-            st,
-            or,
-            "",
-            None,
-            self.hover == Hit::Top(Some(TopItem::QuantizeOptions)),
-        );
-        sp::label(
-            c,
-            "...",
-            or.center().x,
-            or.center().y + 3.5,
-            9.0,
-            t.text,
-            Align::Center,
-        );
+        if self.track.is_none() {
+            let qr = self.top_rect(TopItem::Quantize);
+            sp::button(
+                c,
+                st,
+                qr,
+                "",
+                None,
+                self.hover == Hit::Top(Some(TopItem::Quantize)),
+            );
+            sp::label(
+                c,
+                "QUANT",
+                qr.center().x,
+                qr.center().y + 3.5,
+                9.0,
+                t.text,
+                Align::Center,
+            );
+            let or = self.top_rect(TopItem::QuantizeOptions);
+            sp::button(
+                c,
+                st,
+                or,
+                "",
+                None,
+                self.hover == Hit::Top(Some(TopItem::QuantizeOptions)),
+            );
+            sp::label(
+                c,
+                "...",
+                or.center().x,
+                or.center().y + 3.5,
+                9.0,
+                t.text,
+                Align::Center,
+            );
+        }
         let cr = self.top_rect(TopItem::Close);
         sp::button(
             c,
