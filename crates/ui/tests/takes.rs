@@ -9,7 +9,8 @@ use atomik_model::{Clip, Command, Document, SongCommand};
 use atomik_ui::kurbo::Point;
 use atomik_ui::timeline::Snap;
 use atomik_ui::{
-    ArrangementView, DisplayList, Key, Modifiers, PointerButton, TextEngine, UiAction, UiEvent,
+    ArrangementView, DisplayList, Key, Modifiers, PointerButton, TextEngine, Tool, UiAction,
+    UiEvent,
 };
 use std::path::PathBuf;
 use support::cpu::CpuCanvas;
@@ -879,4 +880,165 @@ fn the_piano_roll_opens_a_take_and_reads_its_notes() {
     };
     assert_eq!(roll.notes(), notes.as_slice());
     assert_eq!(roll.track_device(), Some(&key("keys")));
+}
+
+// ------------------------------------------------------------------ razor and linked comp
+
+#[test]
+fn the_razor_in_a_take_row_cuts_the_comp_at_the_click() {
+    let (mut d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    v.set_tool(Tool::Razor);
+    v.set_snap(Snap::Off);
+    // Take 0 is under the comp nowhere yet: the comp is the layered stack (take 1 on top where
+    // take 2 is short). A razor click in take 0 at 4 BAR + 1 BAR / 2 cuts to the segment's end.
+    let before = group(&d).comp;
+    let at = 4 * BAR + BAR / 2;
+    let end = before
+        .iter()
+        .find(|s| s.start <= at && at < s.end)
+        .unwrap()
+        .end;
+    let p = v.take_point(1, 0, at).unwrap();
+    let actions = click(&d, &reg, &mut v, p);
+    let cmds = song_commands(&actions);
+    assert_eq!(cmds.len(), 1, "{cmds:?}");
+    let SongCommand::SetCompSegment {
+        group: 1,
+        take: 0,
+        start,
+        end: e,
+    } = cmds[0]
+    else {
+        panic!("{cmds:?}");
+    };
+    assert!(
+        (start - at).abs() < BAR / 8,
+        "the cut is at the pointer: {start}"
+    );
+    assert_eq!(e, end);
+    apply(&mut d, &reg, &actions);
+    assert_eq!(group(&d).take_at(start), Some(0));
+    assert_eq!(
+        group(&d).take_at(start - 1),
+        before
+            .iter()
+            .find(|s| s.start < start && start <= s.end)
+            .map(|s| s.take)
+    );
+    d.undo().unwrap();
+    assert_eq!(group(&d).comp, before);
+}
+
+#[test]
+fn a_razor_click_that_changes_nothing_sends_nothing() {
+    let (d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    v.set_tool(Tool::Razor);
+    v.set_snap(Snap::Bar);
+    // The top take already plays the start of the group.
+    let top = group(&d).take_at(4 * BAR).unwrap();
+    let p = v.take_point(1, top, 4 * BAR).unwrap();
+    let actions = click(&d, &reg, &mut v, p);
+    assert!(song_commands(&actions).is_empty(), "{actions:?}");
+}
+
+#[test]
+fn the_razor_dragged_across_a_take_row_comps_the_range() {
+    let (d, reg, mut v) = setup();
+    open(&d, &reg, &mut v);
+    v.set_tool(Tool::Razor);
+    let a = v.take_point(1, 1, 4 * BAR + PPQ / 4).unwrap();
+    let b = v.take_point(1, 1, 5 * BAR - PPQ / 4).unwrap();
+    let mid = Point::new((a.x + b.x) / 2.0, a.y);
+    let moves = |p| UiEvent::PointerMove {
+        pos: p,
+        modifiers: Modifiers::NONE,
+    };
+    let actions = run(&d, &reg, &mut v, &[down(a), moves(mid), moves(b), up(b)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetCompSegment {
+            group: 1,
+            take: 1,
+            start: 4 * BAR,
+            end: 5 * BAR
+        }]
+    );
+}
+
+/// The setup with a second group of two takes on the `lead` track, both groups open and the
+/// tracks `lead` and `keys` selected together.
+fn linked_setup() -> (Document, atomik_device_sdk::Registry, ArrangementView) {
+    let (mut d, reg, mut v) = setup();
+    d.apply(
+        Command::Song(SongCommand::NewTakeGroup {
+            device: key("lead"),
+            lane: 0,
+            takes: (0..2)
+                .map(|i| notes_clip(50, 4 * BAR, 2 * BAR, vec![n(0, PPQ, 60 + i, 0.8)]))
+                .collect(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    open(&d, &reg, &mut v);
+    let toggle = v.take_group_toggle_center(2).expect("a strip");
+    let actions = click(&d, &reg, &mut v, toggle);
+    assert!(!song_commands(&actions).is_empty());
+    v.set_takes_open(2, true);
+    v.sync(d.doc(), &reg);
+    v.set_selected_track(Some(key("lead")));
+    v.command("sequencer.extend_track_selection_down", None, d.doc(), &reg);
+    assert_eq!(v.selected_tracks(), [key("lead"), key("keys")]);
+    (d, reg, v)
+}
+
+#[test]
+fn a_comp_drag_with_several_tracks_selected_comps_every_group_in_one_step() {
+    let (mut d, reg, mut v) = linked_setup();
+    let a = v.take_point(1, 0, 4 * BAR + PPQ / 4).unwrap();
+    let b = v.take_point(1, 0, 5 * BAR - PPQ / 4).unwrap();
+    let mid = Point::new((a.x + b.x) / 2.0, a.y);
+    let moves = |p| UiEvent::PointerMove {
+        pos: p,
+        modifiers: Modifiers::NONE,
+    };
+    let actions = run(&d, &reg, &mut v, &[down(a), moves(mid), moves(b), up(b)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetLinkedComp {
+            groups: vec![1, 2],
+            take: 0,
+            start: 4 * BAR,
+            end: 5 * BAR
+        }]
+    );
+    assert_eq!(v.selected_tracks().len(), 2, "the selection stays");
+    apply(&mut d, &reg, &actions);
+    for (_, _, g) in d.doc().song.take_groups() {
+        assert_eq!(g.take_at(4 * BAR + 1), Some(0));
+    }
+    d.undo().unwrap();
+    for (_, _, g) in d.doc().song.take_groups() {
+        assert_ne!(g.take_at(4 * BAR + 1), Some(0));
+    }
+}
+
+#[test]
+fn a_comp_drag_in_an_unselected_track_is_not_linked() {
+    let (d, reg, mut v) = linked_setup();
+    v.set_selected_track(Some(key("bass")));
+    let a = v.take_point(1, 0, 4 * BAR + PPQ / 4).unwrap();
+    let b = v.take_point(1, 0, 5 * BAR - PPQ / 4).unwrap();
+    let moves = |p| UiEvent::PointerMove {
+        pos: p,
+        modifiers: Modifiers::NONE,
+    };
+    let actions = run(&d, &reg, &mut v, &[down(a), moves(b), up(b)]);
+    assert!(matches!(
+        song_commands(&actions)[..],
+        [SongCommand::SetCompSegment { group: 1, .. }]
+    ));
 }
