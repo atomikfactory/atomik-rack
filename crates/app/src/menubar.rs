@@ -655,6 +655,7 @@ mod tests {
             compensation: true,
             align_returns: true,
             send_follow: true,
+            link_faders: false,
             console_devices: false,
             console_links: false,
             cpu_meters: false,

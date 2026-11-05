@@ -24,6 +24,7 @@ fn vca_doc() -> RackDoc {
             mute: false,
             solo: false,
             members: vec![key("ch-bass"), key("ch-lead")],
+            follows: None,
         },
         VcaGroup {
             id: 2,
@@ -33,6 +34,7 @@ fn vca_doc() -> RackDoc {
             mute: true,
             solo: false,
             members: vec![key("ch-keys")],
+            follows: None,
         },
     ];
     doc
@@ -574,6 +576,7 @@ fn a_track_whose_channel_is_in_a_group_gets_the_groups_colour_bar() {
         mute: false,
         solo: false,
         members: vec![key("ch-bass")],
+        follows: None,
     });
     assert!(paint(&doc).contains(chip), "the bar shows the colour");
     // A group without a colour still marks its tracks (neutral), and leaving it removes the bar.
@@ -606,4 +609,227 @@ fn vca_items(v: &ConsoleView) -> Vec<String> {
         "{items:?}"
     );
     items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
+}
+
+// ---------------------------------------------------------------- link faders
+
+/// The fader batches a drag of `from`'s fader by a tenth of its travel sends.
+fn fader_drag(
+    v: &mut ConsoleView,
+    doc: &RackDoc,
+    reg: &Reg,
+    from: &str,
+) -> Vec<Vec<(String, String, f32)>> {
+    let l = v.strip_layout().unwrap().clone();
+    let fader = l.controls.iter().find(|c| c.param == "fader").unwrap();
+    let travel = fader.rect.height() - 16.0;
+    let p = v.control_center(&key(from), "fader").unwrap();
+    v.handle(&down(p), doc, reg);
+    let a = v.handle(
+        &mv(p + atomik_ui::kurbo::Vec2::new(0.0, travel * 0.1)),
+        doc,
+        reg,
+    );
+    v.handle(&up(p), doc, reg);
+    commands(&a)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Batch(list) => Some(
+                list.into_iter()
+                    .filter_map(|c| match c {
+                        Command::SetParam {
+                            key, param, value, ..
+                        } => Some((key.0, param, value)),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn link_faders_moves_the_levels_of_the_whole_group_without_a_selection() {
+    let (doc, reg, mut v) = setup();
+    assert!(!v.link_faders());
+    // Off: a lone fader moves alone.
+    assert!(fader_drag(&mut v, &doc, &reg, "ch-bass").is_empty());
+    v.set_link_faders(true);
+    assert!(v.link_faders());
+    let steps = fader_drag(&mut v, &doc, &reg, "ch-bass");
+    assert_eq!(steps.len(), 1, "one batch for the step");
+    let names: Vec<&str> = steps[0].iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(
+        names,
+        ["ch-bass", "ch-lead"],
+        "the members of Drums, not Keys"
+    );
+    assert!(steps[0].iter().all(|s| s.1 == "fader"));
+    // The strips keep their offsets: the same dB for both.
+    let db = |pos: f32| 60.0 * (pos / 0.75).log10();
+    let (a, b) = (db(steps[0][0].2) - db(0.62), db(steps[0][1].2) - db(0.75));
+    assert!((a - b).abs() < 1e-3 && a < -1.0, "{a} {b}");
+}
+
+#[test]
+fn link_faders_leaves_a_strip_outside_any_group_alone_and_a_selection_wins() {
+    let (mut doc, reg, mut v) = setup();
+    v.set_link_faders(true);
+    // `ch-keys` is in Keys alone: nothing else to move.
+    assert!(fader_drag(&mut v, &doc, &reg, "ch-keys").is_empty());
+    doc.console.vcas[1].members.clear();
+    v.sync(&doc, &reg);
+    assert!(fader_drag(&mut v, &doc, &reg, "ch-keys").is_empty());
+    // A multiple selection takes its own strips along, group or not.
+    v.set_selected_strips(&[key("ch-bass"), key("ch-keys")]);
+    v.sync(&doc, &reg);
+    let steps = fader_drag(&mut v, &doc, &reg, "ch-bass");
+    let names: Vec<&str> = steps[0].iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(names, ["ch-bass", "ch-keys"]);
+}
+
+// ---------------------------------------------------------------- dragging a track header
+
+/// The song of the arrangement tests with a console channel for each of `bass`, `lead` and
+/// `keys`, and a group `Drums` (id 1) holding the channel of `bass`.
+fn grouped_song() -> (
+    RackDoc,
+    atomik_device_sdk::Registry,
+    atomik_ui::ArrangementView,
+) {
+    use atomik_model::ConsoleChannel;
+    let reg = registry();
+    let mut doc = support::song::song_doc();
+    for (channel, source) in [
+        ("ch-bass", "bass"),
+        ("ch-lead", "lead"),
+        ("ch-keys", "keys"),
+    ] {
+        doc.console.channels.push(ConsoleChannel {
+            channel: key(channel),
+            source: Some(key(source)),
+        });
+    }
+    doc.console.vcas.push(VcaGroup {
+        id: 1,
+        name: "Drums".into(),
+        color: Some([0xe0, 0x5a, 0x4f]),
+        level_db: 0.0,
+        mute: false,
+        solo: false,
+        members: vec![key("ch-bass")],
+        follows: None,
+    });
+    let v = support::song::arrangement(&doc, &reg);
+    (doc, reg, v)
+}
+
+/// The point on the group bar at the right edge of `device`'s header.
+fn bar_of(v: &atomik_ui::ArrangementView, device: &str) -> Point {
+    let lane = v.lane_rect(&key(device), 0).unwrap();
+    Point::new(lane.x0 - 6.0, lane.y0 + 12.0)
+}
+
+#[test]
+fn a_header_dropped_on_the_bar_of_a_group_joins_that_group() {
+    let (doc, reg, mut v) = grouped_song();
+    let start = v.track_header_center(&key("lead")).unwrap();
+    let on_bar = bar_of(&v, "bass");
+    v.handle(&down(start), &doc, &reg);
+    v.handle(
+        &mv(Point::new(start.x, (start.y + on_bar.y) / 2.0)),
+        &doc,
+        &reg,
+    );
+    v.handle(&mv(on_bar), &doc, &reg);
+    assert_eq!(v.vca_drop(), Some(1), "the bar is the target");
+    assert!(v.track_drop().is_none(), "no insertion line over the bar");
+    let actions = v.handle(&up(on_bar), &doc, &reg);
+    assert_eq!(
+        console_cmds(&actions),
+        [ConsoleCommand::AssignToVca {
+            vca: Some(1),
+            strips: vec![key("ch-lead")],
+        }]
+    );
+    assert!(commands(&actions).len() == 1, "nothing else is sent");
+    assert_eq!(v.vca_drop(), None, "the drag is over");
+}
+
+#[test]
+fn a_header_dragged_elsewhere_still_moves_and_several_tracks_join_together() {
+    let (doc, reg, mut v) = grouped_song();
+    // Over the lanes (not the bar) the drag is the usual move, with a line.
+    let start = v.track_header_center(&key("lead")).unwrap();
+    let below = v.track_header_center(&key("keys")).unwrap();
+    v.handle(&down(start), &doc, &reg);
+    v.handle(
+        &mv(Point::new(start.x, (start.y + below.y) / 2.0)),
+        &doc,
+        &reg,
+    );
+    v.handle(&mv(Point::new(below.x, below.y + 30.0)), &doc, &reg);
+    assert_eq!(v.vca_drop(), None);
+    v.handle(&up(below), &doc, &reg);
+
+    // Two selected tracks dropped on the bar join as one command.
+    let (doc, reg, mut v) = grouped_song();
+    v.set_selected_track(Some(key("lead")));
+    v.toggle_selected_track(&key("keys"));
+    let start = v.track_header_center(&key("lead")).unwrap();
+    let on_bar = bar_of(&v, "bass");
+    v.handle(&down(start), &doc, &reg);
+    v.handle(
+        &mv(Point::new(start.x, (start.y + on_bar.y) / 2.0)),
+        &doc,
+        &reg,
+    );
+    v.handle(&mv(on_bar), &doc, &reg);
+    let actions = v.handle(&up(on_bar), &doc, &reg);
+    assert_eq!(
+        console_cmds(&actions),
+        [ConsoleCommand::AssignToVca {
+            vca: Some(1),
+            strips: vec![key("ch-lead"), key("ch-keys")],
+        }]
+    );
+}
+
+#[test]
+fn the_bar_of_a_track_in_no_group_is_not_a_target() {
+    let (doc, reg, mut v) = grouped_song();
+    let start = v.track_header_center(&key("keys")).unwrap();
+    let lead_bar = bar_of(&v, "lead");
+    v.handle(&down(start), &doc, &reg);
+    v.handle(
+        &mv(Point::new(start.x, (start.y + lead_bar.y) / 2.0)),
+        &doc,
+        &reg,
+    );
+    v.handle(&mv(lead_bar), &doc, &reg);
+    assert_eq!(v.vca_drop(), None, "lead has no group");
+    v.handle(&up(lead_bar), &doc, &reg);
+}
+
+#[test]
+fn a_group_that_follows_a_folder_offers_to_stop() {
+    let (mut doc, reg, mut v) = setup();
+    let p = part(&v, 1, VcaPart::Plate);
+    right_click(&mut v, &doc, &reg, p);
+    assert!(!v.menu_items().iter().any(|s| s == "Stop following folder"));
+    v.handle(&key_event(Key::Escape), &doc, &reg);
+    doc.console.vcas[0].follows = Some(1);
+    v.sync(&doc, &reg);
+    right_click(&mut v, &doc, &reg, p);
+    let items = v.menu_items();
+    assert_eq!(items[items.len() - 2], "Stop following folder");
+    let a = pick(&mut v, &doc, &reg, "Stop following folder");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetVcaFollow {
+            vca: 1,
+            folder: None
+        }]
+    );
 }

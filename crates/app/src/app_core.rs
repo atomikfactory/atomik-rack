@@ -2316,7 +2316,40 @@ impl<S: EngineSink> AppCore<S> {
             can_add: !strips.is_empty() && !console.vcas.is_empty(),
             can_remove: strips.iter().any(|s| console.vca_of(s).is_some()),
             can_delete: !console.vcas.is_empty(),
+            can_folder: self.followable_folder(pane).is_some(),
         }
+    }
+
+    /// The track folder Create VCA from Folder works on: the folder selected in the arrangement
+    /// when no group follows it and one of its tracks has a console channel.
+    fn followable_folder(&self, pane: Pane) -> Option<u32> {
+        if pane != Pane::Arrangement {
+            return None;
+        }
+        let folder = self.arrangement().selected_group()?;
+        let doc = self.doc();
+        let free = doc.console.vcas.iter().all(|v| v.follows != Some(folder));
+        (free && !doc.folder_strips(folder).is_empty()).then_some(folder)
+    }
+
+    /// Mixer > Create VCA from Folder: a group named after the selected folder (or `VCA n` when
+    /// that name is taken) that follows the folder, in one undo step. False, with a message, when
+    /// no folder is selected or the model refuses.
+    pub fn create_vca_for_folder(&mut self, pane: Pane) -> bool {
+        let Some(folder) = self.followable_folder(pane) else {
+            self.reject(
+                "Select a track folder (with no VCA following it) to make a VCA from".into(),
+            );
+            return false;
+        };
+        let doc = self.doc();
+        let named = doc.song.org.group(folder).map(|g| g.name.clone());
+        let name = named
+            .filter(|n| doc.console.vca_by_name(n).is_none())
+            .unwrap_or_else(|| doc.console.default_vca_name());
+        let command =
+            Command::Console(atomik_model::ConsoleCommand::CreateVcaForFolder { folder, name });
+        self.apply_command(command).is_ok()
     }
 
     /// Mixer > Create VCA from Selection: a group named `VCA n` over the selected strips (they

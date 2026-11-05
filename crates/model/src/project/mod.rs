@@ -678,6 +678,7 @@ fn load_value(
         return Ok(migrate_v1(doc, registry, warnings));
     }
     doc.console = load_console(&obj["console"], &root.field("console"), &doc, version)?;
+    drop_stale_follows(&mut doc);
     if let Some(maps) = obj.get("midi_maps") {
         doc.midi_maps = crate::midi_map_io::load_midi_maps(maps, &root.field("midi_maps"))?;
     }
@@ -695,6 +696,25 @@ fn load_value(
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)
+}
+
+/// A VCA group that follows a track folder the song does not have stops following and keeps its
+/// members (a hand-edited file; the model never writes one).
+fn drop_stale_follows(doc: &mut RackDoc) {
+    let gone: Vec<usize> = doc
+        .console
+        .vcas
+        .iter()
+        .enumerate()
+        .filter(|(_, g)| {
+            g.follows
+                .is_some_and(|f| doc.song.group_tracks(f).is_empty())
+        })
+        .map(|(i, _)| i)
+        .collect();
+    for i in gone {
+        doc.console.vcas[i].follows = None;
+    }
 }
 
 /// A device's column must exist and the list must be sorted by column.

@@ -613,6 +613,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.move_track_down", e.org.can_move_down),
                 item("sequencer.rename_track", e.org.track_selected),
                 item("sequencer.track_comment", e.org.track_selected),
+                item("mixer.create_vca", e.org.track_selected).labelled("Create VCA"),
                 item("sequencer.delete_track_and_device", e.org.track_selected),
                 Spec::Separator,
             ]);
@@ -638,6 +639,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     "Collapse Folder"
                 }),
                 item("sequencer.ungroup_tracks", true),
+                item("mixer.create_vca", true).labelled("Create VCA"),
+                item("mixer.create_vca_for_folder", true).labelled("Create VCA that Follows"),
                 Spec::Separator,
                 item("sequencer.move_track_up", e.org.can_move_up).labelled("Move Folder Up"),
                 item("sequencer.move_track_down", e.org.can_move_down).labelled("Move Folder Down"),
@@ -1475,6 +1478,7 @@ mod tests {
                 None,
                 None,
                 None,
+                Some("Create VCA"),
                 None,
                 Some("Fold Automation Lanes"),
                 Some("Unfold Automation Lanes")
@@ -2013,12 +2017,14 @@ mod tests {
                 "sequencer.rename_folder",
                 "sequencer.toggle_folder",
                 "sequencer.ungroup_tracks",
+                "mixer.create_vca",
+                "mixer.create_vca_for_folder",
                 "sequencer.move_track_up",
                 "sequencer.move_track_down",
             ]
         );
         assert_eq!(list[1].2, Some("Expand Folder"));
-        assert_eq!(list[3].2, Some("Move Folder Up"));
+        assert_eq!(list[5].2, Some("Move Folder Up"));
         assert_eq!(on(&list, "sequencer.move_track_up"), Some(false));
         assert_eq!(on(&list, "sequencer.move_track_down"), Some(true));
     }

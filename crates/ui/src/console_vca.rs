@@ -54,6 +54,8 @@ pub struct VcaView {
     pub solo: bool,
     /// How many strips are in the group.
     pub members: usize,
+    /// The group follows a track folder (its menu offers to stop).
+    pub follows: bool,
 }
 
 impl VcaView {
@@ -66,6 +68,7 @@ impl VcaView {
             level_db: g.level_db,
             mute: g.mute,
             solo: g.solo,
+            follows: g.follows.is_some(),
             members: g.members.len(),
         }
     }

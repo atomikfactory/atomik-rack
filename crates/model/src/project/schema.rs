@@ -331,6 +331,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Vca, "mute", 1),
     field(Vca, "solo", 1),
     field(Vca, "members", 1).req(),
+    field(Vca, "follows", 43).ignorable(),
     field(Snapshot, "id", 1).req(),
     field(Snapshot, "name", 1).req(),
     field(Snapshot, "devices", 1).req(),

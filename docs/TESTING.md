@@ -1184,6 +1184,13 @@ Hand checks, not automated (they need a real window and your ears):
 - Delete a channel that is in a group and undo it; save, close and reopen the project and check the
   groups, their colours and levels; open an older project and check that it sounds the same and
   shows no groups.
+- Select a track folder in the arrangement and choose Mixer > Create VCA from Folder (or the folder
+  row's context menu): the group takes the folder's name. Drag a track into the folder and out of it,
+  add and delete tracks in it, dissolve the folder and undo each step: the group's bars on the
+  headers, its member count and what you hear follow, and one undo takes the move and the membership
+  back together. Switch Mixer > Link Faders on, pull one member's fader and watch the others move by
+  the same dB; drag a track header onto the colour bar at the right edge of a grouped track's header
+  and check it joins the group; save and reopen the project and check the group still follows.
 
 ## Channel strip upgrades
 

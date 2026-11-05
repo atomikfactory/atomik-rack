@@ -640,6 +640,26 @@ pub enum ConsoleCommand {
         /// The member strips (may be empty).
         members: Vec<DeviceKey>,
     },
+    /// Create a VCA group called `name` that follows the track folder `folder`: its members are
+    /// the console channels of the folder's tracks (sub-folders included), kept so by the model
+    /// after every later command (see [`crate::console_vca`]). The name rules are those of
+    /// `CreateVca`. Rejected: an unknown folder, a folder another group already follows. The
+    /// tracks' channels leave the groups they were in.
+    CreateVcaForFolder {
+        /// The track folder.
+        folder: u32,
+        /// The group name.
+        name: String,
+    },
+    /// Make the VCA group `vca` follow the track folder `folder` (its members become the
+    /// folder's channels), or stop following with `None` (the members stay). Rejected: an
+    /// unknown group or folder, a folder another group already follows, and no change.
+    SetVcaFollow {
+        /// The group id.
+        vca: u32,
+        /// The folder to follow, or none.
+        folder: Option<u32>,
+    },
     /// Rename a VCA group (the same rules as `CreateVca`).
     RenameVca {
         /// The group id.

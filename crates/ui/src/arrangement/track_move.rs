@@ -9,6 +9,11 @@
 //! would refuse (the middle of another folder, a frozen track, no change) shows no line and the
 //! release does nothing. Escape cancels.
 //!
+//! A track dragged over the VCA bar at the right edge of another track's header (the bar of a
+//! track whose channel is in a group) joins that group when released there: the bar's group lights
+//! up on every member and no insertion line shows. A group that follows a folder refuses (the
+//! model says why).
+//!
 //! A press on the header of a folder row drags the folder the same way, with its tracks and
 //! sub-folders: the pointer picks the same places, and the release moves the folder into or out
 //! of another folder (`MoveGroupTo`). A folder is not copied.
@@ -17,9 +22,14 @@ use super::{ArrangementView, DRAG_THRESHOLD, Drag, RowKind, TRACK_INDENT, song_c
 use crate::action::UiAction;
 use crate::event::Modifiers;
 use crate::keymap::{GestureClass, Role};
-use atomik_model::{DeviceKey, OutlineKind, SongCommand, TrackPlace, WorkflowCommand};
+use atomik_model::{
+    Command, ConsoleCommand, DeviceKey, OutlineKind, SongCommand, TrackPlace, WorkflowCommand,
+};
 use std::collections::BTreeMap;
 use vello::kurbo::{Circle, Line, Point};
+
+/// How far left of the header's right edge a drop counts as on the VCA bar.
+const VCA_BAR_HIT: f64 = 22.0;
 
 /// Where a track drag would drop, and where its line is drawn.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,6 +57,8 @@ pub(super) struct TrackMoveDrag {
     /// The folder that is dragged, with its tracks (`devices` is empty then).
     group: Option<u32>,
     drop: Option<TrackDrop>,
+    /// The VCA group whose bar the pointer is over (the release joins it).
+    vca: Option<u32>,
 }
 
 /// An insertion place before it is turned into a command: the index among all tracks, the
@@ -69,6 +81,7 @@ impl ArrangementView {
             copy: false,
             group: None,
             drop: None,
+            vca: None,
         });
         self.drag = Drag::TrackMove;
     }
@@ -83,6 +96,7 @@ impl ArrangementView {
             copy: false,
             group: Some(group),
             drop: None,
+            vca: None,
         });
         self.drag = Drag::TrackMove;
     }
@@ -91,6 +105,26 @@ impl ArrangementView {
     /// that takes no tracks).
     pub fn track_drop(&self) -> Option<TrackDrop> {
         self.og.mv.as_ref().and_then(|d| d.drop)
+    }
+
+    /// The VCA group whose bar a running track drag is over (`None` outside a drag, or when the
+    /// pointer is not on a bar).
+    pub fn vca_drop(&self) -> Option<u32> {
+        self.og.mv.as_ref().and_then(|d| d.vca)
+    }
+
+    /// The group of the track header under `pos` when `pos` is on the group's bar (the right edge
+    /// of the header, wider than the bar it shows).
+    fn vca_bar_at(&self, pos: Point) -> Option<u32> {
+        if pos.x >= self.axis.x0 || pos.x < self.axis.x0 - VCA_BAR_HIT {
+            return None;
+        }
+        let row = self.row_at(pos.y)?;
+        let RowKind::Lane { track, .. } = row.kind else {
+            return None;
+        };
+        let device = &self.song.tracks.get(track)?.device;
+        self.vca_chips.get(device).map(|chip| chip.group)
     }
 
     /// Pointer motion during a track drag.
@@ -108,12 +142,19 @@ impl ArrangementView {
         d.moved = true;
         d.copy = copy && d.group.is_none();
         let (devices, group) = (d.devices.clone(), d.group);
+        let vca = if group.is_none() {
+            self.vca_bar_at(pos)
+        } else {
+            None
+        };
         let drop = match group {
+            _ if vca.is_some() => None,
             Some(g) => self.group_drop_at(g, pos.y),
             None => self.track_drop_at(&devices, copy, pos.y),
         };
         if let Some(d) = &mut self.og.mv {
             d.drop = drop;
+            d.vca = vca;
         }
         self.repaint = true;
     }
@@ -129,6 +170,25 @@ impl ArrangementView {
             // A press that went nowhere on one of several selected tracks picks that one.
             if d.devices.len() > 1 {
                 self.set_selected_track(Some(d.press));
+            }
+            return;
+        }
+        if let Some(vca) = d.vca {
+            let mut strips: Vec<DeviceKey> = Vec::new();
+            for device in &d.devices {
+                if let Some(channel) = self.track_channels.get(device)
+                    && !strips.contains(channel)
+                {
+                    strips.push(channel.clone());
+                }
+            }
+            if !strips.is_empty() {
+                out.push(UiAction::Command(Command::Console(
+                    ConsoleCommand::AssignToVca {
+                        vca: Some(vca),
+                        strips,
+                    },
+                )));
             }
             return;
         }
@@ -296,6 +356,33 @@ impl ArrangementView {
     /// The insertion line of a running track drag.
     pub(super) fn paint_track_drop(&self, c: &mut dyn crate::canvas::Canvas) {
         use crate::canvas::CanvasExt;
+        if let Some(vca) = self.vca_drop() {
+            // The bars of the group light up: the tracks would join these.
+            for row in &self.rows {
+                let RowKind::Lane { track, lane: 0 } = row.kind else {
+                    continue;
+                };
+                let lit = self
+                    .song
+                    .tracks
+                    .get(track)
+                    .and_then(|t| self.vca_chips.get(&t.device))
+                    .is_some_and(|chip| chip.group == vca);
+                if lit {
+                    let r = self.row_rect(row);
+                    let x = self.axis.x0;
+                    c.stroke_with(
+                        vello::kurbo::RoundedRect::from_rect(
+                            vello::kurbo::Rect::new(x - 7.0, r.y0 + 1.0, x, r.y1 - 1.0),
+                            1.5,
+                        ),
+                        1.5,
+                        self.st.selection,
+                    );
+                }
+            }
+            return;
+        }
         let Some(drop) = self.track_drop() else {
             return;
         };

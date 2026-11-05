@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mixer group follow-ups: a VCA that follows a folder, Link Faders, Create VCA in the menus, named group items and
+  dragging a track header onto a group.** A VCA group can follow a track folder: Mixer > Create VCA from Folder (and
+  the folder row's context menu) makes a group named after the folder whose members are the console channels of the
+  folder's tracks, sub-folders included, and the group stays in line by itself as tracks are moved into or out of
+  the folder, added, deleted or the folder is dissolved, in the same undo step as the edit that changed them (a
+  strip of the folder leaves another group to join it). The members of such a group are not edited by hand
+  (assigning to it or out of it is refused with a message), a group whose folder is dissolved or loses its last
+  track stops following and keeps its members, and the VCA strip's menu has Stop following folder. The project
+  file gets an optional `follows` on a group, written only when set (still project format 43). Mixer > Link Faders
+  (kept with the window state, not in the project) makes a fader or send level of a strip in a group move the
+  levels of every member of its group by the same dB, selected or not, where before strips moved together only
+  while selected. The track header context menu has Create VCA, the folder row menu Create VCA and Create VCA that
+  Follows, and once the song has groups the Mixer menu gets Add to Group and Delete Group submenus with a row that
+  names each group, where Add to VCA and Delete VCA acted on the last group or on the selection's groups. A track
+  header, or several selected ones, dragged onto the group bar at the right edge of another track's header joins that
+  group when released (the bars of the group light up while it hovers). Not done yet: automation of the group fader,
+  groups of groups, a VCA that routes its members to a bus and a group chip on the rack's device headers.
 - **Metering follow-ups: spectrogram, reference curve, loudness history, K-weighting, 16384 points and
   smoothing.** The Spectrum analyser gets a third display, Spectrogram: the fine trace as a scrolling image with
   the frequency across and the newest row on top, one row for every 75 ms of audio over 6 seconds, brighter for

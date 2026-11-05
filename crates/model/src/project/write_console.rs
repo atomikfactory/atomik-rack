@@ -56,7 +56,11 @@ pub(super) fn write_console(w: &mut String, console: &Console) {
                     out.push_str(", \"solo\": true");
                 }
                 let members: Vec<String> = v.members.iter().map(|m| json_str(&m.0)).collect();
-                let _ = write!(out, ", \"members\": [{}]}}", members.join(", "));
+                let _ = write!(out, ", \"members\": [{}]", members.join(", "));
+                if let Some(folder) = v.follows {
+                    let _ = write!(out, ", \"follows\": {folder}");
+                }
+                out.push('}');
                 out
             }),
         );

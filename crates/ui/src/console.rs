@@ -42,6 +42,11 @@
 //! selected strip moves on every selected strip as one `Batch` ([`crate::console_gang`]): levels
 //! by the same dB, switches to the state clicked, one undo step per drag. A right-click on a plate
 //! also offers the channel settings commands (copy, paste, reset, clear inserts).
+//! **Link faders** ([`ConsoleView::set_link_faders`]): while on, a fader or a send level of a
+//! strip that is in a VCA group and is not part of a multiple selection moves the levels of
+//! every member of its group by the same dB, selected or not; with it off a group's faders move
+//! alone (the group's own fader offsets them all). The mode is a view setting, not saved in the
+//! project.
 //!
 //! Keys: the arrows, Page Up / Down, Home and End are the `mixer.*` registry commands
 //! ([`ConsoleView::command`]); `handle` reads only Escape and F5 itself. While a strip or bus
@@ -351,6 +356,8 @@ enum MenuItem {
     VcaColor(u32, Option<[u8; 3]>),
     /// Select the members of this group in the console.
     SelectVca(u32),
+    /// Stop this group following its track folder (the members stay).
+    Unfollow(u32),
     /// Run this registry command (it acts on the selected strips).
     Run(&'static str),
     /// Recall this snapshot, all of it or only the categories of the scope.
@@ -782,6 +789,8 @@ pub struct ConsoleView {
     /// Selected strips (view state) and the last clicked one (the range anchor).
     selection: BTreeSet<DeviceKey>,
     anchor: Option<DeviceKey>,
+    /// Link faders: a level of a strip in a VCA group moves the whole group's levels.
+    link_faders: bool,
     /// The strip the arrow keys moved to last (the end of a range the Shift arrows extend).
     cursor: Option<DeviceKey>,
     /// A strip name being edited in place.
@@ -861,6 +870,7 @@ impl ConsoleView {
             pointer: Point::ZERO,
             selection: BTreeSet::new(),
             anchor: None,
+            link_faders: false,
             cursor: None,
             rename: None,
             notice: None,
@@ -1142,6 +1152,19 @@ impl ConsoleView {
             .iter()
             .find(|s| &s.key == channel)
             .is_some_and(|s| !s.on("solo"))
+    }
+
+    /// Switches link faders on or off (see the module documentation).
+    pub fn set_link_faders(&mut self, on: bool) {
+        if on != self.link_faders {
+            self.link_faders = on;
+            self.repaint = true;
+        }
+    }
+
+    /// Whether link faders is on.
+    pub fn link_faders(&self) -> bool {
+        self.link_faders
     }
 
     /// The selected strips (channels and buses), in strip order.
@@ -2328,13 +2351,30 @@ impl ConsoleView {
         let Some(key) = self.strips.get(i).map(|s| &s.key) else {
             return Vec::new();
         };
-        if !gang::is_ganged(param) || self.selection.len() < 2 || !self.selection.contains(key) {
+        if !gang::is_ganged(param) {
+            return Vec::new();
+        }
+        // A strip of a multiple selection takes the selection along; with link faders on, any
+        // other strip of a VCA group takes its group along (levels only).
+        let selected = self.selection.len() >= 2 && self.selection.contains(key);
+        let linked = if !selected && self.link_faders && gang::is_level(param) {
+            self.strips.get(i).and_then(|s| s.vca_id)
+        } else {
+            None
+        };
+        if !selected && linked.is_none() {
             return Vec::new();
         }
         let members: Vec<GangMember> = self
             .strips
             .iter()
-            .filter(|s| self.selection.contains(&s.key))
+            .filter(|s| {
+                if selected {
+                    self.selection.contains(&s.key)
+                } else {
+                    s.vca_id == linked
+                }
+            })
             .filter(|s| !s.driven.iter().any(|(p, _)| p == param))
             .filter_map(|s| {
                 let p = s.desc?.params.iter().find(|p| p.key == param)?;
@@ -2911,6 +2951,10 @@ impl ConsoleView {
                 return;
             }
             (MenuItem::DeleteVca(id), _) => ConsoleCommand::DeleteVca { vca: *id },
+            (MenuItem::Unfollow(id), _) => ConsoleCommand::SetVcaFollow {
+                vca: *id,
+                folder: None,
+            },
             (MenuItem::SnapRecall(id, scope), _) => ConsoleCommand::RecallSnapshot {
                 id: *id,
                 scope: *scope,
@@ -3023,6 +3067,9 @@ impl ConsoleView {
             ));
         }
         items.push(("Colour: none".to_string(), MenuItem::VcaColor(id, None)));
+        if self.vcas.get(i).is_some_and(|v| v.follows) {
+            items.push(("Stop following folder".to_string(), MenuItem::Unfollow(id)));
+        }
         items.push(("Delete VCA".to_string(), MenuItem::DeleteVca(id)));
         let origin = self.menu_origin(pos, items.len());
         self.menu = Some(Menu::plain(items, origin));

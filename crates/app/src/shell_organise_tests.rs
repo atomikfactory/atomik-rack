@@ -430,6 +430,8 @@ fn the_folder_row_menu_has_the_folder_commands_and_acts_on_the_folder() {
             "sequencer.rename_folder",
             "sequencer.toggle_folder",
             "sequencer.ungroup_tracks",
+            "mixer.create_vca",
+            "mixer.create_vca_for_folder",
             "sequencer.move_track_up",
             "sequencer.move_track_down",
         ]

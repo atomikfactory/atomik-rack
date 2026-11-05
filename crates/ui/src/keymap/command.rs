@@ -1066,6 +1066,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "mixer.create_vca_for_folder",
+        "Create VCA from Folder",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.delete_snapshot",
         "Delete Snapshot",
         G::Mixer,
@@ -1086,6 +1093,7 @@ const COMMANDS: &[CommandDef] = &[
         G::Mixer,
         C::Mixer,
     ),
+    cmd("mixer.link_faders", "Link Faders", G::Mixer, C::Global).menu(),
     cmd(
         "mixer.paste_settings",
         "Paste Channel Settings",
