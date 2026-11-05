@@ -287,7 +287,10 @@ pub struct AppCore<S: EngineSink> {
     /// The note player preview that runs (see `app_core_preview.rs`).
     player_preview: Option<preview_ops::PlayerPreview>,
     /// The pattern clipboard both sequencer views last agreed on.
-    pattern_clip_seen: Option<atomik_model::PatternDoc>,
+    pattern_clip_seen: (
+        Option<atomik_model::PatternDoc>,
+        Option<atomik_model::CurvePatternDoc>,
+    ),
     /// The counter the drum generator draws its seeds and character from.
     drum_draws: u64,
     transport_bar: TransportBar,
@@ -536,7 +539,7 @@ impl<S: EngineSink> AppCore<S> {
             eq_live: eq_live::EqLive::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
-            pattern_clip_seen: None,
+            pattern_clip_seen: (None, None),
             drum_draws: clock_entropy(),
             transport_bar: TransportBar::new(theme.clone()),
             console: ConsoleView::new(theme.clone()),
