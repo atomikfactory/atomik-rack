@@ -100,11 +100,16 @@ impl<S: EngineSink> AppCore<S> {
 
     fn paste_strips_from_clipboard(&mut self) -> Result<(), String> {
         match self.clipboard.get().cloned() {
-            Some(ClipboardData::Strips(s)) if !s.devices.devices.is_empty() => self.paste_strips(s),
+            Some(ClipboardData::Strips(s))
+                if !s.devices.devices.is_empty() || !s.loose.is_empty() =>
+            {
+                self.paste_strips(s)
+            }
             Some(ClipboardData::Tracks(devices)) if !devices.devices.is_empty() => self
                 .paste_strips(StripSnapshot {
                     devices,
                     settings: Vec::new(),
+                    loose: Vec::new(),
                 }),
             Some(held) if !held.is_empty() => Err(format!(
                 "The clipboard holds {}: copy strips in the console, or tracks, to paste them here",
@@ -291,6 +296,12 @@ impl<S: EngineSink> AppCore<S> {
                 self.paste_devices(s, pane)
             }
             (Pane::Rack | Pane::Arrangement, ClipboardData::Strips(s)) => {
+                if s.devices.devices.is_empty() {
+                    return foreign(
+                        ClipboardKind::Strips,
+                        "buses and mixer channels paste in the console",
+                    );
+                }
                 self.paste_devices(s.devices, pane)
             }
             (Pane::Arrangement, ClipboardData::Tracks(s)) => self.paste_devices(s, pane),

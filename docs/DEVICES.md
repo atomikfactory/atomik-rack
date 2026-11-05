@@ -4595,6 +4595,11 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
   out-of-range value clamps to the last entry. Changing from one tap to another crossfades over 5 ms
   and settles bit-exactly on the new tap. Dim (-20 dB) and the control-room level apply to every
   source and never touch `main_*`.
+- **Release Auto.** `comp.auto` (a switch appended after `internal.tap_live`, off by default, an
+  AUTO button beside the release knob; automatable) makes the bus compressor's release follow the
+  program: a one-pole average of the gain reduction (500 ms) blends the release between 60 ms and
+  1.2 s, fully slow once the average reaches 6 dB. `comp.release` is not used while it is on. Off, the
+  compressor and the saved project are as before.
 - **Taps.** The send and return taps are copies the master keeps per block in its own state (written
   in stages 0 and 1, read in stage 2); the stages, sockets and cables of the device did not change,
   and the audio thread still does not allocate.

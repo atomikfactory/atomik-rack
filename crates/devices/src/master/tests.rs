@@ -57,6 +57,7 @@ fn descriptor_keys_match_contract_exactly() {
         params.push(format!("send{k}.level"));
     }
     params.push("internal.tap_live".into());
+    params.push("comp.auto".into());
     let mut sockets: Vec<String> = vec!["bus_l".into(), "bus_r".into()];
     for prefix in ["send_bus", "fx_send", "return"] {
         for k in 1..=8 {
@@ -215,6 +216,42 @@ fn bus_compressor_static_curve_and_makeup() {
     let got = sine_gain_db(&mut h, &["bus_l", "bus_r"], "main_l", 1_000.0, 0.5, 0.2);
     assert!(got.abs() < 1e-3, "{got}");
     assert!(h.output("gr_cv_out").iter().all(|v| v.abs() < 1e-9));
+}
+
+/// The bus compressor's gain reduction `ms` after a loud burst of `burst` blocks, as a fraction
+/// of the reduction at the end of the burst.
+fn released_after(auto: bool, burst: usize, ms: usize) -> f32 {
+    let mut h = master();
+    h.set_param("comp.on", 1.0);
+    h.set_param("comp.threshold", -30.0);
+    h.set_param("comp.ratio", 10.0);
+    h.set_param("comp.attack", 1.0);
+    h.set_param("comp.release", 2_000.0);
+    h.set_param("comp.auto", if auto { 1.0 } else { 0.0 });
+    dc(&mut h, "bus_l", 0.9);
+    dc(&mut h, "bus_r", 0.9);
+    h.render(burst, &["main_l"]);
+    // `gr_cv_out` is `1 - gain`: back to dB of reduction.
+    let gr_db = |h: &DeviceHarness| -20.0 * (1.0 - h.output("gr_cv_out")[BATCH - 1]).log10();
+    let at_end = gr_db(&h);
+    dc(&mut h, "bus_l", 0.0);
+    dc(&mut h, "bus_r", 0.0);
+    let blocks = ms * 48 / BATCH;
+    h.render(blocks, &["main_l"]);
+    gr_db(&h) / at_end
+}
+
+#[test]
+fn release_auto_lets_a_brief_burst_go_quickly_and_leaves_the_knob_alone_when_off() {
+    // 48 kHz batches of BATCH frames: 20 ms is about 960 / BATCH blocks.
+    let burst = 960 / BATCH + 1;
+    let auto = released_after(true, burst, 300);
+    let manual = released_after(false, burst, 300);
+    assert!(auto < 0.6, "auto lets go of a brief burst: {auto}");
+    assert!(
+        manual > 0.8 && manual > auto + 0.2,
+        "the 2 s knob holds it: {manual} vs {auto}"
+    );
 }
 
 #[test]
@@ -626,7 +663,7 @@ fn original_sources_and_zero_db_sends_keep_their_sound_bit_exactly() {
 
 #[test]
 fn send_level_params_are_appended_after_the_monitor_source() {
-    assert_eq!(DESCRIPTOR.params.len(), 37 + 8 + 1);
+    assert_eq!(DESCRIPTOR.params.len(), 37 + 8 + 2);
     let src = DESCRIPTOR.param_by_key("monitor.source").unwrap();
     assert_eq!(src.id.0, 36);
     for k in 1..=8u32 {

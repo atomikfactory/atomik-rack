@@ -20,6 +20,28 @@ pub struct StripSnapshot {
     pub devices: DeviceSnapshot,
     /// The settings of the channel of each device, keyed by its index in `devices.devices`.
     pub settings: Vec<(usize, ChannelSettingsClip)>,
+    /// The strips with no device behind them: mixer channels and output buses.
+    pub loose: Vec<LooseStrip>,
+}
+
+/// What kind of strip a [`LooseStrip`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LooseKind {
+    /// A mixer channel (a channel with no source device).
+    Mix,
+    /// An output bus.
+    Bus,
+}
+
+/// A copied strip that has no instrument or track: only its name and settings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LooseStrip {
+    /// Channel or bus.
+    pub kind: LooseKind,
+    /// The name the strip had.
+    pub name: String,
+    /// Its settings (every section).
+    pub clip: ChannelSettingsClip,
 }
 
 /// What the clipboard holds.
@@ -110,7 +132,7 @@ impl ClipboardData {
             ClipboardData::Devices(s) | ClipboardData::Tracks(s) | ClipboardData::Settings(s) => {
                 s.devices.len()
             }
-            ClipboardData::Strips(s) => s.devices.devices.len(),
+            ClipboardData::Strips(s) => s.devices.devices.len() + s.loose.len(),
             ClipboardData::Takes(s) => s.takes.len(),
             ClipboardData::Controllers(s) => s.points.len(),
         }

@@ -30,7 +30,9 @@
 //!   [`atomik_dsp::KNEE_DB`] dB soft knee, stereo-linked. `comp.makeup` is applied after the gain
 //!   reduction, only while the compressor is on. `comp.key` switches the side-chain to `key_in`
 //!   (mono, used on both sides) when it is connected. `gr_cv_out` = `1 − g` of the compressor
-//!   gain `g` (make-up excluded).
+//!   gain `g` (make-up excluded). `comp.auto` (appended after the analyser tap, off by
+//!   default) makes the release follow the program ([`atomik_dsp::Compressor::set_release_auto`]);
+//!   `comp.release` is then not used.
 //! * **Insert:** `insert_send_*` carry the signal at the insert point; a connected
 //!   `insert_return_*` replaces it unless `insert.bypass`.
 //! * **Fader:** the same cubic position taper as the channel ([`atomik_dsp::fader_gain`]).
@@ -133,7 +135,9 @@ const P_SEND_FIRST: usize = P_MONITOR_SOURCE + 1;
 /// The analyser tap switch (`internal.tap_live`: set by the app while a window shows the master,
 /// never stored), appended after the sends.
 const P_TAP_LIVE: usize = P_SEND_FIRST + RETURNS;
-const PARAM_COUNT: usize = P_TAP_LIVE + 1;
+/// Program-dependent release of the bus compressor (appended after the analyser tap).
+const P_COMP_AUTO: usize = P_TAP_LIVE + 1;
+const PARAM_COUNT: usize = P_COMP_AUTO + 1;
 
 /// `monitor.source` index of *FX returns*.
 const SRC_RETURNS: usize = 1;
@@ -281,6 +285,7 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
         i += 1;
     }
     out[P_TAP_LIVE] = toggle(P_TAP_LIVE as u32, "internal.tap_live", "Analyser tap");
+    out[P_COMP_AUTO] = toggle(P_COMP_AUTO as u32, "comp.auto", "Bus comp auto release");
     while i < P_TAP_LIVE {
         out[i] = sends[i - P_SEND_FIRST];
         i += 1;
@@ -538,6 +543,7 @@ impl Master {
             P_COMP_RATIO => self.comp.set_ratio(v),
             P_COMP_ATTACK => self.comp.set_attack_ms(v),
             P_COMP_RELEASE => self.comp.set_release_ms(v),
+            P_COMP_AUTO => self.comp.set_release_auto(self.on(i)),
             P_COMP_MAKEUP => self.makeup.set_target(db_to_gain(v)),
             _ if (P_RETURN_FIRST..P_FADER).contains(&i) => {
                 let k = (i - P_RETURN_FIRST) / 3;

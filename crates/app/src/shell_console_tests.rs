@@ -230,6 +230,9 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Delay Compensation", None),
             ("Align Returns", None),
             ("Sends Follow Bus", None),
+            ("Peak Meters", None),
+            ("PPM Meters", None),
+            ("VU Meters", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Previous track", None),
@@ -1672,6 +1675,49 @@ fn link_faders_is_a_mixer_menu_check_that_persists_in_ui_state() {
     assert!(s2.core().console().link_faders());
     std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
     assert!(!shell_at(Some(path.clone())).core().console().link_faders());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn meter_mode_is_a_mixer_submenu_that_persists_in_ui_state() {
+    use atomik_ui::big_meter::MeterMode;
+    let path = temp("ui-state-meters.json");
+    let _ = std::fs::remove_file(&path);
+    let mut s = shell_at(Some(path.clone()));
+    assert_eq!(
+        s.core().console().meter_mode(),
+        MeterMode::Peak,
+        "peak by default"
+    );
+    let checked =
+        |s: &Shell<NullBackend>, m| menu_row(s, AppCommand::MeterMode(m)).unwrap().checked;
+    assert_eq!(checked(&s, MeterMode::Peak), Some(true));
+    assert_eq!(checked(&s, MeterMode::Vu), Some(false));
+    assert_eq!(
+        AppCommand::MeterMode(MeterMode::Ppm).command_id(),
+        Some(("mixer.meter_mode", Some("ppm")))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.meter_mode", Some("vu")),
+        Some(AppCommand::MeterMode(MeterMode::Vu))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.meter_mode", Some("loud")),
+        None
+    );
+    s.execute(AppCommand::MeterMode(MeterMode::Vu));
+    assert_eq!(s.core().console().meter_mode(), MeterMode::Vu);
+    assert_eq!(checked(&s, MeterMode::Vu), Some(true));
+    assert_eq!(checked(&s, MeterMode::Peak), Some(false));
+    s.flush_ui_state();
+    assert_eq!(UiState::load(&path).meter_mode, MeterMode::Vu);
+    let s2 = shell_at(Some(path.clone()));
+    assert_eq!(s2.core().console().meter_mode(), MeterMode::Vu);
+    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+    assert_eq!(
+        shell_at(Some(path.clone())).core().console().meter_mode(),
+        MeterMode::Peak
+    );
     let _ = std::fs::remove_file(&path);
 }
 

@@ -1280,6 +1280,10 @@ fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
     assert_eq!(selected(&v), ["ch-lead"], "the strip clicked is selected");
     let items = v.menu_items();
     for label in [
+        "Cut strip",
+        "Copy strip",
+        "Paste strip",
+        "Duplicate strip",
         "Copy settings",
         "Paste settings",
         "Reset channel",

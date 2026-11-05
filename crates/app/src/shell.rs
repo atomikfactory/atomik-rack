@@ -795,6 +795,7 @@ impl<B: AudioBackend> Shell<B> {
             view.set_navigator_visible(self.ui.show_rack_navigator);
         }
         self.core.console_mut().set_link_faders(self.ui.link_faders);
+        self.core.console_mut().set_meter_mode(self.ui.meter_mode);
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
@@ -1194,6 +1195,10 @@ impl<B: AudioBackend> Shell<B> {
         let current = match &target {
             ColorTarget::Folder(group) => song.org.group(*group).and_then(|g| g.color),
             ColorTarget::Tracks(devices) => devices.first().and_then(|d| song.shown_color(d)),
+            ColorTarget::Devices(devices) => devices
+                .first()
+                .and_then(|d| self.core.doc().device(d))
+                .and_then(|d| d.color),
         };
         let theme = self.core.view().theme().clone();
         let mut view = ColorPickerView::new(theme, current.unwrap_or([0x3f, 0x8f, 0xd2]));
@@ -1215,6 +1220,15 @@ impl<B: AudioBackend> Shell<B> {
                         color,
                     })
                 }
+                ColorTarget::Devices(devices) => Command::Batch(
+                    devices
+                        .iter()
+                        .map(|device| Command::SetColor {
+                            key: device.clone(),
+                            color,
+                        })
+                        .collect(),
+                ),
                 ColorTarget::Tracks(devices) => Command::Batch(
                     devices
                         .iter()
@@ -6044,6 +6058,12 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::MorphPreviousSnapshot => {
                 self.core.morph_snapshot(None, false);
+                Vec::new()
+            }
+            AppCommand::MeterMode(mode) => {
+                self.core.console_mut().set_meter_mode(mode);
+                self.ui.meter_mode = mode;
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::MorphTime(seconds) => {

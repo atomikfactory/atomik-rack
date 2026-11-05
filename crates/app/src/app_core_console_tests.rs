@@ -237,6 +237,12 @@ fn latency_readouts_are_each_channels_output_latency() {
     assert_eq!(c.latency_readouts(), &[(ka, 480), (kb, 0)][..]);
     assert!(!c.pdc_limit_exceeded());
     assert_eq!(c.pdc_alert(), None);
+    // The whole mix is at least as late as its slowest strip: the console shows that total.
+    assert!(
+        c.console().total_latency() >= 480,
+        "{}",
+        c.console().total_latency()
+    );
 }
 
 #[test]

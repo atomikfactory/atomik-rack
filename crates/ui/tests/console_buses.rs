@@ -283,6 +283,66 @@ fn every_strip_shows_where_its_output_goes() {
 }
 
 #[test]
+fn a_selector_shows_the_colour_of_the_bus_it_plays_into() {
+    let (mut doc, reg, _v) = setup();
+    let cable_cv = {
+        let v = console_view(&doc, &reg);
+        // Both buses have no colour of their own: the default one.
+        let a = v.output_swatch(&key("ch-lead")).expect("routed to a bus");
+        assert_eq!(v.output_swatch(&key("ch-keys")), Some(a));
+        assert_eq!(
+            v.output_swatch(&key("bus")),
+            None,
+            "this bus plays into the master"
+        );
+        a
+    };
+    let drums = doc
+        .devices
+        .iter_mut()
+        .find(|d| d.key == key("bus"))
+        .unwrap();
+    drums.color = Some([0x10, 0xa0, 0x40]);
+    let mut v = console_view(&doc, &reg);
+    let green = atomik_ui::peniko::Color::from_rgb8(0x10, 0xa0, 0x40);
+    assert_eq!(v.output_swatch(&key("ch-lead")), Some(green));
+    assert_eq!(v.output_swatch(&key("ch-keys")), Some(cable_cv));
+    assert_eq!(
+        v.output_swatch(&key("bus-2")),
+        Some(green),
+        "Synths plays into Drums"
+    );
+    // The menu rows of the buses carry their colours; the others none.
+    open_output(&mut v, &doc, &reg, "ch-keys");
+    let items = v.menu_items();
+    let swatches = v.menu_swatches();
+    assert_eq!(items.len(), swatches.len());
+    let at = items
+        .iter()
+        .position(|t| t == "Drums")
+        .expect("a Drums row");
+    assert_eq!(swatches[at], Some(green));
+    let master = items.iter().position(|t| t == "Master").unwrap();
+    assert_eq!(swatches[master], None);
+}
+
+#[test]
+fn a_click_on_a_bus_colour_band_asks_for_its_colour() {
+    let (doc, reg, mut v) = setup();
+    let band = v
+        .colour_plate_center(&key("bus-2"))
+        .expect("a bus has a plate");
+    let a = click(&mut v, &doc, &reg, band);
+    assert!(
+        a.iter().any(|x| matches!(
+            x,
+            UiAction::PickColor(atomik_ui::ColorTarget::Devices(d)) if d == &[key("bus-2")]
+        )),
+        "{a:?}"
+    );
+}
+
+#[test]
 fn a_hand_cabled_or_unrouted_output_reads_as_such() {
     let (mut doc, reg, _v) = setup();
     doc.cables.retain(|c| c.from.device != key("ch-lead"));
@@ -755,7 +815,11 @@ fn console_with_buses_matches_golden() {
 }
 
 /// What every strip menu ends with: the channel settings commands.
-const SETTINGS_ITEMS: [&str; 9] = [
+const SETTINGS_ITEMS: [&str; 13] = [
+    "Cut strip",
+    "Copy strip",
+    "Paste strip",
+    "Duplicate strip",
     "Copy settings",
     "Copy levels",
     "Copy sends",

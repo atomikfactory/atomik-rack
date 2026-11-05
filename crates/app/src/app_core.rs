@@ -2147,6 +2147,7 @@ impl<S: EngineSink> AppCore<S> {
             report.misaligned.iter().map(|m| m.2).max().unwrap_or(0),
         );
         self.console.set_latency_readouts(&self.readouts);
+        self.console.set_total_latency(report.output_latency);
         self.console.set_pdc_warning(self.pdc_limit);
     }
 
@@ -2474,6 +2475,7 @@ impl<S: EngineSink> AppCore<S> {
             can_clear_inserts: strips
                 .iter()
                 .any(|s| !atomik_model::insert_chain(doc, &self.registry, s).is_empty()),
+            meter_mode: self.console.meter_mode(),
         }
     }
 

@@ -19,6 +19,12 @@
 //!   `α = e^(−1/(τ·sr))`. The release stage holds peaks, the attack stage smooths onsets.
 //!   Steady-state error on a 1 kHz sine is under 0.05 dB for releases ≥ 50 ms.
 //!
+//! * **Auto release.** With [`Compressor::set_release_auto`] the release time constant follows the
+//!   program: a slow one-pole average of the gain reduction (time constant
+//!   [`AUTO_AVERAGE_MS`]) blends the release from [`AUTO_RELEASE_FAST_MS`] (brief peaks) to
+//!   [`AUTO_RELEASE_SLOW_MS`] (sustained reduction of [`AUTO_FULL_DB`] or more). The release
+//!   setting is not used while it is on.
+//!
 //! ## Gate / expander
 //! * **Detector:** peak follower, instant attack, [`GATE_DETECTOR_MS`] release (stereo-linked).
 //! * **Open** while the level ≥ threshold. After the level falls below, the gate stays open
@@ -40,6 +46,14 @@ const LOG2_10_20: f32 = 0.166_096_4;
 pub const KNEE_DB: f32 = 6.0;
 /// RMS detector time constant.
 pub const RMS_WINDOW_MS: f32 = 10.0;
+/// Auto release: the release for brief peaks.
+pub const AUTO_RELEASE_FAST_MS: f32 = 60.0;
+/// Auto release: the release after sustained reduction.
+pub const AUTO_RELEASE_SLOW_MS: f32 = 1_200.0;
+/// Auto release: time constant of the average gain reduction that steers the release.
+pub const AUTO_AVERAGE_MS: f32 = 500.0;
+/// Auto release: the average gain reduction (dB) at which the release is fully slow.
+pub const AUTO_FULL_DB: f32 = 6.0;
 /// Gate detector release time constant.
 pub const GATE_DETECTOR_MS: f32 = 5.0;
 /// Fixed expansion ratio of the gate's expander mode.
@@ -119,6 +133,13 @@ pub struct Compressor {
     alpha_attack: f32,
     alpha_release: f32,
     alpha_rms: f32,
+    /// Auto release: on, the two release coefficients and the average's coefficient.
+    auto: bool,
+    alpha_fast: f32,
+    alpha_slow: f32,
+    alpha_avg: f32,
+    /// Auto release: the average gain reduction, dB.
+    avg: f32,
     /// Mean square (RMS mode).
     ms: f32,
     /// Release-stage (peak-holding) gain reduction, dB.
@@ -144,6 +165,11 @@ impl Compressor {
             alpha_attack: 0.0,
             alpha_release: 0.0,
             alpha_rms: 0.0,
+            auto: false,
+            alpha_fast: 0.0,
+            alpha_slow: 0.0,
+            alpha_avg: 0.0,
+            avg: 0.0,
             ms: 0.0,
             y1: 0.0,
             gr: 0.0,
@@ -161,7 +187,16 @@ impl Compressor {
         self.alpha_attack = coeff(self.attack_ms, sample_rate);
         self.alpha_release = coeff(self.release_ms, sample_rate);
         self.alpha_rms = coeff(RMS_WINDOW_MS, sample_rate);
+        self.alpha_fast = coeff(AUTO_RELEASE_FAST_MS, sample_rate);
+        self.alpha_slow = coeff(AUTO_RELEASE_SLOW_MS, sample_rate);
+        self.alpha_avg = coeff(AUTO_AVERAGE_MS, sample_rate);
         self.reset();
+    }
+
+    /// Switches the program-dependent release on or off (see the module docs).
+    pub fn set_release_auto(&mut self, on: bool) {
+        self.auto = on;
+        self.avg = 0.0;
     }
 
     /// Threshold in dB.
@@ -197,6 +232,7 @@ impl Compressor {
         self.ms = 0.0;
         self.y1 = 0.0;
         self.gr = 0.0;
+        self.avg = 0.0;
     }
 
     /// Advances one sample with the side-chain `(l, r)` and returns the linear gain to apply.
@@ -220,7 +256,14 @@ impl Compressor {
         } else {
             static_gain_reduction_db(level_db(level), self.threshold_db, self.ratio)
         };
-        self.y1 = c.max(c + self.alpha_release * (self.y1 - c));
+        let alpha_release = if self.auto {
+            self.avg = self.gr + self.alpha_avg * (self.avg - self.gr);
+            let t = (self.avg / AUTO_FULL_DB).clamp(0.0, 1.0);
+            self.alpha_fast + (self.alpha_slow - self.alpha_fast) * t
+        } else {
+            self.alpha_release
+        };
+        self.y1 = c.max(c + alpha_release * (self.y1 - c));
         self.gr = self.y1 + self.alpha_attack * (self.gr - self.y1);
         if self.gr < 1e-9 {
             self.gr = 0.0;
@@ -565,6 +608,54 @@ mod tests {
         assert!(gr < 0.5 * target && gr > 0.1, "after 100 ms release: {gr}");
         c.reset();
         assert!(c.gain_reduction_db().abs() < 1e-9);
+    }
+
+    /// Gain reduction left `ms` after a burst of `burst_ms` of full scale, auto release on.
+    fn auto_release_left(burst_ms: usize, ms: usize) -> f32 {
+        let mut c = Compressor::new(SR);
+        c.set_detector(Detector::Peak);
+        c.set_threshold_db(-20.0);
+        c.set_ratio(20.0);
+        c.set_attack_ms(1.0);
+        // The set release is far slower than either end of the auto range.
+        c.set_release_ms(2_000.0);
+        c.set_release_auto(true);
+        for _ in 0..(burst_ms * 48) {
+            c.process(1.0, 1.0);
+        }
+        let peak = c.gain_reduction_db();
+        for _ in 0..(ms * 48) {
+            c.process(0.0, 0.0);
+        }
+        c.gain_reduction_db() / peak
+    }
+
+    #[test]
+    fn auto_release_is_fast_after_a_brief_peak_and_slow_after_sustained_reduction() {
+        let brief = auto_release_left(20, 200);
+        let sustained = auto_release_left(4_000, 200);
+        assert!(brief < 0.2, "a brief peak lets go quickly: {brief}");
+        assert!(
+            sustained > 0.5,
+            "sustained reduction lets go slowly: {sustained}"
+        );
+        // Off, the release knob rules again (2 s here: almost nothing released in 200 ms).
+        let mut c = Compressor::new(SR);
+        c.set_detector(Detector::Peak);
+        c.set_threshold_db(-20.0);
+        c.set_ratio(20.0);
+        c.set_attack_ms(1.0);
+        c.set_release_ms(2_000.0);
+        c.set_release_auto(true);
+        c.set_release_auto(false);
+        for _ in 0..(20 * 48) {
+            c.process(1.0, 1.0);
+        }
+        let peak = c.gain_reduction_db();
+        for _ in 0..(200 * 48) {
+            c.process(0.0, 0.0);
+        }
+        assert!(c.gain_reduction_db() / peak > 0.8);
     }
 
     #[test]

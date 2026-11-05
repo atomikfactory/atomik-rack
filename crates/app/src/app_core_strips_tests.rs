@@ -161,25 +161,138 @@ fn cut_removes_the_strip_and_a_paste_brings_it_back_with_its_settings() {
     assert_eq!(param(&c, &now[1], "pan"), 0.25);
 }
 
-#[test]
-fn a_bus_or_a_mixer_channel_cannot_be_copied() {
-    let (mut c, s) = three();
+fn buses(c: &AppCore<RecordingSink>) -> Vec<DeviceKey> {
+    c.doc()
+        .console
+        .buses
+        .iter()
+        .map(|b| b.bus.clone())
+        .collect()
+}
+
+/// A bus called `name` with its fader at -6 dB.
+fn bus(c: &mut AppCore<RecordingSink>, name: &str) -> DeviceKey {
     c.apply_command(Command::Console(ConsoleCommand::CreateBus {
-        name: "Drums".into(),
+        name: name.into(),
         dest: atomik_model::console::OutputDest::Master,
     }))
     .unwrap();
     let bus = c.doc().console.buses.last().unwrap().bus.clone();
-    select(&mut c, &[bus]);
-    let before = c.doc().clone();
+    set(c, &bus, "fader", 0.5);
+    bus
+}
+
+fn mix_channel(c: &mut AppCore<RecordingSink>) -> DeviceKey {
+    assert!(c.add_mix_channel());
+    c.doc().console.channels.last().unwrap().channel.clone()
+}
+
+#[test]
+fn a_bus_is_copied_by_name_and_settings_and_pastes_as_a_new_bus() {
+    let (mut c, s) = three();
+    let drums = bus(&mut c, "Drums");
+    set(&mut c, &drums, "comp.on", 1.0);
+    select(&mut c, std::slice::from_ref(&drums));
     run(&mut c, "edit.copy");
-    assert!(c.clipboard().is_empty());
+    assert_eq!(c.clipboard().kind(), Some(ClipboardKind::Strips));
+    let depth = c.document().undo_depth();
+    run(&mut c, "edit.paste");
+    assert_eq!(c.document().undo_depth(), depth + 1, "one undo step");
+    let now = buses(&c);
+    assert_eq!(now.len(), 2);
+    assert_eq!(c.doc().console.buses[1].name, "Drums 2", "a free name");
+    assert_eq!(param(&c, &now[1], "fader"), 0.5);
+    assert_eq!(param(&c, &now[1], "comp.on"), 1.0);
+    assert_eq!(channels(&c), s, "no channel came with it");
+    assert_eq!(c.console().selected_strips(), vec![now[1].clone()]);
+    c.undo();
+    assert_eq!(buses(&c), vec![drums]);
+}
+
+#[test]
+fn a_mixer_channel_is_copied_and_pasted_after_the_selected_strip() {
+    let (mut c, s) = three();
+    let mix = mix_channel(&mut c);
+    set(&mut c, &mix, "pan", 0.75);
+    select(&mut c, std::slice::from_ref(&mix));
+    run(&mut c, "edit.copy");
+    select(&mut c, &[s[0].clone()]);
+    let tracks_before = tracks(&c);
+    run(&mut c, "edit.paste");
+    let now = channels(&c);
+    assert_eq!(now.len(), 5);
+    assert_eq!(now[0], s[0]);
+    assert_eq!(
+        param(&c, &now[1], "pan"),
+        0.75,
+        "the copy sits after the selected strip"
+    );
+    assert!(c.doc().console.channels[1].source.is_none());
+    assert_eq!(tracks(&c), tracks_before, "a mixer channel has no track");
+    assert_eq!(c.console().selected_strips(), vec![now[1].clone()]);
+    c.undo();
+    assert_eq!(channels(&c).len(), 4);
+}
+
+#[test]
+fn a_mixed_selection_pastes_in_one_undo_step_with_every_strips_settings() {
+    let (mut c, s) = three();
+    let drums = bus(&mut c, "Drums");
+    let mix = mix_channel(&mut c);
+    set(&mut c, &mix, "fader", 0.25);
+    select(&mut c, &[s[1].clone(), mix.clone(), drums.clone()]);
     run(&mut c, "edit.duplicate");
-    assert_eq!(c.doc(), &before);
-    assert!(c.last_rejection().is_some());
+    let depth = c.document().undo_depth();
+    let (ch, bs) = (channels(&c), buses(&c));
+    assert_eq!((ch.len(), bs.len()), (6, 2));
+    assert_eq!(param(&c, &bs[1], "fader"), 0.5);
+    assert_eq!(c.console().selected_strips().len(), 3);
+    // The copied instrument keeps its pan, the copied mixer channel its fader.
+    let copies: Vec<&DeviceKey> = ch.iter().filter(|k| !s.contains(k) && **k != mix).collect();
+    assert!(
+        copies
+            .iter()
+            .any(|k| param(&c, k, "pan").to_bits() == 0.25f32.to_bits())
+    );
+    assert!(
+        copies
+            .iter()
+            .any(|k| param(&c, k, "fader").to_bits() == 0.25f32.to_bits())
+    );
+    c.undo();
+    assert_eq!((channels(&c).len(), buses(&c).len()), (4, 1));
+    assert!(c.document().undo_depth() < depth);
+}
+
+#[test]
+fn a_cut_bus_pastes_back_and_a_bus_cannot_paste_in_the_rack() {
+    let (mut c, s) = three();
+    let drums = bus(&mut c, "Drums");
+    select(&mut c, &[drums]);
+    run(&mut c, "edit.cut");
+    assert!(buses(&c).is_empty());
     select(&mut c, &[s[0].clone()]);
     run(&mut c, "edit.paste");
-    assert_eq!(c.doc(), &before, "an empty clipboard pastes nothing");
+    assert_eq!(
+        c.doc().console.buses[0].name,
+        "Drums",
+        "the name is free again"
+    );
+    assert_eq!(param(&c, &buses(&c)[0], "fader"), 0.5);
+    let before = c.doc().clone();
+    assert!(c.pane_command(Pane::Rack, "edit.paste", None).is_some());
+    assert_eq!(c.doc(), &before, "devices only paste in the rack");
+    assert!(c.last_rejection().is_some_and(|m| m.contains("console")));
+}
+
+#[test]
+fn an_empty_clipboard_pastes_nothing_into_the_console() {
+    let (mut c, s) = three();
+    select(&mut c, &[s[0].clone()]);
+    let before = c.doc().clone();
+    run(&mut c, "edit.paste");
+    assert_eq!(c.doc(), &before);
+    assert!(c.last_rejection().is_some());
 }
 
 #[test]

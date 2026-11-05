@@ -541,7 +541,11 @@ const BUS: &[Row] = &[
         k("comp.ratio", "RATIO"),
         k("comp.attack", "ATK"),
     ]),
-    Row::Grid(&[k("comp.release", "REL"), k("comp.makeup", "GAIN"), None]),
+    Row::Grid(&[
+        k("comp.release", "REL"),
+        k("comp.makeup", "GAIN"),
+        b("comp.auto", "AUTO"),
+    ]),
     Row::GrMeter,
 ];
 const MONITOR: &[Row] = &[Row::Grid(&[
