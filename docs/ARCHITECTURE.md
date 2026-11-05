@@ -458,6 +458,15 @@ folder, or unpacked from an archive: the picked folder (or its `Audio` folder, o
 the project file that holds `<name>/Audio`) gives back each missing file by its hash, copied into the
 session bundle and loaded by the same adopt worker a library item's audio uses, with no decoding.
 
+**Collect and relocate** are the save worker's two uses of `Bundle::collect_from` (`audio-file`, `CollectReport`:
+copied, already present, missing, bytes). `AppCore::collect_files` (`file.collect_files`, File > Collect Files)
+is a Save in place whose destination is the project's own bundle folder (`collect_root`: the file's folder when it
+is named like the file, else the sibling `<name>/`); the job copies each used asset the destination lacks, with
+its peak cache, from the session bundle and then from the folders near the project file that hold an `Audio/`
+directory (`audio_folders`), writes the project atomically and removes the orphans of the destination only. Save As
+uses the same copy instead of copying the whole `Audio/` tree. Audio that was missing and was found is loaded by the
+load worker, and a toast is the report. Assets are named by their hash, so the project text never changes.
+
 ### 2.4 Playback, per 64-frame batch
 
 ```
