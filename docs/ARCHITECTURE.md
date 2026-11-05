@@ -2729,6 +2729,16 @@ of this is saved in the project.
   device-level cycles, which HI-3 would reject. With stages the cycle check, render order, worker
   levels and delay compensation use (device, stage) nodes, with an implicit edge from stage `s` to
   `s + 1`. `Device::process_stage(stage, ctx)` defaults to `process` for stage 0.
+- **Feedback routing.** `atomik.feedback` (Feedback Route, [feedback.rs](../crates/devices/src/feedback.rs))
+  puts its outputs in stage 0 and its inputs in stage 1, so a loop through it is a legal (device, stage)
+  order: outputs first, everything downstream of them, the inputs last. It is the only way a loop is
+  accepted, by `Command::Connect`, by the project reader and by the engine alike, inside a container as
+  well (the check runs on the flattened rack). The delay is a `DelayLine` per side read `delay - n` frames
+  back for frame `n` of the batch, with the delay at least `BATCH` frames, so the samples that come back
+  were written by earlier batches whatever the host block size and however the batches are spread over
+  workers: a bounce is bit-identical at every block size and worker count
+  (`crates/render/tests/feedback.rs`). It reports no latency, so the delay compensation leaves a loop
+  alone, and what enters the line is clamped to plus or minus 16 so a loop with gain stays finite.
 - **Summing inputs.** A socket with `Direction::SummingInput` accepts many cables. Contributions are
   summed as a left fold in ascending source-endpoint order, fixed at routing compile, so the sum is
   bit-identical for any block size and worker count.
@@ -3884,7 +3894,8 @@ parameter tables are in [DEVICES.md](DEVICES.md).
   upgrades, section 5); the strip's own `insert.bypass` is a separate switch that is not delay
   compensated. See [DEVICES.md](DEVICES.md#effect-bypass).
 - **Utility devices.** Gain Tool, Stereo Tool, Gate, Gate + Compressor, Sidechain Tool and Envelope
-  Filter are `Bypassable` effects; Audio Split/Merge and CV Split/Merge are plain utilities whose merge inputs
+  Filter are `Bypassable` effects; Feedback Route (section 5), Audio Split/Merge and CV Split/Merge are
+  plain utilities, and the merge inputs of the two splitters
   are `Direction::SummingInput` (the model's cable rules and the engine's summing and delay
   compensation treat them like a console bus input, in source order). They share the descriptor
   builders of `devices/src/tool_support.rs`, use the deterministic `log2_det`/`exp2_det`, and the
@@ -5861,8 +5872,11 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   bank is made for you). The search lists a container's inside by path key but cannot assign it (see
   the container macros), has no saved queries or history, and reads a plugin's params from the
   layout the project saved.
-- **Feedback loops are rejected.** A cable that would close a loop returns `WouldCreateCycle`;
-  insert and return loops use stages instead.
+- **Feedback loops are rejected, except through a Feedback Route.** A cable that would close a loop
+  returns `WouldCreateCycle` (the model says `BadCable`), unless the loop passes a stage boundary, and
+  the only device with one that carries a signal back is `atomik.feedback`. Its delay is at least one
+  engine batch (64 frames) and cannot be shorter, a loop's own latency is not compensated, and there is
+  no feedback send and return pair, so two places in a rack are joined by cables only.
 - **Platform-dependent last bits.** Output is bit-identical across host block sizes and worker
   counts on one platform. Across operating systems, math-library differences can change the last
   bits, so the SHA-256 goldens are checked on Windows x86-64 only (see
