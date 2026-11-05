@@ -877,6 +877,9 @@ pub struct ArrangementView {
     /// The note lane picked per track (the lane recordings, pastes and imports land on): view
     /// state, not saved.
     note_lane_sel: BTreeMap<DeviceKey, usize>,
+    /// The note lanes armed to record together, per track (view state, not saved): a take goes
+    /// to each of them. A track without any records to its selected lane only.
+    note_lane_rec: BTreeMap<DeviceKey, BTreeSet<usize>>,
     /// The automation lane whose header was pressed last (view state): what the lane items of
     /// the track header menu act on.
     picked_lane: Option<(DeviceKey, String)>,
@@ -1027,6 +1030,7 @@ impl ArrangementView {
             selection: Selection::new(),
             selected_track: None,
             note_lane_sel: BTreeMap::new(),
+            note_lane_rec: BTreeMap::new(),
             picked_lane: None,
             picked_note_lane: None,
             point_sel: None,

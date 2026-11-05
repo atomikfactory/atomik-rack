@@ -59,7 +59,8 @@ const UNIT_TAG_W: f64 = 30.0;
 const LABEL_ROW_H: f64 = 13.0;
 
 /// The unit the inspector shows the fades in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FadeUnit {
     /// Milliseconds.
     #[default]
