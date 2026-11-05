@@ -355,6 +355,21 @@ impl<S: EngineSink> AppCore<S> {
         Ok(message)
     }
 
+    /// [`Self::inject_midi_bytes`] for a machine control SysEx message (the MCP server and the
+    /// hardware-free tests): queued like the one a mapping-role port reads.
+    ///
+    /// # Errors
+    /// A message naming the bytes when they are not a machine control command.
+    pub fn inject_midi_sysex(&self, bytes: &[u8]) -> Result<atomik_midi_io::Mmc, String> {
+        let command = atomik_midi_io::parse_mmc(bytes).ok_or_else(|| {
+            format!(
+                "{bytes:02X?} is not a machine control command (F0 7F <device> 06 <command> F7)"
+            )
+        })?;
+        self.midi.hub.push_mmc(command);
+        Ok(command)
+    }
+
     /// Handles what the MIDI input queued since the last frame, learns, and lets held moves go:
     /// call it once per UI frame with a monotonic time in seconds.
     pub fn midi_control_frame(&mut self, now: f64) {

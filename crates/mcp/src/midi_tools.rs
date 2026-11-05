@@ -95,6 +95,8 @@ fn midi_state(session: &Session) -> Value {
         "received": core.midi_received(),
         "last": core.midi_last_message(),
         "mappings": core.doc().midi_maps.len(),
+        "playing": core.is_playing(),
+        "position": core.position(),
         "message": core.last_rejection(),
         "can_undo": core.document().can_undo(),
     })
@@ -121,7 +123,7 @@ pub fn status_json(session: &Session) -> Value {
 fn input_def() -> Value {
     definition(
         "session_midi_input",
-        "Sends MIDI messages to the control path of the session, as the live MIDI input would (a headless session has no port): the project's mappings see them, MIDI Learn learns from them. `messages` is hex, one message per `;` (`B0 07 7F; 90 3C 64`): a note on or off, a controller or a pitch bend. Each message runs one frame, `interval` seconds after the last; `wait` seconds then pass, which ends a held move (a mapped control is let go after half a second without a message). Returns the learn state, the last message, the number of mappings, whether the document changed, and the last message the app showed.",
+        "Sends MIDI messages to the control path of the session, as the live MIDI input would (a headless session has no port): the project's mappings see them, MIDI Learn learns from them. `messages` is hex, one message per `;` (`B0 07 7F; 90 3C 64`): a note on or off, a controller or a pitch bend, or a machine control SysEx (`F0 7F 7F 06 02 F7` plays, `01` stops, `44` locates; it works as the SysEx of a port set to the mapping role). A run of controllers `B0 63 02; B0 62 2C; B0 06 40` is an NRPN (number 300, value 8192): mappings and MIDI Learn hear it as one source. Each message runs one frame, `interval` seconds after the last; `wait` seconds then pass, which ends a held move (a mapped control is let go after half a second without a message). Returns the learn state, the last message, the number of mappings, whether the document changed, and the last message the app showed.",
         &[
             (
                 "messages",
@@ -159,11 +161,13 @@ fn input(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let session = server.require_session()?;
     let before = session.shell().core().doc().clone();
     for bytes in &list {
-        session
-            .shell()
-            .core()
-            .inject_midi_bytes(&port, bytes)
-            .map_err(|e| e.to_string())?;
+        let core = session.shell().core();
+        if bytes.first() == Some(&0xF0) {
+            core.inject_midi_sysex(bytes).map_err(|e| e.to_string())?;
+        } else {
+            core.inject_midi_bytes(&port, bytes)
+                .map_err(|e| e.to_string())?;
+        }
         session.midi.clock += interval;
         let t = session.midi.clock;
         session.shell_mut().core_mut().midi_control_frame(t);
@@ -186,12 +190,12 @@ fn input(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
 fn learn_def() -> Value {
     definition(
         "session_midi_learn",
-        "MIDI learn and mappings in the session. `action`: `mode` (`on` true or false: MIDI Learn mode, the same as the Mixer menu item), `arm` (a `target`: the next control moved on `session_midi_input` becomes its source; a controller below 64 waits a tenth of a second for a 14 bit pair, so follow it with a `wait` or a second message), `cancel` (drop the armed target), `forget` (every mapping of a `target`), `edit` (mapping `id` with any of `min`, `max`, `invert`, `mode`, `step`, `pickup`, `consume`), `remove` (mapping `id`), `clear`, `export` (a preset `file`, by device type and position), `import` (a preset `file`, applied to this project's devices). A `target` is `<device key> <param key>` (`channel fader`), `vca <id>`, `tempo`, `selected <param key>` (the selected strip) or `transport <play|stop|toggle_play|record|loop|return_to_zero>`. A `mode` is absolute, relative_twos, relative_offset, relative_sign, toggle or momentary. Returns the learn state and the mappings.",
+        "MIDI learn and mappings in the session. `action`: `mode` (`on` true or false: MIDI Learn mode, the same as the Mixer menu item), `arm` (a `target`: the next control moved on `session_midi_input` becomes its source; a controller below 64 waits a tenth of a second for a 14 bit pair, so follow it with a `wait` or a second message), `cancel` (drop the armed target), `forget` (every mapping of a `target`), `edit` (mapping `id` with any of `min`, `max`, `invert`, `mode`, `step`, `pickup`, `consume`), `remove` (mapping `id`), `clear`, `export` (a preset `file`, by device type and position), `export_device` (the selected device's mappings as the preset of its type), `import` (a preset `file`, applied to this project's devices; a preset of one device goes to the selected device of its type, else the first). A `target` is `<device key> <param key>` (`channel fader`), `vca <id>`, `tempo`, `selected <param key>` (the selected strip) or `transport <play|stop|toggle_play|record|loop|return_to_zero>`. A `mode` is absolute, relative_twos, relative_offset, relative_sign, toggle or momentary. Returns the learn state and the mappings.",
         &[
             (
                 "action",
                 "string",
-                "mode, arm, cancel, forget, edit, remove, clear, export or import.",
+                "mode, arm, cancel, forget, edit, remove, clear, export, export_device or import.",
             ),
             ("target", "string", "arm, forget: the target, see above."),
             (
@@ -235,7 +239,11 @@ fn learn_def() -> Value {
                 "boolean",
                 "edit: keep the message away from the notes of the armed instrument.",
             ),
-            ("file", "string", "export, import: the preset file."),
+            (
+                "file",
+                "string",
+                "export, export_device, import: the preset file.",
+            ),
         ],
         &["action"],
     )
@@ -284,9 +292,9 @@ fn learn(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let action = args.str("action")?;
     let file = args.opt_str("file")?;
     let path = match (action, file) {
-        ("export", Some(f)) => Some(server.paths().write(f)?),
+        ("export" | "export_device", Some(f)) => Some(server.paths().write(f)?),
         ("import", Some(f)) => Some(server.paths().read(f)?),
-        ("export" | "import", None) => return Err("`file` is needed".into()),
+        ("export" | "export_device" | "import", None) => return Err("`file` is needed".into()),
         _ => None,
     };
     let session = server.require_session()?;
@@ -305,6 +313,9 @@ fn learn(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "remove" => core.remove_midi_map(id(args)?),
         "clear" => core.clear_midi_maps(),
         "export" => core.export_midi_preset(path.as_deref().ok_or("`file` is needed")?, &[]),
+        "export_device" => {
+            core.export_midi_device_preset(path.as_deref().ok_or("`file` is needed")?)
+        }
         "import" => core.import_midi_preset(path.as_deref().ok_or("`file` is needed")?),
         "edit" => {
             let mut m = core
@@ -342,7 +353,7 @@ fn learn(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         }
         other => {
             return Err(format!(
-                "action {other:?} is not mode, arm, cancel, forget, edit, remove, clear, export or import"
+                "action {other:?} is not mode, arm, cancel, forget, edit, remove, clear, export, export_device or import"
             ));
         }
     };

@@ -262,6 +262,9 @@ pub enum ShellRequest {
     /// panel's IMPORT), starting in [`Shell::midi_preset_dir`], then call
     /// [`Shell::import_midi_preset_from`] with the path.
     PickImportMidiPreset,
+    /// Ask for a file to save the selected device's mappings as the preset of its type; answer
+    /// with [`Shell::export_midi_device_preset_to`].
+    PickExportMidiDevicePreset,
     /// The rack has unsaved changes and `then` would lose them: ask Save, Don't Save or Cancel.
     /// Save: call [`Shell::save_then`]; Don't Save: call [`Shell::discard_then`]; Cancel: do
     /// nothing.
@@ -1498,15 +1501,39 @@ impl<B: AudioBackend> Shell<B> {
         view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         view.set_rows(self.core.midi_map_rows());
+        view.set_ports(self.midi_port_names());
         self.midi_maps = Some(view);
         self.repaint = true;
+    }
+
+    /// The input ports the MIDI Mappings panel offers: the ones set up in Settings (the names a
+    /// source is matched against), then the ports mappings already name.
+    fn midi_port_names(&self) -> Vec<String> {
+        let mut ports: Vec<String> = self
+            .core
+            .sink()
+            .settings()
+            .midi_inputs
+            .iter()
+            .map(|i| i.name.clone())
+            .collect();
+        for m in &self.core.doc().midi_maps {
+            if let Some(p) = &m.source.port
+                && !ports.contains(p)
+            {
+                ports.push(p.clone());
+            }
+        }
+        ports
     }
 
     /// Feeds the MIDI Mappings panel the project's rows.
     fn sync_midi_maps(&mut self) {
         let rows = self.core.midi_map_rows();
+        let ports = self.midi_port_names();
         if let Some(view) = &mut self.midi_maps {
             view.set_rows(rows);
+            view.set_ports(ports);
             if view.needs_repaint() {
                 self.repaint = true;
             }
@@ -1531,6 +1558,9 @@ impl<B: AudioBackend> Shell<B> {
             }
             MidiMapsAction::Export => requests.push(ShellRequest::PickExportMidiPreset),
             MidiMapsAction::Import => requests.push(ShellRequest::PickImportMidiPreset),
+            MidiMapsAction::ExportDevice => {
+                requests.push(ShellRequest::PickExportMidiDevicePreset);
+            }
             MidiMapsAction::Clear => {
                 self.core.clear_midi_maps();
             }
@@ -1797,6 +1827,12 @@ impl<B: AudioBackend> Shell<B> {
     /// Writes the project's MIDI mappings to the picked preset file.
     pub fn export_midi_preset_to(&mut self, path: &Path) {
         self.core.export_midi_preset(path, &[]);
+        self.repaint = true;
+    }
+
+    /// Writes the mappings of the selected device to the picked preset file.
+    pub fn export_midi_device_preset_to(&mut self, path: &Path) {
+        self.core.export_midi_device_preset(path);
         self.repaint = true;
     }
 
