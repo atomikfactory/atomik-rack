@@ -1715,6 +1715,7 @@ impl ApplicationHandler for App {
                     || s.core().view().is_auto_scrolling()
                     || s.core().view().unfold_pending()
                     || s.core().snapshot_morphing()
+                    || s.core().macro_gliding()
                     || !s.core().plugins_ready()
             }) || self.plugin_windows.any(),
             plugins: songs.iter().any(|s| s.core().plugin_instance_count() > 0),

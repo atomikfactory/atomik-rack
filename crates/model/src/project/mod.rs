@@ -21,7 +21,8 @@
 //!                                                              (v27; written only when non-empty),
 //!                "master": key | null, "returns": [key | null × 8], "compensation": bool },
 //!   "midi_maps"?: [{ "id", "source", "target", options… }…]       (v28; written only when non-empty),
-//!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"? }…], "names"?: [{ "bank", "macro", "name" }…] }
+//!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"?, "curve"?, "smooth_ms"? }…],
+//!                "names"?: [{ "bank", "macro", "name" }…] }
 //!                                                               (v29; written only when non-empty),
 //!   "info"?: { "title"?, "author"?, "email"?, "url"?, "notes"? }  (v38; written only when set),
 //!   "tune_cents"?: number                  (v40, -100..=100 around A = 440 Hz; written only when not 0),
@@ -297,9 +298,11 @@
 //! differs from its version 27 file in the version line alone, and plays and bounces bit for bit
 //! as it did. **Version 28** files have no macros: from version 29 the root may carry `"macros"`
 //! after `"midi_maps"` (see [`crate::macros`] and `macros_io.rs`): `{"assigns"?: [{"id", "bank",
-//! "macro", "device", "param", "min", "max", "invert"?}…], "names"?: [{"bank", "macro",
-//! "name"}…]}`; an assignment binds macro `"macro"` (1 to 8) of the `atomik.macro-bank` device
-//! `"bank"` to a param of a top-level device with the plain values at macro 0 and macro 1; ids
+//! "macro", "device", "param", "min", "max", "invert"?, "curve"?, "smooth_ms"?}…], "names"?:
+//! [{"bank", "macro", "name"}…]}`; an assignment binds macro `"macro"` (1 to 8) of the
+//! `atomik.macro-bank` device `"bank"` to a param of a top-level device with the plain values at
+//! macro 0 and macro 1 (`"curve"` `"exp"` or `"log"` bends the travel, `"smooth_ms"` is a live glide
+//! time up to 5000 ms; both are written only when set and an older reader may ignore them); ids
 //! count from 1 and are unique, at most 512, a param is assigned at most once, and the loader
 //! checks the shape and the numbers, not the references (an assignment may name a device that was
 //! deleted; it does nothing). A name is trimmed, 1 to 24 characters, one per bank and macro. The
@@ -468,7 +471,7 @@ mod read_devices;
 mod read_legacy;
 mod read_song;
 mod read_track;
-mod schema;
+pub(crate) mod schema;
 mod write;
 mod write_clip;
 mod write_console;

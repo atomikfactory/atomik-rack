@@ -100,6 +100,7 @@ fn assigned() -> AppCore<RecordingSink> {
                 min,
                 max,
                 invert: false,
+                merge: None,
             }),
         );
     }
@@ -159,6 +160,7 @@ fn assigning_removing_and_a_range_edit_reach_the_engine() {
             min: 100.0,
             max: 200.0,
             invert: false,
+            merge: None,
         }),
     );
     let sent = params_of(&c.sink_mut().take());
@@ -380,6 +382,7 @@ fn demo_doc() -> RackDoc {
             min: 300.0,
             max: 2400.0,
             invert: true,
+            merge: None,
         }),
     );
     let bank = bank(&c);
@@ -875,4 +878,228 @@ fn an_empty_document_has_no_banks_and_an_index_of_the_master_alone() {
     let c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
     assert!(c.macro_bank().is_none());
     assert!(c.macro_bank_rows().is_empty());
+}
+
+// ------------------------------------------------------------------ curves, smoothing, drops
+
+fn shape(c: &mut AppCore<RecordingSink>, id: u32, curve: atomik_model::MacroCurve, ms: u16) {
+    apply(
+        c,
+        Command::Macro(MacroCommand::SetShape {
+            id,
+            curve,
+            smooth_ms: ms,
+        }),
+    );
+}
+
+fn edit_param(
+    c: &mut AppCore<RecordingSink>,
+    device: &str,
+    param: &str,
+    v: f32,
+    merge: Option<u64>,
+) {
+    c.handle_action(UiAction::Command(Command::SetParam {
+        key: key(device),
+        param: param.into(),
+        value: v,
+        merge,
+    }));
+}
+
+fn last_of(sent: &[(u32, u32, f32)], id: u32, param: u32) -> Option<f32> {
+    sent.iter()
+        .filter(|(i, p, _)| (*i, *p) == (id, param))
+        .map(|(_, _, v)| *v)
+        .next_back()
+}
+
+#[test]
+fn a_curve_shapes_what_the_engine_gets_and_a_static_value_still_matches_the_bounce() {
+    let mut c = assigned();
+    let bank = bank(&c);
+    shape(&mut c, 1, atomik_model::MacroCurve::Exp, 0);
+    c.sink_mut().take();
+    set_param(&mut c, &bank, "macro1", 0.5);
+    let (a, cutoff) = (c.device_id(&key("a")).unwrap().0, param_id(SYNTH, CUTOFF));
+    // Slow start over 200..2000: a quarter of the way at the middle of the macro.
+    let sent = params_of(&c.sink_mut().take());
+    assert!(sent.contains(&(a, cutoff, 650.0)), "{sent:?}");
+    // Live and bounce agree for a curved, smoothed assignment on a fresh engine.
+    let mut doc = demo_doc();
+    doc.song_mut().tracks.retain(|t| t.device == key("lead"));
+    let bank = doc.banks().next().unwrap().key.clone();
+    doc.device_mut_for_test(&bank)
+        .params
+        .insert("macro1".into(), 0.7);
+    doc.macros.assigns[0].curve = atomik_model::MacroCurve::Log;
+    doc.macros.assigns[0].smooth_ms = 400;
+    let reference = bounce_of(&doc);
+    let live = play_doc(doc, reference[0].len(), 256);
+    assert_eq!(same_bits(&live, &reference), None);
+}
+
+#[test]
+fn a_smoothed_target_glides_over_its_time_and_ends_exactly_on_the_value() {
+    let mut c = assigned();
+    let bank = bank(&c);
+    shape(&mut c, 1, atomik_model::MacroCurve::Linear, 200);
+    let (a, cutoff) = (c.device_id(&key("a")).unwrap().0, param_id(SYNTH, CUTOFF));
+    let from = c
+        .doc()
+        .driven_value(c.registry(), &key("a"), CUTOFF)
+        .unwrap();
+    c.sink_mut().take();
+    set_param(&mut c, &bank, "macro1", 1.0);
+    // The smoothed target has not jumped; the other one (no smoothing) did.
+    let sent = params_of(&c.sink_mut().take());
+    assert_eq!(last_of(&sent, a, cutoff), None, "{sent:?}");
+    let b = c.device_id(&key("b")).unwrap().0;
+    assert_eq!(last_of(&sent, b, cutoff), Some(4000.0), "{sent:?}");
+    assert!(c.macro_gliding());
+    // The first frame stamps the start, the later ones move along the line.
+    c.transport_frame(10.0);
+    c.transport_frame(10.1);
+    let mid = last_of(&params_of(&c.sink_mut().take()), a, cutoff).expect("a step");
+    let expected = from + (2000.0 - from) * 0.5;
+    assert!((mid - expected).abs() < 1.0, "{mid} vs {expected}");
+    assert!(c.macro_gliding());
+    c.transport_frame(10.3);
+    let end = last_of(&params_of(&c.sink_mut().take()), a, cutoff).expect("the last step");
+    assert_eq!(end, 2000.0);
+    assert!(!c.macro_gliding());
+    c.transport_frame(10.5);
+    assert!(params_of(&c.sink_mut().take()).is_empty());
+}
+
+#[test]
+fn a_move_during_a_glide_starts_from_where_it_is_and_removing_drops_it() {
+    let mut c = assigned();
+    let bank = bank(&c);
+    shape(&mut c, 1, atomik_model::MacroCurve::Linear, 1000);
+    let (a, cutoff) = (c.device_id(&key("a")).unwrap().0, param_id(SYNTH, CUTOFF));
+    set_param(&mut c, &bank, "macro1", 1.0);
+    c.transport_frame(5.0);
+    c.transport_frame(5.5);
+    c.sink_mut().take();
+    // Half-way up; the macro turns back to 0: the glide turns round from the current value.
+    set_param(&mut c, &bank, "macro1", 0.0);
+    c.transport_frame(5.5);
+    c.transport_frame(5.6);
+    let last = last_of(&params_of(&c.sink_mut().take()), a, cutoff).unwrap();
+    assert!(last > 200.0 && last < 2000.0, "{last}");
+    // Taking the param out of the macro ends the glide and leaves it free.
+    assert!(c.remove_from_macro(&key("a"), CUTOFF));
+    assert!(!c.macro_gliding());
+    c.sink_mut().take();
+    c.transport_frame(9.0);
+    c.transport_frame(9.5);
+    let after = params_of(&c.sink_mut().take());
+    assert_eq!(last_of(&after, a, cutoff), None, "{after:?}");
+}
+
+#[test]
+fn a_turned_knob_of_a_driven_param_moves_the_range_and_one_drag_is_one_undo_step() {
+    let mut c = assigned();
+    let bank = bank(&c);
+    set_param(&mut c, &bank, "macro1", 0.5);
+    let (a, cutoff) = (c.device_id(&key("a")).unwrap().0, param_id(SYNTH, CUTOFF));
+    c.sink_mut().take();
+    let steps_before = c.document().undo_depth();
+    for v in [1200.0, 1300.0, 1400.0] {
+        edit_param(&mut c, "a", CUTOFF, v, Some(77));
+    }
+    let a1 = c.doc().macros.assigns[0].clone();
+    assert_eq!((a1.min, a1.max), (500.0, 2300.0), "shifted by 300");
+    assert_eq!(
+        c.doc().driven_value(c.registry(), &key("a"), CUTOFF),
+        Some(1400.0)
+    );
+    let sent = params_of(&c.sink_mut().take());
+    assert_eq!(last_of(&sent, a, cutoff), Some(1400.0), "{sent:?}");
+    c.handle_action(UiAction::EndMerge);
+    assert_eq!(c.document().undo_depth(), steps_before + 1);
+    assert!(c.undo());
+    let a0 = c.doc().macros.assigns[0].clone();
+    assert_eq!((a0.min, a0.max), (200.0, 2000.0));
+    assert!(params_of(&c.sink_mut().take()).contains(&(a, cutoff, 1100.0)));
+    // A value the param already shows changes nothing and says nothing.
+    let before = c.doc().clone();
+    edit_param(&mut c, "a", CUTOFF, 1100.0, None);
+    assert_eq!(c.doc(), &before);
+    // A plain command on a driven param is still refused.
+    assert!(
+        c.apply_command(Command::SetParam {
+            key: key("a"),
+            param: CUTOFF.into(),
+            value: 900.0,
+            merge: None,
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn a_knob_dropped_on_a_macro_assigns_it_to_that_bank_and_macro() {
+    let mut c = core();
+    assert!(c.new_macro_bank());
+    let first = bank(&c);
+    assert!(c.new_macro_bank());
+    let second = c.doc().banks().last().unwrap().key.clone();
+    assert_ne!(first, second);
+    let drop =
+        |bank: &DeviceKey, index: u8, device: &DeviceKey, param: &str| MacrosAction::Assign {
+            bank: bank.clone(),
+            index,
+            device: device.clone(),
+            param: param.into(),
+        };
+    assert!(!c.macros_action(drop(&first, 3, &key("a"), CUTOFF)));
+    let a = c.doc().macros.driving(&key("a"), CUTOFF).unwrap();
+    assert_eq!((a.bank.clone(), a.index), (first.clone(), 3));
+    assert_eq!(c.macro_bank(), Some(first.clone()));
+    // Dropping it on another macro moves it, in one undo step.
+    c.macros_action(drop(&second, 0, &key("a"), CUTOFF));
+    let a = c.doc().macros.driving(&key("a"), CUTOFF).unwrap();
+    assert_eq!((a.bank.clone(), a.index), (second, 0));
+    assert_eq!(c.doc().macros.assigns.len(), 1);
+    assert!(c.undo());
+    assert_eq!(c.doc().macros.driving(&key("a"), CUTOFF).unwrap().index, 3);
+    // Something a macro cannot drive is refused with its reason.
+    c.macros_action(drop(&first, 1, &first, "macro2"));
+    assert!(c.last_rejection().is_some());
+}
+
+#[test]
+fn a_panel_range_drag_is_one_undo_step_and_the_end_closes_the_gesture() {
+    let mut c = assigned();
+    let before = c.document().undo_depth();
+    for (n, max) in [2500.0, 3000.0, 3500.0].into_iter().enumerate() {
+        assert!(!c.macros_action(MacrosAction::DragRange {
+            id: 1,
+            min: 200.0,
+            max,
+            invert: false,
+            merge: (20 << 40) + 1,
+        }));
+        assert_eq!(c.doc().macros.assigns[0].max, max, "step {n}");
+    }
+    c.macros_action(MacrosAction::EndDrag);
+    assert_eq!(c.document().undo_depth(), before + 1);
+    assert!(c.undo());
+    assert_eq!(c.doc().macros.assigns[0].max, 2000.0);
+    // A shape change from the panel is its own step.
+    c.macros_action(MacrosAction::SetShape {
+        id: 1,
+        curve: atomik_model::MacroCurve::Log,
+        smooth_ms: 100,
+    });
+    let a = &c.doc().macros.assigns[0];
+    assert_eq!((a.curve, a.smooth_ms), (atomik_model::MacroCurve::Log, 100));
+    let row = c.macro_bank_rows()[0].macros[0].assigns[0].clone();
+    assert_eq!(
+        (row.curve, row.smooth_ms),
+        (atomik_model::MacroCurve::Log, 100)
+    );
 }

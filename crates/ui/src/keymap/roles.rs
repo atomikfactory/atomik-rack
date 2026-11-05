@@ -33,11 +33,13 @@ pub enum Role {
     /// Drag: on a lane of the arrangement a drag selects a time range instead of drawing or
     /// rubber-banding.
     RangeDrag,
+    /// Drag: a knob of the rack dropped on a macro knob of a macro bank is assigned to it.
+    AssignMacro,
 }
 
 impl Role {
     /// Every role, in listing order.
-    pub const ALL: [Role; 12] = [
+    pub const ALL: [Role; 13] = [
         Role::AlternateTool,
         Role::DisableSnap,
         Role::CopyDrag,
@@ -50,6 +52,7 @@ impl Role {
         Role::SelectedOnly,
         Role::FlatRange,
         Role::RangeDrag,
+        Role::AssignMacro,
     ];
 
     /// The source modules that act on this role. A role with none is not wired: Settings does
@@ -68,6 +71,7 @@ impl Role {
             Role::SelectedOnly => &["piano_roll"],
             Role::FlatRange => &["arrangement"],
             Role::RangeDrag => &["arrangement/lane_range"],
+            Role::AssignMacro => &["rack/macro_drag"],
         }
     }
 
@@ -96,6 +100,7 @@ impl Role {
             Role::SelectedOnly => "selected_only",
             Role::FlatRange => "flat_range",
             Role::RangeDrag => "range_drag",
+            Role::AssignMacro => "assign_macro",
         }
     }
 }
@@ -121,6 +126,7 @@ impl Role {
             Role::SelectedOnly => "Selected notes only",
             Role::FlatRange => "Flat automation range",
             Role::RangeDrag => "Lane range select",
+            Role::AssignMacro => "Assign to macro",
         }
     }
 }
@@ -206,6 +212,7 @@ impl Roles {
             b(R::Constrain, shift, G::DragItem),
             b(R::FlatRange, m(true, false, false, true), G::DragItem),
             b(R::RangeDrag, m(false, false, true, true), G::DragItem),
+            b(R::AssignMacro, m(false, false, true, true), G::DragControl),
             b(R::FineAdjust, shift, G::DragControl),
             b(R::ResetParam, cmd, G::ClickControl),
             b(
@@ -461,6 +468,7 @@ mod tests {
         match module {
             "viewport" => include_str!("../viewport.rs"),
             "rack/selection" => include_str!("../rack/selection.rs"),
+            "rack/macro_drag" => include_str!("../rack/macro_drag.rs"),
             "arrangement" => include_str!("../arrangement.rs"),
             "arrangement/lane_range" => include_str!("../arrangement/lane_range.rs"),
             "console" => include_str!("../console.rs"),

@@ -27,11 +27,27 @@
 //!
 //! # The value
 //!
-//! `v = min + (max - min) * m`, with `m` the macro (`1 - m` when inverted), clamped to the
+//! `v = min + (max - min) * curve(m)`, with `m` the macro (`1 - m` when inverted), clamped to the
 //! descriptor range and rounded for a discrete param: [`crate::macro_value`], which uses only
 //! `+ - *`, so every platform agrees and a bounce is reproducible. `min` and `max` are plain
-//! values of the param (not fractions of a curve), so a cutoff moves linearly in Hz across the
-//! macro, as the container macros do.
+//! values of the param (not fractions of a curve). The default [`MacroCurve::Linear`] moves a
+//! cutoff linearly in Hz across the macro, as the container macros do; [`MacroCurve::Exp`] (slow
+//! start, `m * m`) and [`MacroCurve::Log`] (fast start, the mirror of it) bend the travel between
+//! the two ends, all in the same plain-value range.
+//!
+//! # Smoothing
+//!
+//! An assignment may carry a smoothing time (`smooth_ms`, at most [`MAX_MACRO_SMOOTH_MS`]): when a
+//! live macro moves, the app glides the target to its new value over that time instead of
+//! jumping. It is a live-playing aid only: the saved value, an automation lane and a bounce use the
+//! unsmoothed mapping, so a render stays reproducible.
+//!
+//! # Editing a driven param directly
+//!
+//! Turning the knob of a driven param in the rack does not fight the macro and is not refused
+//! there: [`MacroCommand::MoveRange`] shifts the whole range of the assignment so that the param
+//! shows the new value at the macro position it has now (as far as the param range allows).
+//! Drags carry a merge id and are one undo step. (A plain `SetParam` stays refused.)
 //!
 //! # Where it is applied
 //!
@@ -54,6 +70,71 @@ use atomik_device_sdk::Registry;
 pub const MACRO_BANK_TYPE: &str = "atomik.macro-bank";
 /// Most assignments a project holds.
 pub const MAX_MACRO_ASSIGNS: usize = 512;
+/// The longest smoothing time of an assignment, in milliseconds.
+pub const MAX_MACRO_SMOOTH_MS: u16 = 5000;
+
+/// How the macro travel maps onto the range of an assignment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MacroCurve {
+    /// The value moves in step with the macro.
+    #[default]
+    Linear,
+    /// Slow start, steep end (`m * m`): the low half of the macro covers a quarter of the range.
+    Exp,
+    /// Steep start, slow end (`1 - (1 - m)^2`): the low half of the macro covers three quarters.
+    Log,
+}
+
+impl MacroCurve {
+    /// Every curve, in menu order.
+    pub const ALL: [MacroCurve; 3] = [MacroCurve::Linear, MacroCurve::Exp, MacroCurve::Log];
+
+    /// The name the project file and the panel use.
+    pub fn name(self) -> &'static str {
+        match self {
+            MacroCurve::Linear => "linear",
+            MacroCurve::Exp => "exp",
+            MacroCurve::Log => "log",
+        }
+    }
+
+    /// The curve called `name`.
+    pub fn from_name(name: &str) -> Option<MacroCurve> {
+        Self::ALL.into_iter().find(|c| c.name() == name)
+    }
+
+    /// The next curve in [`MacroCurve::ALL`], wrapping.
+    pub fn next(self) -> MacroCurve {
+        let at = Self::ALL.iter().position(|c| *c == self).unwrap_or(0);
+        Self::ALL[(at + 1) % Self::ALL.len()]
+    }
+
+    /// The share of the range (0 to 1) at macro position `m` (0 to 1, clamped). Only `+ - *`.
+    pub fn shape(self, m: f32) -> f32 {
+        match self {
+            MacroCurve::Linear => m,
+            MacroCurve::Exp => {
+                let m = m.clamp(0.0, 1.0);
+                m * m
+            }
+            MacroCurve::Log => {
+                let m = m.clamp(0.0, 1.0);
+                m * (2.0 - m)
+            }
+        }
+    }
+
+    /// The macro position that gives the share `y` of the range: the inverse of
+    /// [`MacroCurve::shape`] (the one place that takes a square root).
+    pub fn unshape(self, y: f32) -> f32 {
+        let y = y.clamp(0.0, 1.0);
+        match self {
+            MacroCurve::Linear => y,
+            MacroCurve::Exp => y.sqrt(),
+            MacroCurve::Log => 1.0 - (1.0 - y).sqrt(),
+        }
+    }
+}
 
 /// One param driven by one macro of a bank.
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +155,10 @@ pub struct MacroAssign {
     pub max: f32,
     /// The macro runs backwards: macro 1 gives `min`.
     pub invert: bool,
+    /// How the macro travel maps onto the range.
+    pub curve: MacroCurve,
+    /// The glide time of a live move, in milliseconds (0: none, at most [`MAX_MACRO_SMOOTH_MS`]).
+    pub smooth_ms: u16,
 }
 
 /// The name of one macro of a bank (a macro without an entry is called `Macro n`).
@@ -162,6 +247,29 @@ pub enum MacroCommand {
         max: f32,
         /// The macro runs backwards.
         invert: bool,
+        /// Drag-merge group (consecutive ranges of one drag are one undo step), or `None`.
+        merge: Option<u64>,
+    },
+    /// Change the curve and the smoothing time of assignment `id`.
+    SetShape {
+        /// The assignment.
+        id: u32,
+        /// How the macro travel maps onto the range.
+        curve: MacroCurve,
+        /// The glide time of a live move in milliseconds, at most [`MAX_MACRO_SMOOTH_MS`].
+        smooth_ms: u16,
+    },
+    /// A direct edit of a driven param: shift the range of its assignment so the param shows
+    /// `value` at the macro position it has now (as far as the param range allows).
+    MoveRange {
+        /// The driven device.
+        device: DeviceKey,
+        /// The driven param.
+        param: String,
+        /// The value the param should show now.
+        value: f32,
+        /// Drag-merge group, or `None`.
+        merge: Option<u64>,
     },
     /// Remove assignment `id`; the param keeps the value the macro gave it.
     Remove {
@@ -203,7 +311,13 @@ pub fn macro_index_of(param: &str) -> Option<u8> {
 
 /// The value assignment `a` gives a param for macro value `m`.
 pub fn assign_value(a: &MacroAssign, m: f32, p: &ParamDescriptor) -> f32 {
-    macro_value(a.min, a.max, if a.invert { 1.0 - m } else { m }, p)
+    macro_value(a.min, a.max, assign_share(a, m), p)
+}
+
+/// The share of the range (0 to 1) assignment `a` gives at macro value `m`: the direction and
+/// the curve applied.
+fn assign_share(a: &MacroAssign, m: f32) -> f32 {
+    a.curve.shape(if a.invert { 1.0 - m } else { m })
 }
 
 /// The macro position that gives a param the plain value `v` through `a` (the inverse of
@@ -213,7 +327,7 @@ pub fn assign_position(a: &MacroAssign, v: f32) -> f32 {
     if span == 0.0 || !span.is_finite() {
         return 0.0;
     }
-    let m = ((v - a.min) / span).clamp(0.0, 1.0);
+    let m = a.curve.unshape(((v - a.min) / span).clamp(0.0, 1.0));
     if a.invert { 1.0 - m } else { m }
 }
 
@@ -253,6 +367,32 @@ impl RackDoc {
         self.macros
             .driving(device, param)
             .filter(|a| self.macro_assign_live(a))
+    }
+
+    /// The range a direct edit of the driven param would give its assignment: `(id, min, max)`
+    /// of [`MacroCommand::MoveRange`] for `value`, or `None` when nothing drives the param or the
+    /// range would not change (the edit is already what the param shows, or the range is at the
+    /// end of the param's own range). The whole range shifts so the unrounded value at the macro's
+    /// position lands on `value`, kept inside the param range at both ends.
+    pub fn moved_range(
+        &self,
+        registry: &Registry,
+        device: &DeviceKey,
+        param: &str,
+        value: f32,
+    ) -> Option<(u32, f32, f32)> {
+        let a = self.bank_driver(device, param)?;
+        let p = registry
+            .get(&self.device(device)?.type_id)?
+            .descriptor
+            .param_by_key(param)?;
+        let at = a.min + (a.max - a.min) * assign_share(a, self.bank_macro_value(&a.bank, a.index));
+        let (lo, hi) = (a.min.min(a.max), a.min.max(a.max));
+        let shift = (p.clamp(value) - at).clamp(p.min - lo, p.max - hi);
+        (shift != 0.0 && shift.is_finite()).then(|| {
+            let moved = |v: f32| (v + shift).clamp(p.min, p.max);
+            (a.id, moved(a.min), moved(a.max))
+        })
     }
 
     /// The value the macro gives `param` of `device` now, if a live assignment drives it.
@@ -625,6 +765,8 @@ pub(crate) fn plan(
                 min,
                 max,
                 invert,
+                curve: MacroCurve::Linear,
+                smooth_ms: 0,
             };
             if alone {
                 let m = assign_position(&assign, stored);
@@ -640,6 +782,7 @@ pub(crate) fn plan(
             min,
             max,
             invert,
+            merge: _,
         } => {
             let Some(a) = new.assigns.iter_mut().find(|a| a.id == id) else {
                 return Err(bad(format!("no assignment {id}")));
@@ -654,6 +797,43 @@ pub(crate) fn plan(
                 return Err(ModelError::OutOfRange("the range is not finite".into()));
             }
             (a.min, a.max, a.invert) = (min, max, invert);
+        }
+        MacroCommand::SetShape {
+            id,
+            curve,
+            smooth_ms,
+        } => {
+            if smooth_ms > MAX_MACRO_SMOOTH_MS {
+                return Err(ModelError::OutOfRange(format!(
+                    "a smoothing time is at most {MAX_MACRO_SMOOTH_MS} ms"
+                )));
+            }
+            let Some(a) = new.assigns.iter_mut().find(|a| a.id == id) else {
+                return Err(bad(format!("no assignment {id}")));
+            };
+            (a.curve, a.smooth_ms) = (curve, smooth_ms);
+        }
+        MacroCommand::MoveRange {
+            device,
+            param,
+            value,
+            merge: _,
+        } => {
+            if !value.is_finite() {
+                return Err(ModelError::OutOfRange(format!(
+                    "{device} {param:?} is not finite"
+                )));
+            }
+            if doc.bank_driver(&device, &param).is_none() {
+                return Err(bad(format!("{device} {param} is not driven by a macro")));
+            }
+            let Some((id, min, max)) = doc.moved_range(registry, &device, &param, value) else {
+                return Err(bad("the macro is already like that"));
+            };
+            let Some(a) = new.assigns.iter_mut().find(|a| a.id == id) else {
+                return Err(bad(format!("no assignment {id}")));
+            };
+            (a.min, a.max) = (min, max);
         }
         MacroCommand::Remove { id } => {
             let Some(a) = old.assigns.iter().find(|a| a.id == id) else {

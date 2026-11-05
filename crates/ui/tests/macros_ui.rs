@@ -1,7 +1,8 @@
-//! Macro banks in the views: a control a macro drives is locked (it shows the macro's value, wears
-//! an `M<n>` tag and refuses a drag) but keeps its right-click menu, every press on a control says
-//! which param is being touched, and the Macros panel and the parameter search lay out, hit-test
-//! and emit what they promise.
+//! Macro banks in the views: a control a macro drives shows the macro's value and wears an `M<n>`
+//! tag (in the rack a turn of it edits the range of its assignment, elsewhere it is locked) and
+//! keeps its right-click menu, every press on a control says which param is being touched, a knob
+//! dragged onto a macro knob asks for the assignment, and the Macros panel and the parameter
+//! search lay out, hit-test and emit what they promise.
 
 mod support;
 
@@ -26,6 +27,8 @@ fn assign(device: &str, param: &str, min: f32, max: f32, invert: bool) -> MacroA
         min,
         max,
         invert,
+        curve: Default::default(),
+        smooth_ms: 0,
     }
 }
 
@@ -112,22 +115,49 @@ fn the_value_follows_the_macro() {
 }
 
 #[test]
-fn a_driven_rack_control_refuses_a_press_but_keeps_its_menu() {
+fn a_driven_rack_control_edits_through_the_macro_and_keeps_its_menu() {
     let doc = driven_doc();
     let mut v = plain_view(&doc, &registry());
     let at = v.control_center(&key("synth"), "filter.cutoff").unwrap();
     let left = v.handle(&down(at), &doc, &registry());
-    assert!(commands(&left).is_empty());
+    assert!(commands(&left).is_empty(), "a press alone changes nothing");
     assert_eq!(menus(&left), 0);
     // It is still the param being touched.
     assert_eq!(touched(&left), [(key("synth"), "filter.cutoff".to_owned())]);
-    // Dragging it does nothing either.
+    // Dragging it sends the edit (the app turns it into a move of the macro's range), one
+    // merge id for the whole drag.
     let drag = v.handle(&mv(Point::new(at.x, at.y - 40.0)), &doc, &registry());
-    assert!(commands(&drag).is_empty());
-    let _ = v.handle(&up(at), &doc, &registry());
-    // A double click does not reset it.
+    let merges: Vec<_> = commands(&drag)
+        .into_iter()
+        .filter_map(|c| match c {
+            atomik_model::Command::SetParam {
+                key: k,
+                param,
+                merge,
+                ..
+            } if k == key("synth") && param == "filter.cutoff" => Some(merge),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(merges.len(), 1, "{drag:?}");
+    assert!(merges[0].is_some());
+    let end = v.handle(&up(at), &doc, &registry());
+    assert!(end.iter().any(|a| matches!(a, UiAction::EndMerge)));
+    // A double click resets it to the default (the same route).
     let twice = v.handle(&down_with(at, PointerButton::Primary, 2), &doc, &registry());
-    assert!(commands(&twice).is_empty());
+    assert_eq!(commands(&twice).len(), 1);
+    let _ = v.handle(&up(at), &doc, &registry());
+    // The wheel turns it too.
+    let wheel = v.handle(
+        &UiEvent::Wheel {
+            delta: atomik_ui::kurbo::Vec2::new(0.0, 1.0),
+            pos: at,
+            modifiers: Modifiers::NONE,
+        },
+        &doc,
+        &registry(),
+    );
+    assert_eq!(commands(&wheel).len(), 1);
     // The right click opens the control menu.
     let right = v.handle(
         &down_with(at, PointerButton::Secondary, 1),
@@ -247,6 +277,8 @@ fn assign_row(id: u32, target: &str, min: f32, max: f32, invert: bool) -> MacroA
         min,
         max,
         invert,
+        curve: Default::default(),
+        smooth_ms: 0,
         param_min: 20.0,
         param_max: 20_000.0,
         step: 400.0,
@@ -312,6 +344,17 @@ fn click_at(v: &mut MacrosView, p: Point, button: PointerButton) -> Vec<MacrosAc
     }))
 }
 
+/// A press and a release in place: what a click on MIN or MAX with the main button is.
+fn tap_at(v: &mut MacrosView, p: Point) -> Vec<MacrosAction> {
+    let mut out = click_at(v, p, PointerButton::Primary);
+    out.extend(macros_of(v.handle(&UiEvent::PointerUp {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    })));
+    out
+}
+
 fn key_event(v: &mut MacrosView, key: Key, modifiers: Modifiers) -> Vec<MacrosAction> {
     macros_of(v.handle(&UiEvent::Key {
         key,
@@ -351,7 +394,7 @@ fn a_click_on_min_and_max_moves_the_range_by_a_step() {
     let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
     let min = v.assign_center(0, 0, "min").unwrap();
     assert_eq!(
-        click_at(&mut v, min, PointerButton::Primary),
+        tap_at(&mut v, min),
         [MacrosAction::SetRange {
             id: 1,
             min: 600.0,
@@ -370,7 +413,7 @@ fn a_click_on_min_and_max_moves_the_range_by_a_step() {
     );
     let max = v.assign_center(0, 1, "max").unwrap();
     assert_eq!(
-        click_at(&mut v, max, PointerButton::Primary),
+        tap_at(&mut v, max),
         [MacrosAction::SetRange {
             id: 2,
             min: 400.0,
@@ -416,7 +459,7 @@ fn a_range_stays_inside_the_param() {
     let mut v = macros_view(banks);
     // At the ends a click changes nothing.
     let max = v.assign_center(0, 0, "max").unwrap();
-    assert!(click_at(&mut v, max, PointerButton::Primary).is_empty());
+    assert!(tap_at(&mut v, max).is_empty());
     let min = v.assign_center(0, 0, "min").unwrap();
     assert!(click_at(&mut v, min, PointerButton::Secondary).is_empty());
 }
@@ -979,4 +1022,255 @@ fn a_plugin_param_a_bank_drives_is_locked_and_keeps_its_menu() {
     let mut out = v.handle(&down(free), &doc, &registry());
     out.extend(v.handle(&mv(Point::new(free.x + 40.0, free.y)), &doc, &registry()));
     assert!(!commands(&out).is_empty());
+}
+
+// ---- Dragging a knob onto a macro ---------------------------------------------------------------
+
+const ASSIGN: Modifiers = Modifiers {
+    alt: true,
+    shift: true,
+    ..Modifiers::NONE
+};
+
+fn down_assign(pos: Point) -> UiEvent {
+    UiEvent::PointerDown {
+        pos,
+        button: PointerButton::Primary,
+        modifiers: ASSIGN,
+        clicks: 1,
+    }
+}
+
+fn assigns_of(actions: &[UiAction]) -> Vec<MacrosAction> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Macros(m @ MacrosAction::Assign { .. }) => Some(m.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_knob_dragged_with_the_assign_role_onto_a_macro_knob_asks_for_the_assignment() {
+    let doc = driven_doc();
+    let mut v = plain_view(&doc, &registry());
+    let from = v.control_center(&key("synth"), "filter.resonance").unwrap();
+    let onto = v.control_center(&key("bank"), "macro3").unwrap();
+    let press = v.handle(&down_assign(from), &doc, &registry());
+    assert!(
+        commands(&press).is_empty(),
+        "the press does not turn the knob"
+    );
+    let moved = v.handle(&mv(onto), &doc, &registry());
+    assert!(commands(&moved).is_empty());
+    // The line and the outline paint without trouble.
+    let _ = paint_rack(&mut v, &doc);
+    let released = v.handle(&up(onto), &doc, &registry());
+    assert_eq!(
+        assigns_of(&released),
+        [MacrosAction::Assign {
+            bank: key("bank"),
+            index: 2,
+            device: key("synth"),
+            param: "filter.resonance".into(),
+        }]
+    );
+    assert!(commands(&released).is_empty());
+    // Nothing is left of the gesture: the next move is a plain hover.
+    let after = v.handle(&mv(from), &doc, &registry());
+    assert!(assigns_of(&after).is_empty());
+}
+
+#[test]
+fn a_drop_anywhere_else_or_an_escape_assigns_nothing() {
+    let doc = driven_doc();
+    let mut v = plain_view(&doc, &registry());
+    let from = v.control_center(&key("synth"), "filter.resonance").unwrap();
+    let other = v.control_center(&key("synth"), "filter.cutoff").unwrap();
+    let _ = v.handle(&down_assign(from), &doc, &registry());
+    let _ = v.handle(&mv(other), &doc, &registry());
+    let released = v.handle(&up(other), &doc, &registry());
+    assert!(assigns_of(&released).is_empty());
+    assert!(commands(&released).is_empty());
+    // Escape drops it before the release.
+    let onto = v.control_center(&key("bank"), "macro1").unwrap();
+    let _ = v.handle(&down_assign(from), &doc, &registry());
+    let _ = v.handle(&mv(onto), &doc, &registry());
+    let _ = v.handle(
+        &UiEvent::Key {
+            key: Key::Escape,
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        },
+        &doc,
+        &registry(),
+    );
+    let released = v.handle(&up(onto), &doc, &registry());
+    assert!(assigns_of(&released).is_empty());
+}
+
+#[test]
+fn a_plain_press_still_turns_a_knob_and_a_bank_knob_does_not_start_the_drag() {
+    let doc = driven_doc();
+    let mut v = plain_view(&doc, &registry());
+    let from = v.control_center(&key("synth"), "filter.resonance").unwrap();
+    let _ = v.handle(&down(from), &doc, &registry());
+    let moved = v.handle(&mv(Point::new(from.x, from.y - 30.0)), &doc, &registry());
+    assert!(!commands(&moved).is_empty(), "a plain drag turns the knob");
+    let _ = v.handle(&up(from), &doc, &registry());
+    // The macro knob of a bank is no source: with the role held it turns like a plain press.
+    let knob = v.control_center(&key("bank"), "macro2").unwrap();
+    let onto = v.control_center(&key("bank"), "macro4").unwrap();
+    let _ = v.handle(&down_assign(knob), &doc, &registry());
+    let _ = v.handle(&mv(onto), &doc, &registry());
+    let released = v.handle(&up(onto), &doc, &registry());
+    assert!(assigns_of(&released).is_empty());
+}
+
+// ---- The panel: drag, curve, smoothing ----------------------------------------------------------
+
+fn move_to(v: &mut MacrosView, p: Point, shift: bool) -> Vec<MacrosAction> {
+    macros_of(v.handle(&UiEvent::PointerMove {
+        pos: p,
+        modifiers: Modifiers {
+            shift,
+            ..Modifiers::NONE
+        },
+    }))
+}
+
+fn release(v: &mut MacrosView, p: Point) -> Vec<MacrosAction> {
+    macros_of(v.handle(&UiEvent::PointerUp {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    }))
+}
+
+#[test]
+fn a_drag_on_min_moves_the_value_continuously_as_one_merged_gesture() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    let min = v.assign_center(0, 0, "min").unwrap();
+    assert!(click_at(&mut v, min, PointerButton::Primary).is_empty());
+    // A wobble under the threshold is still a click.
+    assert!(move_to(&mut v, Point::new(min.x + 2.0, min.y), false).is_empty());
+    // 60 px of 300 is a fifth of the param range (20..20000), from the value at the press (200).
+    let steps = move_to(&mut v, Point::new(min.x + 60.0, min.y), false);
+    let [
+        MacrosAction::DragRange {
+            id,
+            min: lo,
+            max: hi,
+            invert,
+            merge,
+        },
+    ] = steps.as_slice()
+    else {
+        panic!("{steps:?}");
+    };
+    assert_eq!((*id, *hi, *invert), (1, 2000.0, false));
+    assert!((*lo - (200.0 + 0.2 * 19_980.0)).abs() < 1.0, "{lo}");
+    assert!(*merge >= 20 << 40);
+    // The next step carries the same merge id; the same position again says nothing.
+    let more = move_to(&mut v, Point::new(min.x + 90.0, min.y), false);
+    assert!(matches!(&more[..], [MacrosAction::DragRange { merge: m, .. }] if m == merge));
+    assert!(move_to(&mut v, Point::new(min.x + 90.0, min.y), false).is_empty());
+    // The release ends the gesture and is not a click.
+    assert_eq!(
+        release(&mut v, Point::new(min.x + 90.0, min.y)),
+        [MacrosAction::EndDrag]
+    );
+    assert!(move_to(&mut v, Point::new(min.x + 120.0, min.y), false).is_empty());
+}
+
+#[test]
+fn a_drag_on_max_stays_inside_the_param_and_shift_makes_it_finer() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    let max = v.assign_center(0, 0, "max").unwrap();
+    let _ = click_at(&mut v, max, PointerButton::Primary);
+    // Far to the right: clamped to the param's maximum.
+    let far = move_to(&mut v, Point::new(max.x + 900.0, max.y), false);
+    assert!(
+        matches!(&far[..], [MacrosAction::DragRange { max: m, .. }] if (*m - 20_000.0).abs() < 0.01),
+        "{far:?}"
+    );
+    assert_eq!(release(&mut v, max), [MacrosAction::EndDrag]);
+    // Shift moves a tenth as far.
+    let _ = click_at(&mut v, max, PointerButton::Primary);
+    let fine = move_to(&mut v, Point::new(max.x + 30.0, max.y), true);
+    let expected = 2000.0 + 0.1 * 0.1 * 19_980.0;
+    assert!(
+        matches!(&fine[..], [MacrosAction::DragRange { max: m, .. }] if (*m - expected as f32).abs() < 1.0),
+        "{fine:?}"
+    );
+    let _ = release(&mut v, max);
+}
+
+#[test]
+fn the_right_button_still_steps_down_on_press_and_never_drags() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    let max = v.assign_center(0, 0, "max").unwrap();
+    assert_eq!(
+        click_at(&mut v, max, PointerButton::Secondary),
+        [MacrosAction::SetRange {
+            id: 1,
+            min: 200.0,
+            max: 1600.0,
+            invert: false
+        }]
+    );
+    assert!(move_to(&mut v, Point::new(max.x + 80.0, max.y), false).is_empty());
+}
+
+#[test]
+fn the_curve_button_cycles_and_the_smoothing_button_steps() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    let curve = v.assign_center(0, 0, "curve").unwrap();
+    let shape = |id, curve, smooth_ms| MacrosAction::SetShape {
+        id,
+        curve,
+        smooth_ms,
+    };
+    assert_eq!(
+        click_at(&mut v, curve, PointerButton::Primary),
+        [shape(1, atomik_model::MacroCurve::Exp, 0)]
+    );
+    assert_eq!(
+        click_at(&mut v, curve, PointerButton::Secondary),
+        [shape(1, atomik_model::MacroCurve::Log, 0)]
+    );
+    let smooth = v.assign_center(0, 0, "smooth").unwrap();
+    assert_eq!(
+        click_at(&mut v, smooth, PointerButton::Primary),
+        [shape(1, atomik_model::MacroCurve::Linear, 10)]
+    );
+    // Nothing to go down to from none.
+    assert!(click_at(&mut v, smooth, PointerButton::Secondary).is_empty());
+    let wheel = |v: &mut MacrosView, dy: f64| {
+        macros_of(v.handle(&UiEvent::Wheel {
+            delta: atomik_ui::kurbo::Vec2::new(0.0, dy),
+            pos: smooth,
+            modifiers: Modifiers::NONE,
+        }))
+    };
+    assert_eq!(
+        wheel(&mut v, 1.0),
+        [shape(1, atomik_model::MacroCurve::Linear, 10)]
+    );
+    assert!(wheel(&mut v, -1.0).is_empty());
+}
+
+#[test]
+fn the_panel_shows_the_curve_and_the_smoothing_of_an_assignment() {
+    let mut banks = vec![bank_row("bank", "Macro Bank", true)];
+    banks[0].macros[0].assigns[0].curve = atomik_model::MacroCurve::Exp;
+    banks[0].macros[0].assigns[0].smooth_ms = 250;
+    let v = macros_view(banks);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl);
+    let shown = texts(&dl);
+    for want in ["EXP", "SM 250ms", "LIN", "SM off"] {
+        assert!(shown.iter().any(|t| t == want), "{want}: {shown:?}");
+    }
 }

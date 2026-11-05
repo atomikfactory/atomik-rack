@@ -21,7 +21,14 @@
 //! * on an assignment row a click on **MIN** or **MAX** moves it up by a fiftieth of the param's
 //!   range (a step for a stepped param), a right click down, the wheel too (Shift: a tenth of that);
 //!   **INV** runs the macro backwards ([`MacrosAction::SetRange`] with the whole assignment
-//!   changed), the cross removes the assignment and a click on the target selects it in the rack.
+//!   changed), the cross removes the assignment and a click on the target selects it in the rack;
+//!   a **drag** sideways on MIN or MAX moves the value continuously (the whole param range
+//!   over 300 px, Shift a tenth of that; [`MacrosAction::DragRange`] steps and one
+//!   [`MacrosAction::EndDrag`], so a drag is one undo step), and a click that does not travel is
+//!   the step described above;
+//! * **CURVE** cycles the shape of the travel (linear, exp, log; a right click goes back) and
+//!   **SM** the smoothing time of a live move (a click goes to the next of a few times, a right
+//!   click or the wheel steps it; [`MacrosAction::SetShape`]).
 //!
 //! An assignment whose bank or target is gone is painted in the warning colour and marked missing.
 //! The list scrolls with the wheel over the rows; only the rows in view are painted.
@@ -33,7 +40,7 @@ use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
 use crate::tooltip::Help;
-use atomik_model::{DeviceKey, MAX_MACRO_NAME_CHARS};
+use atomik_model::{DeviceKey, MAX_MACRO_NAME_CHARS, MacroCurve};
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -47,6 +54,14 @@ const MIN_WIDTH: f64 = 620.0;
 const BTN_H: f64 = 20.0;
 const BAR_STEP: f32 = 0.02;
 const BAR_STEP_FINE: f32 = 0.005;
+/// The first merge id of a range drag (a base no other view uses).
+const MERGE_BASE: u64 = 20 << 40;
+/// How far the pointer must travel sideways before a press on MIN or MAX is a drag, pixels.
+const DRAG_THRESHOLD: f64 = 3.0;
+/// Pixels of travel for the whole range of a param.
+const DRAG_PIXELS: f64 = 300.0;
+/// The smoothing times a click steps through, milliseconds.
+pub const SMOOTH_STEPS: [u16; 10] = [0, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000];
 
 /// One assignment of a macro.
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +80,10 @@ pub struct MacroAssignRow {
     pub max: f32,
     /// The macro runs backwards.
     pub invert: bool,
+    /// How the macro's travel maps onto the range.
+    pub curve: MacroCurve,
+    /// The glide time of a live move, in milliseconds.
+    pub smooth_ms: u16,
     /// The param's own range and the step of one click.
     pub param_min: f32,
     /// The param's own maximum.
@@ -132,8 +151,45 @@ pub enum MacrosAction {
         /// The macro runs backwards.
         invert: bool,
     },
+    /// A step of a drag on MIN or MAX: the range of assignment `id`, merged with the other steps
+    /// of the drag (`merge`) into one undo step.
+    DragRange {
+        /// The assignment.
+        id: u32,
+        /// The value at macro 0.
+        min: f32,
+        /// The value at macro 1.
+        max: f32,
+        /// The macro runs backwards.
+        invert: bool,
+        /// The drag's merge id.
+        merge: u64,
+    },
+    /// The drag on MIN or MAX ended.
+    EndDrag,
     /// Remove assignment `id`.
     Remove(u32),
+    /// Change the curve and the smoothing time of assignment `id`.
+    SetShape {
+        /// The assignment.
+        id: u32,
+        /// How the macro's travel maps onto the range.
+        curve: atomik_model::MacroCurve,
+        /// The glide time of a live move in milliseconds.
+        smooth_ms: u16,
+    },
+    /// Drive `param` of `device` with macro `index` of `bank`: a knob dropped on a macro knob of
+    /// the bank's rack panel (the Macros panel itself never sends it).
+    Assign {
+        /// The bank.
+        bank: DeviceKey,
+        /// The macro, 0-based.
+        index: u8,
+        /// The device that owns the knob.
+        device: DeviceKey,
+        /// The knob's param key.
+        param: String,
+    },
     /// Remove every assignment of the macro.
     Clear {
         /// The bank.
@@ -181,6 +237,8 @@ enum Hit {
     Target(u8, usize),
     Min(u8, usize),
     Max(u8, usize),
+    Curve(u8, usize),
+    Smooth(u8, usize),
     Invert(u8, usize),
     Remove(u8, usize),
 }
@@ -208,6 +266,29 @@ struct Rename {
     text: String,
 }
 
+/// A press on MIN or MAX that may become a drag.
+#[derive(Debug, Clone, PartialEq)]
+struct RangeDrag {
+    /// The assignment.
+    id: u32,
+    /// MAX (true) or MIN.
+    max: bool,
+    /// Where the press was.
+    start_x: f64,
+    /// The pointer position the value follows from (the press, then the fine switch).
+    anchor_x: f64,
+    /// The value being dragged at `anchor_x`.
+    base: f32,
+    /// The value the last step asked for.
+    last: f32,
+    /// The drag's merge id.
+    merge: u64,
+    /// The pointer has travelled: the release is not a click.
+    moved: bool,
+    /// The click this press is when it does not travel.
+    click: Option<MacrosAction>,
+}
+
 /// The Macros panel. See the module documentation.
 #[derive(Debug)]
 pub struct MacrosView {
@@ -219,6 +300,8 @@ pub struct MacrosView {
     scroll: f64,
     hover: Option<Point>,
     rename: Option<Rename>,
+    range_drag: Option<RangeDrag>,
+    drags: u64,
     repaint: bool,
 }
 
@@ -245,6 +328,8 @@ impl MacrosView {
             scroll: 0.0,
             hover: None,
             rename: None,
+            range_drag: None,
+            drags: 0,
             repaint: true,
         }
     }
@@ -425,14 +510,18 @@ impl MacrosView {
             r
         };
         let remove = take(22.0, 8.0);
-        let invert = take(48.0, 14.0);
-        let max = take(120.0, 6.0);
-        let min = take(120.0, 14.0);
+        let invert = take(40.0, 8.0);
+        let smooth = take(70.0, 8.0);
+        let curve = take(40.0, 12.0);
+        let max = take(108.0, 6.0);
+        let min = take(108.0, 12.0);
         let target = (row.x0 + PAD + 26.0, right.max(row.x0 + PAD + 60.0));
         AssignColumns {
             target,
             min,
             max,
+            curve,
+            smooth,
             invert,
             remove,
         }
@@ -482,6 +571,8 @@ impl MacrosView {
                     [
                         (Hit::Remove(n, j), c.remove),
                         (Hit::Invert(n, j), c.invert),
+                        (Hit::Smooth(n, j), c.smooth),
+                        (Hit::Curve(n, j), c.curve),
                         (Hit::Max(n, j), c.max),
                         (Hit::Min(n, j), c.min),
                         (Hit::Target(n, j), c.target),
@@ -531,6 +622,8 @@ impl MacrosView {
             Hit::Target(n, j)
             | Hit::Min(n, j)
             | Hit::Max(n, j)
+            | Hit::Curve(n, j)
+            | Hit::Smooth(n, j)
             | Hit::Invert(n, j)
             | Hit::Remove(n, j) => {
                 let at = self.items().iter().position(|i| *i == Item::Assign(n, j))?;
@@ -540,11 +633,19 @@ impl MacrosView {
                     Hit::Target(..) => (c.target, "Show this parameter in the rack"),
                     Hit::Min(..) => (
                         c.min,
-                        "Parameter value at the macro's minimum: click to raise, right-click to lower",
+                        "Parameter value at the macro's minimum: drag, or click to raise and right-click to lower",
                     ),
                     Hit::Max(..) => (
                         c.max,
-                        "Parameter value at the macro's maximum: click to raise, right-click to lower",
+                        "Parameter value at the macro's maximum: drag, or click to raise and right-click to lower",
+                    ),
+                    Hit::Curve(..) => (
+                        c.curve,
+                        "Shape of the travel: linear, exp (slow start) or log (fast start)",
+                    ),
+                    Hit::Smooth(..) => (
+                        c.smooth,
+                        "Glide time of a live move: click for longer, right-click or wheel to step",
                     ),
                     Hit::Invert(..) => (c.invert, "Invert the direction of the parameter"),
                     _ => (c.remove, "Stop this macro driving the parameter"),
@@ -559,9 +660,20 @@ impl MacrosView {
         let mut out = Vec::new();
         match event {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
-            UiEvent::PointerMove { pos, .. } => {
+            UiEvent::PointerMove { pos, modifiers } => {
                 self.hover = Some(*pos);
                 self.repaint = true;
+                out.extend(self.drag_move(pos.x, modifiers.shift));
+            }
+            UiEvent::PointerUp { .. } => {
+                if let Some(d) = self.range_drag.take() {
+                    self.repaint = true;
+                    match (d.moved, d.click) {
+                        (true, _) => out.push(UiAction::Macros(MacrosAction::EndDrag)),
+                        (false, Some(click)) => out.push(UiAction::Macros(click)),
+                        (false, None) => {}
+                    }
+                }
             }
             UiEvent::PointerLeave => {
                 self.hover = None;
@@ -615,6 +727,9 @@ impl MacrosView {
                     value,
                 })
             }
+            Some(Hit::Smooth(n, j)) if dy != 0.0 => self.assign(n, j).map_or_else(Vec::new, |a| {
+                smooth_action(a, step_smooth(a.smooth_ms, up)).map_or_else(Vec::new, act)
+            }),
             Some(Hit::Min(n, j) | Hit::Max(n, j)) if dy != 0.0 => {
                 let max = matches!(self.hit(pos), Some(Hit::Max(..)));
                 let Some(a) = self.assign(n, j) else {
@@ -630,6 +745,50 @@ impl MacrosView {
                 Vec::new()
             }
         }
+    }
+
+    /// A move of the pointer during a press on MIN or MAX: past the threshold the value follows
+    /// the pointer sideways. Shift makes it a tenth as fast from where it was switched on.
+    fn drag_move(&mut self, x: f64, fine: bool) -> Vec<UiAction> {
+        let Some(d) = self.range_drag.as_mut() else {
+            return Vec::new();
+        };
+        if !d.moved && (x - d.start_x).abs() < DRAG_THRESHOLD {
+            return Vec::new();
+        }
+        d.moved = true;
+        let (id, max, merge) = (d.id, d.max, d.merge);
+        let (base, anchor, last) = (d.base, d.anchor_x, d.last);
+        let Some(a) = self.assign_by_id(id).cloned() else {
+            self.range_drag = None;
+            return Vec::new();
+        };
+        let span = f64::from(a.param_max - a.param_min);
+        let speed = if fine { 0.1 } else { 1.0 };
+        let moved = base + ((x - anchor) / DRAG_PIXELS * span * speed) as f32;
+        let value = nudge(moved, 0.0, &a);
+        if value.to_bits() == last.to_bits() {
+            return Vec::new();
+        }
+        if let Some(d) = self.range_drag.as_mut() {
+            d.last = value;
+        }
+        let (min, max_v) = if max { (a.min, value) } else { (value, a.max) };
+        vec![UiAction::Macros(MacrosAction::DragRange {
+            id,
+            min,
+            max: max_v,
+            invert: a.invert,
+            merge,
+        })]
+    }
+
+    fn assign_by_id(&self, id: u32) -> Option<&MacroAssignRow> {
+        self.bank()?
+            .macros
+            .iter()
+            .flat_map(|m| m.assigns.iter())
+            .find(|a| a.id == id)
     }
 
     fn range_edit(&self, a: &MacroAssignRow, max: bool, by: f32) -> Option<MacrosAction> {
@@ -706,8 +865,43 @@ impl MacrosView {
                     return Vec::new();
                 };
                 let by = if forward { a.step } else { -a.step };
-                self.range_edit(a, max, by).map_or_else(Vec::new, act)
+                let click = self.range_edit(a, max, by);
+                if !forward {
+                    return click.map_or_else(Vec::new, act);
+                }
+                // A press with the main button waits: a drag moves the value, a click that did
+                // not travel is the step.
+                let (id, base) = (a.id, if max { a.max } else { a.min });
+                self.drags += 1;
+                self.range_drag = Some(RangeDrag {
+                    id,
+                    max,
+                    start_x: pos.x,
+                    anchor_x: pos.x,
+                    base,
+                    last: base,
+                    merge: MERGE_BASE + self.drags,
+                    moved: false,
+                    click,
+                });
+                Vec::new()
             }
+            Hit::Curve(n, j) => self.assign(n, j).map_or_else(Vec::new, |a| {
+                let curve = if forward {
+                    a.curve.next()
+                } else {
+                    a.curve.next().next()
+                };
+                act(shape_of(a, curve, a.smooth_ms))
+            }),
+            Hit::Smooth(n, j) => self.assign(n, j).map_or_else(Vec::new, |a| {
+                let ms = if forward {
+                    cycle_smooth(a.smooth_ms)
+                } else {
+                    step_smooth(a.smooth_ms, false)
+                };
+                smooth_action(a, ms).map_or_else(Vec::new, act)
+            }),
             Hit::Invert(n, j) => self.assign(n, j).map_or_else(Vec::new, |a| {
                 act(MacrosAction::SetRange {
                     id: a.id,
@@ -984,6 +1178,24 @@ impl MacrosView {
             let r = self.cell(row, x);
             sp::button(c, st, r, &format!("{name} {text}"), None, hovered(r));
         }
+        let curve = self.cell(row, col.curve);
+        sp::button(
+            c,
+            st,
+            curve,
+            &curve_label(a.curve),
+            (a.curve != MacroCurve::Linear).then_some(t.highlight),
+            hovered(curve),
+        );
+        let smooth = self.cell(row, col.smooth);
+        sp::button(
+            c,
+            st,
+            smooth,
+            &smooth_label(a.smooth_ms),
+            (a.smooth_ms > 0).then_some(t.highlight),
+            hovered(smooth),
+        );
         let inv = self.cell(row, col.invert);
         sp::button(
             c,
@@ -1010,8 +1222,51 @@ struct AssignColumns {
     target: (f64, f64),
     min: (f64, f64),
     max: (f64, f64),
+    curve: (f64, f64),
+    smooth: (f64, f64),
     invert: (f64, f64),
     remove: (f64, f64),
+}
+
+fn shape_of(a: &MacroAssignRow, curve: MacroCurve, smooth_ms: u16) -> MacrosAction {
+    MacrosAction::SetShape {
+        id: a.id,
+        curve,
+        smooth_ms,
+    }
+}
+
+/// The action that gives `a` the smoothing time `ms`; `None` when it already has it.
+fn smooth_action(a: &MacroAssignRow, ms: u16) -> Option<MacrosAction> {
+    (ms != a.smooth_ms).then(|| shape_of(a, a.curve, ms))
+}
+
+fn curve_label(curve: MacroCurve) -> String {
+    curve.name().to_uppercase().chars().take(3).collect()
+}
+
+fn smooth_label(ms: u16) -> String {
+    if ms == 0 {
+        "SM off".to_owned()
+    } else {
+        format!("SM {ms}ms")
+    }
+}
+
+/// The smoothing time one step up (`up`) or down from `ms`, within [`SMOOTH_STEPS`].
+fn step_smooth(ms: u16, up: bool) -> u16 {
+    if up {
+        SMOOTH_STEPS.iter().copied().find(|s| *s > ms)
+    } else {
+        SMOOTH_STEPS.iter().rev().copied().find(|s| *s < ms)
+    }
+    .unwrap_or(ms)
+}
+
+/// The next smoothing time of a click: one step up, and back to none after the longest.
+fn cycle_smooth(ms: u16) -> u16 {
+    let up = step_smooth(ms, true);
+    if up == ms { 0 } else { up }
 }
 
 impl MacrosView {
@@ -1031,8 +1286,8 @@ impl MacrosView {
         Some(self.cell(row, x).center())
     }
 
-    /// The centre of a control of assignment `j` of macro `n` (`target`, `min`, `max`, `invert`,
-    /// `remove`).
+    /// The centre of a control of assignment `j` of macro `n` (`target`, `min`, `max`, `curve`,
+    /// `smooth`, `invert`, `remove`).
     pub fn assign_center(&self, n: u8, j: usize, what: &str) -> Option<Point> {
         let at = self.items().iter().position(|i| *i == Item::Assign(n, j))?;
         let row = self.item_rect(at)?;
@@ -1041,6 +1296,8 @@ impl MacrosView {
             "target" => c.target,
             "min" => c.min,
             "max" => c.max,
+            "curve" => c.curve,
+            "smooth" => c.smooth,
             "invert" => c.invert,
             "remove" => c.remove,
             _ => return None,
