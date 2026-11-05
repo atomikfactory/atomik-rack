@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rack editing follow-ups: "+" handles in containers, every device type in Create, Replace Device and a row
+  dropped on a track header.** An unfolded container has a "+" on the seam below its INPUT strip and below each of
+  its devices (so also above its OUTPUT strip): pressing one opens the device browser and the row chosen is added
+  inside that container at that place, as a drop there does. The Create submenu of the rack and device menus now
+  lists, after Instrument, Effect and Player, a submenu per family (Instruments, Effects, Utilities, Modulators,
+  Players, Containers) with every device type by name; a long family is split into parts named by their first and
+  last device, and a choice creates the device as picking its row in the browser does (new command
+  `create.device`, which takes the type as its argument). The device menu has a **Replace Device** submenu
+  (`rack.replace_device`) that lists only the types the selected device can become and is greyed when there is
+  none. A row of the device browser dragged out of the rack onto a track header outlines the header when the row
+  can replace the track's device and replaces it on release, in one undo step. A replacement now keeps the value of
+  every param the new device has by key with the same unit (a choice only when its list of choices is the same),
+  clamped to the new range, besides the track, channel, cables and place it kept; hidden internal params and
+  modulation slots are not carried, and a plugin never gives or takes values this way. The project format is
+  unchanged (44).
 - **Restructuring follow-ups: scale a selection by its edge, extend audio clips and select a range across lanes.**
   Dragging the end edge of a clip with the new **Scale selection** role (Ctrl+Alt+Shift, Cmd+Opt+Shift on macOS; a
   row in Settings, Keyboard) scales every selected clip about the earliest start of the selection, which stays
