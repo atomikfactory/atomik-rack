@@ -9,6 +9,25 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Macro follow-ups: a curve and a smoothing time per assignment, a driven knob that moves its range, assigning by
+  dragging a knob onto a macro and a range edit by dragging.** Each assignment in the Macros panel has a CURVE button
+  (linear, exp for a slow start, log for a fast start: the travel between MIN and MAX bends, the two ends stay
+  where they are, so a cutoff can move in a perceptual way while MIN and MAX stay plain values) and an SM button
+  (the smoothing time of a live move: none, 10, 25, 50, 100, 250, 500 ms, 1, 2 or 5 s): when the macro moves, the
+  target glides to its new value over that time instead of jumping. The glide is a playing aid; a bounce, an
+  automation lane on the macro and a freshly opened project use the plain mapping, so a render stays reproducible,
+  and a stepped param always jumps. Turning the knob of a param a macro bank drives in the rack (a drag, the wheel,
+  a double click that resets) no longer shows a message and does nothing: it shifts the range of the assignment so
+  the param shows the value you set at the macro's position, as far as the param's own range allows (a drag is one
+  undo step); the console strips and the plugin parameter pane still lock a driven control. A knob or fader of the
+  rack dragged with Alt+Shift (Opt+Shift on macOS, the new role Assign to macro in Settings, Keyboard) onto a macro
+  knob of a macro bank assigns it to that macro; a line follows the pointer and the knob under it is outlined.
+  MIN and MAX in the Macros panel can be dragged sideways (the whole param range over 300 px, Shift a tenth as fast)
+  and one drag is one undo step; a click that does not travel still steps. The project format stays 43: an
+  assignment's `"curve"` (written only when not linear) and `"smooth_ms"` (only when set) are ignorable fields, and
+  the MCP `session_macros` tool has a `shape` action for both. Not done yet: a numeric entry for a range, a direct
+  edit of a driven control in the console and the plugin pane, per-track banks made for you, macros that drive a
+  container's inside or another macro, and the other items of the roadmap bullet.
 - **Snapshot follow-ups: a morph from the mix as it is, a morph time that is kept, recall at a marker and A/B of one
   strip.** Mixer > Morph to Next Snapshot and Morph to Previous Snapshot (and Morph to this in the chip menu) now start
   from the mix as it is when you press them, not from the current snapshot, so a morph works with no snapshot

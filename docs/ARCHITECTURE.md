@@ -3362,9 +3362,10 @@ as before (`crates/render/tests/macros.rs`).
   made or used, else the first) is where "Assign to Macro" in the right-click menu and the search
   put a param.
 - **Assignments.** `RackDoc::macros: MacroSet { assigns, names }`. A
-  `MacroAssign { id, bank, index, device, param, min, max, invert }` binds macro `index` (0 to 7) of
-  a bank to a param of a **top-level** device; `min` and `max` are plain values of the param (at
-  macro 0 and macro 1), `invert` runs the macro backwards. Rules: a param follows **at most one
+  `MacroAssign { id, bank, index, device, param, min, max, invert, curve, smooth_ms }` binds macro
+  `index` (0 to 7) of a bank to a param of a **top-level** device; `min` and `max` are plain values
+  of the param (at macro 0 and macro 1), `invert` runs the macro backwards, `curve` bends the travel
+  and `smooth_ms` is a live glide time. Rules: a param follows **at most one
   macro** in the project (assigning it again moves it, in the same undo step); a macro may drive any
   number of params (512 in all); the target is not a bank, not a container (a container has its own
   macros, section 6e) and not a device inside one, the param exists and is not `internal.*`, and
@@ -3372,21 +3373,28 @@ as before (`crates/render/tests/macros.rs`).
   automation clips on its own lane is refused (the lane would fight the macro) and no lane or clip
   can be added for a driven param (automate the macro instead; a lane that is already there and
   empty is skipped by the song builder). A direct `SetParam` on a driven param is refused with
-  `MacroDriven` naming the macro. **Direct edits are refused rather than folded into the range**,
-  because that is the one rule that never hides where a value came from: change the macro, or edit
-  the range in the Macros panel.
-- **The value.** `assign_value`: `v = min + (max - min) x m`, with `m` replaced by `1 - m` when
-  inverted, clamped to the descriptor range and rounded half up for a discrete param. It is
+  `MacroDriven` naming the macro, so the model never hides where a value came from. The rack's
+  controls do not send that command for a driven knob: `AppCore::redirect_driven_edit` turns the
+  edit into `MacroCommand::MoveRange`, which shifts the range of the assignment by the amount that
+  makes the param show the new value at the macro's position (`RackDoc::moved_range`, kept inside
+  the param's own range; a drag carries one merge id, so it is one undo step; an edit that would
+  change nothing is dropped without a message). The console strips and the plugin parameter pane
+  still lock a driven control; there the range is edited in the Macros panel.
+- **The value.** `assign_value`: `v = min + (max - min) x curve(m)`, with `m` replaced by `1 - m`
+  when inverted, `curve` the identity, `m * m` (`Exp`, slow start) or `m * (2 - m)` (`Log`, fast
+  start; `MacroCurve::shape`, only `+ - *`), clamped to the descriptor range and rounded half up for a discrete param. It is
   `expand::macro_value`, the container macros' function: only IEEE `+ - *` and comparisons, so every
-  platform agrees and a bounce is reproducible; the mapping is linear in the plain value (a cutoff
-  moves linearly in Hz across the macro), unlike MIDI mappings, which move a fraction of the param's
-  own curve. `assign_position` is its inverse: **the first assignment to a macro that drives nothing
+  platform agrees and a bounce is reproducible; the default mapping is linear in the plain value (a
+  cutoff moves linearly in Hz across the macro), unlike MIDI mappings, which move a fraction of the
+  param's own curve, and the curve is a choice of the assignment. `assign_position` is its inverse
+  (`MacroCurve::unshape` takes the one square root): **the first assignment to a macro that drives nothing
   moves the macro to the position that gives the target its current value**, so nothing jumps (a
   value outside the range clamps to its end); a macro that already drives others pulls the new
   target to its own position. **Removing** an assignment (`Remove`, `Clear`) leaves the param at the
   value the macro gave it, in the same undo step (an `Edit::Param` beside the edit of the whole
-  set). Commands (`MacroCommand`: `Assign` with an optional bank, `SetRange`, `Remove`, `Clear`,
-  `Rename`) are one undo step each on one `Edit::Macros` that reports `SyncOp::MacrosChanged` for
+  set). Commands (`MacroCommand`: `Assign` with an optional bank, `SetRange` (with an optional drag
+  merge id), `SetShape` (curve and smoothing), `MoveRange`, `Remove`, `Clear`, `Rename`) are one undo
+  step each on one `Edit::Macros` that reports `SyncOp::MacrosChanged` for
   every bank touched; an assignment **outlives its devices** like a MIDI mapping (it does nothing
   while the bank or the target is missing, and the undo of the removal brings it back).
 - **Where it is applied.** `RackDoc::expand` sets the driven params of the expanded devices
@@ -3400,23 +3408,33 @@ as before (`crates/render/tests/macros.rs`).
   bit for bit. In the app, a `ParamChanged` of a bank's `macroN` and `MacrosChanged` run
   `send_macro_values` (one `set_param` per changed target; a freed param gets its stored value
   back), the song is rebuilt, and `engine_lanes` makes an automation take hold every target of a
-  macro lane. **Smoothing** is the device's own: the engine sets the value at the control rate and
-  each device ramps it as it ramps a knob (5 ms on the channel strip's gains), the same path as a
-  MIDI-mapped move, and a lane is applied per 64-frame batch like any automation lane.
+  macro lane. **Smoothing** has two layers. The device's own: the engine sets the value at the
+  control rate and each device ramps it as it ramps a knob (5 ms on the channel strip's gains), the
+  same path as a MIDI-mapped move, and a lane is applied per 64-frame batch like any automation
+  lane. And the assignment's `smooth_ms`: `send_macro_values` does not set a smoothed target but
+  starts a `Glide` (app state, `macro_glide_tick` from `transport_frame`) from the value the engine
+  has now to the new one, a line over that time at the frame rate, ending exactly on the value; a
+  first value, a stepped param, a rebuilt engine and a removed assignment end it, and the event loop
+  keeps its frame rate while one runs (`macro_gliding`). A bounce, a macro lane and a freshly
+  opened project use the plain mapping.
   `crates/app/src/app_core_macros_tests.rs` plays a project with a static macro and with a lane on
   one live at several block sizes and compares it with the bounce bit for bit.
 - **The views.** `RackDoc::view_with_driven_values` gives the rack a copy of the document whose
   devices carry the values the macros give (the song is empty, as in a container's scope document;
   `None`, and so no copy, when nothing differs), the console and the parameter pane read
   `device_with_driven_values`, so a driven control **shows the macro's value**. It is drawn locked
-  with the `M<n>` tag the container panels use, says "driven by macro n" in its tooltip, refuses a
-  drag, a double click and the wheel with a message, and **keeps its right-click menu**
+  with the `M<n>` tag the container panels use, says "driven by macro n" in its tooltip, in the
+  rack takes a drag, a double click and the wheel as a move of the range (see above; the console
+  and the parameter pane refuse them with a message), and **keeps its right-click menu**
   (`UiAction::ControlMenu`: Learn MIDI, Forget MIDI, Assign to Macro 1 to 8 or to a new bank, Remove
   from Macro). A right click on a row of the parameter pane opens the same menu. The **Macros
   panel** (Mixer menu) lists the current bank's eight macros (a bar, a name edited in place, LEARN,
   CLEAR) and the params each drives (MIN and MAX moved by a fiftieth of the param's range or one
-  step, INV, remove, a click on the target selects it in the rack); a bank is chosen by its chip and
-  NEW BANK makes one.
+  step on a click, or continuously by a drag sideways, one merged undo step; CURVE and SM for the
+  shape and the smoothing; INV, remove, a click on the target selects it in the rack); a bank is
+  chosen by its chip and NEW BANK makes one. A rack knob dragged with `Role::AssignMacro` held
+  (`Alt+Shift`; `crates/ui/src/rack/macro_drag.rs`) onto a macro knob of a bank panel ends in
+  `MacrosAction::Assign`, which `AppCore::assign_to_bank_macro` applies.
 - **File.** Project format 29 saves
   `"macros": {"assigns"?: [{"id", "bank", "macro" (1 to 8), "device", "param", "min", "max", "invert"?}], "names"?: [{"bank", "macro", "name"}]}`
   after `"midi_maps"`, omitted when empty (a project without macros differs from its version 28 file
@@ -3424,7 +3442,9 @@ as before (`crates/render/tests/macros.rs`).
   `crates/render/tests/macros.rs` check for text and for the bounce). The loader names the JSON path
   of a repeated id, a second assignment of one param, a macro outside 1 to 8 and a bad name; it does
   not check the references. Plugin param rows a macro drives are written with the layout like those
-  a lane uses.
+  a lane uses. An assignment may also carry `"curve"` (`"exp"` or `"log"`, written only when not linear)
+  and `"smooth_ms"` (a live glide time up to 5000 ms, written only when set); both are ignorable fields
+  under format 43, so no version bump was needed.
 - **Automation follows the selection.** The workflow preference `follow_selection` (View menu, the
   Workflow tab; `workflow.json`, an app setting, off by default) makes every
   `UiAction::ParamTouched` (a press on a rack control, a console control or a row of the parameter

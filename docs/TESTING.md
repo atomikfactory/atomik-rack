@@ -1276,11 +1276,20 @@ Hand checks, not automated (they need your ears and a real window):
 
 ## Macro banks, the parameter search and automation that follows the selection
 
+`crates/model/tests/macro_follow.rs` covers the follow-ups: the curves keep both ends and the
+inverse holds, `SetShape` is one undo step and the expansion and the lanes follow the curve, the two
+new file fields are written only when set and refused with their path when bad, and `MoveRange`
+shifts the range through the curve, the direction and a discrete param, stops at the param's range,
+and merges a drag into one step. `app_core_macros_tests.rs` checks the glide (nothing jumps, the end
+is exact, a move turns round from where it is, a removal ends it), the redirect of a turned knob and
+the drop of a knob on a macro; `crates/ui/tests/macros_ui.rs` the rack gestures and the panel's drag,
+curve and smoothing buttons.
+
 Each layer has its tests, none of which needs hardware. `crates/model/tests/macros.rs` has the maths
 (the value is linear between `min` and `max`, inverts, reverses and clamps; a discrete param rounds
 half up; `assign_position` is the inverse), the commands and their undo (a new bank is one step; the
 first assignment keeps the target's value; several targets for one macro and one macro for a param,
-a second assignment moving the first; a direct edit refused naming the macro; a range edit and what
+a second assignment moving the first; a direct `SetParam` refused naming the macro; a range edit and what
 it refuses; a removal leaving the param at the value the macro gave it; clearing a macro; names;
 every refusal: a bank that is not one, a macro 9, a container or a bank as a target, a param with
 automation of its own, a lane or clip for a driven param, `solo`), assignments that outlive their
