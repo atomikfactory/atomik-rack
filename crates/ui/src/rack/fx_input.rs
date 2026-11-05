@@ -48,6 +48,10 @@ impl RackView {
             self.granular_meter_feed(i, values);
             return;
         }
+        if self.devices[i].spec.wavetable.is_some() {
+            self.wavetable_meter_feed(i, values);
+            return;
+        }
         if self.devices[i].spec.plugin.is_some() {
             self.plugin_meter_feed(i, values);
             return;
@@ -118,6 +122,38 @@ impl RackView {
         if !self.devices[i].scope.feed(values) {
             return;
         }
+        self.devices[i].bump_live();
+        let (top, bottom) = (
+            self.view_to_rack(Point::new(0.0, 0.0)).y,
+            self.view_to_rack(Point::new(0.0, self.size.height)).y,
+        );
+        let d = &self.devices[i];
+        if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
+            self.repaint = true;
+        }
+    }
+
+    /// Keeps the modulated frame positions a wavetable synth published (one per oscillator, `-1`
+    /// while nothing sounds), rounded to the display's resolution, and repaints the visible panel
+    /// when they changed. The vector is reused after the first feed.
+    fn wavetable_meter_feed(&mut self, i: usize, values: &[f32]) {
+        let n = values.len().min(crate::wavetable_panel::METER_COUNT);
+        let shown = &mut self.devices[i].meters;
+        let round = |v: f32| (v * crate::wavetable_panel::POSITION_STEPS).round() as i32;
+        let same = shown.len() == n
+            && shown
+                .iter()
+                .zip(values)
+                .all(|(a, b)| round(*a) == round(*b));
+        if same {
+            return;
+        }
+        shown.clear();
+        shown.extend(
+            values[..n]
+                .iter()
+                .map(|v| round(*v) as f32 / crate::wavetable_panel::POSITION_STEPS),
+        );
         self.devices[i].bump_live();
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, 0.0)).y,

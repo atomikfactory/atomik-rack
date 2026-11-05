@@ -1186,7 +1186,15 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                 );
             }
             if let (Some(panel), Some(device)) = (info.spec.wavetable, info.device) {
-                crate::wavetable_panel::paint_panel(c, theme, &panel, device, desc, info.accent);
+                crate::wavetable_panel::paint_panel(
+                    c,
+                    theme,
+                    &panel,
+                    device,
+                    desc,
+                    info.accent,
+                    info.grain.meters,
+                );
             }
             if let (Some(panel), Some(device)) = (info.spec.fm, info.device) {
                 crate::fm_panel::paint_panel(c, theme, &panel, device, desc, info.accent);

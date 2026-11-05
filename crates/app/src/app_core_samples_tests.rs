@@ -1055,3 +1055,21 @@ fn a_drop_onto_the_wavetable_synth_is_its_one_table_and_reaches_the_engine_as_on
     let back = c.doc().device(&key("wts")).unwrap().zones.clone();
     assert_eq!(back[0].end, 4 * 2_048);
 }
+
+#[test]
+fn the_wavetable_panel_gets_the_positions_its_device_publishes() {
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.wavetable-synth".into(),
+        key: Some(key("wts")),
+    })
+    .unwrap();
+    let id = c.device_id(&key("wts")).unwrap();
+    c.sink_mut().device_values.insert(id, (vec![0.4, -1.0], 1));
+    c.frame();
+    assert_eq!(c.view().device_meters(&key("wts")), &[0.4, -1.0]);
+    c.sink_mut().device_values.insert(id, (vec![0.5, 0.75], 2));
+    c.frame();
+    assert_eq!(c.view().device_meters(&key("wts")), &[0.5, 0.75]);
+}

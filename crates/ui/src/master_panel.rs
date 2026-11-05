@@ -32,13 +32,14 @@ pub const NAMED_PICK_LIST_MIN: usize = 6;
 pub const FREE_LABEL: &str = "free";
 
 /// Whether a click on `p` opens a pick list: a long choice such as the control-room source, or
-/// a `sound` or `algorithm` choice of [`NAMED_PICK_LIST_MIN`] entries or more. A right-click
-/// still steps back through the choices.
+/// a `sound`, `algorithm` or wavetable `table` choice of [`NAMED_PICK_LIST_MIN`] entries or
+/// more. A right-click still steps back through the choices.
 pub fn is_pick_list(p: &ParamDescriptor) -> bool {
     match p.unit {
         atomik_core::Unit::Choice(names) => {
             names.len() >= PICK_LIST_MIN
-                || (names.len() >= NAMED_PICK_LIST_MIN && matches!(p.key, "sound" | "algorithm"))
+                || (names.len() >= NAMED_PICK_LIST_MIN
+                    && matches!(p.key, "sound" | "algorithm" | "osc1.table" | "osc2.table"))
         }
         _ => false,
     }
