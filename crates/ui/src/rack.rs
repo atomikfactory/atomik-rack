@@ -62,6 +62,7 @@ mod name_input;
 mod player_input;
 mod plugin_input;
 mod selection;
+mod wave_drag;
 
 pub use crate::paint::Side as Flip;
 pub use columns::COLUMN_GAP;
@@ -167,6 +168,8 @@ enum Hit {
     Sens(usize),
     /// The overview strip of a slicer panel.
     Strip(usize),
+    /// The waveform of a granular sampler panel: a press sets the position.
+    Wave(usize),
     /// The plot of an EQ panel (handles are picked by position).
     EqPlot(usize),
     /// The "SC from" button of a compressor panel.
@@ -239,6 +242,7 @@ impl Hit {
             | Hit::ToTrack(i)
             | Hit::Sens(i)
             | Hit::Strip(i)
+            | Hit::Wave(i)
             | Hit::EqPlot(i)
             | Hit::ScButton(i)
             | Hit::TunerButton(i)
@@ -476,6 +480,8 @@ enum Drag {
     },
     /// An EQ handle is dragged (see [`EqDrag`]).
     Eq(EqDrag),
+    /// The waveform of a granular sampler is dragged: it sets the position.
+    Wave(wave_drag::WaveDrag),
     /// A cell of a drum generator grid is pressed (see [`drum_input::DrumDrag`]).
     Drum(drum_input::DrumDrag),
 }
@@ -1819,6 +1825,14 @@ impl RackView {
                             );
                             tree.add(dn, dr.to_channel + off, Hit::ToChannel(i), false);
                         }
+                        if let Some(g) = d.spec.granular {
+                            tree.add(
+                                dn,
+                                crate::granular_panel::wave_hit_area(g.wave) + off,
+                                Hit::Wave(i),
+                                false,
+                            );
+                        }
                         if let Some(sl) = d.spec.slicer {
                             tree.add(dn, sl.strip + off, Hit::Strip(i), false);
                             tree.add(dn, sl.sens + off, Hit::Sens(i), false);
@@ -2128,6 +2142,24 @@ impl RackView {
             _ => pc.rect.center(),
         };
         Some(self.rack_to_view(c + d.offset()))
+    }
+
+    /// The part of a granular sampler's waveform that takes a press (logical view coordinates):
+    /// the sample window and its margin; `None` off the front face or when folded.
+    pub fn wave_rect(&self, key: &DeviceKey) -> Option<Rect> {
+        if self.flip != Flip::Front {
+            return None;
+        }
+        let i = self.device_index(key)?;
+        if self.devices[i].folded {
+            return None;
+        }
+        let r = self.wave_area(i)?;
+        let (a, b) = (
+            self.rack_to_view(Point::new(r.x0, r.y0)),
+            self.rack_to_view(Point::new(r.x1, r.y1)),
+        );
+        Some(Rect::new(a.x, a.y, b.x, b.y))
     }
 
     /// Centre of the FROM CLIP button of a Key & Chord panel (logical view coordinates), when it
@@ -3354,6 +3386,7 @@ impl RackView {
         self.crumb_hover_at(pos);
         match self.drag.clone() {
             Drag::Eq(e) => self.eq_move(e, rp, out),
+            Drag::Wave(w) => self.wave_move(w, rp, out),
             Drag::Drum(d) => self.drum_move(d, pos, out),
             Drag::Value {
                 dev,
@@ -3713,6 +3746,7 @@ impl RackView {
                 self.player_down(i, b, modifiers, clicks, out);
             }
             (Hit::EqPlot(i), PointerButton::Primary) => self.eq_down(i, rp, clicks, out),
+            (Hit::Wave(i), PointerButton::Primary) => self.wave_down(i, rp, out),
             (Hit::Preset(i, n), PointerButton::Primary) => self.preset_down(i, n, out),
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
             (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
@@ -3742,6 +3776,7 @@ impl RackView {
                 | Hit::ToTrack(i)
                 | Hit::Sens(i)
                 | Hit::Strip(i)
+                | Hit::Wave(i)
                 | Hit::EqPlot(i)
                 | Hit::Preset(i, _)
                 | Hit::PresetGrid(i)
@@ -3958,7 +3993,7 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
             Drag::Assign { device, param, .. } => self.assign_up(&device, &param, pos, out),
-            Drag::Eq(_) => out.push(UiAction::EndMerge),
+            Drag::Eq(_) | Drag::Wave(_) => out.push(UiAction::EndMerge),
             Drag::Drum(d) => self.drum_up(&d, out),
             Drag::Value { .. } => {
                 self.tree.release_capture();
@@ -4486,6 +4521,7 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { dev, start, .. } => self.store_sens(dev, start),
             Drag::Eq(e) => self.eq_cancel(&e, out),
+            Drag::Wave(w) => self.wave_cancel(&w, out),
             Drag::Drum(d) => self.drum_cancel(&d, out),
             _ => {}
         }

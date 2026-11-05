@@ -228,7 +228,7 @@ impl RackView {
 
     // ------------------------------------------------------------------ EQ handles
 
-    fn param_of_key(&self, i: usize, key: &str) -> Option<&'static ParamDescriptor> {
+    pub(super) fn param_of_key(&self, i: usize, key: &str) -> Option<&'static ParamDescriptor> {
         let desc = self.devices.get(i)?.desc?;
         desc.params.iter().find(|p| p.key == key)
     }

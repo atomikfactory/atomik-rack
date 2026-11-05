@@ -346,7 +346,7 @@ fn the_live_grains_are_the_published_pairs_inside_the_window() {
         GRAINS[..2].to_vec(),
         "out of range and NaN are dropped"
     );
-    let full: Vec<(f32, f32)> = (0..TRAIL_GRAINS).map(|i| (i as f32 / 20.0, 0.5)).collect();
+    let full: Vec<(f32, f32)> = (0..TRAIL_GRAINS).map(|i| (i as f32 / 40.0, 0.5)).collect();
     assert_eq!(
         live_grains(&meters(1.0, 0.3, 0.2, &full)).len(),
         TRAIL_GRAINS
@@ -670,4 +670,113 @@ fn preview_pngs() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, png).unwrap();
     }
+}
+
+// ------------------------------------------------------------- click and drag on the waveform
+
+/// The point of the waveform at `fraction` of the sample window (the middle of its height).
+fn wave_at(v: &RackView, fraction: f64) -> atomik_ui::kurbo::Point {
+    let r = v.wave_rect(&key("grain")).expect("a waveform");
+    let inner = atomik_ui::granular_panel::wave_inner(r);
+    atomik_ui::kurbo::Point::new(inner.x0 + inner.width() * fraction, r.center().y)
+}
+
+fn position_commands(actions: &[UiAction]) -> Vec<(f32, Option<u64>)> {
+    commands(actions)
+        .into_iter()
+        .filter_map(|c| match c {
+            atomik_model::Command::SetParam {
+                param,
+                value,
+                merge,
+                ..
+            } if param == "pos.position" => Some((value, merge)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_press_on_the_waveform_sets_the_position_and_a_drag_moves_it_as_one_step() {
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.3)]);
+    let reg = registry();
+    let a = v.handle(&down(wave_at(&v, 0.25)), &doc, &reg);
+    let first = position_commands(&a);
+    assert_eq!(first.len(), 1, "{a:?}");
+    assert!((first[0].0 - 0.25).abs() < 1e-3, "{first:?}");
+    let merge = first[0].1.expect("a drag merges");
+    let a = v.handle(&mv(wave_at(&v, 0.8)), &doc, &reg);
+    let moved = position_commands(&a);
+    assert_eq!(moved.len(), 1);
+    assert!((moved[0].0 - 0.8).abs() < 1e-3, "{moved:?}");
+    assert_eq!(moved[0].1, Some(merge), "one undo step");
+    // The same place again sends nothing.
+    let a = v.handle(&mv(wave_at(&v, 0.8)), &doc, &reg);
+    assert!(position_commands(&a).is_empty());
+    let a = v.handle(&up(wave_at(&v, 0.8)), &doc, &reg);
+    assert!(a.contains(&UiAction::EndMerge), "{a:?}");
+    // After the release the pointer moves nothing.
+    let a = v.handle(&mv(wave_at(&v, 0.4)), &doc, &reg);
+    assert!(position_commands(&a).is_empty());
+}
+
+#[test]
+fn the_ends_of_the_waveform_reach_zero_and_one_and_the_built_in_source_takes_it_too() {
+    let (doc, mut v) = setup(Vec::new(), &[]);
+    let reg = registry();
+    let r = v.wave_rect(&key("grain")).unwrap();
+    let y = r.center().y;
+    for (x, want) in [(r.x0 + 1.0, 0.0f32), (r.x1 - 1.0, 1.0)] {
+        let a = v.handle(&down(atomik_ui::kurbo::Point::new(x, y)), &doc, &reg);
+        let got = position_commands(&a);
+        assert_eq!(got.len(), 1, "{a:?}");
+        assert!((got[0].0 - want).abs() < f32::EPSILON, "{got:?}");
+        let _ = v.handle(&up(atomik_ui::kurbo::Point::new(x, y)), &doc, &reg);
+    }
+    // A drag past the ends clamps.
+    let _ = v.handle(&down(wave_at(&v, 0.5)), &doc, &reg);
+    let a = v.handle(
+        &mv(atomik_ui::kurbo::Point::new(r.x1 + 200.0, y + 300.0)),
+        &doc,
+        &reg,
+    );
+    let got = position_commands(&a);
+    assert!((got[0].0 - 1.0).abs() < f32::EPSILON, "{got:?}");
+}
+
+#[test]
+fn escape_during_a_waveform_drag_restores_the_position() {
+    use atomik_ui::Key;
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.3)]);
+    let reg = registry();
+    let _ = v.handle(&down(wave_at(&v, 0.7)), &doc, &reg);
+    let a = v.handle(
+        &support::song::press(Key::Escape, atomik_ui::Modifiers::NONE),
+        &doc,
+        &reg,
+    );
+    let got = position_commands(&a);
+    assert_eq!(got.len(), 1, "{a:?}");
+    assert!((got[0].0 - 0.3).abs() < 1e-3, "{got:?}");
+    assert!(a.contains(&UiAction::EndMerge));
+}
+
+#[test]
+fn the_waveform_is_a_front_face_control_that_selects_its_device() {
+    let (doc, mut v) = setup(one_zone(), &[]);
+    let reg = registry();
+    let _ = v.handle(&down(wave_at(&v, 0.5)), &doc, &reg);
+    assert_eq!(v.selected(), Some(&key("grain")));
+    let _ = v.handle(&up(wave_at(&v, 0.5)), &doc, &reg);
+    v.set_flip(Flip::Back);
+    assert!(v.wave_rect(&key("grain")).is_none());
+}
+
+#[test]
+fn the_panel_reads_the_longer_grain_trail() {
+    assert_eq!(TRAIL_GRAINS, 29);
+    assert_eq!(METER_COUNT, 63);
+    let grains: Vec<(f32, f32)> = (0..TRAIL_GRAINS).map(|i| (i as f32 / 30.0, 0.5)).collect();
+    let values = meters(1.0, 0.3, 0.2, &grains);
+    assert_eq!(live_grains(&values).len(), 29);
 }
