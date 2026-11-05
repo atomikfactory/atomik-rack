@@ -524,6 +524,51 @@ impl<S: EngineSink> AppCore<S> {
             .map_err(|_| String::new())
     }
 
+    // ------------------------------------------------------------------ audio from other songs
+
+    /// Names the bundle folders of the other open songs: what was copied there may bring audio
+    /// that this song's bundle lacks, and a paste fetches it from them (see
+    /// [`Self::fetch_lent_audio`]). The workspace sets it when the clipboard crosses to this song.
+    pub fn set_audio_lenders(&mut self, folders: Vec<PathBuf>) {
+        self.audio.lenders = folders;
+    }
+
+    /// The bundle folders audio can be fetched from.
+    pub fn audio_lenders(&self) -> &[PathBuf] {
+        &self.audio.lenders
+    }
+
+    /// A paste registered the assets `hashes`, which this song's bundle does not hold: a worker
+    /// copies the files from the lending songs' bundles into this song's bundle (a scratch one
+    /// when the song has none yet) and loads them, so the pasted clips and zones play. Without a
+    /// lender, or when the bundle cannot be made, the assets stay missing and are listed so.
+    fn fetch_lent_audio(&mut self, hashes: Vec<String>) {
+        if hashes.is_empty() || self.audio.lenders.is_empty() {
+            return;
+        }
+        let bundle = match self.import_bundle() {
+            Ok(bundle) => bundle,
+            Err(e) => {
+                self.reject(format!("audio: {e}"));
+                return;
+            }
+        };
+        let sources = self.audio.lenders.clone();
+        let threshold = self.stream_threshold();
+        let started = crate::audio_import::spawn_fetch(
+            self.audio.tx.clone(),
+            self.audio.generation,
+            bundle,
+            sources,
+            threshold,
+            hashes,
+        );
+        match started {
+            Ok(()) => self.audio.pending += 1,
+            Err(e) => self.reject(format!("audio: cannot start the loader: {e}")),
+        }
+    }
+
     // ------------------------------------------------------------------ before and after
 
     /// Before a workflow command: registers the pool entries a paste needs (a cross-song paste
@@ -544,11 +589,13 @@ impl<S: EngineSink> AppCore<S> {
                 .filter(|(h, _)| !self.doc().assets.contains_key(*h))
                 .map(|(h, m)| (h.clone(), m.clone()))
                 .collect();
+            let hashes: Vec<String> = missing.iter().map(|(h, _)| h.clone()).collect();
             for (hash, meta) in missing {
                 let _ = self
                     .document
                     .apply(Command::RegisterAsset { hash, meta }, &self.registry);
             }
+            self.fetch_lent_audio(hashes);
         }
         let doc = self.document.doc();
         let mut pre = WorkflowPre {

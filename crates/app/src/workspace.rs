@@ -60,6 +60,10 @@ pub struct Workspace<B: AudioBackend> {
     asking: Option<DocId>,
     /// The songs that answered Don't Save to the question of a quit that is in progress.
     declined: Vec<DocId>,
+    /// The recent list every song has (see [`Self::sync_shared`]).
+    recent: Vec<std::path::PathBuf>,
+    /// The library revision each song had when it was last compared, by song id.
+    library_seen: Vec<(DocId, u64)>,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for Workspace<B> {
@@ -105,7 +109,14 @@ impl<B: AudioBackend> Workspace<B> {
             make,
             asking: None,
             declined: Vec::new(),
+            recent: Vec::new(),
+            library_seen: Vec::new(),
         };
+        workspace.recent = workspace.songs[0].shell.core().recent().to_vec();
+        workspace.library_seen = vec![(
+            DocId::FIRST,
+            workspace.songs[0].shell.core().library_revision(),
+        )];
         workspace.share_song_list();
         workspace
     }
@@ -180,6 +191,22 @@ impl<B: AudioBackend> Workspace<B> {
         let Some(data) = self.songs[a].shell.core().clipboard().get().cloned() else {
             return;
         };
+        // The audio of what was copied stays in the bundle of the song it was copied in (and in
+        // the ones that song itself borrowed from): a paste fetches what it lacks from there.
+        let mut lenders: Vec<std::path::PathBuf> = Vec::new();
+        let lent = self.songs[a].shell.core().audio_lenders();
+        for root in self.songs[a]
+            .shell
+            .core()
+            .bundle_root()
+            .into_iter()
+            .chain(lent.iter().map(std::path::PathBuf::as_path))
+        {
+            if !lenders.iter().any(|l| l == root) {
+                lenders.push(root.to_path_buf());
+            }
+        }
+        self.songs[b].shell.core_mut().set_audio_lenders(lenders);
         let target = self.songs[b].shell.core_mut().clipboard_mut();
         if target.get() != Some(&data) {
             target.set(data);
@@ -222,6 +249,7 @@ impl<B: AudioBackend> Workspace<B> {
 
     /// Opens a new song in a window of its own and gives it the focus.
     pub fn new_song(&mut self) -> DocId {
+        self.sync_shared();
         let id = DocId(self.next);
         self.next += 1;
         let from = self.index_of(self.play);
@@ -229,6 +257,13 @@ impl<B: AudioBackend> Workspace<B> {
         shell.start_silent();
         shell.adopt_preferences(&self.songs[from].shell);
         shell.adopt_layout(&self.songs[from].shell);
+        // What the songs share live: the new song starts from the state the others hold.
+        shell
+            .core_mut()
+            .adopt_library(self.songs[from].shell.core().library_copy());
+        shell.core_mut().adopt_recent(&self.recent);
+        self.library_seen
+            .push((id, shell.core().library_revision()));
         self.songs.push(Song { id, shell });
         self.focus(id);
         self.share_song_list();
@@ -254,6 +289,49 @@ impl<B: AudioBackend> Workspace<B> {
                 None
             }
         }
+    }
+
+    /// Opens each recovery snapshot of `snapshots` (the copies of songs a crash cut off, see
+    /// [`crate::recovery::crashed_song_snapshots`]) as an unsaved song in a window of its own,
+    /// then goes back to the song that was routed to; a message there says how many came back.
+    /// A snapshot that cannot be read is skipped. Returns how many songs were opened.
+    pub fn recover_songs(&mut self, snapshots: &[std::path::PathBuf]) -> usize {
+        let asked = self.routed;
+        let focused = self.play;
+        let mut opened = 0;
+        for snapshot in snapshots {
+            let id = self.new_song();
+            let result = self
+                .song_mut(id)
+                .map_or(Ok(()), |s| s.core_mut().open_recovery(snapshot));
+            match result {
+                Ok(()) => opened += 1,
+                Err(e) => {
+                    log::warn!("a song of the last session cannot be recovered: {e}");
+                    self.discard_song(id);
+                }
+            }
+        }
+        if opened > 0 {
+            self.share_song_list();
+            if self.has(focused) {
+                self.focus(focused);
+            }
+            if self.has(asked) {
+                self.select(asked);
+            }
+            let message = if opened == 1 {
+                "The last session ended unexpectedly: a song that was open next to this one came back in a window of its own (not saved yet)".to_owned()
+            } else {
+                format!(
+                    "The last session ended unexpectedly: {opened} songs that were open next to this one came back in windows of their own (not saved yet)"
+                )
+            };
+            if let Some(song) = self.song_mut(asked) {
+                song.notify(message);
+            }
+        }
+        opened
     }
 
     /// Closes song `id` without asking about unsaved changes (the caller did): its windows go
@@ -339,12 +417,52 @@ impl<B: AudioBackend> Workspace<B> {
         }
     }
 
+    /// Carries what the songs share live: the recent list and the library (favourites, tags,
+    /// lists and places). A song that changed one of them hands it to the others, which show it
+    /// at once; the song that changed it wrote the file, so a later write by another song cannot
+    /// drop the change. Costs a comparison per song; called after every event and every frame.
+    pub fn sync_shared(&mut self) {
+        // The recent list: the first song whose list is not the shared one changed it.
+        let changed = self
+            .songs
+            .iter()
+            .position(|s| s.shell.core().recent() != self.recent.as_slice());
+        if let Some(i) = changed {
+            self.recent = self.songs[i].shell.core().recent().to_vec();
+            for (j, song) in self.songs.iter_mut().enumerate() {
+                if j != i {
+                    song.shell.core_mut().adopt_recent(&self.recent);
+                }
+            }
+        }
+        // The library: a song whose revision moved changed it.
+        let seen =
+            |id: DocId, seen: &[(DocId, u64)]| seen.iter().find(|(s, _)| *s == id).map(|(_, r)| *r);
+        let changed = self.songs.iter().position(|s| {
+            seen(s.id, &self.library_seen) != Some(s.shell.core().library_revision())
+        });
+        if let Some(i) = changed {
+            let db = self.songs[i].shell.core().library_copy();
+            for (j, song) in self.songs.iter_mut().enumerate() {
+                if j != i {
+                    song.shell.core_mut().adopt_library(db.clone());
+                }
+            }
+        }
+        self.library_seen = self
+            .songs
+            .iter()
+            .map(|s| (s.id, s.shell.core().library_revision()))
+            .collect();
+    }
+
     /// Per-frame work of every song (the background songs finish their saves, imports and
     /// loads; only the one with the audio plays).
     pub fn frame_all(&mut self, now_seconds: f64) {
         for song in &mut self.songs {
             song.shell.frame_at(now_seconds);
         }
+        self.sync_shared();
     }
 
     /// Reads the audio status of every song; the one with the audio last, so that its state is
@@ -426,6 +544,7 @@ impl<B: AudioBackend> Workspace<B> {
                 other => out.push(other),
             }
         }
+        self.sync_shared();
         out
     }
 

@@ -33,7 +33,11 @@ and collect and relocate (File > Collect Files saves the song in place and gathe
 project's own folder, from a folder it shared with other projects or from a nearby folder that holds audio the
 project lost, with a report of what was copied and what was not found; Save As copies only the audio the song
 uses and finds audio the old bundle lacks in the folders near the old file, so a project moved to another folder
-keeps working).
+keeps working),
+and several songs follow-ups (a paste in one open song brings the audio of the clips, devices, tracks, strips or
+patch with it, a favourite, tag or recent song in one song shows in the others at once, a start after a crash
+brings back the songs that were open next to the first one in windows of their own, and a Save no longer deletes the
+audio of other projects from an `Audio` folder they share).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -55,7 +59,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **Rack editing follow-ups.** The "+" handles inside an unfolded container, a Create submenu that lists the device types and not only the three families, replacing a device by dragging a row of the device browser onto a track header (a library item can be dropped there today), and a context menu item to replace a device.
 - **Track organisation follow-ups.** Routing the tracks of a folder to an output bus and a folder-level fader (see Phase 4).
 - **Recording and editing follow-ups.** The masked parts of a looped clip dimmed in the piano roll (clips without a loop are today), and the inspector's fade unit remembered between sessions.
-- **Automation lane and gesture follow-ups.** Extend to Next and Previous Clip for audio clips (it works on note and automation clips today), a range selected across several lanes, and a way to give a lane a static value from its own handle (today it comes from a control).
+- **Automation lane and gesture follow-ups.** Extend to Next and Previous Clip for audio clips (it works on note and automation clips today) and a range selected across several lanes.
 - **Note lane follow-ups.** Recording to several lanes at once (today a take goes to the one selected lane), and an S button on the chip of lane 0 (the header's second line is full: use the Solo Lane menu item).
 
 ## Phase 3: Audio
@@ -98,7 +102,7 @@ New original devices built from the existing DSP blocks, grouped by the gap they
   come: a preview of what Collect Files will copy, a cancel for a very large collection, collecting plugin preset
   and impulse files that live outside the project, and a Move Project command that also removes the old folder.
 - **Song information follow-ups.** The title, author and notes of a song are done (File > Song Information). A version history inside the project is still to come.
-- **Several songs follow-ups.** Songs open in windows of their own, one of them with the audio and the MIDI keyboard. Still to come: moving clips, devices, channels and patches between open songs, separate Input Focus and Play Focus buttons on the interface panel, recovery that offers a second song's snapshots after a crash, the library and the recent list shared live between songs, and a session of the MCP server with more than one song.
+- **Several songs follow-ups.** Songs open in windows of their own, one of them with the audio and the MIDI keyboard. Copy and paste moves clips, takes, devices, tracks, strips and patches between them, audio included; the library and the recent list are shared live; and the songs a crash cut off come back at the next start. Still to come: separate Input Focus and Play Focus buttons on the interface panel (the song with the stream also has the MIDI inputs today), converting the sample rate of audio pasted from a song with another rate, dragging between song windows, and a session of the MCP server with more than one song.
 
 ## Phase 7: Ecosystem and device parity (last)
 

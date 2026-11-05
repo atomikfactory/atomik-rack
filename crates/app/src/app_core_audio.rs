@@ -189,6 +189,9 @@ pub(super) struct AudioState {
     /// The folder of a template or an item whose audio the next opened document copies into its
     /// session bundle (see [`AppCore::open_template`]).
     pub(super) adopt_from: Option<PathBuf>,
+    /// The bundle folders of the other open songs the clipboard's audio can be fetched from
+    /// (see [`AppCore::set_audio_lenders`]).
+    pub(super) lenders: Vec<PathBuf>,
     /// Unfinished recordings of a dead session already taken up this run.
     recovered: BTreeSet<PathBuf>,
     /// The `rec-*.wav` files whose audio is now in the project, deleted once it is saved.
@@ -243,6 +246,7 @@ impl AudioState {
             session_name: format!("atomik-rack-session-{}-{session}", std::process::id()),
             scratch_base: None,
             adopt_from: None,
+            lenders: Vec::new(),
             recovered: BTreeSet::new(),
             recovered_files: Vec::new(),
             saving: None,

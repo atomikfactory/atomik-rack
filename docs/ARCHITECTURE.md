@@ -5465,14 +5465,33 @@ single-song app) and the one with the **play focus**.
   recovery snapshots (`recovery/song-<n>` for a song opened next to the first, `plugin_setup::song_plugin_config`,
   with no crash journal: the first song's names what a crash lost). The keymap, the workflow preferences and the
   layout of the window are copied into a new song, and `Workspace::sync_preferences` carries a change made in one
-  song to the others. Settings, the library, the recent list and the scan cache are files each song reads and
-  writes itself; a change made in one song's Settings reaches another one when it takes the audio, which carries
-  the audio settings along. The window state file (`ui-state.json`) belongs to the first song to hold it and
-  passes to the next one when that song closes.
-- **Not done yet.** Moving clips, devices, channels and patches between open songs (the library is the way for
-  now), separate Input Focus and Play Focus buttons on the interface panel, recovery that offers the snapshots
-  of a second song after a crash, a library and recent list shared live between songs, and a session of the
-  MCP server with several songs (it stays one song).
+  song to the others. Settings and the scan cache are files each song reads and writes itself; a change made in
+  one song's Settings reaches another one when it takes the audio, which carries the audio settings along. The
+  window state file (`ui-state.json`) belongs to the first song to hold it and passes to the next one when that
+  song closes.
+- **The library and the recent list are live.** Each song keeps its own copy in memory, and the file is written
+  by whichever song changed it. `Workspace::sync_shared` (after every routed call and every frame) compares the
+  recent list and a library revision (`AppCore::library_revision`, counted by changes made in the song, not by
+  adoption) and hands a change to the other songs (`AppCore::adopt_recent`, `AppCore::adopt_library`, which
+  repaints the browser's marks and places and writes nothing), so one song's write cannot drop another's change.
+  A new song starts from the state the others hold.
+- **Moving material between songs.** The clipboard follows the song the calls are routed to (see the takes
+  clipboard above), and so does the audio it needs. When the clipboard crosses to a song,
+  `AppCore::set_audio_lenders` gives that song the bundle folders of the song it was copied in (and those that
+  song borrowed from). A paste of clips, takes, devices, tracks, strips or a patch registers the assets the song
+  lacks (`workflow_pre`) and `AppCore::fetch_lent_audio` has a worker (`spawn_fetch`, thread `atomik-fetch`) copy
+  the files from the lending bundles into the song's own (a scratch bundle when it has none) and load them; a file
+  the lender no longer has is listed as missing like any lost audio. Assets are content hashes, so nothing in the
+  pasted material is rewritten. The sample rate of the other song is not converted.
+- **Recovery of the other songs.** A song next to the first keeps its snapshots in `recovery/song-<n>` with its own
+  session marker. At start, `crashed_song_snapshots` looks in those folders for a marker whose process is gone
+  (and removes it, so the copies are offered once) and `Workspace::recover_songs` opens the newest snapshot of
+  each as an unsaved song in a window of its own, up to eight, without moving the audio or the focus; a message
+  in the first song says how many came back. The first song's own copy is offered by its banner as before.
+- **Not done yet.** Separate Input Focus and Play Focus buttons on the interface panel (the song that has the
+  stream also has the MIDI inputs, so the two are one today: they need a way to feed a song's live notes into the
+  engine of another), dragging clips between song windows, and a session of the MCP server with several songs (it
+  stays one song).
 
 ## 6n. Logs, crash reports and diagnostics
 

@@ -5190,6 +5190,10 @@ impl ArrangementView {
                 modifiers,
                 pencil,
             } => {
+                // An undo during the drag can take the track away: nothing is drawn on it.
+                if !self.song.tracks.iter().any(|t| t.device == device) {
+                    return;
+                }
                 let press = start;
                 if !moved {
                     self.selection.clear();

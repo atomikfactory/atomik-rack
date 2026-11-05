@@ -544,6 +544,40 @@ pub(crate) fn spawn_load(
         .map(|_| ())
 }
 
+/// Starts a worker that copies the assets `hashes` the bundle lacks from the bundle folders
+/// `sources` (another open song's) and loads them. A file no source has comes back as a load
+/// error, which lists it as missing.
+pub(crate) fn spawn_fetch(
+    tx: Sender<Msg>,
+    generation: u64,
+    bundle: Bundle,
+    sources: Vec<PathBuf>,
+    threshold: u64,
+    hashes: Vec<String>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-fetch".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            for hash in hashes {
+                let wanted: std::collections::BTreeSet<String> = [hash.clone()].into();
+                let result = match bundle.collect_from(&sources, &wanted) {
+                    Ok(report) if report.missing.contains(&hash) => {
+                        Err("the song it was copied from no longer has the file".to_owned())
+                    }
+                    Ok(_) => load_asset(&bundle, &hash, threshold),
+                    Err(e) => Err(e.to_string()),
+                };
+                let _ = tx.send(Msg::Loaded {
+                    generation,
+                    hash,
+                    result,
+                });
+            }
+        })
+        .map(|_| ())
+}
+
 /// Starts a worker that resamples the assets `assets` (`(id, display name)`) of `bundle` to
 /// `rate`, stores the copies and loads them, then sends one [`Msg::Converted`].
 pub(crate) fn spawn_convert(

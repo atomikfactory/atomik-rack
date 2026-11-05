@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Several songs: audio that travels, a shared library and recent list, and recovery of every song.** Copy and
+  paste already crossed from one open song to another for clips, takes, devices, tracks, strips and patches, but the
+  audio they use stayed behind in the first song's bundle. A paste now copies the files the song lacks from the
+  bundle of the song they were copied in (or one that song borrowed from) into the song's own bundle, on a worker,
+  and loads them; a file the first song no longer has is listed as missing, like any lost audio. The sample rate of
+  the other song is not converted. The favourites, tags, lists and places of the library and the recent list are now
+  carried between the songs at once: a favourite marked or a song saved in one window shows in the others, the file
+  is no longer rewritten from a stale copy by another song, and a song opened later starts from the same state. A
+  start after a crash brings back the songs that were open next to the first one, one window each, as unsaved
+  songs (up to eight, from their own recovery folders), without moving the audio, and a message says how many came
+  back. The first song's copy is offered by its banner as before. Project format unchanged (43). Not done yet:
+  separate Input Focus and Play Focus buttons (the song that has the stream also has the MIDI inputs), converting
+  audio of another sample rate, dragging between song windows, and a session of the MCP server with more than one
+  song.
 - **Collect Files and relocation.** **File > Collect Files** saves the song in place and gathers the audio it uses
   into the song's own bundle folder (`<name>/` beside the project file, or the folder the file sits in when it is
   named like the file). A song that shared an `Audio` folder with other projects gets audio of its own, and audio
@@ -376,6 +390,10 @@ may break APIs and the patch and project formats.
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.
+- A plain **Save** no longer deletes audio from an `Audio` folder that several project files share. The unused
+  audio of a bundle folder is tidied only when no other project file sits in the folder (or directly in one of
+  its subfolders); where one does, the folder is left as it is. Collect Files gives a song audio of its own.
+- Undoing while a clip is being drawn on a lane no longer lets the release add a clip to a track the undo removed.
 
 ## [0.3.0-rc.2] - 2026-11-04
 

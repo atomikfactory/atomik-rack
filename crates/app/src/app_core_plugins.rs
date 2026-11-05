@@ -150,7 +150,7 @@ impl PluginPaths {
         Self {
             cache: Some(dir.join("plugins.json")),
             journal: Some(dir.join("plugins-in-use.json")),
-            recovery: Some(dir.join("recovery")),
+            recovery: Some(dir.join(crate::recovery::RECOVERY_FOLDER)),
             scratch: Some(std::env::temp_dir()),
         }
     }

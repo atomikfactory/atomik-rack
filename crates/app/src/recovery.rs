@@ -253,6 +253,63 @@ impl SessionMarker {
     }
 }
 
+/// The folder of the recovery snapshots inside the config folder.
+pub const RECOVERY_FOLDER: &str = "recovery";
+
+/// The most songs next to the first one a start offers to recover.
+pub const MAX_RECOVERED_SONGS: usize = 8;
+
+/// The newest recovery snapshot of each song that was open next to the first one when a run
+/// ended without a clean exit, oldest song folder first. The songs after the first keep their
+/// snapshots in `<root>/song-<n>/`; one of those folders counts when it holds a session marker
+/// whose process is gone and a snapshot. The dead markers are removed, so a later start does
+/// not offer the same copies again (and a song opened in this run, which takes such a folder
+/// over, does not mistake them for its own crash).
+pub fn crashed_song_snapshots(root: &Path) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<(u32, PathBuf)> = read
+        .flatten()
+        .take(SCAN_LIMIT)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let number = path
+                .file_name()?
+                .to_str()?
+                .strip_prefix("song-")?
+                .parse::<u32>()
+                .ok()?;
+            path.is_dir().then_some((number, path))
+        })
+        .collect();
+    folders.sort();
+    let mut found = Vec::new();
+    for (_, folder) in folders {
+        let mut crashed = false;
+        if let Ok(read) = std::fs::read_dir(&folder) {
+            for entry in read.flatten().take(SCAN_LIMIT) {
+                let path = entry.path();
+                let is_marker = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| marker_pid(n).is_some());
+                if is_marker && held(&path) == Some(false) {
+                    crashed = true;
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        if crashed
+            && found.len() < MAX_RECOVERED_SONGS
+            && let Some(snapshot) = RecoveryDir::new(&folder).newest()
+        {
+            found.push(snapshot);
+        }
+    }
+    found
+}
+
 /// Whether process `pid` has a live session marker in `dir`. This process counts as alive.
 pub fn session_alive(dir: &Path, pid: u32) -> bool {
     if pid == std::process::id() {

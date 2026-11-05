@@ -381,6 +381,40 @@ impl Bundle {
         Ok(report)
     }
 
+    /// Another project file lives in this folder (or directly in one of its subfolders): the
+    /// `Audio/` store may hold audio that project uses, so nothing in it may be treated as an
+    /// orphan. `file` is the project being saved; it never counts as another project.
+    pub fn shared_with_other_projects(&self, file: &Path) -> bool {
+        let own = fs::canonicalize(file).ok();
+        let is_other = |path: &Path| {
+            path.extension().is_some_and(|e| e == "atomik")
+                && path != file
+                && match (&own, fs::canonicalize(path).ok()) {
+                    (Some(a), Some(b)) => *a != b,
+                    _ => true,
+                }
+        };
+        let Ok(entries) = fs::read_dir(&self.root) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if is_other(&path) {
+                    return true;
+                }
+            } else if path.is_dir()
+                && let Ok(inner) = fs::read_dir(&path)
+                && inner
+                    .flatten()
+                    .any(|e| e.path().is_file() && is_other(&e.path()))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Asset hashes present in `Audio/` that are not in `referenced`, sorted. An unreadable
     /// `Audio/` directory reports no orphans.
     pub fn orphans(&self, referenced: &BTreeSet<String>) -> Vec<String> {

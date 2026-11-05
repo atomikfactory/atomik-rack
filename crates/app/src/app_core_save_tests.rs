@@ -488,3 +488,73 @@ fn a_background_collect_runs_on_the_worker_and_reports_when_it_is_applied() {
             .starts_with("Collected 1 audio file")
     );
 }
+
+/// Two project files in `shared` use one `Audio/` folder; each holds one asset of its own.
+/// Returns the core that opened `song.atomik` and the two assets (song's, other's).
+fn two_projects_sharing_audio(t: &Tmp) -> (AppCore<RecordingSink>, PathBuf, String, String) {
+    let (_, mine) = project_with_audio(t);
+    let shared = t.path("proj");
+    let theirs = Bundle::open(&shared)
+        .unwrap()
+        .add_recording(
+            &AudioData::new(48_000, vec![vec![0.25; 900]]).unwrap(),
+            "other",
+        )
+        .unwrap()
+        .hash;
+    // The other project's file names its audio; its text only has to exist for the rule.
+    std::fs::write(shared.join("other.atomik"), "other project").unwrap();
+    let song = shared.join("song.atomik");
+    std::fs::copy(shared.join("proj.atomik"), &song).unwrap();
+    let mut c = core();
+    c.open(&song).unwrap();
+    c.wait_background();
+    assert_eq!(c.bundle_root(), Some(shared.as_path()));
+    (c, shared, mine, theirs)
+}
+
+#[test]
+fn a_plain_save_keeps_the_audio_of_other_projects_in_a_shared_audio_folder() {
+    let t = Tmp::new("shared-save");
+    let (mut c, shared, mine, theirs) = two_projects_sharing_audio(&t);
+    edit(&mut c, 7.0);
+    c.save().unwrap();
+    c.wait_background();
+    assert!(!c.is_dirty());
+    assert!(wav_of(&shared, &mine).exists());
+    assert!(
+        wav_of(&shared, &theirs).exists(),
+        "audio the open project does not use is another project's"
+    );
+}
+
+#[test]
+fn a_background_save_keeps_the_audio_of_other_projects_in_a_shared_audio_folder() {
+    let t = Tmp::new("shared-bg");
+    let (mut c, shared, _, theirs) = two_projects_sharing_audio(&t);
+    edit(&mut c, 3.0);
+    c.save_in_background().unwrap();
+    c.settle_save();
+    assert!(wav_of(&shared, &theirs).exists());
+}
+
+#[test]
+fn a_project_alone_in_its_bundle_still_drops_audio_it_no_longer_uses() {
+    let t = Tmp::new("alone-prune");
+    let (mut c, hash) = project_with_audio(&t);
+    let root = t.path("proj");
+    let stray = Bundle::open(&root)
+        .unwrap()
+        .add_recording(
+            &AudioData::new(48_000, vec![vec![0.5; 700]]).unwrap(),
+            "stray",
+        )
+        .unwrap()
+        .hash;
+    assert!(wav_of(&root, &stray).exists());
+    edit(&mut c, 5.0);
+    c.save().unwrap();
+    c.wait_background();
+    assert!(wav_of(&root, &hash).exists());
+    assert!(!wav_of(&root, &stray).exists(), "unused audio is tidied");
+}
