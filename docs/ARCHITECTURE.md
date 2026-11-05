@@ -5547,9 +5547,14 @@ The FM synth `atomik.fm-synth` is plain arithmetic: [dsp/src/fm.rs](../crates/ds
 the twelve operator routings (the panel draws its diagram from the same table), the ratio and
 fixed-frequency rule and `limits`, which estimates the highest partial of every operator and returns
 the scales that keep it under a bandwidth limit, so a bright patch plays duller on a high key
-instead of aliasing (no oversampling is needed, the voice stays allocation-free). Its `sound` choice
-works like the guitar amp's `setup`: `expand_setup` turns it into one `Command::Batch` of every
-param of the chosen row of `devices::fm_synth::sounds`.
+instead of aliasing (the voice stays allocation-free). A per-operator wave choice, poly glide, a chorus
+and an `oversample` choice were appended after `bend.range`, so older patches load unchanged (the
+defaults are the sine, off, mix 0 and 1x, which render the old sound bit for bit). With `oversample`
+on, the voices run at twice the rate into a buffer that `atomik_dsp::oversample` decimates, the limiter
+reaches 1.25 times as far, and the device reports the filter delay as variable latency. Its `sound`
+choice works like the guitar amp's `setup`: `expand_setup` turns it into one `Command::Batch` of every
+param of the chosen row of `devices::fm_synth::sounds`. A `sound` or `algorithm` choice of six entries
+or more opens the rack's pick list (`master_panel::is_pick_list`) instead of stepping on a click.
 
 The poly synth `atomik.poly-synth` is one voice engine that three devices share. Its params after
 `bend.range` were appended (every default reproduces the earlier sound bit for bit, which

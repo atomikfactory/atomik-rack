@@ -25,12 +25,23 @@ pub const KEY_IN: &str = "key_in";
 pub const KEY_PARAM: &str = "comp.key";
 /// Choice params with at least this many entries open a pick list instead of cycling.
 pub const PICK_LIST_MIN: usize = 16;
+/// A factory-sound or algorithm choice opens a pick list from this many entries: stepping
+/// through six or more of them one click at a time is slow, and the list shows what is there.
+pub const NAMED_PICK_LIST_MIN: usize = 6;
 /// Label of an unused slot.
 pub const FREE_LABEL: &str = "free";
 
-/// Whether a click on `p` opens a pick list (a long choice such as the control-room source).
+/// Whether a click on `p` opens a pick list: a long choice such as the control-room source, or
+/// a `sound` or `algorithm` choice of [`NAMED_PICK_LIST_MIN`] entries or more. A right-click
+/// still steps back through the choices.
 pub fn is_pick_list(p: &ParamDescriptor) -> bool {
-    matches!(p.unit, atomik_core::Unit::Choice(names) if names.len() >= PICK_LIST_MIN)
+    match p.unit {
+        atomik_core::Unit::Choice(names) => {
+            names.len() >= PICK_LIST_MIN
+                || (names.len() >= NAMED_PICK_LIST_MIN && matches!(p.key, "sound" | "algorithm"))
+        }
+        _ => false,
+    }
 }
 
 /// What the master panel shows that the descriptor does not hold.

@@ -142,6 +142,15 @@ fn descriptor_validates() {
             "master.level_cv_trim",
             "pan_cv_trim",
             "bend.range",
+            "op1.wave",
+            "op2.wave",
+            "op3.wave",
+            "op4.wave",
+            "play.poly_glide",
+            "chorus.mix",
+            "chorus.rate",
+            "chorus.depth",
+            "oversample",
         ]
         .map(String::from),
     );
@@ -160,7 +169,7 @@ fn descriptor_validates() {
             "lfo_cv_out",
         ],
     );
-    assert_eq!(PARAMS.len(), 70);
+    assert_eq!(PARAMS.len(), 79);
     assert_eq!(DESCRIPTOR.type_id, "atomik.fm-synth");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
     assert_eq!(
@@ -1385,4 +1394,365 @@ fn a_tune_of_zero_renders_the_same_bits_as_no_tune() {
             .zip(&b[0])
             .all(|(x, y)| x.to_bits() == y.to_bits())
     );
+}
+
+// ------------------------------------------------------------------------------- waveforms
+
+#[test]
+fn every_waveform_is_bounded_periodic_and_free_of_dc() {
+    for kind in 0..WAVE_NAMES.len() as u8 {
+        let n = 4_000;
+        let mut sum = 0.0f64;
+        let mut worst = 0.0f32;
+        for i in 0..n {
+            let p = i as f64 / n as f64;
+            let v = wave(kind, p);
+            assert!(v.is_finite(), "{}: {p}", WAVE_NAMES[usize::from(kind)]);
+            worst = worst.max(v.abs());
+            sum += f64::from(v);
+            // Any whole number of cycles later is the same point.
+            let again = wave(kind, p + 3.0);
+            assert!(
+                (v - again).abs() < 1e-6,
+                "{} at {p}",
+                WAVE_NAMES[usize::from(kind)]
+            );
+        }
+        assert!(
+            worst <= 1.0 + 1e-6,
+            "{}: peak {worst}",
+            WAVE_NAMES[usize::from(kind)]
+        );
+        assert!(
+            worst > 0.9,
+            "{}: reaches {worst}",
+            WAVE_NAMES[usize::from(kind)]
+        );
+        assert!(
+            (sum / n as f64).abs() < 0.01,
+            "{}: mean {}",
+            WAVE_NAMES[usize::from(kind)],
+            sum / n as f64
+        );
+    }
+    assert_eq!(
+        wave(0, 0.125).to_bits(),
+        (sin_cycles(0.125) as f32).to_bits()
+    );
+    assert_eq!(wave(4, f64::NAN), 0.0);
+}
+
+/// Level in dB of the harmonic `h` of `f0` in `x` (a Hann-windowed 32768 samples), against the
+/// fundamental's level.
+fn harmonic_db(x: &[f32], f0: f64, h: f64) -> f64 {
+    let n = 1 << 15;
+    let mags = magnitude_spectrum(&x[..n]);
+    let bin = |f: f64| (f * n as f64 / SR).round() as usize;
+    let at = |f: f64| {
+        let b = bin(f);
+        mags[b - 2..=b + 2].iter().fold(0.0f64, |m, v| m.max(*v))
+    };
+    20.0 * (at(f0 * h) / at(f0)).log10()
+}
+
+fn wave_tone(kind: f32, key: u8) -> Vec<f32> {
+    let (mut h, _) = synth();
+    pure(&mut h);
+    h.set_param("op1.wave", kind);
+    h.push_note("notes_in", on(0, key, 1.0));
+    h.render(seconds(1.0), &OUT).remove(0)
+}
+
+#[test]
+fn the_waveforms_keep_the_pitch_and_change_the_harmonics() {
+    let f0 = hz(69);
+    let sine = wave_tone(0.0, 69);
+    assert!(
+        harmonic_db(&sine[4_800..], f0, 3.0) < -80.0,
+        "a sine has no third"
+    );
+    for (kind, name) in WAVE_NAMES.iter().enumerate().skip(1) {
+        let o = wave_tone(kind as f32, 69);
+        let f = dominant_frequency(&o[4_800..4_800 + 32_768], SR);
+        // Half and rectified waves put their strongest partial on the second harmonic.
+        let ok = (f - f0).abs() < 1.0 || (f - 2.0 * f0).abs() < 2.0 || (f - 3.0 * f0).abs() < 3.0;
+        assert!(ok, "{}: strongest partial at {f}", name);
+        assert!(peak(&o) > 0.2 && peak(&o) <= 0.5 + 1e-3, "{}", name);
+        assert!(rms_diff(&o[4_800..], &sine[4_800..]) > 0.02, "{}", name);
+    }
+    // The triangle has odd harmonics falling as 1/n^2: the third is 19 dB down.
+    let tri = wave_tone(4.0, 69);
+    let third = harmonic_db(&tri[4_800..], f0, 3.0);
+    assert!((third + 19.1).abs() < 1.5, "triangle third: {third}");
+    // The soft square is bright in the odd harmonics.
+    let sq = wave_tone(5.0, 69);
+    assert!(harmonic_db(&sq[4_800..], f0, 3.0) > -14.0);
+    assert!(
+        harmonic_db(&sq[4_800..], f0, 2.0) < -60.0,
+        "and has no second"
+    );
+}
+
+#[test]
+fn a_modulator_wave_changes_the_brightness_of_the_carrier() {
+    let tone = |kind: f32| {
+        let (mut h, _) = synth();
+        patch(&mut h, 0, [0.6, 0.5, 0.0, 0.0], [1.0; 4]);
+        h.set_param("op2.wave", kind);
+        h.push_note("notes_in", on(0, 60, 1.0));
+        h.render(seconds(0.5), &OUT).remove(0)
+    };
+    let (sine, square) = (tone(0.0), tone(5.0));
+    assert!(brightness(&square[4_800..]) > 1.1 * brightness(&sine[4_800..]));
+    assert!(square.iter().all(|v| v.is_finite() && v.abs() <= 1.0));
+}
+
+// --------------------------------------------------------------------------- poly glide
+
+fn poly_patch(h: &mut DeviceHarness, glide: f32, on_: f32) {
+    pure(h);
+    h.set_param("play.mode", 0.0);
+    h.set_param("play.glide", glide);
+    h.set_param("play.poly_glide", on_);
+}
+
+#[test]
+fn poly_glide_slides_a_new_note_in_from_the_last_one() {
+    let (mut h, _) = synth();
+    poly_patch(&mut h, 150.0, 1.0);
+    h.push_note("notes_in", on(0, 57, 1.0));
+    h.render(seconds(0.3), &OUT);
+    h.push_note("notes_in", off(0, 57));
+    h.render(seconds(0.4), &OUT);
+    h.push_note("notes_in", on(0, 69, 1.0));
+    let o = h.render(seconds(1.5), &OUT).remove(0);
+    let early = dominant_frequency(&o[1_000..3_048], SR);
+    assert!(early > 225.0 && early < 400.0, "on its way: {early}");
+    assert!((freq_at(&o, 60_000) - 440.0).abs() < 2.0, "arrived");
+}
+
+#[test]
+fn poly_glide_is_off_by_default_and_a_glide_time_alone_changes_nothing_in_poly() {
+    let run = |glide: f32, on_: f32| {
+        let (mut h, _) = synth();
+        poly_patch(&mut h, glide, on_);
+        h.push_note("notes_in", on(0, 57, 1.0));
+        h.render(seconds(0.3), &OUT);
+        h.push_note("notes_in", off(0, 57));
+        h.render(seconds(0.4), &OUT);
+        h.push_note("notes_in", on(0, 69, 1.0));
+        h.render(seconds(0.5), &OUT).remove(0)
+    };
+    let (plain, timed) = (run(0.0, 0.0), run(150.0, 0.0));
+    assert!(
+        plain
+            .iter()
+            .zip(&timed)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    assert!((dominant_frequency(&plain[1_000..3_048], SR) - 440.0).abs() < 25.0);
+    // Chords: the notes of a chord played together start from the previous key, none of them
+    // from a stale pitch of its own.
+    let (mut h, _) = synth();
+    poly_patch(&mut h, 80.0, 1.0);
+    for (i, key) in [60u8, 64, 67].iter().enumerate() {
+        h.push_note("notes_in", on(i as u16, *key, 0.8));
+    }
+    let o = h.render(seconds(1.0), &OUT).remove(0);
+    assert!(o.iter().all(|v| v.is_finite() && v.abs() <= 1.5));
+    assert!(peak(&o[40_000..]) > 0.05);
+}
+
+#[test]
+fn poly_glide_carries_through_a_voice_steal() {
+    let (mut h, probe) = synth();
+    poly_patch(&mut h, 150.0, 1.0);
+    h.set_param("voices", 1.0);
+    h.push_note("notes_in", on(0, 57, 1.0));
+    h.render(seconds(0.3), &OUT);
+    h.push_note("notes_in", on(0, 69, 1.0));
+    let o = h.render(seconds(1.5), &OUT).remove(0);
+    assert_eq!(probe.active(), 1);
+    let early = dominant_frequency(&o[1_000..3_048], SR);
+    assert!(early > 225.0 && early < 400.0, "on its way: {early}");
+    assert!((freq_at(&o, 60_000) - 440.0).abs() < 2.0, "arrived");
+}
+
+// ------------------------------------------------------------------------------- chorus
+
+#[test]
+fn the_chorus_widens_a_centred_voice_and_is_off_at_zero() {
+    let render = |mix: f32| {
+        let (mut h, _) = synth();
+        pure(&mut h);
+        h.set_param("chorus.mix", mix);
+        h.set_param("chorus.depth", 1.0);
+        h.set_param("chorus.rate", 1.5);
+        h.push_note("notes_in", on(0, 60, 1.0));
+        h.render(seconds(1.0), &OUT)
+    };
+    let dry = render(0.0);
+    assert!(
+        dry[0]
+            .iter()
+            .zip(&dry[1])
+            .all(|(l, r)| l.to_bits() == r.to_bits())
+    );
+    let wet = render(0.7);
+    assert!(
+        rms_diff(&wet[0][9_600..], &wet[1][9_600..]) > 0.02,
+        "the sides differ"
+    );
+    assert!(rms_diff(&wet[0][9_600..], &dry[0][9_600..]) > 0.02);
+    assert!(
+        wet[0]
+            .iter()
+            .chain(&wet[1])
+            .all(|v| v.is_finite() && v.abs() <= 1.0)
+    );
+    let (lo, hi) = (rms(&dry[0][9_600..]), rms(&wet[0][9_600..]));
+    assert!(
+        hi > 0.5 * lo && hi < 1.5 * lo,
+        "level stays close: {lo} {hi}"
+    );
+}
+
+#[test]
+fn the_chorus_tail_rings_on_after_the_notes_end_and_switching_it_on_starts_clean() {
+    let (mut h, _) = synth();
+    pure(&mut h);
+    h.set_param("chorus.mix", 1.0);
+    h.push_note("notes_in", on(0, 60, 1.0));
+    h.render(seconds(0.2), &OUT);
+    h.push_note("notes_in", off(0, 60));
+    h.render(seconds(0.5), &OUT);
+    let silent = h.render(seconds(0.1), &OUT);
+    assert!(peak(&silent[0]) < 1e-4);
+    // Turning it off and on again does not replay old audio.
+    h.set_param("chorus.mix", 0.0);
+    h.render(seconds(0.1), &OUT);
+    h.set_param("chorus.mix", 1.0);
+    let after = h.render(seconds(0.1), &OUT);
+    assert!(peak(&after[0]) < 1e-4);
+}
+
+// ------------------------------------------------------------------------- oversampling
+
+#[test]
+fn oversampling_reports_its_latency() {
+    let mut s = FmSynth::new();
+    assert_eq!(s.latency_frames(), 0);
+    assert!(s.variable_latency());
+    s.set_param(ParamId(P_OVERSAMPLE), 1.0);
+    assert_eq!(s.latency_frames(), LATENCY_2X);
+    s.set_param(ParamId(P_OVERSAMPLE), 0.0);
+    assert_eq!(s.latency_frames(), 0);
+}
+
+fn quality_tone(over: f32, key: u8, setup: impl Fn(&mut DeviceHarness)) -> Vec<f32> {
+    let (mut h, _) = synth();
+    setup(&mut h);
+    h.set_param("oversample", over);
+    h.push_note("notes_in", on(0, key, 1.0));
+    h.render(seconds(1.0), &OUT).remove(0)
+}
+
+#[test]
+fn oversampling_keeps_pitch_level_and_timing() {
+    let delay_patch = |h: &mut DeviceHarness| {
+        pure(h);
+        h.set_param("op1.delay", 100.0);
+        h.set_param("op1.attack", 5.0);
+    };
+    let (a, b) = (
+        quality_tone(0.0, 69, delay_patch),
+        quality_tone(1.0, 69, delay_patch),
+    );
+    let (fa, fb) = (
+        dominant_frequency(&a[12_000..12_000 + 32_768], SR),
+        dominant_frequency(&b[12_000..12_000 + 32_768], SR),
+    );
+    assert!(
+        (fa - 440.0).abs() < 0.5 && (fb - 440.0).abs() < 0.5,
+        "{fa} {fb}"
+    );
+    let (ra, rb) = (rms(&a[12_000..]), rms(&b[12_000..]));
+    assert!((ra / rb - 1.0).abs() < 0.02, "level {ra} vs {rb}");
+    // The delay holds the note back by the same time (the filter adds its own 29 samples).
+    let onset = |x: &[f32]| x.iter().position(|v| v.abs() > 0.02).unwrap();
+    let (oa, ob) = (onset(&a), onset(&b));
+    assert!((4_700..5_000).contains(&oa), "{oa}");
+    assert!(ob.abs_diff(oa) < 80, "{oa} vs {ob}");
+}
+
+#[test]
+fn oversampling_lets_a_bright_patch_open_further_without_aliasing() {
+    let stack = |h: &mut DeviceHarness| {
+        patch(h, 0, [0.6, 1.0, 1.0, 1.0], [1.0, 1.0, 2.0, 1.0]);
+        h.set_param("feedback", 1.0);
+    };
+    // One modulator at the third harmonic: the plain rate has to hold its index back on high
+    // keys, the doubled rate has room for it.
+    let pair = |h: &mut DeviceHarness| patch(h, 1, [0.6, 1.0, 0.0, 0.0], [1.0, 3.0, 1.0, 1.0]);
+    for key in [84u8, 96, 105] {
+        let a = quality_tone(0.0, key, pair);
+        let b = quality_tone(1.0, key, pair);
+        let (ba, bb) = (brightness(&a[9_600..]), brightness(&b[9_600..]));
+        // The gain is largest where the plain rate holds the most back, and shrinks towards
+        // the top of the keyboard where even the doubled rate has little room.
+        let want = if key < 100 { 1.3 } else { 1.03 };
+        assert!(bb > want * ba, "key {key}: {ba} vs {bb}");
+        let alias = aliasing_db(&b[9_600..], hz(key));
+        assert!(alias < -50.0, "key {key}: alias {alias:.1} dB");
+        let s = quality_tone(1.0, key, stack);
+        let alias = aliasing_db(&s[9_600..], hz(key));
+        assert!(alias < -50.0, "key {key} stack: alias {alias:.1} dB");
+        assert!(b.iter().chain(&s).all(|v| v.is_finite() && v.abs() <= 1.5));
+    }
+}
+
+#[test]
+fn switching_the_oversampling_during_a_note_stays_finite_and_bounded() {
+    let (mut h, probe) = synth();
+    patch(&mut h, 0, [0.6, 1.0, 1.0, 1.0], [1.0, 1.0, 2.0, 1.0]);
+    h.push_note("notes_in", on(0, 72, 1.0));
+    h.render(seconds(0.1), &OUT);
+    for over in [1.0, 0.0, 1.0] {
+        h.set_param("oversample", over);
+        let o = h.render(seconds(0.1), &OUT);
+        assert!(
+            o[0].iter()
+                .chain(&o[1])
+                .all(|v| v.is_finite() && v.abs() <= 1.5)
+        );
+    }
+    // The voices were faded: a new note after the switch plays normally.
+    h.render(seconds(0.3), &OUT);
+    h.push_note("notes_in", on(0, 60, 1.0));
+    let o = h.render(seconds(0.3), &OUT);
+    assert!(peak(&o[0]) > 0.05);
+    assert!(probe.active() >= 1);
+}
+
+#[test]
+fn oversampled_renders_are_identical() {
+    let run = || quality_tone(1.0, 64, |h| patch(h, 1, LEVELS, COARSE));
+    let (a, b) = (run(), run());
+    assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()));
+}
+
+#[test]
+fn the_new_factory_sounds_use_what_was_added() {
+    let by = |name: &str| {
+        sounds::SOUNDS
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name}"))
+    };
+    let has = |s: &sounds::Sound, key: &str| s.changes.iter().any(|(k, _)| *k == key);
+    assert!(has(by("Wide Keys"), "chorus.mix"));
+    assert!(has(by("Glide Lead"), "play.poly_glide"));
+    assert!(has(by("Glide Lead"), "op2.wave"));
+    assert!(has(by("Square Keys"), "op1.wave"));
+    assert!(has(by("Marimba"), "op2.coarse"));
 }

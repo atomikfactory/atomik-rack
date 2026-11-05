@@ -8,10 +8,12 @@
 //! per voice:   op4 -> op3 -> op2 -> op1      (the routing, see ALGORITHMS: operator n is only
 //!              each operator = sine . envelope . level   modulated by operators above n)
 //!              carriers summed . 1/sqrt(carriers) . tremolo . key pan
-//! all voices:  sum . master level (5 ms smoothing) . soft limiter -> out L/R
+//! all voices:  sum (at 2x the rate with `oversample`, then a halfband decimator)
+//!              . master level (5 ms smoothing) . soft limiter . chorus -> out L/R
 //! ```
 //!
-//! * **Operators.** Four sine operators, `op1.*` to `op4.*`. Operator `n` is a sine whose phase
+//! * **Operators.** Four operators, `op1.*` to `op4.*`. Operator `n` is a wave (a sine unless
+//!   `opN.wave` picks another, see [`wave`]) whose phase
 //!   is moved by the outputs of the operators the algorithm routes into it. An operator that
 //!   modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is
 //!   the volume of a carrier and the modulation index (full level is [`fm::MAX_INDEX_RAD`] = 8
@@ -41,7 +43,14 @@
 //!   voice asks [`fm::limits`] for the scales that keep the highest partial of every operator under
 //!   0.4 of the sample rate, and ramps the indices and the feedback to them: a bright patch plays
 //!   duller on a high key instead of aliasing, continuously in the pitch. Operator frequencies
-//!   are held under 0.45 of the sample rate.
+//!   are held under 0.45 of the sample rate. The limiter counts the partials of a sine; the other
+//!   waves are richer than that, so a patch built on them can still alias a little at the plain
+//!   rate. `oversample` (2x) runs the voices at twice the rate and decimates the sum through a
+//!   linear-phase halfband filter ([`atomik_dsp::oversample`]): what the doubled rate carries past
+//!   the output's Nyquist is filtered away, the limiter lets the partials reach 1.25 times as far
+//!   (short of the filter's transition band), and a bright patch keeps more of its index on a high
+//!   key. It costs about twice the voices' CPU and reports the filter's delay
+//!   ([`LATENCY_2X`] frames) as latency. Changing it fades the sounding voices out.
 //! * **Pitch.** `pitch.env_amount` semitones decay to nothing with `pitch.env_decay` ms after each
 //!   note start; the LFO moves the pitch by `lfo.to_pitch` semitones; pitch bend moves it by up to
 //!   `bend.range` semitones (default 2). The fixed-frequency operators ignore all of them.
@@ -52,9 +61,14 @@
 //!   retriggers the envelopes and returns to the key still held when one is released) and
 //!   `legato` (as mono, but a key played while another is held changes the pitch only).
 //!   `play.glide` is the time in ms a pitch takes to cover most of the way to the new key in
-//!   the mono modes. A same-key note-on retriggers that voice from its current level.
+//!   the mono modes, and in poly when `play.poly_glide` is on: then each note that starts a voice
+//!   (a stolen one too) slides in from the key played before it. A same-key note-on retriggers
+//!   that voice from its current level.
 //! * **Stereo.** `spread` pans the voices by key (low left, high right, middle C centred); the
 //!   pan CV balances the pair. The synth has no filter: an FM voice shapes its own spectrum.
+//! * **Chorus.** `chorus.mix` crossfades the stereo output into a chorus (a modulated delay of
+//!   about 12 ms, swung by `chorus.depth` up to 6 ms, at `chorus.rate`; the sides sweep against
+//!   each other). At 0 the stage is skipped and the output is the dry signal bit for bit.
 //! * **Sounds.** `sound` selects a factory sound ([`sounds`]). The device ignores it; the app turns
 //!   a change of `sound` into a batch of param changes (one undo step).
 //! * **Realtime.** Nothing allocates, locks or blocks in `process`, `reset` and `set_param`.
@@ -71,8 +85,9 @@ use atomik_device_sdk::{
 use atomik_dsp::fm::{
     self, ALGORITHM_NAMES, Algorithm, MAX_FEEDBACK_RAD, MAX_INDEX_RAD, OPERATORS,
 };
+use atomik_dsp::oversample::{LATENCY_2X, OversampleFactor, Oversampler};
 use atomik_dsp::{
-    Adsr, Lfo, LfoShape, Smoother, balance_gains, flush_denormal, note_to_hz, sin_cycles,
+    Adsr, Chorus, Lfo, LfoShape, Smoother, balance_gains, flush_denormal, note_to_hz, sin_cycles,
 };
 
 use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
@@ -112,6 +127,12 @@ const SOUNDS: Unit = Unit::Choice(&sounds::SOUND_NAMES);
 const ALGORITHMS: Unit = Unit::Choice(&ALGORITHM_NAMES);
 const LFO_WAVES: Unit = Unit::Choice(&["sine", "triangle", "saw", "square", "sample&hold"]);
 const PLAY_MODES: Unit = Unit::Choice(&["poly", "mono", "legato"]);
+/// The operator waveforms, see [`wave`].
+pub const WAVE_NAMES: [&str; 6] = ["sine", "half", "abs", "pulse", "triangle", "soft sq"];
+const WAVES: Unit = Unit::Choice(&WAVE_NAMES);
+const OVERSAMPLES: Unit = Unit::Choice(&["off", "2x"]);
+const WAVE_KEYS: [&str; OPERATORS] = ["op1.wave", "op2.wave", "op3.wave", "op4.wave"];
+const WAVE_LABELS: [&str; OPERATORS] = ["Op 1 wave", "Op 2 wave", "Op 3 wave", "Op 4 wave"];
 const ENV_MS: (f32, f32) = (0.5, 10_000.0);
 
 // The global params come first, then the four operators, then the rest.
@@ -138,7 +159,14 @@ const P_CV_INDEX: u32 = P_PITCH_ENV + 14;
 const P_CV_LEVEL: u32 = P_PITCH_ENV + 15;
 const P_CV_PAN: u32 = P_PITCH_ENV + 16;
 const P_BEND_RANGE: u32 = P_PITCH_ENV + 17;
-const PARAM_COUNT: usize = P_BEND_RANGE as usize + 1;
+// Added after the first release, appended so the ids of the older params stay put.
+const P_WAVE_BASE: u32 = P_BEND_RANGE + 1;
+const P_POLY_GLIDE: u32 = P_WAVE_BASE + OPERATORS as u32;
+const P_CHORUS_MIX: u32 = P_POLY_GLIDE + 1;
+const P_CHORUS_RATE: u32 = P_POLY_GLIDE + 2;
+const P_CHORUS_DEPTH: u32 = P_POLY_GLIDE + 3;
+const P_OVERSAMPLE: u32 = P_POLY_GLIDE + 4;
+const PARAM_COUNT: usize = P_OVERSAMPLE as usize + 1;
 
 /// The fields of an operator, in param order.
 const F_FIXED: usize = 0;
@@ -497,6 +525,71 @@ const fn build_params() -> [ParamDescriptor; PARAM_COUNT] {
         out[P_PITCH_ENV as usize + i] = rest[i];
         i += 1;
     }
+    let mut op = 0;
+    while op < OPERATORS {
+        out[P_WAVE_BASE as usize + op] = param(
+            P_WAVE_BASE + op as u32,
+            WAVE_KEYS[op],
+            WAVE_LABELS[op],
+            (0.0, (WAVE_NAMES.len() - 1) as f32, 0.0),
+            Lin,
+            WAVES,
+            true,
+        );
+        op += 1;
+    }
+    let later = [
+        param(
+            P_POLY_GLIDE,
+            "play.poly_glide",
+            "Poly glide",
+            (0.0, 1.0, 0.0),
+            Lin,
+            Unit::Toggle,
+            true,
+        ),
+        param(
+            P_CHORUS_MIX,
+            "chorus.mix",
+            "Chorus mix",
+            (0.0, 1.0, 0.0),
+            Lin,
+            Unit::Percent,
+            false,
+        ),
+        param(
+            P_CHORUS_RATE,
+            "chorus.rate",
+            "Chorus rate",
+            (0.05, 5.0, 0.8),
+            Exp,
+            Unit::Hz,
+            false,
+        ),
+        param(
+            P_CHORUS_DEPTH,
+            "chorus.depth",
+            "Chorus depth",
+            (0.0, 1.0, 0.5),
+            Lin,
+            Unit::Percent,
+            false,
+        ),
+        param(
+            P_OVERSAMPLE,
+            "oversample",
+            "Oversampling",
+            (0.0, 1.0, 0.0),
+            Lin,
+            OVERSAMPLES,
+            true,
+        ),
+    ];
+    let mut i = 0;
+    while i < later.len() {
+        out[P_POLY_GLIDE as usize + i] = later[i];
+        i += 1;
+    }
     out
 }
 
@@ -610,6 +703,11 @@ pub fn factory() -> DeviceFactory {
     }
 }
 
+/// Longest delay of the chorus line in ms (centre plus depth stay under it).
+const CHORUS_MAX_MS: f32 = 30.0;
+/// The chorus delay centre in ms, and the swing at full depth.
+const CHORUS_CENTRE_MS: f32 = 12.0;
+const CHORUS_SWING_MS: f32 = 6.0;
 /// Samples between control-rate updates (pitch, indices, levels) of a voice.
 const CONTROL_INTERVAL: u32 = 16;
 /// Fixed range of the pitch CV in semitones (times `pitch_cv_trim`).
@@ -624,6 +722,8 @@ const MASTER_SMOOTH_MS: f32 = 5.0;
 const MAX_FREQ_RATIO: f32 = 0.45;
 /// The highest partial the limiter allows, as a fraction of the sample rate.
 const BANDWIDTH_RATIO: f32 = 0.4;
+/// How much further out the limiter lets the partials go with 2x oversampling.
+const OVERSAMPLE_REACH: f32 = 1.25;
 /// Key scaling in dB per semitone at full scale.
 const KEY_SCALE_DB: f32 = 0.4;
 /// The most the modulation index can be (the sum of `index` and its modulations).
@@ -655,12 +755,22 @@ struct OpValues {
     velocity: f32,
     key_scale: f32,
     delay_samples: u32,
+    /// The waveform, an index into [`WAVE_NAMES`].
+    wave: u8,
 }
 
 /// Shared (per-device) synthesis parameters, as plain values.
 #[derive(Debug, Clone, Copy)]
 struct Shared {
+    /// The rate the voices run at: the device rate times the oversampling factor.
     sample_rate: f32,
+    /// The highest partial the index limiter allows, in Hz.
+    bandwidth: f32,
+    /// `log2` of the oversampling factor (0 or 1): the voices make `1 << shift` samples per
+    /// output sample.
+    shift: u32,
+    /// A new note in poly mode glides from the last one played.
+    poly_glide: bool,
     algorithm: &'static Algorithm,
     feedback: f32,
     index: f32,
@@ -695,12 +805,64 @@ struct Ctl {
     index: f32,
 }
 
-/// Per-sample modulation sources of one render segment (aligned with the output slices).
+/// Per-sample modulation sources of one render segment, at the output rate: a voice running at
+/// twice the rate reads each value for two of its samples.
 struct Mods<'a> {
     lfo: &'a [f32],
     pitch: &'a [f32],
     index: &'a [f32],
 }
+
+/// One cycle of waveform `kind` at `phase` cycles (any finite value): a sine for 0, the others
+/// are bounded by 1 and have no DC offset, so a carrier stays silent when it stops and a
+/// modulator only moves the phase. 1 is a half sine (the negative half cut), 2 the rectified
+/// sine, 3 a full sine squeezed into the first half cycle, 4 a triangle and 5 a sine pushed
+/// towards a square. They are richer than the sine, so the bandwidth limiter (which counts the
+/// partials of a sine) lets more through of them.
+#[inline]
+fn wave(kind: u8, phase: f64) -> f32 {
+    if kind == 0 {
+        return sin_cycles(phase) as f32;
+    }
+    let x = if phase.is_finite() {
+        phase - phase.floor()
+    } else {
+        0.0
+    };
+    match kind {
+        1 => {
+            let s = if x < 0.5 { sin_cycles(x) } else { 0.0 };
+            ((s - HALF_SINE_MEAN) * HALF_SINE_SCALE) as f32
+        }
+        2 => ((sin_cycles(x).abs() - ABS_SINE_MEAN) / ABS_SINE_MEAN) as f32,
+        3 => {
+            if x < 0.5 {
+                sin_cycles(2.0 * x) as f32
+            } else {
+                0.0
+            }
+        }
+        4 => {
+            let y = x + 0.25;
+            let y = y - y.floor();
+            (1.0 - 4.0 * (y - 0.5).abs()) as f32
+        }
+        _ => {
+            let k = SQUARE_DRIVE * sin_cycles(x);
+            (k / (1.0 + k.abs()) * SQUARE_NORM) as f32
+        }
+    }
+}
+
+/// The mean of a half sine, `1/pi`, and the gain that brings its peak back to 1.
+const HALF_SINE_MEAN: f64 = std::f64::consts::FRAC_1_PI;
+const HALF_SINE_SCALE: f64 = 1.0 / (1.0 - HALF_SINE_MEAN);
+/// The mean of a rectified sine, `2/pi`.
+const ABS_SINE_MEAN: f64 = 2.0 * std::f64::consts::FRAC_1_PI;
+/// How hard the soft square drives the sine into `x / (1 + |x|)`, and the gain that brings its
+/// peak back to 1.
+const SQUARE_DRIVE: f64 = 4.0;
+const SQUARE_NORM: f64 = (1.0 + SQUARE_DRIVE) / SQUARE_DRIVE;
 
 /// A value that ramps linearly to its target over one control step.
 #[derive(Debug, Clone, Copy)]
@@ -740,6 +902,8 @@ struct Voice {
     key: u8,
     order: u64,
     pending: Option<(u8, f32)>,
+    /// The pitch the pending note glides from (poly glide).
+    pending_from: Option<f32>,
     velocity: f32,
     /// The pitch in semitones (a MIDI key) now, and the one it glides to.
     pitch: f32,
@@ -772,6 +936,7 @@ impl Voice {
             key: 0,
             order: 0,
             pending: None,
+            pending_from: None,
             velocity: 0.0,
             pitch: 0.0,
             target: 0.0,
@@ -913,7 +1078,7 @@ impl Voice {
             &freq,
             &depth,
             p.feedback * MAX_FEEDBACK_RAD,
-            BANDWIDTH_RATIO * p.sample_rate,
+            p.bandwidth,
         );
         for (op, m) in self.mscale.iter_mut().enumerate() {
             m.aim(lim.index[op] * index * MAX_INDEX_RAD * RAD_TO_CYCLES, snap);
@@ -957,7 +1122,7 @@ impl Voice {
                 // The average of the last two outputs: the damped feedback path.
                 modulation += 0.5 * (self.fb[0] + self.fb[1]) * fb_scale;
             }
-            let s = sin_cycles(self.phase[op] + f64::from(modulation)) as f32;
+            let s = wave(p.ops[op].wave, self.phase[op] + f64::from(modulation));
             y[op] = s * level * env;
             let ph = self.phase[op] + self.step[op];
             self.phase[op] = ph - ph.floor();
@@ -974,10 +1139,11 @@ impl Voice {
     fn render(&mut self, left: &mut [f32], right: &mut [f32], m: &Mods<'_>, p: &Shared) {
         for (n, (lo, ro)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
             if self.countdown == 0 {
+                let k = n >> p.shift;
                 let c = Ctl {
-                    lfo: m.lfo[n],
-                    pitch: m.pitch[n],
-                    index: p.cv_index_amount * clean(m.index[n]),
+                    lfo: m.lfo[k],
+                    pitch: m.pitch[k],
+                    index: p.cv_index_amount * clean(m.index[k]),
                 };
                 self.control(c, p);
                 self.countdown = CONTROL_INTERVAL;
@@ -996,7 +1162,10 @@ impl Voice {
             *ro += out * self.pan.1;
             if !self.is_active(p.algorithm) {
                 match self.pending.take() {
-                    Some((key, velocity)) => self.start(key, velocity, None, p),
+                    Some((key, velocity)) => {
+                        let from = self.pending_from.take();
+                        self.start(key, velocity, from, p);
+                    }
                     None => return,
                 }
             }
@@ -1025,6 +1194,16 @@ pub struct FmSynth {
     /// The pitch the mono voice last sounded at, to glide from.
     last_pitch: Option<f32>,
     lfo: Lfo,
+    /// The device rate (the voices run at `base_rate * factor`).
+    base_rate: f32,
+    /// Oversampling factor of the voices: 1 or 2.
+    factor: usize,
+    /// Stereo decimators of the oversampled mix.
+    os: [Oversampler; 2],
+    chorus: Chorus,
+    chorus_mix: f32,
+    chorus_depth: f32,
+    chorus_on: bool,
     master: Smoother,
     cv_level_db: f32,
     cv_pan_amount: f32,
@@ -1055,11 +1234,15 @@ impl FmSynth {
             velocity: 0.0,
             key_scale: 0.0,
             delay_samples: 0,
+            wave: 0,
         };
         let mut s = Self {
             values: PARAMS.map(|p| p.default),
             shared: Shared {
                 sample_rate: 48_000.0,
+                bandwidth: BANDWIDTH_RATIO * 48_000.0,
+                shift: 0,
+                poly_glide: false,
                 algorithm: fm::algorithm(0),
                 feedback: 0.0,
                 index: 1.0,
@@ -1089,6 +1272,17 @@ impl FmSynth {
             held_len: 0,
             last_pitch: None,
             lfo: Lfo::new(crate::poly_synth::derive_seed(0, 0)),
+            base_rate: 48_000.0,
+            factor: 1,
+            os: std::array::from_fn(|_| {
+                let mut o = Oversampler::new(BATCH);
+                o.set_factor(OversampleFactor::X1);
+                o
+            }),
+            chorus: Chorus::new(48_000.0, CHORUS_MAX_MS),
+            chorus_mix: 0.0,
+            chorus_depth: 0.5,
+            chorus_on: false,
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             cv_level_db: CV_LEVEL_RANGE_DB,
             cv_pan_amount: 1.0,
@@ -1148,7 +1342,7 @@ impl FmSynth {
                 self.shared.pitch_env_coef = (-(CONTROL_INTERVAL as f32) / tau).exp();
             }
             P_LFO_WAVE => self.lfo.set_shape(LfoShape::from_index(choice(v))),
-            P_LFO_RATE => self.lfo.set_rate(v, sr),
+            P_LFO_RATE => self.lfo.set_rate(v, self.base_rate),
             P_LFO_PITCH => self.shared.lfo_to_pitch = v,
             P_LFO_AMP => self.shared.lfo_to_amp = v,
             P_LFO_INDEX => self.shared.lfo_to_index = v,
@@ -1198,7 +1392,81 @@ impl FmSynth {
             P_MASTER => self
                 .master
                 .set_target(PARAMS[P_MASTER as usize].db_param_gain(v)),
-            _ => {}
+            P_POLY_GLIDE => self.shared.poly_glide = v >= 0.5,
+            P_CHORUS_MIX => {
+                self.chorus_mix = v.clamp(0.0, 1.0);
+                self.chorus.set_mix(self.chorus_mix);
+            }
+            P_CHORUS_RATE => self.chorus.set_rate_hz(v),
+            P_CHORUS_DEPTH => {
+                self.chorus_depth = v.clamp(0.0, 1.0);
+                self.chorus
+                    .set_depth_ms(self.chorus_depth * CHORUS_SWING_MS);
+            }
+            P_OVERSAMPLE => self.set_oversample(v >= 0.5),
+            _ => {
+                if (P_WAVE_BASE..P_POLY_GLIDE).contains(&id) {
+                    let op = (id - P_WAVE_BASE) as usize;
+                    self.shared.ops[op].wave =
+                        (v.round().max(0.0) as usize).min(WAVE_NAMES.len() - 1) as u8;
+                }
+            }
+        }
+    }
+
+    /// Switches the voices to twice the rate (or back). The voices fade out first (a rate
+    /// change is not click-free), then every rate-dependent value is worked out again.
+    fn set_oversample(&mut self, on: bool) {
+        let factor = if on { 2 } else { 1 };
+        if factor == self.factor {
+            return;
+        }
+        self.factor = factor;
+        let (of, shift) = if on {
+            (OversampleFactor::X2, 1)
+        } else {
+            (OversampleFactor::X1, 0)
+        };
+        for o in &mut self.os {
+            o.set_factor(of);
+        }
+        self.shared.shift = shift;
+        self.retime();
+        for v in &mut self.voices {
+            v.pending = None;
+            v.pending_from = None;
+            v.steal();
+        }
+    }
+
+    /// Sets the voice rate from the device rate and the factor, and re-applies what depends on it.
+    fn retime(&mut self) {
+        let rate = self.base_rate * self.factor as f32;
+        self.shared.sample_rate = rate;
+        // At the plain rate the partials stay under 0.4 of it. The doubled rate reaches further:
+        // what lies past the output's Nyquist is filtered away, so the limit moves out, but
+        // short of the filter's transition band (0.4 to 0.6 of the output rate), where a
+        // partial would fold back.
+        self.shared.bandwidth = BANDWIDTH_RATIO
+            * self.base_rate
+            * if self.factor == 2 {
+                OVERSAMPLE_REACH
+            } else {
+                1.0
+            };
+        for v in &mut self.voices {
+            for e in &mut v.env {
+                e.set_sample_rate(rate);
+            }
+        }
+        for op in 0..OPERATORS {
+            self.apply(
+                op_param_id(op, F_DELAY),
+                self.values[op_param_id(op, F_DELAY) as usize],
+            );
+        }
+        for id in [P_PITCH_DECAY, P_GLIDE] {
+            self.apply(id, self.values[id as usize]);
         }
     }
 
@@ -1211,6 +1479,11 @@ impl FmSynth {
         let order = self.next_order;
         self.next_order += 1;
         let alg = p.algorithm;
+        // With poly glide on, a note that starts a voice slides in from the last key played.
+        let from = if p.poly_glide { self.last_pitch } else { None };
+        if p.poly_glide {
+            self.last_pitch = Some(f32::from(key));
+        }
         let voices = &mut self.voices[..self.voice_limit];
         // 1. Same key sounding (or pending after a steal): retrigger that voice.
         if let Some(v) = voices.iter_mut().find(|v| v.sounding_key(alg) == Some(key)) {
@@ -1225,13 +1498,14 @@ impl FmSynth {
         // 2. A free voice.
         if let Some(v) = voices.iter_mut().find(|v| !v.is_active(alg)) {
             v.order = order;
-            v.start(key, velocity, None, &p);
+            v.start(key, velocity, from, &p);
             return;
         }
         // 3. Steal the oldest started voice: 2 ms fade, then the new note.
         if let Some(v) = voices.iter_mut().min_by_key(|v| v.order) {
             v.order = order;
             v.pending = Some((key, velocity));
+            v.pending_from = from;
             v.steal();
         }
     }
@@ -1374,12 +1648,10 @@ impl Device for FmSynth {
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
         self.seed = info.seed;
-        self.shared.sample_rate = sr;
-        for v in &mut self.voices {
-            for e in &mut v.env {
-                e.set_sample_rate(sr);
-            }
-        }
+        self.base_rate = sr;
+        self.chorus = Chorus::new(sr, CHORUS_MAX_MS);
+        self.chorus.set_center_ms(CHORUS_CENTRE_MS);
+        self.retime();
         self.master.set_time(MASTER_SMOOTH_MS, sr);
         self.ctl.set_sample_rate(sr);
         self.lfo = Lfo::new(crate::poly_synth::derive_seed(info.seed, 0));
@@ -1405,9 +1677,21 @@ impl Device for FmSynth {
         self.shared.bend = 0.0;
         self.shared.wheel = 0.0;
         self.lfo.reset();
+        self.chorus.reset();
+        for o in &mut self.os {
+            o.reset();
+        }
         let m = self.master.target();
         self.master.set_immediate(m);
         self.fresh = true;
+    }
+
+    fn latency_frames(&self) -> u32 {
+        if self.factor == 2 { LATENCY_2X } else { 0 }
+    }
+
+    fn variable_latency(&self) -> bool {
+        true
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
@@ -1431,7 +1715,9 @@ impl Device for FmSynth {
         }
         let cv_pitch = *ctx.input(PITCH_CV_IN);
         let cv_index = *ctx.input(INDEX_CV_IN);
-        let (mut left, mut right) = ([0.0f32; BATCH], [0.0f32; BATCH]);
+        // The voices render at `1 << shift` times the output rate into these buffers.
+        let shift = self.shared.shift;
+        let (mut hi_l, mut hi_r) = ([0.0f32; 2 * BATCH], [0.0f32; 2 * BATCH]);
         let mut ctl_gain = [1.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
@@ -1451,11 +1737,29 @@ impl Device for FmSynth {
                 pitch: &cv_pitch[start..end],
                 index: &cv_index[start..end],
             };
+            let (lo, hi) = (start << shift, end << shift);
             for v in self.voices.iter_mut().filter(|v| v.is_active(p.algorithm)) {
-                v.render(&mut left[start..end], &mut right[start..end], &m, &p);
+                v.render(&mut hi_l[lo..hi], &mut hi_r[lo..hi], &m, &p);
             }
             self.ctl.fill_gain(&mut ctl_gain[start..end]);
             start = end;
+        }
+        let (mut left, mut right) = ([0.0f32; BATCH], [0.0f32; BATCH]);
+        if shift == 0 {
+            left.copy_from_slice(&hi_l[..BATCH]);
+            right.copy_from_slice(&hi_r[..BATCH]);
+        } else {
+            // The halfband filters take out what the doubled rate carried above the output's
+            // Nyquist, which is what makes a brighter patch safe.
+            let zeros = [0.0f32; BATCH];
+            for (o, (hi, out)) in self
+                .os
+                .iter_mut()
+                .zip([(&hi_l, &mut left), (&hi_r, &mut right)])
+            {
+                o.upsample(&zeros).copy_from_slice(&hi[..2 * BATCH]);
+                o.downsample(out);
+            }
         }
         let level_on = ctx.is_connected(LEVEL_CV_IN);
         let cv_level = *ctx.input(LEVEL_CV_IN);
@@ -1468,6 +1772,15 @@ impl Device for FmSynth {
             right[n] = soft_limit(right[n] * g);
             left[n] *= ctl_gain[n];
             right[n] *= ctl_gain[n];
+        }
+        if self.chorus_mix > 0.0 {
+            if !self.chorus_on {
+                self.chorus.reset();
+                self.chorus_on = true;
+            }
+            self.chorus.process_block(&mut left, &mut right);
+        } else {
+            self.chorus_on = false;
         }
         if ctx.is_connected(PAN_CV_IN) {
             // The stereo pair balanced by the pan CV (unity at the centre).
