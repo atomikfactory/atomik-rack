@@ -47,6 +47,7 @@ mod device_drag;
 mod device_maps;
 mod drum_input;
 mod fx_input;
+mod group_chip;
 mod handles;
 mod help;
 mod inline;
@@ -610,6 +611,8 @@ pub struct RackView {
     links: BTreeSet<Cable>,
     /// The output display of each channel and of the master.
     outputs: BTreeMap<DeviceKey, OutputDisplay>,
+    /// The mixer group of each device that is in one (the chip on its header).
+    groups: BTreeMap<DeviceKey, group_chip::GroupChip>,
     /// The CPU load shown on each plate (percent; see `set_cpu_loads`); empty = readout off.
     cpu: BTreeMap<DeviceKey, f32>,
     /// The Master Section while it is the first device: it cannot be moved or deleted.
@@ -896,6 +899,7 @@ impl RackView {
             show_links: false,
             links: BTreeSet::new(),
             outputs: BTreeMap::new(),
+            groups: BTreeMap::new(),
             cpu: BTreeMap::new(),
             locked: None,
             console_seen: None,
@@ -1220,6 +1224,16 @@ impl RackView {
         self.refresh_master(doc);
         self.refresh_io();
         self.refresh_console(doc, registry, cables_changed || renewed);
+        self.refresh_groups(doc);
+    }
+
+    /// Re-reads the group chips from `doc`'s console.
+    fn refresh_groups(&mut self, doc: &RackDoc) {
+        let groups = group_chip::chips_of(doc);
+        if groups != self.groups {
+            self.groups = groups;
+            self.repaint = true;
+        }
     }
 
     /// Re-reads the master panel data (return effect names, key-in state) from `doc`.
@@ -1700,6 +1714,7 @@ impl RackView {
         self.compute_frames(doc);
         self.cables.clone_from(&doc.cables);
         self.refresh_console(doc, registry, true);
+        self.refresh_groups(doc);
         self.input_channels = doc.input_channels;
         self.output_channels = doc.output_channels;
         self.refresh_io();
@@ -4735,6 +4750,9 @@ impl RackView {
             }
             if let Some(pct) = self.cpu.get(&d.key) {
                 paint::cpu_readout(c, theme, plate, d.folded, *pct);
+            }
+            if let Some(chip) = self.groups.get(&d.key) {
+                paint::group_chip(c, theme, plate, d.folded, &chip.name, chip.color);
             }
             if self.locked.as_ref() == Some(&d.key) {
                 let at = if d.folded {

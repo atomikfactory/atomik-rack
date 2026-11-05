@@ -366,6 +366,8 @@ enum MenuItem {
     SelectVca(u32),
     /// Stop this group following its track folder (the members stay).
     Unfollow(u32),
+    /// Add (`true`) or remove (`false`) the automation lane of this group's level.
+    VcaLane(u32, bool),
     /// Run this registry command (it acts on the selected strips).
     Run(&'static str),
     /// Recall this snapshot, all of it or only the categories of the scope.
@@ -2178,10 +2180,16 @@ impl ConsoleView {
         }
         // The VCA strips (one per group), and the strip a rename or selection named going away.
         let neutral = self.st.base.text_muted;
+        let master = console.master.as_ref();
         let vcas: Vec<VcaView> = console
             .vcas
             .iter()
-            .map(|g| VcaView::of(g, neutral))
+            .map(|g| VcaView {
+                lane: master.is_some_and(|m| {
+                    automated.contains(&(m.clone(), atomik_model::vca_lane_key(g.id)))
+                }),
+                ..VcaView::of(g, neutral)
+            })
             .collect();
         if vcas != self.vcas {
             self.vcas = vcas;
@@ -3183,6 +3191,18 @@ impl ConsoleView {
             }));
             return;
         }
+        // A group's level lane lives on the master's automation track.
+        if let MenuItem::VcaLane(vca, add) = &item {
+            if let Some(device) = self.master.as_ref().map(|m| m.key.clone()) {
+                let param = atomik_model::vca_lane_key(*vca);
+                out.push(UiAction::Command(Command::Song(if *add {
+                    atomik_model::SongCommand::AddAutomationLane { device, param }
+                } else {
+                    atomik_model::SongCommand::RemoveAutomationLane { device, param }
+                })));
+            }
+            return;
+        }
         // A registry command the shell runs on the selection.
         if let MenuItem::Run(id) = &item {
             out.push(UiAction::RunCommand {
@@ -3402,6 +3422,18 @@ impl ConsoleView {
             ));
         }
         items.push(("Colour: none".to_string(), MenuItem::VcaColor(id, None)));
+        if self.master.is_some() {
+            let lane = self.vcas.get(i).is_some_and(|v| v.lane);
+            items.push((
+                if lane {
+                    "Remove Automation Lane"
+                } else {
+                    "Show Automation Lane"
+                }
+                .to_string(),
+                MenuItem::VcaLane(id, !lane),
+            ));
+        }
         if self.vcas.get(i).is_some_and(|v| v.follows) {
             items.push(("Stop following folder".to_string(), MenuItem::Unfollow(id)));
         }

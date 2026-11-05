@@ -922,6 +922,31 @@ pub fn cpu_readout<C: Canvas + ?Sized>(
     }
 }
 
+/// The chip of the mixer group a device is in, on its plate: the group's name on a tag in its
+/// colour (the neutral tag for a group without one). Unfolded it sits above the output display;
+/// a folded strip shows it in the empty panel after the CPU readout.
+pub fn group_chip<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    plate: Rect,
+    folded: bool,
+    name: &str,
+    color: Option<[u8; 3]>,
+) {
+    let size = 6.5;
+    let fill = color.map_or(theme.text_muted, |[r, g, b]| Color::from_rgb8(r, g, b));
+    let (x, y, room) = if folded {
+        (plate.x1 + 352.0, plate.center().y - 6.0, 120.0)
+    } else {
+        (plate.x0 + 6.0, plate.y1 - 44.0, plate.width() - 12.0)
+    };
+    let text = fit_label(name, (room - 10.0).max(8.0), size);
+    let w = (estimate_width(&text, size) + 10.0).min(room);
+    let tag = Rect::new(x, y, x + w, y + 12.0);
+    c.fill_with(RoundedRect::from_rect(tag, 3.0), fill);
+    c.text(&TextRun::new(text, pt(x + 5.0, y + 8.5), size, theme.on_accent).weight(700));
+}
+
 /// The output display of a channel or the master on its name plate: the
 /// label in the normal text colour, the warning colour when the output was cabled by hand somewhere odd and
 /// the muted colour for "Output: none". A folded strip shows it to the right of its plate.
