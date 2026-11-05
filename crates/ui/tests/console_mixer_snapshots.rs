@@ -287,8 +287,12 @@ fn the_chip_menu_lists_the_operations_and_each_sends_its_command() {
             "Recall sends only (no change)",
             "Recall insert bypass only (no change)",
             "Compare with this",
+            "Morph to this",
             "Update from current mix",
             "Rename",
+            "Edit note",
+            "Include the effect parameters",
+            "Next colour (red)",
             "Move left",
             "Move right",
             "Delete snapshot",
@@ -447,6 +451,247 @@ fn a_narrow_console_keeps_the_buttons_and_drops_the_chips_that_do_not_fit() {
     let store = button(&v, ConsoleButton::StoreSnapshot);
     assert!(store.x < 640.0);
     assert!(button(&v, ConsoleButton::Compare).x < 640.0);
+}
+
+// ---- Many snapshots, notes, colours, effects and the morph ------------------------------------
+
+/// A project with `n` snapshots named `S1`..`Sn`, the mix being the last one.
+fn many(n: usize) -> (Document, Reg) {
+    let (mut d, reg) = project(0);
+    for i in 1..=n {
+        d.apply(set("ch-bass", "fader", 0.1 + 0.01 * i as f32), &reg)
+            .unwrap();
+        d.apply(
+            con(ConsoleCommand::StoreSnapshot {
+                name: format!("S{i}"),
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    (d, reg)
+}
+
+fn narrow(doc: &RackDoc, reg: &Reg) -> ConsoleView {
+    let mut v = console_view(doc, reg);
+    v.set_bounds(Rect::new(0.0, 0.0, 700.0, 784.0));
+    v.sync(doc, reg);
+    v
+}
+
+fn bar_point(x: f64) -> Point {
+    Point::new(x, TOOLBAR_H + SNAPSHOT_BAR_H / 2.0)
+}
+
+fn scroll(v: &mut ConsoleView, doc: &RackDoc, reg: &Reg, x: f64, dy: f64) {
+    v.handle(
+        &UiEvent::Wheel {
+            pos: bar_point(x),
+            delta: atomik_ui::kurbo::Vec2::new(0.0, dy),
+            modifiers: Modifiers::NONE,
+        },
+        doc,
+        reg,
+    );
+}
+
+#[test]
+fn more_than_sixteen_snapshots_scroll_in_the_bar_and_the_wheel_moves_the_first_chip() {
+    let (d, reg) = many(40);
+    let mut v = narrow(d.doc(), &reg);
+    assert_eq!(v.snapshot_ids().len(), 40);
+    // The current snapshot (the last, the one the mix matches) is scrolled into view.
+    assert!(v.snapshot_center(40).is_some());
+    assert!(
+        v.snapshot_center(1).is_none(),
+        "the first chips are out of sight"
+    );
+    let first = v.snapshot_first();
+    assert!(first > 0);
+    scroll(&mut v, d.doc(), &reg, 300.0, 1.0);
+    assert_eq!(v.snapshot_first(), first - 1, "the wheel up scrolls back");
+    scroll(&mut v, d.doc(), &reg, 300.0, -1.0);
+    assert_eq!(v.snapshot_first(), first);
+    // To the start: the first chip shows.
+    for _ in 0..first {
+        scroll(&mut v, d.doc(), &reg, 300.0, 1.0);
+    }
+    assert_eq!(v.snapshot_first(), 0);
+    assert!(v.snapshot_center(1).is_some());
+    scroll(&mut v, d.doc(), &reg, 300.0, 1.0);
+    assert_eq!(v.snapshot_first(), 0, "it stops at the first chip");
+    // The buttons stay reachable.
+    assert!(button(&v, ConsoleButton::StoreSnapshot).x < 700.0);
+}
+
+#[test]
+fn the_arrows_appear_only_when_chips_are_out_of_sight_and_scroll_by_one() {
+    let (d, reg) = many(40);
+    let mut v = narrow(d.doc(), &reg);
+    let first = v.snapshot_first();
+    assert!(first > 1);
+    // The left arrow sits right of the label while the chips are scrolled.
+    let left = bar_point(10.0 + 76.0 + 4.0 + 7.0);
+    let a = click(&mut v, d.doc(), &reg, left);
+    assert!(a.is_empty(), "{a:?}");
+    assert_eq!(v.snapshot_first(), first - 1);
+    while v.snapshot_first() > 0 {
+        click(&mut v, d.doc(), &reg, left);
+    }
+    // At the start there is no left arrow: the same spot is the first chip.
+    let a = click(&mut v, d.doc(), &reg, left);
+    assert_eq!(v.snapshot_first(), 0);
+    assert!(matches!(
+        console_cmds(&a).as_slice(),
+        [ConsoleCommand::RecallSnapshot { id: 1, .. }]
+    ));
+    // A few snapshots that all fit show no arrow: the wheel changes nothing.
+    let (d, reg) = many(3);
+    let mut v = wide(d.doc(), &reg);
+    scroll(&mut v, d.doc(), &reg, 300.0, -1.0);
+    assert_eq!(v.snapshot_first(), 0);
+}
+
+#[test]
+fn recalling_a_snapshot_that_is_out_of_sight_scrolls_to_its_chip() {
+    let (mut d, reg) = many(40);
+    let mut v = narrow(d.doc(), &reg);
+    d.apply(
+        con(ConsoleCommand::RecallSnapshot {
+            id: 2,
+            scope: SnapshotScope::ALL,
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    assert!(v.snapshot_center(2).is_some());
+    assert!(v.snapshot_center(40).is_none());
+}
+
+#[test]
+fn a_note_is_typed_from_the_menu_and_sent_and_shows_in_the_status_and_the_tooltip() {
+    let (mut d, reg) = project(2);
+    let mut v = wide(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 2);
+    let a = pick(&mut v, d.doc(), &reg, "Edit note");
+    assert!(a.is_empty());
+    assert!(v.is_text_owner());
+    assert_eq!(v.rename_text(), Some(""));
+    for c in "Chorus, vocal up".chars() {
+        let key = if c == ' ' { Key::Space } else { Key::Char(c) };
+        v.handle(&key_event(key), d.doc(), &reg);
+    }
+    let a = v.handle(&key_event(Key::Enter), d.doc(), &reg);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotNote {
+            id: 2,
+            note: "Chorus, vocal up".into()
+        }]
+    );
+    d.apply(con(console_cmds(&a).remove(0)), &reg).unwrap();
+    v.sync(d.doc(), &reg);
+    let status = v.snapshot_status().expect("the note");
+    assert_eq!(status, "B: Chorus, vocal up");
+    let tip = v.help_at(chip(&v, 2)).expect("a tooltip");
+    assert_eq!(tip.text, "Chorus, vocal up");
+    // Enter on an unchanged note and Escape send nothing.
+    right_click_chip(&mut v, d.doc(), &reg, 2);
+    pick(&mut v, d.doc(), &reg, "Edit note");
+    assert!(v.handle(&key_event(Key::Enter), d.doc(), &reg).is_empty());
+    right_click_chip(&mut v, d.doc(), &reg, 2);
+    pick(&mut v, d.doc(), &reg, "Edit note");
+    v.handle(&key_event(Key::Char('x')), d.doc(), &reg);
+    assert!(v.handle(&key_event(Key::Escape), d.doc(), &reg).is_empty());
+}
+
+#[test]
+fn the_menu_sets_the_chip_colour_and_the_effect_option_and_morphs() {
+    let (mut d, reg) = project(2);
+    let mut v = wide(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let a = pick(&mut v, d.doc(), &reg, "Next colour (red)");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotColor {
+            id: 1,
+            color: Some([0xe0, 0x5a, 0x4f])
+        }]
+    );
+    d.apply(con(console_cmds(&a).remove(0)), &reg).unwrap();
+    v.sync(d.doc(), &reg);
+    // The next click steps on to the next colour of the palette.
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let a = pick(&mut v, d.doc(), &reg, "Next colour (orange)");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotColor {
+            id: 1,
+            color: Some([0xe8, 0x9a, 0x3c])
+        }]
+    );
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let a = pick(&mut v, d.doc(), &reg, "No colour");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotColor { id: 1, color: None }]
+    );
+
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let a = pick(&mut v, d.doc(), &reg, "Include the effect parameters");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetSnapshotEffects {
+            id: 1,
+            effects: true
+        }]
+    );
+    d.apply(con(console_cmds(&a).remove(0)), &reg).unwrap();
+    v.sync(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    assert!(
+        v.menu_items()
+            .iter()
+            .any(|t| t == "Keep only the effect bypass")
+    );
+    v.handle(&key_event(Key::Escape), d.doc(), &reg);
+
+    // The mix is snapshot 2: morphing to the other one is a registry command with the id; the
+    // chip of the current snapshot cannot be morphed to.
+    right_click_chip(&mut v, d.doc(), &reg, 1);
+    let a = pick(&mut v, d.doc(), &reg, "Morph to this");
+    assert!(
+        matches!(a.as_slice(), [UiAction::RunCommand { id, arg }]
+            if id == "mixer.morph_snapshot" && arg.as_deref() == Some("1")),
+        "{a:?}"
+    );
+    right_click_chip(&mut v, d.doc(), &reg, 2);
+    assert!(
+        v.menu_items()
+            .iter()
+            .any(|t| t == "Morph to this (no change)")
+    );
+}
+
+#[test]
+fn a_colour_changes_the_chip_display() {
+    let (mut d, reg) = project(2);
+    let mut v = wide(d.doc(), &reg);
+    let mut plain = DisplayList::new();
+    v.paint(&mut plain, d.doc(), &reg);
+    d.apply(
+        con(ConsoleCommand::SetSnapshotColor {
+            id: 1,
+            color: Some([200, 60, 40]),
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    let mut coloured = DisplayList::new();
+    v.paint(&mut coloured, d.doc(), &reg);
+    assert_ne!(plain, coloured);
 }
 
 // ---- Golden -----------------------------------------------------------------------------------

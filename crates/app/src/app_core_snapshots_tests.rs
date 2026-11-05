@@ -232,14 +232,14 @@ fn commands_without_a_snapshot_say_what_to_do() {
 }
 
 #[test]
-fn sixteen_snapshots_are_the_most() {
+fn sixty_four_snapshots_are_the_most() {
     let mut c = core();
-    for _ in 0..16 {
+    for _ in 0..64 {
         assert!(c.store_snapshot(None));
     }
     assert!(!c.snapshot_menu().can_store);
     assert!(!c.store_snapshot(None));
-    assert!(c.last_rejection().unwrap().contains("at most 16"));
+    assert!(c.last_rejection().unwrap().contains("at most 64"));
 }
 
 #[test]
@@ -253,4 +253,158 @@ fn undo_and_redo_keep_the_hint() {
     assert_eq!(value(&c, "channel", "fader"), 0.9);
     assert!(c.redo());
     assert_eq!(value(&c, "channel", "fader"), 0.3);
+}
+
+// ---- Morph ---------------------------------------------------------------------------------
+
+/// Plays the morph with frames every 50 ms from `t0`, until it ends.
+fn play(c: &mut AppCore<RecordingSink>, t0: f64) -> usize {
+    let mut frames = 0;
+    let mut now = t0;
+    while c.snapshot_morphing() {
+        c.transport_frame(now);
+        now += 0.05;
+        frames += 1;
+        assert!(frames < 1000, "the morph never ends");
+    }
+    frames
+}
+
+#[test]
+fn a_morph_moves_the_mix_to_the_other_snapshot_over_the_morph_time_in_one_undo_step() {
+    let mut c = two_snapshots();
+    assert!(c.recall_snapshot(Some(1)));
+    let start = c.doc().clone();
+    c.set_morph_seconds(2);
+    assert!(c.morph_snapshot(None, true));
+    assert!(c.snapshot_morphing());
+    // The first frame is the start of the clock, half way is half way.
+    c.transport_frame(10.0);
+    assert!((value(&c, "channel", "fader") - 0.3).abs() < 1e-5);
+    c.transport_frame(11.0);
+    assert!((value(&c, "channel", "fader") - 0.6).abs() < 1e-5);
+    assert!(c.snapshot_morphing());
+    c.transport_frame(11.5);
+    c.transport_frame(12.0);
+    assert!(!c.snapshot_morphing());
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    assert_eq!(c.current_snapshot(), Some(2));
+    assert!(c.undo());
+    assert_eq!(c.doc(), &start, "the whole morph is one undo step");
+}
+
+#[test]
+fn a_morph_reaches_the_engine_as_param_changes_and_rebuilds_nothing() {
+    let mut c = two_snapshots();
+    assert!(c.recall_snapshot(Some(1)));
+    c.sink_mut().take();
+    assert!(c.morph_snapshot(Some(2), true));
+    let frames = play(&mut c, 0.0);
+    assert!(
+        frames > 10,
+        "a two second morph takes many frames: {frames}"
+    );
+    let calls = c.sink_mut().take();
+    let params = calls
+        .iter()
+        .filter(|x| matches!(x, SinkCall::Param { .. }))
+        .count();
+    assert!(params >= 10, "{params} param changes");
+    assert!(
+        !calls
+            .iter()
+            .any(|x| matches!(x, SinkCall::Routing(_) | SinkCall::Reset { .. })),
+        "a morph rebuilds nothing"
+    );
+}
+
+#[test]
+fn another_edit_takes_the_mix_over_and_ends_the_morph() {
+    let mut c = two_snapshots();
+    assert!(c.recall_snapshot(Some(1)));
+    assert!(c.morph_snapshot(None, true));
+    c.transport_frame(0.0);
+    c.transport_frame(1.0);
+    let mid = value(&c, "channel", "fader");
+    set(&mut c, "channel", "pan", 0.7);
+    assert!(!c.snapshot_morphing());
+    c.transport_frame(5.0);
+    assert_eq!(value(&c, "channel", "fader"), mid, "it stays where it was");
+}
+
+#[test]
+fn a_morph_needs_a_current_snapshot_a_second_one_and_no_compare() {
+    let mut c = core();
+    assert!(!c.morph_snapshot(None, true));
+    assert!(c.last_rejection().unwrap().contains("Store or recall"));
+    assert!(c.store_snapshot(None));
+    assert!(!c.morph_snapshot(None, true));
+    assert!(c.last_rejection().unwrap().contains("second snapshot"));
+    assert!(!c.snapshot_menu().can_morph);
+
+    let mut c = two_snapshots();
+    assert!(c.snapshot_menu().can_morph);
+    assert!(c.compare_snapshot(None));
+    assert!(!c.snapshot_menu().can_morph);
+    assert!(!c.morph_snapshot(None, true));
+    assert!(c.last_rejection().unwrap().contains("compare"));
+    assert!(c.end_compare());
+    assert!(c.morph_snapshot(Some(1), true));
+    assert!(!c.snapshot_menu().can_morph, "one at a time");
+    assert!(!c.morph_snapshot(Some(1), true));
+    assert!(c.last_rejection().unwrap().contains("already playing"));
+}
+
+#[test]
+fn the_neighbours_wrap_round_for_next_and_previous() {
+    let mut c = two_snapshots();
+    assert_eq!(c.current_snapshot(), Some(2));
+    assert!(c.morph_snapshot(None, true));
+    play(&mut c, 0.0);
+    assert_eq!(c.current_snapshot(), Some(1), "next wraps to the first");
+    assert!(c.morph_snapshot(None, false));
+    play(&mut c, 0.0);
+    assert_eq!(c.current_snapshot(), Some(2), "previous wraps to the last");
+}
+
+#[test]
+fn the_morph_time_is_one_of_the_menu_choices() {
+    let mut c = two_snapshots();
+    assert_eq!(c.snapshot_menu().morph_seconds, 2);
+    c.set_morph_seconds(8);
+    assert_eq!(c.snapshot_menu().morph_seconds, 8);
+    assert!(c.recall_snapshot(Some(1)));
+    assert!(c.morph_snapshot(None, true));
+    c.transport_frame(0.0);
+    c.transport_frame(4.0);
+    assert!(c.snapshot_morphing(), "eight seconds are not over at four");
+    c.transport_frame(8.0);
+    assert!(!c.snapshot_morphing());
+}
+
+// ---- Effect params -------------------------------------------------------------------------
+
+#[test]
+fn the_current_snapshot_can_hold_the_effect_params() {
+    let mut c = two_snapshots();
+    assert!(!c.snapshot_menu().effects);
+    assert!(c.snapshot_menu().can_effects);
+    assert!(c.toggle_snapshot_effects(None));
+    assert!(c.snapshot_menu().effects);
+    assert!(c.doc().console.snapshot(2).unwrap().state.effects);
+    assert!(c.undo());
+    assert!(!c.doc().console.snapshot(2).unwrap().state.effects);
+    assert!(c.redo());
+    assert!(c.toggle_snapshot_effects(None));
+    assert!(!c.snapshot_menu().effects);
+}
+
+#[test]
+fn a_new_core_has_no_morph_and_a_new_document_ends_one() {
+    let mut c = two_snapshots();
+    assert!(!c.snapshot_morphing());
+    assert!(c.recall_snapshot(Some(1)));
+    assert!(c.morph_snapshot(None, true));
+    c.new_document();
+    assert!(!c.snapshot_morphing());
 }

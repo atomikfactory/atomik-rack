@@ -11,8 +11,8 @@ use crate::windows::WindowKind;
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::keymap::{
-    APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, OUTPUT_CHANNEL_ARGS, RATE_ARGS,
-    RECENT_ARGS, SONG_ARGS, TEMPLATE_ARGS,
+    APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
+    OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, SONG_ARGS, TEMPLATE_ARGS,
 };
 use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
 use std::borrow::Cow;
@@ -295,6 +295,15 @@ pub enum AppCommand {
     RecallNextSnapshot,
     /// Mixer > Recall Previous Snapshot.
     RecallPreviousSnapshot,
+    /// Mixer > Morph to Next Snapshot: moves the mix from the current snapshot to another over the
+    /// morph time (`mixer.morph_snapshot`, the id as its argument; the next one by default).
+    MorphSnapshot(Option<u32>),
+    /// Mixer > Morph to Previous Snapshot.
+    MorphPreviousSnapshot,
+    /// Mixer > Morph Time: how long a morph takes, in seconds (`mixer.morph_time`).
+    MorphTime(u8),
+    /// Mixer > Snapshot Includes Effects: the current snapshot holds the effect parameters too.
+    SnapshotEffects,
     /// Mixer > Compare A/B: starts comparing the mix with a snapshot (`mixer.compare_snapshot`,
     /// the id as its argument; the current one by default) and flips between the two while it is on.
     CompareSnapshot(Option<u32>),
@@ -776,6 +785,11 @@ impl AppCommand {
             AppCommand::RecallSnapshot(None) => ("mixer.recall_snapshot", None),
             AppCommand::RecallNextSnapshot => ("mixer.recall_next_snapshot", None),
             AppCommand::RecallPreviousSnapshot => ("mixer.recall_previous_snapshot", None),
+            AppCommand::MorphSnapshot(None) => ("mixer.morph_snapshot", None),
+            AppCommand::MorphSnapshot(Some(_)) => return None,
+            AppCommand::MorphPreviousSnapshot => ("mixer.morph_previous_snapshot", None),
+            AppCommand::MorphTime(s) => ("mixer.morph_time", Some(arg_of(MORPH_TIME_ARGS, *s)?)),
+            AppCommand::SnapshotEffects => ("mixer.snapshot_effects", None),
             AppCommand::CompareSnapshot(None) => ("mixer.compare_snapshot", None),
             AppCommand::EndCompare => ("mixer.end_compare", None),
             AppCommand::DeleteSnapshot(None) => ("mixer.delete_snapshot", None),
@@ -1063,6 +1077,16 @@ impl AppCommand {
             ("mixer.recall_snapshot", None) => AppCommand::RecallSnapshot(None),
             ("mixer.recall_next_snapshot", None) => AppCommand::RecallNextSnapshot,
             ("mixer.recall_previous_snapshot", None) => AppCommand::RecallPreviousSnapshot,
+            ("mixer.morph_snapshot", None) => AppCommand::MorphSnapshot(None),
+            ("mixer.morph_snapshot", Some(id)) => {
+                return id
+                    .parse()
+                    .ok()
+                    .map(|id| AppCommand::MorphSnapshot(Some(id)));
+            }
+            ("mixer.morph_previous_snapshot", None) => AppCommand::MorphPreviousSnapshot,
+            ("mixer.morph_time", Some(a)) => AppCommand::MorphTime(num_arg(MORPH_TIME_ARGS, a)?),
+            ("mixer.snapshot_effects", None) => AppCommand::SnapshotEffects,
             ("mixer.compare_snapshot", None) => AppCommand::CompareSnapshot(None),
             ("mixer.end_compare", None) => AppCommand::EndCompare,
             ("mixer.delete_snapshot", None) => AppCommand::DeleteSnapshot(None),
@@ -1697,6 +1721,15 @@ pub struct SnapshotMenu {
     pub comparing: bool,
     /// A snapshot is current: Delete Snapshot works.
     pub can_delete: bool,
+    /// Another snapshot exists and the current one is not being compared or morphed: the Morph
+    /// items work.
+    pub can_morph: bool,
+    /// A snapshot is current and no compare is on: Snapshot Includes Effects works.
+    pub can_effects: bool,
+    /// The current snapshot holds the effect parameters (Snapshot Includes Effects is ticked).
+    pub effects: bool,
+    /// The morph time in seconds (one of [`MORPH_TIME_ARGS`]).
+    pub morph_seconds: u8,
 }
 
 /// What the Mixer menu needs to know to flip the polarity and bypass the inserts of strips.
@@ -2525,6 +2558,39 @@ pub fn menus_with_songs(
                     "Recall Previous Snapshot",
                     AppCommand::RecallPreviousSnapshot,
                     state.snapshots.can_cycle,
+                ),
+                enabled(
+                    "Morph to Next Snapshot",
+                    AppCommand::MorphSnapshot(None),
+                    state.snapshots.can_morph,
+                ),
+                enabled(
+                    "Morph to Previous Snapshot",
+                    AppCommand::MorphPreviousSnapshot,
+                    state.snapshots.can_morph,
+                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Morph Time",
+                    entries: [
+                        ("1 Second", 1u8),
+                        ("2 Seconds", 2),
+                        ("4 Seconds", 4),
+                        ("8 Seconds", 8),
+                    ]
+                    .into_iter()
+                    .map(|(label, s)| {
+                        check(
+                            label,
+                            AppCommand::MorphTime(s),
+                            state.snapshots.morph_seconds == s,
+                        )
+                    })
+                    .collect(),
+                }),
+                enabled(
+                    "Snapshot Includes Effects",
+                    AppCommand::SnapshotEffects,
+                    state.snapshots.can_effects,
                 ),
                 enabled(
                     "Compare A/B",
@@ -3496,6 +3562,12 @@ mod tests {
         for n in [0, 1, 2, 4, 8, 16, 32] {
             v.push(AppCommand::InputChannels(n));
         }
+        for s in MORPH_TIME_ARGS.iter().filter_map(|a| a.parse().ok()) {
+            v.push(AppCommand::MorphTime(s));
+        }
+        v.push(AppCommand::MorphSnapshot(None));
+        v.push(AppCommand::MorphPreviousSnapshot);
+        v.push(AppCommand::SnapshotEffects);
         for n in [1, 2, 4, 8, 16, 32] {
             v.push(AppCommand::OutputChannels(n));
         }
@@ -4081,6 +4153,13 @@ mod tests {
                 "Recall Snapshot",
                 "Recall Next Snapshot",
                 "Recall Previous Snapshot",
+                "Morph to Next Snapshot",
+                "Morph to Previous Snapshot",
+                "1 Second",
+                "2 Seconds",
+                "4 Seconds",
+                "8 Seconds",
+                "Snapshot Includes Effects",
                 "Compare A/B",
                 "End Compare",
                 "Delete Snapshot",

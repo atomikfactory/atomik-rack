@@ -105,7 +105,8 @@ pub(super) fn load_vcas(
 /// Reads the console's mixer snapshots (version 27): ids from 1 and unique, a trimmed name of at
 /// most 32 characters unique ignoring case, the params of each captured device (finite numbers)
 /// and the groups as they were. The keys are not checked against the rack: a snapshot may name
-/// what was deleted since. At most 16 snapshots.
+/// what was deleted since. At most 64 snapshots. A snapshot may hold the params of the effect
+/// devices (`"effects"`), a note (at most 200 characters) and a colour.
 pub(super) fn load_snapshots(
     v: &Value,
     path: &JsonPath,
@@ -204,10 +205,30 @@ pub(super) fn load_snapshots(
                 });
             }
         }
+        state.effects = flag(s, &p, "effects")?;
+        let note = match s.get("note") {
+            Some(n) => {
+                let np = p.field("note");
+                let n = string(n, &np)?;
+                if n.chars().count() > MAX_SNAPSHOT_NOTE_CHARS {
+                    return Err(np.error(format!(
+                        "a snapshot note has at most {MAX_SNAPSHOT_NOTE_CHARS} characters"
+                    )));
+                }
+                n.to_owned()
+            }
+            None => String::new(),
+        };
+        let color = match s.get("color") {
+            Some(c) => parse_color(c, &p.field("color"))?,
+            None => None,
+        };
         console.snapshots.push(MixerSnapshot {
             id,
             name: name.to_owned(),
             state,
+            note,
+            color,
         });
     }
     Ok(())

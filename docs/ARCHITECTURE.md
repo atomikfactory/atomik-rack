@@ -3054,12 +3054,14 @@ bounce of a project that has none are untouched.
 - **Scope.** `MixerState` holds, per captured device, the params that are not at their default: for
   a console strip (channel, bus, master) every descriptor param but `internal.*` (read generically,
   so a param added to a strip later is captured with no change here), for an effect on a strip's
-  insert chain or on an FX return only its `bypass`; and the VCA groups as `SnapshotVca` (level,
+  insert chain or on an FX return only its `bypass` (every param but `internal.*` when
+  `MixerState::effects` is set, per snapshot, by `SetSnapshotEffects`); and the VCA groups as `SnapshotVca` (level,
   mute, solo, members; the name and colour stay the group's own). Sparse means a param missing from
   a snapshot is its default, as in a device's params. It does **not** hold the song (clips,
   automation, tempo, markers), the cables, the rack structure (devices added or removed, the insert
-  chains' members, the output routing, the order and names of the strips) or the parameters of the
-  effect devices (follow-up in the roadmap).
+  chains' members, the output routing, the order and names of the strips; the last two are a follow-up
+  in the roadmap). A snapshot also has a `note` and a `color` for its chip (`SetSnapshotNote`,
+  `SetSnapshotColor`), and a console holds `MAX_SNAPSHOTS` (64).
 - **Recall** (`RackDoc::recall_changes`, pure) lists the params whose effective value differs and
   pushes ordinary `Edit::Param` steps, plus one `Edit::ConsoleVcas` when the groups differ, in one
   compound undo step. The app therefore sends ordinary `ParamChanged` ops to the engine: no routing
@@ -3074,6 +3076,15 @@ bounce of a project that has none are untouched.
   back once deleted; a strip the snapshot knew that was not a member of the group leaves it, a
   member that is gone is left out. `RackDoc::snapshot_matches` is the same plan asking whether it
   changes anything, which is what lights a chip.
+- **Morph** (`ConsoleCommand::MorphSnapshots { from, to, at }`, `RackDoc::morph_state`): the state at
+  position `at` between two snapshots, built per param from the descriptor (`morph_value`: a discrete param
+  switches at the half way point, an exponential taper moves in its normalised scale, every other one linearly;
+  position 0 and 1 are exactly the two snapshots), then planned as a recall with `SnapshotScope::ALL`. It is a
+  pure function of the two snapshots and the position, so the app plays it by applying successive positions:
+  `AppCore::snapshot_morph_tick` runs from `transport_frame`, skips a step that changes nothing
+  (`RackDoc::morph_matches`), folds every step after the first into the first one's undo step (`join_next`)
+  and ends when the clock reaches the morph time or when any other command is applied (`apply_command` clears
+  it). The event loop keeps its frame rate while `snapshot_morphing()`.
 - **Compare** (`Console::compare`, `CompareState { snapshot, other, on_snapshot }`, not saved):
   beginning stores the working mix in `other` and recalls the snapshot; a flip swaps the live mix
   with `other`. An edit made on one side is part of that side's state when it is flipped away, so
@@ -3082,12 +3093,15 @@ bounce of a project that has none are untouched.
   the compared snapshot and END leave the compare and keep the live side. `Edit::SnapshotCompare`
   makes begin, flip and end ordinary undo steps that restore the slot with the params.
 - **File.** Project format 27:
-  `"console"."snapshots": [{"id", "name", "devices": {key: {param: value}}, "vcas"?}]`, at most 16,
+  `"console"."snapshots": [{"id", "name", "devices": {key: {param: value}}, "vcas"?}]`, at most 64,
   omitted when empty (a project without snapshots differs from its version 26 file in the version
   line alone). The loader checks the shape, ids, names and numbers but not the references, since a
-  snapshot may name what was deleted.
+  snapshot may name what was deleted. `"effects": true`, `"note"` and `"color"` are optional and ignorable
+  additions under format 43, written only when set.
 - **Console view and app.** The bar sits under the toolbar and moves the strips down by
-  `SNAPSHOT_BAR_H`; chips that do not fit are not drawn. The view derives the current snapshot
+  `SNAPSHOT_BAR_H`; chips that do not fit scroll (`console_snapshots::layout` takes the first visible
+  chip; the wheel and two arrows move it, `reveal` brings the current snapshot's chip into view when it
+  changes). The view derives the current snapshot
   (compared, else exactly matching, else the host's hint, the last stored, updated, recalled or
   compared one) and shows a dot when the mix has moved from it. Renaming uses the console's
   text-owner pattern. The Mixer menu commands act on the current snapshot, or on the one named by
@@ -4320,7 +4334,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (445) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (449) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

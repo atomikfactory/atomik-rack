@@ -5974,6 +5974,22 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.recall_adjacent(false);
                 Vec::new()
             }
+            AppCommand::MorphSnapshot(id) => {
+                self.core.morph_snapshot(id, true);
+                Vec::new()
+            }
+            AppCommand::MorphPreviousSnapshot => {
+                self.core.morph_snapshot(None, false);
+                Vec::new()
+            }
+            AppCommand::MorphTime(seconds) => {
+                self.core.set_morph_seconds(seconds);
+                Vec::new()
+            }
+            AppCommand::SnapshotEffects => {
+                self.core.toggle_snapshot_effects(None);
+                Vec::new()
+            }
             AppCommand::CompareSnapshot(id) => {
                 self.core.compare_snapshot(id);
                 Vec::new()

@@ -797,6 +797,10 @@ pub(crate) fn plan(
         | ConsoleCommand::UpdateSnapshot { .. }
         | ConsoleCommand::RecallSnapshot { .. }
         | ConsoleCommand::RenameSnapshot { .. }
+        | ConsoleCommand::SetSnapshotEffects { .. }
+        | ConsoleCommand::SetSnapshotNote { .. }
+        | ConsoleCommand::SetSnapshotColor { .. }
+        | ConsoleCommand::MorphSnapshots { .. }
         | ConsoleCommand::DeleteSnapshot { .. }
         | ConsoleCommand::MoveSnapshot { .. }
         | ConsoleCommand::Compare { .. }

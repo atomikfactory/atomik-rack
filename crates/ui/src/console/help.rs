@@ -57,10 +57,24 @@ impl ConsoleView {
                     .iter()
                     .find(|(k, _)| *k == i)
                     .map(|(_, r)| *r)?;
-                help(
-                    rect,
-                    "Recall this snapshot: double-click to rename, right-click for more",
-                )
+                // A snapshot with a note shows it.
+                match self
+                    .snaps
+                    .get(i)
+                    .map(|s| s.note.as_str())
+                    .filter(|n| !n.is_empty())
+                {
+                    Some(note) => Some(Help::new(rect, note.to_owned())),
+                    None => help(
+                        rect,
+                        "Recall this snapshot: double-click to rename, right-click for more",
+                    ),
+                }
+            }
+            Hit::SnapArrow(left) => {
+                let l = self.snapshot_layout();
+                let rect = if left { l.left } else { l.right }?;
+                help(rect, "Scroll the snapshot chips (or use the mouse wheel)")
             }
             Hit::Ctrl(t, c) => {
                 let (pc, p, _) = self.ctrl_of(t, c)?;

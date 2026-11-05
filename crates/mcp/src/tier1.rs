@@ -411,7 +411,7 @@ fn groove_summary(doc: &RackDoc) -> Vec<Value> {
 /// The mixer snapshots: id and name (what the `mixer.*_snapshot` commands take as their argument),
 /// how many strips and effects each holds, and whether the mix is exactly that snapshot now (what
 /// a recall of it would change nothing of); `skips` lists what a recall would skip because it was
-/// deleted.
+/// deleted. A snapshot that holds the effect parameters, a note or a colour says so.
 fn snapshot_summary(doc: &RackDoc) -> Vec<Value> {
     let registry = default_registry();
     doc.console
@@ -429,6 +429,15 @@ fn snapshot_summary(doc: &RackDoc) -> Vec<Value> {
                     atomik_model::SnapshotScope::ALL,
                 ),
             });
+            if s.state.effects {
+                v["effects"] = json!(true);
+            }
+            if !s.note.is_empty() {
+                v["note"] = json!(s.note);
+            }
+            if let Some([r, g, b]) = s.color {
+                v["color"] = json!(format!("#{r:02x}{g:02x}{b:02x}"));
+            }
             let skips = doc.snapshot_notes(s.id);
             if !skips.is_empty() {
                 v["skips"] = json!(skips);

@@ -33,8 +33,8 @@
 pub use crate::console_bus::{OutputAvail, OutputOption, output_options};
 use crate::console_settings::ChannelSettingsClip;
 pub use crate::console_snapshot::{
-    CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MixerSnapshot, MixerState, SnapshotScope,
-    SnapshotVca,
+    CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOT_NOTE_CHARS, MAX_SNAPSHOTS, MixerSnapshot,
+    MixerState, SnapshotScope, SnapshotVca,
 };
 pub use crate::console_vca::{
     MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
@@ -740,6 +740,41 @@ pub enum ConsoleCommand {
         id: u32,
         /// The new name.
         name: String,
+    },
+    /// Make snapshot `id` hold all the params of the effect devices on the insert chains and the
+    /// returns (`effects`, taken from the effects as they are now) or only their bypass. Rejected
+    /// when it already does.
+    SetSnapshotEffects {
+        /// The snapshot id.
+        id: u32,
+        /// Hold every effect param, not only the bypass.
+        effects: bool,
+    },
+    /// Set the note of a snapshot (trimmed, at most [`MAX_SNAPSHOT_NOTE_CHARS`] characters; empty
+    /// clears it).
+    SetSnapshotNote {
+        /// The snapshot id.
+        id: u32,
+        /// The new note.
+        note: String,
+    },
+    /// Set the chip colour of a snapshot, `None` for the default.
+    SetSnapshotColor {
+        /// The snapshot id.
+        id: u32,
+        /// The new colour.
+        color: Option<[u8; 3]>,
+    },
+    /// Set the mix to the point `at` (0..=1) between snapshots `from` and `to` (see
+    /// [`crate::console_snapshot`]) through ordinary param edits, in one undo step. Rejected for
+    /// the same snapshot twice, while comparing, and when nothing would change.
+    MorphSnapshots {
+        /// The snapshot at position 0.
+        from: u32,
+        /// The snapshot at position 1.
+        to: u32,
+        /// The position between them.
+        at: f32,
     },
     /// Delete a snapshot; a compare with it ends first.
     DeleteSnapshot {

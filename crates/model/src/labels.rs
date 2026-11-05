@@ -132,6 +132,10 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
         ConsoleCommand::SetVcaFollow { .. } => "Follow Folder",
         ConsoleCommand::AssignToVca { .. } => "Assign to VCA",
         ConsoleCommand::DeleteVca { .. } => "Delete VCA",
+        ConsoleCommand::SetSnapshotEffects { .. } => "Snapshot Effect Parameters",
+        ConsoleCommand::SetSnapshotNote { .. } => "Snapshot Note",
+        ConsoleCommand::SetSnapshotColor { .. } => "Snapshot Colour",
+        ConsoleCommand::MorphSnapshots { .. } => "Morph Snapshots",
         _ => DEFAULT_LABEL,
     }
 }

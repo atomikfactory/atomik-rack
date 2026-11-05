@@ -98,8 +98,11 @@ keys.velocity 6 | keys | 6
 keys.velocity 7 | keys | 7
 keys.velocity 8 | keys | 8
 keys.velocity 9 | keys | 9
+mixer.compare_snapshot | global | Cmd+Opt+B
 mixer.extend_left | mixer | Shift+Left
 mixer.extend_right | mixer | Shift+Right
+mixer.recall_next_snapshot | global | Cmd+Opt+PageDown
+mixer.recall_previous_snapshot | global | Cmd+Opt+PageUp
 mixer.route_to_new_bus | global | Cmd+G
 mixer.scroll_end | mixer | End, Shift+End
 mixer.scroll_home | mixer | Home, Shift+Home

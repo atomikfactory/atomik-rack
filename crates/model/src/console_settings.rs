@@ -85,7 +85,7 @@ impl RackDoc {
         check_strip(self, strip)?;
         let device = rules::device(self, strip)?;
         let desc = rules::descriptor(registry, &device.type_id)?;
-        let params = kept_params(desc, true)
+        let params = kept_params(desc, true, false)
             .filter(|p| sections.covers_param(p.key))
             .filter_map(|p| {
                 let v = p.clamp(device.params.get(p.key).copied().unwrap_or(p.default));
@@ -167,7 +167,7 @@ fn set_strip_params(
     values: &BTreeMap<String, f32>,
 ) -> Result<(), ModelError> {
     let desc = rules::descriptor(p.registry, p.type_of(strip)?)?;
-    for param in kept_params(desc, true).filter(|q| sections.covers_param(q.key)) {
+    for param in kept_params(desc, true, false).filter(|q| sections.covers_param(q.key)) {
         let target = values.get(param.key).copied().unwrap_or(param.default);
         set_param(p, strip, param, target);
     }
