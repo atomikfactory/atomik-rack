@@ -210,9 +210,10 @@ impl<S: EngineSink> AppCore<S> {
                     .map_err(err)
             }
             Pane::Arrangement => {
-                // A time range selected on a lane copies the parts of the clips inside it.
-                if let Some((device, lane, start, end)) = self.arrangement.lane_range() {
-                    return ClipSnapshot::capture_range(doc, &device, lane, (start, end))
+                // A time range selected on one or several lanes copies the parts of the clips
+                // of those lanes inside it.
+                if let Some((lanes, start, end)) = self.arrangement.lane_ranges() {
+                    return ClipSnapshot::capture_ranges(doc, &lanes, (start, end))
                         .map(ClipboardData::Clips)
                         .map_err(err);
                 }
@@ -317,16 +318,17 @@ impl<S: EngineSink> AppCore<S> {
             (Pane::Arrangement, ClipboardData::Takes(s)) => self.paste_takes_here(s),
             (Pane::Arrangement, ClipboardData::Clips(s)) => {
                 let span = s.span;
-                // A selected range names the track and lane the clips land on.
-                let ranged = self.arrangement.lane_range();
-                let track = match &ranged {
-                    Some((device, ..)) => Some(device.clone()),
-                    None => self.arrangement.selected_track().cloned(),
-                };
-                // Note clips land on the selected lane of the selected track.
-                let lane = match &ranged {
-                    Some((_, lane, ..)) => Some(*lane),
-                    None => self.arrangement.selected_lane().map(|(_, l)| l),
+                // A range on one lane names the track and lane the clips land on; a range over
+                // several lanes puts each part back on a lane of its own kind of its own track.
+                let ranged = self.arrangement.lane_ranges().map(|(lanes, ..)| lanes);
+                let (track, lane) = match ranged.as_deref() {
+                    Some([(device, lane)]) => (Some(device.clone()), Some(*lane)),
+                    Some(_) => (None, None),
+                    // Note clips land on the selected lane of the selected track.
+                    None => (
+                        self.arrangement.selected_track().cloned(),
+                        self.arrangement.selected_lane().map(|(_, l)| l),
+                    ),
                 };
                 let at_tick = self.position;
                 self.apply_workflow(WorkflowCommand::PasteClips {

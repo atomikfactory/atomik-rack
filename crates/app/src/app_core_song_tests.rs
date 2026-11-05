@@ -2520,6 +2520,59 @@ fn a_stretch_preview_follows_the_pointer_from_the_original_and_is_one_undo_step(
 }
 
 #[test]
+fn a_scale_preview_scales_the_selection_about_its_start_and_is_one_undo_step() {
+    let mut c = with_track();
+    for start in [BAR, 3 * BAR] {
+        apply(
+            &mut c,
+            song(SongCommand::AddClip {
+                device: key("a"),
+                lane: 0,
+                clip: Clip {
+                    start,
+                    ..note_clip(BAR, &[(0, 60)])
+                },
+            }),
+        );
+    }
+    let ids: Vec<_> = c.doc().song.track(&key("a")).unwrap().lanes[0]
+        .clips
+        .iter()
+        .map(|k| k.id)
+        .collect();
+    let geometry = |c: &AppCore<RecordingSink>| -> Vec<(i64, i64)> {
+        c.doc().song.track(&key("a")).unwrap().lanes[0]
+            .clips
+            .iter()
+            .map(|k| (k.start, k.length))
+            .collect()
+    };
+    let undo_before = c.document().undo_depth();
+    // Twice as long: the clips start at 2 and 6 bars from the first one's start, a bar of clip
+    // becomes two, and the first clip keeps its place.
+    c.handle_action(UiAction::ScaleStep {
+        ids: ids.clone(),
+        percent: 50.0,
+    });
+    assert_eq!(geometry(&c), vec![(BAR, 2 * BAR), (BAR + 4 * BAR, 2 * BAR)]);
+    // The next step starts from the original, not from the preview.
+    c.handle_action(UiAction::ScaleStep {
+        ids,
+        percent: 200.0,
+    });
+    assert_eq!(geometry(&c), vec![(BAR, BAR / 2), (BAR + BAR, BAR / 2)]);
+    assert_eq!(
+        c.document().undo_depth(),
+        undo_before,
+        "a preview is no step"
+    );
+    c.handle_action(UiAction::StretchEnd { commit: true });
+    assert_eq!(c.document().undo_depth(), undo_before + 1);
+    c.handle_action(UiAction::Undo);
+    assert_eq!(geometry(&c), vec![(BAR, BAR), (3 * BAR, BAR)]);
+}
+
+#[test]
 fn cancelling_a_stretch_puts_the_clip_back_and_a_later_command_accepts_the_preview() {
     let mut c = with_track();
     apply(
