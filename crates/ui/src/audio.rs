@@ -11,6 +11,7 @@ use atomik_model::{
     AudioClipContent, Cable, Command, DeviceKey, GainPoint, INTERFACE_KEY, MAX_GAIN_POINTS,
     RecSource, SocketRef, TempoEvent, WarpMarker, WarpSettings, slice_envelope,
 };
+use std::collections::BTreeSet;
 
 /// The song tempo map (steps and ramps) for fractional tick / frame conversions, the maths of
 /// [`atomik_core::TempoMap`]. Positions are fixed in time: a tick maps to `seconds * sample_rate`
@@ -340,6 +341,63 @@ pub fn envelope_move(
     p.frame = frame.clamp(lo as i64, hi as i64) as u64;
     p.gain_db = gain_db.clamp(GAIN_MIN_DB, GAIN_MAX_DB);
     list
+}
+
+/// The envelope after moving the points at the `selected` indices together by `d_frame` frames
+/// and `d_gain` dB. The distances shrink, together, as far as it takes to keep every moved
+/// point at frame 0 or later, no later than `max_frame`, strictly between its unselected
+/// neighbours (the selection cannot jump over a point it does not hold) and inside the handle
+/// scale. Indices past the list are ignored.
+pub fn envelope_move_many(
+    points: &[GainPoint],
+    selected: &BTreeSet<usize>,
+    d_frame: i64,
+    d_gain: f32,
+    max_frame: u64,
+) -> Vec<GainPoint> {
+    let chosen: Vec<usize> = selected
+        .iter()
+        .copied()
+        .filter(|&i| i < points.len())
+        .collect();
+    let (mut lo, mut hi) = (i64::MIN, i64::MAX);
+    let (mut lo_db, mut hi_db) = (f32::MIN, f32::MAX);
+    for &i in &chosen {
+        let f = points[i].frame as i64;
+        lo = lo.max(-f);
+        hi = hi.min(max_frame as i64 - f);
+        // The nearest unselected neighbour on each side.
+        if let Some(p) = (0..i).rev().find(|j| !selected.contains(j)) {
+            lo = lo.max(points[p].frame as i64 + 1 - f);
+        }
+        if let Some(n) = (i + 1..points.len()).find(|j| !selected.contains(j)) {
+            hi = hi.min(points[n].frame as i64 - 1 - f);
+        }
+        lo_db = lo_db.max(GAIN_MIN_DB - points[i].gain_db);
+        hi_db = hi_db.min(GAIN_MAX_DB - points[i].gain_db);
+    }
+    let d_frame = if lo > hi { 0 } else { d_frame.clamp(lo, hi) };
+    let d_gain = if lo_db > hi_db {
+        0.0
+    } else {
+        d_gain.clamp(lo_db, hi_db)
+    };
+    let mut list = points.to_vec();
+    for &i in &chosen {
+        list[i].frame = (points[i].frame as i64 + d_frame) as u64;
+        list[i].gain_db = (points[i].gain_db + d_gain).clamp(AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX);
+    }
+    list
+}
+
+/// The envelope without the points at the `selected` indices.
+pub fn envelope_remove_many(points: &[GainPoint], selected: &BTreeSet<usize>) -> Vec<GainPoint> {
+    points
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !selected.contains(i))
+        .map(|(_, p)| *p)
+        .collect()
 }
 
 /// The envelope without point `index`.
@@ -886,5 +944,72 @@ mod tests {
             right: None,
         };
         assert_eq!(cmds(Off, left5), ["in_5>in_l"]);
+    }
+
+    fn env(points: &[(u64, f32)]) -> Vec<GainPoint> {
+        points
+            .iter()
+            .map(|&(frame, gain_db)| GainPoint { frame, gain_db })
+            .collect()
+    }
+
+    fn sel(indices: &[usize]) -> BTreeSet<usize> {
+        indices.iter().copied().collect()
+    }
+
+    #[test]
+    fn selected_envelope_points_move_together_and_keep_their_distances() {
+        let list = env(&[(100, 0.0), (200, -6.0), (300, -12.0), (400, 0.0)]);
+        let moved = envelope_move_many(&list, &sel(&[1, 2]), 30, 3.0, 1000);
+        assert_eq!(
+            moved,
+            env(&[(100, 0.0), (230, -3.0), (330, -9.0), (400, 0.0)])
+        );
+        // Earlier and quieter.
+        let moved = envelope_move_many(&list, &sel(&[1, 2]), -50, -3.0, 1000);
+        assert_eq!(
+            moved,
+            env(&[(100, 0.0), (150, -9.0), (250, -15.0), (400, 0.0)])
+        );
+    }
+
+    #[test]
+    fn a_selection_stops_at_the_points_it_does_not_hold_and_at_the_clip() {
+        let list = env(&[(100, 0.0), (200, -6.0), (300, -12.0), (400, 0.0)]);
+        // The pair cannot reach the unselected neighbours: they stop one frame short, together.
+        let moved = envelope_move_many(&list, &sel(&[1, 2]), 500, 0.0, 1000);
+        assert_eq!(
+            moved,
+            env(&[(100, 0.0), (299, -6.0), (399, -12.0), (400, 0.0)])
+        );
+        let moved = envelope_move_many(&list, &sel(&[1, 2]), -500, 0.0, 1000);
+        assert_eq!(
+            moved,
+            env(&[(100, 0.0), (101, -6.0), (201, -12.0), (400, 0.0)])
+        );
+        // The first point stops at frame 0, the last at the clip's end.
+        let moved = envelope_move_many(&list, &sel(&[0, 1]), -500, 0.0, 1000);
+        assert_eq!((moved[0].frame, moved[1].frame), (0, 100));
+        let moved = envelope_move_many(&list, &sel(&[2, 3]), 5000, 0.0, 450);
+        assert_eq!((moved[2].frame, moved[3].frame), (350, 450));
+        // The gains stop at the scale together, so the shape holds.
+        let moved = envelope_move_many(&list, &sel(&[0, 1]), 0, 100.0, 1000);
+        assert_eq!(
+            (moved[0].gain_db, moved[1].gain_db),
+            (GAIN_MAX_DB, GAIN_MAX_DB - 6.0)
+        );
+        // No selection, or a stale one, changes nothing.
+        assert_eq!(envelope_move_many(&list, &sel(&[]), 10, 1.0, 1000), list);
+        assert_eq!(envelope_move_many(&list, &sel(&[9]), 10, 1.0, 1000), list);
+    }
+
+    #[test]
+    fn selected_envelope_points_go_together() {
+        let list = env(&[(1, 0.0), (2, 1.0), (3, 2.0), (4, 3.0)]);
+        assert_eq!(
+            envelope_remove_many(&list, &sel(&[0, 2])),
+            env(&[(2, 1.0), (4, 3.0)])
+        );
+        assert_eq!(envelope_remove_many(&list, &sel(&[])), list);
     }
 }

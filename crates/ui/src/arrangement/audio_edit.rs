@@ -7,6 +7,10 @@
 //!   clip and drags it at once; a point of any clip can be dragged with the select tool, and a
 //!   right click or the eraser removes it. Points sit at frames from the clip start (a time, like
 //!   a fade), so they follow the clip when it moves and the audio when its left edge is trimmed.
+//!   A point being placed or dragged snaps to the grid (the disable-snap role turns it off).
+//!   Shift-click or Ctrl-click (Cmd on macOS) adds a point to the selection or takes it out;
+//!   dragging a selected point moves every selected point of the clip together, and Delete
+//!   removes them together (see [`ArrangementView::selected_envelope_points`]).
 //! * A **crossfade zone** (where a clip starts over the end of an earlier one, see
 //!   [`atomik_model::song::crossfades`]) is shaded at the start of the later clip with the two
 //!   gain curves crossing.
@@ -16,20 +20,22 @@
 //!   Normalise and Strip Silence need the samples and live in the app.
 
 use super::{
-    ArrangementView, AudioGeo, AudioGrab, CLIP_HEADER, DEFAULT_RATE, Drag, POINT_RADIUS,
-    audio_clip_cmd, song_cmd, value_range,
+    ArrangementView, AudioGeo, AudioGrab, CLIP_HEADER, DEFAULT_RATE, Drag, Menu, MenuKind,
+    POINT_RADIUS, audio_clip_cmd, find_clip, song_cmd, value_range,
 };
 use crate::action::UiAction;
 use crate::audio::{self, GAIN_MAX_DB, GAIN_MIN_DB};
 use crate::canvas::{Canvas, CanvasExt, pt};
+use crate::event::Modifiers;
 use crate::keymap::CommandOutcome;
 use crate::seq_paint as sp;
+use crate::timeline::{Quant, snap_round};
 use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
 use atomik_model::song::{Crossfade, crossfades};
 use atomik_model::{AudioClipContent, Clip, ClipContent, Command};
 use atomik_model::{ClipId, FadeCurve, SongCommand};
-use std::collections::BTreeMap;
-use vello::kurbo::{BezPath, Circle, Point, Rect, Stroke};
+use std::collections::{BTreeMap, BTreeSet};
+use vello::kurbo::{BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 
 /// Frames of a declick fade as milliseconds.
 const DECLICK_MS: u64 = 5;
@@ -62,6 +68,8 @@ pub struct AudioMenu {
 pub(super) struct AudioUi {
     /// The crossfade zones by the clip that fades in.
     pub(super) zones: BTreeMap<ClipId, Crossfade>,
+    /// The selected points of one clip's gain envelope (positions in its point list).
+    pub(super) env_sel: Option<(ClipId, BTreeSet<usize>)>,
 }
 
 impl ArrangementView {
@@ -75,6 +83,77 @@ impl ArrangementView {
                 }
             }
         }
+    }
+
+    /// The selected points of an audio clip's gain envelope: the clip and the positions in its
+    /// point list, ascending.
+    pub fn selected_envelope_points(&self) -> Option<(ClipId, Vec<usize>)> {
+        self.au
+            .env_sel
+            .as_ref()
+            .map(|(id, s)| (*id, s.iter().copied().collect()))
+    }
+
+    /// Selects points of an audio clip's gain envelope (the clip selection becomes that clip);
+    /// an empty list clears the selection.
+    pub fn set_selected_envelope_points(&mut self, clip: ClipId, indices: &[usize]) {
+        if indices.is_empty() {
+            self.au.env_sel = None;
+        } else {
+            self.au.env_sel = Some((clip, indices.iter().copied().collect()));
+            self.selection.select_only(clip);
+            self.selected_track = None;
+            self.point_sel = None;
+        }
+        self.repaint = true;
+    }
+
+    /// Whether point `index` of clip `id`'s envelope is selected.
+    pub(super) fn envelope_point_selected(&self, id: ClipId, index: usize) -> bool {
+        matches!(&self.au.env_sel, Some((c, s)) if *c == id && s.contains(&index))
+    }
+
+    /// Adds point `index` of clip `id`'s envelope to the selection, or takes it out again.
+    pub(super) fn toggle_envelope_point(&mut self, id: ClipId, index: usize) {
+        let mut set = match &self.au.env_sel {
+            Some((c, s)) if *c == id => s.clone(),
+            _ => BTreeSet::new(),
+        };
+        if !set.remove(&index) {
+            set.insert(index);
+        }
+        self.au.env_sel = (!set.is_empty()).then_some((id, set));
+        self.repaint = true;
+    }
+
+    /// Drops selected envelope points that no longer exist (after the song changed).
+    pub(super) fn retain_envelope_selection(&mut self) {
+        let Some((id, set)) = &mut self.au.env_sel else {
+            return;
+        };
+        let len = match find_clip(&self.song, *id) {
+            Some((_, _, c)) if self.selection.contains(id) => match &c.content {
+                ClipContent::Audio(a) => a.envelope.len(),
+                _ => 0,
+            },
+            _ => 0,
+        };
+        set.retain(|i| *i < len);
+        if set.is_empty() {
+            self.au.env_sel = None;
+        }
+    }
+
+    /// The command that removes the selected envelope points together, and forgets them.
+    pub(super) fn delete_envelope_points(&mut self) -> Option<UiAction> {
+        let (id, set) = self.au.env_sel.take()?;
+        let (_, _, clip) = self.find_clip(id)?;
+        let ClipContent::Audio(a) = &clip.content else {
+            return None;
+        };
+        let cmd = self.envelope_edit_cmd(clip, a, |p| audio::envelope_remove_many(p, &set));
+        self.repaint = true;
+        Some(cmd)
     }
 
     /// What the selected audio clips allow.
@@ -278,6 +357,7 @@ impl ArrangementView {
         &mut self,
         clip: &Clip,
         pos: Point,
+        modifiers: Modifiers,
         out: &mut Vec<UiAction>,
     ) -> bool {
         let ClipContent::Audio(a) = &clip.content else {
@@ -292,10 +372,19 @@ impl ArrangementView {
         let r = self.clip_rect_in(row, clip);
         let g = self.audio_geo(r, clip, a, self.timeline_rect());
         let (top, bottom) = value_range(r);
-        let frame = self.frame_under(pos.x, &g);
+        let step = self.step(modifiers);
+        // With a grid the new point lands on its lines.
+        let frame = if step.unit().is_some() {
+            let tick = snap_round(self.axis.x_to_tick(pos.x), &step);
+            let f = self.tempo.frame_at_tick(tick as f64, g.rate) - g.start_frame;
+            f.round().max(0.0) as u64
+        } else {
+            self.frame_under(pos.x, &g)
+        };
         let db = audio::y_to_gain(pos.y, top, bottom);
         let (list, index) = audio::envelope_insert(&a.envelope, frame, db);
         self.selection.select_only(clip.id);
+        self.au.env_sel = Some((clip.id, BTreeSet::from([index])));
         self.start_envelope_drag(clip, a, list, index, pos, out);
         true
     }
@@ -338,6 +427,18 @@ impl ArrangementView {
                     );
                 }
             }
+            // The length handle at the zone's end, where the zone can change length.
+            let xe = self.x_of_tick(z.end as f64);
+            if xe >= vis.x0
+                && xe <= vis.x1
+                && self.x_of_tick(z.end as f64) - self.x_of_tick(z.start as f64)
+                    >= super::crossfade_drag::MIN_ZONE_PX
+                && self.crossfade_handle_at(pt(xe, r.y1 - 1.0), r, clip)
+            {
+                let mid = (r.y0 + CLIP_HEADER + r.y1) / 2.0;
+                let grip = RoundedRect::new(xe - 2.0, mid - 7.0, xe + 2.0, mid + 7.0, 1.5);
+                c.fill_with(grip, st.handle.with_alpha(0.9));
+            }
         }
         if !a.envelope.is_empty() {
             let x_start = vis.x0.max(self.axis.x0).floor();
@@ -362,10 +463,15 @@ impl ArrangementView {
             }
             let ink = st.handle.with_alpha(0.95);
             c.stroke(&line.into(), &Stroke::new(1.5), &ink.into());
-            for (_, p) in self.envelope_points(r, a, g) {
+            for (i, p) in self.envelope_points(r, a, g) {
                 if p.x >= vis.x0 - 4.0 && p.x <= vis.x1 + 4.0 {
-                    c.fill_with(Circle::new(p, 3.5), ink);
-                    c.stroke_with(Circle::new(p, 3.5), 1.0, st.base.plate);
+                    if self.envelope_point_selected(clip.id, i) {
+                        c.fill_with(Circle::new(p, 5.0), st.selection);
+                        c.fill_with(Circle::new(p, 3.0), st.base.plate);
+                    } else {
+                        c.fill_with(Circle::new(p, 3.5), ink);
+                        c.stroke_with(Circle::new(p, 3.5), 1.0, st.base.plate);
+                    }
                 }
             }
         }
@@ -416,6 +522,45 @@ impl ArrangementView {
         }
     }
 
+    /// Opens the shape menu of one fade of `clip` at `pos`: a click on a row shapes that fade
+    /// alone (the other keeps its shape). `track` is the clip's track.
+    pub(super) fn open_fade_menu(
+        &mut self,
+        track: usize,
+        clip: &Clip,
+        a: &AudioClipContent,
+        out: bool,
+        pos: Point,
+    ) {
+        let Some(device) = self.song.tracks.get(track).map(|t| t.device.clone()) else {
+            return;
+        };
+        let current = if out { a.out_curve() } else { a.fade_curve };
+        let (items, commands): (Vec<_>, Vec<_>) = FadeCurve::ALL
+            .iter()
+            .map(|&curve| {
+                let item = (curve.id().to_owned(), curve.label().to_owned());
+                let shaped = a.clone().with_fade_shape(out, curve);
+                (item, self.audio_content_cmd(clip, shaped))
+            })
+            .unzip();
+        let mut menu = Menu::new(device, MenuKind::Takes(commands), items, pos, 0);
+        menu.current = FadeCurve::ALL.iter().position(|&c| c == current);
+        self.open_menu(menu);
+    }
+
+    /// The command that replaces the content of audio clip `clip` with `content`.
+    pub(super) fn audio_content_cmd(&self, clip: &Clip, content: AudioClipContent) -> UiAction {
+        song_cmd(SongCommand::SetAudioClip {
+            id: clip.id,
+            start: clip.start,
+            length: clip.length,
+            muted: clip.muted,
+            content,
+            merge: None,
+        })
+    }
+
     /// The `sequencer.audio_*` commands that need no samples. `None` for a command that is not
     /// one of them.
     pub(super) fn audio_command(&mut self, id: &str, arg: Option<&str>) -> Option<CommandOutcome> {
@@ -450,11 +595,10 @@ impl ArrangementView {
             }
             "sequencer.audio_fade_shape" => {
                 let curve = FadeCurve::from_id(arg?)?;
+                // Both fades take the shape (a fade-out of its own goes with it).
                 Box::new(move |_, a, _| {
-                    (a.fade_curve != curve).then(|| AudioClipContent {
-                        fade_curve: curve,
-                        ..a.clone()
-                    })
+                    (a.fade_curve != curve || a.fade_out_curve.is_some())
+                        .then(|| a.clone().with_fade_curve(curve))
                 })
             }
             "sequencer.audio_crossfade" => {

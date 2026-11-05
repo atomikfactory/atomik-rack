@@ -36,7 +36,7 @@ use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::tempo_lane::{self as lane, TEMPO_LANE_HEIGHT};
 use crate::theme::{Theme, mix};
-use crate::timeline::{Bars, PPQ, Snap, SnapGrid, TimeAxis, snap_floor, snap_round};
+use crate::timeline::{Bars, PPQ, Quant, Snap, SnapGrid, TimeAxis, snap_floor, snap_round};
 use crate::viewport::{SnapMode, Tool, ViewportState};
 use crate::wave_paint::{MAX_COLUMNS, WaveChannel, WaveDetail, paint_channel};
 use atomik_audio_file::PeakPyramid;
@@ -308,6 +308,9 @@ enum ClipPart {
     LoopHandle,
     /// The mute button in the header strip.
     Mute,
+    /// The handle at the end of the crossfade zone of an audio clip: drag it to change the
+    /// crossfade's length.
+    CrossfadeLength,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -617,12 +620,17 @@ enum Drag {
         last: Option<f64>,
     },
     /// The crossfade zone at the start of an audio clip dragged (`crossfade_drag.rs`): the cut
-    /// and the crossfade move together.
+    /// and the crossfade move together, or with `length` the handle at the zone's end changes
+    /// how long the crossfade is.
     Crossfade {
         start: Point,
         /// The later clip as it was at the press.
         clip: Clip,
-        /// The furthest the zone may move earlier and later, in ticks.
+        /// The tick that follows the pointer: the later clip's start, or the zone's end.
+        anchor: i64,
+        /// The handle at the zone's end is dragged.
+        length: bool,
+        /// The furthest the zone may move (or grow) earlier and later, in ticks.
         min: i64,
         max: i64,
         moved: bool,
@@ -2102,6 +2110,7 @@ impl ArrangementView {
         let (tempos, meters) = (song.tempo.len(), song.meter.len());
         self.tempo_sel = self.tempo_sel.filter(|i| *i < tempos);
         self.meter_sel = self.meter_sel.filter(|i| *i < meters);
+        self.retain_envelope_selection();
         self.marker_sync();
         self.takes_sync();
         self.org_sync();
@@ -2676,6 +2685,14 @@ impl ArrangementView {
                             part,
                         };
                     }
+                    if self.crossfade_handle_at(pos, r, clip) {
+                        return Hit::Clip {
+                            track,
+                            lane,
+                            id,
+                            part: ClipPart::CrossfadeLength,
+                        };
+                    }
                     if loop_handle_rect(r, tl, clip)
                         .is_some_and(|h| h.inflate(1.0, 1.0).contains(pos))
                     {
@@ -2995,6 +3012,15 @@ impl ArrangementView {
                 return;
             }
             self.range_sel = None;
+        }
+        if !matches!(
+            hit,
+            Hit::Clip {
+                part: ClipPart::GainPoint(_),
+                ..
+            }
+        ) {
+            self.au.env_sel = None;
         }
         if !matches!(hit, Hit::TempoPoint(_) | Hit::MeterTag(_)) {
             self.tempo_sel = None;
@@ -3561,6 +3587,16 @@ impl ArrangementView {
             return;
         }
         self.pick_note_lane(track, lane);
+        // A right click on a fade handle chooses the shape of that fade.
+        if button == PointerButton::Secondary
+            && matches!(part, ClipPart::FadeIn | ClipPart::FadeOut)
+            && id != FROZEN_CLIP
+            && let ClipContent::Audio(a) = &clip.content
+        {
+            self.selection.select_only(id);
+            self.open_fade_menu(track, &clip, a, part == ClipPart::FadeOut, pos);
+            return;
+        }
         // The stretch role on a clip's start or end edge: the clip's length changes by a ratio
         // and everything in it follows (the body keeps the alternate tool).
         if primary
@@ -3576,6 +3612,20 @@ impl ArrangementView {
             }
             return;
         }
+        // The crossfade length handle works for a plain press with the select tool; with any
+        // other tool or button the pointer is on the clip's body.
+        let part = if part == ClipPart::CrossfadeLength {
+            if primary
+                && id != FROZEN_CLIP
+                && self.vp.effective_tool(modifiers) == Tool::Select
+                && self.crossfade_length_press(id, pos, modifiers)
+            {
+                return;
+            }
+            ClipPart::Body
+        } else {
+            part
+        };
         // A plain press in the crossfade zone at the start of an audio clip drags the zone.
         if primary
             && part == ClipPart::Body
@@ -3631,7 +3681,7 @@ impl ArrangementView {
                         && matches!(part, ClipPart::Body | ClipPart::Header) =>
                 {
                     // On an audio clip the pencil draws a gain envelope point.
-                    self.pencil_envelope(&clip, pos, out);
+                    self.pencil_envelope(&clip, pos, modifiers, out);
                     return;
                 }
                 Tool::Pencil
@@ -3725,6 +3775,17 @@ impl ArrangementView {
                     return;
                 }
                 self.selection.select_only(id);
+                self.selected_track = None;
+                // Shift or Ctrl (Cmd) adds the point to the selection or takes it out again;
+                // a plain press on a point of the selection drags them all, on any other point
+                // selects it alone.
+                if modifiers.shift || modifiers.command() {
+                    self.toggle_envelope_point(id, i);
+                    return;
+                }
+                if !self.envelope_point_selected(id, i) {
+                    self.au.env_sel = Some((id, BTreeSet::from([i])));
+                }
                 self.start_envelope_drag(&clip, a, a.envelope.clone(), i, pos, out);
             }
             ClipPart::AutoBody if primary => {
@@ -4343,6 +4404,13 @@ impl ArrangementView {
         let constrain = roles.is_active(Role::Constrain, modifiers, GestureClass::DragItem);
         let flat = roles.is_active(Role::FlatRange, modifiers, GestureClass::DragItem);
         let (tempo, assets) = (&self.tempo, &self.assets);
+        // The selected envelope points go with a dragged one.
+        let env_sel: BTreeSet<usize> = self
+            .au
+            .env_sel
+            .as_ref()
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default();
         match &mut self.drag {
             Drag::None
             | Drag::Marquee { .. }
@@ -4560,15 +4628,36 @@ impl ArrangementView {
                     }
                     AudioGrab::EnvPoint(index, top, height) => {
                         let start_frame = tempo.frame_at_tick(clip.start as f64, *rate);
-                        let frame = (at(pos.x) - start_frame).round() as i64;
+                        // With a grid the point lands on its lines (a time, like the clip).
+                        let frame = if step.unit().is_some() {
+                            let tick = snap_round(axis.x_to_tick(pos.x), step);
+                            tempo.frame_at_tick(tick as f64, *rate) - start_frame
+                        } else {
+                            at(pos.x) - start_frame
+                        }
+                        .round() as i64;
                         let db = audio::y_to_gain(pos.y, *top, *top + *height);
-                        let moved = audio::envelope_move(&last.2.envelope, *index, frame, db);
                         // A point cannot leave the clip: past its end the drag stays where it was.
                         let span = clip.loop_length.map_or(clip.length, |l| l.min(clip.length));
                         let end = tempo.frame_at_tick((clip.start + span) as f64, *rate);
                         let limit = (end - start_frame).round().max(0.0) as u64;
-                        if moved.iter().all(|p| p.frame <= limit) {
-                            new.2.envelope = moved;
+                        if let Some(p) = content.envelope.get(*index).copied()
+                            && env_sel.len() > 1
+                            && env_sel.contains(index)
+                        {
+                            // The selected points move together by what the grabbed one did.
+                            new.2.envelope = audio::envelope_move_many(
+                                &content.envelope,
+                                &env_sel,
+                                frame - p.frame as i64,
+                                db - p.gain_db,
+                                limit,
+                            );
+                        } else {
+                            let moved = audio::envelope_move(&last.2.envelope, *index, frame, db);
+                            if moved.iter().all(|p| p.frame <= limit) {
+                                new.2.envelope = moved;
+                            }
                         }
                     }
                     AudioGrab::TrimStart => {
@@ -4788,7 +4877,11 @@ impl ArrangementView {
                     ..
                 }) if id != FROZEN_CLIP && self.stretch_hover() => CursorHint::Stretch,
                 Some(Hit::Clip {
-                    part: ClipPart::Edge | ClipPart::EdgeStart | ClipPart::LoopHandle,
+                    part:
+                        ClipPart::Edge
+                        | ClipPart::EdgeStart
+                        | ClipPart::LoopHandle
+                        | ClipPart::CrossfadeLength,
                     ..
                 }) if tool == Tool::Select => CursorHint::ResizeHorizontal,
                 // The mute button acts the same with every tool.
@@ -5243,6 +5336,9 @@ impl ArrangementView {
             "edit.delete" => {
                 if let Some(outcome) = self.range_delete() {
                     return outcome;
+                }
+                if let Some(cmd) = self.delete_envelope_points() {
+                    return CommandOutcome::Handled(vec![cmd]);
                 }
                 if let Some((id, indices)) = self.selected_points() {
                     let points = match find_clip(&self.song, id).map(|(_, _, c)| &c.content) {
@@ -6381,9 +6477,8 @@ impl ArrangementView {
         let g = self.audio_geo(r, clip, a, tl);
         let (top, bottom) = value_range(r);
         self.paint_audio_wave(c, vis, body, clip, a, accent, muted, tl, &g);
-        let curve = a.fade_curve;
         if a.fade_in > 0 && g.fade_in_x > r.x0 {
-            let (path, line) = fade_paths(r.x0, g.fade_in_x, top, bottom, curve, true);
+            let (path, line) = fade_paths(r.x0, g.fade_in_x, top, bottom, a.fade_curve, true);
             c.fill_with(path, st.fade_shade);
             c.stroke(
                 &line.into(),
@@ -6392,7 +6487,7 @@ impl ArrangementView {
             );
         }
         if a.fade_out > 0 && g.fade_out_x < r.x1 {
-            let (path, line) = fade_paths(g.fade_out_x, r.x1, top, bottom, curve, false);
+            let (path, line) = fade_paths(g.fade_out_x, r.x1, top, bottom, a.out_curve(), false);
             c.fill_with(path, st.fade_shade);
             c.stroke(
                 &line.into(),

@@ -772,6 +772,7 @@ impl<S: EngineSink> AppCore<S> {
                 fade_in: 0,
                 fade_out: 0,
                 fade_curve: atomik_model::FadeCurve::Linear,
+                fade_out_curve: None,
                 reverse: false,
                 envelope: Vec::new(),
                 xfade: None,

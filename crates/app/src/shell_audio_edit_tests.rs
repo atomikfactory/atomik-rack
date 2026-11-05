@@ -476,6 +476,77 @@ fn a_crossfade_zone_drag_previews_without_an_undo_step_and_commits_as_one() {
     assert!(s.core().last_rejection().is_some());
 }
 
+#[test]
+fn a_crossfade_length_drag_previews_without_an_undo_step_and_commits_as_one() {
+    use atomik_core::PPQ;
+    use atomik_model::{Command, SongCommand};
+    let mut s = shell();
+    let first = imported(&mut s);
+    let asset = audio(&s, first).asset;
+    let track = s
+        .core()
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .find(|t| {
+            t.lanes
+                .iter()
+                .any(|l| l.clips.iter().any(|c| c.id == first))
+        })
+        .map(|t| t.device.clone())
+        .unwrap();
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddAudioClip {
+            device: track,
+            start: PPQ,
+            length: PPQ + PPQ / 2,
+            asset,
+            source_offset: 12_000,
+            gain_db: 0.0,
+            fade_in: 0,
+            fade_out: 0,
+            fade_curve: FadeCurve::Linear,
+        }))
+        .unwrap();
+    let later = s.core().document().last_clip_id().unwrap();
+    let before = s.core().doc().clone();
+    let depth = s.core().document().undo_depth();
+    let ends = |s: &Shell<NullBackend>| {
+        let song = &s.core().doc().song;
+        (
+            song.clip(first).unwrap().2.end(),
+            song.clip(later).unwrap().2.start,
+        )
+    };
+    assert_eq!(ends(&s), (2 * PPQ, PPQ));
+    // Shorter by a quarter beat: only the first clip's end moves, with no undo step until the
+    // drag ends.
+    let delta = -(PPQ / 4);
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeLengthStep { later, delta });
+    assert_eq!(ends(&s), (2 * PPQ + delta, PPQ));
+    assert_eq!(s.core().document().undo_depth(), depth);
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeEnd { commit: false });
+    assert_eq!(s.core().doc(), &before);
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeLengthStep { later, delta });
+    s.core_mut()
+        .handle_action(UiAction::CrossfadeEnd { commit: true });
+    assert_eq!(s.core().document().undo_depth(), depth + 1);
+    assert_eq!(ends(&s), (2 * PPQ + delta, PPQ));
+    s.core_mut().undo();
+    assert_eq!(s.core().doc(), &before);
+    // Longer needs audio the file does not have after the first clip: refused with a reason.
+    s.core_mut().handle_action(UiAction::CrossfadeLengthStep {
+        later,
+        delta: PPQ / 4,
+    });
+    assert_eq!(s.core().doc(), &before);
+    assert!(s.core().last_rejection().is_some());
+}
+
 /// A shell with one synth track and a one-bar note clip with two notes (the first is a beat
 /// long at tick 0, the second half a beat long at beat 1).
 fn note_clip_shell() -> Shell<NullBackend> {

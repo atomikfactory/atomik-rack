@@ -652,6 +652,10 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                     percent: if *t % 2 == 0 { 50.0 } else { 200.0 },
                     from_start: *t % 3 == 0,
                 },
+                12 if (*t / (BAR / 4)) % 2 != 0 => WorkflowCommand::ResizeCrossfade {
+                    later: ids.first().copied().unwrap_or(ClipId(1)),
+                    delta: *t,
+                },
                 12 => WorkflowCommand::MoveCrossfade {
                     later: ids.first().copied().unwrap_or(ClipId(1)),
                     delta: *t,

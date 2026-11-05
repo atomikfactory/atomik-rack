@@ -27,6 +27,7 @@ fn regions(variant: u8) -> (Vec<SongAudioRegion>, Vec<SongAudioRegion>) {
     fade.fade_in = 2_000;
     fade.fade_out = 3_000;
     fade.fade_curve = SongFadeCurve::EqualPower;
+    fade.fade_out_curve = SongFadeCurve::EqualPower;
     fade.gain = 0.7;
     // A clip cut in two where a later clip covers it.
     let cut_a = SongAudioRegion {
@@ -36,6 +37,7 @@ fn regions(variant: u8) -> (Vec<SongAudioRegion>, Vec<SongAudioRegion>) {
         fade_in: 500,
         fade_out: 1_500,
         fade_curve: SongFadeCurve::Linear,
+        fade_out_curve: SongFadeCurve::Linear,
         ..region(30_000, 100, 4_000)
     };
     let cut_b = SongAudioRegion {

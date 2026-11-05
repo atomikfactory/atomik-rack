@@ -7,6 +7,8 @@
 //! * [`move_crossfade`] drags the overlap of two audio clips along the timeline: the later clip
 //!   starts later (or earlier) and the earlier one ends later (or earlier) by the same number of
 //!   ticks, so the overlap keeps its length and the sound outside it does not change.
+//! * [`resize_crossfade`] changes the length of the overlap: the later clip stays, the earlier
+//!   one ends later (a longer crossfade) or earlier (a shorter one).
 
 use crate::audio_edit::{extend_envelope_start, join_envelopes, slice_envelope};
 use crate::history::Edit;
@@ -263,6 +265,68 @@ pub(crate) fn move_crossfade(
             replace(&device, lane, ec, new_earlier),
             replace(&device, lane, lc, new_later),
         ]),
+        Some(later),
+    ))
+}
+
+/// Plans `ResizeCrossfade`: the overlap that audio clip `later` makes with the clip before it
+/// grows by `delta` ticks (shrinks for a negative one). The later clip stays where it is and
+/// the clip before ends `delta` ticks later, so only the earlier clip's tail changes length.
+pub(crate) fn resize_crossfade(
+    doc: &RackDoc,
+    later: ClipId,
+    delta: i64,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    if delta == 0 {
+        return Err(bad("the crossfade keeps its length"));
+    }
+    let (device, lane, lc) = find_clip(doc, later)?;
+    let song = &doc.song;
+    let zone = song
+        .track(&device)
+        .and_then(|t| t.lanes.get(lane))
+        .and_then(|l| crossfades(l).into_iter().find(|z| z.later == later))
+        .ok_or_else(|| {
+            bad(format!(
+                "clip {} does not crossfade with a clip before it",
+                later.0
+            ))
+        })?;
+    let (_, _, ec) = find_clip(doc, zone.earlier)?;
+    let ea = audio_of(ec)?;
+    audio_of(lc)?;
+    if ea.reverse {
+        return Err(bad("the crossfade of a reversed clip cannot be resized"));
+    }
+    if lc.loop_length.is_some() || ec.loop_length.is_some() {
+        return Err(bad("the crossfade of a looped clip cannot be resized"));
+    }
+    if zone.end != ec.end() {
+        return Err(bad(
+            "the clip before runs past the crossfade: only a crossfade where it ends can be resized",
+        ));
+    }
+    let new_end = zone.end + delta;
+    if new_end <= lc.start || new_end >= lc.end() {
+        return Err(range(
+            "the crossfade cannot be that long or that short: it has to stay inside the later clip",
+        ));
+    }
+    // A longer crossfade needs audio left in the earlier clip's file.
+    if delta > 0 {
+        let frames = doc.assets.get(&ea.asset).map_or(u64::MAX, |m| m.frames);
+        let needed = source_at_tick(song, doc.sample_rate, ec.start, ea, new_end);
+        if needed > frames as f64 + 1.0 {
+            return Err(bad("the clip before has no audio left after its end"));
+        }
+    }
+    let new_earlier = Clip {
+        length: new_end - ec.start,
+        ..ec.clone()
+    };
+    check_geometry(new_earlier.start, new_earlier.length, 0, None).map_err(range)?;
+    Ok((
+        Edit::Compound(vec![replace(&device, lane, ec, new_earlier)]),
         Some(later),
     ))
 }

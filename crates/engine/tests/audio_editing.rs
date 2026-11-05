@@ -83,6 +83,7 @@ fn reverse_works_with_fades_that_stay_in_clip_time() {
     r.fade_in = 400;
     r.fade_out = 600;
     r.fade_curve = SongFadeCurve::SCurve;
+    r.fade_out_curve = SongFadeCurve::SCurve;
     r.gain = 0.5;
     let out = bounce(vec![r], vec![], vec![asset(2, 20_000)], 4_000);
     for i in 0..3_000u64 {
@@ -134,6 +135,7 @@ fn the_new_fade_shapes_follow_their_polynomials() {
         r.fade_in = 800;
         r.fade_out = 500;
         r.fade_curve = curve;
+        r.fade_out_curve = curve;
         let out = bounce(vec![r], vec![], vec![asset(2, 20_000)], 2_500);
         for n in 0..2_000usize {
             let mut g = 1.0f64;
@@ -315,6 +317,7 @@ fn mixed(reverse_first: bool) -> (Vec<SongAudioRegion>, Vec<Vec<(u64, f32)>>) {
         r.fade_in = 300;
         r.gain = 0.7;
         r.fade_curve = SongFadeCurve::EqualPower;
+        r.fade_out_curve = SongFadeCurve::EqualPower;
     }
     regions[2].env = Some(0);
     regions[2].reverse = true;

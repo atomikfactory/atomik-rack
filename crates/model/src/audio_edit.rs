@@ -226,6 +226,107 @@ pub struct StripParams {
     pub pad_after: u64,
 }
 
+/// The silence detector of [`strip_silence`] fed in blocks, so a span of any length is read
+/// with memory that does not grow with it: the state is a few counters and the ranges found
+/// so far.
+///
+/// Create it with the span's length in frames, [`push`](Self::push) the blocks in order (each a
+/// list of planar channels, any length, the channels may differ in length) and call
+/// [`finish`](Self::finish) for the kept ranges. Frames the blocks do not supply, up to the
+/// span's length, count as silence, and so does everything past it. The result is the same
+/// whatever the block sizes.
+#[derive(Debug, Clone)]
+pub struct StripScan {
+    len: u64,
+    threshold: f32,
+    min_silence: u64,
+    pad_before: u64,
+    pad_after: u64,
+    /// Frames consumed so far (the next frame's position).
+    at: u64,
+    /// Where the current silent run began, if one is open.
+    run: Option<u64>,
+    /// Where the piece being kept begins.
+    keep_start: u64,
+    kept: Vec<(u64, u64)>,
+}
+
+impl StripScan {
+    /// A detector for a span of `len` frames.
+    pub fn new(len: u64, params: &StripParams) -> Self {
+        Self {
+            len,
+            threshold: atomik_core::db_to_gain(params.threshold_db),
+            min_silence: params.min_silence.max(1),
+            pad_before: params.pad_before,
+            pad_after: params.pad_after,
+            at: 0,
+            run: None,
+            keep_start: 0,
+            kept: Vec::new(),
+        }
+    }
+
+    /// Closes the silent run `[start, end)`: a long enough one ends the piece before it.
+    fn close_run(&mut self, start: u64, end: u64) {
+        if end - start >= self.min_silence {
+            if start > self.keep_start {
+                self.kept.push((self.keep_start, start));
+            }
+            self.keep_start = end;
+        }
+    }
+
+    /// The next block of frames: a frame is loud when any channel reaches the threshold there.
+    pub fn push<C: AsRef<[f32]>>(&mut self, block: &[C]) {
+        let frames = block.iter().map(|c| c.as_ref().len()).max().unwrap_or(0) as u64;
+        let take = frames.min(self.len.saturating_sub(self.at));
+        for k in 0..take as usize {
+            let loud = block
+                .iter()
+                .any(|c| c.as_ref().get(k).is_some_and(|s| s.abs() >= self.threshold));
+            if loud {
+                if let Some(start) = self.run.take() {
+                    self.close_run(start, self.at);
+                }
+            } else if self.run.is_none() {
+                self.run = Some(self.at);
+            }
+            self.at += 1;
+        }
+    }
+
+    /// The kept ranges, relative to the span's start, ascending and disjoint (see
+    /// [`strip_silence`]).
+    pub fn finish(mut self) -> Vec<(u64, u64)> {
+        let len = self.len;
+        if len == 0 {
+            return Vec::new();
+        }
+        // What was not supplied is silent.
+        if self.at < len && self.run.is_none() {
+            self.run = Some(self.at);
+        }
+        if let Some(start) = self.run.take() {
+            self.close_run(start, len);
+        }
+        if self.keep_start < len {
+            self.kept.push((self.keep_start, len));
+        }
+        // Pad, clamp and join.
+        let mut out: Vec<(u64, u64)> = Vec::with_capacity(self.kept.len());
+        for &(s, e) in &self.kept {
+            let s = s.saturating_sub(self.pad_before);
+            let e = e.saturating_add(self.pad_after).min(len);
+            match out.last_mut() {
+                Some(last) if s <= last.1 => last.1 = last.1.max(e),
+                _ => out.push((s, e)),
+            }
+        }
+        out
+    }
+}
+
 /// The pieces of `[from, to)` that stay after stripping silence, as frame ranges relative to
 /// `from`, ascending and disjoint.
 ///
@@ -233,7 +334,8 @@ pub struct StripParams {
 /// every piece that remains grows by `pad_before` frames at its start and `pad_after` at its
 /// end (never past `[from, to)`), and pieces that then touch or overlap join. The result is a
 /// single range covering everything when there is no silence to strip, and empty when the
-/// whole span is silent.
+/// whole span is silent. Frames past a channel's end count as silence. This reads channels
+/// that are already in memory; [`StripScan`] is the same detector for audio read in blocks.
 pub fn strip_silence<C: AsRef<[f32]>>(
     channels: &[C],
     from: u64,
@@ -241,51 +343,18 @@ pub fn strip_silence<C: AsRef<[f32]>>(
     params: &StripParams,
 ) -> Vec<(u64, u64)> {
     let len = to.saturating_sub(from);
-    if len == 0 {
-        return Vec::new();
-    }
-    let threshold = atomik_core::db_to_gain(params.threshold_db);
-    let min_silence = params.min_silence.max(1);
-    let loud = |k: u64| {
-        let i = usize::try_from(from + k).unwrap_or(usize::MAX);
-        channels
-            .iter()
-            .any(|c| c.as_ref().get(i).is_some_and(|s| s.abs() >= threshold))
-    };
-    // The kept ranges: everything except the silent runs of at least `min_silence` frames.
-    let mut kept: Vec<(u64, u64)> = Vec::new();
-    let mut keep_start = 0u64;
-    let mut k = 0u64;
-    while k < len {
-        if loud(k) {
-            k += 1;
-            continue;
-        }
-        let run_start = k;
-        while k < len && !loud(k) {
-            k += 1;
-        }
-        if k - run_start >= min_silence {
-            if run_start > keep_start {
-                kept.push((keep_start, run_start));
-            }
-            keep_start = k;
-        }
-    }
-    if keep_start < len {
-        kept.push((keep_start, len));
-    }
-    // Pad, clamp and join.
-    let mut out: Vec<(u64, u64)> = Vec::with_capacity(kept.len());
-    for (s, e) in kept {
-        let s = s.saturating_sub(params.pad_before);
-        let e = e.saturating_add(params.pad_after).min(len);
-        match out.last_mut() {
-            Some(last) if s <= last.1 => last.1 = last.1.max(e),
-            _ => out.push((s, e)),
-        }
-    }
-    out
+    let mut scan = StripScan::new(len, params);
+    let lo = usize::try_from(from).unwrap_or(usize::MAX);
+    let hi = usize::try_from(to).unwrap_or(usize::MAX);
+    let span: Vec<&[f32]> = channels
+        .iter()
+        .map(|c| {
+            let c = c.as_ref();
+            &c[lo.min(c.len())..hi.min(c.len()).max(lo.min(c.len()))]
+        })
+        .collect();
+    scan.push(&span);
+    scan.finish()
 }
 
 /// The first frame whose level reaches `threshold_db` on any channel: how much silence a
@@ -321,5 +390,140 @@ mod tests {
         assert_eq!(leading_silence(&[&faint], -40.0), None);
         assert_eq!(leading_silence(&[&faint], -90.0), Some(0));
         assert_eq!(leading_silence::<Vec<f32>>(&[], -40.0), None);
+    }
+
+    /// The detector as it was before blocks: every channel in memory, one frame at a time.
+    fn reference(channels: &[Vec<f32>], from: u64, to: u64, p: &StripParams) -> Vec<(u64, u64)> {
+        let len = to.saturating_sub(from);
+        if len == 0 {
+            return Vec::new();
+        }
+        let threshold = atomik_core::db_to_gain(p.threshold_db);
+        let min_silence = p.min_silence.max(1);
+        let loud = |k: u64| {
+            let i = usize::try_from(from + k).unwrap_or(usize::MAX);
+            channels
+                .iter()
+                .any(|c| c.get(i).is_some_and(|s| s.abs() >= threshold))
+        };
+        let mut kept: Vec<(u64, u64)> = Vec::new();
+        let (mut keep_start, mut k) = (0u64, 0u64);
+        while k < len {
+            if loud(k) {
+                k += 1;
+                continue;
+            }
+            let run_start = k;
+            while k < len && !loud(k) {
+                k += 1;
+            }
+            if k - run_start >= min_silence {
+                if run_start > keep_start {
+                    kept.push((keep_start, run_start));
+                }
+                keep_start = k;
+            }
+        }
+        if keep_start < len {
+            kept.push((keep_start, len));
+        }
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for (s, e) in kept {
+            let s = s.saturating_sub(p.pad_before);
+            let e = e.saturating_add(p.pad_after).min(len);
+            match out.last_mut() {
+                Some(last) if s <= last.1 => last.1 = last.1.max(e),
+                _ => out.push((s, e)),
+            }
+        }
+        out
+    }
+
+    /// Sparse bursts and gaps from a fixed generator.
+    fn noise(seed: u64, frames: usize, channels: usize) -> Vec<Vec<f32>> {
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        (0..channels)
+            .map(|_| {
+                let mut out = vec![0.0f32; frames];
+                let mut at = 0;
+                while at < frames {
+                    let gap = (next() % 90) as usize;
+                    let burst = (next() % 40) as usize + 1;
+                    at += gap;
+                    for s in out.iter_mut().skip(at).take(burst) {
+                        *s = if next() % 2 == 0 { 0.4 } else { -0.3 };
+                    }
+                    at += burst;
+                }
+                out
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_streaming_scan_agrees_with_the_whole_span_detector_at_any_block_size() {
+        for seed in 1..=24u64 {
+            let frames = 700 + (seed as usize * 37) % 400;
+            let channels = noise(seed, frames, 1 + (seed as usize % 2));
+            for (min_silence, pad_before, pad_after) in
+                [(1, 0, 0), (20, 0, 0), (35, 5, 9), (60, 30, 30), (500, 3, 3)]
+            {
+                let params = StripParams {
+                    threshold_db: -20.0,
+                    min_silence,
+                    pad_before,
+                    pad_after,
+                };
+                let (from, to) = (seed % 7, frames as u64 + 20);
+                let want = reference(&channels, from, to, &params);
+                assert_eq!(
+                    strip_silence(&channels, from, to, &params),
+                    want,
+                    "seed {seed}"
+                );
+                for block in [1usize, 2, 7, 64, 333, 100_000] {
+                    let mut scan = StripScan::new(to - from, &params);
+                    let mut at = from as usize;
+                    while at < frames {
+                        let end = (at + block).min(frames);
+                        let part: Vec<&[f32]> = channels.iter().map(|c| &c[at..end]).collect();
+                        scan.push(&part);
+                        at = end;
+                    }
+                    assert_eq!(scan.finish(), want, "seed {seed} block {block} {params:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_streaming_scan_counts_missing_frames_as_silence_and_keeps_little_state() {
+        let params = StripParams {
+            threshold_db: -20.0,
+            min_silence: 10,
+            pad_before: 0,
+            pad_after: 0,
+        };
+        // Sound for 30 frames, then the source ends but the span goes on to 200.
+        let mut scan = StripScan::new(200, &params);
+        scan.push(&[vec![0.5f32; 30]]);
+        assert_eq!(scan.finish(), vec![(0, 30)]);
+        // Nothing supplied at all: the whole span is silent.
+        assert!(StripScan::new(50, &params).finish().is_empty());
+        assert!(StripScan::new(0, &params).finish().is_empty());
+        // Millions of frames of silence in blocks never grow the state.
+        let mut scan = StripScan::new(4_194_304, &params);
+        let block = vec![0.0f32; 1 << 16];
+        for _ in 0..(4_194_304u64 / (1 << 16)) {
+            scan.push(&[&block]);
+        }
+        assert!(scan.kept.is_empty());
+        assert!(scan.finish().is_empty());
     }
 }

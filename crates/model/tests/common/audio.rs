@@ -132,6 +132,7 @@ pub fn audio(n: u8) -> AudioClipContent {
         fade_in: 0,
         fade_out: 0,
         fade_curve: FadeCurve::Linear,
+        fade_out_curve: None,
         reverse: false,
         envelope: Vec::new(),
         xfade: Some(FadeCurve::EqualPower),
@@ -160,6 +161,27 @@ pub fn add_audio_clip_with(device: &str, start: i64, length: i64, a: AudioClipCo
         fade_out: a.fade_out,
         fade_curve: a.fade_curve,
     })
+}
+
+/// Replaces the content of audio clip `id` (its geometry stays), for fields a new clip cannot
+/// carry.
+pub fn set_audio_content(d: &mut Document, reg: &Registry, id: ClipId, content: AudioClipContent) {
+    let (start, length, muted) = {
+        let c = doc_clip(d.doc(), id);
+        (c.start, c.length, c.muted)
+    };
+    d.apply(
+        sc(SongCommand::SetAudioClip {
+            id,
+            start,
+            length,
+            muted,
+            content,
+            merge: None,
+        }),
+        reg,
+    )
+    .unwrap();
 }
 
 /// An empty document with the inputs of a stereo interface and assets 1 and 2 registered.
@@ -227,6 +249,7 @@ impl ClipSpec {
             } else {
                 FadeCurve::Linear
             },
+            fade_out_curve: None,
             reverse: false,
             envelope: Vec::new(),
             xfade: None,

@@ -77,6 +77,7 @@ fn one_clip_becomes_one_region_with_clip_position_and_source_offset() {
             fade_in: 100,
             fade_out: 200,
             fade_curve: FadeCurve::EqualPower,
+            fade_out_curve: FadeCurve::EqualPower,
             clip_pos: 0,
             clip_frames: 2 * BAR_F,
             reverse: false,
@@ -228,6 +229,28 @@ fn equal_power_fades_follow_a_quarter_sine() {
     assert_eq!(r.fade_gain(1000), 1.0);
     let end = r.frames;
     assert!((r.fade_gain(end - 500) - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+}
+
+#[test]
+fn the_fade_out_follows_its_own_curve() {
+    let (reg, mut d) = setup();
+    let a = AudioClipContent {
+        fade_in: 1000,
+        fade_out: 1000,
+        fade_curve: FadeCurve::Linear,
+        fade_out_curve: Some(FadeCurve::Exponential),
+        ..audio(1)
+    };
+    d.apply(add_audio_clip_with("audio-track", 0, BAR, a.clone()), &reg)
+        .unwrap();
+    let id = last(&d);
+    set_audio_content(&mut d, &reg, id, a);
+    let r = &flat(&d, "audio-track")[0];
+    assert_eq!(r.fade_out_curve, FadeCurve::Exponential);
+    // The fade-in is linear: halfway is one half. The fade-out squares: halfway is a quarter.
+    assert!((r.fade_gain(500) - 0.5).abs() < 1e-6);
+    let end = r.frames;
+    assert!((r.fade_gain(end - 500) - 0.25).abs() < 1e-6);
 }
 
 #[test]

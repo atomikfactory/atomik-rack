@@ -1641,6 +1641,7 @@ pub(crate) fn plan(
                 fade_in,
                 fade_out,
                 fade_curve,
+                fade_out_curve: None,
                 reverse: false,
                 envelope: Vec::new(),
                 xfade: Some(FadeCurve::EqualPower),

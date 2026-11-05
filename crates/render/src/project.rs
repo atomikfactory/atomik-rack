@@ -601,6 +601,7 @@ fn song_input_inner(
                         fade_in: r.fade_in,
                         fade_out: r.fade_out,
                         fade_curve: song_fade_curve(r.fade_curve),
+                        fade_out_curve: song_fade_curve(r.fade_out_curve),
                         clip_pos: r.clip_pos,
                         clip_frames: r.clip_frames,
                         reverse,

@@ -107,6 +107,7 @@ fn regions() -> Vec<atomik_engine::SongAudioRegion> {
     r0.fade_in = 1_500;
     r0.fade_out = 2_500;
     r0.fade_curve = atomik_engine::SongFadeCurve::EqualPower;
+    r0.fade_out_curve = atomik_engine::SongFadeCurve::EqualPower;
     let mut r1 = region(12_000, 0, 8_000);
     r1.asset = AssetId(1);
     r1.gain = 0.9;

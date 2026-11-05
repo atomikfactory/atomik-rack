@@ -244,8 +244,10 @@ pub struct SongAudioRegion {
     pub fade_in: u64,
     /// Fade-out length in frames of the original clip (at most `clip_frames`).
     pub fade_out: u64,
-    /// Fade shape.
+    /// Shape of the fade-in.
     pub fade_curve: SongFadeCurve,
+    /// Shape of the fade-out.
+    pub fade_out_curve: SongFadeCurve,
     /// Frames from the original clip's start to this region's start.
     pub clip_pos: u64,
     /// Length in frames of the original clip (>= `clip_pos + frames`).
@@ -279,6 +281,7 @@ impl SongAudioRegion {
             fade_in: 0,
             fade_out: 0,
             fade_curve: SongFadeCurve::Linear,
+            fade_out_curve: SongFadeCurve::Linear,
             clip_pos: 0,
             clip_frames: frames,
             reverse: false,
@@ -310,7 +313,7 @@ impl SongAudioRegion {
         }
         if fading_out {
             g *= self
-                .fade_curve
+                .fade_out_curve
                 .eval(self.clip_frames.saturating_sub(n) as f64 / self.fade_out as f64);
         }
         g as f32
@@ -862,6 +865,21 @@ mod tests {
     }
 
     #[test]
+    fn the_fade_out_has_its_own_shape() {
+        let r = SongAudioRegion {
+            fade_in: 100,
+            fade_out: 100,
+            fade_curve: SongFadeCurve::Linear,
+            fade_out_curve: SongFadeCurve::Exponential,
+            ..SongAudioRegion::plain(AssetId(0), 0, 0, 1000)
+        };
+        // Halfway through each fade: the linear one is a half, the squared one a quarter.
+        assert_eq!(r.fade_gain(50), 0.5);
+        assert_eq!(r.fade_gain(950), 0.25);
+        assert_eq!(r.fade_gain(500), 1.0);
+    }
+
+    #[test]
     fn the_new_curves_are_plain_polynomials_and_the_gain_block_follows_the_pieces() {
         assert_eq!(
             SongFadeCurve::Exponential.eval(0.5).to_bits(),
@@ -878,6 +896,7 @@ mod tests {
             fade_in: 50,
             fade_out: 80,
             fade_curve: SongFadeCurve::SCurve,
+            fade_out_curve: SongFadeCurve::SCurve,
             clip_pos: 20,
             clip_frames: 400,
             frames: 380,

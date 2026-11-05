@@ -816,9 +816,11 @@ fn project_inspect_lists_the_audio_clips_with_their_editing() {
     assert_eq!(first["id"].as_u64(), Some(clip.id.0));
     assert!(first.get("reverse").is_none() && first.get("envelope").is_none());
     assert_eq!(first["fade_curve"], a.fade_curve.id());
+    assert!(first.get("fade_out_curve").is_none());
     // Reversed, with an envelope and another curve and crossfade.
     a.reverse = true;
     a.fade_curve = FadeCurve::SCurve;
+    a.fade_out_curve = Some(FadeCurve::Exponential);
     a.xfade = None;
     a.envelope = vec![
         GainPoint {
@@ -857,6 +859,7 @@ fn project_inspect_lists_the_audio_clips_with_their_editing() {
     assert_eq!(c["reverse"], true);
     assert_eq!(c["envelope"], 2);
     assert_eq!(c["fade_curve"], "s_curve");
+    assert_eq!(c["fade_out_curve"], "exponential");
     assert_eq!(c["crossfade"], "off");
     assert!(c.get("crossfade_ticks").is_none());
 }

@@ -159,3 +159,127 @@ fn a_press_outside_the_zone_or_with_shift_does_not_grab_it() {
     );
     assert!(steps(&a).is_empty(), "{a:?}");
 }
+
+// ---------------------------------------------------------------- the length handle
+
+/// The handle sits on the line where the zone ends (bar 3), inside the later clip's body.
+fn handle(v: &ArrangementView) -> Point {
+    at_tick(v, 3 * BAR)
+}
+
+fn length_steps(actions: &[UiAction]) -> Vec<(ClipId, i64)> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::CrossfadeLengthStep { later, delta } => Some((*later, *delta)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn dragging_the_length_handle_previews_a_longer_crossfade_and_the_release_keeps_it() {
+    let (mut v, doc, reg) = setup();
+    let p = handle(&v);
+    let to = at_tick(&v, 3 * BAR + BAR / 2);
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down(p), mv(Point::new((p.x + to.x) / 2.0, to.y)), mv(to)],
+    );
+    assert_eq!(
+        length_steps(&a).last(),
+        Some(&(ClipId(11), BAR / 2)),
+        "{a:?}"
+    );
+    // The zone does not move: no move steps and no ordinary command.
+    assert!(
+        steps(&a).is_empty() && song_commands(&a).is_empty(),
+        "{a:?}"
+    );
+    let a = v.handle(&up(to), &doc, &reg);
+    assert_eq!(a, vec![UiAction::CrossfadeEnd { commit: true }]);
+    // Shorter: the handle moves back into the zone, snapped to the beat grid.
+    let p = handle(&v);
+    let to = at_tick(&v, 3 * BAR - BAR / 4);
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down(p), mv(Point::new((p.x + to.x) / 2.0, to.y)), mv(to)],
+    );
+    assert_eq!(
+        length_steps(&a).last(),
+        Some(&(ClipId(11), -(BAR / 4))),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn the_crossfade_stays_inside_the_later_clip() {
+    let (mut v, doc, reg) = setup();
+    let p = handle(&v);
+    // Far right: the overlap would reach the later clip's end (bar 4): one tick short.
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down(p),
+            mv(p + Vec2::new(40.0, 0.0)),
+            mv(p + Vec2::new(900.0, 0.0)),
+        ],
+    );
+    assert_eq!(
+        length_steps(&a).last(),
+        Some(&(ClipId(11), BAR - 1)),
+        "{a:?}"
+    );
+    v.handle(&up(p), &doc, &reg);
+    // Far left: not shorter than a tick.
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down(p),
+            mv(p - Vec2::new(40.0, 0.0)),
+            mv(p - Vec2::new(900.0, 0.0)),
+        ],
+    );
+    assert_eq!(
+        length_steps(&a).last(),
+        Some(&(ClipId(11), -(BAR - 1))),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn escape_drops_the_length_preview() {
+    let (mut v, doc, reg) = setup();
+    let p = handle(&v);
+    let to = at_tick(&v, 3 * BAR + BAR / 2);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to)]);
+    assert_eq!(length_steps(&a).len(), 1);
+    let a = v.handle(&press(Key::Escape, Modifiers::NONE), &doc, &reg);
+    assert_eq!(a, vec![UiAction::CrossfadeEnd { commit: false }]);
+}
+
+#[test]
+fn there_is_no_length_handle_where_the_model_would_refuse() {
+    let reg = registry();
+    // The earlier clip plays backwards: only the zone itself moves.
+    let mut doc = overlap_doc();
+    for c in &mut doc.song_mut().tracks[1].lanes[0].clips {
+        if c.id == ClipId(10)
+            && let ClipContent::Audio(a) = &mut c.content
+        {
+            a.reverse = true;
+        }
+    }
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    let p = handle(&v);
+    let to = at_tick(&v, 3 * BAR + BAR / 2);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to)]);
+    assert!(length_steps(&a).is_empty(), "{a:?}");
+    // A press on the line with another tool leaves the clip to that tool.
+    let (mut v, doc, reg) = setup();
+    v.set_tool(atomik_ui::Tool::Mute);
+    let p = handle(&v);
+    let a = v.handle(&down(p), &doc, &reg);
+    assert!(length_steps(&a).is_empty(), "{a:?}");
+}
