@@ -451,3 +451,6 @@ impl PluginProcessor for SynthProcessor {
         ProcessStatus::Continue
     }
 }
+
+#[cfg(test)]
+mod tests;
