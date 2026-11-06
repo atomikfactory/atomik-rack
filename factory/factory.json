@@ -1,5 +1,305 @@
 {
   "items": {
+    "Clips/Broken Beat.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "drums",
+        "syncopated",
+        "breakbeat",
+        "shuffled"
+      ]
+    },
+    "Clips/Four On The Floor.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "drums",
+        "house",
+        "straight",
+        "driving"
+      ]
+    },
+    "Clips/Half-Time Groove.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "drums",
+        "half-time",
+        "heavy",
+        "slow"
+      ]
+    },
+    "Clips/Minor Four Chords.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "chords",
+        "minor",
+        "pad",
+        "progression"
+      ]
+    },
+    "Clips/Octave Pump.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "bass",
+        "octave",
+        "eighths",
+        "driving"
+      ]
+    },
+    "Clips/Open Fifths Rise.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "chords",
+        "fifths",
+        "open",
+        "ambient"
+      ]
+    },
+    "Clips/Rising Triad Arp.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Arpeggio"
+      ],
+      "tags": [
+        "arpeggio",
+        "sixteenths",
+        "major",
+        "bright"
+      ]
+    },
+    "Clips/Seventh Changes.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Chords"
+      ],
+      "tags": [
+        "chords",
+        "jazz",
+        "sevenths",
+        "stabs"
+      ]
+    },
+    "Clips/Syncopated Sub.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "bass",
+        "sub",
+        "syncopated",
+        "sixteenths"
+      ]
+    },
+    "Clips/Triplet Shuffle.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "drums",
+        "shuffle",
+        "triplet",
+        "swing"
+      ]
+    },
+    "Clips/Walking Minor.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "bass",
+        "walking",
+        "minor",
+        "quarter-notes"
+      ]
+    },
+    "Clips/Wide Minor Arp.atomikclip": {
+      "author": "Atomik",
+      "categories": [
+        "Arpeggio"
+      ],
+      "tags": [
+        "arpeggio",
+        "eighths",
+        "minor",
+        "wide"
+      ]
+    },
+    "Containers/Bus Glue.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Mastering"
+      ],
+      "tags": [
+        "chain",
+        "bus",
+        "glue",
+        "master"
+      ]
+    },
+    "Containers/Chord Arp Stack.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Modular"
+      ],
+      "tags": [
+        "modular",
+        "arpeggio",
+        "chords",
+        "pad"
+      ]
+    },
+    "Containers/Drum Punch.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Dynamics"
+      ],
+      "tags": [
+        "chain",
+        "drums",
+        "punchy",
+        "tight"
+      ]
+    },
+    "Containers/Envelope Sweep Pad.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Modular"
+      ],
+      "tags": [
+        "modular",
+        "pad",
+        "sweep",
+        "evolving"
+      ]
+    },
+    "Containers/Ping Pong Tide.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Delay"
+      ],
+      "tags": [
+        "chain",
+        "delay",
+        "stereo",
+        "wide"
+      ]
+    },
+    "Containers/Radio Dust.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Lo-fi"
+      ],
+      "tags": [
+        "chain",
+        "lo-fi",
+        "crushed",
+        "narrow"
+      ]
+    },
+    "Containers/Random Walk Lead.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Modular"
+      ],
+      "tags": [
+        "modular",
+        "generative",
+        "lead",
+        "pentatonic"
+      ]
+    },
+    "Containers/Rotary Choir.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Modulation"
+      ],
+      "tags": [
+        "chain",
+        "rotary",
+        "organ",
+        "swirl"
+      ]
+    },
+    "Containers/Shimmer Cathedral.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "shimmer",
+        "huge"
+      ]
+    },
+    "Containers/Slow Phaser Bed.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Modulation"
+      ],
+      "tags": [
+        "chain",
+        "phaser",
+        "evolving",
+        "soft"
+      ]
+    },
+    "Containers/Tape Warmth.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Saturation"
+      ],
+      "tags": [
+        "chain",
+        "warm",
+        "tape",
+        "glue"
+      ]
+    },
+    "Containers/Vocal Air.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Vocal"
+      ],
+      "tags": [
+        "chain",
+        "vocal",
+        "plate",
+        "smooth"
+      ]
+    },
+    "Containers/Wobble Gate.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Rhythm"
+      ],
+      "tags": [
+        "chain",
+        "rhythmic",
+        "filter",
+        "pulsing"
+      ]
+    },
     "Patches/Aurora Stack.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -10,6 +310,18 @@
         "bright",
         "evolving",
         "bell"
+      ]
+    },
+    "Patches/Basalt Kit.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drum Kit"
+      ],
+      "tags": [
+        "drums",
+        "deep",
+        "round",
+        "electronic"
       ]
     },
     "Patches/Basalt Sub.atomikpatch": {
@@ -36,6 +348,18 @@
         "percussive"
       ]
     },
+    "Patches/Comb Pluck.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Modular"
+      ],
+      "tags": [
+        "semi-modular",
+        "pluck",
+        "comb",
+        "plucked-string"
+      ]
+    },
     "Patches/Copper Pluck.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -60,6 +384,30 @@
         "dry"
       ]
     },
+    "Patches/Dust Kit.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drum Kit"
+      ],
+      "tags": [
+        "drums",
+        "lo-fi",
+        "crushed",
+        "dusty"
+      ]
+    },
+    "Patches/Fold Drone.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Modular"
+      ],
+      "tags": [
+        "semi-modular",
+        "drone",
+        "fold",
+        "evolving"
+      ]
+    },
     "Patches/Glass Choir.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -70,6 +418,18 @@
         "airy",
         "slow",
         "wide"
+      ]
+    },
+    "Patches/Glass Kit.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drum Kit"
+      ],
+      "tags": [
+        "drums",
+        "tonal",
+        "bright",
+        "electronic"
       ]
     },
     "Patches/Gravel Drive.atomikpatch": {
@@ -204,6 +564,18 @@
         "random"
       ]
     },
+    "Patches/Sequenced Pulse.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Modular"
+      ],
+      "tags": [
+        "semi-modular",
+        "sequence",
+        "pulse",
+        "rhythmic"
+      ]
+    },
     "Patches/Slow Morph.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -226,6 +598,18 @@
         "evolving",
         "legato",
         "warm"
+      ]
+    },
+    "Patches/Static Kit.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drum Kit"
+      ],
+      "tags": [
+        "drums",
+        "tight",
+        "bright",
+        "electronic"
       ]
     },
     "Patches/Sync Razor.atomikpatch": {

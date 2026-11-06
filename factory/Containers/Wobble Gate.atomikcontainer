@@ -1,0 +1,98 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Wobble Gate", "folded": false, "patch": "Wobble Gate",
+      "params": {
+        "macro1": 0.88888884,
+        "macro2": 0.14285715
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "gate", "type": "atomik.auto-filter",
+            "name": "Auto-Filter", "folded": false,
+            "params": {
+              "cutoff": 600,
+              "depth": 0.9,
+              "division": 5,
+              "resonance": 0.45,
+              "shape": 3,
+              "sync": 1
+            }
+          },
+          {
+            "id": "clip", "type": "atomik.distortion",
+            "name": "Distortion", "folded": false,
+            "params": {
+              "curve": 0,
+              "drive": 8,
+              "output": -4
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "auto_makeup": 1,
+              "ratio": 3,
+              "threshold": -14
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "gate:in_l"},
+          {"from": "boundary:in_r", "to": "gate:in_r"},
+          {"from": "clip:out_l", "to": "comp:in_l"},
+          {"from": "clip:out_r", "to": "comp:in_r"},
+          {"from": "comp:out_l", "to": "boundary:out_l"},
+          {"from": "comp:out_r", "to": "boundary:out_r"},
+          {"from": "gate:out_l", "to": "clip:in_l"},
+          {"from": "gate:out_r", "to": "clip:in_r"}
+        ],
+        "macros": [
+          {"name": "Depth", "targets": [
+            {"device": "gate", "param": "depth", "min": 0.1, "max": 1}
+          ]},
+          {"name": "Cutoff", "targets": [
+            {"device": "gate", "param": "cutoff", "min": 200, "max": 3000}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

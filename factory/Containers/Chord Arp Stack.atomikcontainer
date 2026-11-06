@@ -1,0 +1,108 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Chord Arp Stack", "folded": false, "patch": "Chord Arp Stack",
+      "params": {
+        "macro1": 0.625,
+        "macro2": 0.2
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "chord", "type": "atomik.key-chord",
+            "name": "Key & Chord", "folded": false,
+            "params": {
+              "chord": 2
+            }
+          },
+          {
+            "id": "arp", "type": "atomik.arpeggiator",
+            "name": "Arpeggiator", "folded": false,
+            "params": {
+              "gate": 70,
+              "mode": 2,
+              "octaves": 2,
+              "rate": 3,
+              "run": 1
+            }
+          },
+          {
+            "id": "synth", "type": "atomik.poly-synth",
+            "name": "Poly Synth", "folded": false,
+            "params": {
+              "delay.feedback": 0.35,
+              "delay.mix": 0.25,
+              "delay.time": 375,
+              "env.amp.attack": 3,
+              "env.amp.decay": 260,
+              "env.amp.release": 260,
+              "env.amp.sustain": 0.3,
+              "env.filter.decay": 240,
+              "env.filter.sustain": 0.1,
+              "filter.cutoff": 1800,
+              "filter.env_amount": 0.35,
+              "filter.resonance": 0.2,
+              "master.level": -4,
+              "osc.mix": 0.5,
+              "osc1.wave": 0,
+              "osc2.fine": 8,
+              "osc2.wave": 0,
+              "spread": 0.4
+            }
+          }
+        ],
+        "cables": [
+          {"from": "arp:notes_out", "to": "synth:notes_in"},
+          {"from": "chord:notes_out", "to": "arp:notes_in"},
+          {"from": "synth:out_l", "to": "boundary:out_l"},
+          {"from": "synth:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Gate", "targets": [
+            {"device": "arp", "param": "gate", "min": 20, "max": 100}
+          ]},
+          {"name": "Cutoff", "targets": [
+            {"device": "synth", "param": "filter.cutoff", "min": 500, "max": 7000}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "chord", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

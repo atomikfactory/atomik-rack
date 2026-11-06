@@ -1,0 +1,99 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Vocal Air", "folded": false, "patch": "Vocal Air",
+      "params": {
+        "macro1": 0.44,
+        "macro2": 0.46153846
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "deess", "type": "atomik.de-esser",
+            "name": "De-esser", "folded": false,
+            "params": {
+              "freq": 6800,
+              "range": 10,
+              "threshold": -32
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 8,
+              "auto_makeup": 1,
+              "ratio": 3.5,
+              "release": 120,
+              "threshold": -20
+            }
+          },
+          {
+            "id": "plate", "type": "atomik.reverb",
+            "name": "Reverb", "folded": false,
+            "params": {
+              "algorithm": 2,
+              "damping": 0.5,
+              "decay": 1.6,
+              "mix": 0.22,
+              "predelay": 18
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "deess:in_l"},
+          {"from": "boundary:in_r", "to": "deess:in_r"},
+          {"from": "comp:out_l", "to": "plate:in_l"},
+          {"from": "comp:out_r", "to": "plate:in_r"},
+          {"from": "deess:out_l", "to": "comp:in_l"},
+          {"from": "deess:out_r", "to": "comp:in_r"},
+          {"from": "plate:out_l", "to": "boundary:out_l"},
+          {"from": "plate:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Space", "targets": [
+            {"device": "plate", "param": "mix", "min": 0, "max": 0.5}
+          ]},
+          {"name": "Squeeze", "targets": [
+            {"device": "comp", "param": "threshold", "min": -8, "max": -34}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
