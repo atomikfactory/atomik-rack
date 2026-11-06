@@ -2131,6 +2131,8 @@ fn snapshots_are_stored_recalled_and_compared_by_command_and_the_bounce_hears_th
         (Some(1), Some("A"))
     );
     assert_eq!(all[0]["matches_mix"], true);
+    // A new snapshot holds the wiring (each strip's output and insert chain).
+    assert_eq!(all[0]["wiring"], true);
     ok(
         &mut s,
         "session_set_param",
@@ -2182,6 +2184,13 @@ fn snapshots_are_stored_recalled_and_compared_by_command_and_the_bounce_hears_th
         json!({"id": "mixer.recall_snapshot", "arg": "2:mutes"}),
     );
     assert_eq!(same_as_reference(&mut s, "snap-scope.wav"), true);
+    // The routing scope is a scope too (nothing differs there, so the mix is as it was).
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.recall_snapshot", "arg": "2:routing"}),
+    );
+    assert_eq!(same_as_reference(&mut s, "snap-routing.wav"), true);
     ok(
         &mut s,
         "session_command",
