@@ -816,6 +816,10 @@ pub enum Place {
     /// [`crate::device_rows`]) or the items saved in `<library folder>/<Section>` (listed
     /// recursively; a missing folder is an empty list).
     Library(atomik_library::LibrarySection),
+    /// One section of the factory library that ships with the application: read-only items
+    /// found below `<factory folder>/<Section>` (listed recursively; the host never saves into
+    /// it or deletes from it). The devices section has no factory entry.
+    Factory(atomik_library::LibrarySection),
     /// Every file in the named favourite list (see `atomik_library::LibraryDb::lists`).
     List(String),
 }

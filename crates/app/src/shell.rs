@@ -2293,6 +2293,13 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_library_root();
     }
 
+    /// Sets the factory library folder (see [`crate::factory`]); `None` when the application has
+    /// none. It is read-only and never the library folder.
+    pub fn set_factory_folder(&mut self, folder: Option<PathBuf>) {
+        self.core.set_factory_root(folder);
+        self.repaint = true;
+    }
+
     /// Hands the library folder in use to the core and the browser panel.
     fn sync_library_root(&mut self) {
         let root = self.library_root();

@@ -10,6 +10,8 @@ for bin in atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-hos
   cp "target/release/$bin" "dist/$name/"
 done
 cp LICENSE README.md CHANGELOG.md "dist/$name/"
+# The factory library: the app finds the folder beside its own executable.
+cp -R factory "dist/$name/factory"
 (cd dist && tar -czf "$name.tar.gz" "$name" && rm -rf "$name")
 sh scripts/release/checksum.sh "dist/$name.tar.gz"
 ls -l dist

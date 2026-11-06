@@ -25,6 +25,7 @@ use super::{AppCore, LoadTarget};
 use crate::browser_workers::{
     BrowseJob, BrowseMsg, CopyAssets, PreviewJob, WalkScope, Workers, home_dir, split_devices,
 };
+use crate::factory::Factory;
 use crate::library_store::{LibrarySaver, Loaded, load};
 use crate::sink::EngineSink;
 use atomik_engine::{PreviewMonitor, preview_channel};
@@ -37,7 +38,7 @@ use atomik_library::{
 #[cfg(test)]
 use atomik_ui::TreeChild;
 use atomik_ui::{BrowseAction, DetailData, FileBrowserView, Place, PlacesData, device_rows};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The preview that is playing (or about to).
 struct ActivePreview {
@@ -86,6 +87,8 @@ pub(crate) struct BrowserState {
     /// The library folder (`<root>/Patches`, `Containers`, `Clips`, `Projects`); `None` while
     /// unknown.
     library_root: Option<PathBuf>,
+    /// The factory library that ships with the application (read-only), when it was found.
+    factory: Option<Factory>,
     /// The database changed since the last snapshot was handed to the saver.
     dirty: bool,
     /// The file must not be overwritten this session (newer version, unreadable).
@@ -138,6 +141,7 @@ impl Default for BrowserState {
             revision: 0,
             lib_path: None,
             library_root: None,
+            factory: None,
             dirty: false,
             locked: false,
             saver: None,
@@ -295,6 +299,53 @@ impl<S: EngineSink> AppCore<S> {
             && let Some(place @ Place::Library(_)) = self.file_browser.location().cloned()
         {
             self.show(place);
+        }
+    }
+
+    /// The factory folder, when the application found one.
+    pub fn factory_root(&self) -> Option<PathBuf> {
+        self.browser
+            .factory
+            .as_ref()
+            .map(|f| f.root().to_path_buf())
+    }
+
+    /// The folder of the factory section `section`, when there is one.
+    pub(super) fn factory_folder(&self, section: LibrarySection) -> Option<PathBuf> {
+        self.browser.factory.as_ref()?.folder(section)
+    }
+
+    /// Whether `path` is the factory folder or inside it (items there are read-only).
+    pub fn in_factory(&self, path: &Path) -> bool {
+        self.browser
+            .factory
+            .as_ref()
+            .is_some_and(|f| f.contains(path))
+    }
+
+    /// Sets the factory folder (`None`: the application has none). Its manifest is read now (a
+    /// small file at start-up, like the library file); one that cannot be read is logged and
+    /// the items show without marks. The Factory entries of the tree follow, and a factory
+    /// section on show is listed again.
+    pub fn set_factory_root(&mut self, root: Option<PathBuf>) {
+        let factory = root.and_then(|root| match Factory::open(&root) {
+            Ok(factory) => Some(factory),
+            Err(e) => {
+                log::warn!("factory library {}: {e}", root.display());
+                Factory::without_marks(&root).ok()
+            }
+        });
+        self.browser.factory = factory;
+        if !self.browser.shown {
+            return;
+        }
+        self.refresh_places();
+        if let Some(Place::Factory(section)) = self.file_browser.location().cloned() {
+            if self.factory_folder(section).is_some() {
+                self.show(Place::Factory(section));
+            } else {
+                self.show(Place::Library(section));
+            }
         }
     }
 
@@ -689,6 +740,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.show_collection(generation, paths);
             }
             Place::Library(section) => self.show_library(generation, section),
+            Place::Factory(section) => self.show_factory(generation, section),
             Place::List(name) => {
                 let paths: Vec<PathBuf> = Tag::new(&name)
                     .ok()
@@ -736,6 +788,19 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Lists a factory section: the walk over `<factory>/<Section>` (empty when the factory has
+    /// no such folder).
+    fn show_factory(&mut self, generation: u64, section: LibrarySection) {
+        self.set_rows(Vec::new());
+        if let Some(root) = self.factory_folder(section) {
+            self.submit(BrowseJob::Walk {
+                generation,
+                root,
+                scope: WalkScope::Section(section),
+            });
+        }
+    }
+
     /// Lists a collection again after the library changed under it.
     fn reshow_collection(&mut self) {
         if let Some(place @ (Place::Favorites | Place::Tag(_) | Place::List(_))) =
@@ -770,6 +835,9 @@ impl<S: EngineSink> AppCore<S> {
     fn decorated(&self, mut rows: Vec<FileRow>) -> Vec<FileRow> {
         for row in &mut rows {
             self.browser.db.decorate(row);
+            if let Some(factory) = &self.browser.factory {
+                factory.decorate(row);
+            }
         }
         rows
     }
@@ -1071,11 +1139,12 @@ impl<S: EngineSink> AppCore<S> {
             .iter()
             .map(|p| {
                 let mark = self.browser.db.mark(p);
-                (
-                    p.clone(),
-                    mark.favorite,
-                    mark.tags.iter().map(|t| t.as_str().to_owned()).collect(),
-                )
+                let mut tags: Vec<String> =
+                    mark.tags.iter().map(|t| t.as_str().to_owned()).collect();
+                if let Some(factory) = &self.browser.factory {
+                    factory.merge(p, &mut tags, &mut Vec::new(), &mut String::new());
+                }
+                (p.clone(), mark.favorite, tags)
             })
             .collect();
         if !marks.is_empty() {
@@ -1086,14 +1155,16 @@ impl<S: EngineSink> AppCore<S> {
                 .iter()
                 .map(|p| {
                     let mark = self.browser.db.mark(p);
-                    (
-                        p.clone(),
-                        mark.author.clone(),
-                        mark.categories
-                            .iter()
-                            .map(|t| t.as_str().to_owned())
-                            .collect(),
-                    )
+                    let mut author = mark.author.clone();
+                    let mut categories: Vec<String> = mark
+                        .categories
+                        .iter()
+                        .map(|t| t.as_str().to_owned())
+                        .collect();
+                    if let Some(factory) = &self.browser.factory {
+                        factory.merge(p, &mut Vec::new(), &mut categories, &mut author);
+                    }
+                    (p.clone(), author, categories)
                 })
                 .collect();
             #[cfg(test)]
@@ -1118,6 +1189,12 @@ impl<S: EngineSink> AppCore<S> {
                 .iter()
                 .map(|l| (l.name().as_str().to_owned(), l.paths().len()))
                 .collect(),
+            factory: self
+                .browser
+                .factory
+                .as_ref()
+                .map(|f| f.sections().to_vec())
+                .unwrap_or_default(),
             bookmarks: db.places().to_vec(),
             roots: self.browser.roots.clone(),
         };

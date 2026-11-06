@@ -1,0 +1,58 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.poly-synth",
+      "name": "Poly Synth", "folded": false, "patch": "Neon Stab",
+      "params": {
+        "chorus.mix": 0.25,
+        "delay.feedback": 0.3,
+        "delay.mix": 0.18,
+        "delay.time": 250,
+        "env.amp.attack": 2,
+        "env.amp.decay": 260,
+        "env.amp.release": 180,
+        "env.amp.sustain": 0.35,
+        "env.filter.decay": 220,
+        "env.filter.sustain": 0.15,
+        "filter.cutoff": 2200,
+        "filter.drive": 0.3,
+        "filter.env_amount": 0.6,
+        "filter.resonance": 0.35,
+        "filter.type": 1,
+        "master.level": 0,
+        "osc.mix": 0.45,
+        "osc1.wave": 0,
+        "osc2.fine": 6,
+        "osc2.semi": 7,
+        "osc2.wave": 0
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

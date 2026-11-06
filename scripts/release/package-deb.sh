@@ -9,7 +9,8 @@
 # Layout: the five programs in /opt/atomik-rack, with /usr/bin/<program> symlinks to them. The app
 # looks for atomik-plugin-scan and atomik-plugin-host beside its own executable, resolved with
 # std::env::current_exe(), which on Linux is the target of /proc/self/exe: a symlink is followed,
-# so the siblings are found in /opt/atomik-rack however the program was started.
+# so the siblings are found in /opt/atomik-rack however the program was started. The factory
+# library is /opt/atomik-rack/factory, found the same way.
 set -eu
 label="$1"
 bins="atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host"
@@ -33,6 +34,8 @@ for bin in $bins; do
   strip --strip-unneeded "$opt/$bin" 2> /dev/null || true
   ln -s "../../opt/atomik-rack/$bin" "$root/usr/bin/$bin"
 done
+
+cp -R factory "$opt/factory"
 
 cat > "$root/usr/share/applications/atomik-rack.desktop" <<'DESKTOP'
 [Desktop Entry]
@@ -101,6 +104,7 @@ CONTROL
 
 find "$root" -type d -exec chmod 0755 {} +
 find "$root/usr/share" -type f -exec chmod 0644 {} +
+find "$opt/factory" -type f -exec chmod 0644 {} +
 mkdir -p dist
 dpkg-deb --root-owner-group --build "$root" "$out"
 dpkg-deb --info "$out"

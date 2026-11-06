@@ -218,6 +218,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         crate::settings::TargetOs::current(),
         &|k| std::env::var_os(k),
     ));
+    let factory_folder = crate::factory::locate();
+    shell.set_factory_folder(factory_folder.clone());
     // Creating a plugin blocks this thread: show LOADING one frame before it starts.
     shell.core_mut().set_plugin_load_paints_first(true);
     // A save writes beside the window instead of freezing it.
@@ -336,6 +338,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
                 crate::settings::TargetOs::current(),
                 &|k| std::env::var_os(k),
             ));
+            song.set_factory_folder(factory_folder.clone());
             song.core_mut().set_plugin_load_paints_first(true);
             song.core_mut().set_background_save(true);
             song.start_with_default_song();

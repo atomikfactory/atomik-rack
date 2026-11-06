@@ -1,0 +1,62 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.poly-synth",
+      "name": "Poly Synth", "folded": false, "patch": "Warm Drift Pad",
+      "params": {
+        "chorus.depth": 0.5,
+        "chorus.mix": 0.35,
+        "chorus.rate": 0.4,
+        "drift": 0.4,
+        "env.amp.attack": 600,
+        "env.amp.decay": 800,
+        "env.amp.release": 1400,
+        "env.amp.sustain": 0.8,
+        "env.filter.attack": 900,
+        "env.filter.decay": 1500,
+        "env.filter.sustain": 0.4,
+        "filter.cutoff": 1400,
+        "filter.env_amount": 0.25,
+        "filter.key_track": 0.4,
+        "filter.resonance": 0.15,
+        "lfo.rate": 0.25,
+        "lfo.to_cutoff": 0.4,
+        "lfo.wave": 0,
+        "master.level": -4,
+        "osc.mix": 0.5,
+        "osc1.fine": -6,
+        "osc1.wave": 0,
+        "osc2.fine": 9,
+        "osc2.wave": 0,
+        "spread": 0.6
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

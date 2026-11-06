@@ -47,12 +47,12 @@ Jobs of `build.yml`:
 
 | Platform | File | Contents |
 | --- | --- | --- |
-| Windows x86-64 | `atomik-rack-<version>-windows-x86_64-setup.exe` | Inno Setup installer: the five programs in `Program Files\Atomik Rack`, a Start menu shortcut, an optional desktop icon, an uninstaller, the `.atomik` file association (a task, on by default) and the licence page. Per machine by default, per user on request. |
-| Windows x86-64 | `atomik-rack-<version>-windows-x86_64.zip` | folder with the five `.exe` files, `LICENSE`, `README.md`, `CHANGELOG.md` |
+| Windows x86-64 | `atomik-rack-<version>-windows-x86_64-setup.exe` | Inno Setup installer: the five programs and the `factory` library folder in `Program Files\Atomik Rack`, a Start menu shortcut, an optional desktop icon, an uninstaller, the `.atomik` file association (a task, on by default) and the licence page. Per machine by default, per user on request. |
+| Windows x86-64 | `atomik-rack-<version>-windows-x86_64.zip` | folder with the five `.exe` files, `factory/`, `LICENSE`, `README.md`, `CHANGELOG.md` |
 | macOS (Apple Silicon and Intel) | `atomik-rack-<version>-macos-universal.dmg` | disk image with `Atomik Rack.app` and an Applications link |
-| macOS (Apple Silicon and Intel) | `atomik-rack-<version>-macos-universal.zip` | folder with `Atomik Rack.app`, `LICENSE`, `README.md`, `CHANGELOG.md` |
-| Debian, Ubuntu (x86-64) | `atomik-rack_<version>_amd64.deb` | package `atomik-rack`: the programs in `/opt/atomik-rack`, links in `/usr/bin`, a desktop entry and the `.atomik` file type |
-| Linux x86-64 | `atomik-rack-<version>-linux-x86_64.tar.gz` | folder with the five programs, `LICENSE`, `README.md`, `CHANGELOG.md` |
+| macOS (Apple Silicon and Intel) | `atomik-rack-<version>-macos-universal.zip` | folder with `Atomik Rack.app` (the factory library is in its `Contents/Resources/factory`), `LICENSE`, `README.md`, `CHANGELOG.md` |
+| Debian, Ubuntu (x86-64) | `atomik-rack_<version>_amd64.deb` | package `atomik-rack`: the programs and `factory/` in `/opt/atomik-rack`, links in `/usr/bin`, a desktop entry and the `.atomik` file type |
+| Linux x86-64 | `atomik-rack-<version>-linux-x86_64.tar.gz` | folder with the five programs, `factory/`, `LICENSE`, `README.md`, `CHANGELOG.md` |
 
 `<version>` is the tag (for example `v0.1.0`; the `.deb` name leaves out the `v`), `dev-<shortsha>` for a manual run, or `nightly-<YYYYMMDD>-<shortsha>` for a nightly. Every artifact has a `.sha256` file; the release also has one `SHA256SUMS` over all of them (and `SHA256SUMS.asc`, a GPG signature of it, when signed).
 
