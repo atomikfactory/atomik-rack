@@ -2664,16 +2664,17 @@ impl<S: EngineSink> AppCore<S> {
     /// has.
     pub fn strip_menu(&self, pane: Pane) -> crate::commands::StripMenu {
         let strips = self.strips_for_vca(pane);
+        let settings = self.settings_strips(pane);
         let doc = self.doc();
         crate::commands::StripMenu {
             can_polarity: !strips.is_empty(),
             can_bypass: strips
                 .iter()
                 .any(|s| atomik_model::inserts_bypassed(doc, &self.registry, s).is_some()),
-            can_copy_settings: !strips.is_empty(),
-            can_paste_settings: !strips.is_empty() && self.has_copied_settings(),
-            can_reset: !strips.is_empty(),
-            can_clear_inserts: strips
+            can_copy_settings: !settings.is_empty(),
+            can_paste_settings: !settings.is_empty() && self.has_copied_settings(),
+            can_reset: !settings.is_empty(),
+            can_clear_inserts: settings
                 .iter()
                 .any(|s| !atomik_model::insert_chain(doc, &self.registry, s).is_empty()),
             meter_mode: self.console.meter_mode(),
@@ -4010,6 +4011,10 @@ mod clipboard_tests;
 #[cfg(test)]
 #[path = "app_core_console_select_tests.rs"]
 mod console_select_tests;
+
+#[cfg(test)]
+#[path = "app_core_master_select_tests.rs"]
+mod master_select_tests;
 
 #[cfg(test)]
 #[path = "app_core_strips_tests.rs"]

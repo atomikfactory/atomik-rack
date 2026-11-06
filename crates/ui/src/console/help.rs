@@ -124,6 +124,13 @@ impl ConsoleView {
                 let (_, r) = l.output.iter().find(|(_, r)| r.contains(lp))?;
                 help(*r + origin, "Highest peak so far: click to reset the peaks")
             }
+            Hit::MasterName => {
+                let l = self.master_layout.as_ref()?;
+                help(
+                    l.name + Vec2::new(self.master_x()?, top),
+                    "Click to select the master: its settings can then be copied and pasted",
+                )
+            }
             Hit::Picker(slot) => {
                 let l = self.master_layout.as_ref()?;
                 let (_, r) = l.return_pickers.iter().find(|(s, _)| *s == slot)?;

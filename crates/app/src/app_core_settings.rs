@@ -9,6 +9,19 @@ use crate::commands::SettingsSection;
 use atomik_model::{ChannelSettingsClip, ConsoleCommand};
 
 impl<S: EngineSink> AppCore<S> {
+    /// The strips the settings commands act on: the master while it is the console's selection
+    /// (it is selected apart from the channels and the buses), else what [`Self::strips_for_vca`]
+    /// gives for `pane`.
+    pub(super) fn settings_strips(&self, pane: Pane) -> Vec<DeviceKey> {
+        if pane == Pane::Console
+            && self.console.master_selected()
+            && let Some(master) = self.doc().console.master.clone()
+        {
+            return vec![master];
+        }
+        self.strips_for_vca(pane)
+    }
+
     /// Whether channel settings have been copied.
     pub fn has_copied_settings(&self) -> bool {
         self.settings_clip.is_some()
@@ -22,8 +35,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Mixer > Copy Channel Settings: the settings of `sections` of the first selected strip.
     /// False, with a message, when nothing is selected.
     pub fn copy_strip_settings(&mut self, pane: Pane, sections: SettingsSection) -> bool {
-        let Some(strip) = self.strips_for_vca(pane).into_iter().next() else {
-            self.reject("Select a channel to copy the settings of".into());
+        let Some(strip) = self.settings_strips(pane).into_iter().next() else {
+            self.reject("Select a channel, a bus or the master to copy the settings of".into());
             return false;
         };
         match self
@@ -49,9 +62,11 @@ impl<S: EngineSink> AppCore<S> {
             self.reject("Copy the settings of a channel first".into());
             return false;
         };
-        let strips = self.strips_for_vca(pane);
+        let strips = self.settings_strips(pane);
         if strips.is_empty() {
-            self.reject("Select one or more channels to paste the settings onto".into());
+            self.reject(
+                "Select one or more channels, or the master, to paste the settings onto".into(),
+            );
             return false;
         }
         self.apply_command(Command::Console(ConsoleCommand::PasteSettings {
@@ -64,7 +79,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Mixer > Reset Channel: every selected strip back to a fresh one, its routing kept, in one
     /// undo step. False, with a message, when nothing is selected.
     pub fn reset_strips(&mut self, pane: Pane) -> bool {
-        let strips = self.strips_for_vca(pane);
+        let strips = self.settings_strips(pane);
         if strips.is_empty() {
             self.reject("Select one or more channels to reset".into());
             return false;
@@ -84,7 +99,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Mixer > Clear Inserts: the insert chains of the selected strips emptied, in one undo
     /// step. False, with a message, when nothing is selected.
     pub fn clear_inserts(&mut self, pane: Pane) -> bool {
-        let strips = self.strips_for_vca(pane);
+        let strips = self.settings_strips(pane);
         if strips.is_empty() {
             self.reject("Select one or more channels to clear the inserts of".into());
             return false;

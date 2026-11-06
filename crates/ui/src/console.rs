@@ -299,6 +299,8 @@ enum Hit {
     InsertRemove(Target, usize),
     /// A peak readout of the master's OUTPUT section: a click resets the peaks.
     PeakReset,
+    /// The master's name plate: a click selects the master.
+    MasterName,
     /// The bypass (B) part of a filled insert slot whose effect has a bypass.
     InsertBypass(Target, usize),
     Menu(usize),
@@ -834,6 +836,9 @@ pub struct ConsoleView {
     /// Selected strips (view state) and the last clicked one (the range anchor).
     selection: BTreeSet<DeviceKey>,
     anchor: Option<DeviceKey>,
+    /// The master is the selection (alone: a click on its name plate), so its settings can be
+    /// copied and pasted. Any change of the strip selection clears it.
+    master_selected: bool,
     /// Link faders: a level of a strip in a VCA group moves the whole group's levels.
     link_faders: bool,
     /// The strip the arrow keys moved to last (the end of a range the Shift arrows extend).
@@ -920,6 +925,7 @@ impl ConsoleView {
             pointer: Point::ZERO,
             selection: BTreeSet::new(),
             anchor: None,
+            master_selected: false,
             link_faders: false,
             cursor: None,
             rename: None,
@@ -1345,7 +1351,30 @@ impl ConsoleView {
         for s in &mut self.strips {
             s.selected = self.selection.contains(&s.key);
         }
+        self.master_selected = false;
+        if let Some(m) = &mut self.master {
+            m.selected = false;
+        }
         self.repaint = true;
+    }
+
+    /// Whether the master is the selection (see [`Self::select_master`]).
+    pub fn master_selected(&self) -> bool {
+        self.master_selected && self.master.is_some()
+    }
+
+    /// Selects the master alone: the strip selection is cleared. The channel settings commands
+    /// then act on the master. Selecting any strip takes the master out again.
+    pub fn select_master(&mut self) {
+        if self.master.is_none() {
+            return;
+        }
+        self.selection.clear();
+        self.mark_selection();
+        self.master_selected = true;
+        if let Some(m) = &mut self.master {
+            m.selected = true;
+        }
     }
 
     /// The ids of the VCA groups shown, in strip order (after the buses).
@@ -1786,6 +1815,12 @@ impl ConsoleView {
         Some((l.name + Vec2::new(self.strip_x(i), self.area_top())).center())
     }
 
+    /// Centre of the master's name plate (a click selects the master).
+    pub fn master_name_center(&self) -> Option<Point> {
+        let l = self.master_layout.as_ref()?;
+        Some((l.name + Vec2::new(self.master_x()?, self.area_top())).center())
+    }
+
     /// Centre of the RACK jump button of a channel strip, when it has one.
     pub fn rack_button_center(&self, channel: &DeviceKey) -> Option<Point> {
         self.jump_center(channel, Jump::Rack)
@@ -1950,6 +1985,9 @@ impl ConsoleView {
                     .position(|c| c.rect.x0 >= l.fader_x && c.rect.contains(lp))
                 {
                     return Hit::Ctrl(Target::Master, i);
+                }
+                if l.name.contains(lp) {
+                    return Hit::MasterName;
                 }
                 return Hit::Empty;
             }
@@ -2362,6 +2400,7 @@ impl ConsoleView {
                     m.insert_scroll = next_insert_scroll(m.insert_scroll, was, m.inserts.len());
                     (m.insert_bypass, m.bypass_all) = bypass_view(doc, registry, k, &m.inserts);
                     let mut extra = names.clone();
+                    extra.push(format!("{}", m.selected));
                     extra.push(format!("{:?} {:?}", m.insert_bypass, m.bypass_all));
                     extra.push(format!("{}", m.insert_scroll));
                     extra.push(format!("{:?}", m.driven));
@@ -2729,6 +2768,7 @@ impl ConsoleView {
             (Hit::Vca(i, part), PointerButton::Primary) => self.vca_down(i, part, clicks, out),
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
             (Hit::PeakReset, PointerButton::Primary) => self.reset_peaks(),
+            (Hit::MasterName, PointerButton::Primary) => self.select_master(),
             (Hit::Insert(t, slot), PointerButton::Primary) => {
                 self.insert_click(t, slot, pos, doc, registry, out)
             }
@@ -5983,7 +6023,7 @@ fn record_master(
         "MAIN OUT",
         t.highlight,
         false,
-        false,
+        m.selected,
         false,
     );
 }
