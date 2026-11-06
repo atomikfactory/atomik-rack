@@ -24,6 +24,17 @@ may break APIs and the patch and project formats.
   there, named versions, protected versions and everything outside the folder stay. Move Project carries the
   versions along (copied, compared byte for byte, then removed from the old place); Save As starts a history of its
   own; project archives and Collect Files leave the versions out. The command count is 469.
+- **Compare versions.** The versions panel has a COMPARE button (and the C key) that lists what differs between the
+  chosen version and the song as it is now, unsaved changes included. Shift-click on a second row (or Shift with
+  Up and Down) marks it, and then the two versions are compared, the older one first. The result replaces the list
+  with a scrollable text in four sections, each shown only when it has lines: Song (tempo, meter, length in bars and
+  minutes, sample rate, master tune, title, author, markers and sections), Tracks (added, removed and renamed
+  tracks; for the others the clip, note and automation lane counts, mute, solo, freeze and the insert effects that
+  came or went), Devices (devices added and removed, with the track a device of an insert chain is on, renamed
+  devices and how many parameters changed on each) and Mixer (strips, buses and groups added, removed or renamed;
+  fader, pan, mute and solo of a strip; snapshots and FX returns). Back, Enter or Esc returns to the list. Nothing is
+  kept or changed by a comparison, and audio is not compared. There is no new command (469) and the project format
+  is unchanged (44).
 - **Library browser tidy-up.** Audio rows of the file browser draw a small waveform at the end of the name column
   (48 bars of the first thirty seconds of the file, on a square-root scale so quiet files show). A worker reads it
   for the visible rows only, newest request first, from the loudness picture the info pane already uses; the answer

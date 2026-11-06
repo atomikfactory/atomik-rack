@@ -494,7 +494,10 @@ automatic, unprotected versions beyond the number to keep, and a name in the ind
 folder is dropped when the index is read, so no delete can reach outside it. `Job::run` in `app_core_save.rs` keeps
 the file a save replaces (`keep_replaced_file`: not when it equals the new text or the newest version, failures only
 logged), and the audio the kept versions list (`scan_assets` of the text) joins the set the orphan tidy keeps.
-`AppCore::save_version`, `versions`, `set_version_protected` and `restore_version` are in `app_core_versions.rs`; the
+`AppCore::save_version`, `versions`, `set_version_protected`, `restore_version` and `compare_version` are in
+`app_core_versions.rs`; `compare_version` loads the two songs and hands them to `compare_docs`
+([`model/src/doc_compare.rs`](../crates/model/src/doc_compare.rs)), a pure diff of two `RackDoc`s into `DocDiff`
+sections (song, tracks, devices, mixer) of short text lines, which the panel shows with `VersionsView::show_report`; the
 panel is [`ui/src/versions_panel.rs`](../crates/ui/src/versions_panel.rs) (`VersionsView`, `UiAction::Versions`), opened by
 `file.save_version` and `file.versions`. Restore after the question about unsaved changes is
 `PendingAction::RestoreVersion`. Archives and Collect Files write only the project text and audio, so they leave the
