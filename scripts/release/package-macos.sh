@@ -26,6 +26,9 @@ app="dist/$name/Atomik Rack.app"
 macos="$app/Contents/MacOS"
 mkdir -p "$macos" "$app/Contents/Resources"
 cp assets/icon/atomik-rack.icns "$app/Contents/Resources/atomik-rack.icns"
+# The factory library: the app finds Contents/Resources/factory from Contents/MacOS. It is
+# copied before signing, so the signature seals it.
+cp -R factory "$app/Contents/Resources/factory"
 for bin in $bins; do
   lipo -create "$arm/$bin" "$x64/$bin" -output "$macos/$bin"
   chmod +x "$macos/$bin"

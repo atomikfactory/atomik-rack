@@ -80,6 +80,7 @@ Source: "{#SourceDir}\atomik-plugin-host.exe"; DestDir: "{app}"; Flags: ignoreve
 Source: "{#RepoDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoDir}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RepoDir}\factory\*"; DestDir: "{app}\factory"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Atomik Rack"; Filename: "{app}\atomik.exe"; IconFilename: "{app}\atomik.exe"
