@@ -1042,3 +1042,125 @@ fn a_comp_drag_in_an_unselected_track_is_not_linked() {
         [SongCommand::SetCompSegment { group: 1, .. }]
     ));
 }
+
+// ------------------------------------------------------------------ the saved link
+
+#[test]
+fn the_menu_links_the_groups_of_the_selected_tracks_and_a_saved_link_combs_them() {
+    let (mut d, reg, mut v) = linked_setup();
+    let at = v.take_point(1, 0, 4 * BAR + PPQ).unwrap();
+    right_click(&d, &reg, &mut v, at);
+    assert!(
+        !v.menu_labels().iter().any(|l| l == "Unlink Take Group"),
+        "{:?}",
+        v.menu_labels()
+    );
+    let linked = pick_row(&d, &reg, &mut v, "Link With Selected Tracks");
+    assert_eq!(
+        song_commands(&linked),
+        [SongCommand::LinkTakeGroups { groups: vec![1, 2] }]
+    );
+    apply(&mut d, &reg, &linked);
+    v.sync(d.doc(), &reg);
+    // The link no longer needs the selection.
+    v.set_selected_track(None);
+    let a = v.take_point(1, 0, 4 * BAR + PPQ / 4).unwrap();
+    let b = v.take_point(1, 0, 5 * BAR - PPQ / 4).unwrap();
+    let actions = run(&d, &reg, &mut v, &[down(a), mv(b), up(b)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetLinkedComp {
+            groups: vec![1, 2],
+            take: 0,
+            start: 4 * BAR,
+            end: 5 * BAR
+        }]
+    );
+    // The strip says so, and the menu offers Unlink.
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    assert!(dl.texts().contains(&"Takes (3) linked"), "{:?}", dl.texts());
+    right_click(&d, &reg, &mut v, at);
+    let labels = v.menu_labels();
+    assert!(
+        labels.iter().any(|l| l == "Unlink Take Group"),
+        "{labels:?}"
+    );
+    let unlink = pick_row(&d, &reg, &mut v, "Unlink Take Group");
+    assert_eq!(
+        song_commands(&unlink),
+        [SongCommand::UnlinkTakeGroup { group: 1 }]
+    );
+    apply(&mut d, &reg, &unlink);
+    v.sync(d.doc(), &reg);
+    let a = v.take_point(1, 0, 4 * BAR + PPQ / 4).unwrap();
+    let b = v.take_point(1, 0, 5 * BAR - PPQ / 4).unwrap();
+    let actions = run(&d, &reg, &mut v, &[down(a), mv(b), up(b)]);
+    assert!(matches!(
+        song_commands(&actions).as_slice(),
+        [SongCommand::SetCompSegment { .. }]
+    ));
+}
+
+#[test]
+fn an_automation_lane_shows_its_take_rows_and_combs_them() {
+    let (mut d, reg, _) = setup();
+    d.apply(
+        Command::Song(SongCommand::AddAutomationLane {
+            device: key("keys"),
+            param: "filter.cutoff".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let lane = d.doc().song.track(&key("keys")).unwrap().lanes.len() - 1;
+    let pass = |from: f32, to: f32| atomik_model::Clip {
+        content: atomik_model::ClipContent::Automation(vec![
+            atomik_model::AutomationPoint {
+                tick: 0,
+                value: from,
+                curve: atomik_model::Curve::Linear,
+            },
+            atomik_model::AutomationPoint {
+                tick: BAR,
+                value: to,
+                curve: atomik_model::Curve::Linear,
+            },
+        ]),
+        ..notes_clip(50, 4 * BAR, 2 * BAR, Vec::new())
+    };
+    d.apply(
+        Command::Song(SongCommand::NewTakeGroup {
+            device: key("keys"),
+            lane,
+            takes: vec![pass(100.0, 900.0), pass(900.0, 100.0)],
+        }),
+        &reg,
+    )
+    .unwrap();
+    let id = d.doc().song.take_groups().last().unwrap().2.id;
+    let mut v = arrangement(d.doc(), &reg);
+    v.set_snap(Snap::Bar);
+    v.set_takes_open(id, true);
+    v.sync(d.doc(), &reg);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    let texts = dl.texts();
+    assert!(texts.contains(&"Takes (2)"), "{texts:?}");
+    assert!(texts.contains(&"Take 2 (active)"), "{texts:?}");
+    let a = v.take_point(id, 0, 4 * BAR + PPQ / 4).expect("a take row");
+    let b = v.take_point(id, 0, 5 * BAR - PPQ / 4).unwrap();
+    let actions = run(&d, &reg, &mut v, &[down(a), mv(b), up(b)]);
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetCompSegment {
+            group: id,
+            take: 0,
+            start: 4 * BAR,
+            end: 5 * BAR
+        }]
+    );
+    apply(&mut d, &reg, &actions);
+    let (_, _, g) = d.doc().song.take_group(id).unwrap();
+    assert_eq!(g.take_at(4 * BAR + 1), Some(0));
+}

@@ -1,5 +1,5 @@
-//! Take groups in the [`ArrangementView`]: a thin comp strip under the lane (a note lane or the
-//! audio lane) of a track that has a group, and, when it is opened, one row per take (stacked sub-lanes).
+//! Take groups in the [`ArrangementView`]: a thin comp strip under the lane (a note lane, the
+//! audio lane or an automation lane) of a track that has a group, and, when it is opened, one row per take (stacked sub-lanes).
 //!
 //! * The **group row** (`TAKE_GROUP_HEIGHT` tall) shows the comp: each segment in the colour of
 //!   its take. Its header has a chevron that opens or closes the take rows, the take count, and a
@@ -14,10 +14,13 @@
 //! * With the **razor** tool a click in a take row cuts the comp there: from the click to the end
 //!   of the segment under it (or to the next segment, or the end of the group when the comp is
 //!   silent there) plays from that take. A drag with the razor comps the range like a plain drag.
-//! * **Linked comping**: when several tracks are selected and the track of the group is one of
-//!   them, a comp drag or a razor cut in one take row applies the same take number and range to
-//!   the groups on the same lane of every selected track (`SetLinkedComp`, one undo step); the
-//!   rows of those groups preview the range.
+//! * **Linked comping**: when the group is linked to others (saved with the project: Link With
+//!   Selected Tracks in a take menu, `LinkTakeGroups`), or when several tracks are selected and
+//!   the track of the group is one of them, a comp drag or a razor cut in one take row applies the
+//!   same take number and range to the linked groups, or to the groups on the same lane of every
+//!   selected track (`SetLinkedComp`, one undo step); the rows of those groups preview the range.
+//!   A saved link wins over the selection; Unlink Take Group drops it.
+//! * An **automation take** row draws the take's points as a line.
 //! * The **comp strip** is edited too. A drag across it silences the range (`SetCompSilence`); a
 //!   drag of a cut between two takes moves the cut (`SetCompSegment` for the take that grows);
 //!   when a cut has a crossfade its tail has a handle that sets the length (`SetCompXfade`). A
@@ -200,7 +203,7 @@ impl ArrangementView {
         }
     }
 
-    /// The rows that follow lane `lane` (a note lane or the audio lane) of track `ti`: per take
+    /// The rows that follow lane `lane` of track `ti`: per take
     /// group its strip and, when open, the take rows. Heights are fixed (they do not follow the
     /// vertical zoom).
     pub(super) fn take_rows(&self, ti: usize, lane: usize) -> Vec<(RowKind, f64)> {
@@ -238,10 +241,34 @@ impl ArrangementView {
         self.tk.open.retain(|id| song.take_group(*id).is_some());
     }
 
-    /// The groups a comp gesture on group `group` also applies to: those on the same lane of
-    /// the other selected tracks, when more than one track is selected and the group's own track
-    /// is one of them. Empty otherwise.
+    /// The groups a comp gesture on group `group` also applies to: the groups saved as linked
+    /// to it, else those on the same lane of the other selected tracks (when more than one track
+    /// is selected and the group's own track is one of them). Empty otherwise.
     pub(super) fn linked_groups(&self, group: u32) -> Vec<u32> {
+        let saved = self.saved_link(group);
+        if saved.is_empty() {
+            self.selection_groups(group)
+        } else {
+            saved
+        }
+    }
+
+    /// The other groups that share group `group`'s saved link.
+    fn saved_link(&self, group: u32) -> Vec<u32> {
+        let Some(tag) = self.group(group).and_then(|g| g.link) else {
+            return Vec::new();
+        };
+        self.song
+            .take_groups()
+            .filter(|(_, _, g)| g.link == Some(tag) && g.id != group)
+            .map(|(_, _, g)| g.id)
+            .take(atomik_model::MAX_LINKED_GROUPS - 1)
+            .collect()
+    }
+
+    /// The groups on the same lane of the other selected tracks: the link a selection of several
+    /// tracks makes (empty unless the group's own track is one of two or more selected).
+    pub(super) fn selection_groups(&self, group: u32) -> Vec<u32> {
         let Some((track, lane, _)) = self.song.take_group(group) else {
             return Vec::new();
         };
@@ -738,6 +765,7 @@ impl ArrangementView {
                 }
             }
         }
+        rows.extend(self.link_rows(group));
         let used = |t: usize| g.comp.iter().any(|s| s.take == t);
         let unused = (0..n).filter(|t| !used(*t)).count();
         if unused > 0 && unused < n {
@@ -759,6 +787,38 @@ impl ArrangementView {
         let commands = all.into_iter().map(|(_, c)| c).collect();
         let menu = super::Menu::new(device, super::MenuKind::Takes(commands), items, pos, 0);
         self.open_menu(menu);
+    }
+
+    /// The menu rows that save or drop the link of group `group`: Link With Selected Tracks
+    /// (the groups of the selected tracks join the ones already linked to it, under one new
+    /// link) and Unlink.
+    fn link_rows(&self, group: u32) -> Vec<(String, SongCommand)> {
+        let mut rows = Vec::new();
+        let Some(g) = self.group(group) else {
+            return rows;
+        };
+        let mut members = vec![group];
+        members.extend(self.saved_link(group));
+        let mut joined = false;
+        for id in self.selection_groups(group) {
+            if !members.contains(&id) && members.len() < atomik_model::MAX_LINKED_GROUPS {
+                members.push(id);
+                joined = true;
+            }
+        }
+        if members.len() > 1 && (joined || g.link.is_none()) {
+            rows.push((
+                "Link With Selected Tracks".into(),
+                SongCommand::LinkTakeGroups { groups: members },
+            ));
+        }
+        if g.link.is_some() {
+            rows.push((
+                "Unlink Take Group".into(),
+                SongCommand::UnlinkTakeGroup { group },
+            ));
+        }
+        rows
     }
 
     /// The rows of a take menu that work on the takes clipboard, a file or a take editor: copy
@@ -947,6 +1007,8 @@ impl ArrangementView {
                             &geo,
                         );
                     }
+                } else if matches!(clip.content, ClipContent::Automation(_)) {
+                    self.paint_take_curve(c, lr, clip, mix(col, st.base.text, 0.5));
                 } else {
                     self.paint_take_notes(c, lr, clip, mix(col, st.base.text, 0.5));
                 }
@@ -1053,6 +1115,40 @@ impl ArrangementView {
         }
     }
 
+    /// A mini view of an automation take: its points as a line, scaled to the take's own lowest
+    /// and highest value (the line holds the last value to the take's end).
+    fn paint_take_curve(&self, c: &mut dyn Canvas, lr: Rect, clip: &Clip, col: Color) {
+        let ClipContent::Automation(points) = &clip.content else {
+            return;
+        };
+        let (lo, hi) = points.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+            (lo.min(p.value), hi.max(p.value))
+        });
+        if points.is_empty() || !lo.is_finite() || !hi.is_finite() {
+            return;
+        }
+        let span = f64::from((hi - lo).max(f32::EPSILON));
+        let (y0, y1) = (lr.y0 + 5.0, lr.y1 - 5.0);
+        let at = |tick: i64, value: f32| {
+            let x = self.axis.tick_to_x(clip.start + tick - clip.offset);
+            let y = y1 - (f64::from(value - lo) / span) * (y1 - y0);
+            pt(x, y)
+        };
+        let mut path = BezPath::new();
+        for (i, p) in points.iter().enumerate() {
+            let q = at(p.tick, p.value);
+            if i == 0 {
+                path.move_to(q);
+            } else {
+                path.line_to(q);
+            }
+        }
+        if let Some(last) = points.last() {
+            path.line_to(at(clip.length + clip.offset, last.value));
+        }
+        c.stroke_with(path, 1.0, col);
+    }
+
     /// Paints the header (track list side) of a group row or a take row.
     pub(super) fn paint_take_header(&self, c: &mut dyn Canvas, kind: &RowKind, hr: Rect) {
         let st = &self.st;
@@ -1079,7 +1175,15 @@ impl ArrangementView {
                 c.fill_with(tri, if hovered { t.text } else { t.text_muted });
                 sp::label(
                     c,
-                    &format!("Takes ({})", g.takes.len()),
+                    &format!(
+                        "Takes ({}){}",
+                        g.takes.len(),
+                        if self.saved_link(*group).is_empty() {
+                            ""
+                        } else {
+                            " linked"
+                        }
+                    ),
                     hr.x0 + 28.0,
                     cy + 3.5,
                     9.5,

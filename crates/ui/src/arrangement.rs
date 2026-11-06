@@ -2128,11 +2128,9 @@ impl ArrangementView {
                     h: lane_h,
                 });
                 y += lane_h;
-                if li < notes {
-                    for (kind, h) in self.take_rows(ti, li) {
-                        rows.push(Row { kind, y, h });
-                        y += h;
-                    }
+                for (kind, h) in self.take_rows(ti, li) {
+                    rows.push(Row { kind, y, h });
+                    y += h;
                 }
             }
         }
@@ -3219,7 +3217,17 @@ impl ArrangementView {
             Hit::TakePick(..) | Hit::TakeDelete(..) | Hit::TakeSpan(..) | Hit::TakeStrip(_)
                 if button == PointerButton::Secondary =>
             {
-                self.selected_track = None;
+                // Several selected tracks stay selected under the menu: it can link their groups.
+                let group = match hit {
+                    Hit::TakePick(g, _)
+                    | Hit::TakeDelete(g, _)
+                    | Hit::TakeSpan(g, _)
+                    | Hit::TakeStrip(g) => g,
+                    _ => 0,
+                };
+                if self.selection_groups(group).is_empty() {
+                    self.selected_track = None;
+                }
                 self.takes_menu(&hit, pos);
             }
             Hit::TakeToggle(_)
