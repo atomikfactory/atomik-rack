@@ -1056,7 +1056,7 @@ impl<S: EngineSink> AppCore<S> {
                 paths,
                 device,
                 at_key,
-            } => self.import_samples(paths, device, at_key),
+            } => self.drop_samples(paths, device, at_key),
             UiAction::AuditionVelocity {
                 device,
                 key,
