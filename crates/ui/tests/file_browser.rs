@@ -405,6 +405,36 @@ fn space_toggles_preview_of_the_selected_file() {
 }
 
 #[test]
+fn space_previews_a_clip_row_and_stops_it_but_selecting_it_stays_silent() {
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    v.set_tree_fraction(0.4);
+    v.set_focused(true);
+    v.set_location(Place::Folder(PathBuf::from("/lib")));
+    let mut clip = audio("riff.atomikclip");
+    clip.kind = FileKind::Clip;
+    clip.info = None;
+    v.set_rows(vec![clip]);
+    let mut v = settled(v);
+    // A click selects the clip without playing it (a library clip plays through the track).
+    assert!(run(&mut v, &[down(row_pt(0)), up(row_pt(0))]).is_empty());
+    assert_eq!(
+        run(&mut v, &[key(Key::Space)]),
+        vec![BrowseAction::Preview(p("riff.atomikclip"))]
+    );
+    v.set_preview(Some(p("riff.atomikclip")), 0.4);
+    assert_eq!(
+        run(&mut v, &[key(Key::Space)]),
+        vec![BrowseAction::StopPreview]
+    );
+    // Enter still loads it.
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::Load(p("riff.atomikclip"))]
+    );
+}
+
+#[test]
 fn escape_stops_the_preview_and_enter_acts_on_the_cursor() {
     let mut v = settled(view());
     assert_eq!(
@@ -1530,6 +1560,12 @@ fn space_and_arrow_keys_never_preview_an_item() {
     click(&mut v, 0);
     assert!(run(&mut v, &[key(Key::Space)]).is_empty());
     assert!(run(&mut v, &[key(Key::Down), key(Key::Down), key(Key::Down)]).is_empty());
+    // The cursor is on the clip now: Space plays it (the arrows alone never do).
+    assert_eq!(
+        run(&mut v, &[key(Key::Space)]),
+        vec![BrowseAction::Preview(p("Riff.atomikclip"))]
+    );
+    assert!(run(&mut v, &[key(Key::Down)]).is_empty());
     assert!(run(&mut v, &[key(Key::Space)]).is_empty());
 }
 
