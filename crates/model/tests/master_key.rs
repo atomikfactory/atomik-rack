@@ -149,13 +149,19 @@ fn a_cable_into_any_other_master_jack_leaves_the_key_alone() {
 }
 
 #[test]
-fn a_cable_into_a_channel_key_in_changes_no_param() {
+fn a_cable_into_a_channel_key_in_switches_that_channels_key_on_and_nothing_else() {
     let (mut d, r) = project();
     let before: Vec<_> = d.doc().devices.iter().map(|x| x.params.clone()).collect();
     run(&mut d, &r, [connect("fx:out_l", "channel:key_in")]);
     let after: Vec<_> = d.doc().devices.iter().map(|x| x.params.clone()).collect();
-    assert_eq!(before, after);
-    assert_eq!(key_on(&d, &r), 0.0);
+    let changed: Vec<usize> = (0..before.len())
+        .filter(|i| before[*i] != after[*i])
+        .collect();
+    assert_eq!(changed.len(), 1, "only the channel changes");
+    let channel = &d.doc().devices[changed[0]];
+    assert_eq!(channel.key, key("channel"));
+    assert_eq!(channel.params.get("key.on"), Some(&1.0));
+    assert_eq!(key_on(&d, &r), 0.0, "the master's switch is its own");
 }
 
 #[test]

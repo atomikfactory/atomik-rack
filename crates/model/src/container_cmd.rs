@@ -465,7 +465,7 @@ pub(crate) fn connect(
     match rules::cable_scope(cable)? {
         None => {
             rules::check_cable(doc, registry, cable)?;
-            // A cable into the master's `key_in` switches the compressor key on, same step.
+            // A cable into the `key_in` of the master, a channel or a bus switches its key on, same step.
             Ok(match rules::key_on_edit(doc, registry, cable) {
                 Some(key_on) => Edit::Compound(vec![Edit::Connect(cable.clone()), key_on]),
                 None => Edit::Connect(cable.clone()),

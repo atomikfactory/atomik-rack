@@ -1,15 +1,18 @@
 //! Copying a strip's settings onto other strips, resetting a strip and clearing its inserts.
 //!
-//! A [`ChannelSettingsClip`] holds what a copy took from one channel or bus: the params of the
-//! sections that were copied (the same sections a mixer snapshot recalls, see
+//! A [`ChannelSettingsClip`] holds what a copy took from one channel, bus or the master: the
+//! params of the sections that were copied (the same sections a mixer snapshot recalls, see
 //! [`SnapshotScope`]) and, when the inserts are one of them, the effects of the insert chain
 //! with their params. It is plain data: the app keeps it on its clipboard, nothing is saved in
 //! the project.
 //!
 //! Pasting sets every param of the clip's sections on the target, a param the clip does not
 //! hold going to its default, and rebuilds the chain from new effect devices; the routing, the
-//! name, the source and the VCA membership are never touched. Everything is planned on a
-//! scratch document, so a refusal changes nothing, and is one undo step.
+//! name, the source and the VCA membership are never touched. The master has params of its own
+//! (the returns, the bus compressor, the monitor), so a copy of the master pastes onto the
+//! master only (of this song or, through the app's clipboard, of another), and a copy of a
+//! channel or a bus never onto the master. Everything is planned on a scratch document, so a
+//! refusal changes nothing, and is one undo step.
 
 use crate::console::{ConsoleCommand, InsertEffect, OutputDest, is_console_type};
 use crate::console_cmd::{Planner, bad};
@@ -33,6 +36,8 @@ pub struct InsertClip {
 /// The settings copied from a channel or a bus (see the module documentation).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChannelSettingsClip {
+    /// The copy is the master's (it pastes onto the master only).
+    pub master: bool,
     /// The sections the copy took.
     pub sections: SnapshotScope,
     /// The strip's params of those sections that are not at their default.
@@ -47,6 +52,7 @@ impl ChannelSettingsClip {
     pub fn restricted(&self, sections: SnapshotScope) -> Self {
         let keep = |p: &str| sections.covers_param(p) && self.sections.covers_param(p);
         Self {
+            master: self.master,
             sections,
             params: self
                 .params
@@ -63,26 +69,32 @@ impl ChannelSettingsClip {
     }
 }
 
-/// `strip` must be a console channel or an output bus.
-fn check_strip(doc: &RackDoc, strip: &DeviceKey) -> Result<(), ModelError> {
-    if doc.console.channel_index(strip).is_none() && doc.console.bus_index(strip).is_none() {
-        return Err(bad(format!("{strip} is not a console channel or bus")));
+/// `strip` must be a console channel, an output bus or the master; whether it is the master.
+fn check_strip(doc: &RackDoc, strip: &DeviceKey) -> Result<bool, ModelError> {
+    let master = doc.console.master.as_ref() == Some(strip);
+    if !master
+        && doc.console.channel_index(strip).is_none()
+        && doc.console.bus_index(strip).is_none()
+    {
+        return Err(bad(format!(
+            "{strip} is not a console channel, bus or the master"
+        )));
     }
-    Ok(())
+    Ok(master)
 }
 
 impl RackDoc {
-    /// Copies the settings of `strip` (a channel or a bus) in `sections`.
+    /// Copies the settings of `strip` (a channel, a bus or the master) in `sections`.
     ///
     /// # Errors
-    /// `strip` is no channel or bus, or its type is unknown.
+    /// `strip` is no channel, bus or master, or its type is unknown.
     pub fn copy_channel_settings(
         &self,
         registry: &Registry,
         strip: &DeviceKey,
         sections: SnapshotScope,
     ) -> Result<ChannelSettingsClip, ModelError> {
-        check_strip(self, strip)?;
+        let master = check_strip(self, strip)?;
         let device = rules::device(self, strip)?;
         let desc = rules::descriptor(registry, &device.type_id)?;
         let params = kept_params(desc, true, false)
@@ -123,6 +135,7 @@ impl RackDoc {
             }
         }
         Ok(ChannelSettingsClip {
+            master,
             sections,
             params,
             inserts,
@@ -214,9 +227,16 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                 return Err(bad("there is no strip to paste the settings onto"));
             }
             for strip in &strips {
-                check_strip(p.doc(), strip)?;
+                let master = check_strip(p.doc(), strip)?;
                 if !is_console_type(p.type_of(strip)?) {
                     return Err(bad(format!("{strip} is not a console strip")));
+                }
+                if master != clip.master {
+                    return Err(bad(if master {
+                        "Settings copied from a channel or a bus do not paste onto the master"
+                    } else {
+                        "Settings copied from the master paste onto the master only"
+                    }));
                 }
                 set_strip_params(p, strip, clip.sections, &clip.params)?;
                 if clip.sections.covers_inserts() {
@@ -228,10 +248,10 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             strip,
             keep_routing,
         } => {
-            check_strip(p.doc(), &strip)?;
+            let master = check_strip(p.doc(), &strip)?;
             set_strip_params(p, &strip, SnapshotScope::ALL, &BTreeMap::new())?;
             clear_chain(p, &strip)?;
-            if !keep_routing {
+            if !keep_routing && !master {
                 crate::console_bus::set_output(p, &strip, &OutputDest::Master)?;
             }
         }
