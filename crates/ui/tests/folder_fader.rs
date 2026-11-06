@@ -130,7 +130,11 @@ fn a_double_click_puts_the_level_at_unity_and_escape_puts_it_back() {
         pressed: true,
     };
     let a = run(&d, &reg, &mut v, &[escape]);
-    let last = commands(&a).iter().filter_map(fader_value).next_back().unwrap();
+    let last = commands(&a)
+        .iter()
+        .filter_map(fader_value)
+        .next_back()
+        .unwrap();
     assert!((last.0 - original).abs() < 1e-4, "{last:?} vs {original}");
 }
 
