@@ -304,8 +304,9 @@ pub struct TakePreview {
 #[derive(Debug, Clone)]
 pub struct Take {
     tracks: BTreeMap<DeviceInstanceId, DeviceKey>,
-    /// The note lane each armed track records to (picked in the arrangement when the take began).
-    lanes: BTreeMap<DeviceKey, usize>,
+    /// The note lanes each armed track records to, ascending (picked in the arrangement when
+    /// the take began): every pass is written to each of them.
+    lanes: BTreeMap<DeviceKey, Vec<usize>>,
     loop_range: Option<(i64, i64)>,
     /// The song's meter map: a clip is rounded out to its bar lines.
     meter: MeterTable,
@@ -336,7 +337,10 @@ impl Take {
     ) -> Self {
         let tracks: Vec<_> = tracks.into_iter().collect();
         Self {
-            lanes: tracks.iter().map(|(_, k, l)| (k.clone(), *l)).collect(),
+            lanes: tracks
+                .iter()
+                .map(|(_, k, l)| (k.clone(), vec![*l]))
+                .collect(),
             tracks: tracks.into_iter().map(|(id, k, _)| (id, k)).collect(),
             loop_range: loop_range.filter(|(s, e)| s < e),
             meter,
@@ -367,8 +371,23 @@ impl Take {
         self
     }
 
-    /// The note lane each armed track records to.
-    pub fn lanes(&self) -> &BTreeMap<DeviceKey, usize> {
+    /// Records `device`'s notes to every lane of `lanes` (sorted, without repeats; an empty
+    /// list changes nothing) instead of the one lane it was given.
+    #[must_use]
+    pub fn to_lanes(mut self, device: &DeviceKey, lanes: &[usize]) -> Self {
+        let mut lanes = lanes.to_vec();
+        lanes.sort_unstable();
+        lanes.dedup();
+        if !lanes.is_empty()
+            && let Some(slot) = self.lanes.get_mut(device)
+        {
+            *slot = lanes;
+        }
+        self
+    }
+
+    /// The note lanes each armed track records to.
+    pub fn lanes(&self) -> &BTreeMap<DeviceKey, Vec<usize>> {
         &self.lanes
     }
 
@@ -431,16 +450,18 @@ impl Take {
         }
     }
 
-    /// The preview of each armed track: its device, the note lane it records to and the notes
-    /// captured on it so far.
+    /// The preview of each armed track: its device, a note lane it records to and the notes
+    /// captured on it so far (one entry per lane when a track records to several).
     pub fn track_previews(&self, now: i64) -> Vec<(DeviceKey, usize, Vec<PreviewNote>)> {
-        self.tracks
-            .iter()
-            .map(|(id, key)| {
-                let lane = self.lanes.get(key).copied().unwrap_or(0);
-                (key.clone(), lane, self.preview_notes(Some(*id), now))
-            })
-            .collect()
+        let mut out = Vec::new();
+        for (id, key) in &self.tracks {
+            let notes = self.preview_notes(Some(*id), now);
+            let lanes = self.lanes.get(key).map_or(&[0][..], Vec::as_slice);
+            for &lane in lanes {
+                out.push((key.clone(), lane, notes.clone()));
+            }
+        }
+        out
     }
 
     fn preview_notes(&self, only: Option<DeviceInstanceId>, now: i64) -> Vec<PreviewNote> {

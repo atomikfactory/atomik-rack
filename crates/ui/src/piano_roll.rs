@@ -421,12 +421,13 @@ pub struct PianoRollView {
 }
 
 /// The parts of clip `id` that a later-starting clip of its lane hides, in content ticks (empty
-/// for a take, a muted or a looped clip: those are not windowed by the lane's overlap rule).
+/// for a take or a muted clip: those are not windowed by the lane's overlap rule). A looped
+/// clip shows its loop window `[0, loop)`: the masked part is what no repetition plays.
 fn masked_spans(song: &atomik_model::Song, id: ClipId) -> Vec<(i64, i64)> {
     let Some((track, lane, clip)) = song.clip(id) else {
         return Vec::new();
     };
-    if clip.muted || clip.loop_length.is_some() || !clip.content.is_notes() {
+    if clip.muted || !clip.content.is_notes() {
         return Vec::new();
     }
     let audible: Vec<(i64, i64)> = atomik_model::song::audible_spans(&track.lanes[lane])
@@ -434,6 +435,9 @@ fn masked_spans(song: &atomik_model::Song, id: ClipId) -> Vec<(i64, i64)> {
         .filter(|(c, _, _)| *c == id)
         .map(|(_, a, b)| (a, b))
         .collect();
+    if let Some(n) = clip.loop_length.filter(|n| *n > 0) {
+        return looped_masked_spans(clip, &audible, n);
+    }
     let mut out = Vec::new();
     let mut at = clip.start;
     for (a, b) in audible {
@@ -448,6 +452,41 @@ fn masked_spans(song: &atomik_model::Song, id: ClipId) -> Vec<(i64, i64)> {
     out.into_iter()
         .map(|(a, b)| (a - clip.start + clip.offset, b - clip.start + clip.offset))
         .collect()
+}
+
+/// The parts of a looped clip's window `[0, n)` that none of its audible song spans plays, in
+/// content ticks. Each span plays the window from `offset mod n`, repetition after repetition.
+fn looped_masked_spans(
+    clip: &atomik_model::Clip,
+    audible: &[(i64, i64)],
+    n: i64,
+) -> Vec<(i64, i64)> {
+    let mut heard: Vec<(i64, i64)> = Vec::new();
+    for &(a, b) in audible {
+        let mut s = a;
+        while s < b {
+            let cs = (clip.offset + (s - clip.start)).rem_euclid(n);
+            let e = (s + n - cs).min(b);
+            heard.push((cs, cs + (e - s)));
+            s = e;
+            if heard.len() > 4096 {
+                return Vec::new();
+            }
+        }
+    }
+    heard.sort_unstable();
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (a, b) in heard {
+        if a > at {
+            out.push((at, a));
+        }
+        at = at.max(b);
+    }
+    if at < n {
+        out.push((at, n));
+    }
+    out
 }
 
 impl PianoRollView {

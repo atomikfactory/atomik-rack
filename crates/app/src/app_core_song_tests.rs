@@ -2786,3 +2786,99 @@ fn a_live_groove_is_in_the_exported_midi_notes() {
     // The file counts in the same ticks as the model (15 360 per quarter note).
     assert_eq!(on.tick as i64, grooved[0].0);
 }
+
+// ---- recording to several lanes ----------------------------------------------------------------
+
+/// Records one note at tick `PPQ` and stops at the end of the bar.
+fn record_one_note(c: &mut AppCore<RecordingSink>) {
+    c.sink_mut().take();
+    transport(c, TransportAction::ToggleRecord);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.sink_mut().recorded = vec![
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::On {
+                key: 45,
+                velocity: 0.9,
+            },
+            frame: frame(PPQ),
+        },
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::Off { key: 45 },
+            frame: frame(2 * PPQ),
+        },
+    ];
+    c.frame();
+    c.sink_mut().state = TransportState {
+        tick: BAR,
+        engine_frame: frame(BAR),
+        song_frame: frame(BAR) - 1000,
+        ..start
+    };
+    transport(c, TransportAction::Stop);
+}
+
+fn clip_counts(c: &AppCore<RecordingSink>) -> Vec<usize> {
+    c.doc().song.tracks[0]
+        .lanes
+        .iter()
+        .map(|l| l.clips.len())
+        .collect()
+}
+
+#[test]
+fn a_take_goes_to_every_lane_armed_for_recording_in_one_undo_step() {
+    let mut c = with_second_lane();
+    arm(&mut c, "a", true);
+    let a = key("a");
+    assert!(c.arrangement_mut().toggle_lane_record(&a, 0));
+    assert!(c.arrangement_mut().toggle_lane_record(&a, 1));
+    assert_eq!(c.arrangement().take_lanes(&a), vec![0, 1]);
+    record_one_note(&mut c);
+    assert_eq!(clip_counts(&c), vec![1, 1], "the take is on both lanes");
+    let notes = |lane: usize| match &c.doc().song.tracks[0].lanes[lane].clips[0].content {
+        ClipContent::Notes(n) => n.iter().map(|n| (n.tick, n.key)).collect::<Vec<_>>(),
+        _ => panic!("note clip"),
+    };
+    assert_eq!(notes(0), notes(1));
+    assert_eq!(notes(0), vec![(PPQ, 45)]);
+    assert!(c.undo());
+    assert_eq!(clip_counts(&c), vec![0, 0], "one step removes both");
+}
+
+#[test]
+fn without_armed_lanes_a_take_goes_to_the_selected_lane_only() {
+    let mut c = with_second_lane();
+    arm(&mut c, "a", true);
+    c.arrangement_mut().set_selected_lane(&key("a"), 1);
+    assert_eq!(c.arrangement().take_lanes(&key("a")), vec![1]);
+    record_one_note(&mut c);
+    assert_eq!(clip_counts(&c), vec![0, 1]);
+}
+
+#[test]
+fn an_armed_lane_that_goes_away_stops_taking_the_take() {
+    let mut c = with_second_lane();
+    arm(&mut c, "a", true);
+    let a = key("a");
+    c.arrangement_mut().toggle_lane_record(&a, 0);
+    c.arrangement_mut().toggle_lane_record(&a, 1);
+    apply(
+        &mut c,
+        song(SongCommand::RemoveNoteLane {
+            device: a.clone(),
+            lane: 1,
+        }),
+    );
+    c.frame();
+    assert_eq!(c.arrangement().take_lanes(&a), vec![0]);
+    record_one_note(&mut c);
+    assert_eq!(clip_counts(&c), vec![1]);
+}

@@ -3204,9 +3204,17 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         let count_in = self.recording_count_in();
-        let take = Take::new(tracks, loop_range, meter)
+        // A track with several lanes armed for recording writes its take to each of them.
+        let lane_sets: Vec<(DeviceKey, Vec<usize>)> = tracks
+            .iter()
+            .map(|(_, d, _)| (d.clone(), self.arrangement.take_lanes(d)))
+            .collect();
+        let mut take = Take::new(tracks, loop_range, meter)
             .counting_in(count_in.is_some())
             .controllers_to_tracks(true);
+        for (device, lanes) in &lane_sets {
+            take = take.to_lanes(device, lanes);
+        }
         self.sink.set_recording(&take.devices());
         self.sink.set_note_taps(&direct);
         self.take = Some(take);
@@ -3265,21 +3273,41 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         for (device, clips) in by_device {
-            // The lane picked when the take began, unless it is gone by now (or no longer a
-            // note lane): then the first one.
-            let lane = lanes
+            // The lanes picked when the take began, less any that are gone by now (or no longer
+            // note lanes); the first lane when none is left.
+            let mut targets: Vec<usize> = lanes
                 .get(&device)
-                .copied()
-                .filter(|l| {
-                    self.doc()
-                        .song
-                        .track(&device)
-                        .is_some_and(|t| t.is_note_lane(*l))
+                .map(|ls| {
+                    ls.iter()
+                        .copied()
+                        .filter(|l| {
+                            self.doc()
+                                .song
+                                .track(&device)
+                                .is_some_and(|t| t.is_note_lane(*l))
+                        })
+                        .collect()
                 })
-                .unwrap_or(0);
-            let command = note_take_command(self.doc(), device, lane, clips, self.record_mode);
-            // A rejection is already reported.
-            let _ = self.apply_command(command);
+                .unwrap_or_default();
+            if targets.is_empty() {
+                targets.push(0);
+            }
+            // Each lane is written exactly as a single-lane take is; the lanes after the first
+            // join its undo step, so a take is one step however many lanes it went to.
+            let mut written = false;
+            for lane in targets {
+                let command = note_take_command(
+                    self.doc(),
+                    device.clone(),
+                    lane,
+                    clips.clone(),
+                    self.record_mode,
+                );
+                self.join_next = written;
+                // A rejection is already reported.
+                written |= self.apply_command(command).is_ok();
+                self.join_next = false;
+            }
             self.document.end_merge();
         }
         self.write_controller_passes(finished.passes);

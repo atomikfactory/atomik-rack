@@ -9,11 +9,18 @@
 //!   on the second line, hidden when the row is [`COMPACT_BELOW`] short. A muted lane's clips are
 //!   painted like the clips of a muted track.
 //! * **Solo and colour.** An S button beside M solos the lane (`SetLaneSolo`; lane 0's chip has
-//!   no room for it, use the menu item): while a lane is
+//!   no S: the chip is 40 px wide on the line that holds the track's own M, S and R buttons, so
+//!   a third control would shrink its label below legibility and an S next to the track's S
+//!   would read as a second track solo; use Solo Lane in the menu): while a lane is
 //!   soloed only the soloed lanes of the track play, and the clips of the others are painted like
 //!   a muted lane's. `sequencer.toggle_lane_solo` does the same for the selected lane, and
 //!   `sequencer.lane_color` (a palette name, or `track`) gives it a colour of its own for its
 //!   clips and its header bar (`SetLaneColor`); a clip's own colour still wins.
+//! * **Recording to several lanes.** `sequencer.toggle_lane_record` (Record to Lane in the track
+//!   header menu) arms the selected lane to record together with the other armed lanes of its
+//!   track ([`ArrangementView::take_lanes`]): a record dot on the header (the chip of lane 0
+//!   gets a record-coloured outline), and a take is written to each armed lane. With none armed
+//!   the take goes to the selected lane as before. Armed lanes are view state, not saved.
 //! * **The selected lane** ([`ArrangementView::record_lane`]) is the lane a click on its header,
 //!   on its empty part or on one of its clips picks. It is where a recording, a paste and an
 //!   import land, and what the lane commands act on. It is view state, not saved, and it is
@@ -32,6 +39,7 @@ use atomik_model::{
     ClipContent, ClipId, DeviceKey, LaneKind, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, SongCommand,
     WorkflowCommand,
 };
+use std::collections::BTreeSet;
 use vello::kurbo::{Point, Rect, RoundedRect};
 
 /// What the track header menu needs to know about the selected lane.
@@ -47,6 +55,9 @@ pub struct LaneMenu {
     pub muted: bool,
     /// The selected lane is soloed (the Solo item is checked).
     pub soloed: bool,
+    /// The selected lane is armed to record with other lanes (the Record to Lane item is
+    /// checked).
+    pub recording: bool,
     /// A selected track has several note lanes that can merge onto its top lane.
     pub can_merge: bool,
     /// One note clip with several pitches is selected, so it can explode into lanes.
@@ -68,6 +79,44 @@ impl ArrangementView {
         };
         let last = t.note_lane_count().saturating_sub(1);
         self.note_lane_sel.get(device).map_or(0, |l| (*l).min(last))
+    }
+
+    /// The note lanes a recording on `device`'s track goes to, ascending: the lanes armed with
+    /// `sequencer.toggle_lane_record` (a take is written to each of them), or the selected
+    /// lane when none is.
+    pub fn take_lanes(&self, device: &DeviceKey) -> Vec<usize> {
+        match self.note_lane_rec.get(device) {
+            Some(set) if !set.is_empty() => set.iter().copied().collect(),
+            _ => vec![self.record_lane(device)],
+        }
+    }
+
+    /// Whether note lane `lane` of `device`'s track is armed to record with its siblings.
+    pub fn lane_armed_for_record(&self, device: &DeviceKey, lane: usize) -> bool {
+        self.note_lane_rec
+            .get(device)
+            .is_some_and(|set| set.contains(&lane))
+    }
+
+    /// Arms note lane `lane` of `device`'s track for recording, or disarms it. False when it
+    /// is not a note lane of an unfrozen track.
+    pub fn toggle_lane_record(&mut self, device: &DeviceKey, lane: usize) -> bool {
+        let ok = self
+            .song
+            .track(device)
+            .is_some_and(|t| t.is_note_lane(lane) && t.frozen.is_none());
+        if !ok {
+            return false;
+        }
+        let set = self.note_lane_rec.entry(device.clone()).or_default();
+        if !set.remove(&lane) {
+            set.insert(lane);
+        }
+        if set.is_empty() {
+            self.note_lane_rec.remove(device);
+        }
+        self.repaint = true;
+        true
     }
 
     /// The selected track and its selected note lane, if a track is selected.
@@ -105,6 +154,20 @@ impl ArrangementView {
                 .track(d)
                 .map_or(0, |t| t.note_lane_count().saturating_sub(1));
             *lane = (*lane).min(last);
+        }
+        // Armed lanes follow their lanes: gone tracks and lanes that stopped being note lanes
+        // (a delete, a merge, a freeze) drop out.
+        let before: usize = self.note_lane_rec.values().map(BTreeSet::len).sum();
+        self.note_lane_rec.retain(|d, set| {
+            match song.track(d) {
+                Some(t) if t.frozen.is_none() => set.retain(|l| t.is_note_lane(*l)),
+                _ => set.clear(),
+            }
+            !set.is_empty()
+        });
+        let after: usize = self.note_lane_rec.values().map(BTreeSet::len).sum();
+        if before != after {
+            self.repaint = true;
         }
     }
 
@@ -391,6 +454,7 @@ impl ArrangementView {
             can_delete: t.note_lane_count() > 1,
             muted: t.lanes.get(lane).is_some_and(|l| l.muted),
             soloed: t.lanes.get(lane).is_some_and(|l| l.solo),
+            recording: self.lane_armed_for_record(d, lane),
             ..workflows
         }
     }
@@ -506,6 +570,7 @@ impl ArrangementView {
                 | "sequencer.delete_note_lane"
                 | "sequencer.toggle_lane_mute"
                 | "sequencer.toggle_lane_solo"
+                | "sequencer.toggle_lane_record"
         ) {
             return None;
         }
@@ -516,7 +581,7 @@ impl ArrangementView {
         let allowed = match id {
             "sequencer.add_note_lane" => menu.can_add,
             "sequencer.rename_note_lane" => menu.can_rename,
-            "sequencer.delete_note_lane" => menu.can_delete,
+            "sequencer.delete_note_lane" | "sequencer.toggle_lane_record" => menu.can_delete,
             _ => menu.can_rename,
         };
         if !allowed {
@@ -534,6 +599,10 @@ impl ArrangementView {
                 return Some(CommandOutcome::Handled(Vec::new()));
             }
             "sequencer.delete_note_lane" => SongCommand::RemoveNoteLane { device, lane },
+            "sequencer.toggle_lane_record" => {
+                self.toggle_lane_record(&device, lane);
+                return Some(CommandOutcome::Handled(Vec::new()));
+            }
             "sequencer.toggle_lane_solo" => SongCommand::SetLaneSolo {
                 device,
                 lane,
@@ -579,6 +648,13 @@ impl ArrangementView {
         );
         let cy = hr.y0 + hr.height() / 2.0 + 3.5;
         sp::label(c, &label, x + 26.0, cy, 10.0, t.text, Align::Start);
+        if self.lane_armed_for_record(&tr.device, lane) {
+            // A record dot: this lane takes the next take with the other armed lanes.
+            c.fill_with(
+                vello::kurbo::Circle::new((x + 8.0, hr.y0 + hr.height() / 2.0), 3.0),
+                st.record,
+            );
+        }
         self.paint_note_lane_buttons(c, hr, track, lane);
         if self.selected_note_lane(track) == Some(lane) {
             c.stroke_with(
@@ -599,7 +675,10 @@ impl ArrangementView {
         let selected = self.selected_note_lane(track) == Some(0);
         let hot = self.hover == Some(Hit::NoteLaneHeader(track, 0));
         let shape = RoundedRect::from_rect(label, 2.0);
-        let col = if selected {
+        let armed = self.lane_armed_for_record(&self.song.tracks[track].device, 0);
+        let col = if armed {
+            st.record
+        } else if selected {
             st.selection
         } else {
             st.base.text_muted

@@ -1013,3 +1013,70 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn record_to_lane_arms_lanes_together_and_the_menu_shows_it() {
+    let (doc, reg, mut v) = setup();
+    let keys = key("keys");
+    // Nothing armed: a take goes to the selected lane.
+    select_lane(&mut v, &doc, &reg, 1);
+    assert_eq!(v.take_lanes(&keys), vec![1]);
+    assert!(!v.lane_menu().recording);
+    assert_eq!(
+        command(&mut v, &doc, &reg, "sequencer.toggle_lane_record"),
+        Some(Vec::new()),
+        "a view-state toggle sends no song command"
+    );
+    assert!(v.lane_armed_for_record(&keys, 1));
+    assert!(v.lane_menu().recording, "the menu item is checked");
+    select_lane(&mut v, &doc, &reg, 2);
+    assert!(!v.lane_menu().recording);
+    command(&mut v, &doc, &reg, "sequencer.toggle_lane_record");
+    // Armed lanes record together whichever lane is selected.
+    select_lane(&mut v, &doc, &reg, 0);
+    assert_eq!(v.take_lanes(&keys), vec![1, 2]);
+    // Disarming the last ones puts the selected lane back.
+    select_lane(&mut v, &doc, &reg, 2);
+    command(&mut v, &doc, &reg, "sequencer.toggle_lane_record");
+    select_lane(&mut v, &doc, &reg, 1);
+    command(&mut v, &doc, &reg, "sequencer.toggle_lane_record");
+    select_lane(&mut v, &doc, &reg, 2);
+    assert_eq!(v.take_lanes(&keys), vec![2]);
+}
+
+#[test]
+fn an_armed_lane_is_painted_and_a_single_lane_track_cannot_arm() {
+    let (doc, reg, mut v) = setup();
+    select_lane(&mut v, &doc, &reg, 1);
+    let plain = painted(&mut v, &doc);
+    command(&mut v, &doc, &reg, "sequencer.toggle_lane_record");
+    assert_ne!(plain, painted(&mut v, &doc), "a record dot appears");
+    select_lane(&mut v, &doc, &reg, 0);
+    let chip = painted(&mut v, &doc);
+    command(&mut v, &doc, &reg, "sequencer.toggle_lane_record");
+    assert_ne!(
+        chip,
+        painted(&mut v, &doc),
+        "the chip of lane 0 is outlined"
+    );
+    // A track with one lane declines (the menu item is off too).
+    let mut one = arrangement(&song_doc(), &reg);
+    one.set_selected_track(Some(key("bass")));
+    assert_eq!(
+        command(&mut one, &song_doc(), &reg, "sequencer.toggle_lane_record"),
+        None
+    );
+}
+
+#[test]
+fn an_armed_lane_drops_out_when_its_lane_is_deleted() {
+    let (mut doc, reg, mut v) = setup();
+    let keys = key("keys");
+    select_lane(&mut v, &doc, &reg, 2);
+    command(&mut v, &doc, &reg, "sequencer.toggle_lane_record");
+    assert_eq!(v.take_lanes(&keys), vec![2]);
+    doc.song_mut().tracks[2].lanes.remove(2);
+    v.sync(&doc, &reg);
+    assert!(!v.lane_armed_for_record(&keys, 2));
+    assert_eq!(v.take_lanes(&keys), vec![1], "the selected lane is clamped");
+}
