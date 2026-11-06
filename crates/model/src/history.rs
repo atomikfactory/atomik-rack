@@ -219,6 +219,11 @@ pub(crate) enum Edit {
         old: Vec<VcaGroup>,
         new: Vec<VcaGroup>,
     },
+    /// The console's whole folder route list.
+    ConsoleFolderRoutes {
+        old: Vec<crate::console_folder::FolderRoute>,
+        new: Vec<crate::console_folder::FolderRoute>,
+    },
     /// The console's whole snapshot list.
     ConsoleSnapshots {
         old: Vec<MixerSnapshot>,
@@ -677,6 +682,9 @@ impl Edit {
             Edit::Macros { old, new } => Edit::Macros { old: new, new: old },
             Edit::MidiMaps { old, new } => Edit::MidiMaps { old: new, new: old },
             Edit::ConsoleVcas { old, new } => Edit::ConsoleVcas { old: new, new: old },
+            Edit::ConsoleFolderRoutes { old, new } => {
+                Edit::ConsoleFolderRoutes { old: new, new: old }
+            }
             Edit::ConsoleSnapshots { old, new } => Edit::ConsoleSnapshots { old: new, new: old },
             Edit::SnapshotCompare { old, new } => Edit::SnapshotCompare { old: new, new: old },
             Edit::ConsoleMaster { old, new } => Edit::ConsoleMaster { old: new, new: old },
@@ -1197,6 +1205,10 @@ impl Edit {
             }
             Edit::ConsoleVcas { new, .. } => {
                 doc.console.vcas.clone_from(new);
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::ConsoleFolderRoutes { new, .. } => {
+                doc.console.folder_routes.clone_from(new);
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleSnapshots { new, .. } => {

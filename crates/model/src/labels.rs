@@ -131,6 +131,10 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
             "Create VCA"
         }
         ConsoleCommand::SetVcaFollow { .. } => "Follow Folder",
+        ConsoleCommand::RouteFolderToBus { .. } | ConsoleCommand::RouteFolderToNewBus { .. } => {
+            "Route Folder to Bus"
+        }
+        ConsoleCommand::UnrouteFolder { .. } => "Stop Routing Folder",
         ConsoleCommand::AssignToVca { .. } => "Assign to VCA",
         ConsoleCommand::DeleteVca { .. } => "Delete VCA",
         ConsoleCommand::SetSnapshotEffects { .. } => "Snapshot Effect Parameters",

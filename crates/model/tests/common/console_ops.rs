@@ -30,6 +30,10 @@ pub enum ConsoleOp {
     VcaForFolder(usize),
     /// A group starts or stops following a folder.
     FollowFolder(usize, Option<usize>),
+    /// A folder plays into a new bus (`None`) or into an existing one.
+    RouteFolder(usize, Option<usize>),
+    /// A folder stops playing into its bus.
+    UnrouteFolder(usize),
     /// A strip joins a group or leaves its group.
     AssignVca(usize, Option<usize>),
     /// A group gets its level lane (on the master's track).
@@ -58,6 +62,8 @@ pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
         1 => i().prop_map(ConsoleOp::PasteSettings),
         2 => i().prop_map(ConsoleOp::VcaForFolder),
         1 => (i(), proptest::option::of(i())).prop_map(|(v, f)| ConsoleOp::FollowFolder(v, f)),
+        2 => (i(), proptest::option::of(i())).prop_map(|(f, b)| ConsoleOp::RouteFolder(f, b)),
+        1 => i().prop_map(ConsoleOp::UnrouteFolder),
         2 => (i(), proptest::option::of(i())).prop_map(|(c, v)| ConsoleOp::AssignVca(c, v)),
         1 => i().prop_map(ConsoleOp::VcaLane),
         1 => i().prop_map(ConsoleOp::DeleteVca),
@@ -126,6 +132,29 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
                 None => None,
             };
             c(ConsoleCommand::SetVcaFollow { vca, folder })
+        }
+        ConsoleOp::RouteFolder(f, bus) => {
+            let groups = &doc.song.org.groups;
+            let folder = groups.get(f % groups.len().max(1))?.id;
+            match bus {
+                None => c(ConsoleCommand::RouteFolderToNewBus {
+                    folder,
+                    name: format!("Folder bus {}", doc.console.buses.len() + 1),
+                }),
+                Some(b) => {
+                    let buses = &doc.console.buses;
+                    c(ConsoleCommand::RouteFolderToBus {
+                        folder,
+                        bus: buses.get(b % buses.len().max(1))?.bus.clone(),
+                    })
+                }
+            }
+        }
+        ConsoleOp::UnrouteFolder(f) => {
+            let routes = &doc.console.folder_routes;
+            c(ConsoleCommand::UnrouteFolder {
+                folder: routes.get(f % routes.len().max(1))?.folder,
+            })
         }
         ConsoleOp::AssignVca(ch, v) => {
             let vcas = &doc.console.vcas;
@@ -244,6 +273,27 @@ pub fn assert_console_invariants(doc: &RackDoc) {
             );
             assert!(!grouped.contains(m), "{m} is in two VCA groups");
             grouped.push(m.clone());
+        }
+    }
+    let mut routed = Vec::new();
+    for r in &console.folder_routes {
+        assert!(
+            console.bus_index(&r.bus).is_some(),
+            "folder route bus {} is not a bus",
+            r.bus
+        );
+        assert!(
+            !routed.contains(&r.folder),
+            "folder {} routed twice",
+            r.folder
+        );
+        routed.push(r.folder);
+        assert!(
+            !doc.song.group_tracks(r.folder).is_empty(),
+            "stale folder route"
+        );
+        for m in &r.members {
+            assert!(console.channel_index(m).is_some(), "route member {m}");
         }
     }
     let mut children = Vec::new();

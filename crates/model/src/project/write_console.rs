@@ -97,6 +97,22 @@ pub(super) fn write_console(w: &mut String, console: &Console) {
             .collect();
         tail.push(format!("\"parallels\": [{}]", pairs.join(", ")));
     }
+    if !console.folder_routes.is_empty() {
+        let routes: Vec<String> = console
+            .folder_routes
+            .iter()
+            .map(|r| {
+                let members: Vec<String> = r.members.iter().map(|m| json_str(&m.0)).collect();
+                format!(
+                    "{{\"folder\": {}, \"bus\": {}, \"members\": [{}]}}",
+                    r.folder,
+                    json_str(&r.bus.0),
+                    members.join(", ")
+                )
+            })
+            .collect();
+        tail.push(format!("\"folder_routes\": [{}]", routes.join(", ")));
+    }
     if tail.is_empty() {
         let _ = writeln!(w, "    \"compensation\": {}", console.compensation);
     } else {

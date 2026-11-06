@@ -19,7 +19,9 @@
 //!                                 "vcas"?: [{ "id", "name", "level_db"?, "mute"?, "solo"?,
 //!                                            "members": [key…] }…] }…]
 //!                                                              (v27; written only when non-empty),
-//!                "master": key | null, "returns": [key | null × 8], "compensation": bool },
+//!                "master": key | null, "returns": [key | null × 8], "compensation": bool,
+//!                "folder_routes"?: [{ "folder", "bus": key, "members": [key…] }…]
+//!                                       (v44, ignorable; written only when non-empty) },
 //!   "midi_maps"?: [{ "id", "source", "target", options… }…]       (v28; written only when non-empty),
 //!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"?, "curve"?, "smooth_ms"? }…],
 //!                "names"?: [{ "bank", "macro", "name" }…] }
@@ -417,7 +419,12 @@
 //! Version 44 adds a note track's own controller lanes, `"controllers"` (the same list as a note clip's, in
 //! song ticks; see [`crate::controller`]), written before the track's `"lanes"` only when the track has
 //! any. They play with the controllers of the clips, so a reader of 43 would play the track without them:
-//! the field is not ignorable. Only a note track takes it. Saving always writes version 44.
+//! the field is not ignorable. Only a note track takes it. A console may also carry `"folder_routes"`
+//! (see [`crate::console_folder`]): `[{"folder", "bus", "members"}…]`, at most 64, one per track folder,
+//! written only when a folder plays into a bus; `"bus"` is a console bus and `"members"` lists the
+//! console channels the route put there. The cables carry the routing, so a reader that drops the field
+//! plays the same mix and only forgets which folder feeds the bus: it is ignorable. A route whose folder
+//! the song lacks is dropped on load. Saving always writes version 44.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -427,6 +434,7 @@ use crate::console::{
     MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOT_NOTE_CHARS, MAX_SNAPSHOTS, MAX_VCA_NAME_CHARS, MAX_VCAS,
     MixerSnapshot, MixerState, SnapshotVca, VcaGroup,
 };
+use crate::console_folder::{FolderRoute, MAX_FOLDER_ROUTES};
 use crate::controller::{ControllerKind, ControllerLane, check_lanes};
 use crate::curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
 use crate::drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
@@ -731,6 +739,11 @@ fn drop_stale_follows(doc: &mut RackDoc) {
     for i in gone {
         doc.console.vcas[i].follows = None;
     }
+    // A folder route whose folder is gone is forgotten; the routing cables stay.
+    let song = doc.song.clone();
+    doc.console
+        .folder_routes
+        .retain(|r| !song.group_tracks(r.folder).is_empty());
 }
 
 /// A level lane of a VCA group (`vca.<id>`) needs the group and the master's track.

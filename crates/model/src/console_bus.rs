@@ -115,7 +115,11 @@ fn into_bus(strip: &DeviceKey, target: &DeviceKey) -> [Cable; 2] {
 }
 
 /// Rejects a destination `strip` cannot be routed to.
-fn check_dest(doc: &RackDoc, strip: &DeviceKey, dest: &OutputDest) -> Result<(), ModelError> {
+pub(crate) fn check_dest(
+    doc: &RackDoc,
+    strip: &DeviceKey,
+    dest: &OutputDest,
+) -> Result<(), ModelError> {
     match dest {
         OutputDest::Master => {
             if doc.console.master.is_none() {
