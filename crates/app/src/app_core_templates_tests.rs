@@ -735,3 +735,48 @@ fn a_name_the_archive_cannot_use_becomes_project() {
     .unwrap();
     assert_eq!(c.archive_name(), "project");
 }
+
+#[test]
+fn a_template_preview_lists_the_tracks_the_tempo_and_the_meter() {
+    let t = Tmp::new("preview");
+    let mut c = core(&t);
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.poly-synth".into(),
+        key: Some(DeviceKey("lead".into())),
+    })
+    .unwrap();
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.poly-synth".into(),
+        key: Some(DeviceKey("pad".into())),
+    })
+    .unwrap();
+    for k in ["lead", "pad"] {
+        c.apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+            device: DeviceKey(k.into()),
+        }))
+        .unwrap();
+    }
+    let file = c.save_as_template("Two Synths").unwrap();
+    let preview = c.template_preview(&file).unwrap();
+    let tracks = c.doc().song.tracks.len();
+    assert_eq!(preview.tracks.len(), tracks);
+    assert!(preview.tracks.len() >= 2, "{:?}", preview.tracks);
+    assert!(preview.tracks.iter().all(|n| !n.is_empty()));
+    assert!((preview.tempo_bpm - c.doc().tempo_bpm).abs() < 1e-9);
+    assert_eq!(preview.meter, (4, 4));
+    // A folder form of the path reads the same song.
+    assert_eq!(c.template_preview(file.parent().unwrap()), Some(preview));
+    // Nothing is opened: the song in the session is untouched.
+    assert_eq!(c.doc().song.tracks.len(), tracks);
+}
+
+#[test]
+fn a_template_that_cannot_be_read_has_no_preview() {
+    let t = Tmp::new("preview-bad");
+    let c = core(&t);
+    assert!(c.template_preview(&t.path("nothing.atomik")).is_none());
+    std::fs::write(t.path("junk.atomik"), "not a project").unwrap();
+    assert!(c.template_preview(&t.path("junk.atomik")).is_none());
+}

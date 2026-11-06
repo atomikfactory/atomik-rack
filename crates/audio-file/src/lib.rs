@@ -15,6 +15,7 @@ mod instrument;
 mod meta;
 mod overview;
 mod peaks;
+mod relocate;
 mod resample;
 mod sf2;
 mod sfz;
@@ -25,7 +26,10 @@ pub use archive::{
     ARCHIVE_EXTENSION, ArchiveError, ArchiveLimits, ArchiveReport, Extracted, archive_size,
     archive_work, extract_archive, is_safe_component, read_archive_project, write_archive,
 };
-pub use bundle::{AssetInfo, Bundle, CollectReport, is_valid_hash, save_text_atomic};
+pub use bundle::{
+    AssetInfo, Bundle, CollectPlan, CollectProgress, CollectReport, is_valid_hash,
+    plan_collect_into, save_text_atomic,
+};
 pub use data::AudioData;
 pub use decode::{
     DEFAULT_MAX_SAMPLES, Decoded, decode_bytes, decode_bytes_with, decode_file, decode_file_with,
@@ -42,6 +46,7 @@ pub use instrument::{
 pub use meta::{FileMeta, parse_meta, read_file_meta};
 pub use overview::overview_levels;
 pub use peaks::{FINEST_PEAK_FRAMES, PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks, raw_min_max};
+pub use relocate::{RetireReport, retire_old_project, verify_copy};
 pub use resample::{resample, resample_owned};
 pub use sf2::{parse_sf2, read_sf2, sf2_presets};
 pub use sfz::{parse_sfz, read_sfz};

@@ -82,6 +82,14 @@ pub enum AppCommand {
     RelinkAudio,
     /// File ▸ Collect Files…: copy the audio the project uses into its own bundle folder.
     CollectFiles,
+    /// File ▸ Preview Collect Files: say what Collect Files would copy, without copying.
+    CollectPreview,
+    /// File ▸ Cancel Collect or Move: stop the copying of audio that Collect Files, Move Project
+    /// or Save As is doing. Only enabled while Collect Files or Move Project runs.
+    CancelCollect,
+    /// File ▸ Move Project…: the project and its audio go to a folder you pick, and the old
+    /// project is removed once the copy is checked.
+    MoveProject,
     /// File ▸ Export Patch… (the rack as patch v2, without the song).
     ExportPatch,
     /// File ▸ Export MIDI Clip…: the selected note clip as a MIDI file.
@@ -701,6 +709,9 @@ impl AppCommand {
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::CollectFiles => ("file.collect_files", None),
+            AppCommand::CollectPreview => ("file.collect_preview", None),
+            AppCommand::CancelCollect => ("file.cancel_collect", None),
+            AppCommand::MoveProject => ("file.move_project", None),
             AppCommand::ExportPatch => ("file.export_patch", None),
             AppCommand::ExportMidiClip => ("file.export_midi_clip", None),
             AppCommand::ExportMidiTrack => ("file.export_midi_track", None),
@@ -1011,6 +1022,9 @@ impl AppCommand {
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.collect_files", None) => AppCommand::CollectFiles,
+            ("file.collect_preview", None) => AppCommand::CollectPreview,
+            ("file.cancel_collect", None) => AppCommand::CancelCollect,
+            ("file.move_project", None) => AppCommand::MoveProject,
             ("file.export_patch", None) => AppCommand::ExportPatch,
             ("file.export_midi_clip", None) => AppCommand::ExportMidiClip,
             ("file.export_midi_track", None) => AppCommand::ExportMidiTrack,
@@ -1715,6 +1729,9 @@ pub struct MenuState {
     /// A project archive is being written or unpacked (File > Cancel Project Archive is
     /// available).
     pub archive_busy: bool,
+    /// Collect Files or Move Project is copying audio on its worker (File > Cancel Collect or
+    /// Move is available).
+    pub collect_busy: bool,
     /// A default song is chosen (File > New from Template > Reset Default Song is available).
     pub default_song: bool,
     /// A note clip is selected or open (File > Export MIDI Clip is available).
@@ -2185,6 +2202,13 @@ pub fn menus_with_songs(
                     state.missing_audio,
                 ),
                 item("Collect Files\u{2026}", AppCommand::CollectFiles),
+                item("Preview Collect Files", AppCommand::CollectPreview),
+                enabled(
+                    "Cancel Collect or Move",
+                    AppCommand::CancelCollect,
+                    state.collect_busy,
+                ),
+                item("Move Project\u{2026}", AppCommand::MoveProject),
                 item("Export Project Archive\u{2026}", AppCommand::ExportArchive),
                 item("Import Project Archive\u{2026}", AppCommand::ImportArchive),
                 enabled(
@@ -3487,6 +3511,7 @@ mod tests {
             editor: false,
             missing_audio: false,
             archive_busy: false,
+            collect_busy: false,
             default_song: false,
             midi_clip: false,
             midi_track: false,
@@ -3536,6 +3561,9 @@ mod tests {
             AppCommand::ImportMidiSong,
             AppCommand::RelinkAudio,
             AppCommand::CollectFiles,
+            AppCommand::CollectPreview,
+            AppCommand::CancelCollect,
+            AppCommand::MoveProject,
             AppCommand::ExportPatch,
             AppCommand::ExportMidiClip,
             AppCommand::ExportMidiTrack,
@@ -4201,6 +4229,9 @@ mod tests {
                 "Import MIDI as Song\u{2026}",
                 "Relink Missing Audio\u{2026}",
                 "Collect Files\u{2026}",
+                "Preview Collect Files",
+                "Cancel Collect or Move",
+                "Move Project\u{2026}",
                 "Export Project Archive\u{2026}",
                 "Import Project Archive\u{2026}",
                 "Cancel Project Archive",
@@ -4828,6 +4859,7 @@ mod tests {
                 editor: false,
                 missing_audio: true,
                 archive_busy: false,
+                collect_busy: false,
                 default_song: false,
                 midi_clip: true,
                 midi_track: false,

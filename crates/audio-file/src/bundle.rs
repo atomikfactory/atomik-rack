@@ -7,8 +7,9 @@
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::data::AudioData;
 use crate::decode::decode_file_with;
@@ -119,6 +120,85 @@ pub struct CollectReport {
     pub missing: Vec<String>,
     /// Bytes of the files copied.
     pub bytes: u64,
+    /// The collection was cancelled before it finished: `copied` is what was done, and the
+    /// assets after it were not looked at.
+    pub cancelled: bool,
+}
+
+/// What [`Bundle::plan_collect`] found: what a collection would do, without writing anything.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CollectPlan {
+    /// Assets that would be copied, with the size of each file, sorted by hash.
+    pub to_copy: Vec<(String, u64)>,
+    /// Assets the bundle already holds.
+    pub present: Vec<String>,
+    /// Assets no source holds.
+    pub missing: Vec<String>,
+}
+
+impl CollectPlan {
+    /// The bytes a collection would copy.
+    pub fn bytes(&self) -> u64 {
+        self.to_copy.iter().map(|(_, n)| n).sum()
+    }
+}
+
+/// A look at a running collection from another thread: cancel it, and see how far it is. A
+/// collection that does not need either uses [`Bundle::collect_from`].
+#[derive(Debug, Default)]
+pub struct CollectProgress {
+    cancel: AtomicBool,
+    done: AtomicU64,
+    total: AtomicU64,
+}
+
+impl CollectProgress {
+    /// A fresh progress: not cancelled, nothing done.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Asks the collection to stop; it does so before the next file and between the blocks of
+    /// a big one. Files already in place stay.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether [`Self::cancel`] was called.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Files looked at so far, and the files to look at.
+    pub fn files(&self) -> (u64, u64) {
+        (
+            self.done.load(Ordering::Relaxed),
+            self.total.load(Ordering::Relaxed),
+        )
+    }
+}
+
+/// The block a copy moves between two cancel checks.
+const COPY_BLOCK: usize = 1 << 20;
+
+/// Copies `from` to `to` in blocks, stopping with [`AudioFileError::Cancelled`] when `progress`
+/// says so.
+fn copy_blocks(from: &Path, to: &Path, progress: &CollectProgress) -> Result<()> {
+    let mut input = fs::File::open(from)?;
+    let mut output = fs::File::create(to)?;
+    let mut block = vec![0u8; COPY_BLOCK];
+    loop {
+        if progress.cancelled() {
+            return Err(AudioFileError::Cancelled);
+        }
+        let n = input.read(&mut block)?;
+        if n == 0 {
+            break;
+        }
+        output.write_all(&block[..n])?;
+    }
+    output.flush()?;
+    Ok(())
 }
 
 /// A project folder with its `Audio/` store.
@@ -346,37 +426,76 @@ impl Bundle {
         sources: &[PathBuf],
         wanted: &BTreeSet<String>,
     ) -> Result<CollectReport> {
-        let mut report = CollectReport::default();
-        let sources: Vec<Bundle> = sources
+        self.collect_from_with(sources, wanted, &CollectProgress::new())
+    }
+
+    /// The bundle folders of `sources` that can be read, without this bundle itself.
+    fn readable_sources(&self, sources: &[PathBuf]) -> Vec<Bundle> {
+        sources
             .iter()
             .filter(|root| root.as_path() != self.root.as_path())
             .filter_map(|root| Bundle::open(root).ok())
-            .collect();
+            .collect()
+    }
+
+    /// What [`Self::collect_from`] would do, with nothing written: which of the assets `wanted`
+    /// it would copy (and how big each file is), which the bundle holds already and which no
+    /// source has.
+    pub fn plan_collect(&self, sources: &[PathBuf], wanted: &BTreeSet<String>) -> CollectPlan {
+        plan_collect_into(&self.root, sources, wanted)
+    }
+
+    /// [`Self::collect_from`] that `progress` can cancel from another thread and that counts the
+    /// assets it has looked at. A cancelled collection returns what it did with
+    /// [`CollectReport::cancelled`] set; the files it copied stay and none is half written.
+    ///
+    /// # Errors
+    /// Reading a source file or writing into this bundle failed; the files copied so far stay.
+    pub fn collect_from_with(
+        &self,
+        sources: &[PathBuf],
+        wanted: &BTreeSet<String>,
+        progress: &CollectProgress,
+    ) -> Result<CollectReport> {
+        let mut report = CollectReport::default();
+        let sources = self.readable_sources(sources);
+        progress.total.store(wanted.len() as u64, Ordering::Relaxed);
+        progress.done.store(0, Ordering::Relaxed);
         for hash in wanted {
+            if progress.cancelled() {
+                report.cancelled = true;
+                return Ok(report);
+            }
             if self.exists(hash) {
                 report.present.push(hash.clone());
-                continue;
-            }
-            let Some(source) = sources.iter().find(|s| s.exists(hash)) else {
-                report.missing.push(hash.clone());
-                continue;
-            };
-            fs::create_dir_all(self.peaks_dir())?;
-            let from = source.asset_path(hash);
-            write_atomic(&self.asset_path(hash), |tmp| {
-                fs::copy(&from, tmp)?;
-                Ok(())
-            })?;
-            report.bytes += fs::metadata(self.asset_path(hash)).map_or(0, |m| m.len());
-            let peaks = source.peaks_path(hash);
-            if peaks.is_file() {
-                // A cache: a copy that fails is rebuilt on demand.
-                let _ = write_atomic(&self.peaks_path(hash), |tmp| {
-                    fs::copy(&peaks, tmp)?;
-                    Ok(())
+            } else if let Some(source) = sources.iter().find(|s| s.exists(hash)) {
+                fs::create_dir_all(self.peaks_dir())?;
+                let from = source.asset_path(hash);
+                let copied = write_atomic(&self.asset_path(hash), |tmp| {
+                    copy_blocks(&from, tmp, progress)
                 });
+                match copied {
+                    Ok(()) => {}
+                    Err(AudioFileError::Cancelled) => {
+                        report.cancelled = true;
+                        return Ok(report);
+                    }
+                    Err(e) => return Err(e),
+                }
+                report.bytes += fs::metadata(self.asset_path(hash)).map_or(0, |m| m.len());
+                let peaks = source.peaks_path(hash);
+                if peaks.is_file() {
+                    // A cache: a copy that fails is rebuilt on demand.
+                    let _ = write_atomic(&self.peaks_path(hash), |tmp| {
+                        fs::copy(&peaks, tmp)?;
+                        Ok(())
+                    });
+                }
+                report.copied.push(hash.clone());
+            } else {
+                report.missing.push(hash.clone());
             }
-            report.copied.push(hash.clone());
+            progress.done.fetch_add(1, Ordering::Relaxed);
         }
         Ok(report)
     }
@@ -456,6 +575,31 @@ impl Bundle {
         }
         Ok(orphans)
     }
+}
+
+/// [`Bundle::plan_collect`] for the bundle folder `root`, which need not exist yet (nothing is
+/// created: a folder that is not there holds none of the assets).
+pub fn plan_collect_into(
+    root: &Path,
+    sources: &[PathBuf],
+    wanted: &BTreeSet<String>,
+) -> CollectPlan {
+    let target = Bundle {
+        root: root.to_path_buf(),
+    };
+    let mut plan = CollectPlan::default();
+    let sources = target.readable_sources(sources);
+    for hash in wanted {
+        if target.exists(hash) {
+            plan.present.push(hash.clone());
+        } else if let Some(source) = sources.iter().find(|s| s.exists(hash)) {
+            let size = fs::metadata(source.asset_path(hash)).map_or(0, |m| m.len());
+            plan.to_copy.push((hash.clone(), size));
+        } else {
+            plan.missing.push(hash.clone());
+        }
+    }
+    plan
 }
 
 fn remove_if_present(path: &Path) -> Result<()> {

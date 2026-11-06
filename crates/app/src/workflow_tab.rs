@@ -9,7 +9,7 @@ use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, Ui
 use std::path::PathBuf;
 
 const ROW: f64 = 40.0;
-const GAP: f64 = 4.0;
+const GAP: f64 = 2.0;
 const BUTTON_W: f64 = 84.0;
 
 /// `text` with its head cut when longer than [`PATH_CHARS`] characters.
@@ -39,6 +39,8 @@ pub enum Pref {
     OpenLastProject,
     /// Stop returns to where playback started.
     ReturnToStart,
+    /// The start screen shows when the app starts without a song.
+    ShowStartScreen,
 }
 
 /// One switch.
@@ -178,6 +180,7 @@ impl WorkflowTab {
             Pref::ShowTooltips => self.prefs.show_tooltips,
             Pref::OpenLastProject => self.prefs.open_last_project,
             Pref::ReturnToStart => self.prefs.return_to_start_on_stop,
+            Pref::ShowStartScreen => self.prefs.show_start_screen,
         }
     }
 
@@ -195,6 +198,9 @@ impl WorkflowTab {
             }
             Pref::OpenLastProject => {
                 self.prefs.open_last_project = !self.prefs.open_last_project;
+            }
+            Pref::ShowStartScreen => {
+                self.prefs.show_start_screen = !self.prefs.show_start_screen;
             }
         }
     }
@@ -240,6 +246,11 @@ impl WorkflowTab {
                 Pref::ReturnToStart,
                 "Return to start on stop",
                 "Stop goes back to where playback started; a second Stop goes to the start of the song.",
+            ),
+            (
+                Pref::ShowStartScreen,
+                "Show the start screen at start-up",
+                "A new song, templates and recent songs when no song opens; File > Start Screen shows it any time.",
             ),
         ] {
             toggles.push(Toggle {

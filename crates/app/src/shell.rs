@@ -237,6 +237,9 @@ pub enum ShellRequest {
     /// Show a folder dialog (the relink panel's PROJECT FOLDER...), then call
     /// [`Shell::relink_project_folder`] with the picked folder.
     PickRelinkProjectFolder,
+    /// Show a folder dialog (File > Move Project), then call [`Shell::move_project_to`] with the
+    /// picked folder: the project goes into a folder of its own name inside it.
+    PickMoveFolder,
     /// Show a save dialog for a project archive (File > Export Project Archive): an `.atomikz`
     /// file named `name`, then call [`Shell::export_archive_to`] with the path.
     PickExportArchive {
@@ -974,6 +977,19 @@ impl<B: AudioBackend> Shell<B> {
         vec![ShellRequest::PickExportArchive { name }]
     }
 
+    /// The folder picked for [`ShellRequest::PickMoveFolder`]: moves the project into it (see
+    /// [`AppCore::move_project`]); the toast says what happened.
+    pub fn move_project_to(&mut self, folder: &Path) {
+        match self.core.move_project(folder) {
+            Ok(()) => {}
+            Err(AppError::NoPath) => {
+                self.notify("Save the song first: Move Project needs a project file".to_owned());
+            }
+            Err(e) => self.notify(e.to_string()),
+        }
+        self.repaint = true;
+    }
+
     /// Writes the project archive the dialog picked (see [`AppCore::start_archive_export`]); the
     /// extension is added when the name has none.
     pub fn export_archive_to(&mut self, path: &Path) {
@@ -1200,6 +1216,69 @@ impl<B: AudioBackend> Shell<B> {
         self.start_screen.as_ref()
     }
 
+    /// The rows of the recent column: the recent songs as they are now, the pinned ones marked.
+    fn start_recent_rows(&self) -> Vec<RecentRow> {
+        self.core
+            .recent()
+            .iter()
+            .map(|p| {
+                let modified = std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
+                RecentRow::new(p, modified).pinned(self.core.is_pinned(p))
+            })
+            .collect()
+    }
+
+    /// Pins or unpins the song at place `index` of the recent list from the start screen: it
+    /// moves to or from the top of the list and the box shows the new order.
+    fn toggle_start_pin(&mut self, index: usize) {
+        let Some(path) = self.core.recent().get(index).cloned() else {
+            return;
+        };
+        let done = if self.core.is_pinned(&path) {
+            self.core.unpin_recent(&path)
+        } else if self.core.pin_recent(&path) {
+            true
+        } else {
+            self.notify(format!(
+                "At most {} songs can be pinned: unpin one first",
+                crate::recent::MAX_PINNED
+            ));
+            false
+        };
+        if done {
+            let rows = self.start_recent_rows();
+            let at = self.core.recent().iter().position(|p| *p == path);
+            if let Some(screen) = &mut self.start_screen {
+                screen.set_recent(rows, at);
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Reads the preview of the template the start screen card is about, when it has not been
+    /// read yet (once per template while the box is open).
+    fn fill_template_preview(&mut self) {
+        let Some(i) = self
+            .start_screen
+            .as_ref()
+            .and_then(StartScreen::preview_wanted)
+        else {
+            return;
+        };
+        let preview = self
+            .core
+            .templates()
+            .get(i)
+            .and_then(|t| self.core.template_preview(&t.path));
+        if let Some(screen) = &mut self.start_screen {
+            screen.set_preview(i, preview);
+        }
+    }
+
     /// Opens the start screen with the templates and the recent songs as they are now.
     fn open_start_screen(&mut self) {
         self.core.reload_templates();
@@ -1209,25 +1288,14 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|t| t.name.clone())
             .collect();
-        let recent: Vec<RecentRow> = self
-            .core
-            .recent()
-            .iter()
-            .map(|p| {
-                let modified = std::fs::metadata(p)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs());
-                RecentRow::new(p, modified)
-            })
-            .collect();
+        let recent = self.start_recent_rows();
         self.start_screen = Some(StartScreen::new(
             templates,
             recent,
             self.workflow.default_song.is_some(),
             self.workflow.show_start_screen,
         ));
+        self.fill_template_preview();
         self.repaint = true;
     }
 
@@ -1252,8 +1320,16 @@ impl<B: AudioBackend> Shell<B> {
         let Some(screen) = &mut self.start_screen else {
             return Vec::new();
         };
-        match screen.handle(event, size) {
+        let outcome = screen.handle(event, size);
+        if matches!(outcome, StartOutcome::Open) {
+            self.fill_template_preview();
+        }
+        match outcome {
             StartOutcome::Open => Vec::new(),
+            StartOutcome::TogglePin(i) => {
+                self.toggle_start_pin(i);
+                Vec::new()
+            }
             StartOutcome::Close => {
                 self.start_screen = None;
                 Vec::new()
@@ -2650,6 +2726,7 @@ impl<B: AudioBackend> Shell<B> {
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
             missing_audio: !self.core.missing_assets().is_empty(),
             archive_busy: self.core.archive_busy(),
+            collect_busy: self.core.collect_busy(),
             default_song: self.workflow.default_song.is_some(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
             midi_track: self.core.can_export_midi(MidiExport::Track),
@@ -5790,6 +5867,35 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
+            }
+            AppCommand::CollectPreview => {
+                match self.core.collect_preview_message() {
+                    Ok(message) => self.notify(message),
+                    Err(AppError::NoPath) => {
+                        self.notify(
+                            "Save the song first: Collect Files gathers its audio next to the project file"
+                                .to_owned(),
+                        );
+                    }
+                    Err(e) => self.notify(e.to_string()),
+                }
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::CancelCollect => {
+                self.core.cancel_collect();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::MoveProject => {
+                self.menubar.as_mut().map(MenuBar::close);
+                if self.core.file().is_none() {
+                    self.notify(
+                        "Save the song first: Move Project needs a project file to move".to_owned(),
+                    );
+                    return Vec::new();
+                }
+                vec![ShellRequest::PickMoveFolder]
             }
             AppCommand::RelinkAudio => {
                 self.open_relink();

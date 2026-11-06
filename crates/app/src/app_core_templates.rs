@@ -60,6 +60,17 @@ pub struct TemplateEntry {
     pub path: PathBuf,
 }
 
+/// What the start screen shows of a template: its tracks and its tempo and meter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplatePreview {
+    /// The name of each track, in the order of the arrangement.
+    pub tracks: Vec<String>,
+    /// The tempo at the start of the song.
+    pub tempo_bpm: f64,
+    /// The time signature at the start of the song: beats per bar and the beat unit.
+    pub meter: (u8, u8),
+}
+
 /// What the core remembers about the templates folder.
 pub(super) struct TemplatesState {
     entries: Vec<TemplateEntry>,
@@ -218,6 +229,30 @@ impl<S: EngineSink> AppCore<S> {
         // `audio_opened` takes it; an open that failed before that must not leave it behind.
         self.audio.adopt_from = None;
         opened
+    }
+
+    /// What a template holds, for the start screen: read from its file without opening it. `None`
+    /// when the file cannot be read or is not a project this build can load (a template made
+    /// with a plugin that is not installed has no preview).
+    pub fn template_preview(&self, path: &Path) -> Option<TemplatePreview> {
+        let file = resolve_project_path(path);
+        let text = atomik_model::read_document_text(&file).ok()?;
+        let (doc, _) = atomik_model::load_project_with_warnings(&text, &self.registry).ok()?;
+        let tracks = doc
+            .song
+            .tracks
+            .iter()
+            .map(|t| {
+                doc.device(&t.device)
+                    .map_or_else(|| t.device.0.clone(), |d| d.name.clone())
+            })
+            .collect();
+        let meter = doc.song.meter.first().map_or((4, 4), |m| (m.num, m.den));
+        Some(TemplatePreview {
+            tracks,
+            tempo_bpm: doc.tempo_bpm,
+            meter,
+        })
     }
 
     /// A copy of the song in the templates folder under `name` (made unique), with the audio it

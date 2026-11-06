@@ -1,6 +1,7 @@
 //! The start screen box: its rows, the mouse and the keyboard, and what each pick asks for.
 
 use super::*;
+use atomik_ui::kurbo::Vec2;
 use atomik_ui::{DisplayList, Modifiers};
 use std::path::PathBuf;
 
@@ -300,12 +301,15 @@ fn golden(name: &str, theme: &Theme) {
     );
     s.handle(&key(Key::Down), VIEW);
     s.paint(&mut list, theme, VIEW);
-    let actual = list.to_json();
+    check_golden(name, &list.to_json());
+}
+
+fn check_golden(name: &str, actual: &str) {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(format!("{name}_1x.json"));
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
-        std::fs::write(&path, &actual).unwrap();
+        std::fs::write(&path, actual).unwrap();
         return;
     }
     let expected = std::fs::read_to_string(&path)
@@ -331,4 +335,212 @@ fn golden_start_screen_dark() {
 #[test]
 fn golden_start_screen_light() {
     golden("start_screen_light", &Theme::light());
+}
+
+fn row_rect(s: &StartScreen, target: Target) -> Rect {
+    s.rows(VIEW)
+        .into_iter()
+        .find(|(t, _)| *t == target)
+        .unwrap_or_else(|| panic!("{target:?} is shown"))
+        .1
+}
+
+fn preview(tracks: usize) -> TemplatePreview {
+    TemplatePreview {
+        tracks: (0..tracks).map(|i| format!("Track {i}")).collect(),
+        tempo_bpm: 128.0,
+        meter: (3, 4),
+    }
+}
+
+#[test]
+fn the_pin_button_toggles_the_pin_and_does_not_open_the_song() {
+    let mut s = screen();
+    let pin = pin_rect(row_rect(&s, Target::Recent(2))).center();
+    assert_eq!(s.row_at(VIEW, pin), Some(Target::Pin(2)), "the pin wins");
+    // The rest of the row still opens the song.
+    let name = row_rect(&s, Target::Recent(2)).center() - Vec2::new(40.0, 0.0);
+    assert_eq!(s.row_at(VIEW, name), Some(Target::Recent(2)));
+    assert_eq!(s.handle(&down(pin), VIEW), StartOutcome::TogglePin(2));
+    assert_eq!(
+        s.focus(),
+        Target::Recent(2),
+        "the keys stay on the song, not on the button"
+    );
+    assert_eq!(
+        s.handle(&down(name), VIEW),
+        StartOutcome::Run(AppCommand::OpenRecent(2))
+    );
+}
+
+#[test]
+fn p_pins_the_song_the_keys_are_on_and_nothing_else() {
+    let mut s = screen();
+    assert_eq!(s.handle(&key(Key::Char('p')), VIEW), StartOutcome::Open);
+    s.handle(&key(Key::Right), VIEW);
+    let Target::Recent(i) = s.focus() else {
+        panic!("{:?}", s.focus());
+    };
+    assert_eq!(
+        s.handle(&key(Key::Char('P')), VIEW),
+        StartOutcome::TogglePin(i)
+    );
+    let ctrl = UiEvent::Key {
+        key: Key::Char('p'),
+        modifiers: Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        },
+        pressed: true,
+    };
+    assert_eq!(s.handle(&ctrl, VIEW), StartOutcome::Open, "Ctrl+P is not P");
+}
+
+#[test]
+fn a_pin_is_never_a_tab_stop_and_has_a_tooltip() {
+    let s = screen();
+    assert!(
+        s.rows(VIEW)
+            .iter()
+            .all(|(t, _)| !matches!(t, Target::Pin(_)))
+    );
+    let pin = pin_rect(row_rect(&s, Target::Recent(0))).center();
+    assert!(
+        s.help_at(VIEW, pin)
+            .unwrap()
+            .text
+            .starts_with("Pin this song")
+    );
+    let mut rows = songs(2);
+    rows[0] = rows[0].clone().pinned(true);
+    let s = StartScreen::new(names(1), rows, false, true);
+    let pin = pin_rect(row_rect(&s, Target::Recent(0))).center();
+    assert!(
+        s.help_at(VIEW, pin)
+            .unwrap()
+            .text
+            .starts_with("Unpin this song")
+    );
+    assert_eq!(Target::Pin(0).command(), None);
+}
+
+#[test]
+fn new_recent_rows_keep_the_keys_on_the_song_that_moved() {
+    let mut s = screen();
+    s.handle(&key(Key::Right), VIEW);
+    let mut rows = songs(4);
+    rows.swap(0, 3);
+    rows[0] = rows[0].clone().pinned(true);
+    s.set_recent(rows, Some(0));
+    assert_eq!(s.focus(), Target::Recent(0));
+    assert!(s.recent()[0].pinned && !s.recent()[1].pinned);
+    // A list that lost the row the keys were on falls back to New.
+    s.set_recent(Vec::new(), None);
+    assert_eq!(s.focus(), Target::New);
+}
+
+#[test]
+fn the_card_follows_the_template_under_the_pointer_or_the_keys_and_asks_once() {
+    let mut s = screen();
+    assert_eq!(s.shown_template(), None);
+    assert_eq!(s.preview_wanted(), None);
+    s.handle(&key(Key::Down), VIEW);
+    s.handle(&key(Key::Down), VIEW);
+    assert_eq!(s.focus(), Target::Template(0));
+    assert_eq!(s.shown_template(), Some(0));
+    assert_eq!(s.preview_wanted(), Some(0));
+    assert_eq!(s.card_lines(0), ["Reading the template..."]);
+    s.set_preview(0, Some(preview(2)));
+    assert_eq!(s.preview_wanted(), None, "it is read once");
+    // The pointer wins over the keys.
+    let over = centre(&s, Target::Template(2));
+    s.handle(
+        &UiEvent::PointerMove {
+            pos: over,
+            modifiers: Modifiers::NONE,
+        },
+        VIEW,
+    );
+    assert_eq!(s.shown_template(), Some(2));
+    assert_eq!(s.preview_wanted(), Some(2));
+    s.set_preview(2, None);
+    assert_eq!(s.card_lines(2), ["No preview for this template"]);
+    assert_eq!(s.preview_wanted(), None);
+    s.handle(&UiEvent::PointerLeave, VIEW);
+    assert_eq!(s.shown_template(), Some(0));
+}
+
+#[test]
+fn the_card_lists_tempo_meter_and_tracks_and_counts_the_rest() {
+    let mut s = StartScreen::new(names(2), songs(1), false, true);
+    s.set_preview(0, Some(preview(1)));
+    assert_eq!(s.card_lines(0), ["128 BPM, 3/4, 1 track", "Track 0"]);
+    let mut odd = preview(11);
+    odd.tempo_bpm = 93.5;
+    odd.meter = (4, 4);
+    s.set_preview(1, Some(odd));
+    let lines = s.card_lines(1);
+    assert_eq!(lines[0], "93.50 BPM, 4/4, 11 tracks");
+    assert_eq!(lines.len(), 1 + 8 + 1);
+    assert_eq!(lines.last().unwrap(), "and 3 more");
+    s.set_preview(0, Some(preview(0)));
+    assert_eq!(s.card_lines(0), ["128 BPM, 3/4, no tracks"]);
+}
+
+#[test]
+fn the_card_stays_inside_the_box_and_hides_in_a_narrow_window() {
+    let mut s = screen();
+    s.handle(&key(Key::End), VIEW);
+    s.set_preview(2, Some(preview(11)));
+    let mut list = DisplayList::new();
+    s.paint(&mut list, &Theme::dark(), VIEW);
+    let text = list.to_json();
+    assert!(text.contains("Track 7") && text.contains("and 3 more"));
+    // Narrow: one column, no card.
+    let narrow = Size::new(420.0, 600.0);
+    let mut list = DisplayList::new();
+    s.paint(&mut list, &Theme::dark(), narrow);
+    assert!(!list.to_json().contains("Track 0"));
+}
+
+fn golden_pinned(name: &str, theme: &Theme) {
+    let mut list = DisplayList::new();
+    let mut s = StartScreen::new(
+        vec!["Band Rehearsal".into(), "Beat Sketch".into()],
+        vec![
+            RecentRow::new(
+                &PathBuf::from("/songs/demo/Night Drive.atomik"),
+                Some(1_700_000_000),
+            )
+            .pinned(true),
+            RecentRow::new(
+                &PathBuf::from("/songs/demo/Old Idea.atomik"),
+                Some(1_690_000_000),
+            ),
+        ],
+        false,
+        true,
+    );
+    s.set_preview(
+        0,
+        Some(TemplatePreview {
+            tracks: vec!["Drums".into(), "Bass".into(), "Keys".into()],
+            tempo_bpm: 120.0,
+            meter: (4, 4),
+        }),
+    );
+    s.handle(&key(Key::Down), VIEW);
+    s.handle(&key(Key::Down), VIEW);
+    s.paint(&mut list, theme, VIEW);
+    check_golden(name, &list.to_json());
+}
+
+#[test]
+fn golden_start_screen_pinned_and_card_dark() {
+    golden_pinned("start_screen_pinned", &Theme::dark());
+}
+
+#[test]
+fn golden_start_screen_pinned_and_card_light() {
+    golden_pinned("start_screen_pinned_light", &Theme::light());
 }

@@ -486,7 +486,7 @@ impl SettingsDialog {
             }
             Tab::Workflow => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
-                let height = (TITLE + 14.0 * 44.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let height = (TITLE + 15.0 * 42.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)

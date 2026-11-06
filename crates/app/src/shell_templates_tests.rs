@@ -745,3 +745,116 @@ fn collect_files_is_a_file_menu_command_that_needs_a_saved_song() {
             .is_some_and(|m| m.starts_with("Collected 1 audio file"))
     );
 }
+
+/// A saved song with audio in `<tmp>/shared/song.atomik`, sharing its Audio folder with another
+/// project file; the shell has it open.
+fn shared_audio_song(t: &Tmp) -> Shell<NullBackend> {
+    let mut s = shell(t);
+    let shared = t.path("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    let wav = t.path("a.wav");
+    atomik_audio_file::write_wav_f32(
+        &wav,
+        &atomik_audio_file::AudioData::new(48_000, vec![vec![0.5; 4_800]]).unwrap(),
+    )
+    .unwrap();
+    s.core_mut()
+        .import_audio(vec![wav], atomik_ui::ImportTarget::NewTracks, 0);
+    s.core_mut().wait_background();
+    s.core_mut().save_as(&shared.join("shared.atomik")).unwrap();
+    std::fs::copy(shared.join("shared.atomik"), shared.join("song.atomik")).unwrap();
+    s.open_file(&shared.join("song.atomik"));
+    s.core_mut().wait_background();
+    s
+}
+
+#[test]
+fn preview_collect_files_says_what_would_be_copied_and_copies_nothing() {
+    let t = Tmp::new("collect-preview");
+    let mut s = shell(&t);
+    let entry = item(&s, AppCommand::CollectPreview);
+    assert_eq!(entry.label, "Preview Collect Files");
+    assert!(entry.enabled);
+    assert!(s.execute(AppCommand::CollectPreview).is_empty());
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Save the song first"))
+    );
+
+    let mut s = shared_audio_song(&t);
+    assert!(s.execute(AppCommand::CollectPreview).is_empty());
+    let message = s.core().last_rejection().unwrap().to_owned();
+    assert!(
+        message.starts_with("Collect Files would copy 1 audio file"),
+        "{message}"
+    );
+    assert!(!t.path("shared").join("song").exists());
+}
+
+#[test]
+fn cancel_collect_is_enabled_only_while_audio_is_being_copied() {
+    let t = Tmp::new("collect-cancel");
+    let mut s = shared_audio_song(&t);
+    let entry = item(&s, AppCommand::CancelCollect);
+    assert_eq!(entry.label, "Cancel Collect or Move");
+    assert!(!entry.enabled, "nothing is being copied");
+    // Nothing to cancel: harmless.
+    assert!(s.execute(AppCommand::CancelCollect).is_empty());
+    // A collection on its worker enables it, and the cancel stops it.
+    s.core_mut().set_background_save(true);
+    assert!(s.execute(AppCommand::CollectFiles).is_empty());
+    if s.core().collect_busy() {
+        assert!(item(&s, AppCommand::CancelCollect).enabled);
+        assert!(s.execute(AppCommand::CancelCollect).is_empty());
+    }
+    s.core_mut().settle_save();
+    assert!(!item(&s, AppCommand::CancelCollect).enabled);
+}
+
+#[test]
+fn move_project_asks_for_a_folder_and_the_answer_moves_the_project() {
+    let t = Tmp::new("move");
+    let mut s = shell(&t);
+    let entry = item(&s, AppCommand::MoveProject);
+    assert_eq!(entry.label, "Move Project\u{2026}");
+    // An unsaved song has nothing to move.
+    assert!(s.execute(AppCommand::MoveProject).is_empty());
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Save the song first"))
+    );
+
+    let mut s = shared_audio_song(&t);
+    assert_eq!(
+        s.execute(AppCommand::MoveProject),
+        vec![ShellRequest::PickMoveFolder]
+    );
+    let dest = t.path("elsewhere");
+    std::fs::create_dir_all(&dest).unwrap();
+    s.move_project_to(&dest);
+    s.core_mut().wait_background();
+    assert_eq!(
+        s.core().file(),
+        Some(dest.join("song").join("song.atomik").as_path())
+    );
+    assert!(dest.join("song").join("Audio").is_dir());
+    assert!(!t.path("shared").join("song.atomik").exists());
+    // The other project of the shared folder is still there.
+    assert!(t.path("shared").join("shared.atomik").is_file());
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Moved to "))
+    );
+    // Moving a project that was never saved says so.
+    let mut fresh = shell(&t);
+    fresh.move_project_to(&dest);
+    assert!(
+        fresh
+            .core()
+            .last_rejection()
+            .is_some_and(|m| m.starts_with("Save the song first"))
+    );
+}

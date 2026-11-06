@@ -764,6 +764,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.cancel_collect",
+        "Cancel Collect or Move",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.clear_recent",
         "Clear Recent Songs",
         G::Global,
@@ -772,6 +779,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("file.close", "Close", G::Global, C::Global).menu(),
     cmd("file.collect_files", "Collect Files", G::Global, C::Global).menu(),
+    cmd(
+        "file.collect_preview",
+        "Preview Collect Files",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd(
         "file.convert_rate",
         "Convert Sample Rate",
@@ -882,6 +896,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .arg(MIDI_RESOLUTION_ARGS)
     .menu(),
+    cmd("file.move_project", "Move Project", G::Global, C::Global).menu(),
     cmd("file.new", "New", G::Global, C::Global).menu(),
     cmd("file.new_rate", "New at Sample Rate", G::Global, C::Global)
         .arg(RATE_ARGS)

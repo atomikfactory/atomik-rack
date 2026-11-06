@@ -384,6 +384,10 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_relink_path",
             "a file or folder dialog: use session_relink with a file or a folder",
         ),
+        ShellRequest::PickMoveFolder => (
+            "pick_move_folder",
+            "a folder dialog: a headless session cannot show it (Move Project is covered by the app tests)",
+        ),
         ShellRequest::PickExportArchive { .. } | ShellRequest::PickImportArchive => (
             "pick_archive",
             "a file dialog: a headless session cannot show it (project archives are covered by the app tests)",
