@@ -49,15 +49,18 @@ pub enum UiAction {
         /// Ticks added to the overlap (not 0).
         delta: i64,
     },
-    /// A step of the end edge of a clip dragged with the scale-selection role: the host puts the
+    /// A step of an edge of a clip dragged with the scale-selection role: the host puts the
     /// document back to before the drag and scales `ids` about the earliest start among them
-    /// (see [`atomik_model::WorkflowCommand::ScaleTempo`]) as a preview that adds no undo step.
+    /// (see [`atomik_model::WorkflowCommand::ScaleTempo`]), or with `from_end` (the start edge
+    /// was dragged) about the latest end, as a preview that adds no undo step.
     /// [`UiAction::StretchEnd`] ends it.
     ScaleStep {
         /// The clips being scaled.
         ids: Vec<ClipId>,
         /// The new tempo as a percentage of the old one.
         percent: f64,
+        /// Scale about the latest end of the clips instead of the earliest start.
+        from_end: bool,
     },
     /// The crossfade drag ended: `commit` keeps the last preview as one undo step, otherwise the
     /// document goes back to what it was before the drag.

@@ -3705,14 +3705,18 @@ impl ArrangementView {
             return;
         }
         // The scale-selection role on a clip's end edge: the whole selection scales about its
-        // start, the grabbed edge following the pointer.
-        if primary && part == ClipPart::Edge && id != FROZEN_CLIP && self.scale_role(modifiers) {
+        // start, the grabbed edge following the pointer; on a start edge about its latest end.
+        if primary
+            && matches!(part, ClipPart::Edge | ClipPart::EdgeStart)
+            && id != FROZEN_CLIP
+            && self.scale_role(modifiers)
+        {
             if !self.selection.contains(&id) {
                 self.selection.select_only(id);
             }
             self.point_sel = None;
             self.selected_track = None;
-            self.begin_scale(clip, pos);
+            self.begin_scale(clip, part == ClipPart::EdgeStart, pos);
             return;
         }
         // The stretch role on a clip's start or end edge: the clip's length changes by a ratio
@@ -5005,7 +5009,7 @@ impl ArrangementView {
                     ..
                 }) if id != FROZEN_CLIP && self.stretch_hover() => CursorHint::Stretch,
                 Some(Hit::Clip {
-                    part: ClipPart::Edge,
+                    part: ClipPart::Edge | ClipPart::EdgeStart,
                     id,
                     ..
                 }) if id != FROZEN_CLIP && self.scale_hover() => CursorHint::Stretch,

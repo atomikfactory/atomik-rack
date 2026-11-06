@@ -1,7 +1,8 @@
 //! The scale-selection role (Ctrl+Alt+Shift by default) on a clip's end edge scales the whole
-//! selection about its earliest start: the gesture emits trial steps (`ScaleStep`) that the host
-//! applies without an undo step, the release keeps the last one (`StretchEnd`), going back to the
-//! start drops it. Alt alone keeps scaling each clip about its own fixed edge.
+//! selection about its earliest start, and on a start edge about its latest end: the gesture
+//! emits trial steps (`ScaleStep`) that the host applies without an undo step, the release keeps
+//! the last one (`StretchEnd`), going back to the start drops it. Alt alone keeps scaling each
+//! clip about its own fixed edge.
 
 mod support;
 
@@ -52,11 +53,35 @@ fn right_edge(v: &ArrangementView, id: u64) -> Point {
     Point::new(r.x1 - 2.0, r.center().y + 6.0)
 }
 
+fn left_edge(v: &ArrangementView, id: u64) -> Point {
+    let r = v.clip_rect(ClipId(id)).unwrap();
+    Point::new(r.x0 + 2.0, r.center().y + 6.0)
+}
+
 fn scale_steps(actions: &[UiAction]) -> Vec<(Vec<ClipId>, f64)> {
     actions
         .iter()
         .filter_map(|a| match a {
-            UiAction::ScaleStep { ids, percent } => Some((ids.clone(), *percent)),
+            UiAction::ScaleStep {
+                ids,
+                percent,
+                from_end: false,
+            } => Some((ids.clone(), *percent)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The steps of a drag of a start edge: the clips, the tempo and that it is about the end.
+fn end_steps(actions: &[UiAction]) -> Vec<(Vec<ClipId>, f64)> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::ScaleStep {
+                ids,
+                percent,
+                from_end: true,
+            } => Some((ids.clone(), *percent)),
             _ => None,
         })
         .collect()
@@ -201,20 +226,83 @@ fn alt_alone_still_stretches_each_clip_about_its_own_fixed_edge() {
 }
 
 #[test]
-fn the_role_needs_the_select_tool_and_the_end_edge() {
+fn the_start_edge_scales_the_selection_about_its_latest_end() {
+    let (mut v, doc, reg) = setup();
+    // Clip 3 spans bars 0..4, clip 2 spans bars 1..4: the selection ends at bar 4.
+    v.set_selected_clips(&[ClipId(2), ClipId(3)]);
+    hold(&mut v, scale(), &doc, &reg);
+    let bp = bar_px(&v);
+    let p = left_edge(&v, 2);
+    // Clip 2's start one bar in is bar 2 of the selection's two bars to the end over the three
+    // it was from bar 1: 2/3 as long, a tempo of 150 per cent.
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down_mods(p, scale(), 1),
+            mv_with(p + Vec2::new(bp * 1.1, 0.0), scale()),
+        ],
+    );
+    let got = end_steps(&a);
+    assert_eq!(got.len(), 1, "{a:?}");
+    assert_eq!(got[0].0, vec![ClipId(2), ClipId(3)]);
+    assert!((got[0].1 - 150.0).abs() < 1e-9, "{}", got[0].1);
+    assert!(scale_steps(&a).is_empty(), "not about the start");
+    assert!(song_commands(&a).is_empty());
+    assert_eq!(v.cursor(), CursorHint::Stretch);
+    let a = v.handle(&up(p), &doc, &reg);
+    assert_eq!(a, vec![UiAction::StretchEnd { commit: true }]);
+}
+
+#[test]
+fn the_start_edge_never_scales_a_clip_before_tick_zero() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_clips(&[ClipId(2), ClipId(3)]);
+    hold(&mut v, scale(), &doc, &reg);
+    let bp = bar_px(&v);
+    let p = left_edge(&v, 2);
+    // Clip 3 already starts at 0: pulling the edge out to the left changes nothing.
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down_mods(p, scale(), 1),
+            mv_with(p - Vec2::new(bp * 0.9, 0.0), scale()),
+        ],
+    );
+    assert!(end_steps(&a).is_empty(), "{a:?}");
+    // A single clip that starts later can grow to the left up to tick 0.
+    v.set_selected_clips(&[ClipId(2)]);
+    let _ = v.handle(&up(p), &doc, &reg);
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down_mods(p, scale(), 1),
+            mv_with(p - Vec2::new(bp * 5.0, 0.0), scale()),
+        ],
+    );
+    let got = end_steps(&a);
+    assert_eq!(got.len(), 1, "{a:?}");
+    // Bars 0..4 over bars 1..4: 4/3 as long.
+    assert!((got[0].1 - 75.0).abs() < 1e-9, "{}", got[0].1);
+}
+
+#[test]
+fn the_role_needs_the_select_tool_and_an_edge() {
     let (mut v, doc, reg) = setup();
     v.set_selected_clips(&[ClipId(1)]);
     hold(&mut v, scale(), &doc, &reg);
     let r = v.clip_rect(ClipId(1)).unwrap();
-    // The start edge and the body are not the handle.
-    let start = Point::new(r.x0 + 2.0, r.center().y + 6.0);
+    // The body is not a handle.
+    let body = Point::new(r.center().x, r.center().y + 6.0);
     let a = run(
         |e| v.handle(e, &doc, &reg),
         &[
-            down_mods(start, scale(), 1),
-            mv_with(start + Vec2::new(20.0, 0.0), scale()),
+            down_mods(body, scale(), 1),
+            mv_with(body + Vec2::new(20.0, 0.0), scale()),
         ],
     );
-    assert!(scale_steps(&a).is_empty(), "{a:?}");
-    let _ = v.handle(&up(start), &doc, &reg);
+    assert!(
+        scale_steps(&a).is_empty() && end_steps(&a).is_empty(),
+        "{a:?}"
+    );
+    let _ = v.handle(&up(body), &doc, &reg);
 }

@@ -928,7 +928,11 @@ impl<S: EngineSink> AppCore<S> {
                 percent,
                 from_start,
             } => self.stretch_step(ids, percent, from_start),
-            UiAction::ScaleStep { ids, percent } => self.scale_step(ids, percent),
+            UiAction::ScaleStep {
+                ids,
+                percent,
+                from_end,
+            } => self.scale_step(ids, percent, from_end),
             UiAction::StretchEnd { commit } => self.end_stretch(commit),
             UiAction::CrossfadeStep { later, delta } => self.crossfade_step(later, delta),
             UiAction::CrossfadeLengthStep { later, delta } => {
