@@ -20,6 +20,9 @@ fn track_button(b: TrackButton, rect: Rect) -> Help {
         TrackButton::AddLane => help("Add an automation lane for a parameter"),
         TrackButton::Input => help("Choose the audio input this track records from"),
         TrackButton::Monitor => help("Input monitoring: click to cycle off, auto, on"),
+        TrackButton::Controllers => help(
+            "This track holds controller lanes of its own: click to edit them in the piano roll",
+        ),
         TrackButton::Keys => help(
             "Master keyboard: the arrow marks the track the keyboard plays; in Separated mode click it to choose",
         ),

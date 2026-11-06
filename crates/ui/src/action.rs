@@ -121,6 +121,9 @@ pub enum UiAction {
     /// Open this note clip in the piano roll (double-click in the arrangement): call
     /// [`crate::PianoRollView::open`] and show the piano roll in place of the arrangement.
     OpenPianoRoll(ClipId),
+    /// Open the controller lanes this track holds outside its clips in the piano roll (the CC
+    /// badge of the track header; the same as Track > Edit Track Controllers for the track).
+    OpenTrackControllers(DeviceKey),
     /// Close the piano roll and show the arrangement again.
     ClosePianoRoll,
     /// A transport request (buttons, shortcuts, ruler clicks).

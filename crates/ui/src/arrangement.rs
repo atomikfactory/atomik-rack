@@ -164,6 +164,17 @@ const NOTE_BUTTONS: [TrackButton; 6] = [
     TrackButton::AddLane,
     TrackButton::Keys,
 ];
+/// Header controls of a note track that holds controller lanes of its own: the same, with the
+/// badge that opens them.
+const NOTE_BUTTONS_CC: [TrackButton; 7] = [
+    TrackButton::Expand,
+    TrackButton::Mute,
+    TrackButton::Solo,
+    TrackButton::Arm,
+    TrackButton::AddLane,
+    TrackButton::Keys,
+    TrackButton::Controllers,
+];
 /// Header controls of an automation track (no solo, arm or note lane to add to; the lane picker
 /// adds and removes its lanes).
 const AUTOMATION_BUTTONS: [TrackButton; 3] =
@@ -222,6 +233,9 @@ pub enum TrackButton {
     /// The arrow that marks the track receiving the master keyboard; in Separated mode a click
     /// sends the keyboard to this track (note tracks).
     Keys,
+    /// The CC badge of a note track that holds controller lanes of its own (it is not there
+    /// otherwise, nor on a compact row): a click opens the lanes in the piano roll.
+    Controllers,
 }
 
 /// A button in the corner above the track list: the master mute and solo clear every track's,
@@ -2351,7 +2365,8 @@ impl ArrangementView {
                 TrackButton::AddLane
                 | TrackButton::Input
                 | TrackButton::Monitor
-                | TrackButton::Keys => Rect::ZERO,
+                | TrackButton::Keys
+                | TrackButton::Controllers => Rect::ZERO,
             };
         }
         match button {
@@ -2363,6 +2378,7 @@ impl ArrangementView {
             TrackButton::Input => Rect::new(x + 104.0, y + 33.0, x + 164.0, y + 49.0),
             TrackButton::Monitor => Rect::new(x + 168.0, y + 33.0, x + 200.0, y + 49.0),
             TrackButton::Keys => Rect::new(x + 172.0, y + 8.0, x + 187.0, y + 24.0),
+            TrackButton::Controllers => Rect::new(x + 144.0, y + 8.0, x + 168.0, y + 24.0),
         }
     }
 
@@ -2389,7 +2405,7 @@ impl ArrangementView {
                 })
             }
             TrackButton::Input => Rect::new(r.x0 + indent, r.y0, r.x1, r.y1),
-            TrackButton::Monitor | TrackButton::Keys => r,
+            TrackButton::Monitor | TrackButton::Keys | TrackButton::Controllers => r,
         }
     }
 
@@ -3396,8 +3412,10 @@ impl ArrangementView {
             &AUDIO_BUTTONS
         } else if t.is_automation_only() {
             &AUTOMATION_BUTTONS
-        } else {
+        } else if t.controllers.is_empty() {
             &NOTE_BUTTONS
+        } else {
+            &NOTE_BUTTONS_CC
         }
     }
 
@@ -3597,6 +3615,11 @@ impl ArrangementView {
                 );
                 menu.current = options.iter().position(|o| *o == current);
                 self.open_menu(menu);
+            }
+            TrackButton::Controllers => {
+                let device = t.device.clone();
+                self.set_selected_track(Some(device.clone()));
+                out.push(UiAction::OpenTrackControllers(device));
             }
             TrackButton::Keys => {
                 // Standard mode follows the selection: the arrow only shows where the keyboard
@@ -7554,6 +7577,18 @@ impl ArrangementView {
                 t.text_muted.with_alpha(0.4)
             };
             c.fill_with(arrow, col);
+            if !tr.controllers.is_empty() && button_shown(hr, TrackButton::Controllers) {
+                // The CC badge: this track holds controller lanes of its own.
+                let br = self.track_button_rect(hr, track, TrackButton::Controllers);
+                sp::button(
+                    c,
+                    st,
+                    br,
+                    "CC",
+                    Some(t.highlight),
+                    hovered(TrackButton::Controllers),
+                );
+            }
         }
         if tr.is_audio() {
             let header = self.audio_header(&tr.device);

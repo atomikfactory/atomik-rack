@@ -807,3 +807,55 @@ fn a_midi_file_that_cannot_make_a_groove_is_reported_and_changes_nothing() {
     );
     assert_eq!(c.doc(), &before);
 }
+
+#[test]
+fn a_channel_of_controllers_alone_imports_to_the_track_lanes_in_one_undo_step() {
+    let tmp = Tmp::new("own-lanes");
+    let bend = |tick, value| SmfEvent {
+        tick,
+        message: SmfMessage::PitchBend { channel: 5, value },
+    };
+    let file = SmfFile {
+        format: 1,
+        ppq: 96,
+        tracks: vec![SmfTrack {
+            events: vec![
+                SmfEvent {
+                    tick: 0,
+                    message: SmfMessage::NoteOn {
+                        channel: 0,
+                        key: 60,
+                        velocity: 90,
+                    },
+                },
+                bend(48, 12288),
+                SmfEvent {
+                    tick: 96,
+                    message: SmfMessage::NoteOff {
+                        channel: 0,
+                        key: 60,
+                        velocity: 0,
+                    },
+                },
+            ],
+            end_tick: 96,
+        }],
+    };
+    let path = tmp.path("bend.mid");
+    std::fs::write(&path, file.to_bytes()).unwrap();
+    let mut c = core();
+    c.locate_bars(2);
+    let before = c.doc().clone();
+    c.import_midi(&path, false);
+    let t = c.doc().song.tracks.last().unwrap();
+    assert_eq!(t.lanes[0].clips.len(), 1);
+    assert_eq!(t.controllers.len(), 1);
+    assert_eq!(
+        t.controllers[0].points[0].tick,
+        2 * BAR + PPQ / 2,
+        "in song ticks, from the import start"
+    );
+    assert!(c.last_rejection().unwrap().contains("Imported 1 track"));
+    c.undo();
+    assert_eq!(c.doc(), &before, "one undo step");
+}

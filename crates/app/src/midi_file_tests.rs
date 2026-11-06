@@ -598,7 +598,10 @@ fn controllers_become_step_points_and_noise_is_left_out() {
         ]],
     );
     let s = read_song(&bytes).unwrap();
-    assert_eq!(s.skipped, 1);
+    assert_eq!(
+        s.skipped, 0,
+        "the second channel's lanes are the track's own"
+    );
     let lanes = &s.tracks[0].controllers;
     let kinds: Vec<_> = lanes.iter().map(|l| l.kind).collect();
     assert_eq!(
@@ -725,7 +728,21 @@ fn files_without_notes_or_in_an_unsupported_form_are_clean_errors() {
             },
         )]],
     );
-    assert_eq!(read_song(&only_controllers), Err(MidiFileError::NoNotes));
+    // A channel with controllers and no notes is a track with lanes of its own.
+    let s = read_song(&only_controllers).unwrap();
+    assert_eq!(s.tracks.len(), 1);
+    assert!(!s.tracks[0].has_clip() && s.tracks[0].track_controllers.len() == 1);
+    let only_programs = smf(
+        96,
+        vec![vec![ev(
+            0,
+            SmfMessage::Program {
+                channel: 0,
+                program: 3,
+            },
+        )]],
+    );
+    assert_eq!(read_song(&only_programs), Err(MidiFileError::NoNotes));
     let err = read_song(b"definitely not midi").unwrap_err();
     assert!(err.to_string().starts_with("not a MIDI file"), "{err}");
     let mut smpte = smf(96, vec![vec![ev(0, on(0, 60, 1))]]);
@@ -757,6 +774,7 @@ fn a_clip_takes_the_track_end_or_rounds_the_content_up_to_a_bar() {
         notes: vec![note(0, PPQ, 60, 100)],
         controllers: Vec::new(),
         midi: Default::default(),
+        track_controllers: Vec::new(),
         end,
     };
     assert_eq!(make(3 * PPQ).into_clip(0, &song).length, 3 * PPQ);
@@ -774,6 +792,7 @@ fn merging_tracks_joins_notes_and_controllers() {
         notes: vec![note(0, PPQ, 60, 100)],
         controllers: vec![lane(0, 0.25), lane(0, 0.25)],
         midi: Default::default(),
+        track_controllers: Vec::new(),
         end: PPQ,
     };
     let b = MidiTrack {
@@ -781,6 +800,7 @@ fn merging_tracks_joins_notes_and_controllers() {
         notes: vec![note(0, PPQ, 60, 50), note(PPQ, PPQ, 62, 50)],
         controllers: vec![lane(0, 0.75)],
         midi: Default::default(),
+        track_controllers: Vec::new(),
         end: 2 * PPQ,
     };
     let m = MidiSong {
@@ -1412,4 +1432,83 @@ fn a_tracks_own_controller_lanes_are_exported_with_no_clip_at_all() {
             ..
         }
     )));
+}
+
+fn bend(channel: u8, value: u16) -> SmfMessage {
+    SmfMessage::PitchBend { channel, value }
+}
+
+#[test]
+fn a_channel_with_controllers_and_no_notes_is_the_tracks_own_lanes() {
+    // One file track: notes and a mod wheel on channel 1, a pitch bend alone on channel 4.
+    let bytes = smf(
+        96,
+        vec![vec![
+            ev(0, on(0, 60, 100)),
+            ev(48, bend(3, 12288)),
+            ev(96, off(0, 60)),
+            ev(96, bend(3, 8192)),
+        ]],
+    );
+    let s = read_song(&bytes).unwrap();
+    assert_eq!(s.tracks.len(), 1);
+    let t = &s.tracks[0];
+    assert_eq!(t.notes.len(), 1);
+    assert!(t.controllers.is_empty(), "the note channel has none");
+    assert_eq!(t.track_controllers.len(), 1);
+    let lane = &t.track_controllers[0];
+    assert_eq!(lane.kind, ControllerKind::PitchBend);
+    let ticks: Vec<i64> = lane.points.iter().map(|p| p.tick).collect();
+    assert_eq!(ticks, [PPQ / 2, PPQ]);
+    assert_eq!(s.skipped, 0);
+    assert!(t.has_clip());
+}
+
+#[test]
+fn a_file_track_of_controllers_alone_makes_a_track_without_a_clip() {
+    let cc = |channel, controller, value| SmfMessage::Controller {
+        channel,
+        controller,
+        value,
+    };
+    let bytes = smf(
+        96,
+        vec![
+            vec![ev(0, on(0, 60, 100)), ev(96, off(0, 60))],
+            vec![ev(0, cc(0, 1, 10)), ev(48, cc(1, 11, 20))],
+        ],
+    );
+    let s = read_song(&bytes).unwrap();
+    assert_eq!(s.tracks.len(), 3, "the note track, then one per channel");
+    assert!(s.tracks[0].track_controllers.is_empty());
+    for (t, kind) in s.tracks[1..]
+        .iter()
+        .zip([ControllerKind::Cc(1), ControllerKind::Cc(11)])
+    {
+        assert!(!t.has_clip());
+        assert_eq!(t.track_controllers.len(), 1);
+        assert_eq!(t.track_controllers[0].kind, kind);
+    }
+    assert_eq!(s.tracks[1].name, "Track 2 ch1");
+    assert_eq!(s.tracks[2].name, "Track 2 ch2");
+}
+
+#[test]
+fn the_tracks_own_lanes_move_with_the_import_start_and_merge_into_a_single_clip() {
+    let bytes = smf(
+        96,
+        vec![vec![
+            ev(0, on(0, 60, 100)),
+            ev(48, bend(3, 12288)),
+            ev(96, off(0, 60)),
+        ]],
+    );
+    let s = read_song(&bytes).unwrap();
+    let moved = s.tracks[0].own_lanes(2 * PPQ);
+    assert_eq!(moved[0].points[0].tick, PPQ / 2 + 2 * PPQ);
+    // Imported into one track as a single clip, the lanes are in the clip, not lost.
+    let m = s.merged();
+    assert!(m.track_controllers.is_empty());
+    assert_eq!(m.controllers.len(), 1);
+    assert_eq!(m.controllers[0].kind, ControllerKind::PitchBend);
 }

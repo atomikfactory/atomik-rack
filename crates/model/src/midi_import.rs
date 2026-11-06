@@ -7,7 +7,9 @@
 //! console channel exactly as `CreateInstrument` makes it but without an armed track (the
 //! track is added unarmed, so importing eight tracks does not arm eight), named after the
 //! MIDI track when the name is not blank, and one clip on its note lane. The clip is validated
-//! like `AddClip` (notes sorted, controller lanes canonical, ticks in range).
+//! like `AddClip` (notes sorted, controller lanes canonical, ticks in range). Controller lanes
+//! that belong to no clip (a channel of the file that has controllers and no notes) go to the
+//! track's own lanes, as one `SetTrackControllers`; a track with nothing else gets no clip.
 //!
 //! A tempo or meter map replaces the song's; markers and ranges are **added** to the existing ones
 //! (new ids). When a clip reaches past the song end, the end moves to the next bar line after it
@@ -15,6 +17,7 @@
 
 use crate::DeviceKey;
 use crate::console_cmd::Planner;
+use crate::controller::ControllerLane;
 use crate::history::{Edit, Swap};
 use crate::song::{Clip, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent};
 use crate::song_cmd::{check_markers, check_meter_map, check_ranges, check_tempo_map, new_track};
@@ -27,8 +30,12 @@ use atomik_device_sdk::Registry;
 pub struct ImportedTrack {
     /// The new device's name (a blank name keeps the instrument's own).
     pub name: String,
-    /// The clip for the track's note lane (its id is ignored and allocated).
-    pub clip: Clip,
+    /// The clip for the track's note lane (its id is ignored and allocated); `None` for a track
+    /// that only has controller lanes.
+    pub clip: Option<Clip>,
+    /// The controller lanes the track holds outside its clips (see `Track::controllers`), in
+    /// song ticks: a MIDI channel with controllers and no notes.
+    pub controllers: Vec<ControllerLane>,
 }
 
 /// What `WorkflowCommand::ImportMidi` adds to the song.
@@ -98,12 +105,22 @@ pub(crate) fn plan(
             old: None,
             new: Some(new_track(key.clone())),
         });
-        let add_clip = Command::Song(SongCommand::AddClip {
-            device: key,
-            lane: 0,
-            clip: t.clip,
-        });
-        p.push(Document::plan(p.doc(), add_clip, registry)?.0);
+        if let Some(clip) = t.clip {
+            let add_clip = Command::Song(SongCommand::AddClip {
+                device: key.clone(),
+                lane: 0,
+                clip,
+            });
+            p.push(Document::plan(p.doc(), add_clip, registry)?.0);
+        }
+        if !t.controllers.is_empty() {
+            let own = Command::Song(SongCommand::SetTrackControllers {
+                device: key,
+                lanes: t.controllers,
+                merge: None,
+            });
+            p.push(Document::plan(p.doc(), own, registry)?.0);
+        }
     }
     if let Some(map) = import.tempo {
         check_tempo_map(&map).map_err(ModelError::OutOfRange)?;

@@ -424,7 +424,10 @@ impl<S: EngineSink> AppCore<S> {
         let notes: usize = midi.tracks.iter().map(|t| t.notes.len()).sum();
         let left_out = match midi.skipped {
             0 => String::new(),
-            n => format!("; {n} channel{} with only controllers left out", plural(n)),
+            n => format!(
+                "; {n} channel{} with only program changes left out",
+                plural(n)
+            ),
         };
         if let Some(device) = target {
             let clip = midi.merged().into_clip(playhead, &self.doc().song);
@@ -454,7 +457,8 @@ impl<S: EngineSink> AppCore<S> {
             .into_iter()
             .map(|t: MidiTrack| ImportedTrack {
                 name: t.name.clone(),
-                clip: t.into_clip(start, &scratch),
+                controllers: t.own_lanes(start),
+                clip: t.has_clip().then(|| t.into_clip(start, &scratch)),
             })
             .collect();
         let import = MidiImport {

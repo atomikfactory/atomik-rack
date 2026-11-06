@@ -18,7 +18,8 @@ const BAR: i64 = PPQ * 4;
 fn track(name: &str, start: i64, length: i64, notes: Vec<Note>) -> ImportedTrack {
     ImportedTrack {
         name: name.to_owned(),
-        clip: notes_clip(start, length, notes),
+        clip: Some(notes_clip(start, length, notes)),
+        controllers: Vec::new(),
     }
 }
 
@@ -44,7 +45,7 @@ fn the_tracks_come_with_instruments_unarmed_and_named_in_one_undo_step() {
         vec![point(0, 0.5, atomik_model::song::Curve::Step)],
     )];
     let mut second = track("Bass", BAR, 2 * BAR, vec![note(0, PPQ, 36, 1.0)]);
-    second.clip.controllers = controllers.clone();
+    second.clip.as_mut().unwrap().controllers = controllers.clone();
     let ops = run_import(
         &mut d,
         &reg,
@@ -287,4 +288,68 @@ fn rejected_imports_change_nothing() {
         assert!(run_import(&mut d, &reg, i).is_err(), "{why}");
         assert_eq!(d.doc(), &before, "{why}: the document is untouched");
     }
+}
+
+fn lane(kind: ControllerKind, ticks: &[i64]) -> ControllerLane {
+    ControllerLane::new(
+        kind,
+        ticks
+            .iter()
+            .map(|t| point(*t, 0.5, atomik_model::song::Curve::Step))
+            .collect(),
+    )
+}
+
+#[test]
+fn a_track_of_controllers_alone_gets_its_own_lanes_and_no_clip() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    let before = d.doc().clone();
+    let own = vec![
+        lane(ControllerKind::PitchBend, &[0, BAR]),
+        lane(ControllerKind::Cc(1), &[PPQ]),
+    ];
+    let only = ImportedTrack {
+        name: "Bend".to_owned(),
+        clip: None,
+        controllers: own.clone(),
+    };
+    run_import(&mut d, &reg, import(vec![only])).unwrap();
+    let t = d.doc().song.tracks.last().unwrap();
+    assert_eq!(t.controllers, own);
+    assert!(t.lanes.iter().all(|l| l.clips.is_empty()), "no clip");
+    d.undo().unwrap();
+    assert_eq!(d.doc(), &before, "one undo step");
+    d.redo().unwrap();
+    assert_eq!(d.doc().song.tracks.last().unwrap().controllers, own);
+}
+
+#[test]
+fn a_clip_and_track_lanes_come_together() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    let mut t = track("Lead", 0, BAR, vec![note(0, PPQ, 60, 0.5)]);
+    t.controllers = vec![lane(ControllerKind::ChannelPressure, &[PPQ])];
+    run_import(&mut d, &reg, import(vec![t])).unwrap();
+    let added = d.doc().song.tracks.last().unwrap();
+    assert_eq!(added.lanes[0].clips.len(), 1);
+    assert_eq!(added.controllers.len(), 1);
+}
+
+#[test]
+fn track_lanes_that_do_not_fit_are_refused_and_change_nothing() {
+    let reg = registry();
+    let mut d = song_start(&reg);
+    let before = d.doc().clone();
+    let mut bad = lane(ControllerKind::Cc(1), &[PPQ, 0]);
+    // Points out of order are not a lane the model accepts as given: the command canonicalises
+    // them, so make the value invalid instead.
+    bad.points[0].value = 9.0;
+    let t = ImportedTrack {
+        name: "x".to_owned(),
+        clip: None,
+        controllers: vec![bad],
+    };
+    assert!(run_import(&mut d, &reg, import(vec![t])).is_err());
+    assert_eq!(d.doc(), &before);
 }

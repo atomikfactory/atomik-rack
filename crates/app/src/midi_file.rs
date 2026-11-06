@@ -42,7 +42,11 @@
 //! clip's `midi` data (at most as many as a clip holds): a bank select (`CC 0`, `CC 32`) just
 //! before a program change at the same tick joins it as one bank and program event and leaves
 //! the controller lanes. The complete SysEx messages of a file track belong to its first clip; a
-//! track with SysEx but no notes becomes a clip without notes that carries them. Tempo, time
+//! track with SysEx but no notes becomes a clip without notes that carries them. A channel that
+//! has controllers and no notes is not a clip: its lanes are the track's own
+//! (`MidiTrack::track_controllers`; they go to the first track of the same file track that has
+//! notes, else to a track of their own without a clip), and a channel with only program changes
+//! is left out. Tempo, time
 //! signature and marker events from every track make the song-level data; a marker named
 //! `<name> (end)` after a marker named `<name>` closes that marker into a range, which is how
 //! the export writes a range. Ticks are rescaled from the file's division with rounding.
@@ -78,7 +82,7 @@ pub enum MidiFileError {
     /// The file is not a MIDI file this reader handles.
     #[error(transparent)]
     Smf(#[from] SmfError),
-    /// The file holds no notes (only tempo, markers or controllers).
+    /// The file holds no notes, controllers or SysEx (only tempo, markers or program changes).
     #[error("the MIDI file has no notes")]
     NoNotes,
 }
@@ -494,6 +498,11 @@ pub struct MidiTrack {
     /// The program changes and SysEx messages of the track, canonical and within the limits of
     /// a clip.
     pub midi: MidiData,
+    /// The controller lanes of the channels of this file track that have controllers and no
+    /// notes: they belong to the track itself, not to its clip (in model ticks from the start of
+    /// the file, canonical). They go to the first track of the file track that has notes, else
+    /// to a track of their own.
+    pub track_controllers: Vec<ControllerLane>,
     /// The tick the track ended at (its end-of-track event, or its last event).
     pub end: i64,
 }
@@ -511,7 +520,7 @@ pub struct MidiSong {
     pub markers: Vec<(i64, String)>,
     /// The ranges as `(start, end, name)`: a marker pair as the export writes it.
     pub ranges: Vec<ImportedRange>,
-    /// How many channels with controllers but no notes were left out.
+    /// How many channels with only program changes (no notes, no controllers) were left out.
     pub skipped: usize,
 }
 
@@ -609,6 +618,14 @@ impl Channel {
             Some(last) if last.tick == tick => *last = point,
             _ => points.push(point),
         }
+    }
+
+    /// The controller lanes of a channel without notes, canonical.
+    fn into_lanes(self) -> Vec<ControllerLane> {
+        self.lanes
+            .into_iter()
+            .map(|(kind, points)| ControllerLane::new(kind, points))
+            .collect()
     }
 
     /// Ends the hanging notes at `end` (at least a sixteenth long) and returns the finished
@@ -761,34 +778,69 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                 SmfMessage::Controller { .. } => {}
             }
         }
-        let finished: Vec<(u8, ChannelData)> = channels
-            .into_iter()
-            .filter_map(|(ch, c)| {
-                let has_lanes = !c.lanes.is_empty() || !c.programs.is_empty();
-                let done = c.finish(end);
-                if done.is_none() && has_lanes {
+        let mut finished: Vec<(u8, ChannelData)> = Vec::new();
+        // A channel with controllers and no notes: its lanes are the track's own.
+        let mut lone: Vec<(u8, Vec<ControllerLane>)> = Vec::new();
+        for (ch, c) in channels {
+            let noteless = c.notes.is_empty() && c.open.is_empty();
+            let programs = !c.programs.is_empty();
+            if noteless {
+                let lanes = c.into_lanes();
+                if !lanes.is_empty() {
+                    lone.push((ch, lanes));
+                } else if programs {
                     skipped += 1;
                 }
-                done.map(|d| (ch, d))
-            })
-            .collect();
+            } else if let Some(done) = c.finish(end) {
+                finished.push((ch, done));
+            }
+        }
         // A SysEx message belongs to the file track, not to a channel: the first clip of the
         // track carries it, or a clip without notes when the track has none.
         let base = title.unwrap_or_else(|| format!("Track {}", index + 1));
-        if finished.is_empty() && !sysex.is_empty() {
-            tracks.push(MidiTrack {
-                name: base,
-                notes: Vec::new(),
-                controllers: Vec::new(),
-                midi: limited(MidiData {
-                    programs: Vec::new(),
-                    sysex,
-                }),
-                end,
-            });
+        let own = |tracks: &[(u8, Vec<ControllerLane>)]| {
+            join_lanes(tracks.iter().flat_map(|(_, lanes)| lanes))
+        };
+        if finished.is_empty() {
+            if lone.is_empty() {
+                if !sysex.is_empty() {
+                    tracks.push(MidiTrack {
+                        name: base,
+                        notes: Vec::new(),
+                        controllers: Vec::new(),
+                        midi: limited(MidiData {
+                            programs: Vec::new(),
+                            sysex,
+                        }),
+                        track_controllers: Vec::new(),
+                        end,
+                    });
+                }
+                continue;
+            }
+            let mut sysex = Some(sysex);
+            let several = lone.len() > 1;
+            for (channel, lanes) in lone {
+                tracks.push(MidiTrack {
+                    name: if several {
+                        format!("{base} ch{}", channel + 1)
+                    } else {
+                        base.clone()
+                    },
+                    notes: Vec::new(),
+                    controllers: Vec::new(),
+                    midi: limited(MidiData {
+                        programs: Vec::new(),
+                        sysex: sysex.take().unwrap_or_default(),
+                    }),
+                    track_controllers: lanes,
+                    end,
+                });
+            }
             continue;
         }
         let mut sysex = Some(sysex);
+        let mut lone = Some(own(&lone));
         let several = finished.len() > 1;
         for (channel, (notes, controllers, mut midi)) in finished {
             midi.sysex = sysex.take().unwrap_or_default();
@@ -801,6 +853,7 @@ pub fn read_song(bytes: &[u8]) -> Result<MidiSong, MidiFileError> {
                 notes,
                 controllers,
                 midi: limited(midi),
+                track_controllers: lone.take().unwrap_or_default(),
                 end,
             });
         }
@@ -911,6 +964,29 @@ fn meter_map(events: &[(i64, u8, u8)]) -> Option<Vec<MeterEvent>> {
     Some(map)
 }
 
+/// Lanes of the same kind joined into one (the later point wins at a shared tick), canonical.
+fn join_lanes<'a>(lanes: impl Iterator<Item = &'a ControllerLane>) -> Vec<ControllerLane> {
+    let mut by_kind: BTreeMap<ControllerKind, Vec<AutomationPoint>> = BTreeMap::new();
+    for lane in lanes {
+        by_kind
+            .entry(lane.kind)
+            .or_default()
+            .extend(lane.points.iter().copied());
+    }
+    by_kind
+        .into_iter()
+        .map(|(kind, mut points)| {
+            // A stable sort keeps the later lane's point last among equal ticks, and the last
+            // of equal ticks wins.
+            points.sort_by_key(|p| p.tick);
+            points.reverse();
+            points.dedup_by_key(|p| p.tick);
+            points.reverse();
+            ControllerLane::new(kind, points)
+        })
+        .collect()
+}
+
 impl MidiSong {
     /// Every track in one: the notes of all tracks and channels together (the first note wins at
     /// a tick and key shared by two) and the controller points of the same kind joined (the
@@ -919,24 +995,11 @@ impl MidiSong {
         let mut notes: Vec<Note> = self.tracks.iter().flat_map(|t| t.notes.clone()).collect();
         notes.sort_by_key(|n| (n.tick, n.key));
         notes.dedup_by_key(|n| (n.tick, n.key));
-        let mut lanes: BTreeMap<ControllerKind, Vec<AutomationPoint>> = BTreeMap::new();
-        for lane in self.tracks.iter().flat_map(|t| &t.controllers) {
-            lanes
-                .entry(lane.kind)
-                .or_default()
-                .extend(lane.points.iter().copied());
-        }
-        let controllers = lanes
-            .into_iter()
-            .map(|(kind, mut points)| {
-                points.sort_by_key(|p| p.tick);
-                // The last of equal ticks wins.
-                points.reverse();
-                points.dedup_by_key(|p| p.tick);
-                points.reverse();
-                ControllerLane::new(kind, points)
-            })
-            .collect();
+        let controllers = join_lanes(
+            self.tracks
+                .iter()
+                .flat_map(|t| t.controllers.iter().chain(&t.track_controllers)),
+        );
         let mut midi = MidiData::default();
         for t in &self.tracks {
             midi.append(t.midi.clone());
@@ -949,12 +1012,37 @@ impl MidiSong {
             notes,
             controllers,
             midi: limited(midi),
+            track_controllers: Vec::new(),
             end: self.tracks.iter().map(|t| t.end).max().unwrap_or(0),
         }
     }
 }
 
 impl MidiTrack {
+    /// Whether the track has a clip: notes, controllers of its channel, or program changes and
+    /// SysEx. A track with only [`Self::track_controllers`] has none.
+    pub fn has_clip(&self) -> bool {
+        !self.notes.is_empty() || !self.controllers.is_empty() || !self.midi.is_empty()
+    }
+
+    /// The track's own controller lanes at song tick `start` (the lanes of [`Self::track_controllers`]
+    /// moved by `start`; a point is kept inside [`MAX_TICK`]).
+    pub fn own_lanes(&self, start: i64) -> Vec<ControllerLane> {
+        let moved = self.track_controllers.iter().map(|lane| {
+            let points = lane
+                .points
+                .iter()
+                .map(|p| AutomationPoint {
+                    tick: (p.tick + start).min(MAX_TICK),
+                    ..*p
+                })
+                .collect();
+            ControllerLane::new(lane.kind, points)
+        });
+        // Points squeezed together at MAX_TICK by the clamp are joined (the last wins).
+        join_lanes(moved.collect::<Vec<_>>().iter())
+    }
+
     /// The content tick just past the last note, controller point, program change and SysEx
     /// message.
     fn content_end(&self) -> i64 {
