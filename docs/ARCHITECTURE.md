@@ -482,7 +482,23 @@ the new one with the same bytes, and only then removes the old project file and 
 uses, then the old folders that are empty (`remove_dir`, never recursive). A place that is the old one, inside it or
 around it, or another project file in the old folder or below it (its `Audio/` may hold audio that project uses),
 makes it remove less: the first two nothing, the last only the old project file. A failed check is an error that
-leaves the old project as it was.
+leaves the old project as it was. The project's versions (below) are copied to the new place and compared byte for
+byte with the same checks before the old ones are removed.
+
+Versions are [`audio-file/src/versions.rs`](../crates/audio-file/src/versions.rs): `VersionStore` reads and writes the
+index (`versions.txt`, tab separated, one line per version: number, automatic or named, protected, time, file, audio,
+name) of the folder `versions_dir` finds (`Versions/` in the bundle folder, else `<name> Versions/` beside the file; an
+existing index wins). Each version is the text of a project file named `<name> v<number>.atomikver`, deliberately not
+`.atomik` so no other project check mistakes it for a project sharing the folder. `prune` removes only listed,
+automatic, unprotected versions beyond the number to keep, and a name in the index that is not a plain file name of that
+folder is dropped when the index is read, so no delete can reach outside it. `Job::run` in `app_core_save.rs` keeps
+the file a save replaces (`keep_replaced_file`: not when it equals the new text or the newest version, failures only
+logged), and the audio the kept versions list (`scan_assets` of the text) joins the set the orphan tidy keeps.
+`AppCore::save_version`, `versions`, `set_version_protected` and `restore_version` are in `app_core_versions.rs`; the
+panel is [`ui/src/versions_panel.rs`](../crates/ui/src/versions_panel.rs) (`VersionsView`, `UiAction::Versions`), opened by
+`file.save_version` and `file.versions`. Restore after the question about unsaved changes is
+`PendingAction::RestoreVersion`. Archives and Collect Files write only the project text and audio, so they leave the
+versions out.
 
 ### 2.4 Playback, per 64-frame batch
 
@@ -4691,7 +4707,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (467) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (469) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
