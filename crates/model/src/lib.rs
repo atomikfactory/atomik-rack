@@ -198,7 +198,8 @@ pub use automation_view::{AutomationCurves, ShownValues};
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
-    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_LANE_PARAM, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
+    lane_param, vca_lane_id, vca_lane_key,
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::{
@@ -1927,6 +1928,7 @@ impl Document {
                                     | ContainerCommand::RenameMacro { .. }
                             )
                             | Command::SetColor { .. }
+                            | Command::Console(ConsoleCommand::SetVcaLevel { .. })
                             | Command::Song(
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
@@ -1950,7 +1952,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode and SetVcaLevel can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

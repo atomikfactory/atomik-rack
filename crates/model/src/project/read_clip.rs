@@ -148,7 +148,7 @@ pub(super) fn load_clip(
         LaneKind::Notes => ClipContent::Notes(load_notes(items, &content_path, version)?.into()),
         LaneKind::Automation(param) => {
             // `None`: a dead plugin param, whose values are kept as they are.
-            let pd = desc.param_by_key(param);
+            let pd = crate::console_vca::lane_param(desc, param);
             let mut points: Vec<AutomationPoint> = Vec::with_capacity(items.len());
             let lazy = JsonPath::lazy();
             for (i, item) in items.iter().enumerate() {

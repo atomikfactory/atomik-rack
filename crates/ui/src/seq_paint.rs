@@ -208,7 +208,7 @@ pub fn param_desc(
 ) -> ParamDescriptor {
     doc.device(device)
         .and_then(|d| registry.get(&d.type_id))
-        .and_then(|f| f.descriptor.param_by_key(param).copied())
+        .and_then(|f| atomik_model::lane_param(f.descriptor, param).copied())
         .unwrap_or(FALLBACK_PARAM)
 }
 

@@ -49,9 +49,11 @@ on audio clips, which play on from their file and reach back only as far as it h
 across several lanes of one or more tracks, copied, cut, deleted, pasted back on lanes of their own kind and bounced),
 and recording and note lane follow-ups (the part of a looped clip that no repetition plays dimmed in the piano roll, the
 inspector's fade unit remembered between sessions, and a take written to every note lane armed with Record to Lane),
-and freeze and export follow-ups (a container instrument or a container effect frozen with everything inside it, a
+freeze and export follow-ups (a container instrument or a container effect frozen with everything inside it, a
 Freeze with Strip option that bakes the channel strip into the render, and Export Selection as Audio File and a
-SELECTION range for stems that take the time range selected on the lanes).
+SELECTION range for stems that take the time range selected on the lanes), and mixer group automation (the level of
+a VCA group as an automation lane on the master's track, recorded from the group's fader and played on its members,
+and a chip with the group's name on the headers of the devices of the rack).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -83,7 +85,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 4: Mixing and control
 
-- **Mixer groups follow-ups.** Automation of the group fader (a group is not a device today, so its level is not a lane target; it needs a device or a new lane target kind), groups of groups, a VCA that routes its members to a bus (a group bus), and a group chip on the device headers of the rack.
+- **Mixer groups follow-ups.** Groups of groups, a VCA that routes its members to a bus (a group bus), and automation of a group's mute and solo (only its level has a lane).
 - **Console editing follow-ups.** Copying the master's settings (the master cannot be selected as a strip yet), a remote-control base for the strip surface, auto make-up and an E band mode on the strip, key-input auto-on for channels and buses, a level CV on the master, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), bypass and a B for container effects (a container has no bypass), a parallel compressor with a key input, a pre-insert tap and a choice of tap, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Snapshots that capture the output routing and the insert chains' members, and snapshot recall as an automation lane (a recall at a marker is done, but a lane would also move with the arrangement and could be drawn).

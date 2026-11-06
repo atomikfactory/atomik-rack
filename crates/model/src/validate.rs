@@ -191,6 +191,16 @@ impl RackDoc {
             }
             for (l, lane) in track.lanes.iter().enumerate() {
                 let is_automation = matches!(lane.kind, LaneKind::Automation(_));
+                if let LaneKind::Automation(key) = &lane.kind
+                    && let Some(id) = crate::console_vca::vca_lane_id(key)
+                    && (self.console.vca(id).is_none()
+                        || self.console.master.as_ref() != Some(&track.device))
+                {
+                    found.add(
+                        format!("{at}.lanes[{l}]"),
+                        format!("the level lane of VCA group {id} needs the group and the master"),
+                    );
+                }
                 if lane
                     .static_value
                     .is_some_and(|v| !is_automation || !v.is_finite())

@@ -266,11 +266,19 @@ impl<S: EngineSink> AppCore<S> {
             return command;
         }
         let value = automation_value_at(&points, self.position as f64);
-        let hold = Command::SetParam {
-            key: device.clone(),
-            param: param.clone(),
-            value,
-            merge: None,
+        // A group's level lane holds the group's level.
+        let hold = match atomik_model::vca_lane_id(param) {
+            Some(vca) => Command::Console(atomik_model::ConsoleCommand::SetVcaLevel {
+                vca,
+                db: value,
+                merge: None,
+            }),
+            None => Command::SetParam {
+                key: device.clone(),
+                param: param.clone(),
+                value,
+                merge: None,
+            },
         };
         Command::Batch(vec![command, hold])
     }
@@ -334,7 +342,7 @@ impl<S: EngineSink> AppCore<S> {
             ));
             return false;
         };
-        let Some(value) = self.doc().param_value(&host, &lane, &self.registry) else {
+        let Some(value) = self.lane_value(&host, &lane) else {
             return false;
         };
         let exists = self
@@ -361,6 +369,15 @@ impl<S: EngineSink> AppCore<S> {
         };
         // A rejection is already reported (a lane that has that value already is one).
         self.apply_command(command).is_ok()
+    }
+
+    /// The value of the param a lane drives, as the document holds it: a device param, or the
+    /// level of a group for a group level lane.
+    fn lane_value(&self, device: &DeviceKey, param: &str) -> Option<f32> {
+        match atomik_model::vca_lane_id(param) {
+            Some(id) => self.doc().console.vca(id).map(|g| g.level_db),
+            None => self.doc().param_value(device, param, &self.registry),
+        }
     }
 
     /// Clears the static value of the lane of `param` on `device`'s track.
@@ -428,7 +445,7 @@ impl<S: EngineSink> AppCore<S> {
         let mut map = BTreeMap::new();
         for lane in lanes {
             let (device, param) = &lane;
-            let Some(value) = self.doc().param_value(device, param, &self.registry) else {
+            let Some(value) = self.lane_value(device, param) else {
                 continue;
             };
             let range = self.lane_range(device, param);
@@ -486,7 +503,7 @@ impl<S: EngineSink> AppCore<S> {
         self.doc()
             .resolve(device)
             .and_then(|d| self.registry.get(&d.type_id))
-            .and_then(|f| f.descriptor.param_by_key(param))
+            .and_then(|f| atomik_model::lane_param(f.descriptor, param))
             .map_or(1.0, |p| (p.max - p.min).abs().max(f32::EPSILON))
     }
 
@@ -763,7 +780,12 @@ impl<S: EngineSink> AppCore<S> {
                 .map(|p| p.id)?;
             Some((id, pid))
         };
-        if containers::is_container(doc, device) {
+        if let Some(id) = atomik_model::vca_lane_id(param) {
+            // A group's level lane plays on the `internal.vca_db` of every member.
+            for (member, target) in doc.vca_lane_targets(id) {
+                out.extend(one(&member, target));
+            }
+        } else if containers::is_container(doc, device) {
             let targets = expand_macro_lane(doc, &self.registry, device, param, &[]);
             for (target, target_param, _) in targets.into_iter().flatten() {
                 out.extend(one(&target, &target_param));

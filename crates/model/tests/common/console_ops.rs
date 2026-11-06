@@ -32,6 +32,10 @@ pub enum ConsoleOp {
     FollowFolder(usize, Option<usize>),
     /// A strip joins a group or leaves its group.
     AssignVca(usize, Option<usize>),
+    /// A group gets its level lane (on the master's track).
+    VcaLane(usize),
+    /// A group is deleted (with its level lane).
+    DeleteVca(usize),
 }
 
 pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
@@ -55,6 +59,8 @@ pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
         2 => i().prop_map(ConsoleOp::VcaForFolder),
         1 => (i(), proptest::option::of(i())).prop_map(|(v, f)| ConsoleOp::FollowFolder(v, f)),
         2 => (i(), proptest::option::of(i())).prop_map(|(c, v)| ConsoleOp::AssignVca(c, v)),
+        1 => i().prop_map(ConsoleOp::VcaLane),
+        1 => i().prop_map(ConsoleOp::DeleteVca),
     ]
 }
 
@@ -130,6 +136,20 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
             c(ConsoleCommand::AssignToVca {
                 vca,
                 strips: vec![chan(*ch)?],
+            })
+        }
+        ConsoleOp::VcaLane(v) => {
+            let vcas = &doc.console.vcas;
+            let id = vcas.get(v % vcas.len().max(1))?.id;
+            Command::Song(atomik_model::SongCommand::AddAutomationLane {
+                device: doc.console.master.clone()?,
+                param: atomik_model::vca_lane_key(id),
+            })
+        }
+        ConsoleOp::DeleteVca(v) => {
+            let vcas = &doc.console.vcas;
+            c(ConsoleCommand::DeleteVca {
+                vca: vcas.get(v % vcas.len().max(1))?.id,
             })
         }
         ConsoleOp::Flag(ch, solo, on) => Command::SetParam {

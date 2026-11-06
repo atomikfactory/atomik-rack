@@ -837,3 +837,80 @@ fn a_group_that_follows_a_folder_offers_to_stop() {
         }]
     );
 }
+
+// ---------------------------------------------------------------- the level lane
+
+/// `doc` with the level lane of group 1 on the master's automation track.
+fn with_level_lane(mut doc: RackDoc) -> RackDoc {
+    let mut t = support::song::song_doc().song_mut().tracks.remove(0);
+    t.device = doc.console.master.clone().unwrap();
+    t.lanes = vec![atomik_model::Lane::automation(atomik_model::vca_lane_key(
+        1,
+    ))];
+    doc.song_mut().tracks = vec![t];
+    doc
+}
+
+#[test]
+fn the_vca_menu_shows_and_removes_the_level_lane() {
+    let (doc, reg, mut v) = setup();
+    let master = doc.console.master.clone().unwrap();
+    let p = part(&v, 1, VcaPart::Plate);
+    right_click(&mut v, &doc, &reg, p);
+    let items = v.menu_items();
+    let at = items
+        .iter()
+        .position(|s| s == "Show Automation Lane")
+        .expect("an automation row");
+    assert!(at > 1 && items.last().unwrap() == "Delete VCA");
+    let a = pick(&mut v, &doc, &reg, "Show Automation Lane");
+    assert_eq!(
+        commands(&a),
+        [Command::Song(
+            atomik_model::SongCommand::AddAutomationLane {
+                device: master.clone(),
+                param: "vca.1".into()
+            }
+        )]
+    );
+    // With the lane the row removes it.
+    let doc = with_level_lane(doc);
+    v.sync(&doc, &reg);
+    right_click(&mut v, &doc, &reg, p);
+    assert!(!v.menu_items().iter().any(|s| s == "Show Automation Lane"));
+    let a = pick(&mut v, &doc, &reg, "Remove Automation Lane");
+    assert_eq!(
+        commands(&a),
+        [Command::Song(
+            atomik_model::SongCommand::RemoveAutomationLane {
+                device: master,
+                param: "vca.1".into()
+            }
+        )]
+    );
+}
+
+#[test]
+fn a_vca_with_a_level_lane_wears_the_mark_and_follows_the_lane_value() {
+    let (doc, reg, mut v) = setup();
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let plain = dl.to_json();
+    let doc = with_level_lane(doc);
+    v.sync(&doc, &reg);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert_ne!(plain, dl.to_json(), "the fader carries the automation mark");
+    // The readout follows the value the lane gives; the group's stored level stays.
+    let master = doc.console.master.clone().unwrap();
+    let mut shown = atomik_model::ShownValues::new();
+    shown.insert((master, "vca.1".into()), -20.0);
+    assert!(v.set_shown_values(&shown));
+    v.sync(&doc, &reg);
+    let shown_texts = texts(&mut v, &doc, &reg);
+    assert!(
+        shown_texts.iter().any(|t| t == "-20.0 dB"),
+        "{shown_texts:?}"
+    );
+    assert_eq!(doc.console.vca(1).unwrap().level_db, -6.0);
+}

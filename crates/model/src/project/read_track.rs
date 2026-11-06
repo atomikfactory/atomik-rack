@@ -124,7 +124,7 @@ pub(super) fn load_track(
             let param_path = p.field("param");
             let param = string(&lane["param"], &param_path)?;
             let dead = crate::plugin::is_dead_plugin_param(desc, param);
-            if (desc.param_by_key(param).is_none() && !dead)
+            if (crate::console_vca::lane_param(desc, param).is_none() && !dead)
                 || crate::console::is_internal_param(param)
             {
                 return Err(param_path.error(format!("{} has no param {param:?}", desc.type_id)));
@@ -153,7 +153,7 @@ pub(super) fn load_track(
             if let Some(v) = lane.get("static") {
                 let sp = p.field("static");
                 let value = number(v, &sp)? as f32;
-                let value = match desc.param_by_key(param) {
+                let value = match crate::console_vca::lane_param(desc, param) {
                     Some(pd) => pd.clamp(value),
                     None if value.is_finite() => value,
                     None => return Err(sp.error(format!("{value} is out of range"))),

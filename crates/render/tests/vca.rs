@@ -273,3 +273,88 @@ fn the_bounce_with_a_group_does_not_depend_on_the_block_or_the_workers() {
         );
     }
 }
+
+/// Group 1's level lane with `points` (song ticks, dB) on the master's automation track.
+fn with_level_lane(d: &mut Document, points: &[(i64, f32, atomik_model::Curve)]) {
+    let master = d.doc().console.master.clone().unwrap();
+    apply(
+        d,
+        Command::Song(SongCommand::AddAutomationLane {
+            device: master.clone(),
+            param: atomik_model::vca_lane_key(1),
+        }),
+    );
+    apply(
+        d,
+        Command::Song(SongCommand::AddClip {
+            device: master,
+            lane: 0,
+            clip: Clip {
+                id: ClipId(0),
+                start: 0,
+                length: 4 * PPQ,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                scale: None,
+                param_lanes: Vec::new(),
+                midi: Default::default(),
+                groove: None,
+                controllers: Vec::new(),
+                name: None,
+                color: None,
+                grid: None,
+                content: ClipContent::Automation(
+                    points
+                        .iter()
+                        .map(|(tick, value, curve)| atomik_model::AutomationPoint {
+                            tick: *tick,
+                            value: *value,
+                            curve: *curve,
+                        })
+                        .collect(),
+                ),
+            },
+        }),
+    );
+}
+
+#[test]
+fn a_level_lane_at_a_fixed_value_bounces_like_the_static_level_and_at_zero_like_no_group() {
+    use atomik_model::Curve;
+    let mut lane = grouped(&ALL);
+    with_level_lane(&mut lane, &[(0, -6.0, Curve::Linear)]);
+    let mut fixed = grouped(&ALL);
+    apply(&mut fixed, level(-6.0));
+    let a = bounce(lane.doc());
+    let b = bounce(fixed.doc());
+    assert!(peak(&b) > 0.02);
+    assert!(max_diff(&a, &b) < 1e-4 * peak(&b), "{}", max_diff(&a, &b));
+    let mut zero = grouped(&ALL);
+    with_level_lane(&mut zero, &[(0, 0.0, Curve::Linear)]);
+    assert_eq!(bits(&bounce(zero.doc())), bits(&bounce(song().doc())));
+}
+
+#[test]
+fn a_level_lane_that_drops_to_the_bottom_silences_the_members_from_there_and_not_before() {
+    use atomik_model::Curve;
+    let mut d = grouped(&ALL);
+    with_level_lane(
+        &mut d,
+        &[(0, 0.0, Curve::Step), (2 * PPQ, -60.0, Curve::Linear)],
+    );
+    let out = bounce(d.doc());
+    let rate = d.doc().sample_rate as usize;
+    // 120 BPM: two beats are one second. The tail of the note past the drop is at -60 dB.
+    let early = peak(&out[..rate * 8 / 10]);
+    let late = peak(&out[rate * 13 / 10..rate * 2]);
+    assert!(early > 0.02, "{early}");
+    assert!(late < early * 2e-3, "{late} against {early}");
+    // The same lane bounces the same with another block size and with workers.
+    let again = bounce_with(d.doc(), 64, 2);
+    assert!(
+        max_diff(&out, &again) < 1e-4 * early,
+        "{}",
+        max_diff(&out, &again)
+    );
+}

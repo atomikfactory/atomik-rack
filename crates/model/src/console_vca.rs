@@ -40,8 +40,8 @@ use crate::console::{Console, ConsoleCommand};
 use crate::console_cmd::{Planner, bad};
 use crate::history::Edit;
 use crate::{DeviceKey, ModelError, RackDoc};
-use atomik_core::{VCA_MAX_DB, VCA_MIN_DB};
-use atomik_device_sdk::Registry;
+use atomik_core::{ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB};
+use atomik_device_sdk::{DeviceDescriptor, Registry};
 use std::collections::BTreeSet;
 
 /// Longest VCA group name, in characters.
@@ -107,6 +107,86 @@ impl VcaFeed {
     /// True when the feed is the default (a strip that gets it is as if it had no group).
     pub fn is_none(&self) -> bool {
         self.db == 0.0 && !self.mute && !self.solo
+    }
+}
+
+/// The prefix of the param key of a group's level lane (`vca.<id>`).
+pub const VCA_LANE_PREFIX: &str = "vca.";
+
+/// What a group level lane is a lane of: the level of a group in dB, over the same range as
+/// [`VcaGroup::level_db`]. It has no param id: a group is not a device, so the lane lives on the
+/// master's automation track and the engine gets the level as the `internal.vca_db` lane of each
+/// member (see [`RackDoc::vca_lane_targets`]).
+pub static VCA_LANE_PARAM: ParamDescriptor = ParamDescriptor {
+    id: ParamId(0),
+    key: "vca",
+    name: "Group level",
+    min: VCA_MIN_DB,
+    max: VCA_MAX_DB,
+    default: 0.0,
+    taper: Taper::Linear,
+    unit: Unit::Db,
+    discrete: false,
+};
+
+/// The param key of the level lane of group `id`.
+pub fn vca_lane_key(id: u32) -> String {
+    format!("{VCA_LANE_PREFIX}{id}")
+}
+
+/// The group a lane key names (`vca.<id>`, the id without leading zeros), if it is one.
+pub fn vca_lane_id(key: &str) -> Option<u32> {
+    let digits = key.strip_prefix(VCA_LANE_PREFIX)?;
+    let id: u32 = digits.parse().ok()?;
+    (id > 0 && digits == id.to_string()).then_some(id)
+}
+
+/// The descriptor of lane param `key` of a device of type `desc`: its own param, or on the master
+/// the level of a group (see [`VCA_LANE_PARAM`]). The one lookup every lane check goes through.
+pub fn lane_param<'a>(desc: &'a DeviceDescriptor, key: &str) -> Option<&'a ParamDescriptor> {
+    desc.param_by_key(key).or_else(|| {
+        (desc.type_id == crate::console::MASTER_TYPE && vca_lane_id(key).is_some())
+            .then_some(&VCA_LANE_PARAM)
+    })
+}
+
+impl RackDoc {
+    /// The member strips a group level lane drives, with the param of each that carries the
+    /// level: `(strip, "internal.vca_db")` for every member of group `id`. Empty for a group that
+    /// does not exist.
+    pub fn vca_lane_targets(&self, id: u32) -> Vec<(DeviceKey, &'static str)> {
+        self.console
+            .vca(id)
+            .map(|g| {
+                g.members
+                    .iter()
+                    .map(|m| (m.clone(), crate::console::VCA_DB_PARAM))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The groups that have a level lane, with their members: what the engine's song depends on
+    /// besides the lanes themselves.
+    pub fn vca_lanes(&self) -> Vec<(u32, Vec<DeviceKey>)> {
+        self.console
+            .vcas
+            .iter()
+            .filter(|g| self.vca_lane_of(g.id).is_some())
+            .map(|g| (g.id, g.members.clone()))
+            .collect()
+    }
+
+    /// The automation lane of group `id`'s level, as `(master device, lane param key)`, when the
+    /// group exists and the song has the lane.
+    pub fn vca_lane_of(&self, id: u32) -> Option<(DeviceKey, String)> {
+        let master = self.console.master.as_ref()?;
+        self.console.vca(id)?;
+        let key = vca_lane_key(id);
+        self.song
+            .track(master)?
+            .automation_lane(&key)
+            .map(|_| (master.clone(), key))
     }
 }
 
@@ -533,14 +613,23 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             }
             Ok(())
         }
-        ConsoleCommand::DeleteVca { vca } => edit_groups(p, |groups| {
-            let index = groups
-                .iter()
-                .position(|v| v.id == vca)
-                .ok_or_else(|| bad(format!("there is no VCA group {vca}")))?;
-            groups.remove(index);
+        ConsoleCommand::DeleteVca { vca } => {
+            // The group's level lane goes with it (the id can be given to a new group).
+            let lane = p.doc().vca_lane_of(vca);
+            edit_groups(p, |groups| {
+                let index = groups
+                    .iter()
+                    .position(|v| v.id == vca)
+                    .ok_or_else(|| bad(format!("there is no VCA group {vca}")))?;
+                groups.remove(index);
+                Ok(())
+            })?;
+            if let Some((master, key)) = lane {
+                let edit = crate::song_cmd::remove_lane_edit(p.doc(), master, key)?;
+                p.push(edit);
+            }
             Ok(())
-        }),
+        }
         other => unreachable!("{other:?} is not a VCA command"),
     }
 }

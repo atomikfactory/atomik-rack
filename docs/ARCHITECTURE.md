@@ -3096,6 +3096,21 @@ tracks, and a group can also **follow** a folder (below).
   not part of a multiple selection moves the levels of every member of its group by the same dB
   (`console_gang`, one `Batch` and one undo step per drag, the offsets between the strips kept); a
   multiple selection still takes its own strips along.
+- **Level lane.** A group's level can be automated. The lane is an ordinary automation lane on the track of the
+  master (`vca_lane_key` names it `vca.<id>`, `VCA_LANE_PARAM` is its range in dB, and `lane_param` is the one lookup
+  every lane check goes through, so a group lane is accepted wherever a param lane is). `AddAutomationLane` needs
+  the master and an existing group, `DeleteVca` removes the lane in the same step (`remove_lane_edit`; the id of a
+  deleted group is given to the next one), and the loader and `RackDoc::validate` refuse a lane of a missing group.
+  The song input expands the lane into the `internal.vca_db` lane of every member (`RackDoc::vca_lane_targets`,
+  the way a macro bank's lane plays on its targets), so a bounce and the live song play the same, and the app builds
+  the song again when the members of a group with a lane change (`RackDoc::vca_lanes`). A group fader move is
+  offered to the automation take as a move of the `vca.<id>` param (`AppCore::apply_command`), the engine hold of a
+  written lane is the members' `internal.vca_db`, `hold_on_mute` batches `SetVcaLevel` and the console fader shows
+  the lane's value through `view_with_shown`. The console's group menu has Show Automation Lane and Remove
+  Automation Lane, the fader carries the automation mark, and the arrangement labels the lane "Group N level".
+- **Rack chip.** A device of the rack that is in a group wears its name on its plate, in the group's colour
+  (`group_chip::chips_of` in the rack view): a channel or a bus that is a member and the instrument of an automatic
+  channel. It sits above the output display of an unfolded plate and after the CPU readout of a folded one.
 - **Commands.** `mixer.create_vca` (Create VCA from Selection), `mixer.add_to_vca`,
   `mixer.remove_from_vca` and `mixer.delete_vca` are registry commands in the Mixer menu, without a
   default key. They act on the strips of the focused pane (the console's selection; the

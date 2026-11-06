@@ -56,6 +56,9 @@ pub struct VcaView {
     pub members: usize,
     /// The group follows a track folder (its menu offers to stop).
     pub follows: bool,
+    /// The group's level has an automation lane (`sync` sets it from the document: the lane is
+    /// not part of the group).
+    pub lane: bool,
 }
 
 impl VcaView {
@@ -70,6 +73,7 @@ impl VcaView {
             solo: g.solo,
             follows: g.follows.is_some(),
             members: g.members.len(),
+            lane: false,
         }
     }
 }
@@ -283,6 +287,9 @@ pub fn paint_strip(
         7.5,
     );
     fader(c, st, l.fader, &VCA_LEVEL, v.level_db, v.color);
+    if v.lane {
+        crate::paint::automation_mark(c, t, l.fader);
+    }
     c.pop_transform();
     if drop_target {
         crate::paint::outline(c, bg.inset(-1.0), 4.0, 2.0, t.highlight);

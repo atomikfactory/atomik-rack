@@ -276,6 +276,9 @@ pub struct AppCore<S: EngineSink> {
     /// The VCA feed last sent to each strip (a strip not listed has the default one), so only
     /// a change reaches the engine; forgotten when the engine is rebuilt.
     vca_sent: BTreeMap<DeviceKey, VcaFeed>,
+    /// The groups that have a level lane with their members, as the engine song was last built
+    /// from them.
+    vca_lanes: Vec<(u32, Vec<DeviceKey>)>,
     /// The spectrum and phase meter devices of the flat rack and their analysis state.
     analysers: analysers::Analysers,
     /// The audio track tuners that show and what the engine was told about them.
@@ -534,6 +537,7 @@ impl<S: EngineSink> AppCore<S> {
             meter_devices: Vec::new(),
             plugin_devices: Vec::new(),
             vca_sent: BTreeMap::new(),
+            vca_lanes: Vec::new(),
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
@@ -800,6 +804,13 @@ impl<S: EngineSink> AppCore<S> {
         // A device that goes away takes its latest plugin state into the undo history.
         self.plugins_flush_dirty(false);
         let merge = param_merge(&command);
+        // A group's fader moved by hand is a move of its level lane's param, for recording.
+        let vca_move = match &command {
+            Command::Console(atomik_model::ConsoleCommand::SetVcaLevel { vca, db, .. }) => {
+                Some((*vca, atomik_model::clamp_vca_db(*db)))
+            }
+            _ => None,
+        };
         // Any edit of the user's other than the morph's own steps takes the mix over.
         if !matches!(
             command,
@@ -850,6 +861,18 @@ impl<S: EngineSink> AppCore<S> {
                     self.console.set_snapshot_hint(hint);
                 }
                 self.sync_ops(&ops);
+                let mut ops = ops;
+                if let (Some((vca, db)), false, Some(master)) = (
+                    vca_move,
+                    ops.is_empty(),
+                    self.document.doc().console.master.clone(),
+                ) {
+                    ops.push(SyncOp::ParamChanged {
+                        key: master,
+                        param: atomik_model::vca_lane_key(vca),
+                        value: db,
+                    });
+                }
                 self.capture_automation(&ops, merge);
                 if let Some((w, pre)) = workflow {
                     self.workflow_post(&w, pre);
@@ -1783,6 +1806,12 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 SyncOp::MidiMapsChanged => self.midi_maps_changed(),
                 SyncOp::ConsoleChanged => {
+                    // A group's level lane plays on its members: new members, a new song.
+                    let lanes = self.doc().vca_lanes();
+                    if lanes != self.vca_lanes {
+                        self.vca_lanes = lanes;
+                        stale.0 = true;
+                    }
                     if self.topology.compensation() != self.doc().console.compensation
                         || self.topology.align_inputs() != self.doc().console.align_returns
                     {
@@ -3435,6 +3464,7 @@ fn play_command(count_in: Option<PreRoll>) -> TransportCommand {
 fn param_merge(command: &Command) -> Option<u64> {
     match command {
         Command::SetParam { merge, .. } => *merge,
+        Command::Console(atomik_model::ConsoleCommand::SetVcaLevel { merge, .. }) => *merge,
         Command::Batch(commands) => commands.iter().find_map(param_merge),
         _ => None,
     }
@@ -3761,6 +3791,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "app_core_console_tests.rs"]
 mod console_tests;
+
+#[cfg(test)]
+#[path = "app_core_vca_lane_tests.rs"]
+mod vca_lane_tests;
 
 #[cfg(test)]
 #[path = "app_core_snapshots_tests.rs"]

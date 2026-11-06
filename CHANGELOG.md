@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mixer group automation and the group chip in the rack.** The level of a VCA group is an automation lane: the
+  group's right-click menu in the console has **Show Automation Lane** (and **Remove Automation Lane**), the lane
+  sits on the master's automation track as "Group N level" over the group's range of -60 to +12 dB, and its
+  fader carries the automation mark and follows the lane while the song plays or the playhead moves. The lane plays
+  on every member of the group (in the live song and in bounces, so a ramp to the bottom silences the members from
+  there on), the song follows a change of members, a move of the group fader is recorded into the lane when it is
+  armed (Touch, Latch or Overwrite like any lane, with lane creation too) and the lane is held while it is written
+  or overridden, and muting the lane keeps the group's level as it was. Deleting a group deletes its lane in the
+  same undo step. The lane is an ordinary lane of the master with the param key `vca.<id>`, so the project format
+  stays 44 and no field is added; a build without this change refuses a file that has one. A device of the rack
+  that is in a mixer group (a channel or a bus that is a member, and the instrument of an automatic channel) wears a
+  chip with the group's name in the group's colour on its header.
 - **Freeze and export follow-ups: container devices, Freeze with Strip and Export Selection.** A container
   instrument or a container effect in the insert chain freezes like any device, with every device inside it left out
   of the engine (the render is taken at the inner output that feeds the container's output, and the latency cut
