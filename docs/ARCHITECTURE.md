@@ -3131,6 +3131,35 @@ tracks, and a group can also **follow** a folder (below).
   (`AddToVca(Some(id))`, `DeleteVca(Some(id))`). The track header and folder row context menus
   have Create VCA (and the folder row Create VCA that Follows).
 
+### Folders routed to a bus
+
+[crates/model/src/console_folder.rs](../crates/model/src/console_folder.rs), the level bar in
+[crates/ui/src/arrangement/folder_fader.rs](../crates/ui/src/arrangement/folder_fader.rs). A track folder can
+play into an output bus: `RouteFolderToBus { folder, bus }` and `RouteFolderToNewBus { folder, name }` set the
+output of the console channels of the folder's tracks (sub-folders included) to the bus with the ordinary
+`SetOutput` cables, and `UnrouteFolder { folder }` sends the channels that still play into it back to the master
+(the bus stays). The console keeps a `FolderRoute { folder, bus, members }` for each routed folder
+(`Console::folder_routes`, at most 64, one per folder; several folders may share a bus), and `members` is the
+channels the route has put on the bus.
+
+- **Following.** `console_folder::sync` runs after every command, in the same undo step (it joins the command's
+  `Edit::Compound`, like the VCA follow): a track that joins the folder gets its output on the bus and is added to
+  `members`, one that leaves goes back to the master if it still plays into the bus, a route whose folder is
+  dissolved (or empty) or whose bus is deleted is forgotten, and the cables stay. A channel the route already owns
+  is never moved again, so an output chosen by hand for one member stays. Where a routed folder holds another
+  routed folder, the inner tracks belong to the inner route.
+- **Saved.** An optional `folder_routes` field of the console (`{"folder", "bus", "members"}`), written only when
+  a folder is routed, at project format 44 and `.ignorable()`: the cables carry the routing, so a reader that
+  drops the field plays the same mix. A route to a folder the song lacks is dropped on load.
+- **Level bar.** A folder header that plays into a bus shows the bus fader as a thin bar along its bottom edge; a
+  folder that only a VCA group follows shows the group's level on it (a folder with neither has no bar, so the
+  other headers are unchanged). A press sets the level, a drag is one undo step (`SetParam` of the bus `fader` or
+  `SetVcaLevel` with a merge id), Esc restores it and a double-click resets it to unity.
+- **Commands.** `mixer.route_folder` (Route Folder to New Bus; with a bus number from 1 as its argument it picks
+  that bus) and `mixer.unroute_folder` (Stop Routing Folder) are in the Mixer menu and the folder row's context
+  menu, without a default key; once the song has a bus, a Route Folder to Bus submenu lists them
+  (`RouteFolder(Some(n))`). They act on the folder selected in the arrangement.
+
 ### Channel strip upgrades
 
 The input trim, the polarity, a parallel compressor and the insert bypass of a channel strip

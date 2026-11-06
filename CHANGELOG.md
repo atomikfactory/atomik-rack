@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Track organisation follow-ups: a folder routed to an output bus, and a level bar on the folder header.** Mixer >
+  **Route Folder to New Bus** (and the folder row's context menu, or a **Route Folder to Bus** submenu that lists
+  the buses of the song) makes the channels of a folder's tracks play into a bus named after the folder, in one
+  undo step; a track that moves into the folder follows, and one that moves out goes back to the master, in the
+  same step as the move. **Stop Routing Folder** sends the channels back to the master. A routed folder shows the
+  bus fader as a thin bar on its header, and a folder that only a VCA group follows shows the group's level on
+  it: press or drag to set it (one undo step), Esc puts it back and a double-click resets it. Saved as an optional
+  field that older builds ignore; the project format is unchanged (44). New commands `mixer.route_folder` (with an
+  optional bus number) and `mixer.unroute_folder`.
 - **MIDI controller follow-ups: a badge for a track's own lanes, a file channel of controllers on the track's
   lanes, and a meter map in the track lane grid.** A note track that holds controller lanes of its own shows a
   **CC** badge in its header (rows of 52 px or more); a click opens the lanes in the piano roll, as Track > Edit
