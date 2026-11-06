@@ -1103,3 +1103,213 @@ fn a_panel_range_drag_is_one_undo_step_and_the_end_closes_the_gesture() {
         (atomik_model::MacroCurve::Log, 100)
     );
 }
+
+// ------------------------------------------------------------------ inside a container
+
+/// A container `c` holding a delay `fx`, and a synth `a` outside.
+fn inner_core() -> AppCore<RecordingSink> {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SYNTH, "a");
+    add(&mut c, "atomik.container", "c");
+    apply(
+        &mut c,
+        Command::Container(atomik_model::ContainerCommand::AddInner {
+            container: key("c"),
+            index: usize::MAX,
+            type_id: DELAY.into(),
+            key: Some(key("fx")),
+            auto_split: false,
+        }),
+    );
+    c.sink_mut().take();
+    c
+}
+
+#[test]
+fn a_bank_macro_reaches_a_param_inside_a_container() {
+    let mut c = inner_core();
+    assert!(c.assign_to_macro(&key("c/fx"), "mix", 0, false));
+    apply(
+        &mut c,
+        Command::Macro(MacroCommand::SetRange {
+            id: 1,
+            min: 0.2,
+            max: 0.8,
+            invert: false,
+            merge: None,
+        }),
+    );
+    let bank = bank(&c);
+    c.sink_mut().take();
+    set_param(&mut c, &bank, "macro1", 0.5);
+    let fx = c.device_id(&key("c/fx")).expect("an engine id").0;
+    let sent = params_of(&c.sink_mut().take());
+    assert!(
+        sent.contains(&(fx, param_id(DELAY, "mix"), 0.5)),
+        "{sent:?}"
+    );
+    // The knob inside the container is locked like any driven param.
+    let e = c
+        .apply_command(Command::SetParam {
+            key: key("c/fx"),
+            param: "mix".into(),
+            value: 0.9,
+            merge: None,
+        })
+        .unwrap_err();
+    assert!(e.to_string().contains("driven"), "{e}");
+    // Taking it out of the macro frees it and keeps the value.
+    assert!(c.remove_from_macro(&key("c/fx"), "mix"));
+    assert_eq!(
+        c.doc().resolve(&key("c/fx")).unwrap().params.get("mix"),
+        Some(&0.5)
+    );
+}
+
+#[test]
+fn a_smoothed_inner_target_glides_like_a_top_level_one() {
+    let mut c = inner_core();
+    assert!(c.assign_to_macro(&key("c/fx"), "mix", 0, false));
+    shape(&mut c, 1, atomik_model::MacroCurve::Linear, 200);
+    let bank = bank(&c);
+    c.sink_mut().take();
+    set_param(&mut c, &bank, "macro1", 1.0);
+    assert!(c.macro_gliding());
+    let fx = c.device_id(&key("c/fx")).unwrap().0;
+    let sent = params_of(&c.sink_mut().take());
+    assert_eq!(last_of(&sent, fx, param_id(DELAY, "mix")), None, "{sent:?}");
+}
+
+#[test]
+fn the_assignment_row_names_an_inner_target() {
+    let mut c = inner_core();
+    assert!(c.assign_to_macro(&key("c/fx"), "mix", 0, false));
+    let rows = c.macro_bank_rows();
+    let row = &rows[0].macros[0].assigns[0];
+    assert!(!row.missing, "{row:?}");
+    assert!(row.target.contains("Mix"), "{}", row.target);
+}
+
+// ------------------------------------------------------------------ a lane on a driven param
+
+/// `demo_doc` with the macro's lane taken out and a lane of cutoff values on the driven param.
+fn based_doc(macro_value: f32) -> RackDoc {
+    let mut doc = demo_doc();
+    doc.song_mut().tracks.retain(|t| t.device == key("lead"));
+    let bank = doc.banks().next().unwrap().key.clone();
+    doc.device_mut_for_test(&bank)
+        .params
+        .insert("macro1".into(), macro_value);
+    let mut c = AppCore::with_doc(RecordingSink::new(), doc, None);
+    apply(
+        &mut c,
+        Command::Song(SongCommand::AddAutomationLane {
+            device: key("lead"),
+            param: CUTOFF.into(),
+        }),
+    );
+    let lane = c
+        .doc()
+        .song
+        .track(&key("lead"))
+        .unwrap()
+        .automation_lane(CUTOFF)
+        .unwrap();
+    let points = vec![
+        AutomationPoint {
+            tick: 0,
+            value: 500.0,
+            curve: Curve::Linear,
+        },
+        AutomationPoint {
+            tick: 2 * PPQ,
+            value: 3000.0,
+            curve: Curve::Linear,
+        },
+    ];
+    apply(
+        &mut c,
+        Command::Song(SongCommand::AddClip {
+            device: key("lead"),
+            lane,
+            clip: Clip {
+                id: ClipId(0),
+                start: 0,
+                length: 4 * PPQ,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                scale: None,
+                param_lanes: Vec::new(),
+                midi: Default::default(),
+                groove: None,
+                controllers: Vec::new(),
+                name: None,
+                color: None,
+                grid: None,
+                content: ClipContent::Automation(points),
+            },
+        }),
+    );
+    c.doc().clone()
+}
+
+#[test]
+fn the_live_path_plays_a_lane_with_the_macro_added_exactly_like_the_bounce() {
+    let doc = based_doc(0.5);
+    let reference = bounce_of(&doc);
+    assert!(reference[0].iter().any(|s| s.abs() > 1e-3));
+    for block in [64, 480] {
+        let live = play_doc(doc.clone(), reference[0].len(), block);
+        assert_eq!(same_bits(&live, &reference), None, "block {block}");
+    }
+    // The macro is part of the sound: another value renders differently.
+    let other = based_doc(0.0);
+    assert!(
+        bounce_of(&other)[0]
+            .iter()
+            .zip(&reference[0])
+            .any(|(a, b)| a.to_bits() != b.to_bits())
+    );
+}
+
+/// The first value of the cutoff lane of `lead` in the last song the sink got.
+fn first_lane_value(calls: &[SinkCall]) -> Option<f32> {
+    let pid = atomik_core::ParamId(param_id(SYNTH, CUTOFF));
+    calls.iter().rev().find_map(|call| match call {
+        SinkCall::Song(input) => input
+            .tracks
+            .iter()
+            .flat_map(|t| &t.automation)
+            .find(|a| a.param == pid)
+            .and_then(|a| a.points.first().map(|p| p.value)),
+        _ => None,
+    })
+}
+
+#[test]
+fn moving_the_macro_rebuilds_the_song_when_the_target_has_a_lane_of_its_own() {
+    let doc = based_doc(0.0);
+    let mut c = AppCore::with_doc(RecordingSink::new(), doc, None);
+    let bank = bank(&c);
+    c.sink_mut().take();
+    set_param(&mut c, &bank, "macro1", 1.0);
+    let calls = c.sink_mut().take();
+    // Inverted over 300..2400: at macro 1 the lane gets nothing added, at 0 the whole range.
+    assert_eq!(first_lane_value(&calls), Some(500.0), "{calls:?}");
+    set_param(&mut c, &bank, "macro1", 0.0);
+    let calls = c.sink_mut().take();
+    assert_eq!(first_lane_value(&calls), Some(500.0 + 2100.0));
+}
+
+#[test]
+fn a_driven_param_with_a_lane_of_its_own_follows_that_lane() {
+    let doc = based_doc(0.0);
+    let mut c = AppCore::with_doc(RecordingSink::new(), doc, None);
+    c.set_follow_selection(true);
+    touch(&mut c, "lead", CUTOFF);
+    assert_eq!(
+        c.arrangement().followed_lane(),
+        Some(&(key("lead"), CUTOFF.to_owned()))
+    );
+}

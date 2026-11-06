@@ -356,3 +356,128 @@ fn a_version_28_file_without_macros_bounces_as_it_always_did() {
     let loaded = load_project(&old, &default_registry()).unwrap();
     same(&bounce(&loaded), &bounce(d.doc()), "a version 28 file");
 }
+
+fn base_points() -> Vec<AutomationPoint> {
+    vec![
+        AutomationPoint {
+            tick: 0,
+            value: 500.0,
+            curve: Curve::Linear,
+        },
+        AutomationPoint {
+            tick: 2 * PPQ,
+            value: 3000.0,
+            curve: Curve::Linear,
+        },
+        AutomationPoint {
+            tick: 3 * PPQ,
+            value: 800.0,
+            curve: Curve::Step,
+        },
+    ]
+}
+
+fn as_flat(points: &[AutomationPoint]) -> Vec<(i64, f32, Curve)> {
+    points.iter().map(|p| (p.tick, p.value, p.curve)).collect()
+}
+
+fn from_flat(points: Vec<(i64, f32, Curve)>) -> Vec<AutomationPoint> {
+    points
+        .into_iter()
+        .map(|(tick, value, curve)| AutomationPoint { tick, value, curve })
+        .collect()
+}
+
+#[test]
+fn a_lane_on_a_driven_param_renders_like_the_lane_with_the_macro_added_by_hand() {
+    let p = cutoff_descriptor();
+    for position in [0.0f32, 0.4, 1.0] {
+        let mut m = song();
+        let bank = assign(&mut m, Some(20.0), Some(2020.0), false);
+        apply(
+            &mut m,
+            Command::SetParam {
+                key: bank,
+                param: "macro1".into(),
+                value: position,
+                merge: None,
+            },
+        );
+        lane_on(&mut m, "lead", CUTOFF, base_points());
+        let a = assignment(&m);
+        let by_hand: Vec<AutomationPoint> = base_points()
+            .iter()
+            .map(|pt| AutomationPoint {
+                value: atomik_model::lane_value(&a, pt.value, position, &p),
+                ..*pt
+            })
+            .collect();
+        // The device starts at the value the macro gave the param, as in the project above.
+        let mut hand = song();
+        apply(
+            &mut hand,
+            Command::SetParam {
+                key: key("lead"),
+                param: CUTOFF.into(),
+                value: assign_value(&a, position, &p),
+                merge: None,
+            },
+        );
+        lane_on(&mut hand, "lead", CUTOFF, by_hand);
+        let (x, y) = (bounce(m.doc()), bounce(hand.doc()));
+        assert!(x.iter().any(|s| *s != 0.0), "the song makes sound");
+        same(&x, &y, &format!("macro at {position}"));
+    }
+    // The lane is really the base: without the macro's range the render differs.
+    let mut m = song();
+    let bank = assign(&mut m, Some(20.0), Some(2020.0), false);
+    apply(
+        &mut m,
+        Command::SetParam {
+            key: bank,
+            param: "macro1".into(),
+            value: 1.0,
+            merge: None,
+        },
+    );
+    lane_on(&mut m, "lead", CUTOFF, base_points());
+    let mut plain = song();
+    lane_on(&mut plain, "lead", CUTOFF, base_points());
+    assert!(bits(&bounce(m.doc())) != bits(&bounce(plain.doc())));
+}
+
+#[test]
+fn a_lane_and_a_macro_lane_render_like_the_joined_lane_by_hand() {
+    let p = cutoff_descriptor();
+    let mut m = song();
+    let bank = assign(&mut m, Some(20.0), Some(2020.0), false);
+    lane_on(&mut m, bank.as_str(), "macro1", points());
+    lane_on(&mut m, "lead", CUTOFF, base_points());
+    let a = assignment(&m);
+    let joined = from_flat(atomik_model::compose_driven_lane(
+        &a,
+        &p,
+        &as_flat(&base_points()),
+        0.0,
+        &as_flat(&points()),
+    ));
+    let mut hand = song();
+    apply(
+        &mut hand,
+        Command::SetParam {
+            key: key("lead"),
+            param: CUTOFF.into(),
+            value: assign_value(&a, 0.0, &p),
+            merge: None,
+        },
+    );
+    lane_on(&mut hand, "lead", CUTOFF, joined);
+    same(&bounce(m.doc()), &bounce(hand.doc()), "joined lanes");
+    // And the block size or the worker count does not matter.
+    let reference = bounce_with(m.doc(), 64, 0);
+    same(
+        &reference,
+        &bounce_with(m.doc(), 333, 3),
+        "block 333, 3 workers",
+    );
+}

@@ -19,7 +19,8 @@
 //! the parameter pane ([`atomik_ui::UiAction::ParamTouched`]) records the param as the last
 //! touched one of its device and, with the switch on, brings its lane into view:
 //!
-//! * a param a macro drives follows the **macro's** lane on the bank's track;
+//! * a param a macro drives follows the **macro's** lane on the bank's track, or its own lane
+//!   (the base the macro adds to) once it has one;
 //! * a device without a song track gets one when it has no Notes input too: an effect or a
 //!   channel strip is automated on an automation track of its own (see
 //!   [`atomik_model::song::Track::is_automation_only`]); only an audio track, a device inside a
@@ -125,7 +126,7 @@ impl<S: EngineSink> AppCore<S> {
         if a.smooth_ms == 0 {
             return None;
         }
-        let type_id = self.doc().device(device)?.type_id.clone();
+        let type_id = self.doc().resolve(device)?.type_id.clone();
         let stepped = self
             .registry
             .get(&type_id)?
@@ -374,7 +375,7 @@ impl<S: EngineSink> AppCore<S> {
 
     fn assign_row(&self, a: &MacroAssign) -> MacroAssignRow {
         let doc = self.doc();
-        let device = doc.device(&a.device);
+        let device = doc.resolve(&a.device);
         let desc = device
             .and_then(|d| self.registry.get(&d.type_id))
             .and_then(|f| f.descriptor.param_by_key(&a.param));
@@ -526,9 +527,15 @@ impl<S: EngineSink> AppCore<S> {
     /// can exist (an audio track, a device inside a container, an internal param).
     pub(super) fn lane_host(&self, device: &DeviceKey, param: &str) -> Option<(DeviceKey, String)> {
         let doc = self.doc();
+        // A driven param that has a lane of its own shows that lane (the base the macro adds
+        // to); else it shows the macro's lane.
+        let own = doc
+            .song
+            .track(device)
+            .is_some_and(|t| t.automation_lane(param).is_some());
         let host = match doc.bank_driver(device, param) {
-            Some(a) => (a.bank.clone(), macro_key(a.index)),
-            None => (device.clone(), param.to_owned()),
+            Some(a) if !own => (a.bank.clone(), macro_key(a.index)),
+            _ => (device.clone(), param.to_owned()),
         };
         let d = doc.device(&host.0)?;
         let desc = self.registry.get(&d.type_id)?.descriptor;
