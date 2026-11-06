@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Takes for automation passes, and a saved link between take groups.** A loop recording of automation now stacks
+  its passes as the takes of one take group on the lane (the last pass plays), like a note or audio loop recording,
+  instead of laying layered clips: the take rows open under the automation lane, a take draws as a line, and the
+  takes can be picked and comped. A recording with one pass still lays plain clips. **Link With Selected Tracks** in
+  a take menu saves a link between the take groups of the selected tracks (one undo step): a comp drag or razor cut
+  in one then combs all of them, without the tracks having to stay selected, the strip reads "linked", and **Unlink
+  Take Group** takes a group out. Saved as optional fields that older builds ignore (older builds drop automation
+  takes and keep the clips they compiled); the project format is unchanged (44). A copied track is not linked to
+  the original. No new menu command ids.
 - **Mixer group follow-ups: a group bus, and automation of a group's mute and solo.** Mixer > **Route Group to New
   Bus** (and a **Route Group to Bus** list with a row per group, or Route to New Bus on the group's plate menu)
   plays the members of a VCA group into a bus named after the group, in one undo step; a strip that joins the group

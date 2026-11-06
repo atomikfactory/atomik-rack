@@ -1430,10 +1430,10 @@ mix of parts of them, the **comp**) plays and the others are kept, silent. Punch
 recording are unchanged: a track with one pass still gets one plain clip.
 
 - **Model** ([takes.rs](../crates/model/src/takes.rs),
-  [takes_cmd.rs](../crates/model/src/takes_cmd.rs)). `Lane.take_groups: Vec<TakeGroup>` (notes and
-  audio lanes only). A
-  `TakeGroup { id, takes: Vec<Clip>, comp: Vec<CompSegment>, clips: Vec<ClipId> }` keeps its takes
-  (whole note or audio clips, bottom to top in recording order) **off** `Lane::clips`, so nothing
+  [takes_cmd.rs](../crates/model/src/takes_cmd.rs)). `Lane.take_groups: Vec<TakeGroup>` (note,
+  audio and automation lanes). A
+  `TakeGroup { id, takes: Vec<Clip>, comp: Vec<CompSegment>, clips: Vec<ClipId>, link }` keeps its
+  takes (whole note, audio or automation clips, bottom to top in recording order) **off** `Lane::clips`, so nothing
   that reads the lane's clip list (the engine's flatten, the editors, selection, the clipboard, the
   clip-drag gestures) can see a hidden take. The comp is a sorted list of disjoint
   `CompSegment { take, start, end }` (a take is its index in `takes`; a range with no segment is
@@ -1519,13 +1519,25 @@ recording are unchanged: a track with one pass still gets one plain clip.
   accepts three or four). The take clips use the
   lane's clip fields and ids from the same pool (unique, below `next_clip_id`, none in `"clips"`);
   `"clips"` must name clips of the same lane, each at most once. The field is omitted for a lane
-  without groups and unknown in version 19 and older, which load without groups.
+  without groups and unknown in version 19 and older, which load without groups. Under format 44 an
+  automation lane may carry `"take_groups"` too, and a group an optional `"link"` tag (an integer
+  from 1, written only when set); both are ignorable, so an older build drops the groups and
+  keeps the compiled clips.
+- **Linked groups.** `SongCommand::LinkTakeGroups { groups }` gives two to 64 groups one new tag
+  and `SongCommand::UnlinkTakeGroup { group }` clears one; the groups that share a tag are
+  linked, whatever lane they are on. The arrangement sends a comp gesture in a linked group as
+  one `SetLinkedComp` over the linked groups (a saved link wins over the track selection that
+  linked groups before), and a duplicated track starts unlinked. Link With Selected Tracks and
+  Unlink Take Group are in the take menus.
 - **Recording** ([app_core.rs](../crates/app/src/app_core.rs) `finish_take`,
   [app_core_rec_audio.rs](../crates/app/src/app_core_rec_audio.rs)). The MIDI `Take` and the audio
   writer already end a loop pass in one clip per lap. When a track has more than one lap the app
   sends them as one `NewTakeGroup` instead of one `AddClip` per lap, so the whole recording is one
   undo step per track and the last pass plays. A recording that never wraps the loop (or runs
-  without one) is a single `AddClip` or `AddAudioClip`.
+  without one) is a single `AddClip` or `AddAudioClip`. An automation take does the same per lane
+  (`finish_automation_take`): each pass that wrote is a lap, and a lane with several laps gets one
+  `NewTakeGroup` of automation clips inside the take's `Command::Batch` (which accepts it), the
+  last pass playing; one lap is plain `AddClip`s as before.
 - **Recording over clips** ([record_over.rs](../crates/model/src/record_over.rs),
   [app/src/record_over.rs](../crates/app/src/record_over.rs)). A lane's rule is by start (a
   later-starting clip hides an earlier one over the overlap, with or without notes), so a plain take
