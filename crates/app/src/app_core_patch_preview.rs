@@ -9,7 +9,8 @@
 //!   a synth followed by effects) is pasted as a copy would be (the instrument gets its console
 //!   channel and the master, the end of a chain of several devices gets a channel too) and a
 //!   song track on the device that takes notes plays a short built-in phrase: a low arpeggio
-//!   and a four-note chord, at 120 BPM.
+//!   and a four-note chord, at 120 BPM (a drum machine plays a one-bar pattern on its pad keys
+//!   instead, since the arpeggio would fall on pads that a kit leaves empty).
 //! * An item that holds **effects** only (a single-device effect patch, a chain of effects or
 //!   an effect container) goes into the insert chain of the channel of a built-in synth that
 //!   plays a short staccato phrase, so the effect is heard on a signal with gaps for its tail.
@@ -86,6 +87,27 @@ const INSTRUMENT_PHRASE: Phrase = &[
     (2.0, 2.0, 64, 0.7),
 ];
 
+/// The phrase a drum machine plays: a bar of kick, snare, clap, hats, percussion, toms and a rim
+/// click on the pad keys of a kit (36 to 46).
+const DRUM_PHRASE: Phrase = &[
+    (0.0, 0.25, 36, 0.9),
+    (0.0, 0.25, 42, 0.6),
+    (0.5, 0.25, 42, 0.5),
+    (1.0, 0.25, 38, 0.9),
+    (1.0, 0.25, 39, 0.6),
+    (1.5, 0.25, 42, 0.5),
+    (2.0, 0.25, 36, 0.9),
+    (2.0, 0.25, 42, 0.6),
+    (2.5, 0.25, 43, 0.7),
+    (2.75, 0.25, 41, 0.8),
+    (3.0, 0.25, 45, 0.8),
+    (3.25, 0.25, 37, 0.7),
+    (3.5, 0.25, 46, 0.7),
+];
+
+/// The built-in drum machine, which plays [`DRUM_PHRASE`].
+const DRUM_TYPE: &str = "atomik.drum-machine";
+
 /// The phrase an effect hears: short notes with gaps between them.
 const EFFECT_PHRASE: Phrase = &[
     (0.0, 0.25, 60, 0.9),
@@ -133,6 +155,15 @@ fn holds_plugin(device: &RackDevice) -> bool {
             .inner
             .as_ref()
             .is_some_and(|i| i.devices.iter().any(holds_plugin))
+}
+
+/// Whether the device is of type `type_id` or holds one.
+fn holds_type(device: &RackDevice, type_id: &str) -> bool {
+    device.type_id == type_id
+        || device
+            .inner
+            .as_ref()
+            .is_some_and(|i| i.devices.iter().any(|d| holds_type(d, type_id)))
 }
 
 /// Whether the device is an instrument or holds one.
@@ -288,7 +319,17 @@ fn instrument_scene(
     let Some(entry) = entry.cloned() else {
         return Err("it has no device that takes notes to play".into());
     };
-    play_track(doc, registry, &entry, INSTRUMENT_PHRASE)
+    let drums = doc
+        .doc()
+        .devices
+        .iter()
+        .any(|d| d.key == entry && holds_type(d, DRUM_TYPE));
+    let phrase = if drums {
+        DRUM_PHRASE
+    } else {
+        INSTRUMENT_PHRASE
+    };
+    play_track(doc, registry, &entry, phrase)
 }
 
 /// A track on `device` that plays `phrase`.
@@ -744,6 +785,24 @@ mod tests {
         );
         let (dry_planes, _) = render_preview(dry.doc(), None).unwrap();
         assert!(planes[0].len() > dry_planes[0].len());
+    }
+
+    #[test]
+    fn a_drum_machine_plays_a_drum_pattern_on_its_pad_keys_and_a_synth_keeps_its_phrase() {
+        let drums = scene_of(&item_text(&project_of(&["atomik.drum-machine"]), &["d0"])).unwrap();
+        assert_eq!(phrase_notes(&drums), DRUM_PHRASE.len());
+        let ClipContent::Notes(notes) = &drums.song.tracks[0].lanes[0].clips[0].content else {
+            panic!("a note clip");
+        };
+        assert!(
+            notes.iter().all(|n| (36..=51).contains(&n.key)),
+            "pad keys only"
+        );
+        let synth = scene_of(&item_text(&project_of(&[SYNTH]), &["d0"])).unwrap();
+        assert_eq!(phrase_notes(&synth), INSTRUMENT_PHRASE.len());
+        // A container that holds a drum machine plays the pattern too.
+        let text = container_text(&["atomik.drum-machine"]);
+        assert_eq!(phrase_notes(&scene_of(&text).unwrap()), DRUM_PHRASE.len());
     }
 
     #[test]
