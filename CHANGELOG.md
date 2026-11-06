@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Library patch previews.** Space on a patch or container item of the file browser plays it without loading it:
+  nothing is added to the song and the undo history is untouched. The item is built into a hidden scratch project
+  and rendered with the bounce renderer on a worker thread, so no device is built or dropped on the audio thread.
+  An item with an instrument (a synth patch, or a container with a synth inside, with its effects) plays a short
+  built-in phrase: a low arpeggio and a held four-note chord. An item that holds effects only (an effect patch, a chain
+  of effects, an effect container) is put in the insert chain of a built-in synth that plays short notes, so the
+  delay or reverb tail is heard. The result, with its tail cut where the sound ends and scaled down when it would
+  clip, goes into the browser's preview voice, so Space again, Esc or another preview stops it as for an audio file,
+  and the row shows the position. Patches with plugins, CV utilities and items with nothing that takes sound are
+  refused with a message in the status line; a failure of the render is reported there too. Previews never reach a
+  bounce or an export. The project format is unchanged (44). Not done yet: playing the preview from the MIDI keyboard
+  as well as the phrase, plugin patches, factory content and deleting items from the browser.
 - **Library clip previews.** Space on a clip item of the file browser (the same key that plays an audio file) plays
   its notes without loading it, once, at the song tempo in effect at the playhead, while the transport stands still.
   With a note track selected the notes go through the instrument of that track (and the players above it) on a clock
@@ -18,7 +30,7 @@ may break APIs and the patch and project formats.
   stop is released, and the document, the selection and the undo history are never touched. Previews never reach a
   bounce or an export. Selecting a clip does not play it, whatever the auto-preview switch says. The library holds
   note clips only (audio files play through the file browser already). The project format is unchanged (44). Not
-  done yet: previews of patches in the library list, factory content and deleting items from the browser.
+  done yet: factory content and deleting items from the browser.
 - **Synth follow-ups: FM unison, slope and 4x, and several zones on the grain sampler.** The FM synth has a **unison**
   stage: `unison.voices` (1 to 7) makes every key sound that many copies of the voice, spread from minus to plus
   `unison.detune` cents (the fixed-frequency operators keep their pitch), started from different phases and panned
