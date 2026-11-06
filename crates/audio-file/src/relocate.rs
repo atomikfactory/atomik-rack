@@ -58,7 +58,7 @@ pub struct RetireReport {
 }
 
 /// Whether the files `a` and `b` hold the same bytes.
-fn same_bytes(a: &Path, b: &Path) -> Result<bool> {
+pub(crate) fn same_bytes(a: &Path, b: &Path) -> Result<bool> {
     let (ma, mb) = (fs::metadata(a)?, fs::metadata(b)?);
     if ma.len() != mb.len() {
         return Ok(false);
