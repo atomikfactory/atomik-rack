@@ -435,6 +435,7 @@ const DYNAMICS: &[Row] = &[
         k("comp.ratio", "RATIO"),
         k("comp.release", "REL"),
     ]),
+    Row::Grid(&[b("comp.auto_makeup", "M-UP"), None, None]),
     Row::GrMeter,
     Row::Grid(&[
         b("gate.on", "GATE"),
@@ -478,7 +479,7 @@ const RACK_ONLY: [&str; 6] = [
 ];
 
 const EQ: &[Row] = &[
-    Row::Grid(&[b("eq.on", "EQ"), None, None]),
+    Row::Grid(&[b("eq.on", "EQ"), b("eq.e_mode", "E"), None]),
     Row::Grid(&[
         k("eq.hf.gain", "HF"),
         k("eq.hf.freq", "FREQ"),
@@ -552,6 +553,7 @@ const BUS: &[Row] = &[
         b("comp.auto", "AUTO"),
     ]),
     Row::GrMeter,
+    Row::Grid(&[k("fader_cv_trim", "LVL CV"), None, None]),
 ];
 const MONITOR: &[Row] = &[Row::Grid(&[
     k("monitor.level", "LEVEL"),

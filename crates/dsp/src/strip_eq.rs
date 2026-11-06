@@ -11,6 +11,17 @@ pub const OUTER_BELL_Q: f64 = 0.7;
 /// Q of an outer band that is a shelf (the steepest shelf without overshoot).
 pub const SHELF_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
+/// How much the gain widens the Q of a bell in E mode: the Q is multiplied by
+/// `1 + |gain| / E_MODE_GAIN_DB`, so it doubles at that many dB of boost or cut.
+pub const E_MODE_GAIN_DB: f64 = 18.0;
+
+/// The Q a bell runs at in E mode: `q` made narrower as the gain grows (proportional Q), so a
+/// small move stays broad and a large one gets focused. Flat (0 dB) it is `q` itself.
+#[must_use]
+pub fn e_mode_q(q: f64, gain_db: f64) -> f64 {
+    q * (1.0 + gain_db.abs() / E_MODE_GAIN_DB)
+}
+
 /// One EQ band as the strip stores it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StripBand {
@@ -31,6 +42,8 @@ pub struct StripCurve {
     pub sample_rate: f64,
     /// The EQ section is on (off, the bands are bypassed).
     pub eq_on: bool,
+    /// E mode: every bell's Q follows its gain ([`e_mode_q`]); off, the Q is the stored one.
+    pub e_mode: bool,
     /// The high-pass corner in Hz when it is on.
     pub hpf: Option<f64>,
     /// The low-pass corner in Hz when it is on.
@@ -49,6 +62,11 @@ impl StripCurve {
     /// The bands in the order HF, HMF, LMF, LF with their shapes and Q.
     fn sections(&self) -> [(BiquadShape, BiquadParams); 4] {
         let make = |b: &StripBand, shape: BiquadShape, q: f64| {
+            let q = if self.e_mode && shape == BiquadShape::Peaking {
+                e_mode_q(q, b.gain_db)
+            } else {
+                q
+            };
             (
                 shape,
                 BiquadParams {
@@ -125,6 +143,7 @@ mod tests {
         StripCurve {
             sample_rate: SR,
             eq_on: true,
+            e_mode: false,
             hpf: None,
             lpf: None,
             hf: band(8_000.0),
@@ -149,6 +168,28 @@ mod tests {
         assert!((c.response_db(2_500.0) - 9.0).abs() < 1e-6);
         c.eq_on = false;
         assert_eq!(c.response_db(2_500.0), 0.0);
+    }
+
+    #[test]
+    fn e_mode_narrows_a_bell_with_its_gain_and_leaves_the_peak_and_the_shelves_alone() {
+        let mut c = flat();
+        c.hmf.gain_db = 12.0;
+        let wide = c.band_db(1, 4_000.0);
+        c.e_mode = true;
+        // The peak is the gain either way; off the centre the response is lower (narrower).
+        assert!((c.band_db(1, 2_500.0) - 12.0).abs() < 1e-6);
+        assert!(c.band_db(1, 4_000.0) < wide - 0.5);
+        // Flat, the Q is the stored one.
+        c.hmf.gain_db = 0.0;
+        assert!(c.band_db(1, 4_000.0).abs() < 1e-9);
+        assert_eq!(e_mode_q(1.5, 0.0), 1.5);
+        assert!((e_mode_q(1.0, -18.0) - 2.0).abs() < 1e-12);
+        // A shelf is not a bell: E mode does not change it.
+        let mut shelf = flat();
+        shelf.hf.gain_db = 9.0;
+        let before = shelf.band_db(0, 5_000.0);
+        shelf.e_mode = true;
+        assert_eq!(shelf.band_db(0, 5_000.0), before);
     }
 
     #[test]

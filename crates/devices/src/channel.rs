@@ -32,10 +32,18 @@
 //! * **Dynamics** ([`atomik_dsp::Compressor`], [`atomik_dsp::Gate`]): one stereo-linked
 //!   side-chain feeds both. The side-chain is `key_in` (mono, used on both sides) when `key.on`
 //!   is set *and* `key_in` is connected; otherwise it is the signal entering the dynamics.
+//!   Cabling `key_in` in the rack sets `key.on` in the same undo step (the model does it,
+//!   not this device); removing the cable leaves the switch as it is.
 //!   Compressor attack is [`COMP_ATTACK_MS`] ([`COMP_FAST_ATTACK_MS`] with `comp.fast`), soft
 //!   knee [`atomik_dsp::KNEE_DB`] dB, `comp.peak` selects peak instead of the default RMS
 //!   detector. Gate attack is [`GATE_ATTACK_MS`] ([`GATE_FAST_ATTACK_MS`] with `gate.fast`).
 //!   `gate.range` is the attenuation in dB when closed (the expander's floor).
+//! * **Auto make-up** (`comp.auto_makeup`, off by default): while the compressor is on, its
+//!   output is raised by the reduction a full-scale steady signal gets, `-threshold · (1 −
+//!   1/ratio)` dB (15 dB at the default −20 dB and 4:1), capped at 24 dB, so the compressed
+//!   strip peaks about where the uncompressed one did. The gain follows the threshold and
+//!   ratio knobs through the 5 ms smoother and acts on the audio only: `gr_cv_out` and the
+//!   meters still read the reduction alone. Off, the strip is bit-identical to before.
 //! * **Compressor look-ahead** (`comp.lookahead`, 0..[`LOOKAHEAD_MAX_MS`] ms, default 0): the
 //!   dynamics section (gate and compressor) delays the audio it processes by that many samples
 //!   while the gains are still computed from the signal as it arrives, so the compressor
@@ -56,6 +64,12 @@
 //!   bypass.
 //! * **EQ:** RBJ biquads with smoothed parameters. HF and LF are shelves (Q 1/√2, cookbook slope
 //!   S = 1) or, with `*.bell`, bells with a fixed Q of [`OUTER_BELL_Q`]. HMF and LMF are bells.
+//! * **E mode** (`eq.e_mode`, off by default): every band that is a bell (HMF, LMF, and HF or
+//!   LF with their bell switch) gets a proportional Q: the stored Q is multiplied by `1 +
+//!   |gain| / 18`, so a small boost or cut stays broad and a large one is focused (the Q
+//!   doubles at ±18 dB). Shelves, the frequencies and the gains are unchanged, and a bell at
+//!   0 dB is flat either way. The drawn curve ([`atomik_dsp::strip_eq::StripCurve`]) follows
+//!   it. Off, the EQ is bit-identical to before.
 //! * **Inserts:** `insert_send_*` always carry the signal at the insert point. When either
 //!   `insert_return_*` socket is connected (and `insert.bypass` is off) the return replaces the
 //!   signal; a single connected return side feeds both sides.
@@ -138,6 +152,7 @@ use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
     ScopeTap, SocketDescriptor, SocketId, SocketKind,
 };
+use atomik_dsp::strip_eq::e_mode_q;
 use atomik_dsp::{
     BiquadShape, Compressor, DelayLine, Detector, Gate, PassFilter, PassKind, SmoothedBiquad,
     Smoother, fader_gain_vca, pan_constant_power, stereo_width,
@@ -363,15 +378,19 @@ const P_EQ_BYPASS: usize = P_TAP_LIVE + 5;
 /// at the insert send instead of the one after the inserts).
 const P_PCOMP_KEY: usize = P_TAP_LIVE + 6;
 const P_PCOMP_PRE: usize = P_TAP_LIVE + 7;
-const PARAM_COUNT: usize = P_TAP_LIVE + 8;
+/// The compressor's automatic make-up gain and the EQ's E mode (proportional Q on the bells),
+/// appended after the parallel compressor's tap choice.
+const P_COMP_AUTO_MAKEUP: usize = P_TAP_LIVE + 8;
+const P_EQ_E_MODE: usize = P_TAP_LIVE + 9;
+const PARAM_COUNT: usize = P_TAP_LIVE + 10;
 
 /// Full-scale swing of `fader_cv_in` in dB.
-const FADER_CV_DB: f32 = 24.0;
+pub(crate) const FADER_CV_DB: f32 = 24.0;
 /// Full-scale swing of a send-level CV in dB (the −60..+6 dB range).
 const SEND_CV_DB: f32 = 66.0;
 
 /// A bipolar CV amount, −1..+1, default +1.
-const fn cv_trim(id: usize, key: &'static str, name: &'static str) -> ParamDescriptor {
+pub(crate) const fn cv_trim(id: usize, key: &'static str, name: &'static str) -> ParamDescriptor {
     param(
         id as u32,
         key,
@@ -599,6 +618,13 @@ pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
         "Parallel comp pre-insert",
         0.0,
     );
+    out[P_COMP_AUTO_MAKEUP] = toggle(
+        P_COMP_AUTO_MAKEUP as u32,
+        "comp.auto_makeup",
+        "Comp auto make-up",
+        0.0,
+    );
+    out[P_EQ_E_MODE] = toggle(P_EQ_E_MODE as u32, "eq.e_mode", "EQ E mode", 0.0);
     let mut k = 0;
     while k < SENDS {
         out[P_SEND_TRIM_FIRST + k] = cv[k];
@@ -909,6 +935,9 @@ pub struct Channel {
     hpf_on: Section,
     lpf_on: Section,
     comp: Compressor,
+    /// The compressor's make-up gain: 1 unless `comp.auto_makeup` is on, then the gain that
+    /// brings a full-scale signal back to full scale (from the threshold and the ratio).
+    comp_makeup: Smoother,
     gate: Gate,
     comp_on: Section,
     gate_on: Section,
@@ -994,6 +1023,7 @@ impl Channel {
             hpf_on: Section::new(sr),
             lpf_on: Section::new(sr),
             comp: Compressor::new(sr),
+            comp_makeup: smoother(1.0, sr),
             gate: Gate::new(sr),
             comp_on: Section::new(sr),
             gate_on: Section::new(sr),
@@ -1038,6 +1068,51 @@ impl Channel {
         self.values[i] >= 0.5
     }
 
+    /// Sets the compressor's make-up target: 1 (none) unless `comp.auto_makeup` is on, then the
+    /// gain reduction a full-scale steady signal gets, `-threshold · (1 − 1/ratio)` dB, capped at
+    /// 24 dB, so the compressed strip peaks where the uncompressed one did.
+    fn apply_comp_makeup(&mut self) {
+        let db = if self.on(P_COMP_AUTO_MAKEUP) {
+            let ratio = self.values[P_COMP_RATIO].max(1.0);
+            (-self.values[P_COMP_THRESHOLD] * (1.0 - 1.0 / ratio)).clamp(0.0, 24.0)
+        } else {
+            0.0
+        };
+        self.comp_makeup.set_target(db_to_gain(db));
+    }
+
+    /// Sets the shape and the Q of EQ band `b` (HF, HMF, LMF, LF) from its params. An outer
+    /// band is a shelf (Q [`SHELF_Q`]) or, with its bell switch, a bell (Q [`OUTER_BELL_Q`]); a
+    /// middle band is a bell with its `q` param. In E mode every bell's Q follows its gain
+    /// ([`atomik_dsp::strip_eq::e_mode_q`]); off, the Q is the stored one, bit for bit.
+    fn refresh_band(&mut self, b: usize) {
+        let base = P_EQ_FIRST + 3 * b;
+        let outer = b == 0 || b == 3;
+        let bell = !outer || self.values[base + 2] >= 0.5;
+        let q = if !outer {
+            self.values[base + 2]
+        } else if bell {
+            OUTER_BELL_Q
+        } else {
+            SHELF_Q
+        };
+        let q = if bell && self.on(P_EQ_E_MODE) {
+            e_mode_q(f64::from(q), f64::from(self.values[base])) as f32
+        } else {
+            q
+        };
+        let band = &mut self.eq[b];
+        if outer {
+            let shelf = if b == 0 {
+                BiquadShape::HighShelf
+            } else {
+                BiquadShape::LowShelf
+            };
+            band.set_shape(if bell { BiquadShape::Peaking } else { shelf });
+        }
+        band.set_q(q);
+    }
+
     /// Pushes param `i` into the DSP state (RT-safe).
     fn apply(&mut self, i: usize) {
         let v = self.values[i];
@@ -1063,8 +1138,15 @@ impl Channel {
                 let frames = (v.clamp(0.0, LOOKAHEAD_MAX_MS) * 0.001 * self.sample_rate).round();
                 self.look = (frames as u32).min(self.look_l.max_delay() as u32);
             }
-            P_COMP_THRESHOLD => self.comp.set_threshold_db(v),
-            P_COMP_RATIO => self.comp.set_ratio(v),
+            P_COMP_THRESHOLD => {
+                self.comp.set_threshold_db(v);
+                self.apply_comp_makeup();
+            }
+            P_COMP_RATIO => {
+                self.comp.set_ratio(v);
+                self.apply_comp_makeup();
+            }
+            P_COMP_AUTO_MAKEUP => self.apply_comp_makeup(),
             P_COMP_RELEASE => self.comp.set_release_ms(v),
             P_COMP_PEAK => self.comp.set_detector(if self.on(i) {
                 Detector::Peak
@@ -1105,23 +1187,14 @@ impl Channel {
             P_PCOMP_MAKEUP => self.pcomp_makeup.set_target(db_to_gain(v)),
             _ if (P_EQ_FIRST..P_EQ_FIRST + 12).contains(&i) => {
                 let b = (i - P_EQ_FIRST) / 3;
-                let band = &mut self.eq[b];
                 match (i - P_EQ_FIRST) % 3 {
-                    0 => band.set_gain_db(v),
-                    1 => band.set_freq(v),
-                    _ if b == 0 || b == 3 => {
-                        let bell = v >= 0.5;
-                        let shelf = if b == 0 {
-                            BiquadShape::HighShelf
-                        } else {
-                            BiquadShape::LowShelf
-                        };
-                        band.set_shape(if bell { BiquadShape::Peaking } else { shelf });
-                        band.set_q(if bell { OUTER_BELL_Q } else { SHELF_Q });
-                    }
-                    _ => band.set_q(v),
+                    0 => self.eq[b].set_gain_db(v),
+                    1 => self.eq[b].set_freq(v),
+                    _ => {}
                 }
+                self.refresh_band(b);
             }
+            P_EQ_E_MODE => (0..4).for_each(|b| self.refresh_band(b)),
             _ if (P_SEND_FIRST..P_PAN).contains(&i) => {
                 self.set_send_target((i - P_SEND_FIRST) / 3, 0.0);
             }
@@ -1226,6 +1299,7 @@ impl Channel {
         [
             &mut self.input,
             &mut self.input_r,
+            &mut self.comp_makeup,
             &mut self.pcomp_mix,
             &mut self.pcomp_makeup,
             &mut self.insert,
@@ -1301,14 +1375,19 @@ impl Channel {
         }
         let look = self.look as f32;
         for n in 0..BATCH {
+            // `g` acts on the audio, `red` is the reduction alone (the make-up is not one).
             let mut g = 1.0;
+            let mut red = 1.0;
             if gate != Step::Skip {
                 let m = self.gate_on.next();
                 g *= 1.0 + (self.gate.process(sl[n], sr[n]) - 1.0) * m;
+                red = g;
             }
             if comp != Step::Skip {
                 let m = self.comp_on.next();
-                g *= 1.0 + (self.comp.process(sl[n], sr[n]) - 1.0) * m;
+                let c = self.comp.process(sl[n], sr[n]);
+                red *= 1.0 + (c - 1.0) * m;
+                g *= 1.0 + (c * self.comp_makeup.next_value() - 1.0) * m;
             }
             if self.look > 0 {
                 // The audio is late by the look-ahead, the gains were computed on its early copy.
@@ -1320,7 +1399,7 @@ impl Channel {
             }
             l[n] *= g;
             r[n] *= g;
-            gr[n] = (1.0 - g).clamp(0.0, 1.0);
+            gr[n] = (1.0 - red).clamp(0.0, 1.0);
         }
     }
 

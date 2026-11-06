@@ -128,6 +128,8 @@ fn descriptor_keys_match_contract_exactly() {
             "eq.bypass",
             "pcomp.key",
             "pcomp.pre",
+            "comp.auto_makeup",
+            "eq.e_mode",
         ]
         .map(String::from),
     );
@@ -1721,6 +1723,7 @@ fn the_drawn_strip_curve_matches_a_measured_sweep_within_a_tenth_of_a_db() {
     let curve = StripCurve {
         sample_rate: SR,
         eq_on: true,
+        e_mode: false,
         hpf: Some(120.0),
         lpf: Some(9_000.0),
         hf: StripBand {
@@ -2106,4 +2109,185 @@ fn the_pre_insert_tap_compresses_the_signal_the_insert_chain_receives() {
     // After the inserts the wet path is the (quiet, constant) return, not the program.
     assert!(after.iter().skip(40).all(|v| v.abs() < 0.1));
     assert!(before.iter().skip(40).any(|v| v.abs() > 0.3));
+}
+
+// ---- console editing follow-ups: auto make-up and the E mode of the EQ
+
+/// A tone at -6 dB through a compressor with the auto make-up as asked: its gain in dB and the
+/// gain-reduction CV of the last batch.
+fn made_up(auto: bool, threshold: f32, ratio: f32) -> (f64, Vec<f32>) {
+    let mut h = channel();
+    h.set_param("comp.on", 1.0);
+    h.set_param("comp.threshold", threshold);
+    h.set_param("comp.ratio", ratio);
+    h.set_param("comp.auto_makeup", if auto { 1.0 } else { 0.0 });
+    let gain = sine_gain_db(&mut h, &["in_l", "in_r"], "out_l", 1_000.0, 0.5, 0.6);
+    (gain, h.output("gr_cv_out").to_vec())
+}
+
+#[test]
+fn auto_makeup_adds_the_reduction_a_full_scale_signal_gets_and_leaves_the_meter_alone() {
+    let (plain, gr_plain) = made_up(false, -20.0, 4.0);
+    let (auto, gr_auto) = made_up(true, -20.0, 4.0);
+    // 20 dB below full scale at 4:1 is 15 dB of reduction for a full-scale signal.
+    assert!((auto - plain - 15.0).abs() < 0.2, "{auto} vs {plain}");
+    assert_eq!(gr_plain, gr_auto, "the make-up is not gain reduction");
+    assert!(
+        gr_auto.iter().any(|g| *g > 0.1),
+        "the meter reads the reduction"
+    );
+    // A ratio of 1 reduces nothing, so there is nothing to make up.
+    let (flat, _) = made_up(false, -20.0, 1.0);
+    let (flat_auto, _) = made_up(true, -20.0, 1.0);
+    assert!((flat_auto - flat).abs() < 1e-3, "{flat_auto} vs {flat}");
+    // A threshold at full scale reduces nothing either.
+    let (top, _) = made_up(false, 0.0, 4.0);
+    let (top_auto, _) = made_up(true, 0.0, 4.0);
+    assert!((top_auto - top).abs() < 1e-3);
+}
+
+#[test]
+fn auto_makeup_is_capped_follows_the_knobs_and_waits_for_the_compressor() {
+    let mut c = Channel::new();
+    let target = |c: &Channel| c.comp_makeup.target();
+    assert_eq!(target(&c), 1.0, "off by default");
+    c.set_param(ParamId(P_COMP_AUTO_MAKEUP as u32), 1.0);
+    // The default threshold (-20 dB) and ratio (4:1).
+    assert!((target(&c) - db_to_gain(15.0)).abs() < 1e-5);
+    c.set_param(ParamId(P_COMP_THRESHOLD as u32), -60.0);
+    c.set_param(ParamId(P_COMP_RATIO as u32), 20.0);
+    assert!(
+        (target(&c) - db_to_gain(24.0)).abs() < 1e-5,
+        "capped at 24 dB"
+    );
+    c.set_param(ParamId(P_COMP_THRESHOLD as u32), -10.0);
+    c.set_param(ParamId(P_COMP_RATIO as u32), 2.0);
+    assert!(
+        (target(&c) - db_to_gain(5.0)).abs() < 1e-5,
+        "follows the knobs"
+    );
+    c.set_param(ParamId(P_COMP_AUTO_MAKEUP as u32), 0.0);
+    assert_eq!(target(&c), 1.0);
+    // With the compressor off the make-up changes nothing, whatever the switch says.
+    let quiet = |auto: f32| {
+        let mut h = channel();
+        h.set_param("comp.auto_makeup", auto);
+        run_signal(&mut h, &["in_l", "in_r"], sine(440.0, 0.4), 40, &["out_l"])
+    };
+    assert_eq!(quiet(0.0), quiet(1.0));
+}
+
+#[test]
+fn a_strip_with_the_new_switches_off_is_bit_identical() {
+    let run = |set: &[(&str, f32)]| {
+        let mut h = channel();
+        for (k, v) in [
+            ("comp.on", 1.0),
+            ("comp.threshold", -24.0),
+            ("eq.on", 1.0),
+            ("eq.hmf.gain", 7.0),
+            ("eq.hmf.q", 2.0),
+            ("eq.lmf.gain", -5.0),
+        ] {
+            h.set_param(k, v);
+        }
+        for (k, v) in set {
+            h.set_param(k, *v);
+        }
+        run_signal(
+            &mut h,
+            &["in_l", "in_r"],
+            sine(700.0, 0.6),
+            60,
+            &["out_l", "out_r"],
+        )
+    };
+    let base = run(&[]);
+    assert_eq!(base, run(&[("comp.auto_makeup", 0.0), ("eq.e_mode", 0.0)]));
+    assert_ne!(base, run(&[("comp.auto_makeup", 1.0)]));
+    assert_ne!(base, run(&[("eq.e_mode", 1.0)]));
+}
+
+#[test]
+fn e_mode_makes_the_bells_follow_their_gain_and_matches_the_drawn_curve() {
+    use atomik_dsp::strip_eq::{StripBand, StripCurve};
+    let band = |gain_db: f64, freq: f64, q: f64, bell: bool| StripBand {
+        gain_db,
+        freq,
+        q,
+        bell,
+    };
+    let settings: [(&str, f32); 10] = [
+        ("eq.on", 1.0),
+        ("eq.hf.bell", 1.0),
+        ("eq.hf.gain", 6.0),
+        ("eq.hf.freq", 8_000.0),
+        ("eq.hmf.gain", 12.0),
+        ("eq.hmf.freq", 2_500.0),
+        ("eq.hmf.q", 1.0),
+        ("eq.lmf.gain", -9.0),
+        ("eq.lmf.freq", 300.0),
+        ("eq.lmf.q", 2.0),
+    ];
+    let curve = |e_mode: bool| StripCurve {
+        sample_rate: SR,
+        eq_on: true,
+        e_mode,
+        hpf: None,
+        lpf: None,
+        hf: band(6.0, 8_000.0, 0.0, true),
+        hmf: band(12.0, 2_500.0, 1.0, false),
+        lmf: band(-9.0, 300.0, 2.0, false),
+        lf: band(0.0, 100.0, 0.0, false),
+    };
+    let freqs = [300.0, 1_000.0, 2_000.0, 2_500.0, 4_000.0, 8_000.0, 12_000.0];
+    let measure = |e_mode: bool| {
+        let mut h = channel();
+        for (k, v) in settings {
+            h.set_param(k, v);
+        }
+        h.set_param("eq.e_mode", if e_mode { 1.0 } else { 0.0 });
+        let mut flat = channel();
+        freqs.map(|hz| {
+            sine_gain_db(&mut h, &["in_l", "in_r"], "out_l", hz, 0.1, 0.3)
+                - sine_gain_db(&mut flat, &["in_l", "in_r"], "out_l", hz, 0.1, 0.3)
+        })
+    };
+    let (off, on) = (measure(false), measure(true));
+    for (e, got) in [(false, off), (true, on)] {
+        for (i, hz) in freqs.into_iter().enumerate() {
+            let want = curve(e).response_db(hz);
+            assert!(
+                (got[i] - want).abs() < 0.1,
+                "e {e} {hz} Hz: {} vs {want}",
+                got[i]
+            );
+        }
+    }
+    // Off the centre the focused bell lets less through.
+    assert!(on[4] < off[4] - 0.5, "{} vs {}", on[4], off[4]);
+    // Alone, a bell has its full gain at its centre either way.
+    let alone = |e: f32| {
+        let mut h = channel();
+        for (k, v) in [
+            ("eq.on", 1.0),
+            ("eq.hmf.gain", 12.0),
+            ("eq.hmf.freq", 2_500.0),
+        ] {
+            h.set_param(k, v);
+        }
+        h.set_param("eq.e_mode", e);
+        let mut flat = channel();
+        sine_gain_db(&mut h, &["in_l", "in_r"], "out_l", 2_500.0, 0.1, 0.3)
+            - sine_gain_db(&mut flat, &["in_l", "in_r"], "out_l", 2_500.0, 0.1, 0.3)
+    };
+    assert!((alone(0.0) - 12.0).abs() < 0.1 && (alone(1.0) - 12.0).abs() < 0.1);
+    // Flat bands are not changed: a strip with no gain sounds the same in E mode.
+    let flat = |e: f32| {
+        let mut h = channel();
+        h.set_param("eq.on", 1.0);
+        h.set_param("eq.e_mode", e);
+        run_signal(&mut h, &["in_l", "in_r"], sine(900.0, 0.5), 40, &["out_l"])
+    };
+    assert_eq!(flat(0.0), flat(1.0));
 }
