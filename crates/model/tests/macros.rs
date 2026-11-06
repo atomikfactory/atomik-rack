@@ -471,7 +471,7 @@ fn what_cannot_be_driven_is_refused() {
 }
 
 #[test]
-fn containers_and_their_insides_have_their_own_macros() {
+fn a_container_has_its_own_macros_but_a_bank_may_drive_what_is_inside() {
     let (mut d, r) = project();
     run(
         &mut d,
@@ -483,16 +483,16 @@ fn containers_and_their_insides_have_their_own_macros() {
     );
     run_macro(&mut d, &r, assign(None, 0, "a", WAVE)).unwrap();
     let bank = bank_key(&d);
-    for target in ["c", "c/fx"] {
-        let e = run_macro(&mut d, &r, assign(Some(bank.as_str()), 0, target, "macro1"))
-            .or_else(|_| run_macro(&mut d, &r, assign(Some(bank.as_str()), 0, target, "mix")))
-            .unwrap_err();
-        assert!(e.to_string().contains("container"), "{target}: {e}");
-    }
+    // The container itself keeps its own macros.
+    let e = run_macro(&mut d, &r, assign(Some(bank.as_str()), 0, "c", "macro1")).unwrap_err();
+    assert!(e.to_string().contains("container"), "{e}");
+    // A param inside it may follow a macro of the bank.
+    run_macro(&mut d, &r, assign(Some(bank.as_str()), 0, "c/fx", "mix")).unwrap();
+    assert!(d.doc().bank_driver(&key("c/fx"), "mix").is_some());
 }
 
 #[test]
-fn a_param_with_automation_on_its_own_lane_is_refused_and_so_is_a_lane_for_a_driven_one() {
+fn a_param_with_automation_on_its_own_lane_may_be_driven_and_a_driven_one_may_have_a_lane() {
     let (mut d, r) = project();
     run(
         &mut d,
@@ -510,44 +510,31 @@ fn a_param_with_automation_on_its_own_lane_is_refused_and_so_is_a_lane_for_a_dri
             ),
         ],
     );
-    let e = run_macro(&mut d, &r, assign(None, 0, "a", CUTOFF)).unwrap_err();
-    assert!(e.to_string().contains("automation"), "{e}");
-    // An empty lane is no data: it may be driven (the song builder skips it).
+    // The lane sets the base: the assignment is allowed.
+    run_macro(&mut d, &r, assign(None, 0, "a", CUTOFF)).unwrap();
+    assert_eq!(d.doc().banks().count(), 1);
+    // A lane and a clip for a driven param are allowed too.
+    let bank = bank_key(&d);
+    run_macro(&mut d, &r, assign(Some(bank.as_str()), 1, "b", CUTOFF)).unwrap();
     run(
         &mut d,
         &r,
-        [sc(atomik_model::SongCommand::AddAutomationLane {
-            device: key("a"),
-            param: WAVE.into(),
-        })],
-    );
-    run_macro(&mut d, &r, assign(None, 0, "a", WAVE)).unwrap();
-    assert_eq!(d.doc().banks().count(), 1);
-    // A new lane or clip for a driven param says to automate the macro.
-    let e = d
-        .apply(
-            add_clip(
-                "a",
-                2,
-                auto_clip(0, 960, vec![point(0, 1.0, Curve::Linear)]),
-            ),
-            &r,
-        )
-        .unwrap_err();
-    assert!(e.to_string().contains("automate the macro"), "{e}");
-    // No lane can be added for a param that is already driven.
-    let bank = bank_key(&d);
-    run_macro(&mut d, &r, assign(Some(bank.as_str()), 1, "b", CUTOFF)).unwrap();
-    let e = d
-        .apply(
+        [
+            add_track("b"),
             sc(atomik_model::SongCommand::AddAutomationLane {
                 device: key("b"),
                 param: CUTOFF.into(),
             }),
-            &r,
-        )
-        .unwrap_err();
-    assert!(e.to_string().contains("automate the macro"), "{e}");
+        ],
+    );
+    assert!(
+        d.doc()
+            .song
+            .track(&key("b"))
+            .unwrap()
+            .automation_lane(CUTOFF)
+            .is_some()
+    );
 }
 
 #[test]
@@ -662,19 +649,26 @@ fn a_bank_is_an_automatable_track() {
             .automation_lane("macro1")
             .is_some()
     );
-    // An effect is automated on a track of its own, unless a macro drives the param.
+    // An effect is automated on a track of its own, and a macro that drives the param does not
+    // change that: the lane sets the base the macro adds to.
     let (mut e, r2) = project();
     run(&mut e, &r2, [add(usize::MAX, DELAY, Some("fx"))]);
     run_macro(&mut e, &r2, assign(None, 0, "fx", "mix")).unwrap();
+    run(
+        &mut e,
+        &r2,
+        [sc(atomik_model::SongCommand::AddAutomationLane {
+            device: key("fx"),
+            param: "mix".into(),
+        })],
+    );
     assert!(
-        e.apply(
-            sc(atomik_model::SongCommand::AddAutomationLane {
-                device: key("fx"),
-                param: "mix".into(),
-            }),
-            &r2,
-        )
-        .is_err()
+        e.doc()
+            .song
+            .track(&key("fx"))
+            .unwrap()
+            .automation_lane("mix")
+            .is_some()
     );
 }
 

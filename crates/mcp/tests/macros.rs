@@ -164,13 +164,17 @@ fn assigning_a_param_makes_a_bank_and_the_session_lists_it() {
         r.first_text()
     );
     // Remove by device and param, then clear the rest.
-    // A param with automation of its own cannot be driven: the lane would fight the macro.
+    // A param with automation of its own may be driven: the lane sets the base the macro adds to.
     let v = macros(
         &mut s,
         json!({"action": "assign", "device": "bass", "param": "filter.cutoff", "macro": 3}),
     );
-    assert_eq!(v["done"], false);
-    assert!(v["message"].as_str().unwrap().contains("automation"), "{v}");
+    assert_eq!(v["done"], true, "{v}");
+    let v = macros(
+        &mut s,
+        json!({"action": "remove", "device": "bass", "param": "filter.cutoff"}),
+    );
+    assert_eq!(assignments(&v).len(), 2);
     let v = macros(
         &mut s,
         json!({"action": "remove", "device": "lead", "param": "filter.cutoff"}),

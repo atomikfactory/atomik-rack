@@ -1118,7 +1118,8 @@ pub enum SongCommand {
     },
     /// Add an automation lane for a parameter (creates the track if needed: a note track for a
     /// device with a Notes input, an automation track for any other device, a channel strip or an
-    /// effect; an audio track takes none). Internal params and params a macro drives are refused.
+    /// effect; an audio track takes none). Internal params are refused. A param a macro drives may have a
+    /// lane: it sets the base and the macro adds its range (see `crate::macro_lane`).
     AddAutomationLane {
         /// Device.
         device: DeviceKey,
