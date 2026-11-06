@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Start screen and collect follow-ups.** The start screen shows a **card** for the template under the pointer or
+  the keys: its tempo, meter and tracks, read from the file when you reach it (a template made with a plugin this
+  machine lacks says it has no preview). A recent song has a **pin** (click it, or press P on the row): a pinned
+  song stays at the top of the recent list, in the order it was pinned, however many songs are opened after it, up
+  to four; Clear Menu keeps the pins, the pins are shared by every open song and saved in `recent.json` (a build
+  that does not know pins still reads the list). Settings, Workflow has a **Show the start screen at start-up** row
+  beside the start screen's own check box. **Preview Collect Files** (File menu) says what Collect Files would copy
+  and how big it is, and what is already there or cannot be found, without copying; Collect Files, Move Project
+  and a Save As that copies audio show their count in the status line and can be stopped with **Cancel Collect or
+  Move** (nothing is written then, the project stays as it was, and the files already copied stay). **Move
+  Project** puts the project and the audio it uses in a folder of its own name inside the folder you pick, then
+  removes the old project: only after the new project file reads back exactly as written and every audio file the
+  old bundle holds is in the new one byte for byte, never audio that another project in the old folder (or below
+  it) may use (the old project file alone goes then), never a place that is the old one, inside it or around it,
+  and a folder that holds anything else stays with it. It refuses to move into a folder that already holds a
+  project of that name. No project format change.
 - **Macro follow-ups: the inside of a container, lanes of driven params, typed ranges.** A macro bank can now
   drive a param of a device inside a container (a path such as `layer/synth`, from the right-click menu inside the
   container, the Macros panel or the MCP `macros` tool): the engine, a bounce, the saved project and the container's

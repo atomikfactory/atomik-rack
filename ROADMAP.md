@@ -43,6 +43,11 @@ project's own folder, from a folder it shared with other projects or from a near
 project lost, with a report of what was copied and what was not found; Save As copies only the audio the song
 uses and finds audio the old bundle lacks in the folders near the old file, so a project moved to another folder
 keeps working),
+and start screen and collect follow-ups (a card for the template under the pointer with its tempo, meter and tracks,
+pinned songs that stay at the top of the recent list and survive Clear Menu, a Show the start screen row in
+Settings, Workflow, Preview Collect Files, Cancel Collect or Move for a very large collection, and Move Project, which
+removes the old project only after the copy has been checked byte for byte and never audio that another project in
+the old folder may use),
 and several songs follow-ups (a paste in one open song brings the audio of the clips, devices, tracks, strips or
 patch with it, a favourite, tag or recent song in one song shows in the others at once, a start after a crash
 brings back the songs that were open next to the first one in windows of their own, and a Save no longer deletes the
@@ -124,11 +129,17 @@ New original devices built from the existing DSP blocks, grouped by the gap they
 ## Phase 6: Library and projects
 
 - **Library of devices, patches and projects.** Done: the browser lists the built-in devices and the patches, containers, clips and projects of a library folder; Save to Library writes the selected devices, a container or a note clip with their samples; items load by double click or drag as one undo step, and projects open after the unsaved-changes question. Still to come: factory content, previews of clips and patches, and deleting items from the browser.
-- **Start screen follow-ups.** The start screen is done (File > Start Screen, and at start-up unless its check box is cleared). Still to come: previews of the templates, pinned songs that stay at the top of the recent list, and a row for it in Settings, Workflow.
+- **Start screen follow-ups.** The start screen is done (File > Start Screen, and at start-up unless its check box or the Show the start screen row in Settings, Workflow is cleared), with a card for the template under the pointer or the keys (its tempo, meter and tracks) and pins for the recent songs. The File > Open Recent menu lists the pinned songs first. Still to come: a small rendered picture of a template.
 - **Collect and relocate follow-ups.** Collect Files and Save As keep a project working in its new folder (see
-  above), a project archive packs a project with its audio and relinking by folder repairs one that moved. Still to
-  come: a preview of what Collect Files will copy, a cancel for a very large collection, collecting plugin preset
-  and impulse files that live outside the project, and a Move Project command that also removes the old folder.
+  above), a project archive packs a project with its audio and relinking by folder repairs one that moved. Preview
+  Collect Files says what a collection would copy, with the size, without copying; Collect Files and Move Project
+  run on the save worker with a count in the status line and Cancel Collect or Move; and File > Move Project puts the
+  project and the audio it uses in a folder of its own name inside the folder you pick, then removes the old project,
+  but only after the new project file reads back as written and every audio file of the old bundle is in the new one
+  byte for byte, and never audio that another project in the old folder may use (then only the old project file
+  goes), and a folder that holds anything else stays. Still to come: collecting plugin preset and impulse files that
+  live outside the project, and removing the audio of the old folder that no other project uses when other projects
+  share it.
 - **Song information follow-ups.** The title, author and notes of a song are done (File > Song Information). A version history inside the project is still to come.
 - **Several songs follow-ups.** Songs open in windows of their own, one of them with the audio and the MIDI keyboard. Copy and paste moves clips, takes, devices, tracks, strips and patches between them, audio included; the library and the recent list are shared live; and the songs a crash cut off come back at the next start. Still to come: separate Input Focus and Play Focus buttons on the interface panel (the song with the stream also has the MIDI inputs today), converting the sample rate of audio pasted from a song with another rate, dragging between song windows, and a session of the MCP server with more than one song.
 

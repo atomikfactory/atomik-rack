@@ -461,14 +461,28 @@ folder, or unpacked from an archive: the picked folder (or its `Audio` folder, o
 the project file that holds `<name>/Audio`) gives back each missing file by its hash, copied into the
 session bundle and loaded by the same adopt worker a library item's audio uses, with no decoding.
 
-**Collect and relocate** are the save worker's two uses of `Bundle::collect_from` (`audio-file`, `CollectReport`:
-copied, already present, missing, bytes). `AppCore::collect_files` (`file.collect_files`, File > Collect Files)
+**Collect and relocate** are the save worker's uses of `Bundle::collect_from_with` (`audio-file`, `CollectReport`:
+copied, already present, missing, bytes, cancelled). `AppCore::collect_files` (`file.collect_files`, File > Collect Files)
 is a Save in place whose destination is the project's own bundle folder (`collect_root`: the file's folder when it
 is named like the file, else the sibling `<name>/`); the job copies each used asset the destination lacks, with
 its peak cache, from the session bundle and then from the folders near the project file that hold an `Audio/`
 directory (`audio_folders`), writes the project atomically and removes the orphans of the destination only. Save As
 uses the same copy instead of copying the whole `Audio/` tree. Audio that was missing and was found is loaded by the
 load worker, and a toast is the report. Assets are named by their hash, so the project text never changes.
+
+The copy is read in blocks and watches a `CollectProgress` (a cancel flag and a file count) that the UI thread holds in
+the running `Flight`: `AppCore::cancel_collect` (`file.cancel_collect`) makes the worker stop before the next block, no
+file is left half written (a copy goes to a temporary file first), nothing is written and nothing removed, and the
+status line (`save_progress`) counts the files while it runs. `AppCore::collect_preview` (`file.collect_preview`) asks
+`plan_collect_into` what a collection would do without creating anything. `AppCore::move_project`
+(`file.move_project`, the platform's folder dialog `ShellRequest::PickMoveFolder`) is a Save As into
+`<folder>/<name>/` whose job also runs `retire_old_project` (`audio-file`, `relocate.rs`) once the new project file is
+written: it checks that the new file reads back as written and that `verify_copy` finds every asset of the old bundle in
+the new one with the same bytes, and only then removes the old project file and the old copies of the assets the project
+uses, then the old folders that are empty (`remove_dir`, never recursive). A place that is the old one, inside it or
+around it, or another project file in the old folder or below it (its `Audio/` may hold audio that project uses),
+makes it remove less: the first two nothing, the last only the old project file. A failed check is an error that
+leaves the old project as it was.
 
 ### 2.4 Playback, per 64-frame batch
 
@@ -4736,7 +4750,9 @@ creation chain in the **Creation chain** bullet.
   The window's close button and Cmd/Ctrl+Q are `AppCommand::Quit`, so they take the same path.
   `AppCore` keeps a `RecentFiles` (eight project paths, newest first, de-duplicated by `PathKey`;
   `recent.json` next to `settings.json`, written atomically) that a successful `open` or `save_as`
-  updates; a patch is not listed and a missing file leaves the list when chosen. The menu model has
+  updates; up to `MAX_PINNED` songs can be pinned (`pin_recent`, listed first, kept by Clear Menu,
+  a `pinned` list in the file that older builds ignore, shared by the open songs through
+  `Workspace::sync_shared`); a patch is not listed and a missing file leaves the list when chosen. The menu model has
   `MenuEntry::Submenu`; File > Open Recent is built by `menus_with_recent` from the core's list
   (`MenuItem.label` is a `Cow`, the recent songs being named after their files). The in-window bar
   draws a flyout beside the row (hover, click, Right and Left, Enter) and the macOS native menu
@@ -4749,7 +4765,10 @@ creation chain in the **Creation chain** bullet.
   and the recent songs (name, folder, day of the file), and a pick returns the `AppCommand` of the
   File menu row (`New`, `Open`, `NewFromTemplate`, `OpenRecent`), so the question about unsaved
   changes and the missing-file messages are the menu's own. The `show_start_screen` flag
-  (`workflow.json`, default on) is the box's check box; File > Start Screen opens it at any time.
+  (`workflow.json`, default on) is the box's check box and a row of Settings > Workflow; File >
+  Start Screen opens it at any time. A template under the pointer or the keys has a card with its
+  `TemplatePreview` (`AppCore::template_preview` loads the file without opening it, once per
+  template while the box is open), and a pin button on a recent row returns `StartOutcome::TogglePin`.
   The headless and MCP sessions never call `start_without_project`, so they never show it.
 - **Settings tabs** ([app/src/settings_dialog.rs](../crates/app/src/settings_dialog.rs),
   `keyboard_tab.rs`, `workflow_tab.rs`). Audio (unchanged), Keyboard (a `KeymapEditor`: list by
