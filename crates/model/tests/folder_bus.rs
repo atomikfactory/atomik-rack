@@ -348,3 +348,32 @@ fn a_route_to_a_folder_the_song_lacks_is_dropped_and_bad_routes_are_refused() {
     assert_ne!(not_a_channel, text);
     assert!(load_project(&not_a_channel, &r).is_err());
 }
+
+#[test]
+fn a_channel_moved_in_the_console_keeps_the_route_members_in_console_order() {
+    // Found by the document sequence test: folder, route to a new bus, move a channel. The members
+    // were left in the old order, so the saved text changed when the project was loaded again.
+    let (mut d, r) = project();
+    let f = folder(&mut d, &r, &["a", "b"], "Strings");
+    route_new(&mut d, &r, f, "Strings bus");
+    assert_eq!(members(&d, f), ["channel", "channel-2"]);
+    d.apply(
+        con(ConsoleCommand::MoveChannel {
+            channel: key("channel"),
+            to: 1,
+        }),
+        &r,
+    )
+    .unwrap();
+    assert_eq!(members(&d, f), ["channel-2", "channel"]);
+    let text = save_project(d.doc());
+    let loaded = load_project(&text, &r).unwrap();
+    assert_eq!(save_project(&loaded), text);
+    d.undo().unwrap();
+    assert_eq!(
+        members(&d, f),
+        ["channel", "channel-2"],
+        "undo restores the order"
+    );
+    assert_console_invariants(d.doc());
+}

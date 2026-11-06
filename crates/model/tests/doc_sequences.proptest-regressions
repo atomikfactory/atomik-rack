@@ -8,3 +8,4 @@ cc d22c125a638ea8d815a2d4e280c469a567ad03312ef157fec9ed5cbe50ea6f17 # shrinks to
 cc bfd17d75868d35477c8a025f74c63a98ad95d144d20f866ca44c707a4685d022 # shrinks to steps = [Song(RemoveTrack(61)), Wf(Take(NewGroup(0, [(0, 30720)]))), Song(RemoveClip(6))]
 cc 21a1a9b7463768216b90e2959c94e5c29204e80ed3ba881aecb89f50711659d8 # ReplaceDevice dropped every lane of an automation track: a track needs a lane
 cc 7e7953970c6567f6e6714e8975398536aca6435fbc30770104e999e5ce0e2252 # shrinks to steps = [Wf(Player(0, 0)), Song(AddLane(29, 0)), Wf(Sort(2))]
+cc 8b05acc83ede3764bf4816d8d54f4a232068027848573a430a0184b22758d620 # shrinks to steps = [Wf(Folder([7, 2])), Console(RouteFolder(0, None)), Console(MoveChannel(6, 1))]

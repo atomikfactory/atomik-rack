@@ -204,14 +204,13 @@ pub(crate) fn sync(doc: &RackDoc, registry: &Registry) -> Option<Edit> {
         .iter()
         .map(|r| doc.route_strips(&live, r.folder))
         .collect();
+    // The members are kept in console order (what the loader restores), so a channel moved within
+    // the console re-sorts them in the same step.
     let steady = live.len() == old.len()
-        && live.iter().zip(&wanted).all(|(r, w)| {
-            let mut members: Vec<&DeviceKey> = r.members.iter().collect();
-            let mut want: Vec<&DeviceKey> = w.iter().collect();
-            members.sort();
-            want.sort();
-            members == want
-        });
+        && live
+            .iter()
+            .zip(&wanted)
+            .all(|(r, w)| r.members.iter().eq(w.iter()));
     if steady {
         return None;
     }
