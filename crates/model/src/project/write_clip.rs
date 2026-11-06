@@ -289,13 +289,17 @@ pub(super) fn write_take_groups(w: &mut String, lane: &Lane, open: &BTreeSet<u32
             .collect();
         let _ = write!(
             w,
-            "\n                ],\n                \"comp\": [{}],\n                \"clips\": [{}]{}\n              }}",
+            "\n                ],\n                \"comp\": [{}],\n                \"clips\": [{}]{}{}\n              }}",
             comp.join(", "),
             ids.join(", "),
             if open.contains(&group.id) {
                 ",\n                \"open\": true"
             } else {
                 ""
+            },
+            match group.link {
+                Some(tag) => format!(",\n                \"link\": {tag}"),
+                None => String::new(),
             }
         );
     }

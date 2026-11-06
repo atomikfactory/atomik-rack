@@ -1582,6 +1582,8 @@ fn paste_tracks(
             for g in &mut lane.take_groups {
                 g.id = next_group;
                 next_group += 1;
+                // The copy is not linked to the groups it was copied from.
+                g.link = None;
                 for take in &mut g.takes {
                     take.id = ClipId(next);
                     next = next

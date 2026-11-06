@@ -3,7 +3,7 @@
 //! compiled lane clips (see [`crate::takes`]).
 
 use crate::history::Edit;
-use crate::song::{Clip, ClipContent, ClipId, LaneKind, MAX_TICK, SongCommand};
+use crate::song::{Clip, ClipContent, ClipId, MAX_TICK, SongCommand};
 use crate::song_cmd::{bad, check_audio, check_geometry, check_new_clip, range, track_index};
 use crate::takes::{
     CompSegment, TakeGroup, check_comp, clear_segment, comp_clips, comp_with_take_inserted,
@@ -123,6 +123,37 @@ fn build(
     Ok(Edit::Compound(edits))
 }
 
+/// The edit that gives take groups `groups` the link tag `tag` (`None`: no link), one
+/// `TakeGroups` edit per lane that holds any of them.
+fn set_links(doc: &RackDoc, groups: &[u32], tag: Option<u32>) -> Result<Edit, ModelError> {
+    let mut lanes: Vec<(DeviceKey, usize)> = Vec::new();
+    for id in groups {
+        let (device, lane, _) = find(doc, *id)?;
+        if !lanes.contains(&(device.clone(), lane)) {
+            lanes.push((device, lane));
+        }
+    }
+    let mut edits = Vec::with_capacity(lanes.len());
+    for (device, lane) in lanes {
+        let old = doc.song.tracks[track_index(doc, &device)?].lanes[lane]
+            .take_groups
+            .clone();
+        let mut new = old.clone();
+        for g in &mut new {
+            if groups.contains(&g.id) {
+                g.link = tag;
+            }
+        }
+        edits.push(Edit::TakeGroups {
+            device,
+            lane,
+            old,
+            new,
+        });
+    }
+    Ok(Edit::Compound(edits))
+}
+
 /// Plans one take command.
 pub(crate) fn plan(
     doc: &RackDoc,
@@ -136,13 +167,8 @@ pub(crate) fn plan(
             takes,
         } => {
             let t = &doc.song.tracks[track_index(doc, &device)?];
-            let kind = &t
-                .lanes
-                .get(lane)
-                .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?
-                .kind;
-            if matches!(kind, LaneKind::Automation(_)) {
-                return Err(bad("takes are for notes and audio lanes"));
+            if t.lanes.get(lane).is_none() {
+                return Err(bad(format!("{device} has no lane {lane}")));
             }
             if takes.is_empty() || takes.len() > MAX_TAKES {
                 return Err(range(format!(
@@ -167,6 +193,7 @@ pub(crate) fn plan(
                 comp: layered_comp(&checked),
                 takes: checked,
                 clips: Vec::new(),
+                link: None,
             };
             // Reserve the take ids first, then let `build` allocate the compiled clips after them.
             let mut scratch = doc.clone();
@@ -191,9 +218,6 @@ pub(crate) fn plan(
                 .lanes
                 .get(lane)
                 .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?;
-            if matches!(lane_ref.kind, LaneKind::Automation(_)) {
-                return Err(bad("takes are for notes and audio lanes"));
-            }
             let total = clips.len() + extra.len();
             if total == 0 || total > MAX_TAKES {
                 return Err(range(format!(
@@ -242,6 +266,7 @@ pub(crate) fn plan(
                 comp: layered_comp(&takes),
                 takes,
                 clips: Vec::new(),
+                link: None,
             };
             let mut scratch = doc.clone();
             scratch.song_mut().next_clip_id = next;
@@ -374,6 +399,43 @@ pub(crate) fn plan(
                 return Err(bad("no linked group changes"));
             }
             Ok(Edit::Compound(edits))
+        }
+        SongCommand::LinkTakeGroups { groups } => {
+            if groups.len() < 2 || groups.len() > MAX_LINKED_GROUPS {
+                return Err(range(format!(
+                    "a link holds 2 to {MAX_LINKED_GROUPS} groups, not {}",
+                    groups.len()
+                )));
+            }
+            let mut tags = Vec::with_capacity(groups.len());
+            for (i, id) in groups.iter().enumerate() {
+                if groups[..i].contains(id) {
+                    return Err(bad(format!("take group {id} is listed twice")));
+                }
+                tags.push(find(doc, *id)?.2.link);
+            }
+            if tags[0].is_some() && tags.iter().all(|t| *t == tags[0]) {
+                let alone = doc
+                    .song
+                    .take_groups()
+                    .all(|(_, _, g)| g.link != tags[0] || groups.contains(&g.id));
+                if alone {
+                    return Err(bad("those take groups are linked already"));
+                }
+            }
+            let tag = doc
+                .song
+                .take_groups()
+                .filter_map(|(_, _, g)| g.link)
+                .max()
+                .map_or(1, |m| m.saturating_add(1));
+            set_links(doc, &groups, Some(tag))
+        }
+        SongCommand::UnlinkTakeGroup { group } => {
+            if find(doc, group)?.2.link.is_none() {
+                return Err(bad(format!("take group {group} is not linked")));
+            }
+            set_links(doc, &[group], None)
         }
         SongCommand::DeleteTake { group, take } => {
             let (device, lane, g) = find(doc, group)?;

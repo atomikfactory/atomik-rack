@@ -530,7 +530,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 SongCommand::MoveNoteLane {
                     device, to_device, ..
                 } => track_frozen(device).or_else(|| track_frozen(to_device)),
-                SongCommand::SetLinkedComp { groups, .. } => groups.iter().find_map(|g| {
+                SongCommand::SetLinkedComp { groups, .. }
+                | SongCommand::LinkTakeGroups { groups } => groups.iter().find_map(|g| {
                     doc.song
                         .take_group(*g)
                         .and_then(|(t, _, _)| track_frozen(&t.device))
@@ -540,6 +541,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | SongCommand::MoveTake { group, .. }
                 | SongCommand::DeleteUnusedTakes { group }
                 | SongCommand::SetCompXfade { group, .. }
+                | SongCommand::UnlinkTakeGroup { group }
                 | SongCommand::SetCompSilence { group, .. }
                 | SongCommand::SetTake { group, .. }
                 | SongCommand::SetTakeLoop { group, .. } => doc

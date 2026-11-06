@@ -123,6 +123,9 @@ enum TakeOp {
     Silence(usize, i64, i64),
     /// A comp over every group at once.
     Linked(usize, i64, i64),
+    /// Two or three groups (picked by index) linked, or one taken out of its link.
+    Link(Vec<usize>),
+    Unlink(usize),
     /// A clip command on a take (what a clip editor open on it sends).
     EditTake(usize, usize, u8),
 }
@@ -144,6 +147,8 @@ fn take_op() -> impl Strategy<Value = TakeOp> {
         (0usize..4).prop_map(TakeOp::Unused),
         (0usize..4, span()).prop_map(|(g, (s, l))| TakeOp::Silence(g, s, s + l)),
         (0usize..4, span()).prop_map(|(t, (s, l))| TakeOp::Linked(t, s, s + l)),
+        proptest::collection::vec(0usize..4, 2..4).prop_map(TakeOp::Link),
+        (0usize..4).prop_map(TakeOp::Unlink),
         (0usize..4, 0usize..4, 0u8..100).prop_map(|(g, t, k)| TakeOp::EditTake(g, t, k)),
     ]
 }
@@ -243,6 +248,15 @@ fn resolve_take(op: &TakeOp, doc: &RackDoc) -> Option<SongCommand> {
             take: *t,
             start: *start,
             end: *end,
+        },
+        TakeOp::Link(picks) => SongCommand::LinkTakeGroups {
+            groups: picks
+                .iter()
+                .filter_map(|g| pick(&all, *g).map(|p| p.0))
+                .collect(),
+        },
+        TakeOp::Unlink(g) => SongCommand::UnlinkTakeGroup {
+            group: pick(&all, *g)?.0,
         },
         TakeOp::Silence(g, start, end) => SongCommand::SetCompSilence {
             group: pick(&all, *g)?.0,

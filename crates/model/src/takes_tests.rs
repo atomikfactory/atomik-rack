@@ -143,6 +143,7 @@ fn the_range_is_the_union_of_the_takes_and_a_picked_take_covers_all_of_it() {
         takes: vec![notes_take(10, 30), notes_take(20, 50)],
         comp: vec![seg(1, 10, 70)],
         clips: Vec::new(),
+        link: None,
     };
     assert_eq!(group.range(), (10, 70));
     assert_eq!(group.picked(), Some(1));
@@ -163,6 +164,7 @@ fn note_comp_clips_keep_content_alignment_like_a_split() {
         takes: vec![notes_take(100, 400)],
         comp: vec![seg(0, 150, 300)],
         clips: Vec::new(),
+        link: None,
     };
     let out = comp_clips(&doc, &group);
     assert_eq!(out.len(), 1);
@@ -189,6 +191,7 @@ fn audio_cuts_start_later_in_the_asset_and_fade_where_they_cut() {
             seg(0, 6 * ppq, 8 * ppq),
         ],
         clips: Vec::new(),
+        link: None,
     };
     let out = comp_clips(&doc, &group);
     assert_eq!(out.len(), 3);
@@ -219,6 +222,7 @@ fn a_whole_take_segment_compiles_to_the_take_itself() {
         comp: vec![seg(0, 480, 4480)],
         takes: vec![take.clone()],
         clips: Vec::new(),
+        link: None,
     };
     assert_eq!(comp_clips(&doc, &group), [take]);
 }
@@ -233,6 +237,7 @@ fn a_fade_never_exceeds_half_of_a_short_piece() {
         // 4 000 ticks are 6 250 frames at 120 BPM and 48 kHz (1.5625 frames per tick).
         comp: vec![seg(0, 1000, 5000)],
         clips: Vec::new(),
+        link: None,
     };
     let out = comp_clips(&doc, &group);
     let a = audio_of(&out[0]);
