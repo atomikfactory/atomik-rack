@@ -1,0 +1,100 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Tape Warmth", "folded": false, "patch": "Tape Warmth",
+      "params": {
+        "macro1": 0.2857143,
+        "macro2": 0.33333334
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "sat", "type": "atomik.distortion",
+            "name": "Distortion", "folded": false,
+            "params": {
+              "curve": 5,
+              "drive": 9,
+              "mix": 0.85,
+              "output": -5,
+              "tone": -0.2
+            }
+          },
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 30,
+              "band1.on": 1,
+              "band5.freq": 9000,
+              "band5.gain": -2.5
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 25,
+              "auto_makeup": 1,
+              "ratio": 2.5,
+              "release": 220,
+              "threshold": -14
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "sat:in_l"},
+          {"from": "boundary:in_r", "to": "sat:in_r"},
+          {"from": "comp:out_l", "to": "boundary:out_l"},
+          {"from": "comp:out_r", "to": "boundary:out_r"},
+          {"from": "eq:out_l", "to": "comp:in_l"},
+          {"from": "eq:out_r", "to": "comp:in_r"},
+          {"from": "sat:out_l", "to": "eq:in_l"},
+          {"from": "sat:out_r", "to": "eq:in_r"}
+        ],
+        "macros": [
+          {"name": "Drive", "targets": [
+            {"device": "sat", "param": "drive", "min": 3, "max": 24}
+          ]},
+          {"name": "Tone", "targets": [
+            {"device": "sat", "param": "tone", "min": -0.6, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

@@ -33,6 +33,8 @@ $RECYCLE.BIN/
 /tools/
 !crates/audio-file/tests/fixtures/*.wav
 !examples/projects/*/Audio/*.wav
+# The drum kits of the factory library keep their rendered audio beside the item.
+!factory/Patches/*/Audio/*.wav
 examples/projects/*/Audio/.peaks/
 
 # Local tool configuration files (not part of the project)

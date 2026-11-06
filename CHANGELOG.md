@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **More factory content.** The Factory root now holds 31 patches, 13 containers and 12 note clips (about 1.2 MB, most
+  of it the audio of the drum kits). The containers are ten effect chains of built-in effects (tape saturation, a
+  vocal chain, a ping-pong echo, a shimmer reverb, a lo-fi radio, drum punch, a slow phaser, a rotary speaker, a
+  tempo-synced filter gate and a mix-bus finish), each with named macros that start where the sound was designed,
+  and three modular instruments built from the CV and note devices (a sample-and-hold walk through a scale, a
+  chord-and-arpeggio stack and an envelope-swept pad). Three new semi-modular patches use its sequencer and
+  modulation slots. The four drum kits (nine pads each on keys 36 to 46) play short mono samples that the writer
+  renders from the synthesised pad modules of the built-in drum machine, so no recording is involved; the audio sits
+  beside each kit item, as it does for any library item with samples. The clips are four drum patterns on the pad
+  keys of the kits, three bass lines, three chord progressions and two arpeggios. Space on a drum machine item now
+  plays a drum pattern on its pad keys instead of the melodic phrase, which a kit leaves mostly silent. The tables
+  and the renderer are test code in the same writer as before, and tests check that every item loads, that every
+  patch, container and kit plays audible sound under full scale, that every macro of a chain changes the sound and
+  that each kit sample is mono, short, levelled and named by its content. The command count is unchanged.
 - **Factory library.** The file browser has a Factory root under Library with the sections the application ships
   items for (Patches today), next to the user's own library: items there list, search, filter by tag and category,
   take favourites and user tags, drag and load, preview with Space and step with the patch strip like library items,
@@ -22,8 +36,8 @@ may break APIs and the patch and project formats.
   tables and the writer are test code (`ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib
   write_the_factory_library -- --ignored`), and `ATOMIK_FACTORY_RENDER_DIR=<folder>` with
   `render_the_factory_library_to_wav` renders every patch to a WAV with a level report. Tests load every patch,
-  apply it in place and render its preview phrase, which must be audible and stay under full scale. Containers,
-  clips and patches with samples are not part of the first content. The command count is unchanged.
+  apply it in place and render its preview phrase, which must be audible and stay under full scale. The command
+  count is unchanged.
 - **Project versions.** Every save keeps the project file it replaces as an automatic version in a versions folder
   next to the project (`Versions/` inside its bundle folder, else `<name> Versions/` beside the file), and the
   oldest automatic versions beyond a number are pruned (Settings > Interface > "Versions kept": 5 to 200, default

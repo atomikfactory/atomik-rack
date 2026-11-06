@@ -5564,9 +5564,18 @@ items are ordinary project texts, plus one small new file type.
   `library.json`, which still key favourites and tags by the item's path. `delete_item` and `rename_item` refuse a
   path inside the factory folder first, so a factory item is never changed whatever the library folder is, and
   `stepping_folder` follows a shown factory section for patch stepping. Packaging copies `factory/` into every
-  artifact (`scripts/release/package-*.sh`, the `.iss` file) and the smoke test checks `factory.json`. The 24
-  patches are written from the tables in `app_core_factory_build.rs` (test code, the sound design) as
-  `save_device_item` writes any patch, and `app_core_factory_tests.rs` loads, applies and renders each one.
+  artifact (`scripts/release/package-*.sh`, the `.iss` file) and the smoke test checks `factory.json`. Every item
+  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 27 device patches
+  (`Def`; the semi-modular ones fill modulation slots by key), 13 containers (`ContainerDef`: ten effect chains wired
+  in series, three modular instruments with explicit cables, macros whose position is set from the first target's
+  value so the container sounds as designed), 12 note clips (`app_core_factory_clips.rs`, step and chord patterns
+  written with `save_clip_file`) and 4 drum kits (`app_core_factory_kits.rs`). A kit sample is rendered by
+  `render_hit`: a hidden project with one drum machine, a pad on a synthesised module, offline through
+  `render_doc_in`, mixed to mono, trimmed, faded and levelled; the kit item is the drum machine with a zone per pad
+  and the audio in `<kit>/Audio/<id>.wav` beside it (the layout of any library item with samples). The item
+  writers are the ones Save to Library uses (`save_device_item`), and `app_core_factory_tests.rs` loads, applies and
+  renders each item; the exact audio is compared on Windows x86-64 only, where the library is written. A patch
+  preview of a drum machine plays a pattern on its pad keys (`DRUM_PHRASE`).
 - **What the library does not write.** Everything outside the library folder and the session bundle
   is read only. Items do not carry project-level state: macro assignments, song tracks (a patch has
   none) and console settings are not saved with a patch, and a pasted instrument gets its console

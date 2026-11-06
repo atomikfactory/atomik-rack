@@ -1,0 +1,98 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Radio Dust", "folded": false, "patch": "Radio Dust",
+      "params": {
+        "macro1": 0.5833333
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "crush", "type": "atomik.distortion",
+            "name": "Distortion", "folded": false,
+            "params": {
+              "crush.bits": 9,
+              "crush.rate": 16000,
+              "curve": 4,
+              "drive": 6,
+              "mix": 0.85,
+              "output": -2
+            }
+          },
+          {
+            "id": "band", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 320,
+              "band1.on": 1,
+              "band5.freq": 4000,
+              "band5.gain": -9,
+              "output": 3
+            }
+          },
+          {
+            "id": "slap", "type": "atomik.echo",
+            "name": "Echo", "folded": false,
+            "params": {
+              "feedback": 0.3,
+              "mix": 0.2,
+              "time.mode": 0,
+              "time.ms": 90
+            }
+          }
+        ],
+        "cables": [
+          {"from": "band:out_l", "to": "slap:in_l"},
+          {"from": "band:out_r", "to": "slap:in_r"},
+          {"from": "boundary:in_l", "to": "crush:in_l"},
+          {"from": "boundary:in_r", "to": "crush:in_r"},
+          {"from": "crush:out_l", "to": "band:in_l"},
+          {"from": "crush:out_r", "to": "band:in_r"},
+          {"from": "slap:out_l", "to": "boundary:out_l"},
+          {"from": "slap:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Crush", "targets": [
+            {"device": "crush", "param": "crush.bits", "min": 16, "max": 4}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

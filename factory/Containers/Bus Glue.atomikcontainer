@@ -1,0 +1,108 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Bus Glue", "folded": false, "patch": "Bus Glue",
+      "params": {
+        "macro1": 0.36363637,
+        "macro2": 0.5555556
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 25,
+              "band1.on": 1,
+              "band5.freq": 10000,
+              "band5.gain": 1.5
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 30,
+              "auto_makeup": 1,
+              "auto_release": 1,
+              "knee": 8,
+              "ratio": 2,
+              "threshold": -12
+            }
+          },
+          {
+            "id": "wide", "type": "atomik.stereo-tool",
+            "name": "Stereo Tool", "folded": false,
+            "params": {
+              "width": 1.1
+            }
+          },
+          {
+            "id": "limit", "type": "atomik.mastering",
+            "name": "Mastering", "folded": false,
+            "params": {
+              "ceiling": -1,
+              "multiband.on": 0,
+              "softclip": 0.2
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "eq:in_l"},
+          {"from": "boundary:in_r", "to": "eq:in_r"},
+          {"from": "comp:out_l", "to": "wide:in_l"},
+          {"from": "comp:out_r", "to": "wide:in_r"},
+          {"from": "eq:out_l", "to": "comp:in_l"},
+          {"from": "eq:out_r", "to": "comp:in_r"},
+          {"from": "limit:out_l", "to": "boundary:out_l"},
+          {"from": "limit:out_r", "to": "boundary:out_r"},
+          {"from": "wide:out_l", "to": "limit:in_l"},
+          {"from": "wide:out_r", "to": "limit:in_r"}
+        ],
+        "macros": [
+          {"name": "Glue", "targets": [
+            {"device": "comp", "param": "threshold", "min": -4, "max": -26}
+          ]},
+          {"name": "Width", "targets": [
+            {"device": "wide", "param": "width", "min": 0.6, "max": 1.5}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
