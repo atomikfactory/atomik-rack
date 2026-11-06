@@ -456,3 +456,43 @@ fn saving_with_the_panel_open_gives_the_panel_the_keys_for_the_name() {
     assert_eq!(s.focus(), Pane::FileBrowser);
     assert!(s.core().file_browser().is_text_owner());
 }
+
+/// Removes a test's temporary folder when the test ends, however it ends.
+struct Cleanup(PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_factory_example_picked_in_the_browser_opens_as_a_new_unsaved_song() {
+    let dir = config("factory-example");
+    let _cleanup = Cleanup(dir.clone());
+    let factory =
+        std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../factory")).unwrap();
+    let project = factory.join("Projects/Moonrise Modular/Moonrise Modular.atomik");
+    let before = std::fs::read(&project).unwrap();
+    let mut s = shell_with(&dir, Some(dir.join("Library")));
+    s.set_factory_folder(Some(factory));
+    // On a song with changes the pick asks first; on a clean one it opens.
+    s.core_mut()
+        .browse(atomik_ui::BrowseAction::OpenProject(project.clone()));
+    assert!(s.handle(&UiEvent::FileHoverCancel).is_empty());
+    assert_eq!(
+        s.core().file(),
+        None,
+        "the factory copy is not the song's file"
+    );
+    assert!(!s.core().is_dirty());
+    assert!(s.core().title().contains("Moonrise Modular"));
+    assert!(s.core().doc().song.tracks.len() >= 4);
+    // Save has no file to write: it asks for a place.
+    assert!(matches!(
+        s.save_then(PendingAction::OpenFile(project.clone()))
+            .as_slice(),
+        [ShellRequest::PickSaveFileThen { .. }]
+    ));
+    assert_eq!(std::fs::read(&project).unwrap(), before);
+}

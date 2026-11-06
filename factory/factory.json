@@ -671,6 +671,42 @@
         "slow",
         "wide"
       ]
+    },
+    "Projects/Basalt Beat/Basalt Beat.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Example"
+      ],
+      "tags": [
+        "beat",
+        "drums",
+        "kit",
+        "minor"
+      ]
+    },
+    "Projects/Bus Room/Bus Room.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Example"
+      ],
+      "tags": [
+        "mix",
+        "buses",
+        "groups",
+        "automation"
+      ]
+    },
+    "Projects/Moonrise Modular/Moonrise Modular.atomik": {
+      "author": "Atomik",
+      "categories": [
+        "Example"
+      ],
+      "tags": [
+        "modular",
+        "ambient",
+        "arpeggio",
+        "generative"
+      ]
     }
   },
   "version": 1

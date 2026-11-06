@@ -1,13 +1,17 @@
-//! The factory library: read-only items (patches, containers, clips) that ship with the
-//! application, shown in the file browser as their own root next to the user library.
+//! The factory library: read-only items (patches, containers, clips and example projects) that
+//! ship with the application, shown in the file browser as their own root next to the user
+//! library.
 //!
 //! # Layout
 //!
 //! A factory folder looks like the library folder: `Patches/`, `Containers/` and `Clips/` hold
-//! the item files (below any sub-folders), and an optional `factory.json` gives the items the
-//! tags, categories and author the browser shows (a patch file holds no such marks; the user
-//! library keeps them in its database, which is the user's to change, so the factory keeps its
-//! own, read-only):
+//! the item files (below any sub-folders), and `Projects/` holds the example songs, each a folder
+//! `<name>/<name>.atomik` with the audio it needs in `Audio/` (the layout Save As writes). An
+//! optional `factory.json` gives the items the tags, categories and author the browser shows (a
+//! patch file holds no such marks; the user library keeps them in its database, which is the
+//! user's to change, so the factory keeps its own, read-only). An example opens as a new unsaved
+//! song ([`crate::app_core::AppCore::open_template`]), so the factory copy is never the song's
+//! file and Save asks for a place:
 //!
 //! ```text
 //! { "version": 1,
@@ -121,6 +125,7 @@ impl Factory {
             LibrarySection::Patches,
             LibrarySection::Containers,
             LibrarySection::Clips,
+            LibrarySection::Projects,
         ]
         .into_iter()
         .filter(|s| s.folder_name().is_some_and(|name| root.join(name).is_dir()))

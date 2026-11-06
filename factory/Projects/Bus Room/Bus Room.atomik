@@ -1,0 +1,1158 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 118,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Master", "folded": false
+    },
+    {
+      "id": "drums", "type": "atomik.drum-machine",
+      "name": "Drums", "folded": false,
+      "params": {
+        "master.level": -1,
+        "pad1.body": 0.35,
+        "pad1.choke": 0,
+        "pad1.decay": 220,
+        "pad1.level": 0,
+        "pad1.module": 1,
+        "pad1.pan": 0,
+        "pad1.snap": 0.85,
+        "pad1.sweep": 0.8,
+        "pad1.tune": 4,
+        "pad10.body": 0.3,
+        "pad10.choke": 0,
+        "pad10.decay": 160,
+        "pad10.level": 0,
+        "pad10.module": 4,
+        "pad10.pan": 0.3,
+        "pad10.snap": 0.6,
+        "pad10.sweep": 0.7,
+        "pad10.tune": 9,
+        "pad11.body": 0.8,
+        "pad11.choke": 1,
+        "pad11.decay": 180,
+        "pad11.level": -7,
+        "pad11.module": 3,
+        "pad11.pan": 0.25,
+        "pad11.snap": 0.7,
+        "pad11.tune": 3,
+        "pad2.body": 0.7,
+        "pad2.choke": 0,
+        "pad2.decay": 45,
+        "pad2.level": -4,
+        "pad2.module": 5,
+        "pad2.pan": 0,
+        "pad2.snap": 1,
+        "pad2.sweep": 0,
+        "pad2.tune": 22,
+        "pad3.body": 0.35,
+        "pad3.choke": 0,
+        "pad3.decay": 150,
+        "pad3.level": 0,
+        "pad3.module": 2,
+        "pad3.pan": 0,
+        "pad3.snap": 0.85,
+        "pad3.tune": 3,
+        "pad4.body": 0.6,
+        "pad4.choke": 0,
+        "pad4.decay": 120,
+        "pad4.level": -2,
+        "pad4.module": 6,
+        "pad4.pan": 0,
+        "pad4.snap": 0.5,
+        "pad4.sweep": 0.4,
+        "pad6.body": 0.3,
+        "pad6.choke": 0,
+        "pad6.decay": 180,
+        "pad6.level": 0,
+        "pad6.module": 4,
+        "pad6.pan": -0.3,
+        "pad6.snap": 0.6,
+        "pad6.sweep": 0.7,
+        "pad6.tune": 2,
+        "pad7.body": 0.8,
+        "pad7.choke": 1,
+        "pad7.decay": 35,
+        "pad7.level": -6,
+        "pad7.module": 3,
+        "pad7.pan": 0.25,
+        "pad7.snap": 0.7,
+        "pad7.tune": 3,
+        "pad8.body": 0.3,
+        "pad8.choke": 0,
+        "pad8.decay": 90,
+        "pad8.level": -4,
+        "pad8.module": 5,
+        "pad8.pan": -0.25,
+        "pad8.snap": 0.7,
+        "pad8.sweep": 0,
+        "pad8.tune": 12
+      }
+    },
+    {
+      "id": "channel-8", "type": "atomik.channel",
+      "name": "Hats", "folded": false,
+      "params": {
+        "fader": 0.82552063,
+        "pan": 0
+      }
+    },
+    {
+      "id": "channel-7", "type": "atomik.channel",
+      "name": "Snare", "folded": false,
+      "params": {
+        "fader": 0.82552063,
+        "pan": 0
+      }
+    },
+    {
+      "id": "channel-6", "type": "atomik.channel",
+      "name": "Kick", "folded": false,
+      "params": {
+        "fader": 0.82552063,
+        "pan": 0
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false,
+      "params": {
+        "fader": 0.82552063,
+        "pan": 0
+      }
+    },
+    {
+      "id": "bass", "type": "atomik.mono-bass",
+      "name": "Bass", "folded": false, "patch": "Gravel Drive",
+      "params": {
+        "chorus.mix": 0.1,
+        "env.amp.sustain": 0.85,
+        "filter.cutoff": 700,
+        "filter.drive": 0.7,
+        "filter.env_amount": 0.5,
+        "filter.resonance": 0.3,
+        "filter2.cutoff": 3000,
+        "filter2.mode": 1,
+        "filter2.resonance": 0.15,
+        "master.level": 6,
+        "noise.level": 0.04,
+        "osc.mix": 0.5,
+        "osc1.wave": 0,
+        "osc2.octave": -1,
+        "osc2.wave": 1
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false,
+      "params": {
+        "fader": 0.3758904,
+        "pan": 0
+      }
+    },
+    {
+      "id": "tines", "type": "atomik.fm-synth",
+      "name": "Tines", "folded": false, "patch": "Velvet Tines",
+      "params": {
+        "algorithm": 1,
+        "chorus.mix": 0.25,
+        "lfo.rate": 4,
+        "lfo.to_amp": 0.1,
+        "master.level": 0,
+        "op1.attack": 1,
+        "op1.coarse": 1,
+        "op1.decay": 2200,
+        "op1.level": 0.75,
+        "op1.release": 320,
+        "op1.sustain": 0.1,
+        "op1.velocity": 0.3,
+        "op2.attack": 1,
+        "op2.coarse": 1,
+        "op2.decay": 1400,
+        "op2.level": 0.28,
+        "op2.release": 300,
+        "op2.sustain": 0.05,
+        "op2.velocity": 0.6,
+        "op3.attack": 1,
+        "op3.coarse": 1,
+        "op3.decay": 2300,
+        "op3.detune": 5,
+        "op3.level": 0.45,
+        "op3.release": 320,
+        "op3.sustain": 0.1,
+        "op3.velocity": 0.3,
+        "op4.attack": 1,
+        "op4.coarse": 7,
+        "op4.decay": 120,
+        "op4.level": 0.14,
+        "op4.release": 100,
+        "op4.sustain": 0,
+        "op4.velocity": 0.8,
+        "spread": 0.35
+      }
+    },
+    {
+      "id": "channel-3", "type": "atomik.channel",
+      "name": "Console Channel 3", "folded": false,
+      "params": {
+        "fader": 0.36874652,
+        "pan": -0.25,
+        "send2.level": -10,
+        "send2.on": 1
+      }
+    },
+    {
+      "id": "pad", "type": "atomik.dual-layer",
+      "name": "Pad", "folded": false, "patch": "Aurora Stack",
+      "params": {
+        "a.env.amp.attack": 500,
+        "a.env.amp.release": 1200,
+        "a.env.amp.sustain": 0.85,
+        "a.filter.cutoff": 1800,
+        "a.filter.env_amount": 0.2,
+        "a.osc.mix": 0.5,
+        "a.osc1.wave": 0,
+        "a.osc2.fine": 8,
+        "a.osc2.wave": 0,
+        "b.env.amp.attack": 2,
+        "b.env.amp.decay": 900,
+        "b.env.amp.release": 900,
+        "b.env.amp.sustain": 0.15,
+        "b.filter.cutoff": 6000,
+        "b.osc.mix": 0.4,
+        "b.osc1.octave": 1,
+        "b.osc1.wave": 2,
+        "b.osc2.octave": 2,
+        "b.osc2.wave": 3,
+        "layer.mode": 0,
+        "master.level": -4,
+        "spread": 0.5
+      }
+    },
+    {
+      "id": "channel-4", "type": "atomik.channel",
+      "name": "Console Channel 4", "folded": false,
+      "params": {
+        "fader": 0.30436492,
+        "pan": 0,
+        "send1.level": -9,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "reed", "type": "atomik.poly-synth",
+      "name": "Reed", "folded": false, "patch": "Hollow Reed Lead",
+      "params": {
+        "delay.mix": 0.15,
+        "env.amp.attack": 12,
+        "env.amp.decay": 200,
+        "env.amp.release": 180,
+        "env.amp.sustain": 0.8,
+        "filter.cutoff": 1800,
+        "filter.env_amount": 0.3,
+        "filter.resonance": 0.25,
+        "glide": 70,
+        "legato": 1,
+        "lfo.rate": 5.2,
+        "lfo.to_pitch": 0.18,
+        "lfo.wave": 0,
+        "master.level": 0.5,
+        "osc.mix": 0.35,
+        "osc1.wave": 1,
+        "osc2.fine": 4,
+        "osc2.wave": 2,
+        "voices": 6
+      }
+    },
+    {
+      "id": "channel-5", "type": "atomik.channel",
+      "name": "Console Channel 5", "folded": false,
+      "params": {
+        "fader": 0.27652088,
+        "pan": 0.2,
+        "send1.level": -10,
+        "send1.on": 1,
+        "send2.level": -7,
+        "send2.on": 1
+      }
+    },
+    {
+      "id": "container", "type": "atomik.container",
+      "name": "Shimmer Cathedral", "folded": false, "patch": "Shimmer Cathedral",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "shift", "type": "atomik.pitch-shifter",
+            "name": "Pitch Shifter", "folded": false,
+            "params": {
+              "mix": 0.35,
+              "quality": 2,
+              "semitones": 12
+            }
+          },
+          {
+            "id": "hall", "type": "atomik.space-reverb",
+            "name": "Space Reverb", "folded": false,
+            "params": {
+              "algorithm": 1,
+              "decay": 8,
+              "highcut": 9000,
+              "mix": 0.45,
+              "predelay": 30
+            }
+          },
+          {
+            "id": "wide", "type": "atomik.stereo-tool",
+            "name": "Stereo Tool", "folded": false,
+            "params": {
+              "width": 1.3
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "shift:in_l"},
+          {"from": "boundary:in_r", "to": "shift:in_r"},
+          {"from": "hall:out_l", "to": "wide:in_l"},
+          {"from": "hall:out_r", "to": "wide:in_r"},
+          {"from": "shift:out_l", "to": "hall:in_l"},
+          {"from": "shift:out_r", "to": "hall:in_r"},
+          {"from": "wide:out_l", "to": "boundary:out_l"},
+          {"from": "wide:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Shimmer", "targets": [
+            {"device": "shift", "param": "mix", "min": 0, "max": 0.7}
+          ]},
+          {"name": "Decay", "targets": [
+            {"device": "hall", "param": "decay", "min": 2, "max": 14}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "container-2", "type": "atomik.container",
+      "name": "Ping Pong Tide", "folded": false, "patch": "Ping Pong Tide",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5833333
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "echo", "type": "atomik.echo",
+            "name": "Echo", "folded": false,
+            "params": {
+              "color.high": 6000,
+              "feedback": 0.45,
+              "mix": 0.35,
+              "ping_pong": 1,
+              "time.sync": 6,
+              "wobble.depth": 0.2
+            }
+          },
+          {
+            "id": "chorus", "type": "atomik.modulation",
+            "name": "Modulation", "folded": false,
+            "params": {
+              "depth": 0.4,
+              "mix": 0.3,
+              "mode": 0,
+              "rate": 0.4
+            }
+          },
+          {
+            "id": "room", "type": "atomik.reverb",
+            "name": "Reverb", "folded": false,
+            "params": {
+              "algorithm": 0,
+              "decay": 1.2,
+              "mix": 0.15
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "echo:in_l"},
+          {"from": "boundary:in_r", "to": "echo:in_r"},
+          {"from": "chorus:out_l", "to": "room:in_l"},
+          {"from": "chorus:out_r", "to": "room:in_r"},
+          {"from": "echo:out_l", "to": "chorus:in_l"},
+          {"from": "echo:out_r", "to": "chorus:in_r"},
+          {"from": "room:out_l", "to": "boundary:out_l"},
+          {"from": "room:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Feedback", "targets": [
+            {"device": "echo", "param": "feedback", "min": 0.1, "max": 0.8}
+          ]},
+          {"name": "Mix", "targets": [
+            {"device": "echo", "param": "mix", "min": 0, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "bus", "type": "atomik.bus",
+      "name": "Drums", "folded": true
+    },
+    {
+      "id": "bus-2", "type": "atomik.bus",
+      "name": "Music", "folded": true
+    },
+    {
+      "id": "container-3", "type": "atomik.container",
+      "name": "Drum Punch", "folded": false, "patch": "Drum Punch",
+      "params": {
+        "macro1": 0.6923078,
+        "macro2": 0.4615385
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "shape", "type": "atomik.transient-shaper",
+            "name": "Transient Shaper", "folded": false,
+            "params": {
+              "attack": 0.6,
+              "output": -4.5,
+              "sustain": -0.2
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 15,
+              "auto_makeup": 1,
+              "ratio": 5,
+              "release": 90,
+              "threshold": -16
+            }
+          },
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band2.freq": 90,
+              "band2.gain": 2,
+              "band5.freq": 9000,
+              "band5.gain": 2.5
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "shape:in_l"},
+          {"from": "boundary:in_r", "to": "shape:in_r"},
+          {"from": "comp:out_l", "to": "eq:in_l"},
+          {"from": "comp:out_r", "to": "eq:in_r"},
+          {"from": "eq:out_l", "to": "boundary:out_l"},
+          {"from": "eq:out_r", "to": "boundary:out_r"},
+          {"from": "shape:out_l", "to": "comp:in_l"},
+          {"from": "shape:out_r", "to": "comp:in_r"}
+        ],
+        "macros": [
+          {"name": "Punch", "targets": [
+            {"device": "shape", "param": "attack", "min": -0.3, "max": 1}
+          ]},
+          {"name": "Length", "targets": [
+            {"device": "shape", "param": "sustain", "min": -0.8, "max": 0.5}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "container-4", "type": "atomik.container",
+      "name": "Tape Warmth", "folded": false, "patch": "Tape Warmth",
+      "params": {
+        "macro1": 0.2857143,
+        "macro2": 0.33333334
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "sat", "type": "atomik.distortion",
+            "name": "Distortion", "folded": false,
+            "params": {
+              "curve": 5,
+              "drive": 9,
+              "mix": 0.85,
+              "output": -5,
+              "tone": -0.2
+            }
+          },
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 30,
+              "band1.on": 1,
+              "band5.freq": 9000,
+              "band5.gain": -2.5
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 25,
+              "auto_makeup": 1,
+              "ratio": 2.5,
+              "release": 220,
+              "threshold": -14
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "sat:in_l"},
+          {"from": "boundary:in_r", "to": "sat:in_r"},
+          {"from": "comp:out_l", "to": "boundary:out_l"},
+          {"from": "comp:out_r", "to": "boundary:out_r"},
+          {"from": "eq:out_l", "to": "comp:in_l"},
+          {"from": "eq:out_r", "to": "comp:in_r"},
+          {"from": "sat:out_l", "to": "eq:in_l"},
+          {"from": "sat:out_r", "to": "eq:in_r"}
+        ],
+        "macros": [
+          {"name": "Drive", "targets": [
+            {"device": "sat", "param": "drive", "min": 3, "max": 24}
+          ]},
+          {"name": "Tone", "targets": [
+            {"device": "sat", "param": "tone", "min": -0.6, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "container-5", "type": "atomik.container",
+      "name": "Bus Glue", "folded": false, "patch": "Bus Glue",
+      "params": {
+        "macro1": 0.36363637,
+        "macro2": 0.5555556
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 25,
+              "band1.on": 1,
+              "band5.freq": 10000,
+              "band5.gain": 1.5
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 30,
+              "auto_makeup": 1,
+              "auto_release": 1,
+              "knee": 8,
+              "ratio": 2,
+              "threshold": -12
+            }
+          },
+          {
+            "id": "wide", "type": "atomik.stereo-tool",
+            "name": "Stereo Tool", "folded": false,
+            "params": {
+              "width": 1.1
+            }
+          },
+          {
+            "id": "limit", "type": "atomik.mastering",
+            "name": "Mastering", "folded": false,
+            "params": {
+              "ceiling": -1,
+              "multiband.on": 0,
+              "softclip": 0.2
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "eq:in_l"},
+          {"from": "boundary:in_r", "to": "eq:in_r"},
+          {"from": "comp:out_l", "to": "wide:in_l"},
+          {"from": "comp:out_r", "to": "wide:in_r"},
+          {"from": "eq:out_l", "to": "comp:in_l"},
+          {"from": "eq:out_r", "to": "comp:in_r"},
+          {"from": "limit:out_l", "to": "boundary:out_l"},
+          {"from": "limit:out_r", "to": "boundary:out_r"},
+          {"from": "wide:out_l", "to": "limit:in_l"},
+          {"from": "wide:out_r", "to": "limit:in_r"}
+        ],
+        "macros": [
+          {"name": "Glue", "targets": [
+            {"device": "comp", "param": "threshold", "min": -4, "max": -26}
+          ]},
+          {"name": "Width", "targets": [
+            {"device": "wide", "param": "width", "min": 0.6, "max": 1.5}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [
+    {"from": "bass:out_l", "to": "channel-2:in_l"},
+    {"from": "bass:out_r", "to": "channel-2:in_r"},
+    {"from": "bus:follow_out", "to": "channel:follow_in"},
+    {"from": "bus:follow_out", "to": "channel-6:follow_in"},
+    {"from": "bus:follow_out", "to": "channel-7:follow_in"},
+    {"from": "bus:follow_out", "to": "channel-8:follow_in"},
+    {"from": "bus:insert_send_l", "to": "container-3:in_l"},
+    {"from": "bus:insert_send_r", "to": "container-3:in_r"},
+    {"from": "bus:out_l", "to": "master:bus_l"},
+    {"from": "bus:out_r", "to": "master:bus_r"},
+    {"from": "bus:send1_l", "to": "master:send_bus1_l"},
+    {"from": "bus:send1_r", "to": "master:send_bus1_r"},
+    {"from": "bus:send2_l", "to": "master:send_bus2_l"},
+    {"from": "bus:send2_r", "to": "master:send_bus2_r"},
+    {"from": "bus:send3_l", "to": "master:send_bus3_l"},
+    {"from": "bus:send3_r", "to": "master:send_bus3_r"},
+    {"from": "bus:send4_l", "to": "master:send_bus4_l"},
+    {"from": "bus:send4_r", "to": "master:send_bus4_r"},
+    {"from": "bus:send5_l", "to": "master:send_bus5_l"},
+    {"from": "bus:send5_r", "to": "master:send_bus5_r"},
+    {"from": "bus:send6_l", "to": "master:send_bus6_l"},
+    {"from": "bus:send6_r", "to": "master:send_bus6_r"},
+    {"from": "bus:send7_l", "to": "master:send_bus7_l"},
+    {"from": "bus:send7_r", "to": "master:send_bus7_r"},
+    {"from": "bus:send8_l", "to": "master:send_bus8_l"},
+    {"from": "bus:send8_r", "to": "master:send_bus8_r"},
+    {"from": "bus-2:follow_out", "to": "channel-2:follow_in"},
+    {"from": "bus-2:follow_out", "to": "channel-3:follow_in"},
+    {"from": "bus-2:follow_out", "to": "channel-4:follow_in"},
+    {"from": "bus-2:follow_out", "to": "channel-5:follow_in"},
+    {"from": "bus-2:insert_send_l", "to": "container-4:in_l"},
+    {"from": "bus-2:insert_send_r", "to": "container-4:in_r"},
+    {"from": "bus-2:out_l", "to": "master:bus_l"},
+    {"from": "bus-2:out_r", "to": "master:bus_r"},
+    {"from": "bus-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "bus-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "bus-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "bus-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "bus-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "bus-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "bus-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "bus-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "bus-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "bus-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "bus-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "bus-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "bus-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "bus-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "bus-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "bus-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel:out_l", "to": "bus:bus_l"},
+    {"from": "channel:out_r", "to": "bus:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "bus-2:bus_l"},
+    {"from": "channel-2:out_r", "to": "bus-2:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-3:out_l", "to": "bus-2:bus_l"},
+    {"from": "channel-3:out_r", "to": "bus-2:bus_r"},
+    {"from": "channel-3:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-3:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-3:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-3:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-3:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-3:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-3:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-3:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-3:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-3:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-3:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-3:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-3:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-3:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-3:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-3:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-4:out_l", "to": "bus-2:bus_l"},
+    {"from": "channel-4:out_r", "to": "bus-2:bus_r"},
+    {"from": "channel-4:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-4:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-4:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-4:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-4:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-4:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-4:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-4:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-4:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-4:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-4:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-4:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-4:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-4:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-4:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-4:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-5:out_l", "to": "bus-2:bus_l"},
+    {"from": "channel-5:out_r", "to": "bus-2:bus_r"},
+    {"from": "channel-5:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-5:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-5:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-5:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-5:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-5:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-5:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-5:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-5:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-5:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-5:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-5:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-5:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-5:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-5:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-5:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-6:out_l", "to": "bus:bus_l"},
+    {"from": "channel-6:out_r", "to": "bus:bus_r"},
+    {"from": "channel-6:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-6:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-6:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-6:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-6:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-6:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-6:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-6:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-6:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-6:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-6:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-6:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-6:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-6:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-6:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-6:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-7:out_l", "to": "bus:bus_l"},
+    {"from": "channel-7:out_r", "to": "bus:bus_r"},
+    {"from": "channel-7:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-7:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-7:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-7:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-7:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-7:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-7:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-7:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-7:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-7:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-7:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-7:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-7:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-7:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-7:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-7:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-8:out_l", "to": "bus:bus_l"},
+    {"from": "channel-8:out_r", "to": "bus:bus_r"},
+    {"from": "channel-8:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-8:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-8:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-8:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-8:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-8:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-8:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-8:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-8:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-8:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-8:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-8:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-8:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-8:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-8:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-8:send8_r", "to": "master:send_bus8_r"},
+    {"from": "container:out_l", "to": "master:return1_l"},
+    {"from": "container:out_r", "to": "master:return1_r"},
+    {"from": "container-2:out_l", "to": "master:return2_l"},
+    {"from": "container-2:out_r", "to": "master:return2_r"},
+    {"from": "container-3:out_l", "to": "bus:insert_return_l"},
+    {"from": "container-3:out_r", "to": "bus:insert_return_r"},
+    {"from": "container-4:out_l", "to": "bus-2:insert_return_l"},
+    {"from": "container-4:out_r", "to": "bus-2:insert_return_r"},
+    {"from": "container-5:out_l", "to": "master:insert_return_l"},
+    {"from": "container-5:out_r", "to": "master:insert_return_r"},
+    {"from": "drums:out_l", "to": "channel:in_l"},
+    {"from": "drums:out_r", "to": "channel:in_r"},
+    {"from": "drums:pad1_out_l", "to": "channel-6:in_l"},
+    {"from": "drums:pad1_out_r", "to": "channel-6:in_r"},
+    {"from": "drums:pad3_out_l", "to": "channel-7:in_l"},
+    {"from": "drums:pad3_out_r", "to": "channel-7:in_r"},
+    {"from": "drums:pad7_out_l", "to": "channel-8:in_l"},
+    {"from": "drums:pad7_out_r", "to": "channel-8:in_r"},
+    {"from": "master:fx_send1_l", "to": "container:in_l"},
+    {"from": "master:fx_send1_r", "to": "container:in_r"},
+    {"from": "master:fx_send2_l", "to": "container-2:in_l"},
+    {"from": "master:fx_send2_r", "to": "container-2:in_r"},
+    {"from": "master:insert_send_l", "to": "container-5:in_l"},
+    {"from": "master:insert_send_r", "to": "container-5:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "pad:out_l", "to": "channel-4:in_l"},
+    {"from": "pad:out_r", "to": "channel-4:in_r"},
+    {"from": "reed:out_l", "to": "channel-5:in_l"},
+    {"from": "reed:out_r", "to": "channel-5:in_r"},
+    {"from": "tines:out_l", "to": "channel-3:in_l"},
+    {"from": "tines:out_r", "to": "channel-3:in_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "drums"},
+      {"channel": "channel-2", "source": "bass"},
+      {"channel": "channel-3", "source": "tines"},
+      {"channel": "channel-4", "source": "pad"},
+      {"channel": "channel-5", "source": "reed"},
+      {"channel": "channel-6", "source": "drums"},
+      {"channel": "channel-7", "source": "drums"},
+      {"channel": "channel-8", "source": "drums"}
+    ],
+    "buses": [
+      {"bus": "bus", "name": "Drums"},
+      {"bus": "bus-2", "name": "Music"}
+    ],
+    "vcas": [
+      {"id": 1, "name": "Beat", "color": "#e05a4f", "members": ["channel-2", "bus"]},
+      {"id": 2, "name": "Harmony", "color": "#e89a3c", "members": ["channel-3", "channel-4"]}
+    ],
+    "master": "master",
+    "returns": ["container", "container-2", null, null, null, null, null, null],
+    "compensation": true,
+    "align_returns": true,
+    "send_follow": true,
+    "folder_routes": [{"folder": 1, "bus": "bus-2", "members": ["channel-2", "channel-3", "channel-4", "channel-5"]}]
+  },
+  "info": {
+    "title": "Bus Room",
+    "author": "Atomik",
+    "notes": "A steady four-on-the-floor tune in A minor at 118 BPM, built to be mixed: synthesised drums, a gritty bass, a soft electric keys arpeggio, a slow pad and a reedy lead. The beat ducks for a breakdown, the pad swells in and the lead opens its filter, all by automation. The mixing side: drum pads on their own channels into a Drums bus, a track folder that plays into a Music bus, group levels, two send effects, a mix-bus finish and automation of a filter, a fader and a group level."
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 118}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 1474560,
+    "next_clip_id": 9,
+    "tails": true,
+    "groups": [
+      {"id": 1, "name": "Music"}
+    ],
+    "tracks": [
+      {
+        "device": "drums", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 245760, "length": 1228800, "offset": 0, "loop_length": 122880, "muted": false, "name": "Four On The Floor",
+                "notes": [
+                  [0, 1728, 36, 1],
+                  [0, 1728, 42, 0.82],
+                  [7680, 1728, 46, 0.82],
+                  [15360, 1728, 36, 1],
+                  [15360, 1728, 39, 1],
+                  [15360, 1728, 42, 0.82],
+                  [23040, 1728, 46, 0.82],
+                  [30720, 1728, 36, 1],
+                  [30720, 1728, 42, 0.82],
+                  [38400, 1728, 46, 0.82],
+                  [46080, 1728, 36, 1],
+                  [46080, 1728, 39, 1],
+                  [46080, 1728, 42, 0.82],
+                  [53760, 1728, 46, 0.82],
+                  [61440, 1728, 36, 1],
+                  [61440, 1728, 42, 0.82],
+                  [69120, 1728, 46, 0.82],
+                  [76800, 1728, 36, 1],
+                  [76800, 1728, 39, 1],
+                  [76800, 1728, 42, 0.82],
+                  [84480, 1728, 46, 0.82],
+                  [92160, 1728, 36, 1],
+                  [92160, 1728, 42, 0.82],
+                  [99840, 1728, 46, 0.82],
+                  [107520, 1728, 36, 1],
+                  [107520, 1728, 39, 1],
+                  [107520, 1728, 42, 0.82],
+                  [115200, 1728, 46, 0.82]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "bass", "muted": false, "solo": false, "armed": false, "group": 1,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 2, "start": 491520, "length": 983040, "offset": 0, "loop_length": 245760, "muted": false, "name": "Chord Pump",
+                "notes": [
+                  [0, 6144, 33, 1],
+                  [7680, 6144, 33, 0.82],
+                  [15360, 6144, 45, 0.82],
+                  [23040, 6144, 33, 0.82],
+                  [30720, 6144, 33, 1],
+                  [38400, 6144, 45, 0.82],
+                  [46080, 6144, 33, 0.82],
+                  [61440, 6144, 29, 1],
+                  [69120, 6144, 29, 0.82],
+                  [76800, 6144, 41, 0.82],
+                  [84480, 6144, 29, 0.82],
+                  [92160, 6144, 29, 1],
+                  [99840, 6144, 41, 0.82],
+                  [107520, 6144, 29, 0.82],
+                  [122880, 6144, 36, 1],
+                  [130560, 6144, 36, 0.82],
+                  [138240, 6144, 48, 0.82],
+                  [145920, 6144, 36, 0.82],
+                  [153600, 6144, 36, 1],
+                  [161280, 6144, 48, 0.82],
+                  [168960, 6144, 36, 0.82],
+                  [184320, 6144, 31, 1],
+                  [192000, 6144, 31, 0.82],
+                  [199680, 6144, 43, 0.82],
+                  [207360, 6144, 31, 0.82],
+                  [215040, 6144, 31, 1],
+                  [222720, 6144, 43, 0.82],
+                  [230400, 6144, 31, 0.82]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "tines", "muted": false, "solo": false, "armed": false, "group": 1,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 245760, "length": 1228800, "offset": 0, "loop_length": 245760, "muted": false, "name": "Wide Minor Arp",
+                "notes": [
+                  [0, 6912, 45, 1],
+                  [7680, 6912, 52, 0.82],
+                  [15360, 6912, 57, 0.82],
+                  [23040, 6912, 60, 0.82],
+                  [30720, 6912, 64, 1],
+                  [38400, 6912, 69, 0.82],
+                  [46080, 6912, 64, 0.82],
+                  [53760, 6912, 60, 0.82],
+                  [61440, 6912, 41, 1],
+                  [69120, 6912, 48, 0.82],
+                  [76800, 6912, 53, 0.82],
+                  [84480, 6912, 57, 0.82],
+                  [92160, 6912, 60, 1],
+                  [99840, 6912, 65, 0.82],
+                  [107520, 6912, 60, 0.82],
+                  [115200, 6912, 57, 0.82],
+                  [122880, 6912, 48, 1],
+                  [130560, 6912, 55, 0.82],
+                  [138240, 6912, 60, 0.82],
+                  [145920, 6912, 64, 0.82],
+                  [153600, 6912, 67, 1],
+                  [161280, 6912, 72, 0.82],
+                  [168960, 6912, 67, 0.82],
+                  [176640, 6912, 64, 0.82],
+                  [184320, 6912, 43, 1],
+                  [192000, 6912, 50, 0.82],
+                  [199680, 6912, 55, 0.82],
+                  [207360, 6912, 59, 0.82],
+                  [215040, 6912, 62, 1],
+                  [222720, 6912, 67, 0.82],
+                  [230400, 6912, 62, 0.82],
+                  [238080, 6912, 59, 0.82]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "pad", "muted": false, "solo": false, "armed": false, "group": 1,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 4, "start": 0, "length": 1474560, "offset": 0, "loop_length": 245760, "muted": false, "name": "Minor Four Chords",
+                "notes": [
+                  [0, 58368, 45, 0.75],
+                  [0, 58368, 57, 0.75],
+                  [0, 58368, 60, 0.75],
+                  [0, 58368, 64, 0.75],
+                  [61440, 58368, 41, 0.75],
+                  [61440, 58368, 57, 0.75],
+                  [61440, 58368, 60, 0.75],
+                  [61440, 58368, 65, 0.75],
+                  [122880, 58368, 48, 0.75],
+                  [122880, 58368, 55, 0.75],
+                  [122880, 58368, 60, 0.75],
+                  [122880, 58368, 64, 0.75],
+                  [184320, 58368, 43, 0.75],
+                  [184320, 58368, 55, 0.75],
+                  [184320, 58368, 59, 0.75],
+                  [184320, 58368, 62, 0.75]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "reed", "muted": false, "solo": false, "armed": false, "group": 1,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 5, "start": 737280, "length": 737280, "offset": 0, "loop_length": 245760, "muted": false, "name": "Reed Line",
+                "notes": [
+                  [0, 7296, 69, 1],
+                  [15360, 7296, 72, 0.82],
+                  [30720, 7296, 76, 1],
+                  [46080, 7296, 72, 0.82],
+                  [61440, 7296, 72, 1],
+                  [76800, 7296, 69, 0.82],
+                  [92160, 7296, 65, 1],
+                  [107520, 7296, 69, 0.82],
+                  [122880, 7296, 67, 1],
+                  [138240, 7296, 72, 0.82],
+                  [153600, 7296, 76, 1],
+                  [168960, 7296, 79, 0.82],
+                  [184320, 7296, 74, 1],
+                  [199680, 7296, 71, 0.82],
+                  [215040, 7296, 67, 1]
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "automation", "param": "filter.cutoff",
+            "clips": [
+              {
+                "id": 8, "start": 737280, "length": 737280, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 500, "linear"],
+                  [737280, 5500, "linear"]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "master", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "automation", "param": "vca.1",
+            "clips": [
+              {
+                "id": 6, "start": 921600, "length": 337920, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 0, "linear"],
+                  [61440, -18, "linear"],
+                  [307200, -18, "linear"],
+                  [337920, 0, "linear"]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "channel-4", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "automation", "param": "fader",
+            "clips": [
+              {
+                "id": 7, "start": 0, "length": 491520, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 0.23717082, "linear"],
+                  [491520, 0.30436492, "linear"]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
