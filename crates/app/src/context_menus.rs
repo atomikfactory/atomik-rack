@@ -765,6 +765,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.ungroup_tracks", true),
                 item("mixer.create_vca", true).labelled("Create VCA"),
                 item("mixer.create_vca_for_folder", true).labelled("Create VCA that Follows"),
+                item("mixer.route_folder", true).labelled("Route Folder to New Bus"),
+                item("mixer.unroute_folder", e.org.folder_routed).labelled("Stop Routing Folder"),
                 Spec::Separator,
                 item("sequencer.move_track_up", e.org.can_move_up).labelled("Move Folder Up"),
                 item("sequencer.move_track_down", e.org.can_move_down).labelled("Move Folder Down"),
@@ -2276,12 +2278,15 @@ mod tests {
                 "sequencer.ungroup_tracks",
                 "mixer.create_vca",
                 "mixer.create_vca_for_folder",
+                "mixer.route_folder",
+                "mixer.unroute_folder",
                 "sequencer.move_track_up",
                 "sequencer.move_track_down",
             ]
         );
         assert_eq!(list[1].2, Some("Expand Folder"));
-        assert_eq!(list[5].2, Some("Move Folder Up"));
+        assert_eq!(list[7].2, Some("Move Folder Up"));
+        assert_eq!(on(&list, "mixer.unroute_folder"), Some(false));
         assert_eq!(on(&list, "sequencer.move_track_up"), Some(false));
         assert_eq!(on(&list, "sequencer.move_track_down"), Some(true));
     }

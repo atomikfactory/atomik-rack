@@ -202,6 +202,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Delete Channel", None),
             ("Create VCA from Selection", None),
             ("Create VCA from Folder", None),
+            ("Route Folder to New Bus", None),
+            ("Stop Routing Folder", None),
             ("Add to VCA", None),
             ("Remove from VCA", None),
             ("Delete VCA", None),
@@ -1790,6 +1792,78 @@ fn create_vca_from_folder_makes_a_group_that_follows_the_selected_folder() {
     assert_eq!(s.core().doc().console.vcas[0].members.len(), 3);
     s.core_mut().undo();
     assert_eq!(s.core().doc().console.vcas[0].members.len(), 2);
+}
+
+#[test]
+fn route_folder_plays_the_selected_folder_into_a_bus_and_stop_routing_undoes_it() {
+    let mut s = folder_shell();
+    let enabled = |s: &Shell<NullBackend>, c: AppCommand| menu_row(s, c).map(|i| i.enabled);
+    assert_eq!(enabled(&s, AppCommand::RouteFolder(None)), Some(false));
+    assert_eq!(enabled(&s, AppCommand::UnrouteFolder), Some(false));
+    s.core_mut().arrangement_mut().set_selected_group(Some(1));
+    s.set_focus(Pane::Arrangement);
+    assert_eq!(enabled(&s, AppCommand::RouteFolder(None)), Some(true));
+    assert_eq!(
+        enabled(&s, AppCommand::UnrouteFolder),
+        Some(false),
+        "not routed yet"
+    );
+    let before = s.core().doc().clone();
+    s.execute(AppCommand::RouteFolder(None));
+    let doc = s.core().doc();
+    let route = doc.console.folder_route(1).expect("a route");
+    assert_eq!(route.members.len(), 2);
+    assert_eq!(
+        doc.console.bus_by_name("Strings").map(|b| b.bus.clone()),
+        Some(route.bus.clone()),
+        "the bus is named after the folder"
+    );
+    assert_eq!(enabled(&s, AppCommand::UnrouteFolder), Some(true));
+    // The menu now lists the bus, and a row routes the folder to it (a no-op here: it is there).
+    let rows: Vec<String> = s
+        .menu_model()
+        .iter()
+        .flat_map(|m| m.items())
+        .filter(|i| matches!(i.command, AppCommand::RouteFolder(Some(_))))
+        .map(|i| i.label.to_string())
+        .collect();
+    assert_eq!(rows, ["Strings"]);
+    s.core_mut().undo();
+    assert_eq!(s.core().doc(), &before, "one undo step");
+    s.core_mut().redo();
+    s.execute(AppCommand::UnrouteFolder);
+    assert!(s.core().doc().console.folder_routes.is_empty());
+    // The command ids: `mixer.route_folder` with no argument makes a bus, with a number picks one.
+    assert_eq!(
+        AppCommand::from_command("mixer.route_folder", None),
+        Some(AppCommand::RouteFolder(None))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.route_folder", Some("2")),
+        Some(AppCommand::RouteFolder(Some(2)))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.route_folder", Some("0")),
+        None
+    );
+    assert_eq!(AppCommand::RouteFolder(Some(2)).command_id(), None);
+    assert_eq!(
+        AppCommand::UnrouteFolder.command_id(),
+        Some(("mixer.unroute_folder", None))
+    );
+    s.execute(AppCommand::RouteFolder(Some(1)));
+    assert_eq!(
+        s.core()
+            .doc()
+            .console
+            .folder_route(1)
+            .map(|r| r.bus.clone()),
+        s.core().doc().console.buses.first().map(|b| b.bus.clone()),
+        "route to the first bus"
+    );
+    let before_bad = s.core().doc().clone();
+    s.execute(AppCommand::RouteFolder(Some(9)));
+    assert_eq!(s.core().doc(), &before_bad, "there is no bus 9");
 }
 
 #[test]

@@ -147,6 +147,8 @@ pub struct OrgMenu {
     pub can_move_up: bool,
     /// The selected track or folder can move down.
     pub can_move_down: bool,
+    /// The selected folder plays into a bus: Stop Routing Folder works on it.
+    pub folder_routed: bool,
 }
 
 /// What is being typed in the track list.
@@ -352,6 +354,7 @@ impl ArrangementView {
             track_selected: self.selected_track.is_some(),
             can_move_up: up,
             can_move_down: down,
+            folder_routed: self.og.group.is_some_and(|g| self.folder_routed(g)),
         }
     }
 
@@ -440,7 +443,7 @@ impl ArrangementView {
     }
 
     /// The colour of a folder (its own, else a neutral).
-    fn folder_accent(&self, group: u32) -> Color {
+    pub(super) fn folder_accent(&self, group: u32) -> Color {
         self.song
             .org
             .group(group)
@@ -460,7 +463,7 @@ impl ArrangementView {
     }
 
     /// Where a folder's name starts and how wide it may be before the buttons.
-    fn folder_name_box(&self, hr: Rect, group: u32) -> (f64, f64) {
+    pub(super) fn folder_name_box(&self, hr: Rect, group: u32) -> (f64, f64) {
         let x = self.folder_chevron_rect(hr, group).x1 + 5.0;
         (x, (hr.x0 + 108.0 - x).max(16.0))
     }
@@ -693,6 +696,9 @@ impl ArrangementView {
             if self.button_rect(hr, track_button(b)).contains(pos) {
                 return Hit::FolderButton(group, b);
             }
+        }
+        if let Some(hit) = self.folder_fader_hit(group, hr, pos) {
+            return hit;
         }
         Hit::Folder(group)
     }
@@ -1420,6 +1426,7 @@ impl ArrangementView {
                 hovered(b),
             );
         }
+        self.paint_folder_fader(c, hr, group);
         if self.og.group == Some(group) {
             c.stroke_with(
                 RoundedRect::from_rect(hr.inset(-1.0), 1.0),

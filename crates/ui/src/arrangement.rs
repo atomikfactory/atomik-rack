@@ -57,6 +57,7 @@ mod audio_edit;
 mod crossfade_drag;
 mod draw_series;
 mod folder_clips;
+mod folder_fader;
 mod ghost;
 mod header_band;
 mod header_drop;
@@ -384,6 +385,8 @@ enum Hit {
     FolderToggle(u32),
     /// A button of a folder row.
     FolderButton(u32, FolderButton),
+    /// The level bar of a folder row (`folder_fader.rs`).
+    FolderFader(u32),
     /// A folder row away from its controls (the name; the timeline part).
     Folder(u32),
     /// A folder clip of a folder row: the folder and the index of the bar.
@@ -735,6 +738,8 @@ enum Drag {
     Series(Box<draw_series::SeriesDrag>),
     /// The handle of a lane's static value is dragged (`static_handle.rs`).
     Static(Box<static_handle::StaticDrag>),
+    /// The level bar of a folder row is dragged (`folder_fader.rs`).
+    FolderFader(Box<folder_fader::FaderDrag>),
     /// A time range is dragged on a lane (`lane_range.rs`).
     Range(Box<lane_range::RangeDrag>),
     /// Dragging the snap selector: up steps through the resolutions, a press without a drag
@@ -864,6 +869,8 @@ pub struct ArrangementView {
     /// The colour chip of each track whose console channel is in a VCA group (the group's colour,
     /// a neutral grey when it has none).
     vca_chips: BTreeMap<DeviceKey, VcaChip>,
+    /// The level bar of each folder that plays into a bus or has a VCA group following it.
+    folder_faders: BTreeMap<u32, folder_fader::FolderFader>,
     /// The console channel of each track that has one (the strips a header drag assigns).
     track_channels: BTreeMap<DeviceKey, DeviceKey>,
     rows: Vec<Row>,
@@ -1030,6 +1037,7 @@ impl ArrangementView {
             doc_rev: None,
             device_sig: Vec::new(),
             vca_chips: BTreeMap::new(),
+            folder_faders: BTreeMap::new(),
             track_channels: BTreeMap::new(),
             rows: Vec::new(),
             content_height: 0.0,
@@ -2014,6 +2022,7 @@ impl ArrangementView {
                 Some((t.device.clone(), channel.channel.clone()))
             })
             .collect();
+        let faders = folder_fader::faders_of(doc, registry);
         let sources = if headers.is_empty() {
             Vec::new()
         } else {
@@ -2023,6 +2032,7 @@ impl ArrangementView {
             && (Arc::ptr_eq(&self.song, &doc.song) || self.song == doc.song)
             && self.rec_sources == sources
             && self.vca_chips == chips
+            && self.folder_faders == faders
             && self.track_channels == channels
             && self.device_sig == sig
             && self.assets == doc.assets
@@ -2046,6 +2056,7 @@ impl ArrangementView {
         self.input_channels = doc.input_channels;
         self.device_sig = sig;
         self.vca_chips = chips;
+        self.folder_faders = faders;
         self.track_channels = channels;
         self.synced = true;
         self.rebuild(doc, registry);
@@ -3226,6 +3237,10 @@ impl ArrangementView {
                     self.selected_track = None;
                 }
                 self.takes_down(&hit, pos, modifiers, doc, registry, out);
+            }
+            Hit::FolderFader(g) if primary => self.folder_fader_down(g, pos, clicks, out),
+            Hit::FolderFader(g) => {
+                self.folder_down(&Hit::Folder(g), pos, button, modifiers, clicks, out);
             }
             Hit::FolderToggle(_)
             | Hit::FolderButton(..)
@@ -4470,6 +4485,10 @@ impl ArrangementView {
             self.static_move(pos, out);
             return;
         }
+        if matches!(self.drag, Drag::FolderFader(_)) {
+            self.folder_fader_move(pos, out);
+            return;
+        }
         if matches!(self.drag, Drag::Range(_)) {
             self.range_move(pos, modifiers);
             return;
@@ -4524,6 +4543,7 @@ impl ArrangementView {
             | Drag::Stretch { .. }
             | Drag::Crossfade { .. }
             | Drag::Static(_)
+            | Drag::FolderFader(_)
             | Drag::Range(_)
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
@@ -4944,7 +4964,7 @@ impl ArrangementView {
             | Drag::Crossfade { .. }
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
             Drag::Stretch { .. } => CursorHint::Stretch,
-            Drag::Static(_) => CursorHint::Move,
+            Drag::Static(_) | Drag::FolderFader(_) => CursorHint::Move,
             Drag::Range(_) => CursorHint::Crosshair,
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
@@ -4969,7 +4989,7 @@ impl ArrangementView {
                 Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::EndMark | Hit::MarkerLine(_)) => {
                     CursorHint::ResizeHorizontal
                 }
-                Some(Hit::StaticHandle(..)) => CursorHint::Move,
+                Some(Hit::StaticHandle(..) | Hit::FolderFader(_)) => CursorHint::Move,
                 // The stretch role over an edge: the edge stretches the clip instead.
                 Some(Hit::Clip {
                     part: ClipPart::Edge | ClipPart::EdgeStart,
@@ -5192,6 +5212,7 @@ impl ArrangementView {
             }
             Drag::Series(_) => out.push(UiAction::EndMerge),
             Drag::Static(d) => self.static_up(*d, out),
+            Drag::FolderFader(d) => self.folder_fader_up(*d, out),
             Drag::Range(d) => self.range_up(*d),
             Drag::Bend {
                 id,
@@ -6105,6 +6126,7 @@ impl ArrangementView {
                 out.push(UiAction::EndMerge);
             }
             Drag::Static(d) => self.static_cancel(*d, out),
+            Drag::FolderFader(d) => self.folder_fader_cancel(*d, out),
             Drag::Range(_) => {}
             Drag::Series(s) => {
                 out.push(content_cmd(s.id, s.base, Some(s.merge)));
