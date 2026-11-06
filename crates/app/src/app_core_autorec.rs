@@ -22,9 +22,11 @@
 //!   lane holds every target it expands to.
 //! * **Passes.** A loop wrap ends a pass at the loop end and starts the next at the loop start
 //!   (the knob's current value is its first value in Overwrite); a locate ends the take. Each
-//!   pass writes its own clips, so the later laps lie on top of the earlier ones.
+//!   pass writes its own clips, so the later laps lie on top of the earlier ones. When several
+//!   passes wrote on a lane (a loop recording) they are stacked as the takes of one take group
+//!   (the last pass plays, and the takes can be picked and comped like note takes).
 //! * **Stop.** The take ends at the transport position and every written stretch becomes an
-//!   automation clip on its lane (ticks relative to the clip start, thinned by
+//!   automation clip on its lane (a take of its group after a loop recording) (ticks relative to the clip start, thinned by
 //!   [`thin_points`] with `AppCore::automation_thinning` of the parameter's range). All the
 //!   clips of all the lanes are one `Command::Batch`, so a take is **one undo step**. A later
 //!   clip hides the older points under it, which is how Overwrite and Touch replace what was
@@ -144,8 +146,9 @@ struct LaneTake {
     mode: WriteMode,
     /// The current pass.
     pass: PassRecorder,
-    /// What earlier passes wrote.
-    done: Vec<Segment>,
+    /// What earlier passes wrote, the stretches of each pass together (a pass that wrote
+    /// nothing is not listed).
+    laps: Vec<Vec<Segment>>,
     /// The value the param had last.
     value: f32,
     /// The size of the param's range (the thinning tolerance is a fraction of it).
@@ -473,7 +476,7 @@ impl<S: EngineSink> AppCore<S> {
                 LaneTake {
                     mode,
                     pass: PassRecorder::new(mode, tick, value),
-                    done: Vec::new(),
+                    laps: Vec::new(),
                     value,
                     range,
                     created: false,
@@ -639,7 +642,7 @@ impl<S: EngineSink> AppCore<S> {
             LaneTake {
                 mode,
                 pass,
-                done: Vec::new(),
+                laps: Vec::new(),
                 value,
                 range,
                 created: true,
@@ -723,7 +726,10 @@ impl<S: EngineSink> AppCore<S> {
         for lane in take.lanes.values_mut() {
             let next = PassRecorder::new(lane.mode, state.loop_start, lane.value);
             let ended = std::mem::replace(&mut lane.pass, next);
-            lane.done.extend(ended.finish(state.loop_end));
+            let wrote = ended.finish(state.loop_end);
+            if !wrote.is_empty() {
+                lane.laps.push(wrote);
+            }
         }
         if let Some(t) = take.tempo.as_mut() {
             let next = PassRecorder::new(WriteMode::Overwrite, state.loop_start, t.value);
@@ -839,8 +845,11 @@ impl<S: EngineSink> AppCore<S> {
         let mut adds = Vec::new();
         let mut commands = Vec::new();
         for ((device, param), lane) in take.lanes {
-            let mut segments = lane.done;
-            segments.extend(lane.pass.finish(end));
+            let mut laps = lane.laps;
+            let last = lane.pass.finish(end);
+            if !last.is_empty() {
+                laps.push(last);
+            }
             let tolerance = self.autorec.thinning * lane.range;
             // A pattern number holds until the next: stepped points, never a ramp between two.
             let curve = if param == PATTERN_PARAM {
@@ -848,10 +857,15 @@ impl<S: EngineSink> AppCore<S> {
             } else {
                 Curve::Linear
             };
-            let clips = segment_clips_with(&segments, tolerance, curve);
-            if clips.is_empty() {
+            let laps: Vec<_> = laps
+                .iter()
+                .map(|segments| segment_clips_with(segments, tolerance, curve))
+                .filter(|clips| !clips.is_empty())
+                .collect();
+            if laps.is_empty() {
                 continue;
             }
+            let lap_count = laps.len();
             let index = if lane.created {
                 let add = Command::Song(SongCommand::AddAutomationLane {
                     device: device.clone(),
@@ -876,12 +890,27 @@ impl<S: EngineSink> AppCore<S> {
             let Some(index) = index else {
                 continue;
             };
-            for (start, length, points) in clips {
-                commands.push(Command::Song(SongCommand::AddClip {
+            // A loop recording (several passes wrote) stacks the passes as the takes of one group,
+            // the last pass playing until the user picks or comps; a single pass is plain clips.
+            let total: usize = laps.iter().map(Vec::len).sum();
+            let clips = laps
+                .into_iter()
+                .flatten()
+                .map(|(start, length, points)| automation_clip(start, length, points));
+            if lap_count > 1 && total <= atomik_model::MAX_TAKES {
+                commands.push(Command::Song(SongCommand::NewTakeGroup {
                     device: device.clone(),
                     lane: index,
-                    clip: automation_clip(start, length, points),
+                    takes: clips.collect(),
                 }));
+            } else {
+                for clip in clips {
+                    commands.push(Command::Song(SongCommand::AddClip {
+                        device: device.clone(),
+                        lane: index,
+                        clip,
+                    }));
+                }
             }
         }
         if commands.is_empty() {

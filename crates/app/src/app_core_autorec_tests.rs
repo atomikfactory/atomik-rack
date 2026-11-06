@@ -385,12 +385,92 @@ fn a_loop_wrap_ends_the_pass_and_starts_the_next_at_the_loop_start() {
     set(&mut c, CUTOFF, 8000.0, None);
     at(&mut c, 1200, 1);
     record(&mut c);
+    // The two passes are the takes of one group, the last pass playing where it wrote.
+    let takes = takes_of(&c, 1);
+    assert_eq!(takes.len(), 2, "one take per pass: {takes:?}");
+    assert_eq!(takes[0].0..takes[0].0 + takes[0].1, 0..BAR);
+    assert_eq!(takes[0].2.last().unwrap().1, 4000.0);
+    assert_eq!((takes[1].0, takes[1].1), (0, 1200));
+    assert_eq!(takes[1].2, [(0, 4000.0), (900, 8000.0)]);
     let lane = clips(&c, 1);
-    assert_eq!(lane.len(), 2, "one clip per pass: {lane:?}");
-    assert_eq!(lane[0].0..lane[0].0 + lane[0].1, 0..BAR);
+    assert_eq!((lane[0].0, lane[0].1), (0, 1200), "{lane:?}");
+    assert_eq!(lane[0].2, takes[1].2);
+    assert_eq!(
+        lane[1].0, 1200,
+        "the first pass plays after the second ends"
+    );
+}
+
+/// The takes of the take group on lane `lane` of track `a`, as `(start, length, points)`.
+fn takes_of(c: &AppCore<impl EngineSink>, lane: usize) -> Vec<Written> {
+    let track = c.doc().song.track(&key("a")).unwrap();
+    track.lanes[lane]
+        .take_groups
+        .iter()
+        .flat_map(|g| &g.takes)
+        .map(|cl| {
+            let ClipContent::Automation(p) = &cl.content else {
+                panic!("not automation");
+            };
+            (
+                cl.start,
+                cl.length,
+                p.iter().map(|p| (p.tick, p.value)).collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_loop_recording_of_automation_can_be_comped_and_is_one_undo_step() {
+    let mut c = core();
+    set_mode(&mut c, CUTOFF, WriteMode::Overwrite);
+    arm(&mut c, CUTOFF);
+    let depth = c.doc().song.tracks.len();
+    record(&mut c);
+    at(&mut c, 1000, 0);
+    set(&mut c, CUTOFF, 4000.0, None);
+    at(&mut c, 600, 1);
+    c.frame();
+    set(&mut c, CUTOFF, 5000.0, None);
+    at(&mut c, 600, 2);
+    c.frame();
+    at(&mut c, 900, 2);
+    set(&mut c, CUTOFF, 8000.0, None);
+    at(&mut c, 1200, 2);
+    record(&mut c);
+    let groups: Vec<_> = c.doc().song.take_groups().map(|(_, _, g)| g.id).collect();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(takes_of(&c, 1).len(), 3, "one take per pass");
+    assert_eq!(c.doc().song.tracks.len(), depth);
+    // The first pass can be picked like a note take.
+    c.apply_command(Command::Song(SongCommand::PickTake {
+        group: groups[0],
+        take: 0,
+    }))
+    .unwrap();
+    let lane = clips(&c, 1);
+    assert_eq!(lane.len(), 1);
     assert_eq!(lane[0].2.last().unwrap().1, 4000.0);
-    assert_eq!((lane[1].0, lane[1].1), (0, 1200));
-    assert_eq!(lane[1].2, [(0, 4000.0), (900, 8000.0)]);
+    // One undo takes the whole recording back.
+    assert!(c.undo());
+    assert!(c.undo());
+    assert!(c.doc().song.take_groups().next().is_none());
+    assert!(clips(&c, 1).len() <= 1);
+}
+
+#[test]
+fn a_single_pass_is_still_plain_clips() {
+    let mut c = core();
+    set_mode(&mut c, CUTOFF, WriteMode::Overwrite);
+    arm(&mut c, CUTOFF);
+    record(&mut c);
+    at(&mut c, 1000, 0);
+    set(&mut c, CUTOFF, 4000.0, None);
+    at(&mut c, 1500, 0);
+    record(&mut c);
+    assert!(c.doc().song.take_groups().next().is_none());
+    assert_eq!(clips(&c, 1).len(), 1);
 }
 
 // ------------------------------------------------------------------ what is captured
