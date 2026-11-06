@@ -385,14 +385,14 @@ pub(in crate::app_core) fn clip_notes(def: &ClipDef) -> Vec<Note> {
     out
 }
 
-/// The clip file text of `def`.
+/// The clip of `def` placed at song tick `start`: named for the pattern, with its notes.
 ///
 /// # Panics
-/// A pattern the model refuses.
-pub(in crate::app_core) fn clip_text(def: &ClipDef) -> String {
-    let clip = Clip {
+/// A pattern that does not fill the clip.
+pub(in crate::app_core) fn clip_of(def: &ClipDef, start: i64) -> Clip {
+    Clip {
         id: ClipId(0),
-        start: 0,
+        start,
         length: ticks(def.bars as f64 * 4.0),
         offset: 0,
         loop_length: None,
@@ -406,11 +406,18 @@ pub(in crate::app_core) fn clip_text(def: &ClipDef) -> String {
         color: None,
         grid: None,
         content: ClipContent::Notes(clip_notes(def).into()),
-    };
+    }
+}
+
+/// The clip file text of `def`.
+///
+/// # Panics
+/// A pattern the model refuses.
+pub(in crate::app_core) fn clip_text(def: &ClipDef) -> String {
     let file = ClipFile {
         tempo_bpm: def.bpm,
         meter: (4, 4),
-        clip,
+        clip: clip_of(def, 0),
     };
     save_clip_file(&file).unwrap_or_else(|e| panic!("{}: {e}", def.name))
 }

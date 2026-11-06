@@ -1,0 +1,788 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 84,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Master", "folded": false
+    },
+    {
+      "id": "drone", "type": "atomik.semi-modular",
+      "name": "Drone", "folded": false, "patch": "Fold Drone",
+      "params": {
+        "env.amp.attack": 1400,
+        "env.amp.decay": 800,
+        "env.amp.release": 2200,
+        "env.amp.sustain": 1,
+        "filter1.cutoff": 1500,
+        "filter1.env": 0,
+        "filter1.mode": 1,
+        "filter1.resonance": 0.15,
+        "filter1.track": 0.4,
+        "lfo1.rate": 0.09,
+        "lfo1.wave": 0,
+        "lfo2.rate": 0.17,
+        "lfo2.wave": 1,
+        "master.level": 6,
+        "mod1_amount": 0.35,
+        "mod2_amount": 0.2,
+        "mod3_amount": 0.4,
+        "osc1.level": 0.7,
+        "osc1.type": 3,
+        "osc2.fine": 5,
+        "osc2.level": 0.5,
+        "osc2.octave": -1,
+        "osc2.type": 2,
+        "osc3.level": 0.25,
+        "osc3.octave": -2,
+        "osc3.type": 0,
+        "play.glide": 220,
+        "play.mode": 2,
+        "shaper.drive": 12,
+        "shaper.mix": 0.7,
+        "shaper.type": 4
+      },
+      "mods": [
+        { "slot": 0, "source": 3, "target": 13 },
+        { "slot": 1, "source": 4, "target": 4 },
+        { "slot": 2, "source": 7, "target": 13 }
+      ]
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false,
+      "params": {
+        "fader": 0.5208683,
+        "pan": 0
+      }
+    },
+    {
+      "id": "container", "type": "atomik.container",
+      "name": "Sweep Pad", "folded": false, "patch": "Envelope Sweep Pad",
+      "params": {
+        "macro1": 0.71428573,
+        "macro2": 1
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "mod", "type": "atomik.mod-source",
+            "name": "Mod Source", "folded": false,
+            "params": {
+              "env_attack": 1800,
+              "env_decay": 3000,
+              "env_release": 1500,
+              "env_sustain": 0.6,
+              "lfo1_amount": 0.4,
+              "lfo1_rate": 0.18,
+              "lfo1_shape": 1
+            }
+          },
+          {
+            "id": "pad", "type": "atomik.poly-synth",
+            "name": "Poly Synth", "folded": false,
+            "params": {
+              "chorus.mix": 0.3,
+              "cv.cutoff_amount": 3,
+              "env.amp.attack": 900,
+              "env.amp.decay": 600,
+              "env.amp.release": 1600,
+              "env.amp.sustain": 0.9,
+              "filter.cutoff": 350,
+              "filter.env_amount": 0,
+              "filter.resonance": 0.2,
+              "master.level": -4,
+              "osc.mix": 0.5,
+              "osc1.fine": -7,
+              "osc1.wave": 0,
+              "osc2.fine": 9,
+              "osc2.wave": 0,
+              "spread": 0.5
+            }
+          }
+        ],
+        "cables": [
+          {"from": "mod:env_cv_out", "to": "pad:cutoff_cv_in"},
+          {"from": "mod:lfo1_cv_out", "to": "pad:pan_cv_in"},
+          {"from": "pad:out_l", "to": "boundary:out_l"},
+          {"from": "pad:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Sweep", "targets": [
+            {"device": "pad", "param": "cv.cutoff_amount", "min": 0.5, "max": 4}
+          ]},
+          {"name": "Drift", "targets": [
+            {"device": "pad", "param": "pan_cv_trim", "min": 0, "max": 1}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "mod", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0},
+          {"target": "pad", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false,
+      "params": {
+        "fader": 0.6813882,
+        "pan": 0,
+        "send1.level": -9,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "container-2", "type": "atomik.container",
+      "name": "Arp Stack", "folded": false, "patch": "Chord Arp Stack",
+      "params": {
+        "macro1": 0.625,
+        "macro2": 0.2
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "chord", "type": "atomik.key-chord",
+            "name": "Key & Chord", "folded": false,
+            "params": {
+              "chord": 2
+            }
+          },
+          {
+            "id": "arp", "type": "atomik.arpeggiator",
+            "name": "Arpeggiator", "folded": false,
+            "params": {
+              "gate": 70,
+              "mode": 2,
+              "octaves": 2,
+              "rate": 3,
+              "run": 1
+            }
+          },
+          {
+            "id": "synth", "type": "atomik.poly-synth",
+            "name": "Poly Synth", "folded": false,
+            "params": {
+              "delay.feedback": 0.35,
+              "delay.mix": 0.25,
+              "delay.time": 375,
+              "env.amp.attack": 3,
+              "env.amp.decay": 260,
+              "env.amp.release": 260,
+              "env.amp.sustain": 0.3,
+              "env.filter.decay": 240,
+              "env.filter.sustain": 0.1,
+              "filter.cutoff": 1800,
+              "filter.env_amount": 0.35,
+              "filter.resonance": 0.2,
+              "master.level": -4,
+              "osc.mix": 0.5,
+              "osc1.wave": 0,
+              "osc2.fine": 8,
+              "osc2.wave": 0,
+              "spread": 0.4
+            }
+          }
+        ],
+        "cables": [
+          {"from": "arp:notes_out", "to": "synth:notes_in"},
+          {"from": "chord:notes_out", "to": "arp:notes_in"},
+          {"from": "synth:out_l", "to": "boundary:out_l"},
+          {"from": "synth:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Gate", "targets": [
+            {"device": "arp", "param": "gate", "min": 20, "max": 100}
+          ]},
+          {"name": "Cutoff", "targets": [
+            {"device": "synth", "param": "filter.cutoff", "min": 500, "max": 7000}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "chord", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    },
+    {
+      "id": "channel-3", "type": "atomik.channel",
+      "name": "Console Channel 3", "folded": false,
+      "params": {
+        "fader": 0.7645302,
+        "pan": -0.25,
+        "send2.level": -7,
+        "send2.on": 1
+      }
+    },
+    {
+      "id": "pulse", "type": "atomik.semi-modular",
+      "name": "Pulse", "folded": false, "patch": "Sequenced Pulse",
+      "params": {
+        "env.amp.attack": 1,
+        "env.amp.decay": 240,
+        "env.amp.release": 110,
+        "env.amp.sustain": 0.3,
+        "env.filter.decay": 220,
+        "env.filter.sustain": 0.1,
+        "filter1.cutoff": 650,
+        "filter1.env": 2.5,
+        "filter1.mode": 5,
+        "filter1.resonance": 0.35,
+        "filter1.track": 0.5,
+        "master.level": 6,
+        "mod1_amount": 0.18,
+        "mod2_amount": 0.25,
+        "osc1.level": 1,
+        "osc1.shape": 0.3,
+        "osc1.type": 1,
+        "osc2.fine": 6,
+        "osc2.level": 0.7,
+        "osc2.octave": -1,
+        "osc2.type": 0,
+        "play.mode": 1,
+        "seq.gate": 55,
+        "seq.on.12": 0,
+        "seq.on.4": 0,
+        "seq.on.8": 0,
+        "seq.pitch.1": 0,
+        "seq.pitch.10": 12,
+        "seq.pitch.11": 0,
+        "seq.pitch.12": 5,
+        "seq.pitch.13": 7,
+        "seq.pitch.14": 3,
+        "seq.pitch.15": 0,
+        "seq.pitch.16": -5,
+        "seq.pitch.2": 0,
+        "seq.pitch.3": 12,
+        "seq.pitch.4": 0,
+        "seq.pitch.5": 7,
+        "seq.pitch.6": 0,
+        "seq.pitch.7": 10,
+        "seq.pitch.8": 0,
+        "seq.pitch.9": 0,
+        "seq.rate": 3,
+        "seq.run": 1
+      },
+      "mods": [
+        { "slot": 0, "source": 9, "target": 7 },
+        { "slot": 1, "source": 10, "target": 4 }
+      ]
+    },
+    {
+      "id": "channel-4", "type": "atomik.channel",
+      "name": "Console Channel 4", "folded": false,
+      "params": {
+        "fader": 0.694589,
+        "pan": 0.2,
+        "send2.level": -10,
+        "send2.on": 1
+      }
+    },
+    {
+      "id": "container-3", "type": "atomik.container",
+      "name": "Wanderer", "folded": false, "patch": "Random Walk Lead",
+      "params": {
+        "macro1": 0.45454544,
+        "macro2": 0.21428572
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "lfo", "type": "atomik.mod-source",
+            "name": "Mod Source", "folded": false,
+            "params": {
+              "lfo1_rate": 7.3,
+              "lfo1_shape": 2
+            }
+          },
+          {
+            "id": "hold", "type": "atomik.sample-hold",
+            "name": "Sample and Hold", "folded": false,
+            "params": {
+              "clock": 1,
+              "level": 0.3,
+              "rate": 4
+            }
+          },
+          {
+            "id": "scale", "type": "atomik.cv-quantizer",
+            "name": "CV Quantizer", "folded": false,
+            "params": {
+              "root": 9,
+              "scale": 11
+            }
+          },
+          {
+            "id": "lead", "type": "atomik.poly-synth",
+            "name": "Poly Synth", "folded": false,
+            "params": {
+              "delay.feedback": 0.35,
+              "delay.mix": 0.2,
+              "delay.time": 375,
+              "env.amp.attack": 4,
+              "env.amp.decay": 300,
+              "env.amp.release": 200,
+              "env.amp.sustain": 0.7,
+              "filter.cutoff": 1600,
+              "filter.env_amount": 0.4,
+              "filter.resonance": 0.25,
+              "master.level": -7.5,
+              "osc.mix": 0.4,
+              "osc1.wave": 0,
+              "osc2.fine": 6,
+              "osc2.wave": 1
+            }
+          }
+        ],
+        "cables": [
+          {"from": "hold:cv_out", "to": "scale:pitch_cv_in"},
+          {"from": "lead:out_l", "to": "boundary:out_l"},
+          {"from": "lead:out_r", "to": "boundary:out_r"},
+          {"from": "lfo:lfo1_cv_out", "to": "hold:cv_in"},
+          {"from": "scale:pitch_cv_out", "to": "lead:pitch_cv_in"}
+        ],
+        "macros": [
+          {"name": "Range", "targets": [
+            {"device": "hold", "param": "level", "min": 0.05, "max": 0.6}
+          ]},
+          {"name": "Cutoff", "targets": [
+            {"device": "lead", "param": "filter.cutoff", "min": 400, "max": 6000}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "lead", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    },
+    {
+      "id": "channel-5", "type": "atomik.channel",
+      "name": "Console Channel 5", "folded": false,
+      "params": {
+        "fader": 0.72176296,
+        "pan": 0.3,
+        "send1.level": -8,
+        "send1.on": 1,
+        "send2.level": -6,
+        "send2.on": 1
+      }
+    },
+    {
+      "id": "container-4", "type": "atomik.container",
+      "name": "Shimmer Cathedral", "folded": false, "patch": "Shimmer Cathedral",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "shift", "type": "atomik.pitch-shifter",
+            "name": "Pitch Shifter", "folded": false,
+            "params": {
+              "mix": 0.35,
+              "quality": 2,
+              "semitones": 12
+            }
+          },
+          {
+            "id": "hall", "type": "atomik.space-reverb",
+            "name": "Space Reverb", "folded": false,
+            "params": {
+              "algorithm": 1,
+              "decay": 8,
+              "highcut": 9000,
+              "mix": 0.45,
+              "predelay": 30
+            }
+          },
+          {
+            "id": "wide", "type": "atomik.stereo-tool",
+            "name": "Stereo Tool", "folded": false,
+            "params": {
+              "width": 1.3
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "shift:in_l"},
+          {"from": "boundary:in_r", "to": "shift:in_r"},
+          {"from": "hall:out_l", "to": "wide:in_l"},
+          {"from": "hall:out_r", "to": "wide:in_r"},
+          {"from": "shift:out_l", "to": "hall:in_l"},
+          {"from": "shift:out_r", "to": "hall:in_r"},
+          {"from": "wide:out_l", "to": "boundary:out_l"},
+          {"from": "wide:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Shimmer", "targets": [
+            {"device": "shift", "param": "mix", "min": 0, "max": 0.7}
+          ]},
+          {"name": "Decay", "targets": [
+            {"device": "hall", "param": "decay", "min": 2, "max": 14}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "container-5", "type": "atomik.container",
+      "name": "Ping Pong Tide", "folded": false, "patch": "Ping Pong Tide",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5833333
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "echo", "type": "atomik.echo",
+            "name": "Echo", "folded": false,
+            "params": {
+              "color.high": 6000,
+              "feedback": 0.45,
+              "mix": 0.35,
+              "ping_pong": 1,
+              "time.sync": 6,
+              "wobble.depth": 0.2
+            }
+          },
+          {
+            "id": "chorus", "type": "atomik.modulation",
+            "name": "Modulation", "folded": false,
+            "params": {
+              "depth": 0.4,
+              "mix": 0.3,
+              "mode": 0,
+              "rate": 0.4
+            }
+          },
+          {
+            "id": "room", "type": "atomik.reverb",
+            "name": "Reverb", "folded": false,
+            "params": {
+              "algorithm": 0,
+              "decay": 1.2,
+              "mix": 0.15
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "echo:in_l"},
+          {"from": "boundary:in_r", "to": "echo:in_r"},
+          {"from": "chorus:out_l", "to": "room:in_l"},
+          {"from": "chorus:out_r", "to": "room:in_r"},
+          {"from": "echo:out_l", "to": "chorus:in_l"},
+          {"from": "echo:out_r", "to": "chorus:in_r"},
+          {"from": "room:out_l", "to": "boundary:out_l"},
+          {"from": "room:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Feedback", "targets": [
+            {"device": "echo", "param": "feedback", "min": 0.1, "max": 0.8}
+          ]},
+          {"name": "Mix", "targets": [
+            {"device": "echo", "param": "mix", "min": 0, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-3:out_l", "to": "master:bus_l"},
+    {"from": "channel-3:out_r", "to": "master:bus_r"},
+    {"from": "channel-3:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-3:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-3:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-3:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-3:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-3:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-3:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-3:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-3:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-3:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-3:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-3:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-3:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-3:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-3:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-3:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-4:out_l", "to": "master:bus_l"},
+    {"from": "channel-4:out_r", "to": "master:bus_r"},
+    {"from": "channel-4:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-4:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-4:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-4:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-4:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-4:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-4:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-4:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-4:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-4:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-4:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-4:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-4:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-4:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-4:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-4:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-5:out_l", "to": "master:bus_l"},
+    {"from": "channel-5:out_r", "to": "master:bus_r"},
+    {"from": "channel-5:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-5:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-5:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-5:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-5:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-5:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-5:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-5:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-5:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-5:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-5:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-5:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-5:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-5:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-5:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-5:send8_r", "to": "master:send_bus8_r"},
+    {"from": "container:out_l", "to": "channel-2:in_l"},
+    {"from": "container:out_r", "to": "channel-2:in_r"},
+    {"from": "container-2:out_l", "to": "channel-3:in_l"},
+    {"from": "container-2:out_r", "to": "channel-3:in_r"},
+    {"from": "container-3:out_l", "to": "channel-5:in_l"},
+    {"from": "container-3:out_r", "to": "channel-5:in_r"},
+    {"from": "container-4:out_l", "to": "master:return1_l"},
+    {"from": "container-4:out_r", "to": "master:return1_r"},
+    {"from": "container-5:out_l", "to": "master:return2_l"},
+    {"from": "container-5:out_r", "to": "master:return2_r"},
+    {"from": "drone:out_l", "to": "channel:in_l"},
+    {"from": "drone:out_r", "to": "channel:in_r"},
+    {"from": "master:fx_send1_l", "to": "container-4:in_l"},
+    {"from": "master:fx_send1_r", "to": "container-4:in_r"},
+    {"from": "master:fx_send2_l", "to": "container-5:in_l"},
+    {"from": "master:fx_send2_r", "to": "container-5:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "pulse:out_l", "to": "channel-4:in_l"},
+    {"from": "pulse:out_r", "to": "channel-4:in_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "drone"},
+      {"channel": "channel-2", "source": "container"},
+      {"channel": "channel-3", "source": "container-2"},
+      {"channel": "channel-4", "source": "pulse"},
+      {"channel": "channel-5", "source": "container-3"}
+    ],
+    "master": "master",
+    "returns": ["container-4", "container-5", null, null, null, null, null, null],
+    "compensation": true,
+    "align_returns": true,
+    "send_follow": true
+  },
+  "info": {
+    "title": "Moonrise Modular",
+    "author": "Atomik",
+    "notes": "A slow, spacious piece in A minor at 84 BPM built from the modular instruments: a pad that swells open on each chord, a deep drone, an arpeggio that climbs the seventh chords by itself, a sequenced pulse and a lead that wanders through the scale on its own, with a shimmering reverb and a ping-pong echo. The modular side: instruments made of containers with CV cables, a semi-modular synth with its sequencer, two send effects and a container macro moved by automation."
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 84}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 7,
+    "tails": true,
+    "tracks": [
+      {
+        "device": "drone", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 983040, "offset": 0, "loop_length": 245760, "muted": false, "name": "Sub Roots",
+                "notes": [
+                  [0, 58368, 33, 0.8],
+                  [61440, 58368, 29, 0.8],
+                  [122880, 58368, 36, 0.8],
+                  [184320, 58368, 31, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "container", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 2, "start": 0, "length": 983040, "offset": 0, "loop_length": 245760, "muted": false, "name": "Minor Four Chords",
+                "notes": [
+                  [0, 58368, 45, 0.75],
+                  [0, 58368, 57, 0.75],
+                  [0, 58368, 60, 0.75],
+                  [0, 58368, 64, 0.75],
+                  [61440, 58368, 41, 0.75],
+                  [61440, 58368, 57, 0.75],
+                  [61440, 58368, 60, 0.75],
+                  [61440, 58368, 65, 0.75],
+                  [122880, 58368, 48, 0.75],
+                  [122880, 58368, 55, 0.75],
+                  [122880, 58368, 60, 0.75],
+                  [122880, 58368, 64, 0.75],
+                  [184320, 58368, 43, 0.75],
+                  [184320, 58368, 55, 0.75],
+                  [184320, 58368, 59, 0.75],
+                  [184320, 58368, 62, 0.75]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "container-2", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 245760, "length": 737280, "offset": 0, "loop_length": 245760, "muted": false, "name": "Arp Roots",
+                "notes": [
+                  [0, 58368, 45, 0.8],
+                  [61440, 58368, 41, 0.8],
+                  [122880, 58368, 48, 0.8],
+                  [184320, 58368, 43, 0.8]
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "automation", "param": "macro2",
+            "clips": [
+              {
+                "id": 6, "start": 245760, "length": 737280, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 0.15, "linear"],
+                  [491520, 0.9, "linear"],
+                  [737280, 0.45, "linear"]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "pulse", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 4, "start": 491520, "length": 491520, "offset": 0, "loop_length": 245760, "muted": false, "name": "Arp Roots",
+                "notes": [
+                  [0, 58368, 45, 0.8],
+                  [61440, 58368, 41, 0.8],
+                  [122880, 58368, 48, 0.8],
+                  [184320, 58368, 43, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "container-3", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 5, "start": 491520, "length": 491520, "offset": 0, "loop_length": 245760, "muted": false, "name": "Wander Holds",
+                "notes": [
+                  [0, 116736, 57, 0.7],
+                  [122880, 58368, 60, 0.7],
+                  [184320, 58368, 55, 0.7]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

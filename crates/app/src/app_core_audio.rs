@@ -1414,10 +1414,23 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Opens a project file or bundle folder (the project file inside it). A project's audio is
-    /// loaded in the background; missing files are reported, never fatal. On error nothing
+    /// loaded in the background; missing files are reported, never fatal. A project of the
+    /// factory library opens as a new unsaved song, as a template does. On error nothing
     /// changes.
     pub fn open(&mut self, path: &Path) -> Result<(), AppError> {
         let file = atomik_render::bundle::resolve_project_path(path);
+        // A project of the factory library is read-only: it opens as a new unsaved song.
+        if self.in_factory(&file) {
+            let name = file.file_stem().map_or_else(
+                || "the example".to_owned(),
+                |s| s.to_string_lossy().into_owned(),
+            );
+            self.open_template(&file)?;
+            self.report(format!(
+                "Opened {name} as a new song: Save asks where to keep your copy"
+            ));
+            return Ok(());
+        }
         let text = atomik_model::read_document_text(&file).map_err(|source| AppError::Io {
             path: file.clone(),
             source,
