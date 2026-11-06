@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Snapshot follow-ups: routing and insert chains, and a snapshot lane.** A snapshot now keeps where each strip
+  plays (the master, a bus or an Audio I/O pair) and which effects sit on its insert chain, in order. Recall
+  re-cables what differs in the same undo step as the params; what no longer fits (an effect that is gone or has
+  moved to a return, a bus that is gone, a route that would make a loop, an Audio I/O pair another cable has
+  taken) is skipped, named in the snapshot's status, and the rest still recalls. The chip menu has **Recall
+  routing only** (a `routing` scope in the MCP `mixer.recall_snapshot` argument), a morph flips the wiring at
+  the half way point, and a compare flips it with the rest of the mix. A snapshot made by an older build holds no
+  wiring and leaves the routing alone, until Update from current mix takes it. A **snapshot lane** is an
+  automation lane of the master whose points recall a snapshot while the song plays: it is drawn in the
+  arrangement as blocks named after the snapshots, moves, copies and splits with its clips, has a picker of the
+  snapshots on a right click, and every edit is one undo step; a marker and a point crossed in one frame recall the
+  later one. **Add Snapshot Lane** and **Remove Snapshot Lane** are in the snapshot chip menu; a bounce does not
+  recall (as for a marker). The wiring is an optional field that older builds ignore; a project that has a
+  snapshot lane does not open in a build from before it (the lane is a lane of the master with a key that build
+  does not know). The project format is unchanged (44). No new menu command ids.
 - **Restructuring follow-ups: scale about the end, warp markers that join, and joining clips of different files.**
   With the scale-selection role held (Ctrl+Alt+Shift), a drag of the **start** edge of a selected clip scales every
   selected clip about the latest end of the selection, which stays where it is, as the end edge already did about the
