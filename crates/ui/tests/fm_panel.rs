@@ -192,6 +192,7 @@ fn the_envelope_shape_runs_from_zero_up_to_one_down_to_sustain_and_out() {
         decay: 400.0,
         sustain: 0.5,
         release: 900.0,
+        slope: 0.0,
     };
     let p = envelope_points(&e);
     assert_eq!(p[0], (0.0, 0.0));
@@ -210,6 +211,14 @@ fn the_envelope_shape_runs_from_zero_up_to_one_down_to_sustain_and_out() {
         ..e
     });
     assert!(slow[2].0 - slow[1].0 > p[2].0 - p[1].0);
+    // A slope lets the sustain stretch fall, and a longer one falls less.
+    let steep = envelope_points(&EnvShape { slope: 100.0, ..e });
+    let gentle = envelope_points(&EnvShape {
+        slope: 10_000.0,
+        ..e
+    });
+    assert_eq!(steep[3].1, 0.5);
+    assert!(steep[4].1 < gentle[4].1 && gentle[4].1 < 0.5);
     // Nonsense settings still give points in range.
     let odd = envelope_points(&EnvShape {
         delay: -5.0,
@@ -217,6 +226,7 @@ fn the_envelope_shape_runs_from_zero_up_to_one_down_to_sustain_and_out() {
         decay: 0.0,
         sustain: 7.0,
         release: 0.0,
+        slope: -3.0,
     });
     assert!(
         odd.iter()
@@ -266,7 +276,7 @@ fn the_layout_places_every_param_once_below_the_band() {
             .iter()
             .filter(|c| {
                 let k = desc.params[c.param].key;
-                k.starts_with(&format!("op{n}.")) && !k.ends_with(".wave")
+                k.starts_with(&format!("op{n}.")) && !k.ends_with(".wave") && !k.ends_with(".slope")
             })
             .map(|c| (c.rect.y0, c.rect.y1))
             .collect();
@@ -298,6 +308,42 @@ fn the_four_operator_waves_share_a_row_of_their_own() {
     assert!(waves.iter().all(|c| (c.rect.y0 - y).abs() < 1e-6));
     assert!(spec.front_sections.iter().any(|s| s.label == "WAVE"));
     assert!(spec.front_sections.iter().any(|s| s.label == "CHORUS"));
+}
+
+#[test]
+fn the_slopes_and_the_unison_have_rows_of_their_own() {
+    let reg = registry();
+    let desc = reg.get(FM_TYPE).unwrap().descriptor;
+    let spec = fm_layout(desc);
+    let of = |suffix: &str, prefix: &str| -> Vec<_> {
+        spec.front
+            .iter()
+            .filter(|c| {
+                let k = desc.params[c.param].key;
+                k.starts_with(prefix) && k.ends_with(suffix)
+            })
+            .collect()
+    };
+    let slopes = of(".slope", "op");
+    assert_eq!(slopes.len(), 4);
+    assert!(
+        slopes
+            .iter()
+            .all(|c| (c.rect.y0 - slopes[0].rect.y0).abs() < 1e-6)
+    );
+    assert_eq!(
+        spec.front
+            .iter()
+            .filter(|c| desc.params[c.param].key.starts_with("unison."))
+            .count(),
+        3
+    );
+    for label in ["SLOPE", "UNISON"] {
+        assert!(
+            spec.front_sections.iter().any(|s| s.label == label),
+            "{label}"
+        );
+    }
 }
 
 #[test]
