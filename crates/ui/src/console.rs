@@ -366,8 +366,11 @@ enum MenuItem {
     SelectVca(u32),
     /// Stop this group following its track folder (the members stay).
     Unfollow(u32),
-    /// Add (`true`) or remove (`false`) the automation lane of this group's level.
-    VcaLane(u32, bool),
+    /// Add (`true`) or remove (`false`) the automation lane of this group's level, mute or solo.
+    VcaLane(u32, atomik_model::VcaLaneKind, bool),
+    /// Play this group into a new bus (the shell names it), or (`false`) stop playing it into its
+    /// bus.
+    VcaRoute(u32, bool),
     /// Run this registry command (it acts on the selected strips).
     Run(&'static str),
     /// Recall this snapshot, all of it or only the categories of the scope.
@@ -2184,11 +2187,17 @@ impl ConsoleView {
         let vcas: Vec<VcaView> = console
             .vcas
             .iter()
-            .map(|g| VcaView {
-                lane: master.is_some_and(|m| {
-                    automated.contains(&(m.clone(), atomik_model::vca_lane_key(g.id)))
-                }),
-                ..VcaView::of(g, neutral)
+            .map(|g| {
+                let lanes = atomik_model::VcaLaneKind::ALL.map(|kind| {
+                    master.is_some_and(|m| {
+                        automated.contains(&(m.clone(), atomik_model::vca_lane_key_of(g.id, kind)))
+                    })
+                });
+                VcaView {
+                    lane: lanes.contains(&true),
+                    lanes,
+                    ..VcaView::of(g, neutral)
+                }
             })
             .collect();
         if vcas != self.vcas {
@@ -3191,16 +3200,29 @@ impl ConsoleView {
             }));
             return;
         }
-        // A group's level lane lives on the master's automation track.
-        if let MenuItem::VcaLane(vca, add) = &item {
+        // A group's lanes live on the master's automation track.
+        if let MenuItem::VcaLane(vca, kind, add) = &item {
             if let Some(device) = self.master.as_ref().map(|m| m.key.clone()) {
-                let param = atomik_model::vca_lane_key(*vca);
+                let param = atomik_model::vca_lane_key_of(*vca, *kind);
                 out.push(UiAction::Command(Command::Song(if *add {
                     atomik_model::SongCommand::AddAutomationLane { device, param }
                 } else {
                     atomik_model::SongCommand::RemoveAutomationLane { device, param }
                 })));
             }
+            return;
+        }
+        // Routing a group to a bus is the shell's (it names the new bus).
+        if let MenuItem::VcaRoute(vca, on) = &item {
+            out.push(UiAction::RunCommand {
+                id: if *on {
+                    "mixer.route_vca"
+                } else {
+                    "mixer.unroute_vca"
+                }
+                .to_owned(),
+                arg: Some(vca.to_string()),
+            });
             return;
         }
         // A registry command the shell runs on the selection.
@@ -3423,17 +3445,29 @@ impl ConsoleView {
         }
         items.push(("Colour: none".to_string(), MenuItem::VcaColor(id, None)));
         if self.master.is_some() {
-            let lane = self.vcas.get(i).is_some_and(|v| v.lane);
-            items.push((
-                if lane {
-                    "Remove Automation Lane"
-                } else {
-                    "Show Automation Lane"
-                }
-                .to_string(),
-                MenuItem::VcaLane(id, !lane),
-            ));
+            for (k, kind) in atomik_model::VcaLaneKind::ALL.into_iter().enumerate() {
+                let lane = self.vcas.get(i).is_some_and(|v| v.lanes[k]);
+                let word = match kind {
+                    atomik_model::VcaLaneKind::Level => "Level",
+                    atomik_model::VcaLaneKind::Mute => "Mute",
+                    atomik_model::VcaLaneKind::Solo => "Solo",
+                };
+                items.push((
+                    format!("{} {word} Lane", if lane { "Remove" } else { "Show" }),
+                    MenuItem::VcaLane(id, kind, !lane),
+                ));
+            }
         }
+        let routed = self.vcas.get(i).is_some_and(|v| v.routed);
+        items.push((
+            if routed {
+                "Stop Routing to Bus"
+            } else {
+                "Route to New Bus"
+            }
+            .to_string(),
+            MenuItem::VcaRoute(id, !routed),
+        ));
         if self.vcas.get(i).is_some_and(|v| v.follows) {
             items.push(("Stop following folder".to_string(), MenuItem::Unfollow(id)));
         }

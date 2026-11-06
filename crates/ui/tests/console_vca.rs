@@ -868,10 +868,10 @@ fn the_vca_menu_shows_and_removes_the_level_lane() {
     let items = v.menu_items();
     let at = items
         .iter()
-        .position(|s| s == "Show Automation Lane")
-        .expect("an automation row");
+        .position(|s| s == "Show Level Lane")
+        .expect("a level lane row");
     assert!(at > 1 && items.last().unwrap() == "Delete VCA");
-    let a = pick(&mut v, &doc, &reg, "Show Automation Lane");
+    let a = pick(&mut v, &doc, &reg, "Show Level Lane");
     assert_eq!(
         commands(&a),
         [Command::Song(
@@ -885,8 +885,8 @@ fn the_vca_menu_shows_and_removes_the_level_lane() {
     let doc = with_level_lane(doc);
     v.sync(&doc, &reg);
     right_click(&mut v, &doc, &reg, p);
-    assert!(!v.menu_items().iter().any(|s| s == "Show Automation Lane"));
-    let a = pick(&mut v, &doc, &reg, "Remove Automation Lane");
+    assert!(!v.menu_items().iter().any(|s| s == "Show Level Lane"));
+    let a = pick(&mut v, &doc, &reg, "Remove Level Lane");
     assert_eq!(
         commands(&a),
         [Command::Song(
@@ -895,6 +895,104 @@ fn the_vca_menu_shows_and_removes_the_level_lane() {
                 param: "vca.1".into()
             }
         )]
+    );
+}
+
+/// `doc` with the lanes of `kinds` of group 1 on the master's automation track.
+fn with_lanes(mut doc: RackDoc, kinds: &[atomik_model::VcaLaneKind]) -> RackDoc {
+    let mut t = support::song::song_doc().song_mut().tracks.remove(0);
+    t.device = doc.console.master.clone().unwrap();
+    t.lanes = kinds
+        .iter()
+        .map(|k| atomik_model::Lane::automation(atomik_model::vca_lane_key_of(1, *k)))
+        .collect();
+    doc.song_mut().tracks = vec![t];
+    doc
+}
+
+#[test]
+fn the_vca_menu_shows_and_removes_the_mute_and_solo_lanes() {
+    use atomik_model::VcaLaneKind;
+    let (doc, reg, mut v) = setup();
+    let master = doc.console.master.clone().unwrap();
+    let p = part(&v, 1, VcaPart::Plate);
+    right_click(&mut v, &doc, &reg, p);
+    let items = v.menu_items();
+    for row in ["Show Level Lane", "Show Mute Lane", "Show Solo Lane"] {
+        assert!(items.iter().any(|s| s == row), "{row}: {items:?}");
+    }
+    let a = pick(&mut v, &doc, &reg, "Show Mute Lane");
+    assert_eq!(
+        commands(&a),
+        [Command::Song(
+            atomik_model::SongCommand::AddAutomationLane {
+                device: master.clone(),
+                param: "vca.1.mute".into()
+            }
+        )]
+    );
+    // With the solo lane the row removes that lane only.
+    let doc = with_lanes(doc, &[VcaLaneKind::Solo]);
+    v.sync(&doc, &reg);
+    right_click(&mut v, &doc, &reg, p);
+    let items = v.menu_items();
+    assert!(items.iter().any(|s| s == "Show Mute Lane"));
+    assert!(!items.iter().any(|s| s == "Show Solo Lane"));
+    let a = pick(&mut v, &doc, &reg, "Remove Solo Lane");
+    assert_eq!(
+        commands(&a),
+        [Command::Song(
+            atomik_model::SongCommand::RemoveAutomationLane {
+                device: master,
+                param: "vca.1.solo".into()
+            }
+        )]
+    );
+}
+
+#[test]
+fn a_mute_lane_value_shows_on_the_plate_and_the_menu_offers_the_bus_route() {
+    use atomik_model::VcaLaneKind;
+    let (doc, reg, mut v) = setup();
+    let master = doc.console.master.clone().unwrap();
+    let doc = with_lanes(doc, &[VcaLaneKind::Mute]);
+    v.sync(&doc, &reg);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let plain = dl.to_json();
+    // The lane gives a mute: the group's M lights, the stored flag stays.
+    let mut shown = atomik_model::ShownValues::new();
+    shown.insert((master, "vca.1.mute".into()), 1.0);
+    assert!(v.set_shown_values(&shown));
+    v.sync(&doc, &reg);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert_ne!(plain, dl.to_json());
+    assert!(!doc.console.vca(1).unwrap().mute);
+    // Route to New Bus is the shell's: a registry command naming the group.
+    let p = part(&v, 1, VcaPart::Plate);
+    right_click(&mut v, &doc, &reg, p);
+    let a = pick(&mut v, &doc, &reg, "Route to New Bus");
+    assert!(
+        a.iter().any(|x| matches!(
+            x,
+            UiAction::RunCommand { id, arg: Some(arg) } if id == "mixer.route_vca" && arg == "1"
+        )),
+        "{a:?}"
+    );
+    // A routed group offers to stop.
+    let mut routed = doc.clone();
+    routed.console.vcas[0].bus = Some(routed.console.master.clone().unwrap());
+    v.sync(&routed, &reg);
+    right_click(&mut v, &routed, &reg, p);
+    assert!(!v.menu_items().iter().any(|s| s == "Route to New Bus"));
+    let a = pick(&mut v, &routed, &reg, "Stop Routing to Bus");
+    assert!(
+        a.iter().any(|x| matches!(
+            x,
+            UiAction::RunCommand { id, arg: Some(arg) } if id == "mixer.unroute_vca" && arg == "1"
+        )),
+        "{a:?}"
     );
 }
 
