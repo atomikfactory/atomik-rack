@@ -1,0 +1,73 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.fm-synth",
+      "name": "FM Synth", "folded": false, "patch": "Glass Choir",
+      "params": {
+        "algorithm": 8,
+        "chorus.mix": 0.3,
+        "index": 0.8,
+        "lfo.rate": 0.3,
+        "lfo.to_index": 0.15,
+        "master.level": -1.5,
+        "op1.attack": 700,
+        "op1.coarse": 1,
+        "op1.decay": 1500,
+        "op1.level": 0.55,
+        "op1.release": 1400,
+        "op1.sustain": 0.8,
+        "op1.velocity": 0.2,
+        "op2.attack": 800,
+        "op2.coarse": 1,
+        "op2.decay": 1500,
+        "op2.detune": 8,
+        "op2.level": 0.5,
+        "op2.release": 1400,
+        "op2.sustain": 0.8,
+        "op2.velocity": 0.2,
+        "op3.attack": 900,
+        "op3.coarse": 2,
+        "op3.decay": 1800,
+        "op3.level": 0.18,
+        "op3.release": 1400,
+        "op3.sustain": 0.7,
+        "op4.attack": 1100,
+        "op4.coarse": 3,
+        "op4.decay": 1800,
+        "op4.level": 0.12,
+        "op4.release": 1400,
+        "op4.sustain": 0.7,
+        "unison.detune": 12,
+        "unison.spread": 0.8,
+        "unison.voices": 3
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

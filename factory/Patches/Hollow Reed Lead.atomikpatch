@@ -1,0 +1,56 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.poly-synth",
+      "name": "Poly Synth", "folded": false, "patch": "Hollow Reed Lead",
+      "params": {
+        "delay.mix": 0.15,
+        "env.amp.attack": 12,
+        "env.amp.decay": 200,
+        "env.amp.release": 180,
+        "env.amp.sustain": 0.8,
+        "filter.cutoff": 1800,
+        "filter.env_amount": 0.3,
+        "filter.resonance": 0.25,
+        "glide": 70,
+        "legato": 1,
+        "lfo.rate": 5.2,
+        "lfo.to_pitch": 0.18,
+        "lfo.wave": 0,
+        "master.level": 0.5,
+        "osc.mix": 0.35,
+        "osc1.wave": 1,
+        "osc2.fine": 4,
+        "osc2.wave": 2,
+        "voices": 6
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.fm-synth",
+      "name": "FM Synth", "folded": false, "patch": "Velvet Tines",
+      "params": {
+        "algorithm": 1,
+        "chorus.mix": 0.25,
+        "lfo.rate": 4,
+        "lfo.to_amp": 0.1,
+        "master.level": 0,
+        "op1.attack": 1,
+        "op1.coarse": 1,
+        "op1.decay": 2200,
+        "op1.level": 0.75,
+        "op1.release": 320,
+        "op1.sustain": 0.1,
+        "op1.velocity": 0.3,
+        "op2.attack": 1,
+        "op2.coarse": 1,
+        "op2.decay": 1400,
+        "op2.level": 0.28,
+        "op2.release": 300,
+        "op2.sustain": 0.05,
+        "op2.velocity": 0.6,
+        "op3.attack": 1,
+        "op3.coarse": 1,
+        "op3.decay": 2300,
+        "op3.detune": 5,
+        "op3.level": 0.45,
+        "op3.release": 320,
+        "op3.sustain": 0.1,
+        "op3.velocity": 0.3,
+        "op4.attack": 1,
+        "op4.coarse": 7,
+        "op4.decay": 120,
+        "op4.level": 0.14,
+        "op4.release": 100,
+        "op4.sustain": 0,
+        "op4.velocity": 0.8,
+        "spread": 0.35
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

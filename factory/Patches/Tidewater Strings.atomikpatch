@@ -1,0 +1,59 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.poly-synth",
+      "name": "Poly Synth", "folded": false, "patch": "Tidewater Strings",
+      "params": {
+        "chorus.depth": 0.6,
+        "chorus.mix": 0.5,
+        "chorus.rate": 0.5,
+        "drift": 0.3,
+        "env.amp.attack": 350,
+        "env.amp.decay": 600,
+        "env.amp.release": 700,
+        "env.amp.sustain": 0.9,
+        "filter.cutoff": 2600,
+        "filter.env_amount": 0.1,
+        "filter.key_track": 0.6,
+        "filter.resonance": 0.1,
+        "lfo2.rate": 5.5,
+        "lfo2.to_level": 0.06,
+        "lfo2.wave": 0,
+        "master.level": 0,
+        "osc.mix": 0.5,
+        "osc1.fine": -9,
+        "osc1.wave": 0,
+        "osc2.fine": 11,
+        "osc2.wave": 0,
+        "spread": 0.8
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.wavetable-synth",
+      "name": "Wavetable Synth", "folded": false, "patch": "Vowel Drift",
+      "params": {
+        "env.amp.attack": 250,
+        "env.amp.release": 900,
+        "env.amp.sustain": 0.8,
+        "env.mod.decay": 1800,
+        "env.mod.to_pos1": 0.6,
+        "filter.cutoff": 5500,
+        "lfo.rate": 0.35,
+        "lfo.to_pos1": 0.25,
+        "master.level": -2.5,
+        "osc1.level": 0.7,
+        "osc1.position": 0.1,
+        "osc1.table": 5,
+        "osc2.level": 0.25,
+        "osc2.octave": -1,
+        "osc2.table": 2,
+        "unison.detune": 14,
+        "unison.spread": 0.7,
+        "unison.voices": 3
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

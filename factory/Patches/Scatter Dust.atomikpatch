@@ -1,0 +1,51 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.granular",
+      "name": "Grain Sampler", "folded": false, "patch": "Scatter Dust",
+      "params": {
+        "env.amp.attack": 5,
+        "env.amp.decay": 300,
+        "env.amp.release": 500,
+        "env.amp.sustain": 0.4,
+        "grain.density": 90,
+        "grain.reverse": 0.3,
+        "grain.size": 14,
+        "grain.spread": 1,
+        "grain.timing": 0.7,
+        "grain.window": 2,
+        "master.level": 4.5,
+        "pitch.random": 300,
+        "pos.position": 0.4,
+        "pos.spray": 0.5
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

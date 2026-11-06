@@ -1,0 +1,293 @@
+{
+  "items": {
+    "Patches/Aurora Stack.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "layered",
+        "bright",
+        "evolving",
+        "bell"
+      ]
+    },
+    "Patches/Basalt Sub.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "sub",
+        "mono",
+        "dark",
+        "round"
+      ]
+    },
+    "Patches/Brass Rail.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Organ"
+      ],
+      "tags": [
+        "organ",
+        "bright",
+        "driven",
+        "percussive"
+      ]
+    },
+    "Patches/Copper Pluck.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pluck"
+      ],
+      "tags": [
+        "analog",
+        "short",
+        "bright",
+        "echo"
+      ]
+    },
+    "Patches/Dusk Clavier.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Keys"
+      ],
+      "tags": [
+        "analog",
+        "plucked",
+        "reedy",
+        "dry"
+      ]
+    },
+    "Patches/Glass Choir.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "fm",
+        "airy",
+        "slow",
+        "wide"
+      ]
+    },
+    "Patches/Gravel Drive.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "distorted",
+        "mono",
+        "gritty",
+        "heavy"
+      ]
+    },
+    "Patches/Harmonic Sunrise.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "wavetable",
+        "slow",
+        "evolving",
+        "bright"
+      ]
+    },
+    "Patches/Hollow Reed Lead.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Lead"
+      ],
+      "tags": [
+        "analog",
+        "mono",
+        "glide",
+        "vibrato"
+      ]
+    },
+    "Patches/Iron Bass.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "fm",
+        "mono",
+        "glide",
+        "punchy"
+      ]
+    },
+    "Patches/Mist Bed.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Texture"
+      ],
+      "tags": [
+        "granular",
+        "soft",
+        "slow",
+        "vocal"
+      ]
+    },
+    "Patches/Neon Stab.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Lead"
+      ],
+      "tags": [
+        "analog",
+        "bright",
+        "stab",
+        "echo"
+      ]
+    },
+    "Patches/Pebble Mallet.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pluck"
+      ],
+      "tags": [
+        "fm",
+        "wooden",
+        "percussive",
+        "dry"
+      ]
+    },
+    "Patches/Porch Light Organ.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Organ"
+      ],
+      "tags": [
+        "organ",
+        "soft",
+        "vibrato",
+        "warm"
+      ]
+    },
+    "Patches/Rubber Floor.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "acid",
+        "mono",
+        "resonant",
+        "glide"
+      ]
+    },
+    "Patches/Rust Bell.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bell"
+      ],
+      "tags": [
+        "fm",
+        "metallic",
+        "inharmonic",
+        "ringing"
+      ]
+    },
+    "Patches/Scatter Dust.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Texture"
+      ],
+      "tags": [
+        "granular",
+        "glitchy",
+        "bright",
+        "random"
+      ]
+    },
+    "Patches/Slow Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "layered",
+        "evolving",
+        "soft",
+        "drift"
+      ]
+    },
+    "Patches/Slow Tide.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Texture"
+      ],
+      "tags": [
+        "granular",
+        "evolving",
+        "legato",
+        "warm"
+      ]
+    },
+    "Patches/Sync Razor.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Lead"
+      ],
+      "tags": [
+        "wavetable",
+        "sharp",
+        "bright",
+        "sync"
+      ]
+    },
+    "Patches/Tidewater Strings.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Strings"
+      ],
+      "tags": [
+        "analog",
+        "ensemble",
+        "wide",
+        "soft"
+      ]
+    },
+    "Patches/Velvet Tines.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Keys"
+      ],
+      "tags": [
+        "fm",
+        "soft",
+        "tremolo",
+        "mellow"
+      ]
+    },
+    "Patches/Vowel Drift.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "wavetable",
+        "vocal",
+        "evolving",
+        "wide"
+      ]
+    },
+    "Patches/Warm Drift Pad.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "analog",
+        "warm",
+        "slow",
+        "wide"
+      ]
+    }
+  },
+  "version": 1
+}

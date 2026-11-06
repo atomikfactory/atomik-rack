@@ -1,0 +1,52 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.organ",
+      "name": "Organ", "folded": false, "patch": "Brass Rail",
+      "params": {
+        "drawbar.1": 5,
+        "drawbar.16": 8,
+        "drawbar.1_1_3": 4,
+        "drawbar.1_3_5": 3,
+        "drawbar.2": 5,
+        "drawbar.2_2_3": 4,
+        "drawbar.4": 6,
+        "drawbar.5_1_3": 8,
+        "drawbar.8": 8,
+        "out.drive": 0.45,
+        "out.level": 2,
+        "perc.decay": 0,
+        "perc.level": 1,
+        "perc.mode": 2,
+        "scanner.type": 5
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

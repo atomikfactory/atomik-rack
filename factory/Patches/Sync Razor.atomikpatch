@@ -1,0 +1,53 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.wavetable-synth",
+      "name": "Wavetable Synth", "folded": false, "patch": "Sync Razor",
+      "params": {
+        "env.amp.attack": 3,
+        "env.amp.release": 150,
+        "env.amp.sustain": 0.8,
+        "env.mod.decay": 500,
+        "env.mod.sustain": 0.3,
+        "env.mod.to_pos1": 0.7,
+        "filter.cutoff": 6500,
+        "filter.resonance": 0.2,
+        "master.level": -2,
+        "osc1.level": 0.7,
+        "osc1.position": 0.3,
+        "osc1.table": 7,
+        "osc2.level": 0,
+        "unison.detune": 10,
+        "unison.voices": 2,
+        "voices": 6
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
