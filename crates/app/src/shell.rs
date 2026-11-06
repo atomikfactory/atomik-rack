@@ -1275,6 +1275,14 @@ impl<B: AudioBackend> Shell<B> {
                 Ok(_) => self.refresh_versions(true),
                 Err(e) => self.notify(e.to_string()),
             },
+            VersionsAction::Compare { id, with } => match self.core.compare_version(id, with) {
+                Ok(c) => {
+                    if let Some(view) = &mut self.versions {
+                        view.show_report(&c.before, &c.after, c.lines);
+                    }
+                }
+                Err(e) => self.notify(e.to_string()),
+            },
             VersionsAction::Protect { id, protected } => {
                 match self.core.set_version_protected(id, protected) {
                     Ok(()) => self.refresh_versions(false),
@@ -4060,7 +4068,10 @@ impl<B: AudioBackend> Shell<B> {
                 ..
             } = event
             {
-                self.versions = None;
+                // Esc leaves a comparison for the list first, then closes the panel.
+                if !self.versions.as_mut().is_some_and(|v| v.close_report()) {
+                    self.versions = None;
+                }
                 return Vec::new();
             }
             let actions = self

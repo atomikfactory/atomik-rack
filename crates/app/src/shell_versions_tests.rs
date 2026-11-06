@@ -281,3 +281,82 @@ fn the_versions_kept_preference_reaches_the_core() {
     s.apply_preferences(Some((user, prefs)));
     assert_eq!(s.core().keep_versions(), 7);
 }
+
+#[test]
+fn compare_shows_what_differs_from_the_song_now_and_esc_goes_back_before_it_closes() {
+    let t = Tmp::new("compare");
+    let mut s = saved(&t);
+    // The file holds 2 cents; the version the second save kept holds 1. Unsaved: 7 cents.
+    tune(&mut s, 7.0);
+    s.execute(AppCommand::Versions);
+    let at = s.versions_view().unwrap().compare_rect().center();
+    assert!(click(&mut s, at).is_empty());
+    let v = s.versions_view().unwrap();
+    assert!(v.report_open());
+    let lines = v.report_lines().unwrap();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim() == "~ Master tune: +1 cents -> +7 cents"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        s.core().versions().unwrap().len(),
+        1,
+        "comparing keeps nothing"
+    );
+    assert!(s.core().is_dirty());
+    // Esc leaves the comparison; a second Esc closes the panel.
+    key(&mut s, Key::Escape);
+    assert!(s.versions_open());
+    assert!(!s.versions_view().unwrap().report_open());
+    key(&mut s, Key::Escape);
+    assert!(!s.versions_open());
+}
+
+#[test]
+fn compare_two_versions_with_shift_and_the_c_key() {
+    let t = Tmp::new("compare-two");
+    let mut s = saved(&t);
+    tune(&mut s, 3.0);
+    s.core_mut().save().unwrap();
+    s.execute(AppCommand::Versions);
+    assert_eq!(s.versions_view().unwrap().items().len(), 2);
+    // Newest first: the newest holds 2 cents, the older 1 cent.
+    key(&mut s, Key::Down);
+    s.handle(&UiEvent::Key {
+        key: Key::Up,
+        modifiers: Modifiers {
+            shift: true,
+            ..Modifiers::NONE
+        },
+        pressed: true,
+    });
+    assert_eq!(s.versions_view().unwrap().marked_id(), Some(1));
+    key(&mut s, Key::Char('c'));
+    let lines = s.versions_view().unwrap().report_lines().unwrap().to_vec();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim() == "~ Master tune: +1 cents -> +2 cents"),
+        "{lines:?}"
+    );
+    // Enter goes back to the list and restores nothing.
+    key(&mut s, Key::Enter);
+    assert!(s.versions_open());
+    assert_eq!(s.core().doc().tune_cents, 3.0);
+}
+
+#[test]
+fn a_comparison_that_cannot_be_made_is_reported_and_the_list_stays() {
+    let t = Tmp::new("compare-bad");
+    let mut s = saved(&t);
+    s.execute(AppCommand::Versions);
+    let id = s.versions_view().unwrap().selected_id().unwrap();
+    let file = s.core().versions_file().unwrap();
+    let store = atomik_audio_file::VersionStore::for_project(&file).unwrap();
+    std::fs::write(store.path_of(id).unwrap(), "not a project").unwrap();
+    key(&mut s, Key::Char('c'));
+    assert!(s.versions_open());
+    assert!(!s.versions_view().unwrap().report_open());
+}
