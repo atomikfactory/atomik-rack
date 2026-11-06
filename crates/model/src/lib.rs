@@ -1964,7 +1964,11 @@ impl Document {
                                     | ContainerCommand::RenameMacro { .. }
                             )
                             | Command::SetColor { .. }
-                            | Command::Console(ConsoleCommand::SetVcaLevel { .. })
+                            | Command::Console(
+                                ConsoleCommand::SetVcaLevel { .. }
+                                    | ConsoleCommand::SetVcaMute { .. }
+                                    | ConsoleCommand::SetVcaSolo { .. }
+                            )
                             | Command::Song(
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
@@ -1988,7 +1992,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode and SetVcaLevel can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

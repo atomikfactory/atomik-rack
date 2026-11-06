@@ -266,13 +266,27 @@ impl<S: EngineSink> AppCore<S> {
             return command;
         }
         let value = automation_value_at(&points, self.position as f64);
-        // A group's level lane holds the group's level.
-        let hold = match atomik_model::vca_lane_id(param) {
-            Some(vca) => Command::Console(atomik_model::ConsoleCommand::SetVcaLevel {
-                vca,
-                db: value,
-                merge: None,
-            }),
+        // A group's lane holds the group's level, mute or solo.
+        let hold = match atomik_model::vca_lane_parts(param) {
+            Some((vca, atomik_model::VcaLaneKind::Level)) => {
+                Command::Console(atomik_model::ConsoleCommand::SetVcaLevel {
+                    vca,
+                    db: value,
+                    merge: None,
+                })
+            }
+            Some((vca, atomik_model::VcaLaneKind::Mute)) => {
+                Command::Console(atomik_model::ConsoleCommand::SetVcaMute {
+                    vca,
+                    on: value >= 0.5,
+                })
+            }
+            Some((vca, atomik_model::VcaLaneKind::Solo)) => {
+                Command::Console(atomik_model::ConsoleCommand::SetVcaSolo {
+                    vca,
+                    on: value >= 0.5,
+                })
+            }
             None => Command::SetParam {
                 key: device.clone(),
                 param: param.clone(),
@@ -372,10 +386,14 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The value of the param a lane drives, as the document holds it: a device param, or the
-    /// level of a group for a group level lane.
+    /// level, mute or solo of a group for a group lane.
     fn lane_value(&self, device: &DeviceKey, param: &str) -> Option<f32> {
-        match atomik_model::vca_lane_id(param) {
-            Some(id) => self.doc().console.vca(id).map(|g| g.level_db),
+        match atomik_model::vca_lane_parts(param) {
+            Some((id, kind)) => self.doc().console.vca(id).map(|g| match kind {
+                atomik_model::VcaLaneKind::Level => g.level_db,
+                atomik_model::VcaLaneKind::Mute => f32::from(u8::from(g.mute)),
+                atomik_model::VcaLaneKind::Solo => f32::from(u8::from(g.solo)),
+            }),
             None => self.doc().param_value(device, param, &self.registry),
         }
     }
@@ -780,9 +798,10 @@ impl<S: EngineSink> AppCore<S> {
                 .map(|p| p.id)?;
             Some((id, pid))
         };
-        if let Some(id) = atomik_model::vca_lane_id(param) {
-            // A group's level lane plays on the `internal.vca_db` of every member.
-            for (member, target) in doc.vca_lane_targets(id) {
+        if let Some((id, kind)) = atomik_model::vca_lane_parts(param) {
+            // A group's lane plays on the `internal.vca_db`, `internal.vca_mute` or
+            // `internal.vca_solo` of every member.
+            for (member, target) in doc.vca_kind_targets(id, kind) {
                 out.extend(one(&member, target));
             }
         } else if containers::is_container(doc, device) {
