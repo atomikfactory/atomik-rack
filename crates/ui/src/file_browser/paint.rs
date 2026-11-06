@@ -345,10 +345,25 @@ impl FileBrowserView {
         let bar = lay.path;
         c.fill_with(bar, t.lcd);
         c.push_clip(&bar.into());
-        if self.entry.is_none() {
+        if self.entry.is_none() && self.confirm.is_none() {
             self.paint_nav_buttons(c, lay);
         }
-        if let Some(e) = &self.entry {
+        if let Some(path) = &self.confirm {
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            // A long name gives way so that the keys always show.
+            let fixed = measure(c, "Delete ''? Enter deletes, Esc cancels", SMALL_FONT, 400);
+            let room = (bar.width() - 2.0 * lay::PAD - fixed).max(24.0);
+            let name = fit_label_in(c, &name, room, SMALL_FONT);
+            let shown = format!("Delete '{name}'? Enter deletes, Esc cancels");
+            c.text(&TextRun::new(
+                shown,
+                pt(bar.x0 + lay::PAD, baseline(bar, SMALL_FONT)),
+                SMALL_FONT,
+                t.warning,
+            ));
+        } else if let Some(e) = &self.entry {
             let label = match e.kind {
                 super::EntryKind::NewTag => "New tag",
                 super::EntryKind::RenameTag(_)

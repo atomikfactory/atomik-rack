@@ -31,6 +31,9 @@
 //! menu adds "Open as Project" and, for files below [`FileBrowserView::set_library_folder`],
 //! "Rename..." (also `F2`), which ends in [`BrowseAction::RenameItem`]. Dragging an item (or a
 //! device row) emits [`BrowseAction::DragFiles`] with its path or URI like an audio file.
+//! "Delete..." (also `Delete`) on a patch, container or clip item below the library folder
+//! asks in the path bar (`Delete 'name'?`): Enter ends in [`BrowseAction::DeleteItem`], any
+//! other key or a click cancels. Devices and projects offer no delete.
 //! Space on a clip, patch or container item emits [`BrowseAction::Preview`] (and
 //! [`BrowseAction::StopPreview`] while it plays), as for an audio file; selecting one does not
 //! start a preview.
@@ -240,6 +243,9 @@ pub struct FileBrowserView {
     search: TextField,
     search_focused: bool,
     entry: Option<Entry>,
+    /// The library item a delete question is about: the path bar names it, Enter confirms and
+    /// anything else cancels.
+    confirm: Option<PathBuf>,
     menu: Option<menu::Menu>,
     gesture: Gesture,
     hover: Hover,
@@ -304,6 +310,7 @@ impl FileBrowserView {
             search: TextField::default(),
             search_focused: false,
             entry: None,
+            confirm: None,
             menu: None,
             gesture: Gesture::None,
             hover: Hover::None,
@@ -456,6 +463,7 @@ impl FileBrowserView {
         self.requested_info.clear();
         self.requested_thumbs.clear();
         self.requested_detail = None;
+        self.confirm = None;
         self.resort();
     }
 
@@ -585,6 +593,13 @@ impl FileBrowserView {
                     && !e.targets.first().is_some_and(|p| self.inside_library(p))
             }) {
                 self.entry = None;
+            }
+            if self
+                .confirm
+                .as_ref()
+                .is_some_and(|p| !self.inside_library(p))
+            {
+                self.confirm = None;
             }
             self.dirty = true;
         }

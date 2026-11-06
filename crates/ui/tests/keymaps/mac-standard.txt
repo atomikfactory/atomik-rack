@@ -51,6 +51,7 @@ file.open | global | Cmd+O
 file.quit | global | Cmd+Q
 file.save | global | Cmd+S
 file.save_as | global | Cmd+Shift+S
+files.delete | files | Delete
 files.down | files | Down
 files.end | files | End
 files.favorite | files | F

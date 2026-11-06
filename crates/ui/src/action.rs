@@ -937,6 +937,11 @@ pub enum BrowseAction {
         /// The new file stem as typed.
         to: String,
     },
+    /// Delete a library item: `path` is the file of a patch, container or clip item inside the
+    /// library folder, and the user confirmed the question that names it. The app refuses
+    /// anything else, removes the file and the audio only it uses, and lists the section
+    /// again.
+    DeleteItem(PathBuf),
     /// These visible audio rows have no `AudioInfo` yet: probe them (each path is requested
     /// once until the rows are replaced).
     RequestInfo(Vec<PathBuf>),

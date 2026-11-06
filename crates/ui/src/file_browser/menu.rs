@@ -41,6 +41,8 @@ pub(super) enum Act {
     OpenProject(PathBuf),
     /// Start the rename entry of a library item.
     RenameItem(PathBuf),
+    /// Ask whether to delete a library item.
+    DeleteItem(PathBuf),
     /// Show a folder (a choice of the path pop-up).
     Go(PathBuf),
     /// Show a file or folder in the system file manager.

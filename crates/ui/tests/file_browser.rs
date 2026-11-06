@@ -1760,28 +1760,29 @@ fn device_rows_offer_only_load() {
 #[test]
 fn menu_load_and_open_as_project_emit_their_actions() {
     let mut v = library_view(LibrarySection::Patches, patch_rows());
-    let at = row_pt(1);
+    // Row 0: the longer menu of an item (it ends in Delete) still fits below it.
+    let at = row_pt(0);
     run(&mut v, &[right(at)]);
     assert_eq!(
         run(&mut v, &[down(menu_item(at, 0))]),
-        vec![BrowseAction::Load(p("Lead.atomikpatch"))]
+        vec![BrowseAction::Load(p("Box.atomikcontainer"))]
     );
     run(&mut v, &[right(at)]);
     assert_eq!(
         run(&mut v, &[down(menu_item(at, 1))]),
-        vec![BrowseAction::OpenProject(p("Lead.atomikpatch"))]
+        vec![BrowseAction::OpenProject(p("Box.atomikcontainer"))]
     );
 }
 
 #[test]
 fn rename_entry_starts_with_the_stem_and_commits_the_new_name() {
     let mut v = library_view(LibrarySection::Patches, patch_rows());
-    let at = row_pt(1);
+    let at = row_pt(0);
     run(&mut v, &[right(at)]);
     assert!(run(&mut v, &[down(menu_item(at, 2))]).is_empty());
     assert!(v.is_text_owner());
     assert!(
-        paint(&mut v).texts().contains(&"Lead"),
+        paint(&mut v).texts().contains(&"Box"),
         "prefilled with the stem"
     );
     // The text is selected: typing replaces it.
@@ -1789,7 +1790,7 @@ fn rename_entry_starts_with_the_stem_and_commits_the_new_name() {
     assert_eq!(
         run(&mut v, &[key(Key::Enter)]),
         vec![BrowseAction::RenameItem {
-            path: p("Lead.atomikpatch"),
+            path: p("Box.atomikcontainer"),
             to: "Pad".into()
         }]
     );
@@ -2646,4 +2647,106 @@ fn the_thumbnail_cache_is_bounded() {
         vec![PathBuf::from("/t/old.wav")],
         "the full cache started again: the old one is asked for, the recent one is kept"
     );
+}
+
+// ----- deleting library items ------------------------------------------------------------------
+
+fn asks_to_delete(v: &mut FileBrowserView) -> bool {
+    paint(v)
+        .texts()
+        .iter()
+        .any(|t| t.starts_with("Delete '") && t.ends_with("Esc cancels"))
+}
+
+#[test]
+fn the_row_menu_of_an_item_offers_delete_and_asks_before_it_emits() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    let at = row_pt(0);
+    run(&mut v, &[right(at)]);
+    assert!(paint(&mut v).texts().contains(&"Delete..."));
+    // Rows: Load, Open as Project, Rename, sep, New tag, Toggle, sep, Author, Categories, sep,
+    // New list, sep, Show in Folder, sep, Delete.
+    let delete = menu_after(
+        at,
+        3.0 * 22.0 + 8.0 + 2.0 * 22.0 + 8.0 + 2.0 * 22.0 + 8.0 + 22.0 + 8.0 + 22.0 + 8.0,
+    );
+    assert!(run(&mut v, &[down(delete)]).is_empty(), "it only asks");
+    assert!(asks_to_delete(&mut v));
+    assert!(
+        paint(&mut v)
+            .texts()
+            .iter()
+            .any(|t| t.contains("Delete 'Box")),
+        "the question names the item"
+    );
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::DeleteItem(p("Box.atomikcontainer"))]
+    );
+    assert!(!asks_to_delete(&mut v));
+}
+
+#[test]
+fn the_delete_key_asks_about_the_cursor_item_and_escape_or_a_click_cancels() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    click(&mut v, 2);
+    assert!(run(&mut v, &[key(Key::Delete)]).is_empty());
+    assert!(asks_to_delete(&mut v));
+    assert!(
+        paint(&mut v)
+            .texts()
+            .iter()
+            .any(|t| t.contains("Riff.atomikclip"))
+    );
+    assert!(run(&mut v, &[key(Key::Escape)]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    // A second Delete does not confirm; other keys cancel without an action.
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(run(&mut v, &[key(Key::Delete)]).is_empty());
+    assert!(!asks_to_delete(&mut v), "any other key cancels");
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(run(&mut v, &[ch('x')]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    // A click cancels and does nothing else.
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(run(&mut v, &[down(row_pt(0)), up(row_pt(0))]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    // A new listing drops a pending question.
+    run(&mut v, &[key(Key::Delete)]);
+    v.set_rows(patch_rows());
+    assert!(!asks_to_delete(&mut v));
+}
+
+#[test]
+fn delete_is_not_offered_for_projects_devices_audio_or_items_outside_the_library() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    // Row 3 is the project.
+    click(&mut v, 3);
+    assert!(run(&mut v, &[key(Key::Delete)]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    run(&mut v, &[right(row_pt(3))]);
+    assert!(!paint(&mut v).texts().contains(&"Delete..."));
+    run(&mut v, &[key(Key::Escape)]);
+    // A device row and an audio file.
+    let mut rows = vec![device_row("atomik.poly", "Poly Synth", "INSTRUMENT")];
+    rows.push(audio("kick.wav"));
+    v.set_rows(rows);
+    for row in 0..2 {
+        click(&mut v, row);
+        run(&mut v, &[key(Key::Delete)]);
+        assert!(!asks_to_delete(&mut v), "row {row}");
+    }
+    // An item beyond the library folder.
+    v.set_rows(patch_rows());
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(!asks_to_delete(&mut v));
+    // Dropping the library folder while a question is open closes it.
+    v.set_library_folder(Some(PathBuf::from("/lib")));
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(asks_to_delete(&mut v));
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    assert!(!asks_to_delete(&mut v));
 }
