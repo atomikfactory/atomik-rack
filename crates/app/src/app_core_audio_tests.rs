@@ -476,11 +476,14 @@ fn removing_the_last_clip_and_saving_in_a_fresh_session_deletes_the_asset() {
     assert!(fresh.undo(), "and undo brings the clip back");
     assert!(fresh.song_assets().contains_key(&hash));
     fresh.undo();
-    // The saved project no longer lists it; a new session saving cleans the file up.
+    // The saved project no longer lists it; a new session saving cleans the file up once no kept
+    // version uses it (one automatic version is kept, and it has no clip either).
     let mut next = core();
+    next.set_keep_versions(1);
     next.open(&file).unwrap();
     next.wait_background();
     assert!(next.doc().assets.is_empty());
+    next.apply_command(Command::SetMasterTune(3.0)).unwrap();
     next.save().unwrap();
     assert!(!asset.exists());
     assert!(

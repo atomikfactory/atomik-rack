@@ -336,6 +336,8 @@ pub struct AppCore<S: EngineSink> {
     join_next: bool,
     /// New tracks take the next colour of the palette (Interface > Colour new tracks).
     auto_color: bool,
+    /// How many automatic versions a save keeps (Settings; see [`AppCore::set_keep_versions`]).
+    keep_versions: u32,
     /// The ticks per quarter note File > Export MIDI writes (File > MIDI Export Resolution).
     midi_resolution: crate::midi_file::MidiResolution,
     /// The take group the file the import dialog returns becomes a take of (Import File as
@@ -608,6 +610,7 @@ impl<S: EngineSink> AppCore<S> {
             keep_pending: None,
             join_next: false,
             auto_color: false,
+            keep_versions: crate::keymap_store::DEFAULT_KEEP_VERSIONS,
             midi_resolution: crate::midi_file::MidiResolution::default(),
             take_import: None,
             trial_next: false,
@@ -3865,6 +3868,10 @@ pub use templates::{
     DEFAULT_SONG_NAME, MAX_TEMPLATES, TEMPLATES_FOLDER, TemplateEntry, TemplatePreview,
     list_templates,
 };
+
+#[path = "app_core_versions.rs"]
+mod versions;
+pub use versions::VersionRow;
 
 #[path = "app_core_archive.rs"]
 mod archive;

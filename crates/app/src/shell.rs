@@ -2314,6 +2314,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
+        self.core.set_keep_versions(self.workflow.keep_versions);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
