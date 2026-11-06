@@ -16,8 +16,10 @@
 //! while another plays or a compare is on.
 //!
 //! A snapshot may name a **marker**: while the song plays, the playhead crossing a marker of
-//! that name recalls the snapshot ([`AppCore::snapshot_marker_frame`], once per frame). A
-//! compare in progress is left alone.
+//! that name recalls the snapshot ([`AppCore::snapshot_marker_frame`], once per frame). The
+//! **snapshot lane** (an automation lane of the master, see [`atomik_model::SNAPSHOT_LANE_KEY`])
+//! recalls the same way when the playhead crosses one of its points; of a marker and a point
+//! crossed in one frame the later one wins. A compare in progress is left alone.
 
 use super::*;
 use crate::commands::SnapshotMenu;
@@ -341,8 +343,9 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// One frame of marker recall: while the song plays, a marker the playhead has crossed since
-    /// the last frame recalls the snapshot that names it (the last one when several were crossed).
+    /// One frame of marker and lane recall: while the song plays, a marker the playhead has
+    /// crossed since the last frame recalls the snapshot that names it, and so does a point of
+    /// the snapshot lane (the last one when several were crossed).
     /// After a start, a locate or a loop wrap the markers up to a sixteenth before the playhead
     /// count, so a marker at the very start of a pass recalls too. A compare in progress, or a
     /// morph, is left alone.
@@ -356,25 +359,31 @@ impl<S: EngineSink> AppCore<S> {
             Some(prev) if tick >= prev => (prev + 1, tick),
             _ => (tick - atomik_core::PPQ / 4 + 1, tick),
         };
-        if self
-            .doc()
-            .console
-            .snapshots
-            .iter()
-            .all(|s| s.marker.is_none())
-            || self.doc().console.compare.is_some()
+        let doc = self.doc();
+        let by_marker = doc.console.snapshots.iter().any(|s| s.marker.is_some());
+        if !(by_marker || doc.snapshot_lane().is_some())
+            || doc.console.compare.is_some()
             || self.snapshot_morph.is_some()
         {
             return;
         }
-        let doc = self.doc();
-        let target = doc
+        let in_frame = |tick: i64| tick >= from && tick <= to;
+        let marker = doc
             .song
             .markers
             .iter()
-            .filter(|m| m.tick >= from && m.tick <= to)
-            .filter_map(|m| doc.console.snapshot_for_marker(&m.name))
+            .filter(|m| in_frame(m.tick))
+            .filter_map(|m| Some((m.tick, doc.console.snapshot_for_marker(&m.name)?)))
             .next_back();
+        let lane = doc
+            .snapshot_lane_events()
+            .into_iter()
+            .rfind(|(tick, _)| in_frame(*tick));
+        // The later of the two wins; at the same tick the lane does.
+        let target = match (marker, lane) {
+            (Some(m), Some(l)) => Some(if l.0 >= m.0 { l.1 } else { m.1 }),
+            (m, l) => l.or(m).map(|(_, id)| id),
+        };
         if let Some(id) = target {
             self.recall_snapshot(Some(id));
         }

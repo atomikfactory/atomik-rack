@@ -238,13 +238,13 @@ fn check_target(p: &Planner<'_>, channel: &DeviceKey) -> Result<(), ModelError> 
 }
 
 /// Removes the cables of `device`'s current path `send → old… → return`.
-fn unwire(p: &mut Planner<'_>, device: &DeviceKey, old: &[DeviceKey]) {
+pub(crate) fn unwire(p: &mut Planner<'_>, device: &DeviceKey, old: &[DeviceKey]) {
     let doomed = path_cables(p.doc(), device, old);
     p.disconnect_where(|c| doomed.contains(c));
 }
 
 /// Cables `send → new[0] → … → return`; nothing for an empty chain (an unused insert).
-fn wire_chain(
+pub(crate) fn wire_chain(
     p: &mut Planner<'_>,
     device: &DeviceKey,
     new: &[DeviceKey],

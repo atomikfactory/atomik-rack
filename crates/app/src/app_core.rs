@@ -3533,6 +3533,14 @@ impl<S: EngineSink> AppCore<S> {
         self.transport_bar.set_click_gain(self.metronome_gain);
         self.arrangement.set_armed_lanes(&self.autorec.armed);
         self.arrangement.set_tempo_armed(self.autorec.tempo_armed);
+        self.arrangement.set_snapshot_names(
+            self.document
+                .doc()
+                .console
+                .snapshots
+                .iter()
+                .map(|s| (s.id, s.name.as_str())),
+        );
         self.piano_roll.set_playhead(self.position);
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,

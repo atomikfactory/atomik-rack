@@ -564,3 +564,192 @@ fn a_marker_with_no_snapshot_or_a_snapshot_with_no_marker_does_nothing() {
     c.snapshot_marker_frame(true, 9000);
     assert_eq!(value(&c, "channel", "fader"), 0.9);
 }
+
+// ---- The snapshot lane and the wiring ------------------------------------------------------
+
+fn auto_point(tick: i64, value: f32) -> atomik_model::AutomationPoint {
+    atomik_model::AutomationPoint {
+        tick,
+        value,
+        curve: atomik_model::Curve::Step,
+    }
+}
+
+/// `two_snapshots` with a snapshot lane on the master holding `A` (1) at 1000 and `B` (2) at
+/// 5000, in a clip that starts at 1000; the mix is `B`'s.
+fn laned() -> AppCore<RecordingSink> {
+    let mut c = two_snapshots();
+    let master = c.doc().console.master.clone().expect("a master");
+    c.apply_command(Command::Song(
+        atomik_model::SongCommand::AddAutomationLane {
+            device: master.clone(),
+            param: atomik_model::SNAPSHOT_LANE_KEY.into(),
+        },
+    ))
+    .expect("lane");
+    let lane = c.doc().snapshot_lane().expect("the lane").1;
+    c.apply_command(Command::Song(atomik_model::SongCommand::AddClip {
+        device: master,
+        lane,
+        clip: atomik_model::Clip {
+            id: atomik_model::ClipId(0),
+            start: 1000,
+            length: 15360 * 4,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            scale: None,
+            param_lanes: Vec::new(),
+            midi: Default::default(),
+            groove: None,
+            controllers: Vec::new(),
+            name: None,
+            color: None,
+            grid: None,
+            content: atomik_model::ClipContent::Automation(vec![
+                auto_point(0, 1.0),
+                auto_point(4000, 2.0),
+            ]),
+        },
+    }))
+    .expect("points");
+    c
+}
+
+#[test]
+fn the_playhead_crossing_a_point_of_the_snapshot_lane_recalls_its_snapshot() {
+    let mut c = laned();
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    c.snapshot_marker_frame(false, 1200);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    c.snapshot_marker_frame(true, 100);
+    c.snapshot_marker_frame(true, 900);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(
+        value(&c, "channel", "fader"),
+        0.3,
+        "the first point recalls A"
+    );
+    // An edit made after the point stays until the next one.
+    set(&mut c, "channel", "fader", 0.5);
+    c.snapshot_marker_frame(true, 3000);
+    assert_eq!(value(&c, "channel", "fader"), 0.5);
+    c.snapshot_marker_frame(true, 5200);
+    assert_eq!(
+        value(&c, "channel", "fader"),
+        0.9,
+        "the second point recalls B"
+    );
+}
+
+#[test]
+fn the_lane_recalls_as_the_clip_moves_and_each_edit_is_one_undo_step() {
+    let mut c = laned();
+    let (master, lane) = c.doc().snapshot_lane().unwrap();
+    let id = c.doc().song.track(&master).unwrap().lanes[lane].clips[0].id;
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetClipGeometry {
+        id,
+        start: 21000,
+        length: 15360 * 4,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        merge: None,
+    }))
+    .expect("moved");
+    // The old place recalls nothing; the new one does.
+    c.snapshot_marker_frame(true, 100);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+    c.snapshot_marker_frame(true, 21100);
+    assert_eq!(value(&c, "channel", "fader"), 0.3);
+    // The recall and the move were one undo step each: undoing both puts the recalls back.
+    assert!(c.undo());
+    assert!(c.undo());
+    assert!(
+        c.doc()
+            .snapshot_lane_events()
+            .iter()
+            .all(|(t, _)| *t < 20000)
+    );
+}
+
+#[test]
+fn a_marker_and_a_point_in_one_frame_recall_the_later_and_the_lane_wins_a_tie() {
+    let mut c = laned();
+    // The marker `Chorus` (B) sits at 1100, after the lane's point (A) at 1000.
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetMarkers(vec![
+        marker(1, 1100, "Chorus"),
+    ])))
+    .expect("markers");
+    c.apply_command(Command::Console(ConsoleCommand::SetSnapshotMarker {
+        id: 2,
+        marker: Some("Chorus".into()),
+    }))
+    .expect("marker set");
+    c.snapshot_marker_frame(true, 100);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(value(&c, "channel", "fader"), 0.9, "the later marker wins");
+}
+
+#[test]
+fn a_muted_snapshot_lane_recalls_nothing_and_muting_it_needs_no_param() {
+    let mut c = laned();
+    let (master, lane) = c.doc().snapshot_lane().unwrap();
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetLaneMuted {
+        device: master,
+        lane,
+        muted: true,
+    }))
+    .expect("a lane with no param mutes");
+    c.snapshot_marker_frame(true, 100);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(value(&c, "channel", "fader"), 0.9);
+}
+
+#[test]
+fn a_compare_in_progress_is_left_alone_by_the_lane() {
+    let mut c = laned();
+    assert!(c.compare_snapshot(Some(2)));
+    let comparing = c.doc().clone();
+    c.snapshot_marker_frame(true, 100);
+    c.snapshot_marker_frame(true, 1300);
+    assert_eq!(c.doc(), &comparing);
+}
+
+#[test]
+fn a_recall_rewires_the_rack_and_the_engine_rebuilds_its_routing() {
+    let mut c = two_snapshots();
+    assert!(
+        c.apply_command(Command::Console(ConsoleCommand::CreateBus {
+            name: "Drums".into(),
+            dest: atomik_model::OutputDest::Master,
+        }))
+        .is_ok()
+    );
+    assert!(c.store_snapshot(Some("Wired".into())));
+    let id = c.doc().console.snapshots.last().unwrap().id;
+    let bus = c.doc().console.buses[0].bus.clone();
+    c.apply_command(Command::Console(ConsoleCommand::SetOutput {
+        strip: key("channel"),
+        dest: atomik_model::OutputDest::Bus(bus),
+    }))
+    .expect("routed");
+    c.sink_mut().take();
+    assert!(c.recall_snapshot(Some(id)));
+    assert_eq!(
+        atomik_model::output_dest(c.doc(), &key("channel")),
+        atomik_model::OutputDest::Master
+    );
+    let calls = c.sink_mut().take();
+    assert!(
+        calls.iter().any(|x| matches!(x, SinkCall::Routing(_))),
+        "the cables moved, so the engine got a new routing"
+    );
+    assert!(c.undo());
+    assert!(matches!(
+        atomik_model::output_dest(c.doc(), &key("channel")),
+        atomik_model::OutputDest::Bus(_)
+    ));
+}

@@ -139,3 +139,104 @@ fn the_blocks_paint_numbers_and_leave_other_lanes_alone() {
     assert!(texts.contains(&"3"), "{texts:?}");
     assert!(texts.contains(&"5"), "{texts:?}");
 }
+
+// ---- The snapshot lane -------------------------------------------------------------------
+
+/// A master with a snapshot lane holding snapshot 4 for a bar, then snapshot 9 (named "Chorus"
+/// and "Verse" in the view, no snapshot 9).
+fn snapshot_view() -> (
+    atomik_model::RackDoc,
+    atomik_device_sdk::Registry,
+    ArrangementView,
+) {
+    let (mut doc, reg) = (song_doc(), registry());
+    doc.devices
+        .push(device("master", "atomik.master", "Master"));
+    let clip = auto_clip(
+        20,
+        BAR,
+        2 * BAR,
+        vec![ap(0, 4.0, Curve::Step), ap(BAR, 9.0, Curve::Step)],
+    );
+    doc.song_mut().tracks.push(track(
+        "master",
+        vec![Lane::automation(atomik_model::SNAPSHOT_LANE_KEY).with_clips(vec![clip])],
+    ));
+    doc.song_mut().next_clip_id = 21;
+    let mut v = arrangement(&doc, &reg);
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1200.0, 900.0));
+    v.set_snapshot_names([(2, "Intro"), (4, "Chorus"), (7, "Bridge")].into_iter());
+    v.sync(&doc, &reg);
+    (doc, reg, v)
+}
+
+#[test]
+fn the_snapshot_lane_draws_blocks_with_the_snapshot_names() {
+    let (doc, reg, mut v) = snapshot_view();
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let texts = dl.texts();
+    assert!(texts.contains(&"Chorus"), "{texts:?}");
+    // A snapshot that is gone shows its number.
+    assert!(texts.contains(&"9"), "{texts:?}");
+}
+
+#[test]
+fn the_snapshot_picker_lists_the_snapshots_and_a_row_sets_the_block() {
+    let (doc, reg, mut v) = snapshot_view();
+    let r = v.clip_rect(CLIP).unwrap();
+    let at = Point::new(v.tick_to_x(BAR + BAR / 2), r.center().y + 6.0);
+    v.handle(&right_down(at), &doc, &reg);
+    let items = v.param_menu_items();
+    assert_eq!(items, ["2", "4", "7", "delete"], "one row per snapshot");
+    assert_eq!(v.menu_current(), Some(1), "snapshot 4 is the block's");
+    let row = v.param_menu_row_center(2).unwrap();
+    let out = v.handle(&down(row), &doc, &reg);
+    let set = clip_commands(&out);
+    let Some(SongCommand::SetClipContent {
+        id: CLIP,
+        content: ClipContent::Automation(points),
+        ..
+    }) = set.first()
+    else {
+        panic!("{set:?}");
+    };
+    let want: Vec<AutomationPoint> = vec![ap(0, 7.0, Curve::Step), ap(BAR, 9.0, Curve::Step)];
+    assert_eq!(points, &want);
+}
+
+#[test]
+fn a_clip_drawn_on_the_snapshot_lane_starts_with_the_first_snapshot() {
+    let (doc, reg, mut v) = snapshot_view();
+    v.set_tool(atomik_ui::Tool::Pencil);
+    let y = v.lane_rect(&key("master"), 0).unwrap().center().y;
+    let from = Point::new(v.tick_to_x(3 * BAR + BAR / 4), y);
+    let to = Point::new(v.tick_to_x(3 * BAR + BAR / 2), y);
+    let mut out = v.handle(&down(from), &doc, &reg);
+    out.extend(v.handle(&mv(to), &doc, &reg));
+    out.extend(v.handle(&up(to), &doc, &reg));
+    let added = clip_commands(&out);
+    let Some(SongCommand::AddClip { clip, .. }) = added.first() else {
+        panic!("{added:?}");
+    };
+    let ClipContent::Automation(points) = &clip.content else {
+        panic!("automation clip");
+    };
+    assert_eq!(points.len(), 1, "{points:?}");
+    assert_eq!(
+        (points[0].tick, points[0].value, points[0].curve),
+        (0, 2.0, Curve::Step)
+    );
+}
+
+#[test]
+fn a_rename_or_a_new_snapshot_repaints_the_lane() {
+    let (doc, reg, mut v) = snapshot_view();
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert!(!v.needs_repaint(), "painted");
+    v.set_snapshot_names([(2, "Intro"), (4, "Chorus"), (7, "Bridge")].into_iter());
+    assert!(!v.needs_repaint(), "the same names change nothing");
+    v.set_snapshot_names([(2, "Intro"), (4, "Hook"), (7, "Bridge")].into_iter());
+    assert!(v.needs_repaint());
+}

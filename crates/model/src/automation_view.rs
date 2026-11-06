@@ -172,6 +172,10 @@ impl RackDoc {
                 }
                 continue;
             }
+            // The snapshot lane recalls; it shows nothing on a control.
+            if param == crate::SNAPSHOT_LANE_KEY && self.console.master.as_ref() == Some(device) {
+                continue;
+            }
             if let Some(d) = devices.iter_mut().find(|d| &d.key == device) {
                 d.params.insert(param.clone(), *value);
             }

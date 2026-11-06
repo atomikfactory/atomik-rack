@@ -13,10 +13,15 @@
 //! the returns ([`MixerState::effects`], chosen per snapshot with `SetSnapshotEffects`); without
 //! it only their bypass is kept. It carries an optional **note** and **colour**, for the chip.
 //!
-//! **What it does not hold**: the arrangement (clips, automation, tempo, markers), the cables and
-//! the structure of the rack (devices added, removed or re-cabled, the order and the names of the
-//! strips, the output routing, the insert chains' members); including the last two is a
-//! follow-up (see the roadmap).
+//! It also holds the **wiring** ([`MixerState::wiring`], see [`crate::console_snapshot_wiring`]):
+//! where each strip plays (the master, a bus or an Audio I/O pair) and which effects sit on its
+//! insert chain, in order. A snapshot without it (made by an older build) leaves the routing and
+//! the chains alone on recall.
+//!
+//! **What it does not hold**: the arrangement (clips, automation, tempo, markers) and the rest of
+//! the structure of the rack (devices added or removed, other cables, the order and the names of
+//! the strips). A recall moves the cables between the devices the rack has; it never adds or
+//! removes one.
 //!
 //! A snapshot may name a **marker** (`SetSnapshotMarker`): the app recalls the snapshot when the
 //! playhead crosses a marker of that name while the song plays (the name is matched ignoring
@@ -56,6 +61,7 @@
 use crate::console::{Console, ConsoleCommand, is_console_type, is_internal_param};
 use crate::console_cmd::{Planner, bad};
 use crate::console_insert::insert_chain;
+use crate::console_snapshot_wiring::{self as wiring, SnapshotWiring, WiringChanges};
 use crate::console_vca::{VcaGroup, canonical};
 use crate::history::Edit;
 use crate::{DeviceKey, ModelError, RackDoc};
@@ -73,26 +79,28 @@ pub const MAX_SNAPSHOTS: usize = 64;
 const BYPASS: &str = "bypass";
 
 /// Categories of a recall: the bits of a [`SnapshotScope`].
-mod bits {
-    pub(super) const LEVELS: u8 = 1;
-    pub(super) const MUTES: u8 = 2;
-    pub(super) const SENDS: u8 = 4;
-    pub(super) const INSERTS: u8 = 8;
-    pub(super) const PROCESSING: u8 = 16;
-    pub(super) const GROUPS: u8 = 32;
+pub(crate) mod bits {
+    pub(crate) const LEVELS: u8 = 1;
+    pub(crate) const MUTES: u8 = 2;
+    pub(crate) const SENDS: u8 = 4;
+    pub(crate) const INSERTS: u8 = 8;
+    pub(crate) const PROCESSING: u8 = 16;
+    pub(crate) const GROUPS: u8 = 32;
+    pub(crate) const ROUTING: u8 = 64;
 }
 
 /// Which categories a recall applies. `LEVELS` is the fader, pan, width and input trim of the
 /// strips and the VCA levels; `MUTES` the mute and solo of the strips and the groups; `SENDS` the
 /// send switches, levels and pre/post; `INSERTS` the bypass of the insert effects and the insert
 /// switches of the strips; `PROCESSING` every other param of a strip (EQ, dynamics, parallel
-/// compressor, polarity, latency adjust, ...); `GROUPS` the membership of the VCA groups.
+/// compressor, polarity, latency adjust, ...); `GROUPS` the membership of the VCA groups;
+/// `ROUTING` the outputs of the strips and the effects on their insert chains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotScope(u8);
 
 impl SnapshotScope {
     /// Everything.
-    pub const ALL: SnapshotScope = SnapshotScope(63);
+    pub const ALL: SnapshotScope = SnapshotScope(127);
     /// Faders, pans, widths, input trims and the VCA levels.
     pub const LEVELS: SnapshotScope = SnapshotScope(bits::LEVELS);
     /// Mutes and solos, of strips and groups.
@@ -102,7 +110,11 @@ impl SnapshotScope {
     /// The insert bypass.
     pub const INSERTS: SnapshotScope = SnapshotScope(bits::INSERTS);
 
-    /// The scope named `name` (`all`, `levels`, `mutes`, `sends`, `inserts`), ignoring case.
+    /// The output routing and the insert chain members.
+    pub const ROUTING: SnapshotScope = SnapshotScope(bits::ROUTING);
+
+    /// The scope named `name` (`all`, `levels`, `mutes`, `sends`, `inserts`, `routing`), ignoring
+    /// case.
     pub fn from_name(name: &str) -> Option<SnapshotScope> {
         Some(match name.trim().to_ascii_lowercase().as_str() {
             "all" => Self::ALL,
@@ -110,6 +122,7 @@ impl SnapshotScope {
             "mutes" | "solos" => Self::MUTES,
             "sends" => Self::SENDS,
             "inserts" | "bypass" => Self::INSERTS,
+            "routing" | "wiring" => Self::ROUTING,
             _ => return None,
         })
     }
@@ -134,7 +147,7 @@ impl SnapshotScope {
         self.has(bits::INSERTS)
     }
 
-    fn has(self, bit: u8) -> bool {
+    pub(crate) fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
     }
 }
@@ -178,6 +191,9 @@ pub struct MixerState {
     pub vcas: Vec<SnapshotVca>,
     /// The effect devices hold all their params, not only the bypass.
     pub effects: bool,
+    /// The output and the insert chain of each strip (see [`crate::console_snapshot_wiring`]);
+    /// `None` for a state that holds none, which leaves the wiring alone on recall.
+    pub wiring: Option<BTreeMap<DeviceKey, SnapshotWiring>>,
 }
 
 /// One stored snapshot.
@@ -307,11 +323,13 @@ struct Changes {
     params: Vec<ParamChange>,
     /// The groups after the recall, when they differ from the live ones.
     vcas: Option<Vec<VcaGroup>>,
+    /// The outputs and insert chains that change.
+    wiring: WiringChanges,
 }
 
 impl Changes {
     fn is_empty(&self) -> bool {
-        self.params.is_empty() && self.vcas.is_none()
+        self.params.is_empty() && self.vcas.is_none() && self.wiring.is_empty()
     }
 }
 
@@ -322,10 +340,22 @@ impl RackDoc {
         self.capture_mixer_with(registry, false)
     }
 
-    /// The mixer state now; with `effects` the effect devices give all their params.
+    /// The mixer state now, wiring included; with `effects` the effect devices give all their
+    /// params.
     pub fn capture_mixer_with(&self, registry: &Registry, effects: bool) -> MixerState {
+        self.capture_mixer_opts(registry, effects, true)
+    }
+
+    /// The mixer state now; `wiring` says whether it holds the outputs and insert chains.
+    pub fn capture_mixer_opts(
+        &self,
+        registry: &Registry,
+        effects: bool,
+        wiring: bool,
+    ) -> MixerState {
         let mut state = MixerState {
             effects,
+            wiring: wiring.then(|| self.capture_wiring(registry)),
             ..MixerState::default()
         };
         let strips = self
@@ -431,7 +461,12 @@ impl RackDoc {
             }
         }
         let vcas = self.recalled_vcas(state, scope);
-        Changes { params, vcas }
+        let wiring = self.wiring_changes(registry, state, scope);
+        Changes {
+            params,
+            vcas,
+            wiring,
+        }
     }
 
     /// The groups after recalling `state` with `scope`, or `None` when nothing changes.
@@ -487,6 +522,9 @@ impl RackDoc {
         let mut keep: Vec<DeviceKey> = insert_chain(self, registry, strip).into_iter().collect();
         keep.push(strip.clone());
         state.devices.retain(|k, _| keep.contains(k));
+        if let Some(w) = &mut state.wiring {
+            w.retain(|k, _| k == strip);
+        }
         state.vcas.clear();
         state
     }
@@ -512,6 +550,7 @@ impl RackDoc {
         let at = if at.is_nan() { 0.0 } else { at.clamp(0.0, 1.0) };
         let mut out = MixerState {
             effects: a.effects || b.effects,
+            wiring: wiring::morph(&a.wiring, &b.wiring, at),
             ..MixerState::default()
         };
         let keys: std::collections::BTreeSet<&DeviceKey> =
@@ -630,6 +669,7 @@ impl RackDoc {
                 ));
             }
         }
+        notes.extend(self.wiring_notes(&snapshot.state));
         notes
     }
 }
@@ -705,6 +745,7 @@ fn apply(p: &mut Planner<'_>, changes: Changes) {
         let old = p.doc().console.vcas.clone();
         p.push(Edit::ConsoleVcas { old, new });
     }
+    wiring::apply(p, changes.wiring);
 }
 
 /// Pushes the edit that sets the compare state to `new`.
@@ -720,7 +761,9 @@ fn set_compare(p: &mut Planner<'_>, new: Option<CompareState>) {
 /// hidden slot swap.
 fn flip(p: &mut Planner<'_>, c: CompareState) {
     let registry = p.registry;
-    let mut live = p.doc().capture_mixer_with(registry, c.other.effects);
+    let mut live = p
+        .doc()
+        .capture_mixer_opts(registry, c.other.effects, c.other.wiring.is_some());
     if let Some(strip) = &c.strip {
         live = p.doc().strip_state(registry, live, strip);
     }
@@ -1075,6 +1118,10 @@ mod tests {
             Some(SnapshotScope::LEVELS)
         );
         assert_eq!(SnapshotScope::from_name("nope"), None);
+        assert_eq!(
+            SnapshotScope::from_name("Routing"),
+            Some(SnapshotScope::ROUTING)
+        );
         for bit in [
             bits::LEVELS,
             bits::MUTES,
@@ -1082,6 +1129,7 @@ mod tests {
             bits::INSERTS,
             bits::PROCESSING,
             bits::GROUPS,
+            bits::ROUTING,
         ] {
             assert!(SnapshotScope::ALL.has(bit));
         }

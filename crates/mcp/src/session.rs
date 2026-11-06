@@ -656,7 +656,7 @@ silently; `confirm` true answers the unsaved-changes question (Save, Don't Save,
             (
                 "arg",
                 "string",
-                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca, mixer.delete_vca, mixer.route_vca and mixer.unroute_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels). For the snapshot commands (mixer.recall_snapshot, mixer.update_snapshot, mixer.compare_snapshot, mixer.delete_snapshot, mixer.morph_snapshot) the id or the name of a snapshot (ids, names, notes and colours are in session_status under console.snapshots; without it they act on the current snapshot); mixer.recall_snapshot also takes `<snapshot>:<scope>` with a scope of all, levels, mutes, sends or inserts; mixer.store_snapshot takes the name of the new snapshot (without it the next of A, B, 1, 2, ...).",
+                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca, mixer.delete_vca, mixer.route_vca and mixer.unroute_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels). For the snapshot commands (mixer.recall_snapshot, mixer.update_snapshot, mixer.compare_snapshot, mixer.delete_snapshot, mixer.morph_snapshot) the id or the name of a snapshot (ids, names, notes and colours are in session_status under console.snapshots; without it they act on the current snapshot); mixer.recall_snapshot also takes `<snapshot>:<scope>` with a scope of all, levels, mutes, sends, inserts or routing; mixer.store_snapshot takes the name of the new snapshot (without it the next of A, B, 1, 2, ...).",
             ),
         ],
         &["id"],
@@ -825,7 +825,7 @@ fn snapshot_special(
                 return Ok(None);
             };
             let scope = atomik_model::SnapshotScope::from_name(scope).ok_or_else(|| {
-                format!("`{scope}` is not a scope (all, levels, mutes, sends, inserts)")
+                format!("`{scope}` is not a scope (all, levels, mutes, sends, inserts, routing)")
             })?;
             Ok(Some(SnapshotSpecial::Recall(
                 snapshot_id(doc, which)?,

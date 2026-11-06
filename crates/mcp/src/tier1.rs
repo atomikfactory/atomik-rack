@@ -411,7 +411,8 @@ fn groove_summary(doc: &RackDoc) -> Vec<Value> {
 /// The mixer snapshots: id and name (what the `mixer.*_snapshot` commands take as their argument),
 /// how many strips and effects each holds, and whether the mix is exactly that snapshot now (what
 /// a recall of it would change nothing of); `skips` lists what a recall would skip because it was
-/// deleted. A snapshot that holds the effect parameters, a note or a colour says so.
+/// deleted. A snapshot that holds the effect parameters or the wiring (the output of each strip and
+/// its insert chain), a note or a colour says so.
 fn snapshot_summary(doc: &RackDoc) -> Vec<Value> {
     let registry = default_registry();
     doc.console
@@ -431,6 +432,9 @@ fn snapshot_summary(doc: &RackDoc) -> Vec<Value> {
             });
             if s.state.effects {
                 v["effects"] = json!(true);
+            }
+            if s.state.wiring.is_some() {
+                v["wiring"] = json!(true);
             }
             if !s.note.is_empty() {
                 v["note"] = json!(s.note);

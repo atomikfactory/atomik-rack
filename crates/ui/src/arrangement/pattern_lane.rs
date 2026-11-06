@@ -11,16 +11,25 @@
 //!   Clip) and the row sets the number of the block under the pointer,
 //! * the **seed** of a new clip: a clip drawn on the lane starts with one point, the number under
 //!   the pointer, so it plays at once.
+//!
+//! The snapshot lane (the master's lane that recalls mixer snapshots) is drawn and edited the same
+//! way, with the names of the snapshots in the blocks and in the picker; a clip drawn on it starts
+//! with the first snapshot.
 
 use super::*;
-use atomik_model::PATTERN_PARAM;
+use atomik_model::{PATTERN_PARAM, SNAPSHOT_LANE_KEY};
 
 /// The most patterns any device has (the picker never lists more).
 const MAX_PICKER_ROWS: usize = 64;
 
-/// True for the descriptor of a `pattern` param.
+/// True for the descriptor of a `pattern` param, or of the snapshot lane: a lane drawn as blocks.
 pub(super) fn is_pattern(param: &ParamDescriptor) -> bool {
-    param.key == PATTERN_PARAM
+    param.key == PATTERN_PARAM || is_snapshot(param)
+}
+
+/// True for the descriptor of the snapshot lane.
+fn is_snapshot(param: &ParamDescriptor) -> bool {
+    param.key == SNAPSHOT_LANE_KEY
 }
 
 /// The pattern number a value reads as, within the param's range.
@@ -29,6 +38,46 @@ fn number(param: &ParamDescriptor, value: f32) -> usize {
 }
 
 impl ArrangementView {
+    /// Tells the view the names of the mixer snapshots, by id, for the snapshot lane to show (the
+    /// app owns them). A change repaints.
+    pub fn set_snapshot_names<'a>(&mut self, names: impl Iterator<Item = (u32, &'a str)>) {
+        let mut same = true;
+        let mut count = 0;
+        for (i, (id, name)) in names.enumerate() {
+            count += 1;
+            match self.snapshot_names.get_mut(i) {
+                Some((have_id, have)) if *have_id == id && have == name => {}
+                Some(slot) => {
+                    *slot = (id, name.to_owned());
+                    same = false;
+                }
+                None => {
+                    self.snapshot_names.push((id, name.to_owned()));
+                    same = false;
+                }
+            }
+        }
+        if self.snapshot_names.len() != count {
+            self.snapshot_names.truncate(count);
+            same = false;
+        }
+        if !same {
+            self.repaint = true;
+        }
+    }
+
+    /// What a held value reads as in a block: the number of a pattern, the name of a snapshot (its
+    /// number when the snapshot is gone).
+    fn block_label(&self, param: &ParamDescriptor, value: f32) -> String {
+        let n = number(param, value);
+        if is_snapshot(param)
+            && let Some((_, name)) = self.snapshot_names.iter().find(|(id, _)| *id as usize == n)
+        {
+            return name.clone();
+        }
+        n.to_string()
+    }
+
     /// True when lane `lane` of track `track` is a pattern lane.
     pub(super) fn is_pattern_lane(&self, track: usize, lane: usize) -> bool {
         self.is_automation_lane(track, lane) && is_pattern(&self.param_of(track, lane))
@@ -77,7 +126,7 @@ impl ArrangementView {
                 c.fill_with(block, accent.with_alpha(0.3));
                 c.stroke_with(block, 1.0, accent.with_alpha(0.8));
                 if x1 - x0 >= 16.0 {
-                    let label = number(param, p.value).to_string();
+                    let label = self.block_label(param, p.value);
                     sp::label(
                         c,
                         &label,
@@ -100,7 +149,12 @@ impl ArrangementView {
             return;
         };
         let param = self.param_of(track, lane);
-        let count = (param.max.round().max(1.0) as usize).min(MAX_PICKER_ROWS);
+        let snapshots = is_snapshot(&param);
+        let count = if snapshots {
+            self.snapshot_names.len()
+        } else {
+            (param.max.round().max(1.0) as usize).min(MAX_PICKER_ROWS)
+        };
         // The block under the pointer: the last point at or before it.
         let raw = self.axis.x_to_tick(pos.x);
         let content_tick = seq_edit::content_windows(clip)
@@ -132,13 +186,29 @@ impl ArrangementView {
         };
         let mut items: Vec<(String, String)> = Vec::new();
         let mut commands: Vec<UiAction> = Vec::new();
-        for n in 1..=count {
-            items.push((n.to_string(), format!("Pattern {n}")));
-            commands.push(super::song_cmd(set(n as f32)));
+        if snapshots {
+            for (id, name) in &self.snapshot_names {
+                items.push((id.to_string(), format!("Recall {name}")));
+                commands.push(super::song_cmd(set(*id as f32)));
+            }
+        } else {
+            for n in 1..=count {
+                items.push((n.to_string(), format!("Pattern {n}")));
+                commands.push(super::song_cmd(set(n as f32)));
+            }
         }
         items.push(("delete".into(), "Delete Clip".into()));
         commands.push(super::song_cmd(SongCommand::RemoveClip { id: clip.id }));
-        let current = points.get(index).map(|p| number(&param, p.value) - 1);
+        let current = points.get(index).and_then(|p| {
+            let n = number(&param, p.value);
+            if snapshots {
+                self.snapshot_names
+                    .iter()
+                    .position(|(id, _)| *id as usize == n)
+            } else {
+                Some(n - 1)
+            }
+        });
         let device = self.song.tracks[track].device.clone();
         let scroll = current
             .unwrap_or(0)
@@ -173,9 +243,14 @@ impl ArrangementView {
         };
         let (top, bottom) = value_range(self.clip_rect_in(self.row_rect(row), &clip));
         let param = self.param_of(track, lane);
+        // A snapshot lane starts with the first snapshot, whatever the height of the press.
+        let value = match self.snapshot_names.first() {
+            Some((id, _)) if is_snapshot(&param) => *id as f32,
+            _ => seq_edit::value_from_y(&param, press.y, top, bottom - top),
+        };
         clip.content = ClipContent::Automation(vec![AutomationPoint {
             tick: 0,
-            value: seq_edit::value_from_y(&param, press.y, top, bottom - top),
+            value,
             curve: Curve::Step,
         }]);
         song_cmd(SongCommand::AddClip { device, lane, clip })

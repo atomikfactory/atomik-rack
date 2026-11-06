@@ -230,11 +230,11 @@ A warped or transposed audio clip adds `"warp": {"enabled": true, "mode": "tonal
 
 **Mixer snapshots**
 
-`session_status` lists the snapshots under `document.console.snapshots` (`id`, `name`, `devices`, `vcas`, `matches_mix`, `effects` when it holds the effect parameters, `note` and `color` when set, and `skips` for what a recall would leave out because it was deleted) and a compare in progress under `document.console.compare` (`snapshot`, `side`: `B` while the snapshot is live, `A` for the working mix). To check them:
+`session_status` lists the snapshots under `document.console.snapshots` (`id`, `name`, `devices`, `vcas`, `matches_mix`, `effects` when it holds the effect parameters, `wiring` when it holds the outputs and insert chains, `note` and `color` when set, and `skips` for what a recall would leave out because it was deleted) and a compare in progress under `document.console.compare` (`snapshot`, `side`: `B` while the snapshot is live, `A` for the working mix). To check them:
 
 1. `session_open` the project, `session_bounce` into `target/mcp/reference.wav`, then `session_command` `mixer.store_snapshot` (the snapshot is named `A`; an `arg` names it).
 2. `session_set_param` a fader (`device` `channel`, `param` `fader`), a mute or a send, and `session_bounce` with `reference`: `bit_identical` is false.
-3. `session_command` `mixer.recall_snapshot` with `arg` `A` (a name or an id): the bounce is bit for bit the reference again, and one `edit.undo` brings the edited mix back. `arg` `A:levels` (or `mutes`, `sends`, `inserts`) recalls only that category.
+3. `session_command` `mixer.recall_snapshot` with `arg` `A` (a name or an id): the bounce is bit for bit the reference again, and one `edit.undo` brings the edited mix back. `arg` `A:levels` (or `mutes`, `sends`, `inserts`, `routing`) recalls only that category.
 4. `mixer.compare_snapshot` starts an A/B (`side` `B` is the snapshot), the same command flips it, `mixer.end_compare` keeps the live side; bounce after each to hear both. `mixer.update_snapshot`, `mixer.delete_snapshot` and `mixer.recall_next_snapshot` act on the current snapshot, or on the `arg`. `mixer.morph_snapshot` (the `arg` is the id of the snapshot to move to, else the next one) and `mixer.morph_previous_snapshot` start a morph from the current snapshot that the session's frame clock plays: `session_pointer` `wait` for the morph time (`mixer.morph_time` with `1`, `2`, `4` or `8`), and the mix is on the other snapshot.
 
 **MIDI learn, mappings and control surfaces**
