@@ -515,7 +515,13 @@ impl ArrangementView {
             base
         };
         let frozen = if tr.frozen.is_some() { 16.0 } else { 0.0 };
-        (base - frozen - self.track_indent(track)).max(16.0)
+        // The CC badge of a track with controller lanes sits left of the keyboard arrow.
+        let badge = if tr.controllers.is_empty() || hr.height() < super::COMPACT_BELOW {
+            0.0
+        } else {
+            26.0
+        };
+        (base - frozen - badge - self.track_indent(track)).max(16.0)
     }
 
     /// What a press on the name of a track header is, when it is on it.

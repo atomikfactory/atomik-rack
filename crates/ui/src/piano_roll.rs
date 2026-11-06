@@ -1434,13 +1434,16 @@ impl PianoRollView {
             grid: None,
             content: ClipContent::Notes(atomik_model::NoteList::new()),
         });
+        // The stand-in clip starts at tick 0, so its grid is the song's own: the whole meter map
+        // (bars restart at every meter change), not the one meter of a clip.
         let meter = Meter::at(&doc.song, 0);
+        let bars = Bars::of(&doc.song);
         let same = self.clip == clip && self.device.is_some() == clip.is_some();
-        if !same || meter != self.meter {
+        if !same || meter != self.meter || bars != self.bars {
             self.device = clip.is_some().then(|| device.clone());
             self.clip = clip;
             self.meter = meter;
-            self.bars = Bars::single(meter);
+            self.bars = bars;
             self.prune_controller_selection();
             self.repaint = true;
         }
@@ -1703,6 +1706,12 @@ impl PianoRollView {
                 Rect::new(b.x0 + x0, y, b.x0 + x1, y + 16.0)
             }
         }
+    }
+
+    /// The bar grid the roll draws: one meter from bar 1 for a clip (counted from the clip's
+    /// start), the song's whole meter map in the track mode.
+    pub fn bars(&self) -> &Bars {
+        &self.bars
     }
 
     fn step(&self, modifiers: Modifiers) -> Option<i64> {
@@ -4893,11 +4902,20 @@ impl PianoRollView {
             .spacing(1.2),
         );
         if let Some(clip) = &self.clip {
-            let bar = self.meter.bar_ticks();
-            let (b0, b1) = (
-                clip.start / bar + 1,
-                (clip.start + clip.length + bar - 1) / bar,
-            );
+            let (b0, b1) = if self.track.is_some() {
+                // Bars of the song's meter map.
+                (
+                    self.bars.bar_of(clip.start),
+                    self.bars
+                        .bar_of((clip.start + clip.length - 1).max(clip.start)),
+                )
+            } else {
+                let bar = self.meter.bar_ticks();
+                (
+                    clip.start / bar + 1,
+                    (clip.start + clip.length + bar - 1) / bar,
+                )
+            };
             let text = if self.track.is_some() {
                 format!("{}  ·  bars {b0}–{b1}  ·  outside the clips", self.title)
             } else {

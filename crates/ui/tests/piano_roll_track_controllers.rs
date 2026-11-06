@@ -264,3 +264,65 @@ fn opening_a_clip_leaves_the_track_mode() {
     v.close();
     assert_eq!(v.track(), None);
 }
+
+fn with_meter_change() -> (PianoRollView, Document, Registry) {
+    let (mut v, mut d, reg) = setup(vec![ControllerLane::new(
+        MOD,
+        vec![pt(0, 0.5, Curve::Step)],
+    )]);
+    d.apply(
+        Command::Song(SongCommand::SetMeterMap(vec![
+            atomik_core::MeterEvent::new(1, 4, 4),
+            atomik_core::MeterEvent::new(3, 3, 4),
+        ])),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    (v, d, reg)
+}
+
+#[test]
+fn the_track_grid_follows_the_meter_map_of_the_song() {
+    let (v, d, _reg) = with_meter_change();
+    let bars = v.bars();
+    assert_eq!(bars.segments().len(), 2, "one segment per meter event");
+    let bar = 4 * atomik_core::PPQ;
+    // Two bars of 4/4, then bars of three beats.
+    assert_eq!(bars.bar_ticks_at(0), bar);
+    assert_eq!(bars.bar_ticks_at(2 * bar), 3 * atomik_core::PPQ);
+    assert_eq!(bars.bar_of(2 * bar), 3);
+    assert_eq!(bars.bar_of(2 * bar + 3 * atomik_core::PPQ), 4);
+    assert_eq!(*bars, atomik_ui::timeline::Bars::of(&d.doc().song));
+}
+
+#[test]
+fn the_track_grid_returns_to_one_meter_when_the_map_is_undone() {
+    let (mut v, mut d, reg) = with_meter_change();
+    d.undo().unwrap();
+    v.sync(d.doc(), &reg);
+    assert_eq!(v.bars().segments().len(), 1);
+}
+
+#[test]
+fn the_track_title_counts_bars_through_the_meter_map() {
+    let (mut v, d, reg) = with_meter_change();
+    let end = d.doc().song.end.max(atomik_core::PPQ);
+    let last = atomik_ui::timeline::Bars::of(&d.doc().song).bar_of(end - 1);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    let want = format!("bars 1\u{2013}{last}");
+    assert!(
+        dl.texts().iter().any(|t| t.contains(&want)),
+        "{want} in {:?}",
+        dl.texts()
+    );
+}
+
+#[test]
+fn a_clip_roll_keeps_its_one_meter() {
+    let (mut v, d, reg) = with_meter_change();
+    v.open(atomik_model::ClipId(1));
+    v.sync(d.doc(), &reg);
+    assert_eq!(v.bars().segments().len(), 1);
+}

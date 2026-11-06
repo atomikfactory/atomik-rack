@@ -952,6 +952,9 @@ impl<S: EngineSink> AppCore<S> {
                 Some(device) => self.open_step_editor(device, Some(id)),
                 None => self.open_piano_roll(id),
             },
+            UiAction::OpenTrackControllers(device) => {
+                self.open_track_controllers(device);
+            }
             UiAction::ClosePianoRoll => self.close_piano_roll(),
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
             UiAction::SetTuner { device, on } => self.set_tuner(device, on),
