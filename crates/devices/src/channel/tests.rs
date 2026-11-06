@@ -126,6 +126,8 @@ fn descriptor_keys_match_contract_exactly() {
             "input.phase_r",
             "dyn.bypass",
             "eq.bypass",
+            "pcomp.key",
+            "pcomp.pre",
         ]
         .map(String::from),
     );
@@ -1990,4 +1992,118 @@ fn bypassing_the_eq_takes_it_out_and_the_settings_come_back() {
     settled(&mut h, &["out_l"]);
     h.set_param("eq.bypass", 0.0);
     assert!(approx(settled(&mut h, &["out_l"])[0], eq, 1e-4));
+}
+
+// ------------------------------------------------------------------ key and tap of the parallel compressor
+
+/// `out_l` of a strip with the parallel compressor fully wet, a constant `key_in` and `setup`.
+fn pcomp_keyed(key: Option<f32>, setup: impl FnOnce(&mut DeviceHarness)) -> Vec<f32> {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("pcomp.on", 1.0);
+    h.set_param("pcomp.mix", 1.0);
+    for (k, v) in pcomp_params() {
+        h.set_param(k, v);
+    }
+    if let Some(v) = key {
+        dc(&mut h, "key_in", v);
+    }
+    setup(&mut h);
+    run_signal(&mut h, &["in_l", "in_r"], program, 200, &["out_l"]).remove(0)
+}
+
+#[test]
+fn the_parallel_compressor_listens_to_the_key_only_when_enabled_and_connected() {
+    let own = pcomp_keyed(None, |_| {});
+    // The key switch alone, or a connected key alone, change nothing.
+    let switch_only = pcomp_keyed(None, |h| h.set_param("pcomp.key", 1.0));
+    let key_only = pcomp_keyed(Some(0.9), |_| {});
+    for other in [&switch_only, &key_only] {
+        assert!(
+            own.iter()
+                .zip(other.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+    }
+    // A loud key squashes the quiet passages too, which the signal itself does not.
+    let keyed = pcomp_keyed(Some(0.9), |h| h.set_param("pcomp.key", 1.0));
+    let quiet = |v: &[f32]| {
+        v[4_800 + 2_400..2 * 4_800]
+            .iter()
+            .fold(0.0f32, |m, x| m.max(x.abs()))
+    };
+    assert!(
+        quiet(&keyed) < quiet(&own) * 0.7,
+        "{} vs {}",
+        quiet(&keyed),
+        quiet(&own)
+    );
+    // The dynamics section is not keyed by it.
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("pcomp.key", 1.0);
+    h.set_param("comp.on", 1.0);
+    h.set_param("comp.threshold", -30.0);
+    dc(&mut h, "key_in", 0.9);
+    let g = sine_gain_db(&mut h, &["in_l"], "out_l", 1_000.0, 0.01, 0.3);
+    assert!(g.abs() < 0.05, "{g}");
+}
+
+#[test]
+fn the_parallel_key_matches_a_standalone_compressor_fed_by_the_key() {
+    let got = pcomp_keyed(Some(0.5), |h| h.set_param("pcomp.key", 1.0));
+    let mut c = Compressor::new(SR as f32);
+    c.set_threshold_db(-30.0);
+    c.set_ratio(8.0);
+    c.set_attack_ms(10.0);
+    c.set_release_ms(150.0);
+    let makeup = db_to_gain(6.0);
+    for (n, y) in got.iter().enumerate() {
+        let x = program(n);
+        let g = c.process(0.5, 0.5) * makeup;
+        assert!(approx(*y, x * g, 1e-5), "{n}: {y} vs {}", x * g);
+    }
+}
+
+#[test]
+fn the_pre_insert_tap_compresses_the_signal_the_insert_chain_receives() {
+    // No insert cabled: the tap and the return are the same signal, so the tap is invisible.
+    let post = pcomp_keyed(None, |_| {});
+    let pre = pcomp_keyed(None, |h| h.set_param("pcomp.pre", 1.0));
+    assert!(
+        post.iter()
+            .zip(&pre)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    // A return that differs from the send (a constant) shows which signal is compressed: with
+    // the tap before the insert the wet path is the program, with the default tap it is the
+    // return.
+    let wet = |pre: bool| {
+        let mut h = channel();
+        h.set_param("pan", -1.0);
+        h.set_param("pcomp.on", 1.0);
+        h.set_param("pcomp.mix", 1.0);
+        for (k, v) in pcomp_params() {
+            h.set_param(k, v);
+        }
+        h.set_param("pcomp.pre", if pre { 1.0 } else { 0.0 });
+        dc(&mut h, "insert_return_l", 0.02);
+        dc(&mut h, "insert_return_r", 0.02);
+        run_signal(&mut h, &["in_l", "in_r"], program, 200, &["out_l"]).remove(0)
+    };
+    let (after, before) = (wet(false), wet(true));
+    let mut c = Compressor::new(SR as f32);
+    c.set_threshold_db(-30.0);
+    c.set_ratio(8.0);
+    c.set_attack_ms(10.0);
+    c.set_release_ms(150.0);
+    let makeup = db_to_gain(6.0);
+    for (n, y) in before.iter().enumerate() {
+        let x = program(n);
+        let g = c.process(x, x) * makeup;
+        assert!(approx(*y, x * g, 1e-5), "{n}: {y} vs {}", x * g);
+    }
+    // After the inserts the wet path is the (quiet, constant) return, not the program.
+    assert!(after.iter().skip(40).all(|v| v.abs() < 0.1));
+    assert!(before.iter().skip(40).any(|v| v.abs() > 0.3));
 }

@@ -95,13 +95,17 @@
 //!   the dynamics section, with its own threshold, ratio, attack and release, an RMS detector and
 //!   the soft knee) followed by `pcomp.makeup` dB, blended with the dry signal: `out = dry ·
 //!   (1 − mix) + compressed · makeup · mix`, so `pcomp.mix` 1 is the compressor alone. It listens
-//!   to the signal it processes (no key input) and has **no lookahead**, so it adds no latency:
+//!   to the signal it processes, or to `key_in` while `pcomp.key` is set and `key_in` is connected
+//!   (the key is not delayed by the inserts), and has **no lookahead**, so it adds no latency:
 //!   the dry and the compressed signal are sample aligned and the strip reports nothing for it.
 //!   The blend is on when `pcomp.on` is set and `pcomp.mix` is above 0; both go through the 5 ms
 //!   smoother, so there is no click, and a section that is off (the default) and settled costs
 //!   nothing and leaves the signal untouched bit for bit. The compressor starts from a cleared
 //!   state whenever the section switches on. `gr_cv_out` and the meters are those of the dynamics
-//!   section only.
+//!   section only. With `pcomp.pre` the compressed copy is taken at the insert send (the signal
+//!   the insert chain receives) instead of after the inserts, and blended with the signal after
+//!   them: the copy does not pass through the chain, so it is sample aligned with the dry signal
+//!   only while the inserts add no latency and `latency.adjust` is 0.
 //! * **`latency.adjust`** is a *relative* trim of −[`MAX_LATENCY_ADJUST`]..=
 //!   +[`MAX_LATENCY_ADJUST`] samples, default 0:
 //!   * **positive `N`:** the channel really delays its signal by `N` samples (at the start of
@@ -355,7 +359,11 @@ const P_PCOMP_PEAK: usize = P_TAP_LIVE + 2;
 const P_PHASE_R: usize = P_TAP_LIVE + 3;
 const P_DYN_BYPASS: usize = P_TAP_LIVE + 4;
 const P_EQ_BYPASS: usize = P_TAP_LIVE + 5;
-const PARAM_COUNT: usize = P_TAP_LIVE + 6;
+/// The parallel compressor's key switch (it listens to `key_in`) and its tap choice (the signal
+/// at the insert send instead of the one after the inserts).
+const P_PCOMP_KEY: usize = P_TAP_LIVE + 6;
+const P_PCOMP_PRE: usize = P_TAP_LIVE + 7;
+const PARAM_COUNT: usize = P_TAP_LIVE + 8;
 
 /// Full-scale swing of `fader_cv_in` in dB.
 const FADER_CV_DB: f32 = 24.0;
@@ -584,6 +592,13 @@ pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
     out[P_PHASE_R] = toggle(P_PHASE_R as u32, "input.phase_r", "Phase invert R", 0.0);
     out[P_DYN_BYPASS] = toggle(P_DYN_BYPASS as u32, "dyn.bypass", "Dynamics bypass", 0.0);
     out[P_EQ_BYPASS] = toggle(P_EQ_BYPASS as u32, "eq.bypass", "EQ bypass", 0.0);
+    out[P_PCOMP_KEY] = toggle(P_PCOMP_KEY as u32, "pcomp.key", "Parallel comp key", 0.0);
+    out[P_PCOMP_PRE] = toggle(
+        P_PCOMP_PRE as u32,
+        "pcomp.pre",
+        "Parallel comp pre-insert",
+        0.0,
+    );
     let mut k = 0;
     while k < SENDS {
         out[P_SEND_TRIM_FIRST + k] = cv[k];
@@ -920,6 +935,8 @@ pub struct Channel {
     /// Copy of `key_in` from stage 0 (stage 1 runs the dynamics with `route.insert_pre`).
     key: Block,
     key_active: bool,
+    /// The parallel compressor listens to the `key_in` copy (`pcomp.key` and `key_in` cabled).
+    pcomp_key_active: bool,
     /// Insert routing latched in stage 0 for stage 1.
     insert_pre: bool,
     /// Dynamics gain-reduction CV, written in stage 1.
@@ -1003,6 +1020,7 @@ impl Channel {
             mid: ([0.0; BATCH], [0.0; BATCH]),
             key: [0.0; BATCH],
             key_active: false,
+            pcomp_key_active: false,
             insert_pre: false,
             gr: [0.0; BATCH],
             fresh: true,
@@ -1309,6 +1327,14 @@ impl Channel {
     /// The parallel compressor: blends the compressed signal into the dry one (see the module
     /// documentation). Nothing runs while it is off and settled.
     fn parallel_stage(&mut self, l: &mut Block, r: &mut Block) {
+        // The compressed copy comes from the tap: the signal after the inserts (the default, `l`
+        // and `r` themselves) or the one at the insert send (`pcomp.pre`).
+        let (src_l, src_r) = if self.on(P_PCOMP_PRE) {
+            self.mid
+        } else {
+            (*l, *r)
+        };
+        let key = self.pcomp_key_active.then_some(self.key);
         let on = self.pcomp_mix.target() > 0.0;
         if on && !self.pcomp_active {
             self.pcomp_active = true;
@@ -1322,9 +1348,10 @@ impl Channel {
         }
         for n in 0..BATCH {
             let m = self.pcomp_mix.next_value();
-            let g = self.pcomp.process(l[n], r[n]) * self.pcomp_makeup.next_value();
-            l[n] += (l[n] * g - l[n]) * m;
-            r[n] += (r[n] * g - r[n]) * m;
+            let (dl, dr) = key.map_or((src_l[n], src_r[n]), |k| (k[n], k[n]));
+            let g = self.pcomp.process(dl, dr) * self.pcomp_makeup.next_value();
+            l[n] += (src_l[n] * g - l[n]) * m;
+            r[n] += (src_r[n] * g - r[n]) * m;
         }
     }
 
@@ -1389,6 +1416,7 @@ impl Channel {
         let (mut l, mut r, _) = stereo_in(ctx, S_IN_L, S_IN_R);
         self.key = finite(*ctx.input(SocketId(S_KEY)));
         self.key_active = self.on(P_KEY_ON) && ctx.is_connected(SocketId(S_KEY));
+        self.pcomp_key_active = self.on(P_PCOMP_KEY) && ctx.is_connected(SocketId(S_KEY));
         self.gr = [0.0; BATCH];
         for (a, b) in l.iter_mut().zip(r.iter_mut()) {
             *a *= self.input.next_value();

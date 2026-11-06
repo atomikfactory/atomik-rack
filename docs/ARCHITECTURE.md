@@ -3184,6 +3184,14 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
 - **Console readouts.** The trim knob (`input.gain`) writes its value in dB at rest where the label goes,
   and the gain-reduction bar writes the reduction in dB while it moves. The parallel compressor's detector
   is `pcomp.peak` (a PEAK button in the PARALLEL section).
+- **Key and tap of the parallel compressor.** `pcomp.key` and `pcomp.pre` are appended after `eq.bypass`. With
+  `pcomp.key` set and `key_in` cabled the parallel compressor detects on the key (the copy `stage0` takes, the same
+  one the dynamics use, not delayed by the inserts) instead of the signal it compresses; the dynamics section keeps
+  its own `key.on`. With `pcomp.pre` the compressed copy is the stage-0 signal at the insert send (`mid`), blended
+  into the signal after the inserts, so it does not pass through the chain and is aligned with the dry path only while
+  the chain and `latency.adjust` add no delay. The console has a KEY button in the PARALLEL section; the tap switch is
+  rack-only (`console_layout::RACK_ONLY`). A container in the chain is an effect with a `bypass` param (6e), so its
+  **B** and BYP ALL work like any slot's.
 - **Commands and tools.** `mixer.toggle_polarity` and `mixer.bypass_all_inserts` are registry
   commands in the Mixer menu without default keys; they act on the strips of the focused pane like
   the VCA commands (`AppCore::strips_for_vca`), flip all inverted strips back or invert all, and

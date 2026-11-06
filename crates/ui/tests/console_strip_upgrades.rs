@@ -47,6 +47,7 @@ fn the_parallel_section_follows_the_dynamics_and_holds_its_controls() {
         [
             ("pcomp.on", CtrlKind::Button),
             ("pcomp.peak", CtrlKind::Button),
+            ("pcomp.key", CtrlKind::Button),
             ("pcomp.threshold", CtrlKind::Knob),
             ("pcomp.ratio", CtrlKind::Knob),
             ("pcomp.mix", CtrlKind::Knob),
@@ -67,6 +68,7 @@ fn the_detail_params_are_in_the_rack_only_and_every_other_param_is_placed_once()
     let l = strip_layout(desc, Folds::default(), 900.0);
     let placed: Vec<&str> = l.controls.iter().map(|c| c.param).collect();
     for rack_only in [
+        "pcomp.pre",
         "pcomp.attack",
         "pcomp.release",
         "pcomp.makeup",
@@ -85,7 +87,14 @@ fn the_detail_params_are_in_the_rack_only_and_every_other_param_is_placed_once()
     for p in desc.params {
         if is_hidden_param(p.key)
             || p.key.starts_with("pcomp.a")
-            || ["pcomp.release", "pcomp.makeup", "dyn.bypass", "eq.bypass"].contains(&p.key)
+            || [
+                "pcomp.pre",
+                "pcomp.release",
+                "pcomp.makeup",
+                "dyn.bypass",
+                "eq.bypass",
+            ]
+            .contains(&p.key)
         {
             continue;
         }
@@ -108,7 +117,11 @@ fn the_parallel_button_and_the_polarity_switch_set_their_params_from_the_console
     let (doc, reg) = (console_doc(), console_registry_real_channel());
     let ch = key("ch-bass");
     let mut v = view(&doc, &reg);
-    for (param, want) in [("input.phase", 1.0f32), ("pcomp.on", 1.0)] {
+    for (param, want) in [
+        ("input.phase", 1.0f32),
+        ("pcomp.on", 1.0),
+        ("pcomp.key", 1.0),
+    ] {
         assert!(v.scroll_to_control(&ch, param), "{param} is shown");
         let p = v.control_center(&ch, param).expect(param);
         let sent: Vec<Command> = commands(&click(&mut v, &doc, &reg, p));

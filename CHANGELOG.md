@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Channel strip follow-ups: a key and a tap for the parallel compressor.** The parallel compressor listens to the
+  strip's key input while **KEY** is lit in the PARALLEL section (`pcomp.key`, with a key cabled; the dynamics
+  section keeps its own KEY), and `pcomp.pre`, in the rack's channel panel, compresses the signal the insert chain
+  receives instead of the one that comes back from it, blended with the signal after the inserts (the two are
+  aligned only while the inserts add no latency). Both are appended params that default to off, so a project that
+  does not touch them sounds as before. A container in the insert chain already had a bypass and a **B** on its
+  slot (a bypassed container passes its input through, without the latency of its inside); this is now covered by tests.
 - **Mixer group automation and the group chip in the rack.** The level of a VCA group is an automation lane: the
   group's right-click menu in the console has **Show Automation Lane** (and **Remove Automation Lane**), the lane
   sits on the master's automation track as "Group N level" over the group's range of -60 to +12 dB, and its

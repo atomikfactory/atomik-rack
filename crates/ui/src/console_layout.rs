@@ -453,7 +453,11 @@ const DYNAMICS: &[Row] = &[
     ]),
 ];
 const PARALLEL: &[Row] = &[
-    Row::Grid(&[b("pcomp.on", "PAR COMP"), b("pcomp.peak", "PEAK"), None]),
+    Row::Grid(&[
+        b("pcomp.on", "PAR COMP"),
+        b("pcomp.peak", "PEAK"),
+        b("pcomp.key", "KEY"),
+    ]),
     Row::Grid(&[
         k("pcomp.threshold", "THR"),
         k("pcomp.ratio", "RATIO"),
@@ -464,7 +468,8 @@ const PARALLEL: &[Row] = &[
 /// Params of the strip's descriptor that the console does not place (they are in the rack's
 /// channel panel) and that the MORE section must not pick up either. The two section bypasses
 /// are driven by the BYP ALL switch of the inserts.
-const RACK_ONLY: [&str; 5] = [
+const RACK_ONLY: [&str; 6] = [
+    "pcomp.pre",
     "pcomp.attack",
     "pcomp.release",
     "pcomp.makeup",

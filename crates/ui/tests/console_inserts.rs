@@ -474,3 +474,30 @@ fn scrolled_strip_with_six_inserts_matches_golden() {
     v.paint(&mut dl, &doc, &reg);
     check("console_inserts6_scrolled_1x.json", &dl.to_json());
 }
+
+#[test]
+fn the_b_of_a_container_slot_toggles_the_bypass_of_the_container() {
+    let (mut doc, mut reg) = (doc_with(2), console_registry());
+    reg.register(atomik_devices::container::factory()).unwrap();
+    for d in &mut doc.devices {
+        if d.key.0 == "fx2" {
+            d.type_id = atomik_model::CONTAINER_TYPE.into();
+        }
+    }
+    let ch = key("ch-bass");
+    let mut v = view(&doc, &reg);
+    let b = v
+        .insert_bypass_center(&ch, 1)
+        .expect("B on a container slot");
+    assert_eq!(
+        set_param_cmds(&click(&mut v, &doc, &reg, b)),
+        [("fx2".to_string(), "bypass".to_string(), 1.0)]
+    );
+    let doc = with_bypass(doc, &["fx2"]);
+    let mut v = view(&doc, &reg);
+    let b = v.insert_bypass_center(&ch, 1).unwrap();
+    assert_eq!(
+        set_param_cmds(&click(&mut v, &doc, &reg, b)),
+        [("fx2".to_string(), "bypass".to_string(), 0.0)]
+    );
+}

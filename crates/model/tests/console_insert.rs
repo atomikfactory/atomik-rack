@@ -491,3 +491,22 @@ fn a_strip_with_only_a_dynamics_section_in_use_can_still_be_bypassed() {
     d.apply(set_param("channel", "gate.on", 0.0), &reg).unwrap();
     assert_eq!(inserts_bypassed(d.doc(), &reg, &strip), Some(true));
 }
+
+#[test]
+fn a_container_insert_has_a_bypass_like_any_effect() {
+    let reg = console_registry();
+    let mut d = rack(&reg);
+    d.apply(set("channel", 0, new_fx("atomik.container")), &reg)
+        .unwrap();
+    let chain = chain_of(&d, &reg, "channel");
+    assert_eq!(chain.len(), 1);
+    let c = key(&chain[0]);
+    assert_eq!(
+        insert_bypass_states(d.doc(), &reg, &key("channel")),
+        [(c.clone(), false)]
+    );
+    let on = bypass_inserts_commands(d.doc(), &reg, &key("channel"), true);
+    assert_eq!(on.len(), 1);
+    d.apply(Command::Batch(on), &reg).unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &key("channel")), Some(true));
+}
