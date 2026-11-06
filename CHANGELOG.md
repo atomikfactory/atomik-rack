@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Library browser tidy-up.** Audio rows of the file browser draw a small waveform at the end of the name column
+  (48 bars of the first thirty seconds of the file, on a square-root scale so quiet files show). A worker reads it
+  for the visible rows only, newest request first, from the loudness picture the info pane already uses; the answer
+  is kept per file and size (up to 4000 files), a row without one, or whose file changed, draws nothing, and a narrow
+  panel leaves the name its room. Patch, container and clip items below the library folder can now be deleted: the
+  row menu has "Delete..." and the Delete key (command `files.delete`, Files context) asks in the path bar
+  (`Delete 'name'?`), Enter confirms and Esc, any other key or a click cancels. There is no system trash helper, so
+  the file is removed for good, together with the audio it alone uses in its sibling folder (`<name>/Audio`); audio
+  that another item or project of the same name still lists, or that cannot be read to tell, is kept and the status
+  line says so; a folder that is a link is never entered and folders are only removed once empty. Built-in devices,
+  projects, factory content, anything outside the library folder and any other file are refused with a message. The
+  item's favourite flag, tags, author, categories and list places are forgotten, a running preview stops and the
+  section is listed again. The project format is unchanged (44); the command count is 467.
 - **Library patch previews.** Space on a patch or container item of the file browser plays it without loading it:
   nothing is added to the song and the undo history is untouched. The item is built into a hidden scratch project
   and rendered with the bounce renderer on a worker thread, so no device is built or dropped on the audio thread.
