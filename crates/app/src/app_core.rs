@@ -3871,7 +3871,7 @@ pub use templates::{
 
 #[path = "app_core_versions.rs"]
 mod versions;
-pub use versions::VersionRow;
+pub use versions::{VersionComparison, VersionRow};
 
 #[path = "app_core_archive.rs"]
 mod archive;
