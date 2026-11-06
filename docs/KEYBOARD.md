@@ -417,6 +417,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
 | Collapse | files | `Left` | `Left` | `Left` |
+| Delete Library Item | files | `Delete` | `Delete` | `Delete` |
 | Expand | files | `Right` | `Right` | `Right` |
 | First Item | files | `Home` | `Home` | `Home` |
 | Last Item | files | `End` | `End` | `End` |
@@ -624,6 +625,7 @@ Commands without a key in this profile (menus and Settings still reach them): In
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
 | Collapse | files | `Left` | `Left` | `Left` |
+| Delete Library Item | files | `Delete` | `Delete` | `Delete` |
 | Expand | files | `Right` | `Right` | `Right` |
 | First Item | files | `Home` | `Home` | `Home` |
 | Last Item | files | `End` | `End` | `End` |

@@ -46,7 +46,25 @@
 //! blocks it, except for the item itself (a change of case). The sibling bundle folder
 //! `<stem>/` is renamed with the file; if that fails the file goes back. The favourite flag and
 //! tags move to the new path in `library.json`, and the panel lists the place again and selects
-//! the row. A refusal goes to the status line.
+//! the row and selects it. A refusal goes to the status line.
+//!
+//! # Delete
+//!
+//! `BrowseAction::DeleteItem` (the browser asked and the user confirmed, naming the item)
+//! removes a patch, container or clip item file from the library folder. There is no system
+//! trash helper, so the file is removed for good, and only what belongs to the item goes:
+//!
+//! * built-in devices (their rows are not files), anything outside the library folder (`..`
+//!   included), the factory folder, projects and every other kind of file are refused;
+//! * the item's own audio, `<stem>/Audio/<hash>.wav` of its sibling bundle for each asset the
+//!   item lists, is removed unless another item or project of the same stem (they share the
+//!   bundle) still lists that asset, or cannot be read to tell: that audio is kept and the
+//!   message says so. A bundle folder that is a link is never entered, and the folders go only
+//!   once empty (never a recursive delete);
+//! * the favourite flag, tags, author, categories and list places move out of `library.json`,
+//!   a running preview stops, and the panel lists the place again.
+//!
+//! A refusal or a failure goes to the status line.
 
 use super::*;
 use crate::browser_workers::{CopyAssets, CopyReport};
@@ -62,7 +80,7 @@ use atomik_model::{
     save_clip_file, save_device_item,
 };
 use atomik_ui::Modifiers;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Where a library item loads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -390,6 +408,79 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Deletes the library item `path` (see the module docs). The result goes to the status
+    /// line.
+    pub(super) fn delete_library_item(&mut self, path: &Path) {
+        match self.delete_item(path) {
+            Ok(message) => {
+                self.stop_preview();
+                self.library_deleted(path);
+                self.report(message);
+            }
+            Err(message) => self.report(message),
+        }
+    }
+
+    fn delete_item(&self, path: &Path) -> Result<String, String> {
+        let name = file_name(path);
+        if device_type_of(path).is_some() {
+            return Err("Built-in devices cannot be deleted".into());
+        }
+        let root = self.library_folder()?;
+        let inside = path != root
+            && path.starts_with(&root)
+            && !path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
+        if !inside {
+            return Err("Only items inside the library folder can be deleted".into());
+        }
+        let factory = path
+            .strip_prefix(&root)
+            .ok()
+            .and_then(|rel| rel.components().next())
+            .is_some_and(|c| c.as_os_str().eq_ignore_ascii_case("Factory"));
+        if factory {
+            return Err(format!("{name} is factory content and cannot be deleted"));
+        }
+        let kind = classify(path, false);
+        if !matches!(
+            kind,
+            Some(FileKind::Patch | FileKind::Container | FileKind::Clip)
+        ) {
+            return Err(format!("{name} is not a patch, container or clip item"));
+        }
+        if !path.is_file() {
+            return Err(format!("{name} is gone"));
+        }
+        // What the item uses, and what a same-named neighbour still uses.
+        let (own, kept_for) = if kind == Some(FileKind::Clip) {
+            (Vec::new(), None)
+        } else {
+            let own = item_hashes(path).map_err(|e| format!("{name} cannot be read: {e}"))?;
+            let kept_for =
+                shared_audio(path, &own).map_err(|e| format!("{name} cannot be deleted: {e}"))?;
+            (own, kept_for)
+        };
+        std::fs::remove_file(path).map_err(|e| format!("{name} cannot be deleted: {e}"))?;
+        let mut note = String::new();
+        if !own.is_empty() {
+            match &kept_for {
+                Some((who, hashes)) => {
+                    let free: Vec<String> = own
+                        .iter()
+                        .filter(|h| !hashes.contains(*h))
+                        .cloned()
+                        .collect();
+                    remove_item_audio(&path.with_extension(""), &free);
+                    note = format!(" (audio that {who} still uses was kept)");
+                }
+                None => remove_item_audio(&path.with_extension(""), &own),
+            }
+        }
+        Ok(format!("Deleted {name}{note}"))
+    }
+
     fn rename_item(&self, path: &Path, to: &str) -> Result<PathBuf, String> {
         let root = self.library_folder()?;
         let inside = path != root
@@ -579,6 +670,94 @@ fn same_name(a: &Path, b: &Path) -> bool {
         && a.file_name().zip(b.file_name()).is_some_and(|(x, y)| {
             x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
         })
+}
+
+/// The asset ids an item or project file lists (the keys of its `assets`).
+fn item_hashes(path: &Path) -> Result<Vec<String>, String> {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > crate::browser_workers::ITEM_PROBE_MAX) {
+        return Err("it is too large to read".into());
+    }
+    let text = atomik_model::read_document_text(path).map_err(|e| e.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(value
+        .get("assets")
+        .and_then(serde_json::Value::as_object)
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default())
+}
+
+/// The audio of `own` that another item or project of the same stem (the files that read the
+/// bundle `path` writes beside itself) lists: that file's name and the shared asset ids. A
+/// neighbour that cannot be read counts as using every asset. `Ok(None)` when nothing is
+/// shared; an error when the folder cannot be listed, so nothing can be shown to be free.
+fn shared_audio(path: &Path, own: &[String]) -> Result<Option<(String, BTreeSet<String>)>, String> {
+    let unreadable = || "its folder cannot be read".to_owned();
+    let stem = path
+        .file_stem()
+        .ok_or_else(unreadable)?
+        .to_string_lossy()
+        .to_lowercase();
+    let entries =
+        std::fs::read_dir(path.parent().ok_or_else(unreadable)?).map_err(|_| unreadable())?;
+    let mut shared: BTreeSet<String> = BTreeSet::new();
+    let mut who = String::new();
+    for entry in entries.flatten() {
+        let other = entry.path();
+        let sibling = other != path
+            && other.is_file()
+            && other
+                .file_stem()
+                .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem)
+            && matches!(
+                classify(&other, false),
+                Some(FileKind::Patch | FileKind::Container | FileKind::Project)
+            );
+        if !sibling {
+            continue;
+        }
+        match item_hashes(&other) {
+            Ok(used) => {
+                let both: Vec<&String> = own.iter().filter(|h| used.contains(*h)).collect();
+                if both.is_empty() {
+                    continue;
+                }
+                shared.extend(both.into_iter().cloned());
+            }
+            Err(_) => shared.extend(own.iter().cloned()),
+        }
+        if who.is_empty() {
+            who = file_name(&other);
+        }
+    }
+    Ok((!shared.is_empty()).then_some((who, shared)))
+}
+
+/// Removes `<bundle>/Audio/<hash>.wav` (and a `.peaks` file) for each of `hashes`, then the
+/// `Audio`, `.peaks` and bundle folders if they are empty. A folder that is a link, a name
+/// that is not an asset id and any failure are left alone: nothing outside the item's own
+/// files is touched.
+fn remove_item_audio(bundle: &Path, hashes: &[String]) {
+    let real_dir = |p: &Path| {
+        std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+    };
+    let audio = bundle.join("Audio");
+    if !real_dir(bundle) || !real_dir(&audio) {
+        return;
+    }
+    let peaks = audio.join(".peaks");
+    for hash in hashes {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let _ = std::fs::remove_file(audio.join(format!("{hash}.wav")));
+        if real_dir(&peaks) {
+            let _ = std::fs::remove_file(peaks.join(format!("{hash}.peaks")));
+        }
+    }
+    // `remove_dir` only removes an empty folder.
+    let _ = std::fs::remove_dir(&peaks);
+    let _ = std::fs::remove_dir(&audio);
+    let _ = std::fs::remove_dir(bundle);
 }
 
 /// The stem of `path` for a message.

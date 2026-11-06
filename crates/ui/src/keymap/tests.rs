@@ -89,6 +89,7 @@ fn reference_shadows_are_the_expected_notes() {
             "files Return files.open over transport.go_start",
             "files Space files.toggle_preview over transport.play_stop",
             "files Backspace files.parent over edit.delete",
+            "files Delete files.delete over edit.delete",
             "files F2 files.rename over view.toggle_spectrum_eq",
             "files Cmd+A files.select_all over edit.select_all",
             "files Cmd+F files.search over view.toggle_browser",
@@ -1027,6 +1028,7 @@ fn the_files_context_takes_the_panels_keys_before_the_global_ones() {
         ("Alt+Up", "files.parent"),
         ("F", "files.favorite"),
         ("F2", "files.rename"),
+        ("Delete", "files.delete"),
         ("Cmd+F", "files.search"),
         ("Cmd+A", "files.select_all"),
     ];
@@ -1037,7 +1039,6 @@ fn the_files_context_takes_the_panels_keys_before_the_global_ones() {
         ("F5", "view.toggle_console"),
         ("F3", "view.toggle_browser"),
         ("Cmd+Shift+Z", "edit.redo"),
-        ("Delete", "edit.delete"),
         ("Cmd+Return", "transport.record"),
     ];
     for os in Os::ALL {
@@ -1074,7 +1075,7 @@ fn files_commands_are_in_their_own_group_and_context() {
         .iter()
         .filter(|d| d.id.starts_with("files."))
         .collect();
-    assert_eq!(files.len(), 16);
+    assert_eq!(files.len(), 17);
     for d in files {
         assert_eq!(d.group, Group::Files, "{}", d.id);
         assert_eq!(d.context, Context::Files, "{}", d.id);

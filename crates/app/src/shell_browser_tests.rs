@@ -505,6 +505,7 @@ fn every_files_command_is_taken_by_the_shell_and_declines_nothing() {
         "files.parent",
         "files.favorite",
         "files.rename",
+        "files.delete",
         "files.search",
         "files.select_all",
     ] {

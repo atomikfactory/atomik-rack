@@ -289,6 +289,9 @@ impl FileBrowserView {
         if self.entry.is_some() && !lay.path.contains(pos) {
             self.entry = None;
         }
+        if self.confirm.take().is_some() {
+            return;
+        }
         if lay.handle.contains(pos) {
             self.gesture = Gesture::Resize;
         } else if lay.search.contains(pos) {
@@ -711,6 +714,10 @@ impl FileBrowserView {
             items.push(MenuItem::separator());
             items.push(MenuItem::new("Show in Folder", Act::Reveal(path.clone())));
         }
+        if self.deletable(&self.rows[row_idx as usize]) {
+            items.push(MenuItem::separator());
+            items.push(MenuItem::new("Delete...", Act::DeleteItem(path.clone())));
+        }
         if let Some(folder) = folder {
             items.push(MenuItem::separator());
             if self.places.bookmarks.contains(&folder) {
@@ -800,6 +807,7 @@ impl FileBrowserView {
             Some(Act::Load(p)) => emit(out, BrowseAction::Load(p)),
             Some(Act::OpenProject(p)) => emit(out, BrowseAction::OpenProject(p)),
             Some(Act::RenameItem(p)) => self.begin_rename_item(p),
+            Some(Act::DeleteItem(p)) => self.confirm = Some(p),
             Some(Act::Go(p)) => emit(out, BrowseAction::Show(Place::Folder(p))),
             Some(Act::Reveal(p)) => emit(out, BrowseAction::Reveal(p)),
             Some(Act::EditAuthor) => {
@@ -867,7 +875,9 @@ impl FileBrowserView {
             return;
         }
         self.dirty = true;
-        if self.entry.is_some() {
+        if self.confirm.is_some() {
+            self.confirm_key(key, out);
+        } else if self.entry.is_some() {
             self.entry_key(key, mods, out);
         } else if self.search_focused {
             self.search_key(key, mods, out);
@@ -879,6 +889,24 @@ impl FileBrowserView {
                 Pane::List => self.list_key(key, mods, out),
             }
         }
+    }
+
+    /// A key while the delete question is open: Enter confirms, every other key cancels it.
+    fn confirm_key(&mut self, key: &Key, out: &mut Vec<UiAction>) {
+        if let Some(path) = self.confirm.take()
+            && matches!(key, Key::Enter)
+        {
+            emit(out, BrowseAction::DeleteItem(path));
+        }
+    }
+
+    /// Whether the row is a library item the browser can delete: a patch, container or clip
+    /// file below the library folder (never a device, a project or anything outside).
+    fn deletable(&self, row: &FileRow) -> bool {
+        matches!(
+            row.kind,
+            FileKind::Patch | FileKind::Container | FileKind::Clip
+        ) && self.inside_library(&row.path)
     }
 
     fn entry_key(&mut self, key: &Key, mods: Modifiers, out: &mut Vec<UiAction>) {
@@ -1046,6 +1074,15 @@ impl FileBrowserView {
             }
             Key::Escape => emit(out, self.escape_action()),
             Key::Backspace => emit(out, BrowseAction::Parent),
+            Key::Delete => {
+                let target = cur
+                    .and_then(|c| self.row_at_pos(c))
+                    .filter(|r| self.deletable(r))
+                    .map(|r| r.path.clone());
+                if target.is_some() {
+                    self.confirm = target;
+                }
+            }
             Key::F(2) => {
                 let target = cur
                     .and_then(|c| self.row_at_pos(c))

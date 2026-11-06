@@ -1760,28 +1760,29 @@ fn device_rows_offer_only_load() {
 #[test]
 fn menu_load_and_open_as_project_emit_their_actions() {
     let mut v = library_view(LibrarySection::Patches, patch_rows());
-    let at = row_pt(1);
+    // Row 0: the longer menu of an item (it ends in Delete) still fits below it.
+    let at = row_pt(0);
     run(&mut v, &[right(at)]);
     assert_eq!(
         run(&mut v, &[down(menu_item(at, 0))]),
-        vec![BrowseAction::Load(p("Lead.atomikpatch"))]
+        vec![BrowseAction::Load(p("Box.atomikcontainer"))]
     );
     run(&mut v, &[right(at)]);
     assert_eq!(
         run(&mut v, &[down(menu_item(at, 1))]),
-        vec![BrowseAction::OpenProject(p("Lead.atomikpatch"))]
+        vec![BrowseAction::OpenProject(p("Box.atomikcontainer"))]
     );
 }
 
 #[test]
 fn rename_entry_starts_with_the_stem_and_commits_the_new_name() {
     let mut v = library_view(LibrarySection::Patches, patch_rows());
-    let at = row_pt(1);
+    let at = row_pt(0);
     run(&mut v, &[right(at)]);
     assert!(run(&mut v, &[down(menu_item(at, 2))]).is_empty());
     assert!(v.is_text_owner());
     assert!(
-        paint(&mut v).texts().contains(&"Lead"),
+        paint(&mut v).texts().contains(&"Box"),
         "prefilled with the stem"
     );
     // The text is selected: typing replaces it.
@@ -1789,7 +1790,7 @@ fn rename_entry_starts_with_the_stem_and_commits_the_new_name() {
     assert_eq!(
         run(&mut v, &[key(Key::Enter)]),
         vec![BrowseAction::RenameItem {
-            path: p("Lead.atomikpatch"),
+            path: p("Box.atomikcontainer"),
             to: "Pad".into()
         }]
     );
@@ -2562,4 +2563,190 @@ fn the_row_menu_of_a_midi_file_offers_import_and_the_type_filter_finds_it() {
     typed(&mut v, "kind:midi");
     let dl = paint(&mut v);
     assert!(dl.texts().contains(&"groove.mid") && !dl.texts().contains(&"kick.wav"));
+}
+
+// ----- waveform thumbnails ---------------------------------------------------------------------
+
+#[test]
+fn thumbnails_are_asked_for_once_per_visible_audio_row_only() {
+    let mut v = view();
+    let mut asked = v.take_thumb_requests();
+    asked.sort();
+    assert_eq!(
+        asked,
+        vec![
+            p("hat.wav"),
+            p("kick 1.wav"),
+            p("kick 10.wav"),
+            p("kick 2.wav"),
+            p("snare.wav")
+        ],
+        "audio rows, not the folder"
+    );
+    assert!(v.take_thumb_requests().is_empty(), "each path once");
+    // New rows ask again, except for a file whose thumbnail is known at its current size.
+    v.set_thumb(p("hat.wav"), 2048, vec![10, 200, 30]);
+    v.set_thumb(p("snare.wav"), 999, vec![10]);
+    v.set_rows(sample_rows());
+    let mut asked = v.take_thumb_requests();
+    asked.sort();
+    assert!(!asked.contains(&p("hat.wav")), "{asked:?}");
+    assert!(
+        asked.contains(&p("snare.wav")),
+        "its size changed: {asked:?}"
+    );
+}
+
+#[test]
+fn thumbnails_of_unseen_rows_wait_until_they_scroll_into_view() {
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    v.set_location(Place::Folder(PathBuf::from("/lib")));
+    v.set_rows((0..300).map(|i| audio(&format!("s{i:03}.wav"))).collect());
+    let first = v.take_thumb_requests();
+    assert!(!first.is_empty() && first.len() < 40, "{}", first.len());
+    assert!(!first.contains(&p("s299.wav")));
+}
+
+#[test]
+fn a_row_draws_its_thumbnail_only_when_it_has_one_and_there_is_room() {
+    let wide = |v: &mut FileBrowserView| v.set_bounds(Rect::new(0.0, 0.0, 800.0, 600.0));
+    let mut v = view();
+    wide(&mut v);
+    let plain = paint(&mut v).ops().len();
+    v.set_thumb(p("hat.wav"), 2048, vec![0, 128, 255, 128, 0, 64]);
+    let with = paint(&mut v).ops().len();
+    assert_eq!(with, plain + 6, "one bar per level");
+    // A thumbnail of another size, an empty one and a narrow panel draw nothing.
+    v.set_thumb(p("hat.wav"), 1, vec![255; 6]);
+    assert_eq!(paint(&mut v).ops().len(), plain);
+    v.set_thumb(p("hat.wav"), 2048, Vec::new());
+    assert_eq!(paint(&mut v).ops().len(), plain);
+    v.set_thumb(p("hat.wav"), 2048, vec![0, 128, 255]);
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    let narrow = paint(&mut v).ops().len();
+    v.set_thumb(p("hat.wav"), 2048, Vec::new());
+    assert_eq!(narrow, paint(&mut v).ops().len(), "no room: nothing drawn");
+}
+
+#[test]
+fn the_thumbnail_cache_is_bounded() {
+    let mut v = view();
+    let row = |name: &str| FileRow {
+        path: PathBuf::from(name),
+        size: 1,
+        ..audio("x.wav")
+    };
+    v.set_thumb(PathBuf::from("/t/old.wav"), 1, vec![1]);
+    for i in 0..4_100 {
+        v.set_thumb(PathBuf::from(format!("/t/{i}.wav")), 1, vec![1]);
+    }
+    v.set_rows(vec![row("/t/old.wav"), row("/t/4099.wav")]);
+    assert_eq!(
+        v.take_thumb_requests(),
+        vec![PathBuf::from("/t/old.wav")],
+        "the full cache started again: the old one is asked for, the recent one is kept"
+    );
+}
+
+// ----- deleting library items ------------------------------------------------------------------
+
+fn asks_to_delete(v: &mut FileBrowserView) -> bool {
+    paint(v)
+        .texts()
+        .iter()
+        .any(|t| t.starts_with("Delete '") && t.ends_with("Esc cancels"))
+}
+
+#[test]
+fn the_row_menu_of_an_item_offers_delete_and_asks_before_it_emits() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    let at = row_pt(0);
+    run(&mut v, &[right(at)]);
+    assert!(paint(&mut v).texts().contains(&"Delete..."));
+    // Rows: Load, Open as Project, Rename, sep, New tag, Toggle, sep, Author, Categories, sep,
+    // New list, sep, Show in Folder, sep, Delete.
+    let delete = menu_after(
+        at,
+        3.0 * 22.0 + 8.0 + 2.0 * 22.0 + 8.0 + 2.0 * 22.0 + 8.0 + 22.0 + 8.0 + 22.0 + 8.0,
+    );
+    assert!(run(&mut v, &[down(delete)]).is_empty(), "it only asks");
+    assert!(asks_to_delete(&mut v));
+    assert!(
+        paint(&mut v)
+            .texts()
+            .iter()
+            .any(|t| t.contains("Delete 'Box")),
+        "the question names the item"
+    );
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::DeleteItem(p("Box.atomikcontainer"))]
+    );
+    assert!(!asks_to_delete(&mut v));
+}
+
+#[test]
+fn the_delete_key_asks_about_the_cursor_item_and_escape_or_a_click_cancels() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    click(&mut v, 2);
+    assert!(run(&mut v, &[key(Key::Delete)]).is_empty());
+    assert!(asks_to_delete(&mut v));
+    assert!(
+        paint(&mut v)
+            .texts()
+            .iter()
+            .any(|t| t.contains("Riff.atomikclip"))
+    );
+    assert!(run(&mut v, &[key(Key::Escape)]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    // A second Delete does not confirm; other keys cancel without an action.
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(run(&mut v, &[key(Key::Delete)]).is_empty());
+    assert!(!asks_to_delete(&mut v), "any other key cancels");
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(run(&mut v, &[ch('x')]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    // A click cancels and does nothing else.
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(run(&mut v, &[down(row_pt(0)), up(row_pt(0))]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    // A new listing drops a pending question.
+    run(&mut v, &[key(Key::Delete)]);
+    v.set_rows(patch_rows());
+    assert!(!asks_to_delete(&mut v));
+}
+
+#[test]
+fn delete_is_not_offered_for_projects_devices_audio_or_items_outside_the_library() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    // Row 3 is the project.
+    click(&mut v, 3);
+    assert!(run(&mut v, &[key(Key::Delete)]).is_empty());
+    assert!(!asks_to_delete(&mut v));
+    run(&mut v, &[right(row_pt(3))]);
+    assert!(!paint(&mut v).texts().contains(&"Delete..."));
+    run(&mut v, &[key(Key::Escape)]);
+    // A device row and an audio file.
+    let mut rows = vec![device_row("atomik.poly", "Poly Synth", "INSTRUMENT")];
+    rows.push(audio("kick.wav"));
+    v.set_rows(rows);
+    for row in 0..2 {
+        click(&mut v, row);
+        run(&mut v, &[key(Key::Delete)]);
+        assert!(!asks_to_delete(&mut v), "row {row}");
+    }
+    // An item beyond the library folder.
+    v.set_rows(patch_rows());
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(!asks_to_delete(&mut v));
+    // Dropping the library folder while a question is open closes it.
+    v.set_library_folder(Some(PathBuf::from("/lib")));
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::Delete)]);
+    assert!(asks_to_delete(&mut v));
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    assert!(!asks_to_delete(&mut v));
 }

@@ -31,9 +31,19 @@
 //! menu adds "Open as Project" and, for files below [`FileBrowserView::set_library_folder`],
 //! "Rename..." (also `F2`), which ends in [`BrowseAction::RenameItem`]. Dragging an item (or a
 //! device row) emits [`BrowseAction::DragFiles`] with its path or URI like an audio file.
+//! "Delete..." (also `Delete`) on a patch, container or clip item below the library folder
+//! asks in the path bar (`Delete 'name'?`): Enter ends in [`BrowseAction::DeleteItem`], any
+//! other key or a click cancels. Devices and projects offer no delete.
 //! Space on a clip, patch or container item emits [`BrowseAction::Preview`] (and
 //! [`BrowseAction::StopPreview`] while it plays), as for an audio file; selecting one does not
 //! start a preview.
+//!
+//! # Thumbnails
+//!
+//! A visible audio row draws a small waveform at the end of its name column when the panel is
+//! wide enough. The app polls [`FileBrowserView::take_thumb_requests`] every frame (each path
+//! once until the rows are replaced) and answers with [`FileBrowserView::set_thumb`]; a row
+//! without an answer, or whose file size changed since, draws nothing.
 //!
 //! # Info requests
 //!
@@ -80,6 +90,9 @@ pub struct PlacesData {
     /// Drives / file-system roots and the home folder (expandable).
     pub roots: Vec<PathBuf>,
 }
+
+/// The most waveform thumbnails the panel keeps.
+const THUMB_CACHE: usize = 4_000;
 
 /// What the info pane shows of an audio file beyond its row: read by the app on a worker.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -212,6 +225,12 @@ pub struct FileBrowserView {
     list_scroll: f64,
     preview: Option<(PathBuf, f32)>,
     requested_info: BTreeSet<PathBuf>,
+    /// Waveform thumbnails of audio rows by path: the file size they were read at and the
+    /// levels (0 to 255, empty when the file could not be read). A row whose size differs
+    /// draws none.
+    thumbs: BTreeMap<PathBuf, (u64, Vec<u8>)>,
+    /// Rows whose thumbnail was asked for since the rows were last replaced.
+    requested_thumbs: BTreeSet<PathBuf>,
     /// What the app told about the audio file of the info pane (see [`FileBrowserView::set_detail`]).
     detail: Option<(PathBuf, DetailData)>,
     /// The file whose detail was asked for last.
@@ -224,6 +243,9 @@ pub struct FileBrowserView {
     search: TextField,
     search_focused: bool,
     entry: Option<Entry>,
+    /// The library item a delete question is about: the path bar names it, Enter confirms and
+    /// anything else cancels.
+    confirm: Option<PathBuf>,
     menu: Option<menu::Menu>,
     gesture: Gesture,
     hover: Hover,
@@ -278,6 +300,8 @@ impl FileBrowserView {
             list_scroll: 0.0,
             preview: None,
             requested_info: BTreeSet::new(),
+            thumbs: BTreeMap::new(),
+            requested_thumbs: BTreeSet::new(),
             detail: None,
             requested_detail: None,
             info_dirty: false,
@@ -286,6 +310,7 @@ impl FileBrowserView {
             search: TextField::default(),
             search_focused: false,
             entry: None,
+            confirm: None,
             menu: None,
             gesture: Gesture::None,
             hover: Hover::None,
@@ -436,7 +461,9 @@ impl FileBrowserView {
         self.anchor = None;
         self.list_scroll = 0.0;
         self.requested_info.clear();
+        self.requested_thumbs.clear();
         self.requested_detail = None;
+        self.confirm = None;
         self.resort();
     }
 
@@ -567,6 +594,13 @@ impl FileBrowserView {
             }) {
                 self.entry = None;
             }
+            if self
+                .confirm
+                .as_ref()
+                .is_some_and(|p| !self.inside_library(p))
+            {
+                self.confirm = None;
+            }
             self.dirty = true;
         }
     }
@@ -667,6 +701,46 @@ impl FileBrowserView {
                 _ => Vec::new(),
             })
             .collect()
+    }
+
+    /// The visible audio rows without a thumbnail of their current size that were not asked for
+    /// yet (each path once until [`Self::set_rows`]). Polled by the app every frame next to
+    /// [`Self::take_info_requests`]; answer each with [`Self::set_thumb`].
+    pub fn take_thumb_requests(&mut self) -> Vec<PathBuf> {
+        let range = layout::visible_range(
+            self.list_scroll,
+            self.lay().list.height(),
+            layout::ROW_H,
+            self.view.len(),
+        );
+        let mut want = Vec::new();
+        for pos in range {
+            let r = &self.rows[self.view[pos] as usize];
+            let known = self
+                .thumbs
+                .get(&r.path)
+                .is_some_and(|(size, _)| *size == r.size);
+            if matches!(r.kind, FileKind::Audio(_))
+                && !known
+                && !self.requested_thumbs.contains(&r.path)
+            {
+                want.push(r.path.clone());
+            }
+        }
+        self.requested_thumbs.extend(want.iter().cloned());
+        want
+    }
+
+    /// Answers [`Self::take_thumb_requests`]: the waveform thumbnail of `path` read at file size
+    /// `size`, as levels from 0 to 255 in time order (empty when the file could not be read:
+    /// the row then draws none and is not asked again). At most 4000
+    /// thumbnails are kept (the cache starts again when it is full).
+    pub fn set_thumb(&mut self, path: PathBuf, size: u64, levels: Vec<u8>) {
+        if self.thumbs.len() >= THUMB_CACHE && !self.thumbs.contains_key(&path) {
+            self.thumbs.clear();
+        }
+        self.thumbs.insert(path, (size, levels));
+        self.dirty = true;
     }
 
     /// The audio file the info pane shows when its detail was not asked for yet (once per

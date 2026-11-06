@@ -1127,3 +1127,170 @@ fn last_saved_item_names_the_newest_saved_file() {
         )
     );
 }
+
+// ------------------------------------------------------------------ delete
+
+fn delete_item(c: &mut AppCore<RecordingSink>, path: &Path) {
+    c.browse(BrowseAction::DeleteItem(path.to_path_buf()));
+}
+
+fn says(c: &AppCore<RecordingSink>, text: &str) {
+    let message = c.last_rejection().unwrap_or_default().to_lowercase();
+    assert!(
+        message.contains(&text.to_lowercase()),
+        "{text:?}: {message}"
+    );
+}
+
+#[test]
+fn delete_item_removes_the_file_its_own_audio_and_its_marks() {
+    let lib = Tmp::new("delete-audio");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let dir = lib.path("Library/Patches");
+    let item = dir.join("Kit.atomikpatch");
+    a.browse(BrowseAction::ToggleFavorite(vec![item.clone()]));
+    assert!(a.library_mark(&item).favorite);
+    assert!(dir.join(format!("Kit/Audio/{hash}.wav")).is_file());
+    delete_item(&mut a, &item);
+    assert_eq!(a.last_rejection(), Some("Deleted Kit.atomikpatch"));
+    assert!(files_in(&dir).is_empty(), "{:?}", files_in(&dir));
+    assert!(!a.library_mark(&item).favorite, "the mark went with it");
+    // The song's own audio is not the item's: it is untouched.
+    assert!(a.song_assets().contains_key(&hash));
+}
+
+#[test]
+fn delete_item_without_audio_removes_just_the_file_and_a_clip_item_too() {
+    let lib = Tmp::new("delete-plain");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    std::fs::write(lib.path("Library/Patches/Notes.txt"), "keep").unwrap();
+    delete_item(&mut c, &path);
+    assert_eq!(files_in(&lib.path("Library/Patches")), ["Notes.txt"]);
+    let clip = lib.path("Library/Clips/Riff.atomikclip");
+    std::fs::create_dir_all(clip.parent().unwrap()).unwrap();
+    std::fs::write(&clip, "{}").unwrap();
+    delete_item(&mut c, &clip);
+    assert!(!clip.exists());
+    says(&c, "Deleted Riff.atomikclip");
+}
+
+#[test]
+fn delete_item_keeps_audio_that_another_item_of_the_same_name_still_uses() {
+    let lib = Tmp::new("delete-shared");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let dir = lib.path("Library/Patches");
+    let wav = dir.join(format!("Kit/Audio/{hash}.wav"));
+    // A container of the same name beside the patch reads the same bundle.
+    let twin = dir.join("Kit.atomikcontainer");
+    std::fs::copy(dir.join("Kit.atomikpatch"), &twin).unwrap();
+    delete_item(&mut a, &dir.join("Kit.atomikpatch"));
+    says(&a, "still uses");
+    says(&a, "Kit.atomikcontainer");
+    assert!(wav.is_file(), "the shared sample stays");
+    assert!(twin.is_file());
+    // Once the last user goes, the audio and its folders go too.
+    delete_item(&mut a, &twin);
+    assert!(!wav.exists());
+    assert!(files_in(&dir).is_empty(), "{:?}", files_in(&dir));
+}
+
+#[test]
+fn delete_item_keeps_all_audio_when_a_neighbour_cannot_be_read_to_tell() {
+    let lib = Tmp::new("delete-unreadable");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let dir = lib.path("Library/Patches");
+    std::fs::write(dir.join("Kit.atomik"), "not json").unwrap();
+    delete_item(&mut a, &dir.join("Kit.atomikpatch"));
+    assert!(dir.join(format!("Kit/Audio/{hash}.wav")).is_file());
+    says(&a, "still uses");
+}
+
+#[test]
+fn delete_item_only_removes_the_assets_the_item_lists_and_empty_folders() {
+    let lib = Tmp::new("delete-own");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let dir = lib.path("Library/Patches");
+    // Another file in the bundle, and a file that merely has an asset-like name.
+    let stray = dir.join("Kit/Audio/notes.txt");
+    std::fs::write(&stray, "mine").unwrap();
+    let other = dir.join(format!("Kit/Audio/{}.wav", "ab".repeat(32)));
+    std::fs::write(&other, "x").unwrap();
+    delete_item(&mut a, &dir.join("Kit.atomikpatch"));
+    assert!(!dir.join(format!("Kit/Audio/{hash}.wav")).exists());
+    assert!(stray.is_file() && other.is_file(), "not the item's own");
+    assert!(dir.join("Kit/Audio").is_dir(), "a folder with files stays");
+}
+
+#[test]
+fn delete_item_refuses_devices_projects_factory_content_and_what_is_outside_the_library() {
+    let lib = Tmp::new("delete-refuse");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    // A built-in device row is not a file.
+    delete_item(&mut c, &device_uri(SYNTH));
+    says(&c, "built-in");
+    // A project, a sound file and a text file are not deletable items.
+    let projects = lib.path("Library/Projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    for name in ["Song.atomik", "kick.wav", "readme.txt"] {
+        let file = projects.join(name);
+        std::fs::write(&file, "x").unwrap();
+        delete_item(&mut c, &file);
+        assert!(file.is_file(), "{name}");
+        says(&c, "not a patch");
+    }
+    // Factory content.
+    let factory = lib.path("Library/Factory/Patches/Pad.atomikpatch");
+    std::fs::create_dir_all(factory.parent().unwrap()).unwrap();
+    std::fs::write(&factory, "x").unwrap();
+    delete_item(&mut c, &factory);
+    assert!(factory.is_file());
+    says(&c, "factory");
+    // Outside the library, climbing out with `..`, the library folder itself, a folder.
+    let outside = lib.path("Elsewhere/Lead.atomikpatch");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    std::fs::write(&outside, "x").unwrap();
+    delete_item(&mut c, &outside);
+    says(&c, "inside the library");
+    let sneaky = lib.path("Library/Patches/../../Elsewhere/Lead.atomikpatch");
+    delete_item(&mut c, &sneaky);
+    assert!(outside.is_file());
+    delete_item(&mut c, &lib.path("Library"));
+    delete_item(&mut c, &lib.path("Library/Patches"));
+    assert!(lib.path("Library/Patches").is_dir() && path.is_file());
+    // A gone item, and no library folder at all.
+    delete_item(&mut c, &lib.path("Library/Patches/Gone.atomikpatch"));
+    says(&c, "gone");
+    c.set_library_root(None);
+    delete_item(&mut c, &path);
+    says(&c, "library folder");
+    assert!(path.is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_item_never_follows_a_linked_bundle_folder_out_of_the_library() {
+    let lib = Tmp::new("delete-link");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let dir = lib.path("Library/Patches");
+    // The item's bundle folder becomes a link to a folder of the user's own samples.
+    let theirs = lib.path("Mine");
+    std::fs::create_dir_all(theirs.join("Audio")).unwrap();
+    let precious = theirs.join(format!("Audio/{hash}.wav"));
+    std::fs::write(&precious, "precious").unwrap();
+    std::fs::remove_dir_all(dir.join("Kit")).unwrap();
+    std::os::unix::fs::symlink(&theirs, dir.join("Kit")).unwrap();
+    delete_item(&mut a, &dir.join("Kit.atomikpatch"));
+    assert!(precious.is_file(), "a linked folder is left alone");
+}

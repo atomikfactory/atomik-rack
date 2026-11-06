@@ -7824,6 +7824,7 @@ fn files_key(id: &str, os: Os) -> Option<(Key, Modifiers)> {
         "files.parent" => (Key::Backspace, Modifiers::NONE),
         "files.favorite" => (Key::Char('f'), Modifiers::NONE),
         "files.rename" => (Key::F(2), Modifiers::NONE),
+        "files.delete" => (Key::Delete, Modifiers::NONE),
         "files.search" => (Key::Char('f'), command),
         "files.select_all" => (Key::Char('a'), command),
         _ => return None,
