@@ -25,7 +25,10 @@
 //!   a **drag** sideways on MIN or MAX moves the value continuously (the whole param range
 //!   over 300 px, Shift a tenth of that; [`MacrosAction::DragRange`] steps and one
 //!   [`MacrosAction::EndDrag`], so a drag is one undo step), and a click that does not travel is
-//!   the step described above;
+//!   the step described above; a **middle click** on MIN or MAX, or Enter with the pointer on it,
+//!   types the value in place (Enter keeps it, Esc drops it; the text is a number in the param's
+//!   unit, with `k` for kilohertz, `s` for seconds and a percent as 0 to 100; the value is held
+//!   to the param's range and rounded for a stepped param);
 //! * **CURVE** cycles the shape of the travel (linear, exp, log; a right click goes back) and
 //!   **SM** the smoothing time of a live move (a click goes to the next of a few times, a right
 //!   click or the wheel steps it; [`MacrosAction::SetShape`]).
@@ -60,8 +63,57 @@ const MERGE_BASE: u64 = 20 << 40;
 const DRAG_THRESHOLD: f64 = 3.0;
 /// Pixels of travel for the whole range of a param.
 const DRAG_PIXELS: f64 = 300.0;
+/// The most characters a typed range value holds.
+const ENTRY_CHARS: usize = 12;
 /// The smoothing times a click steps through, milliseconds.
 pub const SMOOTH_STEPS: [u16; 10] = [0, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000];
+
+/// How the text typed for MIN or MAX maps to a plain value of the param.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EntryUnit {
+    /// The number is the value (decibels, semitones, a count or a choice index).
+    #[default]
+    Number,
+    /// A percentage: 50 is 0.5.
+    Percent,
+    /// Hertz; a trailing `k` makes it kilohertz.
+    Hz,
+    /// Milliseconds; a trailing `s` makes it seconds.
+    Ms,
+}
+
+impl EntryUnit {
+    /// The text an edit starts from: the value as it is typed (a percentage as 0 to 100), without
+    /// a unit and without trailing zeros.
+    pub fn text(self, value: f32) -> String {
+        let shown = if self == EntryUnit::Percent {
+            value * 100.0
+        } else {
+            value
+        };
+        let text = format!("{shown:.3}");
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    }
+
+    /// The plain value typed text means: a number, then an optional unit (see the variants);
+    /// `None` when it is not a number.
+    pub fn parse(self, text: &str) -> Option<f32> {
+        let t = text.trim().to_lowercase();
+        let end = t
+            .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+')))
+            .unwrap_or(t.len());
+        let (number, suffix) = t.split_at(end);
+        let n: f32 = number.parse().ok()?;
+        let suffix = suffix.trim();
+        let value = match self {
+            EntryUnit::Percent => n / 100.0,
+            EntryUnit::Hz if suffix.starts_with('k') => n * 1000.0,
+            EntryUnit::Ms if suffix == "s" => n * 1000.0,
+            _ => n,
+        };
+        value.is_finite().then_some(value)
+    }
+}
 
 /// One assignment of a macro.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +148,8 @@ pub struct MacroAssignRow {
     pub max_text: String,
     /// The bank or the target is gone (the assignment does nothing).
     pub missing: bool,
+    /// How typed text for MIN and MAX maps to a value of the param.
+    pub unit: EntryUnit,
 }
 
 /// One macro of a bank.
@@ -266,6 +320,19 @@ struct Rename {
     text: String,
 }
 
+/// A range value being typed in place.
+#[derive(Debug, Clone, PartialEq)]
+struct RangeEntry {
+    /// The assignment.
+    id: u32,
+    /// MAX (true) or MIN.
+    max: bool,
+    /// The text so far.
+    text: String,
+    /// Nothing typed yet: the first character replaces the text.
+    fresh: bool,
+}
+
 /// A press on MIN or MAX that may become a drag.
 #[derive(Debug, Clone, PartialEq)]
 struct RangeDrag {
@@ -301,6 +368,7 @@ pub struct MacrosView {
     hover: Option<Point>,
     rename: Option<Rename>,
     range_drag: Option<RangeDrag>,
+    entry: Option<RangeEntry>,
     drags: u64,
     repaint: bool,
 }
@@ -329,6 +397,7 @@ impl MacrosView {
             hover: None,
             rename: None,
             range_drag: None,
+            entry: None,
             drags: 0,
             repaint: true,
         }
@@ -379,9 +448,9 @@ impl MacrosView {
         self.banks.get(self.selected)
     }
 
-    /// True while a macro name is being edited (the panel is a text owner).
+    /// True while a macro name or a range value is being edited (the panel is a text owner).
     pub fn is_editing(&self) -> bool {
-        self.rename.is_some()
+        self.rename.is_some() || self.entry.is_some()
     }
 
     /// True when something changed since the last [`Self::paint`].
@@ -598,7 +667,7 @@ impl MacrosView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        if self.rename.is_some() {
+        if self.is_editing() {
             return None;
         }
         let hit = self.hit(pos)?;
@@ -633,11 +702,11 @@ impl MacrosView {
                     Hit::Target(..) => (c.target, "Show this parameter in the rack"),
                     Hit::Min(..) => (
                         c.min,
-                        "Parameter value at the macro's minimum: drag, or click to raise and right-click to lower",
+                        "Value at macro minimum: drag; click raises, right-click lowers; middle-click types",
                     ),
                     Hit::Max(..) => (
                         c.max,
-                        "Parameter value at the macro's maximum: drag, or click to raise and right-click to lower",
+                        "Value at macro maximum: drag; click raises, right-click lowers; middle-click types",
                     ),
                     Hit::Curve(..) => (
                         c.curve,
@@ -684,6 +753,9 @@ impl MacrosView {
                 // A press anywhere keeps an edited name (a click elsewhere is "done").
                 if self.rename.is_some() {
                     out.extend(self.finish_rename(true));
+                }
+                if self.entry.is_some() {
+                    out.extend(self.finish_entry(true));
                 }
                 if let Some(hit) = self.hit(*pos) {
                     out.extend(self.press(hit, *pos, *button));
@@ -861,6 +933,10 @@ impl MacrosView {
             }),
             Hit::Min(n, j) | Hit::Max(n, j) => {
                 let max = matches!(hit, Hit::Max(..));
+                if button == PointerButton::Middle {
+                    self.open_entry(n, j, max);
+                    return Vec::new();
+                }
                 let Some(a) = self.assign(n, j) else {
                     return Vec::new();
                 };
@@ -916,6 +992,51 @@ impl MacrosView {
         }
     }
 
+    /// Starts typing the MIN or MAX value of assignment `j` of macro `n`.
+    fn open_entry(&mut self, n: u8, j: usize, max: bool) {
+        let Some(a) = self.assign(n, j) else { return };
+        self.entry = Some(RangeEntry {
+            id: a.id,
+            max,
+            text: a.unit.text(if max { a.max } else { a.min }),
+            fresh: true,
+        });
+        self.repaint = true;
+    }
+
+    /// Ends the typed value; applies it when `keep` and the text is a number that changes the
+    /// range (held to the param's range, rounded for a stepped param).
+    fn finish_entry(&mut self, keep: bool) -> Vec<UiAction> {
+        let Some(e) = self.entry.take() else {
+            return Vec::new();
+        };
+        self.repaint = true;
+        if !keep {
+            return Vec::new();
+        }
+        let Some(a) = self.assign_by_id(e.id) else {
+            return Vec::new();
+        };
+        let Some(typed) = a.unit.parse(&e.text) else {
+            return Vec::new();
+        };
+        let value = nudge(typed, 0.0, a);
+        let (min, max) = if e.max {
+            (a.min, value)
+        } else {
+            (value, a.max)
+        };
+        if (min, max) == (a.min, a.max) {
+            return Vec::new();
+        }
+        vec![UiAction::Macros(MacrosAction::SetRange {
+            id: a.id,
+            min,
+            max,
+            invert: a.invert,
+        })]
+    }
+
     /// Ends the name edit; keeps the text when `keep`.
     fn finish_rename(&mut self, keep: bool) -> Vec<UiAction> {
         let Some(r) = self.rename.take() else {
@@ -955,7 +1076,40 @@ impl MacrosView {
             }
             return Vec::new();
         }
+        if let Some(e) = &mut self.entry {
+            match key {
+                Key::Enter => return self.finish_entry(true),
+                Key::Escape => return self.finish_entry(false),
+                Key::Backspace => {
+                    if e.fresh {
+                        e.text.clear();
+                    } else {
+                        e.text.pop();
+                    }
+                    e.fresh = false;
+                }
+                Key::Char(c) if !modifiers.ctrl && !modifiers.meta && !c.is_control() => {
+                    if e.fresh {
+                        e.text.clear();
+                    }
+                    e.fresh = false;
+                    if e.text.chars().count() < ENTRY_CHARS {
+                        e.text.push(*c);
+                    }
+                }
+                _ => {}
+            }
+            return Vec::new();
+        }
         match key {
+            Key::Enter => {
+                // Enter with the pointer on MIN or MAX types the value in place.
+                let under = self.hover.and_then(|p| self.hit(p));
+                if let Some(Hit::Min(n, j) | Hit::Max(n, j)) = under {
+                    self.open_entry(n, j, matches!(under, Some(Hit::Max(..))));
+                }
+                Vec::new()
+            }
             Key::Escape => vec![UiAction::Macros(MacrosAction::Close)],
             Key::PageUp | Key::PageDown => {
                 let page = self.list_area().height() * 0.9;
@@ -1174,9 +1328,25 @@ impl MacrosView {
             colour,
             Align::Start,
         );
-        for (x, name, text) in [(col.min, "MIN", &a.min_text), (col.max, "MAX", &a.max_text)] {
+        for (x, name, text, max) in [
+            (col.min, "MIN", &a.min_text, false),
+            (col.max, "MAX", &a.max_text, true),
+        ] {
             let r = self.cell(row, x);
-            sp::button(c, st, r, &format!("{name} {text}"), None, hovered(r));
+            if let Some(e) = self.entry.as_ref().filter(|e| e.id == a.id && e.max == max) {
+                sp::rect(c, r, st.background);
+                sp::label(
+                    c,
+                    &fit_label(&format!("{name} {}|", e.text), r.width() - 6.0, 10.5),
+                    r.x0 + 4.0,
+                    text_y,
+                    10.5,
+                    t.text,
+                    Align::Start,
+                );
+            } else {
+                sp::button(c, st, r, &format!("{name} {text}"), None, hovered(r));
+            }
         }
         let curve = self.cell(row, col.curve);
         sp::button(

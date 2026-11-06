@@ -209,6 +209,19 @@ impl RackView {
             return Cow::Borrowed(doc);
         };
         self.scope_macros = std::array::from_fn(|i| container.macros[i].name.clone());
+        // The params a macro bank drives inside this container show the value it gives them.
+        let mut devices = container.devices.clone();
+        if let Some(path) = &path {
+            let prefix = format!("{}/", path.0);
+            for a in &doc.macros.assigns {
+                if let Some(local) = a.device.0.strip_prefix(&prefix)
+                    && let Some(v) = doc.driven_value(registry, &a.device, &a.param)
+                    && let Some(d) = devices.iter_mut().find(|d| d.key.0 == local)
+                {
+                    d.params.insert(a.param.clone(), v);
+                }
+            }
+        }
         Cow::Owned(RackDoc {
             sample_rate: doc.sample_rate,
             tempo_bpm: doc.tempo_bpm,
@@ -216,7 +229,7 @@ impl RackView {
             output_channels: 2,
             input_channels: 2,
             assets: doc.assets.clone(),
-            devices: container.devices.clone(),
+            devices,
             columns: 1,
             cables: container.cables.clone(),
             song: atomik_model::empty_song(doc.tempo_bpm).into(),
@@ -254,6 +267,22 @@ impl RackView {
                             .or_default()
                             .push((t.param.clone(), m as u8, d == depth));
                     }
+                }
+            }
+        }
+        // A macro bank drives devices of this container too (its macro is not the container's,
+        // so the `here` flag is off).
+        if let Some(path) = self.path_of(depth) {
+            let prefix = format!("{}/", path.0);
+            for a in &doc.macros.assigns {
+                if let Some(local) = a.device.0.strip_prefix(&prefix)
+                    && !local.contains('/')
+                    && doc.macro_assign_live(a)
+                {
+                    self.driven
+                        .entry(DeviceKey(local.to_string()))
+                        .or_default()
+                        .push((a.param.clone(), a.index, false));
                 }
             }
         }

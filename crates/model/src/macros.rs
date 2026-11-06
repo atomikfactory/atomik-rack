@@ -18,10 +18,13 @@
 //! * Assigning to a macro that has no other assignment moves the macro to the position that
 //!   gives the target its current value, so nothing jumps either; a macro that already drives
 //!   others pulls the new target to its own position.
-//! * The target is a top-level device that is not a bank or a container (a container has its own
-//!   macros), a param that exists and is not internal, and not the solo of a console strip (the
-//!   mix derives the silenced strips from it). A target with automation clips on its own lane is
-//!   refused (the lane would fight the macro).
+//! * The target is a device of the rack or one inside a container (a path key such as
+//!   `layer/synth`) that is not a bank or a container, a param that exists and is not internal and
+//!   that no macro of a container drives, and not the solo of a console strip (the mix derives the
+//!   silenced strips from it). A device that holds assigned params cannot move into or out of a
+//!   container (its key would change).
+//! * A target may have an automation lane of its own: the lane sets the base and the macro adds
+//!   its range (see [`crate::macro_lane`]). A lane exists only for a device of the rack.
 //! * An assignment outlives its devices like a MIDI mapping does: while the bank or the target is
 //!   missing it does nothing, and the undo of the removal brings it back to life.
 //!
@@ -316,7 +319,7 @@ pub fn assign_value(a: &MacroAssign, m: f32, p: &ParamDescriptor) -> f32 {
 
 /// The share of the range (0 to 1) assignment `a` gives at macro value `m`: the direction and
 /// the curve applied.
-fn assign_share(a: &MacroAssign, m: f32) -> f32 {
+pub(crate) fn assign_share(a: &MacroAssign, m: f32) -> f32 {
     a.curve.shape(if a.invert { 1.0 - m } else { m })
 }
 
@@ -358,7 +361,7 @@ impl RackDoc {
     pub fn macro_assign_live(&self, a: &MacroAssign) -> bool {
         self.device(&a.bank)
             .is_some_and(|d| d.type_id == MACRO_BANK_TYPE)
-            && self.device(&a.device).is_some()
+            && self.resolve(&a.device).is_some()
     }
 
     /// The live assignment that drives `param` of `device`, if any: what refuses a `SetParam`
@@ -383,7 +386,7 @@ impl RackDoc {
     ) -> Option<(u32, f32, f32)> {
         let a = self.bank_driver(device, param)?;
         let p = registry
-            .get(&self.device(device)?.type_id)?
+            .get(&self.resolve(device)?.type_id)?
             .descriptor
             .param_by_key(param)?;
         let at = a.min + (a.max - a.min) * assign_share(a, self.bank_macro_value(&a.bank, a.index));
@@ -403,7 +406,7 @@ impl RackDoc {
         param: &str,
     ) -> Option<f32> {
         let a = self.bank_driver(device, param)?;
-        let d = self.device(device)?;
+        let d = self.resolve(device)?;
         let p = registry.get(&d.type_id)?.descriptor.param_by_key(param)?;
         Some(assign_value(a, self.bank_macro_value(&a.bank, a.index), p))
     }
@@ -479,14 +482,15 @@ impl RackDoc {
         if !differs {
             return None;
         }
-        let devices = self
-            .devices
-            .iter()
-            .map(|d| {
-                self.device_with_driven_values(registry, &d.key)
-                    .unwrap_or_else(|| d.clone())
-            })
-            .collect();
+        // A target inside a container is a path key: its value goes into the inside.
+        let mut devices = self.devices.clone();
+        for a in &self.macros.assigns {
+            if let Some(v) = self.driven_value(registry, &a.device, &a.param)
+                && let Some(d) = crate::container::find_relative_mut(&mut devices, &a.device.0)
+            {
+                d.params.insert(a.param.clone(), v);
+            }
+        }
         Some(RackDoc {
             sample_rate: self.sample_rate,
             tempo_bpm: self.tempo_bpm,
@@ -515,12 +519,7 @@ impl RackDoc {
         device: &DeviceKey,
         param: &str,
     ) -> Option<String> {
-        if device.0.contains('/') {
-            return Some(format!(
-                "{device} is inside a container: use the container's own macros"
-            ));
-        }
-        let Some(d) = self.device(device) else {
+        let Some(d) = self.resolve(device) else {
             return Some(format!("no device {device}"));
         };
         if d.type_id == MACRO_BANK_TYPE {
@@ -537,6 +536,13 @@ impl RackDoc {
         }
         if param == "solo" && console::is_console_type(&d.type_id) {
             return Some("solo is derived by the mixer and cannot follow a macro".to_owned());
+        }
+        if let Some((container, index)) = self.macro_driver(device, param) {
+            return Some(format!(
+                "{} {param} is driven by macro {} of {container}: unmap it there first",
+                d.name,
+                index + 1
+            ));
         }
         None
     }
@@ -561,8 +567,13 @@ pub fn expand_bank_lane(
         if !doc.macro_assign_live(a) {
             continue;
         }
+        // A target with a lane of its own plays that lane with the macro added (see
+        // `crate::macro_lane`): the macro's lane is folded into it.
+        if doc.has_own_lane_points(&a.device, &a.param) {
+            continue;
+        }
         let Some(p) = doc
-            .device(&a.device)
+            .resolve(&a.device)
             .and_then(|d| registry.get(&d.type_id))
             .and_then(|f| f.descriptor.param_by_key(&a.param))
         else {
@@ -592,7 +603,7 @@ pub(crate) fn apply(doc: &RackDoc, registry: &Registry, expanded: &mut ExpandedR
                     continue;
                 }
                 let Some(p) = doc
-                    .device(&a.device)
+                    .resolve(&a.device)
                     .and_then(|d| registry.get(&d.type_id))
                     .and_then(|f| f.descriptor.param_by_key(&a.param))
                 else {
@@ -652,7 +663,7 @@ fn check_bank(doc: &RackDoc, bank: &DeviceKey) -> Result<(), ModelError> {
 }
 
 fn param_edit(doc: &RackDoc, key: &DeviceKey, param: &str, new: f32, default: f32) -> Option<Edit> {
-    let old = doc.device(key)?.params.get(param).copied();
+    let old = doc.resolve(key)?.params.get(param).copied();
     (old.unwrap_or(default).to_bits() != new.to_bits()).then(|| Edit::Param {
         key: key.clone(),
         param: param.to_owned(),
@@ -669,7 +680,7 @@ fn freeing_edits(doc: &RackDoc, registry: &Registry, freed: &[&MacroAssign]) -> 
         .filter_map(|a| {
             let v = doc.driven_value(registry, &a.device, &a.param)?;
             let default = doc
-                .device(&a.device)
+                .resolve(&a.device)
                 .and_then(|d| registry.get(&d.type_id))
                 .and_then(|f| f.descriptor.param_by_key(&a.param))
                 .map_or(0.0, |p| p.default);
@@ -740,15 +751,6 @@ pub(crate) fn plan(
                 .ok_or_else(|| ModelError::UnknownKey(param.clone()))?;
             let (min, max) = (min.unwrap_or(p.min), max.unwrap_or(p.max));
             check_range(p, min, max)?;
-            if let Some(t) = doc_now.song.track(&device)
-                && let Some(i) = t.automation_lane(&param)
-                && !t.lanes[i].clips.is_empty()
-            {
-                return Err(bad(format!(
-                    "{} {} has automation on its own lane: delete it first",
-                    d.name, p.name
-                )));
-            }
             // The macro that has nothing yet takes the position that keeps the target's value.
             let alone = new.of_macro(&bank_key, index).next().is_none();
             let stored = doc_now
@@ -788,7 +790,7 @@ pub(crate) fn plan(
                 return Err(bad(format!("no assignment {id}")));
             };
             if let Some(p) = doc
-                .device(&a.device)
+                .resolve(&a.device)
                 .and_then(|d| registry.get(&d.type_id))
                 .and_then(|f| f.descriptor.param_by_key(&a.param))
             {

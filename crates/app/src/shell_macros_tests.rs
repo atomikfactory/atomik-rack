@@ -566,6 +566,27 @@ fn the_panel_edits_a_range_and_learn_gives_way_to_the_controller() {
 }
 
 #[test]
+fn a_typed_range_value_is_one_undo_step_and_the_keys_are_the_panels() {
+    let mut s = shell();
+    add_synth(&mut s, "a", "Lead");
+    s.control_target = Some((key("a"), CUTOFF.into()));
+    s.run_command("macro.assign_control", Some("1"));
+    s.execute(AppCommand::MacroPanel);
+    let before = s.core().doc().macros.assigns[0].clone();
+    let max = s.macros_view().unwrap().assign_center(0, 0, "max").unwrap();
+    mouse(&mut s, max, PointerButton::Middle);
+    assert!(s.macros_view().unwrap().is_editing());
+    // The digits and the k are the panel's: no command ran, no transport started.
+    type_text(&mut s, "3k");
+    press(&mut s, Key::Enter, Modifiers::NONE);
+    assert!(!s.core().is_playing());
+    assert_eq!(s.core().doc().macros.assigns[0].max, 3000.0);
+    assert!(!s.macros_view().unwrap().is_editing());
+    assert!(s.core_mut().undo());
+    assert_eq!(s.core().doc().macros.assigns[0], before);
+}
+
+#[test]
 fn a_bank_made_from_the_menu_is_a_device_of_the_rack() {
     let mut s = shell();
     s.execute(AppCommand::NewMacroBank);

@@ -49,6 +49,7 @@ mod labels;
 mod lane_cmd;
 mod library_io;
 mod loop_convert;
+mod macro_lane;
 mod macros;
 mod macros_io;
 mod master_tune;
@@ -127,6 +128,7 @@ pub use freeze::{
 };
 pub use lane_cmd::ExtractMode;
 pub use loop_convert::LoopConvert;
+pub use macro_lane::{BEND_PARTS, compose as compose_driven_lane, lane_value};
 pub use macros::{
     MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MAX_MACRO_SMOOTH_MS, MacroAssign, MacroCommand, MacroCurve,
     MacroName, MacroSet, assign_position, assign_value, expand_bank_lane, macro_index_of,

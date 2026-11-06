@@ -895,7 +895,20 @@ fn check_can_enter(doc: &RackDoc, registry: &Registry, key: &DeviceKey) -> Resul
         )));
     }
     rules::descriptor(registry, &device.type_id)?;
-    if let Some(a) = doc.macros.assigns.iter().find(|a| &a.device == key) {
+    check_not_driven(doc, key)
+}
+
+/// Refuses a move of `key` (or of the container `key` when a device inside it is driven) while a
+/// macro bank drives one of its params: the assignment names the device by its key, which the move
+/// would change.
+fn check_not_driven(doc: &RackDoc, key: &DeviceKey) -> Result<(), ModelError> {
+    let inside = format!("{}/", key.0);
+    if let Some(a) = doc
+        .macros
+        .assigns
+        .iter()
+        .find(|a| &a.device == key || a.device.0.starts_with(&inside))
+    {
         return Err(ModelError::BadMacro(format!(
             "{}.{} is driven by {} of {}: remove the assignment first",
             label(doc, key),
@@ -1147,6 +1160,9 @@ fn exit(doc: &RackDoc, registry: &Registry, ex: &Exit<'_>) -> Result<Planned, Mo
     let mut tops: BTreeMap<DeviceKey, DeviceKey> = BTreeMap::new();
     for local in &ex.moved {
         tops.insert(local.clone(), free_key(&mut taken, &local.0));
+    }
+    for local in &ex.moved {
+        check_not_driven(doc, &DeviceKey(format!("{c}/{local}")))?;
     }
     let top = |k: &DeviceKey| tops[k].clone();
     let moves = |k: &DeviceKey| ex.moved.contains(k);

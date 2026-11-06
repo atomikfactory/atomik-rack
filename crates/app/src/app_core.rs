@@ -1766,6 +1766,11 @@ impl<S: EngineSink> AppCore<S> {
                         // A container's or a bank's macro: one `set_param` per target.
                         let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
                         self.send_macro_values(exp);
+                        // A target with a lane of its own plays that lane with the macro added:
+                        // a move of the macro changes the song.
+                        if self.doc().bank_shapes_lanes(key) {
+                            stale.0 = true;
+                        }
                     } else {
                         self.send_param(key, param, *value);
                     }

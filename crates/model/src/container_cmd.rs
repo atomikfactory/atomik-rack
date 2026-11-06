@@ -116,6 +116,16 @@ pub(crate) fn plan(
                     k + 1
                 )));
             }
+            let inner_key = DeviceKey(format!("{container}/{}", target.device));
+            if let Some(a) = doc.bank_driver(&inner_key, &target.param) {
+                return Err(bad_macro(format!(
+                    "{}.{} is already driven by {} of {}",
+                    target.device,
+                    target.param,
+                    doc.macro_name(&a.bank, a.index),
+                    a.bank
+                )));
+            }
             let old = c.macros[i].clone();
             let mut new = old.clone();
             match new

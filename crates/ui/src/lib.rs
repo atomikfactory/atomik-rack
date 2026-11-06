@@ -429,7 +429,9 @@ pub use export_panel::{
 };
 pub use file_browser::{DetailData, FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
-pub use macros_panel::{MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView};
+pub use macros_panel::{
+    EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView,
+};
 pub use marker_edit::MarkSel;
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;

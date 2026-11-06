@@ -448,8 +448,16 @@ fn song_input_inner(
             let Some(param) = desc.param_by_key(key).map(|p| p.id) else {
                 continue;
             };
-            // A param a macro drives follows the macro, whatever its own lane holds.
+            // A param a macro drives plays its lane with the macro added to it (the lane is the
+            // base); without points it follows the macro alone.
             if doc.bank_driver(&track.device, key).is_some() {
+                if let Some(points) = doc.driven_lane_points(registry, &track.device, key) {
+                    let points = points
+                        .into_iter()
+                        .map(|(tick, value, curve)| song_point(tick, value, curve))
+                        .collect();
+                    automation.push(SongAutomation { param, points });
+                }
                 continue;
             }
             let points = flatten_automation(track, i)
