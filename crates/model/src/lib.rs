@@ -105,6 +105,7 @@ pub use rec_source::{RecSource, rec_source, source_label, source_options, source
 pub mod console;
 pub mod song;
 
+pub use audio_join::{JoinRender, join_render};
 pub use clip_transform::{SCALE_PERCENT_MAX, SCALE_PERCENT_MIN};
 pub use container::{
     BOUNDARY_CV, BOUNDARY_KEY, CONTAINER_MACROS, CONTAINER_TYPE, ContainerCommand, ContainerDoc,

@@ -789,7 +789,7 @@ impl<S: EngineSink> AppCore<S> {
                 // The imported clips took the next ids in track order.
                 self.select_new_clips(pre.next_clip, import.tracks.len());
             }
-            WorkflowCommand::JoinClips { ids } => {
+            WorkflowCommand::JoinClips { ids } | WorkflowCommand::RenderJoin { ids, .. } => {
                 // The earliest clip keeps its id and now spans the others.
                 let song = &self.doc().song;
                 let keep = ids

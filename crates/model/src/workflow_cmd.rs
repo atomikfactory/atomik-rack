@@ -324,6 +324,17 @@ pub enum WorkflowCommand {
         /// The render, from its first frame.
         audio: AudioClipContent,
     },
+    /// Replaces audio clips that play different files by one clip of `audio`, a render of what
+    /// they played (the app renders it, see [`crate::join_render`]). The earliest clip keeps its
+    /// id, name, colour and crossfade and now spans all of them; the others go. One undo step.
+    /// Rejected: clips that are not audio clips of one lane, a muted clip, a gap between
+    /// clips, and audio that is not in the pool or has a reverse or a warp.
+    RenderJoin {
+        /// The clips (at least two, one lane).
+        ids: Vec<ClipId>,
+        /// The render, from its first frame.
+        audio: AudioClipContent,
+    },
     /// Makes repetition `index` (0-based, the repetitions a looped clip shows from `offset mod
     /// loop`) of a looped clip a clip of its own, so it can be edited alone. The repetitions
     /// before it stay one looped clip under the clip's id, the ones after it another (a new id);
@@ -447,12 +458,16 @@ pub enum WorkflowCommand {
     /// earliest start of the selection, lengths, loops, notes and controller and automation
     /// points scale with them (positions round to the nearest tick), and audio clips are warped
     /// to follow (a reversed one keeps playing backwards). The percentage is
-    /// `SCALE_PERCENT_MIN..=SCALE_PERCENT_MAX` and not 100. One undo step.
+    /// `SCALE_PERCENT_MIN..=SCALE_PERCENT_MAX` and not 100. One undo step. With `from_end` the
+    /// selection scales about its latest end instead (the clip ends keep their place relative
+    /// to it and the earliest start moves), for the drag of a start edge.
     ScaleTempo {
         /// The clips.
         ids: Vec<ClipId>,
         /// The new tempo as a percentage of the old one.
         percent: f64,
+        /// Scale about the latest end of the selection instead of its earliest start.
+        from_end: bool,
     },
     /// Moves the crossfade of audio clip `later` with the clip before it (the overlap where
     /// `later` starts over that clip's end) by `delta` ticks, in one undo step: `later` starts
@@ -991,6 +1006,9 @@ pub(crate) fn plan(
         WorkflowCommand::RenderLoop { id, audio } => {
             plain(crate::loop_convert::render_loop(doc, id, audio))
         }
+        WorkflowCommand::RenderJoin { ids, audio } => {
+            crate::audio_join::render_join(doc, &ids, audio)
+        }
         WorkflowCommand::TrimClips {
             ids, start_delta, ..
         } => plain(trim_clips(doc, registry, &ids, start_delta)),
@@ -1008,9 +1026,11 @@ pub(crate) fn plan(
         WorkflowCommand::ReverseClips { ids, graphical } => {
             crate::clip_transform::reverse_clips(doc, &ids, graphical)
         }
-        WorkflowCommand::ScaleTempo { ids, percent } => {
-            crate::clip_transform::scale_clips(doc, &ids, percent)
-        }
+        WorkflowCommand::ScaleTempo {
+            ids,
+            percent,
+            from_end,
+        } => crate::clip_transform::scale_clips(doc, &ids, percent, from_end),
         WorkflowCommand::StretchClips {
             ids,
             percent,

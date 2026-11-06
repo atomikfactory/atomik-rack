@@ -54,7 +54,11 @@ impl ArrangementView {
                     },
                 };
                 Some(self.with_selection("Select the clips to scale", |ids| {
-                    WorkflowCommand::ScaleTempo { ids, percent }
+                    WorkflowCommand::ScaleTempo {
+                        ids,
+                        percent,
+                        from_end: false,
+                    }
                 }))
             }
             "sequencer.chop_clips" => {

@@ -362,7 +362,11 @@ impl<S: EngineSink> AppCore<S> {
     /// `percent` of their tempo from there (the same preview rules as
     /// [`AppCore::stretch_step`]; [`AppCore::end_stretch`] ends the drag).
     pub(super) fn scale_step(&mut self, ids: Vec<ClipId>, percent: f64) {
-        self.trial_step(WorkflowCommand::ScaleTempo { ids, percent });
+        self.trial_step(WorkflowCommand::ScaleTempo {
+            ids,
+            percent,
+            from_end: false,
+        });
     }
 
     /// One step of a crossfade zone dragged: the document is put back to what it was before
@@ -407,7 +411,11 @@ impl<S: EngineSink> AppCore<S> {
             Some(percent) => {
                 let ids = self.arrangement.selected_clips();
                 if !ids.is_empty() {
-                    self.trial_step(WorkflowCommand::ScaleTempo { ids, percent });
+                    self.trial_step(WorkflowCommand::ScaleTempo {
+                        ids,
+                        percent,
+                        from_end: false,
+                    });
                 }
             }
             None => self.end_stretch(false),

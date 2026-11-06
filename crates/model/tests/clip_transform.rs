@@ -19,7 +19,11 @@ fn reverse(ids: Vec<ClipId>, graphical: bool) -> Command {
 }
 
 fn scale(ids: Vec<ClipId>, percent: f64) -> Command {
-    wf(WorkflowCommand::ScaleTempo { ids, percent })
+    wf(WorkflowCommand::ScaleTempo {
+        ids,
+        percent,
+        from_end: false,
+    })
 }
 
 fn chop(ids: Vec<ClipId>, length: i64) -> Command {
@@ -334,6 +338,50 @@ fn scaling_moves_clips_relative_to_the_earliest_start_and_scales_the_loop() {
             "{e:?}"
         );
     }
+}
+
+#[test]
+fn scaling_from_the_end_keeps_the_latest_end_and_moves_the_start() {
+    let r = registry();
+    let mut d = synth_doc(
+        &r,
+        notes_clip(4 * BAR, 2 * BAR, vec![note(PPQ, PPQ, 60, 0.8)]),
+    );
+    run(
+        &mut d,
+        &r,
+        [add_clip(
+            "synth",
+            0,
+            notes_clip(6 * BAR, 2 * BAR, vec![note(0, PPQ, 62, 0.8)]),
+        )],
+    );
+    let ids: Vec<ClipId> = d.doc().song.track(&key("synth")).unwrap().lanes[0]
+        .clips
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    let from_end = |ids: Vec<ClipId>, percent| {
+        wf(WorkflowCommand::ScaleTempo {
+            ids,
+            percent,
+            from_end: true,
+        })
+    };
+    let was = text(&d);
+    // Half as fast: twice as long, about the end at 8 bars, so the starts move back.
+    one_step(&mut d, &r, from_end(ids.clone(), 50.0));
+    let (a, b) = (the_clip(&d, 0), the_clip(&d, 1));
+    assert_eq!(b.end(), 8 * BAR, "the latest end stays");
+    assert_eq!((b.start, b.length), (4 * BAR, 4 * BAR));
+    assert_eq!((a.start, a.length), (0, 4 * BAR));
+    assert_eq!(notes_of(&a), [(2 * PPQ, 2 * PPQ, 60)]);
+    one_step(&mut d, &r, from_end(ids.clone(), 200.0));
+    assert_eq!(text(&d), was);
+    // A start that would go before tick 0 is refused and changes nothing.
+    let e = rejected(&mut d, &r, from_end(ids, 25.0));
+    assert!(matches!(e, ModelError::OutOfRange(_)), "{e:?}");
+    assert_eq!(text(&d), was);
 }
 
 #[test]
