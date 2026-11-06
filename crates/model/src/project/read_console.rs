@@ -88,6 +88,38 @@ pub(super) fn load_vcas(
         }
         let order: Vec<&DeviceKey> = console.strip_keys().collect();
         members.sort_by_key(|m| order.iter().position(|k| *k == m).unwrap_or(usize::MAX));
+        // The bus and the strips the route put there (version 44): the bus is a console bus, the
+        // strips are members, and there is no list without a bus.
+        let bus = match g.get("bus") {
+            Some(b) => {
+                let bp = p.field("bus");
+                let key = DeviceKey(string(b, &bp)?.to_owned());
+                if console.bus_index(&key).is_none() {
+                    return Err(bp.error(format!("{:?} is not a console bus", key.0)));
+                }
+                Some(key)
+            }
+            None => None,
+        };
+        let mut routed = Vec::new();
+        if let Some(r) = g.get("routed") {
+            let rp = p.field("routed");
+            if bus.is_none() {
+                return Err(rp.error("a group without a bus has no routed strips"));
+            }
+            for (j, m) in array(r, &rp)?.iter().enumerate() {
+                let mp = rp.index(j);
+                let key = DeviceKey(string(m, &mp)?.to_owned());
+                if !members.contains(&key) {
+                    return Err(mp.error(format!("{:?} is not a member of the group", key.0)));
+                }
+                if routed.contains(&key) {
+                    return Err(mp.error(format!("{:?} is listed twice", key.0)));
+                }
+                routed.push(key);
+            }
+            routed.sort_by_key(|m| order.iter().position(|k| *k == m).unwrap_or(usize::MAX));
+        }
         console.vcas.push(VcaGroup {
             id,
             name: name.to_owned(),
@@ -97,6 +129,8 @@ pub(super) fn load_vcas(
             solo: flag(g, &p, "solo")?,
             members,
             follows,
+            bus,
+            routed,
         });
     }
     Ok(())

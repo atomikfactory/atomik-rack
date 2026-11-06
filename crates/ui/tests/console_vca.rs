@@ -25,6 +25,8 @@ fn vca_doc() -> RackDoc {
             solo: false,
             members: vec![key("ch-bass"), key("ch-lead")],
             follows: None,
+            bus: None,
+            routed: Vec::new(),
         },
         VcaGroup {
             id: 2,
@@ -35,6 +37,8 @@ fn vca_doc() -> RackDoc {
             solo: false,
             members: vec![key("ch-keys")],
             follows: None,
+            bus: None,
+            routed: Vec::new(),
         },
     ];
     doc
@@ -577,6 +581,8 @@ fn a_track_whose_channel_is_in_a_group_gets_the_groups_colour_bar() {
         solo: false,
         members: vec![key("ch-bass")],
         follows: None,
+        bus: None,
+        routed: Vec::new(),
     });
     assert!(paint(&doc).contains(chip), "the bar shows the colour");
     // A group without a colour still marks its tracks (neutral), and leaving it removes the bar.
@@ -724,6 +730,8 @@ fn grouped_song() -> (
         solo: false,
         members: vec![key("ch-bass")],
         follows: None,
+        bus: None,
+        routed: Vec::new(),
     });
     let v = support::song::arrangement(&doc, &reg);
     (doc, reg, v)

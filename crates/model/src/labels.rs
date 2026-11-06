@@ -135,6 +135,10 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
             "Route Folder to Bus"
         }
         ConsoleCommand::UnrouteFolder { .. } => "Stop Routing Folder",
+        ConsoleCommand::RouteVcaToBus { .. } | ConsoleCommand::RouteVcaToNewBus { .. } => {
+            "Route Group to Bus"
+        }
+        ConsoleCommand::UnrouteVca { .. } => "Stop Routing Group",
         ConsoleCommand::AssignToVca { .. } => "Assign to VCA",
         ConsoleCommand::DeleteVca { .. } => "Delete VCA",
         ConsoleCommand::SetSnapshotEffects { .. } => "Snapshot Effect Parameters",

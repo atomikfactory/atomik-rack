@@ -82,6 +82,12 @@ pub struct VcaGroup {
     /// documentation), or none for a group whose members are chosen by hand. Written only when
     /// set (an optional field of project format 43).
     pub follows: Option<u32>,
+    /// The bus the members play into (see [`crate::console_group_bus`]), or none. Written only
+    /// when set (an optional field of project format 44).
+    pub bus: Option<DeviceKey>,
+    /// The members the route has put on the bus, in console order; empty without a bus. A member
+    /// that is not listed is routed at the next command; one listed keeps whatever output it has.
+    pub routed: Vec<DeviceKey>,
 }
 
 /// What the engine strip of a member is fed from its group (`internal.vca_*`); all at their
@@ -110,8 +116,60 @@ impl VcaFeed {
     }
 }
 
-/// The prefix of the param key of a group's level lane (`vca.<id>`).
+/// The prefix of the param key of a group's lanes (`vca.<id>`, `vca.<id>.mute`, `vca.<id>.solo`).
 pub const VCA_LANE_PREFIX: &str = "vca.";
+
+/// What a group lane automates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcaLaneKind {
+    /// The group's level in dB (`vca.<id>`).
+    Level,
+    /// The group's mute, off or on (`vca.<id>.mute`).
+    Mute,
+    /// The group's solo, off or on (`vca.<id>.solo`).
+    Solo,
+}
+
+impl VcaLaneKind {
+    /// Every kind, in the order the lanes are offered.
+    pub const ALL: [VcaLaneKind; 3] = [VcaLaneKind::Level, VcaLaneKind::Mute, VcaLaneKind::Solo];
+
+    /// The end of the lane's param key after the id (empty for the level).
+    pub fn suffix(self) -> &'static str {
+        match self {
+            VcaLaneKind::Level => "",
+            VcaLaneKind::Mute => ".mute",
+            VcaLaneKind::Solo => ".solo",
+        }
+    }
+
+    /// The param of each member strip that carries what the lane drives.
+    pub fn target_param(self) -> &'static str {
+        match self {
+            VcaLaneKind::Level => crate::console::VCA_DB_PARAM,
+            VcaLaneKind::Mute => crate::console::VCA_MUTE_PARAM,
+            VcaLaneKind::Solo => crate::console::VCA_SOLO_PARAM,
+        }
+    }
+
+    /// The word the lane is called by (`level`, `mute`, `solo`).
+    pub fn word(self) -> &'static str {
+        match self {
+            VcaLaneKind::Level => "level",
+            VcaLaneKind::Mute => "mute",
+            VcaLaneKind::Solo => "solo",
+        }
+    }
+
+    /// What the lane is a lane of (see [`VCA_LANE_PARAM`]).
+    pub fn descriptor(self) -> &'static ParamDescriptor {
+        match self {
+            VcaLaneKind::Level => &VCA_LANE_PARAM,
+            VcaLaneKind::Mute => &VCA_MUTE_LANE_PARAM,
+            VcaLaneKind::Solo => &VCA_SOLO_LANE_PARAM,
+        }
+    }
+}
 
 /// What a group level lane is a lane of: the level of a group in dB, over the same range as
 /// [`VcaGroup::level_db`]. It has no param id: a group is not a device, so the lane lives on the
@@ -129,24 +187,74 @@ pub static VCA_LANE_PARAM: ParamDescriptor = ParamDescriptor {
     discrete: false,
 };
 
+/// What a group mute lane is a lane of: the group's mute, 0 (off) or 1 (on).
+pub static VCA_MUTE_LANE_PARAM: ParamDescriptor = ParamDescriptor {
+    id: ParamId(0),
+    key: "vca_mute",
+    name: "Group mute",
+    min: 0.0,
+    max: 1.0,
+    default: 0.0,
+    taper: Taper::Linear,
+    unit: Unit::Toggle,
+    discrete: true,
+};
+
+/// What a group solo lane is a lane of: the group's solo, 0 (off) or 1 (on).
+pub static VCA_SOLO_LANE_PARAM: ParamDescriptor = ParamDescriptor {
+    id: ParamId(0),
+    key: "vca_solo",
+    name: "Group solo",
+    min: 0.0,
+    max: 1.0,
+    default: 0.0,
+    taper: Taper::Linear,
+    unit: Unit::Toggle,
+    discrete: true,
+};
+
 /// The param key of the level lane of group `id`.
 pub fn vca_lane_key(id: u32) -> String {
-    format!("{VCA_LANE_PREFIX}{id}")
+    vca_lane_key_of(id, VcaLaneKind::Level)
 }
 
-/// The group a lane key names (`vca.<id>`, the id without leading zeros), if it is one.
-pub fn vca_lane_id(key: &str) -> Option<u32> {
-    let digits = key.strip_prefix(VCA_LANE_PREFIX)?;
+/// The param key of the lane of `kind` of group `id`.
+pub fn vca_lane_key_of(id: u32, kind: VcaLaneKind) -> String {
+    format!("{VCA_LANE_PREFIX}{id}{}", kind.suffix())
+}
+
+/// The group and the kind a lane key names (the id without leading zeros), if it is a group lane.
+pub fn vca_lane_parts(key: &str) -> Option<(u32, VcaLaneKind)> {
+    let rest = key.strip_prefix(VCA_LANE_PREFIX)?;
+    let (digits, kind) = match rest.split_once('.') {
+        None => (rest, VcaLaneKind::Level),
+        Some((d, "mute")) => (d, VcaLaneKind::Mute),
+        Some((d, "solo")) => (d, VcaLaneKind::Solo),
+        Some(_) => return None,
+    };
     let id: u32 = digits.parse().ok()?;
-    (id > 0 && digits == id.to_string()).then_some(id)
+    (id > 0 && digits == id.to_string()).then_some((id, kind))
+}
+
+/// The group a LEVEL lane key names (`vca.<id>`), if it is one. A mute or solo lane is not: see
+/// [`vca_lane_parts`].
+pub fn vca_lane_id(key: &str) -> Option<u32> {
+    match vca_lane_parts(key)? {
+        (id, VcaLaneKind::Level) => Some(id),
+        _ => None,
+    }
 }
 
 /// The descriptor of lane param `key` of a device of type `desc`: its own param, or on the master
-/// the level of a group (see [`VCA_LANE_PARAM`]). The one lookup every lane check goes through.
+/// the level, mute or solo of a group (see [`VcaLaneKind::descriptor`]). The one lookup every lane
+/// check goes through.
 pub fn lane_param<'a>(desc: &'a DeviceDescriptor, key: &str) -> Option<&'a ParamDescriptor> {
     desc.param_by_key(key).or_else(|| {
-        (desc.type_id == crate::console::MASTER_TYPE && vca_lane_id(key).is_some())
-            .then_some(&VCA_LANE_PARAM)
+        if desc.type_id == crate::console::MASTER_TYPE {
+            vca_lane_parts(key).map(|(_, kind)| kind.descriptor())
+        } else {
+            None
+        }
     })
 }
 
@@ -155,24 +263,30 @@ impl RackDoc {
     /// level: `(strip, "internal.vca_db")` for every member of group `id`. Empty for a group that
     /// does not exist.
     pub fn vca_lane_targets(&self, id: u32) -> Vec<(DeviceKey, &'static str)> {
+        self.vca_kind_targets(id, VcaLaneKind::Level)
+    }
+
+    /// The member strips a lane of `kind` of group `id` drives, with the param of each that
+    /// carries it (`internal.vca_db`, `internal.vca_mute` or `internal.vca_solo`).
+    pub fn vca_kind_targets(&self, id: u32, kind: VcaLaneKind) -> Vec<(DeviceKey, &'static str)> {
         self.console
             .vca(id)
             .map(|g| {
                 g.members
                     .iter()
-                    .map(|m| (m.clone(), crate::console::VCA_DB_PARAM))
+                    .map(|m| (m.clone(), kind.target_param()))
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// The groups that have a level lane, with their members: what the engine's song depends on
-    /// besides the lanes themselves.
+    /// The groups that have a lane of any kind, with their members: what the engine's song
+    /// depends on besides the lanes themselves.
     pub fn vca_lanes(&self) -> Vec<(u32, Vec<DeviceKey>)> {
         self.console
             .vcas
             .iter()
-            .filter(|g| self.vca_lane_of(g.id).is_some())
+            .filter(|g| !self.vca_lanes_of(g.id).is_empty())
             .map(|g| (g.id, g.members.clone()))
             .collect()
     }
@@ -180,13 +294,27 @@ impl RackDoc {
     /// The automation lane of group `id`'s level, as `(master device, lane param key)`, when the
     /// group exists and the song has the lane.
     pub fn vca_lane_of(&self, id: u32) -> Option<(DeviceKey, String)> {
+        self.vca_lane_kind_of(id, VcaLaneKind::Level)
+    }
+
+    /// The automation lane of `kind` of group `id`, as `(master device, lane param key)`, when
+    /// the group exists and the song has the lane.
+    pub fn vca_lane_kind_of(&self, id: u32, kind: VcaLaneKind) -> Option<(DeviceKey, String)> {
         let master = self.console.master.as_ref()?;
         self.console.vca(id)?;
-        let key = vca_lane_key(id);
+        let key = vca_lane_key_of(id, kind);
         self.song
             .track(master)?
             .automation_lane(&key)
             .map(|_| (master.clone(), key))
+    }
+
+    /// Every lane group `id` has (level, mute, solo), as `(master device, lane param key)`.
+    pub fn vca_lanes_of(&self, id: u32) -> Vec<(DeviceKey, String)> {
+        VcaLaneKind::ALL
+            .iter()
+            .filter_map(|k| self.vca_lane_kind_of(id, *k))
+            .collect()
     }
 }
 
@@ -467,6 +595,8 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                     solo: false,
                     members,
                     follows: None,
+                    bus: None,
+                    routed: Vec::new(),
                 });
                 Ok(())
             })
@@ -503,6 +633,8 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                     solo: false,
                     members,
                     follows: Some(folder),
+                    bus: None,
+                    routed: Vec::new(),
                 });
                 Ok(())
             })
@@ -614,8 +746,8 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
             Ok(())
         }
         ConsoleCommand::DeleteVca { vca } => {
-            // The group's level lane goes with it (the id can be given to a new group).
-            let lane = p.doc().vca_lane_of(vca);
+            // The group's lanes go with it (the id can be given to a new group).
+            let lanes = p.doc().vca_lanes_of(vca);
             edit_groups(p, |groups| {
                 let index = groups
                     .iter()
@@ -624,7 +756,7 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                 groups.remove(index);
                 Ok(())
             })?;
-            if let Some((master, key)) = lane {
+            for (master, key) in lanes {
                 let edit = crate::song_cmd::remove_lane_edit(p.doc(), master, key)?;
                 p.push(edit);
             }

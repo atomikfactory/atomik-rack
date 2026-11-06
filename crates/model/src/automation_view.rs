@@ -157,12 +157,18 @@ impl RackDoc {
         let mut devices = self.devices.clone();
         let mut console = self.console.clone();
         for ((device, param), value) in shown {
-            // A group's level lane lives on the master: it shows on the group's fader.
-            if let Some(id) = crate::console_vca::vca_lane_id(param)
+            // A group's lane lives on the master: it shows on the group's fader, mute or solo.
+            if let Some((id, kind)) = crate::console_vca::vca_lane_parts(param)
                 && self.console.master.as_ref() == Some(device)
             {
                 if let Some(g) = console.vcas.iter_mut().find(|g| g.id == id) {
-                    g.level_db = crate::console_vca::clamp_vca_db(*value);
+                    match kind {
+                        crate::VcaLaneKind::Level => {
+                            g.level_db = crate::console_vca::clamp_vca_db(*value)
+                        }
+                        crate::VcaLaneKind::Mute => g.mute = *value >= 0.5,
+                        crate::VcaLaneKind::Solo => g.solo = *value >= 0.5,
+                    }
                 }
                 continue;
             }

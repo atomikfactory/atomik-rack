@@ -746,19 +746,19 @@ fn drop_stale_follows(doc: &mut RackDoc) {
         .retain(|r| !song.group_tracks(r.folder).is_empty());
 }
 
-/// A level lane of a VCA group (`vca.<id>`) needs the group and the master's track.
+/// A lane of a VCA group (`vca.<id>`, `.mute`, `.solo`) needs the group and the master's track.
 fn check_vca_lanes(doc: &RackDoc, path: &JsonPath) -> Result<(), ModelError> {
     for (t, track) in doc.song.tracks.iter().enumerate() {
         for lane in &track.lanes {
             let LaneKind::Automation(key) = &lane.kind else {
                 continue;
             };
-            let Some(id) = crate::console_vca::vca_lane_id(key) else {
+            let Some((id, _)) = crate::console_vca::vca_lane_parts(key) else {
                 continue;
             };
             if doc.console.vca(id).is_none() || doc.console.master.as_ref() != Some(&track.device) {
                 return Err(path.index(t).error(format!(
-                    "the level lane {key:?} needs VCA group {id} and the master"
+                    "the group lane {key:?} needs VCA group {id} and the master"
                 )));
             }
         }
