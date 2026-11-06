@@ -264,6 +264,12 @@ impl<S: EngineSink> AppCore<S> {
         let LaneKind::Automation(param) = &l.kind else {
             return command;
         };
+        // The snapshot lane drives no param: there is no value to hold.
+        if param == atomik_model::SNAPSHOT_LANE_KEY
+            && self.doc().console.master.as_ref() == Some(device)
+        {
+            return command;
+        }
         let points = flatten_automation(track, *lane);
         if points.is_empty() {
             return command;
