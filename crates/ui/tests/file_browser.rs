@@ -2563,3 +2563,87 @@ fn the_row_menu_of_a_midi_file_offers_import_and_the_type_filter_finds_it() {
     let dl = paint(&mut v);
     assert!(dl.texts().contains(&"groove.mid") && !dl.texts().contains(&"kick.wav"));
 }
+
+// ----- waveform thumbnails ---------------------------------------------------------------------
+
+#[test]
+fn thumbnails_are_asked_for_once_per_visible_audio_row_only() {
+    let mut v = view();
+    let mut asked = v.take_thumb_requests();
+    asked.sort();
+    assert_eq!(
+        asked,
+        vec![
+            p("hat.wav"),
+            p("kick 1.wav"),
+            p("kick 10.wav"),
+            p("kick 2.wav"),
+            p("snare.wav")
+        ],
+        "audio rows, not the folder"
+    );
+    assert!(v.take_thumb_requests().is_empty(), "each path once");
+    // New rows ask again, except for a file whose thumbnail is known at its current size.
+    v.set_thumb(p("hat.wav"), 2048, vec![10, 200, 30]);
+    v.set_thumb(p("snare.wav"), 999, vec![10]);
+    v.set_rows(sample_rows());
+    let mut asked = v.take_thumb_requests();
+    asked.sort();
+    assert!(!asked.contains(&p("hat.wav")), "{asked:?}");
+    assert!(
+        asked.contains(&p("snare.wav")),
+        "its size changed: {asked:?}"
+    );
+}
+
+#[test]
+fn thumbnails_of_unseen_rows_wait_until_they_scroll_into_view() {
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    v.set_location(Place::Folder(PathBuf::from("/lib")));
+    v.set_rows((0..300).map(|i| audio(&format!("s{i:03}.wav"))).collect());
+    let first = v.take_thumb_requests();
+    assert!(!first.is_empty() && first.len() < 40, "{}", first.len());
+    assert!(!first.contains(&p("s299.wav")));
+}
+
+#[test]
+fn a_row_draws_its_thumbnail_only_when_it_has_one_and_there_is_room() {
+    let wide = |v: &mut FileBrowserView| v.set_bounds(Rect::new(0.0, 0.0, 800.0, 600.0));
+    let mut v = view();
+    wide(&mut v);
+    let plain = paint(&mut v).ops().len();
+    v.set_thumb(p("hat.wav"), 2048, vec![0, 128, 255, 128, 0, 64]);
+    let with = paint(&mut v).ops().len();
+    assert_eq!(with, plain + 6, "one bar per level");
+    // A thumbnail of another size, an empty one and a narrow panel draw nothing.
+    v.set_thumb(p("hat.wav"), 1, vec![255; 6]);
+    assert_eq!(paint(&mut v).ops().len(), plain);
+    v.set_thumb(p("hat.wav"), 2048, Vec::new());
+    assert_eq!(paint(&mut v).ops().len(), plain);
+    v.set_thumb(p("hat.wav"), 2048, vec![0, 128, 255]);
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    let narrow = paint(&mut v).ops().len();
+    v.set_thumb(p("hat.wav"), 2048, Vec::new());
+    assert_eq!(narrow, paint(&mut v).ops().len(), "no room: nothing drawn");
+}
+
+#[test]
+fn the_thumbnail_cache_is_bounded() {
+    let mut v = view();
+    let row = |name: &str| FileRow {
+        path: PathBuf::from(name),
+        size: 1,
+        ..audio("x.wav")
+    };
+    v.set_thumb(PathBuf::from("/t/old.wav"), 1, vec![1]);
+    for i in 0..4_100 {
+        v.set_thumb(PathBuf::from(format!("/t/{i}.wav")), 1, vec![1]);
+    }
+    v.set_rows(vec![row("/t/old.wav"), row("/t/4099.wav")]);
+    assert_eq!(
+        v.take_thumb_requests(),
+        vec![PathBuf::from("/t/old.wav")],
+        "the full cache started again: the old one is asked for, the recent one is kept"
+    );
+}

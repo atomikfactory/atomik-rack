@@ -62,6 +62,7 @@ pub(crate) enum ViewCall {
     SetPlaces(PlacesData),
     SetChildren(PathBuf, Vec<TreeChild>),
     Detail(PathBuf, Option<f64>, Vec<f32>),
+    Thumb(PathBuf, u64, Vec<u8>),
     Select(PathBuf),
 }
 
@@ -598,6 +599,10 @@ impl<S: EngineSink> AppCore<S> {
         }
         let wanted = self.file_browser.take_info_requests();
         self.queue_probe(wanted);
+        let thumbs = self.file_browser.take_thumb_requests();
+        if !thumbs.is_empty() && self.browser.workers().thumbs(thumbs) {
+            self.browser.jobs += 1;
+        }
         if let Some(path) = self.file_browser.take_detail_request()
             && self.browser.workers().detail(path)
         {
@@ -820,6 +825,13 @@ impl<S: EngineSink> AppCore<S> {
                     .push(ViewCall::Detail(path.clone(), tempo, levels.clone()));
                 self.file_browser
                     .set_detail(path, DetailData { tempo, levels });
+            }
+            BrowseMsg::Thumb { path, size, levels } => {
+                #[cfg(test)]
+                self.browser
+                    .trace
+                    .push(ViewCall::Thumb(path.clone(), size, levels.clone()));
+                self.file_browser.set_thumb(path, size, levels);
             }
             BrowseMsg::ItemInfo(info) => {
                 #[cfg(test)]
