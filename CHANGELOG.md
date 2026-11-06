@@ -9,6 +9,25 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Restructuring follow-ups: scale a selection by its edge, extend audio clips and select a range across lanes.**
+  Dragging the end edge of a clip with the new **Scale selection** role (Ctrl+Alt+Shift, Cmd+Opt+Shift on macOS; a
+  row in Settings, Keyboard) scales every selected clip about the earliest start of the selection, which stays
+  where it is: the clips keep their places relative to it and everything in them follows, the grabbed edge goes
+  where the pointer is (on the grid), the clips change live as a preview that adds no undo step, the release keeps it
+  as one step and Esc puts everything back. It is Scale Tempo (`ScaleTempo`) on a ratio taken from the drag; Alt
+  alone still scales each clip about its own fixed edge. **Extend to Next Clip** and **Extend to Previous Clip** now
+  work on audio clips too, in the same step as note and automation clips: an audio clip plays on from its file (a
+  reversed one moves its source offset with its end and grows no further than the start of its file), its fades and
+  gain envelope follow, and reaching back moves the start only as far as the file has audio before it, so a clip
+  that cannot reach its neighbour stops short and one with no room is left alone. The edge maths of audio clips
+  moved from the arrangement view to the model for this and behaves as before under a drag. A range selected with
+  Alt+Shift now follows the pointer onto other lanes: a drag that moves up or down takes every note, audio and
+  automation lane between the lane it began on and the one under the pointer, across tracks as well. Copy and Cut
+  take the parts of the clips of all of them, Delete cuts the range out of every lane in one step, Paste puts each
+  part back on a lane of its own kind of its own track at the playhead, and Bounce Range in Place renders each track
+  the lanes belong to once. A range on one lane works as before. The project format is unchanged (44). Not done yet:
+  scaling a selection about its end by dragging its start edge, joining clips of different files by rendering
+  them, and warp markers kept when audio clips join.
 - **Quantize follow-ups: controllers that follow, a grid per note and a groove from a MIDI file.** A quantize
   now carries the controller lane points of a note clip (pitch bend, aftertouch and CC) along with the notes it
   moves. The rule: a point between a note's old start (included) and its new start (excluded) moves by the same

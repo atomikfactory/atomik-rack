@@ -4769,11 +4769,16 @@ creation chain in the **Creation chain** bullet.
 - **Lane handle, lane range and extend.** `arrangement/static_handle.rs` draws the static value of an automation
   lane as a line with a handle (`Hit::StaticHandle`, `Drag::Static`); the drag sends `SetLaneStatic` with one merge id
   (`MergeKey::LaneStatic` folds the steps into one) and Esc sends the old value back. `arrangement/lane_range.rs`
-  holds the time range of one lane that a drag with `Role::RangeDrag` selects (view state, forgotten by any other
-  press or Esc): `edit.delete` on it sends `CutOut`, and the app captures it with `ClipSnapshot::capture_range`
-  (the parts of the lane's clips inside the range, starting at its start) for Copy and Cut and pastes the clips on
-  the range's lane at the playhead. `WorkflowCommand::ExtendClips` grows note and automation clips to the
-  neighbouring clip of their lane (the start side reuses the left-trim planner). A drag of the start edge of an
+  holds the time range of one or several lanes that a drag with `Role::RangeDrag` selects (view state, forgotten by
+  any other press or Esc; the drag takes every lane row from the one it began on to the one under the pointer, and
+  `ArrangementView::lane_ranges` reports them): `edit.delete` on it sends one `CutOut` over the clips of all the
+  lanes, and the app captures it with `ClipSnapshot::capture_ranges` (the parts of the lanes' clips inside the
+  range, starting at its start) for Copy and Cut. A paste puts the clips on the range's lane when it has one, and
+  each part on a lane of its own kind of its own track when it has several; a range bounce renders each track once.
+  `WorkflowCommand::ExtendClips` grows clips to the neighbouring clip of their lane (the start side reuses the
+  left-trim planner; an audio clip uses the edge maths of `audio_trim` in the model, the same functions as the
+  arrangement view's audio edge drags, so it plays on from its file and reaches back only as far as the file has
+  audio). A drag of the start edge of an
   audio clip also trims the other selected audio clips by the same ticks (`Drag::Audio` carries them). The snap
   resolutions and the snap mode (`arrangement_snap`, `piano_roll_snap`, `snap_mode`) and the piano roll's note
   audition switch (`piano_roll_audition`, command `editor.audition_toggle`) are saved in `ui-state.json`.
@@ -4832,7 +4837,10 @@ creation chain in the **Creation chain** bullet.
   clip's own fixed edge: the gesture is an Alt+drag on a clip edge (`Drag::Stretch`), whose steps
   reach the app as `UiAction::StretchStep` and run as a `Document::apply_trial` preview
   (`AppCore::stretch_step`: the trial is cancelled and re-planned from the original at every
-  step, so no undo step exists until the release commits one). The same trial serves the Scale
+  step, so no undo step exists until the release commits one). The end edge dragged with
+  `Role::ScaleSelection` (Ctrl+Alt+Shift) is the same drag with `whole` set: it scales the whole selection about
+  its earliest start, so its steps are `ScaleTempo` previews (`UiAction::ScaleStep`, `AppCore::scale_step`) on the
+  ratio of the grabbed edge's new place to its old one, both counted from that start. The same trial serves the Scale
   Tempo panel (`ScaleView`, opened by `sequencer.scale_tempo` with `dialog`: every usable value
   previews through `AppCore::scale_preview`, Enter commits with `AppCore::scale_apply`) and the
   crossfade drag (`Drag::Crossfade`, `UiAction::CrossfadeStep`): `MoveCrossfade` (`audio_join` in

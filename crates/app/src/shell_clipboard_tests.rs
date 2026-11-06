@@ -1528,6 +1528,105 @@ fn a_lane_range_copies_cuts_deletes_and_pastes_the_parts_of_the_clips_inside_it(
     );
 }
 
+/// `with_clips` plus a cutoff lane under the note lane of track `a`, holding one clip of a bar.
+fn with_two_lanes() -> Shell<NullBackend> {
+    let mut s = with_clips();
+    for c in [
+        SongCommand::AddAutomationLane {
+            device: key("a"),
+            param: "filter.cutoff".into(),
+        },
+        SongCommand::AddClip {
+            device: key("a"),
+            lane: 1,
+            clip: atomik_model::Clip {
+                id: ClipId(0),
+                start: 0,
+                length: BAR,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                scale: None,
+                param_lanes: Vec::new(),
+                midi: Default::default(),
+                groove: None,
+                controllers: Vec::new(),
+                name: None,
+                color: None,
+                grid: None,
+                content: atomik_model::ClipContent::Automation(vec![
+                    atomik_model::AutomationPoint {
+                        tick: 0,
+                        value: 500.0,
+                        curve: atomik_model::Curve::Linear,
+                    },
+                ]),
+            },
+        },
+    ] {
+        s.core_mut().apply_command(Command::Song(c)).unwrap();
+    }
+    s.core_mut().after_view_change();
+    s.set_focus(Pane::Arrangement);
+    s
+}
+
+/// The `(start, length)` of the clips of each lane of track `a`.
+fn lane_clips(s: &Shell<NullBackend>) -> Vec<Vec<(i64, i64)>> {
+    let t = s.core().doc().song.track(&key("a")).unwrap().clone();
+    t.lanes
+        .iter()
+        .map(|l| {
+            let mut v: Vec<(i64, i64)> = l.clips.iter().map(|c| (c.start, c.length)).collect();
+            v.sort_unstable();
+            v
+        })
+        .collect()
+}
+
+#[test]
+fn a_range_over_two_lanes_copies_cuts_deletes_and_pastes_each_part_on_its_own_lane() {
+    let mut s = with_two_lanes();
+    let range = |s: &mut Shell<NullBackend>| {
+        s.core_mut().arrangement_mut().set_lane_ranges(
+            vec![(key("a"), 0), (key("a"), 1)],
+            BAR / 4,
+            BAR / 2,
+        );
+    };
+    let whole = vec![vec![(0, BAR)], vec![(0, BAR)]];
+    assert_eq!(lane_clips(&s), whole);
+    range(&mut s);
+    assert!(s.core().has_selection(Pane::Arrangement));
+    // Copy changes nothing; Paste puts the part of each lane back on that lane at the playhead.
+    tap(&mut s, Os::Windows, "Cmd+C");
+    assert_eq!(lane_clips(&s), whole);
+    s.core_mut()
+        .transport_action(atomik_ui::TransportAction::Locate(4 * BAR));
+    tap(&mut s, Os::Windows, "Cmd+V");
+    assert_eq!(
+        lane_clips(&s),
+        vec![
+            vec![(0, BAR), (4 * BAR, BAR / 4)],
+            vec![(0, BAR), (4 * BAR, BAR / 4)]
+        ]
+    );
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(lane_clips(&s), whole, "one undo step for both lanes");
+    // Cut copies and removes the part inside the range from both lanes.
+    range(&mut s);
+    tap(&mut s, Os::Windows, "Cmd+X");
+    let cut = vec![vec![(0, BAR / 4), (BAR / 2, BAR / 2)]; 2];
+    assert_eq!(lane_clips(&s), cut);
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(lane_clips(&s), whole, "one undo step for both lanes");
+    // Delete removes without copying.
+    range(&mut s);
+    tap(&mut s, Os::Windows, "Delete");
+    assert_eq!(lane_clips(&s), cut);
+    assert!(s.core().arrangement().lane_ranges().is_none());
+}
+
 #[test]
 fn the_device_menu_runs_the_preview_command_on_a_player_only() {
     let mut s = rack3();

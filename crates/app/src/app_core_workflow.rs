@@ -357,6 +357,14 @@ impl<S: EngineSink> AppCore<S> {
         });
     }
 
+    /// One step of the end edge of a clip dragged with the scale-selection role: the document
+    /// is put back to what it was before the drag and `ids` scale about their earliest start to
+    /// `percent` of their tempo from there (the same preview rules as
+    /// [`AppCore::stretch_step`]; [`AppCore::end_stretch`] ends the drag).
+    pub(super) fn scale_step(&mut self, ids: Vec<ClipId>, percent: f64) {
+        self.trial_step(WorkflowCommand::ScaleTempo { ids, percent });
+    }
+
     /// One step of a crossfade zone dragged: the document is put back to what it was before
     /// the drag and the crossfade of `later` moves by `delta` ticks from there (the same
     /// preview rules as [`AppCore::stretch_step`]; [`AppCore::end_stretch`] ends the drag).

@@ -887,6 +887,30 @@ fn a_range_bounce_takes_the_range_selected_on_a_lane_for_its_track() {
 }
 
 #[test]
+fn a_range_over_several_lanes_bounces_each_track_of_its_lanes_once() {
+    let mut c = core_with(0);
+    c.toggle_freeze_tail();
+    // The same lane listed twice stands for one track: one bounce of the second half.
+    c.arrangement_mut().set_lane_ranges(
+        vec![(key("bass"), 0), (key("bass"), 0)],
+        BAR + BAR / 2,
+        2 * BAR,
+    );
+    c.bounce_range();
+    c.wait_background();
+    let bounced: Vec<_> = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .filter(|t| t.is_audio())
+        .collect();
+    assert_eq!(bounced.len(), 1, "one render for the one track");
+    let clip = &bounced[0].lanes[0].clips[0];
+    assert_eq!((clip.start, clip.length), (BAR + BAR / 2, BAR / 2));
+}
+
+#[test]
 fn a_range_bounce_says_why_it_renders_nothing() {
     let mut c = core_with(0);
     c.bounce_range();

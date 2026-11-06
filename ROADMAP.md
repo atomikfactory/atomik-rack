@@ -42,7 +42,11 @@ and controller lanes without a note clip (a note track holds pitch bend, afterto
 edited in the piano roll with the same lane chips, recorded when a take has controller events and no notes, played by
 the engine, the bounce and the MIDI export, and kept in the project file),
 and quantize follow-ups (controller lane points of a note clip that move with their notes, a grid per note taken from
-the note's own length, and a groove made from a MIDI file chosen or dropped on the quantize panel).
+the note's own length, and a groove made from a MIDI file chosen or dropped on the quantize panel),
+and restructuring follow-ups (a drag of the end edge of a selected clip with the scale-selection role scales every
+selected clip about the start of the selection, previewed and kept as one undo step; Extend to Next and Previous Clip
+on audio clips, which play on from their file and reach back only as far as it has audio; and a time range selected
+across several lanes of one or more tracks, copied, cut, deleted, pasted back on lanes of their own kind and bounced).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -60,11 +64,10 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **Loop recording and takes follow-ups.** Takes for automation passes (a loop recording of automation still lays layered clips), and a saved link between the take groups of several tracks (today the link is the track selection).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
 - **MIDI file follow-ups.** Per-note expression (MPE) kept, and typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
-- **Arrangement restructuring follow-ups.** Scaling a whole selection about its start by dragging its outer edge (an Alt+drag scales each clip about its own fixed edge), joining clips of different files by rendering them into one, and warp markers kept when audio clips join.
+- **Arrangement restructuring follow-ups.** Scaling a selection about its end by dragging its start edge (the end edge scales it about the start today), joining clips of different files by rendering them into one, and warp markers kept when audio clips join.
 - **Rack editing follow-ups.** The "+" handles inside an unfolded container, a Create submenu that lists the device types and not only the three families, replacing a device by dragging a row of the device browser onto a track header (a library item can be dropped there today), and a context menu item to replace a device.
 - **Track organisation follow-ups.** Routing the tracks of a folder to an output bus and a folder-level fader (see Phase 4).
 - **Recording and editing follow-ups.** The masked parts of a looped clip dimmed in the piano roll (clips without a loop are today), and the inspector's fade unit remembered between sessions.
-- **Automation lane and gesture follow-ups.** Extend to Next and Previous Clip for audio clips (it works on note and automation clips today) and a range selected across several lanes.
 - **Note lane follow-ups.** Recording to several lanes at once (today a take goes to the one selected lane), and an S button on the chip of lane 0 (the header's second line is full: use the Solo Lane menu item).
 
 ## Phase 3: Audio

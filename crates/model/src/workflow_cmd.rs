@@ -381,12 +381,15 @@ pub enum WorkflowCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
-    /// Extends every listed note or automation clip to the clip that follows it on its lane
-    /// (`next`: the end moves out to that clip's start, the content stays where it is) or to the
-    /// clip before it (the start moves back to that clip's end, like a trim to the left, the
-    /// content stays where it is in song time). A clip with no neighbour on that side, one that
-    /// already touches or overlaps it, and audio clips are left as they are; a command that
-    /// would change nothing rejects. One undo step.
+    /// Extends every listed clip to the clip that follows it on its lane (`next`: the end moves
+    /// out to that clip's start, the content stays where it is) or to the clip before it (the
+    /// start moves back to that clip's end, like a trim to the left, the content stays where it
+    /// is in song time). An audio clip follows the rules of its own edge handles: it plays on
+    /// from its file (a reversed one moves its source offset with its end) and can reach back
+    /// only as far as its file has audio before the start, so it stops short of a neighbour it
+    /// cannot reach. A clip with no neighbour on that side and one that already touches or
+    /// overlaps it are left as they are; a command that would change nothing rejects. One undo
+    /// step.
     ExtendClips {
         /// The clips.
         ids: Vec<ClipId>,
@@ -2281,10 +2284,8 @@ fn extend_clips(
     next: bool,
 ) -> Result<Edit, ModelError> {
     let mut edits = Vec::new();
+    let tempo = crate::audio_trim::TempoMap::new(&doc.song.tempo);
     for (device, lane, c) in clips_in_song_order(doc, ids)? {
-        if c.content.is_audio() {
-            continue;
-        }
         let Some(clips) = doc
             .song
             .track(&device)
@@ -2308,9 +2309,26 @@ fn extend_clips(
             let length = to - c.start;
             check_geometry(c.start, length, c.offset, c.loop_length)
                 .map_err(ModelError::OutOfRange)?;
-            Clip {
-                length,
-                ..c.clone()
+            if let ClipContent::Audio(a) = &c.content {
+                // The fades stay, and a reversed clip moves its source offset with its end: it
+                // grows no further than the start of its file.
+                let rate = audio_rate(doc, a);
+                let (length, content) = crate::audio_trim::resize_end_audio(
+                    &tempo,
+                    rate,
+                    (c.start, c.length, a),
+                    length,
+                    1,
+                );
+                if length <= c.length {
+                    continue;
+                }
+                checked_audio(doc, c, c.start, length, content)?
+            } else {
+                Clip {
+                    length,
+                    ..c.clone()
+                }
             }
         } else {
             let Some(to) = clips
@@ -2324,7 +2342,26 @@ fn extend_clips(
             if to >= c.start {
                 continue;
             }
-            trimmed(doc, registry, (&device, lane), c, to - c.start)?
+            if let ClipContent::Audio(a) = &c.content {
+                // The start moves back only as far as the file has audio before it.
+                let Some(meta) = doc.assets.get(&a.asset) else {
+                    continue;
+                };
+                let (start, length, content) = crate::audio_trim::trim_start_audio(
+                    &tempo,
+                    audio_rate(doc, a),
+                    meta.frames,
+                    (c.start, c.length, a),
+                    to,
+                    1,
+                );
+                if start >= c.start {
+                    continue;
+                }
+                checked_audio(doc, c, start, length, content)?
+            } else {
+                trimmed(doc, registry, (&device, lane), c, to - c.start)?
+            }
         };
         edits.push(Edit::Clip {
             device,
@@ -2335,12 +2372,41 @@ fn extend_clips(
     }
     if edits.is_empty() {
         return Err(bad_song(if next {
-            "no selected note or automation clip has a gap before the next clip"
+            "no selected clip has a gap before the next clip that it can grow into"
         } else {
-            "no selected note or automation clip has a gap after the previous clip"
+            "no selected clip has a gap after the previous clip that it can grow into"
         }));
     }
     Ok(Edit::Compound(edits))
+}
+
+/// The sample rate of the file an audio clip plays (the project's when the file is unknown).
+fn audio_rate(doc: &RackDoc, a: &AudioClipContent) -> u32 {
+    doc.assets
+        .get(&a.asset)
+        .map_or(doc.sample_rate, |m| m.sample_rate)
+}
+
+/// `clip` with the geometry and audio content given, checked the way `SetAudioClip` checks it.
+fn checked_audio(
+    doc: &RackDoc,
+    clip: &Clip,
+    start: i64,
+    length: i64,
+    content: AudioClipContent,
+) -> Result<Clip, ModelError> {
+    check_geometry(start, length, 0, clip.loop_length).map_err(ModelError::OutOfRange)?;
+    crate::song_cmd::check_audio(doc, &content)?;
+    crate::song_cmd::check_audio_span(
+        &content,
+        crate::song_cmd::audio_span_frames(doc, start, length, clip.loop_length),
+    )?;
+    Ok(Clip {
+        start,
+        length,
+        content: ClipContent::Audio(content),
+        ..clip.clone()
+    })
 }
 
 /// The clip `c` of lane `lane` of `device` with its start moved by `delta` ticks and its end

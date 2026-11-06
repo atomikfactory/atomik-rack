@@ -22,7 +22,7 @@
 //! height presets) is in the `organise` submodule.
 
 use crate::action::{ContextTarget, ImportTarget, TransportAction, UiAction};
-use crate::audio::{self, InputSel, TempoMap};
+use crate::audio::{self, InputSel, TempoMap, clip_frames, trim_start_audio};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
@@ -629,6 +629,9 @@ enum Drag {
         originals: Vec<Clip>,
         /// The start edge is grabbed (the end stays), else the end edge.
         from_start: bool,
+        /// The whole selection scales about its earliest start (the scale-selection role)
+        /// instead of each clip about its own fixed edge.
+        whole: bool,
         moved: bool,
         /// The host holds a preview that the release accepts.
         open: bool,
@@ -3651,6 +3654,17 @@ impl ArrangementView {
             self.open_fade_menu(track, &clip, a, part == ClipPart::FadeOut, pos);
             return;
         }
+        // The scale-selection role on a clip's end edge: the whole selection scales about its
+        // start, the grabbed edge following the pointer.
+        if primary && part == ClipPart::Edge && id != FROZEN_CLIP && self.scale_role(modifiers) {
+            if !self.selection.contains(&id) {
+                self.selection.select_only(id);
+            }
+            self.point_sel = None;
+            self.selected_track = None;
+            self.begin_scale(clip, pos);
+            return;
+        }
         // The stretch role on a clip's start or end edge: the clip's length changes by a ratio
         // and everything in it follows (the body keeps the alternate tool).
         if primary
@@ -4935,6 +4949,11 @@ impl ArrangementView {
                     id,
                     ..
                 }) if id != FROZEN_CLIP && self.stretch_hover() => CursorHint::Stretch,
+                Some(Hit::Clip {
+                    part: ClipPart::Edge,
+                    id,
+                    ..
+                }) if id != FROZEN_CLIP && self.scale_hover() => CursorHint::Stretch,
                 Some(Hit::Clip {
                     part:
                         ClipPart::Edge
@@ -7917,62 +7936,6 @@ fn song_cmd(c: SongCommand) -> UiAction {
     UiAction::Command(Command::Song(c))
 }
 
-fn clip_frames(tempo: &TempoMap, start: i64, length: i64, rate: u32) -> u64 {
-    tempo
-        .frame_at(start + length, rate)
-        .saturating_sub(tempo.frame_at(start, rate))
-}
-
-/// The geometry and content an audio clip gets when its start is trimmed to song tick
-/// `wanted`: the source offset follows (warped and reversed clips by their own rules), the
-/// fades are clamped to the new length and the envelope stays on the sound it was drawn on.
-fn trim_start_audio(
-    tempo: &TempoMap,
-    rate: u32,
-    asset_frames: u64,
-    (start, length, content): (i64, i64, &AudioClipContent),
-    wanted: i64,
-    min: i64,
-) -> (i64, i64, AudioClipContent) {
-    let orig = (start, length, content.source_offset);
-    let mut markers = None;
-    let t = if content.warp.enabled && content.reverse {
-        // A warped clip played backwards plays its stretched span from the end: trimming its
-        // start cuts the end of that span, so the source offset and the markers stay.
-        audio::trim_left_stretched_reversed(orig, wanted, min)
-    } else if content.warp.enabled {
-        let (t, m) =
-            audio::trim_left_warped(rate, (start, length, content), asset_frames, wanted, min);
-        markers = Some(m);
-        t
-    } else if content.reverse {
-        audio::trim_left_reversed(tempo, rate, orig, asset_frames, wanted, min)
-    } else {
-        audio::trim_left(tempo, rate, orig, asset_frames, wanted, min)
-    };
-    let frames = clip_frames(tempo, t.start, t.length, rate);
-    let (fade_in, fade_out) = audio::clamp_fades(content.fade_in, content.fade_out, frames);
-    let moved = i128::from(tempo.frame_at(t.start, rate)) - i128::from(tempo.frame_at(start, rate));
-    let mut trimmed = content.clone();
-    if let Some(m) = markers {
-        trimmed.warp.markers = m;
-    }
-    (
-        t.start,
-        t.length,
-        AudioClipContent {
-            source_offset: t.source_offset,
-            fade_in,
-            fade_out,
-            envelope: audio::envelope_after_trim(
-                &content.envelope,
-                moved.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
-            ),
-            ..trimmed
-        },
-    )
-}
-
 fn audio_clip_cmd(
     c: &Clip,
     start: i64,
@@ -8006,28 +7969,9 @@ fn resize_cmd(
         return (new, geometry_cmd(clip, clip.start, new.0, new.1, merge));
     };
     let rate = assets.get(&a.asset).map_or(DEFAULT_RATE, |m| m.sample_rate);
-    let mut frames = clip_frames(tempo, clip.start, new.0, rate);
-    let mut source_offset = a.source_offset;
-    if a.reverse && !a.warp.enabled {
-        // The end of a reversed clip is the low end of its source span: the offset moves with
-        // it, and the clip grows no further than frame 0.
-        let old = clip_frames(tempo, clip.start, clip.length, rate);
-        let (_, allowed) = audio::reversed_end_resize(a.source_offset, old, frames);
-        if allowed < frames {
-            let end_frame = tempo.frame_at(clip.start, rate) + allowed;
-            let end = tempo.tick_at_frame(end_frame as f64, rate).round() as i64;
-            new.0 = (end - clip.start).max(min);
-            frames = clip_frames(tempo, clip.start, new.0, rate);
-        }
-        source_offset = audio::reversed_end_resize(a.source_offset, old, frames).0;
-    }
-    let (fade_in, fade_out) = audio::clamp_fades(a.fade_in, a.fade_out, frames);
-    let content = AudioClipContent {
-        source_offset,
-        fade_in,
-        fade_out,
-        ..a.clone()
-    };
+    let (length, content) =
+        audio::resize_end_audio(tempo, rate, (clip.start, clip.length, a), new.0, min);
+    new.0 = length;
     (new, audio_clip_cmd(clip, clip.start, new.0, content, merge))
 }
 

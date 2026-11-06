@@ -9,10 +9,17 @@
 //! accepts it as one step and Esc puts everything back. The model plans the stretch (see
 //! `atomik_model::WorkflowCommand::StretchClips`). The same gesture on a clip's body keeps the
 //! alternate tool's own meaning.
+//!
+//! With the scale-selection role held (Ctrl+Alt+Shift by default) a drag of a clip's end edge
+//! scales the whole selection instead: every selected clip keeps its place relative to the
+//! earliest start of the selection, which stays where it is, and the grabbed edge follows the
+//! pointer (`atomik_model::WorkflowCommand::ScaleTempo`, the command of the Scale Tempo panel).
+//! The preview, the grid and the release work as for the stretch.
 
 use super::{ArrangementView, DRAG_THRESHOLD, Drag, MIN_TICKS};
 use crate::action::UiAction;
 use crate::event::Modifiers;
+use crate::keymap::{GestureClass, Role};
 use crate::seq_edit;
 use crate::viewport::Tool;
 use atomik_model::{Clip, ClipId};
@@ -31,6 +38,31 @@ impl ArrangementView {
         self.vp.tool() == Tool::Select && self.vp.shown_tool() == Tool::Pencil
     }
 
+    /// Whether a press with `modifiers` is the scale-selection gesture: the Select tool with the
+    /// scale-selection role held.
+    pub(super) fn scale_role(&self, modifiers: Modifiers) -> bool {
+        self.vp.tool() == Tool::Select
+            && self
+                .vp
+                .roles()
+                .is_active(Role::ScaleSelection, modifiers, GestureClass::DragItem)
+    }
+
+    /// Whether the pointer is over a clip's end edge while the scale-selection role is held
+    /// (the cursor).
+    pub(super) fn scale_hover(&self) -> bool {
+        self.scale_role(self.vp.held())
+    }
+
+    /// Starts a scale drag on the end edge of `clip`: the clips of the selection (and `clip`)
+    /// scale together about the earliest start among them.
+    pub(super) fn begin_scale(&mut self, clip: Clip, pos: Point) {
+        self.begin_stretch(clip, false, pos);
+        if let Drag::Stretch { whole, .. } = &mut self.drag {
+            *whole = true;
+        }
+    }
+
     /// Starts a stretch drag on the edge of `clip` (`from_start`: its start edge). The selection
     /// has the clip already; the clips it holds are stretched together.
     pub(super) fn begin_stretch(&mut self, clip: Clip, from_start: bool, pos: Point) {
@@ -45,6 +77,7 @@ impl ArrangementView {
             clip,
             originals,
             from_start,
+            whole: false,
             moved: false,
             open: false,
             last: None,
@@ -67,6 +100,7 @@ impl ArrangementView {
             clip,
             originals,
             from_start,
+            whole,
             moved,
             open,
             last,
@@ -79,6 +113,32 @@ impl ArrangementView {
             return;
         }
         let delta = axis.dx_to_ticks(pos.x - start.x);
+        if *whole {
+            // The grabbed end edge goes where the pointer asks; the earliest start stays.
+            let base = originals
+                .iter()
+                .map(|c| c.start)
+                .min()
+                .unwrap_or(clip.start);
+            let end = clip.start + seq_edit::drag_length(clip.start, clip.end(), delta, step, min);
+            let ratio = scale_ratio(base, clip, originals, end, min);
+            let percent = 100.0 / ratio;
+            if (percent - 100.0).abs() < 1e-6 {
+                if std::mem::take(open) {
+                    out.push(UiAction::StretchEnd { commit: false });
+                }
+                *last = None;
+            } else if *last != Some(percent) {
+                out.push(UiAction::ScaleStep {
+                    ids: originals.iter().map(|c| c.id).collect::<Vec<ClipId>>(),
+                    percent,
+                });
+                *open = true;
+                *last = Some(percent);
+            }
+            self.repaint = true;
+            return;
+        }
         let wanted = if *from_start {
             clip.end() - seq_edit::drag_start_by(snap_mode, clip.start, delta, step)
         } else {
@@ -104,6 +164,22 @@ impl ArrangementView {
         }
         self.repaint = true;
     }
+}
+
+/// The ratio the selection scales by about `base` (its earliest start) when the end of the
+/// grabbed `clip` goes to `end`, held to what the model accepts: a tempo between
+/// [`SCALE_PERCENT_MIN`] and [`SCALE_PERCENT_MAX`] and no clip shorter than `min` ticks.
+fn scale_ratio(base: i64, clip: &Clip, originals: &[Clip], end: i64, min: i64) -> f64 {
+    let span = (clip.end() - base).max(1) as f64;
+    let mut ratio = (end - base).max(1) as f64 / span;
+    let shortest = originals
+        .iter()
+        .map(|c| c.length)
+        .min()
+        .unwrap_or(min)
+        .max(1);
+    ratio = ratio.max(min as f64 / shortest as f64);
+    ratio.clamp(100.0 / SCALE_PERCENT_MAX, 100.0 / SCALE_PERCENT_MIN)
 }
 
 /// The ratio of the new length to the old for the grabbed `clip` given the length the pointer

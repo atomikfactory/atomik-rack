@@ -35,11 +35,14 @@ pub enum Role {
     RangeDrag,
     /// Drag: a knob of the rack dropped on a macro knob of a macro bank is assigned to it.
     AssignMacro,
+    /// Drag: the end edge of a clip of the arrangement scales the whole selection about its
+    /// start instead of resizing the clips.
+    ScaleSelection,
 }
 
 impl Role {
     /// Every role, in listing order.
-    pub const ALL: [Role; 13] = [
+    pub const ALL: [Role; 14] = [
         Role::AlternateTool,
         Role::DisableSnap,
         Role::CopyDrag,
@@ -53,6 +56,7 @@ impl Role {
         Role::FlatRange,
         Role::RangeDrag,
         Role::AssignMacro,
+        Role::ScaleSelection,
     ];
 
     /// The source modules that act on this role. A role with none is not wired: Settings does
@@ -72,6 +76,7 @@ impl Role {
             Role::FlatRange => &["arrangement"],
             Role::RangeDrag => &["arrangement/lane_range"],
             Role::AssignMacro => &["rack/macro_drag"],
+            Role::ScaleSelection => &["arrangement/stretch"],
         }
     }
 
@@ -101,6 +106,7 @@ impl Role {
             Role::FlatRange => "flat_range",
             Role::RangeDrag => "range_drag",
             Role::AssignMacro => "assign_macro",
+            Role::ScaleSelection => "scale_selection",
         }
     }
 }
@@ -127,6 +133,7 @@ impl Role {
             Role::FlatRange => "Flat automation range",
             Role::RangeDrag => "Lane range select",
             Role::AssignMacro => "Assign to macro",
+            Role::ScaleSelection => "Scale selection",
         }
     }
 }
@@ -213,6 +220,7 @@ impl Roles {
             b(R::FlatRange, m(true, false, false, true), G::DragItem),
             b(R::RangeDrag, m(false, false, true, true), G::DragItem),
             b(R::AssignMacro, m(false, false, true, true), G::DragControl),
+            b(R::ScaleSelection, m(true, false, true, true), G::DragItem),
             b(R::FineAdjust, shift, G::DragControl),
             b(R::ResetParam, cmd, G::ClickControl),
             b(
@@ -471,6 +479,7 @@ mod tests {
             "rack/macro_drag" => include_str!("../rack/macro_drag.rs"),
             "arrangement" => include_str!("../arrangement.rs"),
             "arrangement/lane_range" => include_str!("../arrangement/lane_range.rs"),
+            "arrangement/stretch" => include_str!("../arrangement/stretch.rs"),
             "console" => include_str!("../console.rs"),
             "piano_roll" => include_str!("../piano_roll.rs"),
             "audio_editor" => include_str!("../audio_editor.rs"),

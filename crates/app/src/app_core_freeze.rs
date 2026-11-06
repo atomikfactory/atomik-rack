@@ -479,13 +479,22 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The tracks a range bounce renders with the span of each, and why the others are left out.
-    /// The span is the range selected on a lane (that lane's track alone) or the range between
-    /// the locators on every selected track; a track qualifies when it is not frozen, has a
+    /// The span is the range selected on a lane (the tracks of the lanes it covers) or the range
+    /// between the locators on every selected track; a track qualifies when it is not frozen, has a
     /// chain and plays a note or audio clip inside the span.
     fn range_candidates(&self) -> (Vec<RangeJob>, Vec<String>) {
         let doc = self.doc();
-        let wanted: Vec<RangeJob> = match self.arrangement.lane_range() {
-            Some((device, _, start, end)) => vec![(device, (start, end))],
+        let wanted: Vec<RangeJob> = match self.arrangement.lane_ranges() {
+            Some((lanes, start, end)) => {
+                // Each track of the lanes the range covers renders once.
+                let mut tracks: Vec<DeviceKey> = Vec::new();
+                for (device, _) in lanes {
+                    if !tracks.contains(&device) {
+                        tracks.push(device);
+                    }
+                }
+                tracks.into_iter().map(|d| (d, (start, end))).collect()
+            }
             None => {
                 let tracks = self.arrangement.command_tracks();
                 let range = doc.song.loop_range;
