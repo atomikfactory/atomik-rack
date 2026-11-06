@@ -37,6 +37,7 @@ pub mod controller_edit;
 mod curves;
 mod curves_cmd;
 mod device_patch;
+mod doc_compare;
 mod drums;
 mod drums_cmd;
 mod expand;
@@ -118,6 +119,7 @@ pub use container::{
 };
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
 pub use device_patch::MAX_PATCH_NAME_CHARS;
+pub use doc_compare::{DiffSection, DocDiff, compare_docs};
 pub use drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
 pub use expand::{
     BYPASS_PARAM, ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value,

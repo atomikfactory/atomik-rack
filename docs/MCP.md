@@ -296,7 +296,9 @@ Say in "How it was tested" which of these you ran and what they showed (for exam
 `session_save` writes the project; each save after the first keeps the replaced file as a version beside the project.
 `file.save_version` opens the Versions panel with the name focused (`session_key` with `text` types the name, `Enter`
 keeps the version) and `file.versions` opens it on the list (`Enter` restores the chosen version, `Escape` closes).
-A song with no project file says to save it first.
+A song with no project file says to save it first. In the list, `session_key` `c` compares the chosen version with the
+song now and the panel then shows the lines of the comparison (`session_texts` lists them: `SONG`, `TRACKS`, `DEVICES`,
+`MIXER` and their `+`, `-` and `~` lines); `Escape` returns to the list.
 
 ### Recipe: templates, song information and archives
 

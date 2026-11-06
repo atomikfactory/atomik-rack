@@ -1,7 +1,8 @@
 //! The versions panel: it lists the versions it was given, the name takes typing, SAVE VERSION and
 //! Enter in the name emit the save, the list chooses with the pointer and the arrows, RESTORE,
 //! a double-click and Enter in the list emit the restore, PROTECT toggles an automatic version
-//! only, CLOSE closes.
+//! only, CLOSE closes, COMPARE and C ask for a comparison (with a Shift-marked second version or the
+//! song now) and the comparison is a scrollable text that BACK, Enter and Backspace leave.
 
 mod support;
 
@@ -253,8 +254,218 @@ fn the_buttons_have_tooltips() {
         v.save_rect(),
         v.restore_rect(),
         v.protect_rect(),
+        v.compare_rect(),
     ] {
         assert!(v.help_at(r.center()).is_some());
     }
     assert!(v.help_at(Point::new(1.0, 1.0)).is_none());
+}
+
+fn press_with(v: &mut VersionsView, key: Key, modifiers: Modifiers) -> Vec<VersionsAction> {
+    actions(v.handle(&UiEvent::Key {
+        key,
+        modifiers,
+        pressed: true,
+    }))
+}
+
+const SHIFT: Modifiers = Modifiers {
+    shift: true,
+    ctrl: false,
+    alt: false,
+    meta: false,
+};
+
+fn shift_click(v: &mut VersionsView, p: Point) {
+    v.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: SHIFT,
+        clicks: 1,
+    });
+}
+
+#[test]
+fn compare_asks_for_the_chosen_version_against_the_song_now() {
+    let mut v = view(items());
+    assert_eq!(
+        click_on(&mut v, |v| v.compare_rect()),
+        vec![VersionsAction::Compare { id: 5, with: None }]
+    );
+    press(&mut v, Key::Tab);
+    press(&mut v, Key::Down);
+    assert_eq!(
+        press(&mut v, Key::Char('c')),
+        vec![VersionsAction::Compare { id: 4, with: None }]
+    );
+    assert_eq!(
+        press(&mut v, Key::Char('C')),
+        vec![VersionsAction::Compare { id: 4, with: None }]
+    );
+    // C in the name is typed text.
+    press(&mut v, Key::Up);
+    press(&mut v, Key::Up);
+    assert!(v.name_has_keys());
+    assert_eq!(press(&mut v, Key::Char('c')), vec![]);
+    assert_eq!(v.name(), "c");
+}
+
+#[test]
+fn compare_with_nothing_chosen_asks_for_nothing() {
+    let mut v = view(Vec::new());
+    assert_eq!(click_on(&mut v, |v| v.compare_rect()), vec![]);
+}
+
+#[test]
+fn shift_marks_a_second_version_to_compare_with() {
+    let mut v = view(items());
+    // Shift-click on row 3 chooses it and marks the row the choice left (the newest).
+    let p = v.row_rect(3).center();
+    shift_click(&mut v, p);
+    assert_eq!(v.selected_id(), Some(2));
+    assert_eq!(v.marked_id(), Some(5));
+    assert_eq!(
+        click_on(&mut v, |v| v.compare_rect()),
+        vec![VersionsAction::Compare {
+            id: 2,
+            with: Some(5)
+        }]
+    );
+    assert!(texts(&v).iter().any(|s| s == "COMPARE WITH"));
+    // A plain click chooses and keeps the mark; shift-clicking back onto the mark clears it.
+    let p = v.row_rect(0).center();
+    shift_click(&mut v, p);
+    assert_eq!(v.selected_id(), Some(5));
+    assert_eq!(v.marked_id(), None);
+    // Shift with the arrows marks the row left behind.
+    press_with(&mut v, Key::Down, SHIFT);
+    assert_eq!((v.selected_id(), v.marked_id()), (Some(4), Some(5)));
+    press_with(&mut v, Key::Down, SHIFT);
+    assert_eq!((v.selected_id(), v.marked_id()), (Some(3), Some(5)));
+    assert_eq!(
+        press(&mut v, Key::Char('c')),
+        vec![VersionsAction::Compare {
+            id: 3,
+            with: Some(5)
+        }]
+    );
+    // Going back onto the marked row clears the mark: it would compare a version with itself.
+    press_with(&mut v, Key::Up, SHIFT);
+    press_with(&mut v, Key::Up, SHIFT);
+    assert_eq!((v.selected_id(), v.marked_id()), (Some(5), None));
+    // The app replacing the rows drops a mark whose version is gone.
+    shift_click(&mut v, p);
+    let p = v.row_rect(1).center();
+    shift_click(&mut v, p);
+    assert_eq!(v.marked_id(), Some(5));
+    v.set_items(items().into_iter().skip(1).collect(), false);
+    assert_eq!(v.marked_id(), None);
+}
+
+fn report_lines(n: usize) -> Vec<String> {
+    (1..=n).map(|i| format!("  ~ Line {i}")).collect()
+}
+
+#[test]
+fn a_comparison_replaces_the_list_and_back_returns() {
+    let mut v = view(items());
+    v.show_report(
+        "2026-11-06 12:02",
+        "The song now",
+        vec!["SONG".into(), "  ~ Tempo: 120 -> 90".into()],
+    );
+    assert!(v.report_open());
+    let t = texts(&v);
+    for want in [
+        "2026-11-06 12:02  ->  The song now",
+        "SONG",
+        "  ~ Tempo: 120 -> 90",
+        "BACK",
+        "CLOSE",
+    ] {
+        assert!(t.iter().any(|s| s == want), "missing {want:?} in {t:?}");
+    }
+    assert!(
+        !t.iter().any(|s| s == "RESTORE" || s == "SAVE VERSION"),
+        "{t:?}"
+    );
+    // The list is out of reach: a click on a row, or on the old buttons, does nothing.
+    assert_eq!(click_on(&mut v, |v| v.row_rect(1)), vec![]);
+    assert_eq!(click_on(&mut v, |v| v.protect_rect()), vec![]);
+    assert_eq!(v.selected_id(), Some(5));
+    assert!(v.report_open());
+    assert_eq!(click_on(&mut v, |v| v.back_rect()), vec![]);
+    assert!(!v.report_open());
+    // Enter and Backspace leave it too; close_report says whether there was one.
+    v.show_report("a", "b", report_lines(2));
+    assert_eq!(press(&mut v, Key::Enter), vec![]);
+    assert!(!v.report_open());
+    v.show_report("a", "b", report_lines(2));
+    press(&mut v, Key::Backspace);
+    assert!(!v.report_open());
+    v.show_report("a", "b", report_lines(2));
+    assert!(v.close_report());
+    assert!(!v.close_report());
+    // CLOSE still closes the panel from a comparison.
+    v.show_report("a", "b", report_lines(2));
+    assert_eq!(
+        click_on(&mut v, |v| v.close_rect()),
+        vec![VersionsAction::Close]
+    );
+}
+
+#[test]
+fn a_long_comparison_scrolls_with_the_wheel_and_the_keys() {
+    let total = atomik_ui::REPORT_LINES * 2 + 5;
+    let mut v = view(items());
+    v.show_report("a", "b", report_lines(total));
+    let shown = |v: &VersionsView| {
+        let t = texts(v);
+        (1..=total)
+            .filter(|i| t.iter().any(|s| s == &format!("  ~ Line {i}")))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shown(&v), (1..=atomik_ui::REPORT_LINES).collect::<Vec<_>>());
+    v.handle(&UiEvent::Wheel {
+        delta: Vec2::new(0.0, -1.0),
+        pos: v.row_rect(2).center(),
+        modifiers: Modifiers::NONE,
+    });
+    assert_eq!(v.report_scroll(), 3);
+    v.handle(&UiEvent::Wheel {
+        delta: Vec2::new(0.0, 1.0),
+        pos: v.row_rect(2).center(),
+        modifiers: Modifiers::NONE,
+    });
+    assert_eq!(v.report_scroll(), 0);
+    press(&mut v, Key::Down);
+    assert_eq!(v.report_scroll(), 1);
+    press(&mut v, Key::PageDown);
+    assert_eq!(v.report_scroll(), 1 + atomik_ui::REPORT_LINES);
+    press(&mut v, Key::End);
+    assert_eq!(v.report_scroll(), total - atomik_ui::REPORT_LINES);
+    assert_eq!(*shown(&v).last().unwrap(), total, "the last line shows");
+    press(&mut v, Key::Down);
+    assert_eq!(
+        v.report_scroll(),
+        total - atomik_ui::REPORT_LINES,
+        "no further"
+    );
+    press(&mut v, Key::Home);
+    assert_eq!(v.report_scroll(), 0);
+    press(&mut v, Key::Up);
+    assert_eq!(v.report_scroll(), 0);
+    // A comparison that fits does not scroll.
+    v.show_report("a", "b", report_lines(3));
+    press(&mut v, Key::End);
+    assert_eq!(v.report_scroll(), 0);
+}
+
+#[test]
+fn a_comparison_has_a_back_tooltip_and_the_list_buttons_have_none() {
+    let mut v = view(items());
+    v.show_report("a", "b", report_lines(1));
+    assert!(v.help_at(v.back_rect().center()).is_some());
+    assert!(v.help_at(v.close_rect().center()).is_some());
+    assert!(v.help_at(v.protect_rect().center()).is_none());
 }
