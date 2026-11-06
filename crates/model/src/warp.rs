@@ -584,7 +584,11 @@ pub fn warped_at_song_tempo(song: &Song, start: i64, a: &AudioClipContent) -> Au
 /// clip without warp is switched on at the song tempo at its start (Beats mode, unless it has
 /// another mode set) so it still plays as it did apart from the moved transients.
 ///
-/// `Err` says why nothing can be done (reversed clip, bad grid, no usable transient).
+/// A reversed clip plays the stretched span backwards, so a transient sits at the mirror of
+/// its forward place (mirrored in frames, so it holds through tempo ramps): the grid line it
+/// moves to is found there, and the marker goes back to the forward side of the time map.
+///
+/// `Err` says why nothing can be done (bad grid, no usable transient).
 pub fn quantize_audio(
     song: &Song,
     sample_rate: u32,
@@ -594,9 +598,6 @@ pub fn quantize_audio(
     onsets: &[u64],
     q: &AudioQuantize,
 ) -> Result<AudioClipContent, String> {
-    if a.reverse {
-        return Err("a reversed clip cannot be warped".into());
-    }
     if q.grid < 1
         || !q.strength.is_finite()
         || !q.randomize.is_finite()
@@ -623,14 +624,32 @@ pub fn quantize_audio(
     sorted.sort_unstable();
     sorted.dedup();
     let mut moved = 0usize;
+    // Forward song ticks and the ticks the clip plays them at: the same for a clip that plays
+    // forwards, mirrored in frames about the clip's span for one that plays backwards.
+    let table = song.tempo_table();
+    let map = table.map();
+    let sr = f64::from(sample_rate);
+    let first_frame = map.frame(start as f64, sr);
+    let span_frames = map.frame((start + length) as f64, sr) - first_frame;
+    let mirror = |tick: f64| -> f64 {
+        if base.reverse {
+            map.tick(
+                (first_frame + span_frames - (map.frame(tick, sr) - first_frame)).max(0.0),
+                sr,
+            )
+        } else {
+            tick
+        }
+    };
     for (index, o) in sorted.into_iter().enumerate() {
         let of = o as f64;
         if of <= lo + 1.0 || of >= hi - 1.0 {
             continue;
         }
-        let t_cur = tick_at_source(song, sample_rate, start, &base, of);
+        let t_cur = mirror(tick_at_source(song, sample_rate, start, &base, of));
         let target = targets.position(targets.nearest(t_cur.round() as i64));
-        let mut t_new = (t_cur + strength * (target - t_cur)).round() as i64 - start;
+        let moved_to = t_cur + strength * (target - t_cur);
+        let mut t_new = mirror(moved_to).round() as i64 - start;
         if randomize > 0.0 {
             let u = signed_unit(hash64(u64::from(q.seed), q.clip_seed, index as u64));
             t_new += (u * randomize * HUMANIZE_TIME_TICKS as f64).round() as i64;

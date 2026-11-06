@@ -893,8 +893,9 @@ of a warped clip through the map, the `W` mark and marker lines in the display l
 panel (stepping and clamping, /2 and x2, the two-octave limit, APPLY, DETECT and CLOSE, the
 picture). `crates/app/src/app_core_warp_tests.rs` runs the cache and the commands with real files:
 APPLY as one undo step, a reversed clip warped and transposed, Warp Loop as N Bars (tempo, clip length, the 999
-BPM limit), Warp to Song Tempo and DETECT finding 100 BPM in a click track (and the song tempo, with
-a message, in a flat file), Quantize Audio putting late hits on the grid, the song going out dry at
+BPM limit), the tempo estimate on click tracks at eight tempos, a reversed clip warped from its audio and as bars,
+Quantize Audio on a reversed clip, Warp to Song Tempo and DETECT finding 100 BPM in a click track (and the
+song tempo, with a message, in a flat file), Quantize Audio putting late hits on the grid, the song going out dry at
 once and again with the buffer when the worker is done, a tempo edit replacing the buffer, warp off
 emptying the cache, and an undo cancelling the render; `shell_warp_tests.rs` the menu items and ids,
 the commands from the menu with undo, and the panel through the shell. The keyboard cheat sheet and

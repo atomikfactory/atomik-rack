@@ -9,6 +9,11 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Tempo detection, Warp Loop as N Bars and Quantize Audio on a reversed clip.** Detect Tempo, Warp to Song Tempo,
+  Warp Loop as Bars and Quantize Audio no longer refuse a clip that plays backwards. Quantize Audio moves each
+  transient to the grid line nearest where the reversed clip plays it (the clip's two ends stay put, and the mirror
+  is taken in frames, so it holds through tempo ramps), as one undo step. The tempo estimate is tested on click
+  tracks at eight tempos from 75 to 170 BPM. The slice editor and Clip to Loop Slicer still refuse a reversed clip.
 - **Recording and note lane follow-ups: dimmed loops, several lanes recorded at once and a remembered fade unit.**
   The piano roll dims the part of a looped clip's window that no repetition plays (a later clip of the lane hides
   it every time round), as it already did for clips without a loop. **Record to Lane** (`sequencer.toggle_lane_record`,

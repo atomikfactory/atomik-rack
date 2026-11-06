@@ -522,3 +522,96 @@ fn quantize_audio_takes_randomise_and_requantizes_its_own_markers() {
     let tick = atomik_model::tick_at_source(&c.doc().song, 48_000, clip.start, &a, 12_700.0);
     assert!((tick - (PPQ / 2) as f64).abs() < 60.0, "{tick}");
 }
+
+/// Sets `reverse` on the clip, keeping everything else.
+fn reverse_clip(c: &mut AppCore<RecordingSink>, id: ClipId) {
+    let clip = c.doc().song.clip(id).unwrap().2.clone();
+    let mut content = audio(c, id);
+    content.reverse = true;
+    c.apply_command(Command::Song(SongCommand::SetAudioClip {
+        id,
+        start: clip.start,
+        length: clip.length,
+        muted: false,
+        content,
+        merge: None,
+    }))
+    .unwrap();
+}
+
+#[test]
+fn tempo_detection_finds_a_click_track_at_several_tempos() {
+    // A noise burst on every beat, twelve beats long.
+    for tempo in [75.0f64, 90.0, 100.0, 110.0, 128.0, 140.0, 150.0, 170.0] {
+        let t = Tmp::new("tempi");
+        let period = (60.0 * 48_000.0 / tempo).round() as usize;
+        let a = wav(&t, "clicks.wav", period * 12, clicks(period, 0));
+        let mut c = core();
+        let ids = import(&mut c, &[a]);
+        select(&mut c, &ids);
+        let tenths = f64::from(c.detect_warp_tempo().unwrap_or(0)) / 10.0;
+        assert!((tenths - tempo).abs() < 0.3, "{tempo}: found {tenths}");
+        // The same on a second run: the estimate is deterministic.
+        assert_eq!(f64::from(c.detect_warp_tempo().unwrap()) / 10.0, tenths);
+    }
+}
+
+#[test]
+fn a_reversed_clip_takes_its_tempo_from_the_audio_and_a_bar_count() {
+    let t = Tmp::new("reversed-tempo");
+    let a = wav(&t, "beats.wav", 172_800, clicks(28_800, 0));
+    let mut c = core();
+    let ids = import(&mut c, &[a]);
+    reverse_clip(&mut c, ids[0]);
+    select(&mut c, &ids);
+    c.warp_to_song_tempo();
+    c.wait_background();
+    assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    let a = audio(&c, ids[0]);
+    assert!(a.reverse && a.warp.enabled);
+    assert!(
+        (a.warp.source_bpm - 100.0).abs() < 0.2,
+        "{}",
+        a.warp.source_bpm
+    );
+    // As bars: 3.6 s is 2 bars at 133.3 BPM.
+    select(&mut c, &ids);
+    c.warp_bars(2);
+    c.wait_background();
+    let a = audio(&c, ids[0]);
+    assert!(a.reverse && (a.warp.source_bpm - 8.0 * 60.0 / 3.6).abs() < 1e-6);
+    assert_eq!(c.doc().song.clip(ids[0]).unwrap().2.length, 8 * PPQ);
+    // One undo step each.
+    assert!(c.undo());
+    assert!((audio(&c, ids[0]).warp.source_bpm - 100.0).abs() < 0.2);
+    assert!(c.undo());
+    assert!(!audio(&c, ids[0]).warp.enabled && audio(&c, ids[0]).reverse);
+}
+
+#[test]
+fn quantize_audio_moves_the_hits_of_a_reversed_clip_to_the_grid_as_it_plays_them() {
+    let t = Tmp::new("reversed-quantize");
+    let a = wav(&t, "late.wav", 96_000, clicks(12_000, 700));
+    let mut c = core();
+    let ids = import(&mut c, &[a]);
+    reverse_clip(&mut c, ids[0]);
+    select(&mut c, &ids);
+    let before = c.doc().clone();
+    c.quantize_audio_clips(PPQ / 2, 1.0);
+    c.wait_background();
+    assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    let clip = c.doc().song.clip(ids[0]).unwrap().2.clone();
+    let a = audio(&c, ids[0]);
+    assert!(
+        a.reverse && a.warp.enabled && a.warp.markers.len() > 3,
+        "{:?}",
+        a.warp
+    );
+    // The hit at source frame 12 700 plays mirrored in the clip, on an eighth.
+    let fwd = atomik_model::tick_at_source(&c.doc().song, 48_000, clip.start, &a, 12_700.0);
+    let played = (clip.start + clip.length) as f64 - fwd;
+    let off = (played % (PPQ / 2) as f64).min((PPQ / 2) as f64 - played % (PPQ / 2) as f64);
+    assert!(off < 60.0, "{played}");
+    c.undo();
+    assert_eq!(c.doc(), &before);
+}
