@@ -13,10 +13,13 @@
 //! and the audio files it used (with their peak caches), then the folders that are empty after
 //! that. A folder that also holds anything else stays, with what is in it. Where another project
 //! file lives in the old folder (or below it) its `Audio/` store may hold audio that project
-//! uses, so the audio is left alone and only the old project file goes.
+//! uses, so the audio is left alone and only the old project file goes. The versions of the
+//! project (see [`crate::versions`]) are copied to the new place, compared byte for byte, and
+//! only then removed from the old one.
 
 use crate::bundle::Bundle;
 use crate::error::{AudioFileError, Result};
+use crate::versions::{carry_versions, retire_versions};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
@@ -34,6 +37,9 @@ pub struct RetireReport {
     pub folder_removed: bool,
     /// Another project lives in the old folder: its audio was left alone.
     pub shared: bool,
+    /// Versions of the project (see [`crate::versions`]) carried to the new place and removed
+    /// from the old one.
+    pub versions_moved: usize,
     /// Why nothing at all was removed (the new place is the old one, or inside it, or around it).
     pub refused: Option<&'static str>,
 }
@@ -180,6 +186,9 @@ pub fn retire_old_project(
         _ => {}
     }
 
+    // The versions go with the project: copied and compared before the old ones are removed.
+    let carried = carry_versions(old_file, new_file)?;
+
     let shared = old_root.is_some_and(|root| has_other_project(root, old_file, SCAN_DEPTH));
     report.shared = shared;
     // Opened before anything is removed: an old folder that cannot be read fails the move whole.
@@ -189,6 +198,9 @@ pub fn retire_old_project(
     };
     if remove_file_if_present(old_file)? {
         report.removed_files += 1;
+    }
+    if carried > 0 {
+        report.versions_moved = retire_versions(old_file, new_file)?;
     }
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(old) = &old {
