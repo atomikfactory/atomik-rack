@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Example projects.** The Factory root of the browser has a Projects section with three short songs made from the
+  factory content and nothing else (built-in devices, the factory patches, containers, kit samples and clips, no
+  plugin): Basalt Beat (16 bars at 96 BPM: a sampled drum kit with looped pattern clips, a walking sub, a clavier and
+  a mallet hook, with effect containers on a channel and the master), Moonrise Modular (16 bars at 84 BPM: the three
+  modular instruments, a drone and a sequenced pulse, a shimmer reverb and a ping-pong echo as send effects, and a
+  container macro opened by automation) and Bus Room (24 bars at 118 BPM: drum pads on channels of their own into a
+  Drums bus, a track folder that plays into a Music bus, two groups, two send effects and a master finish, with the
+  beat ducked for a breakdown by an automated group level, a pad faded in and a lead filter opened). Picking one
+  (double click, a drop, or the command line) opens it as a new unsaved song, as a template does: the factory file is
+  never the song's file, so Save asks where to keep your copy. The folder grows to about 1.6 MB (the Basalt Beat
+  carries the audio of its kit). The writer is the same test code as before (`ATOMIK_WRITE_FACTORY=1 cargo test -p
+  atomik-app --lib write_the_factory_library -- --ignored`, or `write_the_example_projects` for the examples alone);
+  tests check that each example is 16 to 32 bars of built-in devices and factory samples, that its file is what the
+  tables build, that it bounces to audible sound under full scale with no silent stretch, and that opening it leaves
+  the factory file untouched. The command count is unchanged and so is the project format.
 - **More factory content.** The Factory root now holds 31 patches, 13 containers and 12 note clips (about 1.2 MB, most
   of it the audio of the drum kits). The containers are ten effect chains of built-in effects (tape saturation, a
   vocal chain, a ping-pong echo, a shimmer reverb, a lo-fi radio, drum punch, a slow phaser, a rotary speaker, a

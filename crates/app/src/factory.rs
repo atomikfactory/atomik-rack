@@ -9,9 +9,7 @@
 //! `<name>/<name>.atomik` with the audio it needs in `Audio/` (the layout Save As writes). An
 //! optional `factory.json` gives the items the tags, categories and author the browser shows (a
 //! patch file holds no such marks; the user library keeps them in its database, which is the
-//! user's to change, so the factory keeps its own, read-only). An example opens as a new unsaved
-//! song ([`crate::app_core::AppCore::open_template`]), so the factory copy is never the song's
-//! file and Save asks for a place:
+//! user's to change, so the factory keeps its own, read-only):
 //!
 //! ```text
 //! { "version": 1,
@@ -21,6 +19,9 @@
 //!
 //! The paths are relative to the factory folder and use `/`. A tag or category that is not a
 //! valid tag name is skipped.
+//!
+//! A project of the folder opens as a new unsaved song (`AppCore::open_template`), so the factory
+//! copy is never the song's file and Save asks for a place.
 //!
 //! # Where it is found
 //!
