@@ -543,7 +543,8 @@ impl<S: EngineSink> AppCore<S> {
             instrument: IMPORT_INSTRUMENT.to_owned(),
             tracks: vec![ImportedTrack {
                 name: name.clone(),
-                clip,
+                clip: Some(clip),
+                controllers: Vec::new(),
             }],
             ..MidiImport::default()
         };

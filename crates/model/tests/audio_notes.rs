@@ -303,7 +303,8 @@ fn a_new_track_with_the_notes_is_one_undo_step() {
         instrument: SYNTH.to_owned(),
         tracks: vec![ImportedTrack {
             name: "Vocal notes".to_owned(),
-            clip,
+            clip: Some(clip),
+            controllers: Vec::new(),
         }],
         ..MidiImport::default()
     };
