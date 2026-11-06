@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Library clip previews.** Space on a clip item of the file browser (the same key that plays an audio file) plays
+  its notes without loading it, once, at the song tempo in effect at the playhead, while the transport stands still.
+  With a note track selected the notes go through the instrument of that track (and the players above it) on a clock
+  of their own; with none selected a small built-in voice renders them into the browser's preview voice, so Space
+  again, Esc or another preview stops it as for an audio file. The row shows the position while it plays. Starting
+  the transport, another preview or a stop ends it (a song that plays refuses the preview), a note held at the
+  stop is released, and the document, the selection and the undo history are never touched. Previews never reach a
+  bounce or an export. Selecting a clip does not play it, whatever the auto-preview switch says. The library holds
+  note clips only (audio files play through the file browser already). The project format is unchanged (44). Not
+  done yet: previews of patches in the library list, factory content and deleting items from the browser.
 - **Synth follow-ups: FM unison, slope and 4x, and several zones on the grain sampler.** The FM synth has a **unison**
   stage: `unison.voices` (1 to 7) makes every key sound that many copies of the voice, spread from minus to plus
   `unison.detune` cents (the fixed-frequency operators keep their pitch), started from different phases and panned
