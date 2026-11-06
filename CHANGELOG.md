@@ -9,6 +9,24 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Synth follow-ups: FM unison, slope and 4x, and several zones on the grain sampler.** The FM synth has a **unison**
+  stage: `unison.voices` (1 to 7) makes every key sound that many copies of the voice, spread from minus to plus
+  `unison.detune` cents (the fixed-frequency operators keep their pitch), started from different phases and panned
+  apart by `unison.spread`, sharing the voice's envelopes and adding in power; the voice allocation and the play
+  modes are those of one voice. Each operator has a **slope** (`op1.slope` to `op4.slope`), a fifth envelope stage
+  after the decay: while the key is held the level keeps falling, by 60 dB over that many ms (0 holds the sustain
+  as before); the panel draws it in the envelope shape. The oversampling choice has a **4x** setting (two halfband
+  stages, 35 frames of latency, reported): it helps where the richer waves and the feedback loop fold back, and
+  costs about four times the voice CPU. All new params are appended and default to the old behaviour, so projects
+  and patches sound as before, bit for bit (a test pins every factory sound on Windows). On the grain sampler, a
+  sample dropped on the panel with the **copy modifier** held (Ctrl, or Opt on a Mac) keeps the zones it has and
+  adds one per file, in one undo step, where a plain drop still replaces the sample; the sample editor sets the key
+  and velocity ranges of the zones. The two edges of the **spray band** on the waveform are handles in the lower half
+  of the display: drag one to set the spray (one undo step, Esc puts it back). The play mode and the zone mode open
+  a **pick list** on a click. The project format is unchanged (44). Not done yet: six operators, a mod matrix
+  beyond the fixed targets and a display of the modulated indices of a sounding voice for the FM synth; spectral or
+  pitch-synchronous grains, a freeze of a live input, a legato note that crosses to another sample and more factory
+  sounds for the grain sampler.
 - **Start screen and collect follow-ups.** The start screen shows a **card** for the template under the pointer or
   the keys: its tempo, meter and tracks, read from the file when you reach it (a template made with a plugin this
   machine lacks says it has no preview). A recent song has a **pin** (click it, or press P on the row): a pinned
