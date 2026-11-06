@@ -34,6 +34,27 @@ pub struct UiPrefs {
     pub auto_color: bool,
     /// What Reverse Clips does with notes when no mode is named.
     pub reverse_mode: ReverseMode,
+    /// How many automatic versions a save keeps.
+    pub keep_versions: u32,
+}
+
+/// The numbers of automatic versions the row steps through.
+pub const KEEP_VERSIONS_STEPS: [u32; 6] = [5, 10, 20, 50, 100, 200];
+
+/// The choice after `n` in [`KEEP_VERSIONS_STEPS`] (wrapping), `back` going the other way. A
+/// number between two choices (a hand-edited file) goes to the nearest one in that direction.
+pub fn step_keep_versions(n: u32, back: bool) -> u32 {
+    let steps = KEEP_VERSIONS_STEPS;
+    if back {
+        steps
+            .iter()
+            .rev()
+            .find(|&&s| s < n)
+            .copied()
+            .unwrap_or(steps[steps.len() - 1])
+    } else {
+        steps.iter().find(|&&s| s > n).copied().unwrap_or(steps[0])
+    }
 }
 
 impl UiPrefs {
@@ -47,6 +68,7 @@ impl UiPrefs {
             automation_thinning: prefs.automation_thinning,
             auto_color: prefs.auto_color,
             reverse_mode: prefs.reverse_mode,
+            keep_versions: prefs.keep_versions,
         }
     }
 
@@ -59,6 +81,7 @@ impl UiPrefs {
         prefs.automation_thinning = self.automation_thinning;
         prefs.auto_color = self.auto_color;
         prefs.reverse_mode = self.reverse_mode;
+        prefs.keep_versions = self.keep_versions;
     }
 }
 
@@ -79,6 +102,8 @@ pub enum UiRow {
     AutoColor,
     /// What Reverse Clips does with notes (steps through the modes).
     ReverseMode,
+    /// How many automatic versions a save keeps (steps through [`KEEP_VERSIONS_STEPS`]).
+    KeepVersions,
 }
 
 /// One row of the tab.
@@ -190,6 +215,13 @@ impl InterfaceTab {
                 self.prefs.reverse_mode.label().to_string(),
                 false,
             ),
+            (
+                UiRow::KeepVersions,
+                "Versions kept",
+                "Automatic versions a save keeps beside the project; named and protected ones stay.",
+                self.prefs.keep_versions.to_string(),
+                false,
+            ),
         ] {
             let rect = Rect::new(x0, y, x0 + inner, y + ROW);
             let button = if matches!(which, UiRow::ValueTooltips | UiRow::AutoColor) {
@@ -239,6 +271,9 @@ impl InterfaceTab {
             UiRow::ValueTooltips => self.prefs.value_tooltips = !self.prefs.value_tooltips,
             UiRow::AutoColor => self.prefs.auto_color = !self.prefs.auto_color,
             UiRow::ReverseMode => self.prefs.reverse_mode = self.prefs.reverse_mode.next(),
+            UiRow::KeepVersions => {
+                self.prefs.keep_versions = step_keep_versions(self.prefs.keep_versions, back);
+            }
             UiRow::AutomationThinning => {
                 let all = ThinLevel::ALL;
                 let at = all

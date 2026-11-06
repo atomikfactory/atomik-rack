@@ -112,9 +112,17 @@ pub struct WorkflowPrefs {
     /// What Reverse Clips does with the notes of a clip when no mode is named (default: each
     /// note mirrors as a bar).
     pub reverse_mode: ReverseMode,
+    /// How many automatic versions of a project a save keeps (1 to [`MAX_KEEP_VERSIONS`],
+    /// default 20; named and protected versions are never pruned).
+    pub keep_versions: u32,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
+
+/// How many automatic versions a save keeps when the preference is not set.
+pub const DEFAULT_KEEP_VERSIONS: u32 = 20;
+/// The most automatic versions the preference may ask for.
+pub const MAX_KEEP_VERSIONS: u32 = 1000;
 
 /// How Reverse Clips treats notes when the command names no mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -205,6 +213,7 @@ impl Default for WorkflowPrefs {
             default_song: None,
             scratch_folder: None,
             reverse_mode: ReverseMode::default(),
+            keep_versions: DEFAULT_KEEP_VERSIONS,
             extra: BTreeMap::new(),
         }
     }
@@ -309,6 +318,12 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(ReverseMode::from_id)
                 .unwrap_or(defaults.reverse_mode),
+            keep_versions: obj
+                .get("keep_versions")
+                .and_then(Value::as_u64)
+                .map_or(defaults.keep_versions, |n| {
+                    n.clamp(1, u64::from(MAX_KEEP_VERSIONS)) as u32
+                }),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -340,6 +355,7 @@ impl WorkflowPrefs {
                             | "default_song"
                             | "scratch_folder"
                             | "reverse_mode"
+                            | "keep_versions"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -418,6 +434,7 @@ impl WorkflowPrefs {
             "midi_resolution".into(),
             Value::String(self.midi_resolution.id().into()),
         );
+        map.insert("keep_versions".into(), Value::from(self.keep_versions));
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -754,6 +771,25 @@ mod tests {
         assert!(!bad.extra.contains_key("reverse_mode"));
         assert_eq!(ReverseMode::Bars.next(), ReverseMode::Starts);
         assert_eq!(ReverseMode::Starts.next(), ReverseMode::Bars);
+    }
+
+    #[test]
+    fn the_versions_kept_preference_round_trips_and_stays_in_range() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(d.keep_versions, 20);
+        let w = WorkflowPrefs {
+            keep_versions: 50,
+            ..d
+        };
+        let text = w.to_json();
+        assert!(text.contains("\"keep_versions\": 50"), "{text}");
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
+        let low = WorkflowPrefs::from_json(r#"{"keep_versions": 0}"#).unwrap();
+        assert_eq!(low.keep_versions, 1);
+        let high = WorkflowPrefs::from_json(r#"{"keep_versions": 99999}"#).unwrap();
+        assert_eq!(high.keep_versions, MAX_KEEP_VERSIONS);
+        let bad = WorkflowPrefs::from_json(r#"{"keep_versions": "many"}"#).unwrap();
+        assert_eq!(bad.keep_versions, 20);
     }
 
     #[test]

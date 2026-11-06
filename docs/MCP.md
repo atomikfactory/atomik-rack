@@ -291,6 +291,13 @@ Say in "How it was tested" which of these you ran and what they showed (for exam
 4. `session_command` `file.export_song_audio` only raises the native file dialog, reported as `pick_export_audio`: use `session_export` to write the file.
 5. For stems, `session_export` with `file` `target/mcp/stems`, `stems` `true`, `format` `f32` and `tail` `false`: the folder holds `01 <channel>.wav` and so on in mixer order, ending with `<n> Master.wav`, all of the same length (`frames`). `compare_audio` of the master stem and a plain `session_export` of the song is `bit_identical`; the other stems line up with it (a strip with less latency than the slowest path is delayed, `delay_frames` in the Atomik render, so onsets match). `stems_dry` `true` writes the channels before their strips (no fader, pan, inserts or sends; no bus, return or master file), and `container` `aiff` writes `.aif` files. `session_command` `file.export_stems` only raises the folder dialog (`pick_export_audio`).
 
+### Recipe: project versions
+
+`session_save` writes the project; each save after the first keeps the replaced file as a version beside the project.
+`file.save_version` opens the Versions panel with the name focused (`session_key` with `text` types the name, `Enter`
+keeps the version) and `file.versions` opens it on the list (`Enter` restores the chosen version, `Escape` closes).
+A song with no project file says to save it first.
+
 ### Recipe: templates, song information and archives
 
 1. `session_open` with `library` set to a folder inside the allowed roots (`target/mcp/lib/Library`): the templates folder is the `Templates` folder beside it (`target/mcp/lib/Templates`), listed in `session_status` under `templates_folder` and `templates`. Put a project there (`session_save` into it, or `file.save_template` for the open song: it adds a copy named after the song's title or file, never overwriting a template) and `session_commands` lists it as `file.new_template:<index>` in the File menu.

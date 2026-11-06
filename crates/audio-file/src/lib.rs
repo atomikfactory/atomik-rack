@@ -20,6 +20,7 @@ mod resample;
 mod sf2;
 mod sfz;
 mod stream_decode;
+mod versions;
 mod wav;
 
 pub use archive::{
@@ -51,4 +52,8 @@ pub use resample::{resample, resample_owned};
 pub use sf2::{parse_sf2, read_sf2, sf2_presets};
 pub use sfz::{parse_sfz, read_sfz};
 pub use stream_decode::{StreamDecoder, probe_file};
+pub use versions::{
+    INDEX_FILE, MAX_VERSION_NAME_CHARS, VERSION_EXTENSION, VERSIONS_FOLDER, Version, VersionKind,
+    VersionStore, carry_versions, retire_versions, scan_assets, versions_dir,
+};
 pub use wav::{WavStreamReader, read_wav_f32, read_wav_f32_limited, write_wav_f32};

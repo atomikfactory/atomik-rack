@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use atomik_audio_file::{
-    AudioData, AudioFileError, Bundle, CollectProgress, retire_old_project, verify_copy,
+    AudioData, AudioFileError, Bundle, CollectProgress, VersionKind, VersionStore,
+    retire_old_project, verify_copy,
 };
 use common::*;
 
@@ -474,4 +475,137 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut out = Vec::new();
     walk(root, &mut out);
     out
+}
+
+/// Removes the test folder when the test ends.
+struct Cleanup(PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Makes `count` automatic versions and one named version of the project `file`.
+fn keep_versions(file: &Path, count: usize) -> VersionStore {
+    let mut store = VersionStore::for_project(file).unwrap();
+    let none = BTreeSet::new();
+    for i in 0..count {
+        store
+            .add(
+                VersionKind::Automatic,
+                "",
+                &format!("text {i}"),
+                &none,
+                i as u64,
+            )
+            .unwrap();
+    }
+    store
+        .add(VersionKind::Named, "Named", "named text", &none, 99)
+        .unwrap();
+    store
+}
+
+#[test]
+fn a_move_carries_the_versions_and_the_old_folder_still_goes() {
+    let dir = tmp_dir("reloc-versions");
+    let _cleanup = Cleanup(dir.clone());
+    let old = old_project(&dir, "Old", &[0.1]);
+    keep_versions(&old.file, 3);
+    assert!(old.root.join("Versions").is_dir());
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "Old", "new text");
+    let report = retire_old_project(
+        &old.file,
+        Some(&old.root),
+        &new_file,
+        "new text",
+        Some(&new_root),
+        &wanted(&old),
+    )
+    .unwrap();
+    assert_eq!(report.versions_moved, 4);
+    assert!(
+        report.folder_removed,
+        "the versions did not keep the old folder alive"
+    );
+    assert!(!old.root.exists());
+    let moved = VersionStore::for_project(&new_file).unwrap();
+    assert_eq!(moved.entries().len(), 4);
+    assert_eq!(moved.dir(), new_root.join("Versions"));
+    let named = moved
+        .entries()
+        .iter()
+        .find(|v| v.kind == VersionKind::Named)
+        .unwrap();
+    assert_eq!(moved.read(named.id).unwrap(), "named text");
+}
+
+#[test]
+fn a_refused_move_keeps_the_versions_where_they_were() {
+    let dir = tmp_dir("reloc-versions-refused");
+    let _cleanup = Cleanup(dir.clone());
+    let old = old_project(&dir, "Old", &[0.1]);
+    keep_versions(&old.file, 2);
+    let before = snapshot(&old.root);
+    let report = retire_old_project(
+        &old.file,
+        Some(&old.root),
+        &old.file,
+        "old project text",
+        Some(&old.root),
+        &wanted(&old),
+    )
+    .unwrap();
+    assert!(report.refused.is_some());
+    assert_eq!(report.versions_moved, 0);
+    assert_eq!(snapshot(&old.root), before);
+}
+
+#[test]
+fn a_failed_check_removes_no_version() {
+    let dir = tmp_dir("reloc-versions-unverified");
+    let _cleanup = Cleanup(dir.clone());
+    let old = old_project(&dir, "Old", &[0.1]);
+    keep_versions(&old.file, 2);
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "Old", "something else");
+    let before = snapshot(&old.root);
+    let err = retire_old_project(
+        &old.file,
+        Some(&old.root),
+        &new_file,
+        "what was meant",
+        Some(&new_root),
+        &wanted(&old),
+    );
+    assert!(err.is_err());
+    assert_eq!(
+        snapshot(&old.root),
+        before,
+        "nothing of the old place was removed"
+    );
+}
+
+#[test]
+fn an_unrelated_file_in_the_old_versions_folder_keeps_the_folder() {
+    let dir = tmp_dir("reloc-versions-stranger");
+    let _cleanup = Cleanup(dir.clone());
+    let old = old_project(&dir, "Old", &[0.1]);
+    keep_versions(&old.file, 1);
+    std::fs::write(old.root.join("Versions").join("mine.txt"), "mine").unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "Old", "new text");
+    let report = retire_old_project(
+        &old.file,
+        Some(&old.root),
+        &new_file,
+        "new text",
+        Some(&new_root),
+        &wanted(&old),
+    )
+    .unwrap();
+    assert!(!report.folder_removed);
+    assert_eq!(
+        std::fs::read_to_string(old.root.join("Versions").join("mine.txt")).unwrap(),
+        "mine"
+    );
 }

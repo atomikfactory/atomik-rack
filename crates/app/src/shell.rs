@@ -169,8 +169,8 @@ use atomik_ui::{
     NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
     PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
     RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView,
-    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, WarpAction,
-    WarpValues, WarpView,
+    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem,
+    VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -358,6 +358,8 @@ pub enum PendingAction {
     /// Open this project (picked in the library, dropped on the window or chosen from the
     /// recent songs).
     OpenFile(PathBuf),
+    /// Restore this version of the project (File > Versions) as the current song.
+    RestoreVersion(u32),
 }
 
 /// How the shell is set up.
@@ -532,6 +534,8 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The versions panel, while it is open.
+    versions: Option<VersionsView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -714,6 +718,7 @@ impl<B: AudioBackend> Shell<B> {
             scale_percent: 150.0,
             silence: None,
             song_info: None,
+            versions: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -1159,6 +1164,7 @@ impl<B: AudioBackend> Shell<B> {
     /// (composition windows, dead keys) to the window.
     pub fn wants_text_input(&self) -> bool {
         self.song_info.is_some()
+            || self.versions.is_some()
             || self.quantize.as_ref().is_some_and(QuantizeView::wants_text)
             || self.scale.is_some()
             || self.color_picker.is_some()
@@ -1203,6 +1209,100 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.song_info = None;
+        self.repaint = true;
+    }
+
+    /// Whether the versions panel is open.
+    pub fn versions_open(&self) -> bool {
+        self.versions.is_some()
+    }
+
+    /// The versions panel, while it is open.
+    pub fn versions_view(&self) -> Option<&VersionsView> {
+        self.versions.as_ref()
+    }
+
+    /// The rows of the versions panel: the versions of the open project, newest first.
+    fn version_items(&self) -> Vec<VersionItem> {
+        self.core
+            .versions()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| VersionItem {
+                id: v.id,
+                when: crate::logging::minute_stamp(v.time),
+                name: v.name,
+                automatic: v.automatic,
+                protected: v.protected,
+            })
+            .collect()
+    }
+
+    /// File > Save Version and File > Versions: opens the versions panel (the name has the keys;
+    /// with `list` the versions do). A song with no project file yet has no versions to keep.
+    fn open_versions(&mut self, list: bool) {
+        if self.core.versions_file().is_none() {
+            self.notify(
+                "Save the song first: versions are kept next to the project file".to_owned(),
+            );
+            return;
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = VersionsView::new(theme, self.version_items());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        if list {
+            view.focus_list();
+        }
+        self.versions = Some(view);
+        self.repaint = true;
+    }
+
+    /// Replaces the rows of the open versions panel with the versions the project holds now.
+    fn refresh_versions(&mut self, clear_name: bool) {
+        let items = self.version_items();
+        if let Some(view) = &mut self.versions {
+            view.set_items(items, clear_name);
+        }
+        self.repaint = true;
+    }
+
+    /// What the versions panel asked for.
+    fn versions_action(&mut self, action: VersionsAction) {
+        match action {
+            VersionsAction::Close => self.versions = None,
+            VersionsAction::Save(name) => match self.core.save_version(&name) {
+                Ok(_) => self.refresh_versions(true),
+                Err(e) => self.notify(e.to_string()),
+            },
+            VersionsAction::Protect { id, protected } => {
+                match self.core.set_version_protected(id, protected) {
+                    Ok(()) => self.refresh_versions(false),
+                    Err(e) => self.notify(e.to_string()),
+                }
+            }
+            VersionsAction::Restore(id) => {
+                // A save that is still writing decides whether there is anything unsaved.
+                self.core.settle_save();
+                if self.core.is_dirty() {
+                    self.pending.push(ShellRequest::ConfirmSave {
+                        then: PendingAction::RestoreVersion(id),
+                    });
+                } else {
+                    self.restore_version(id);
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Restores the version `id` as the current song and closes the versions panel. A version
+    /// that cannot be restored is reported and the panel stays.
+    fn restore_version(&mut self, id: u32) {
+        match self.core.restore_version(id) {
+            Ok(()) => self.versions = None,
+            Err(e) => self.notify(e.to_string()),
+        }
         self.repaint = true;
     }
 
@@ -2314,6 +2414,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
+        self.core.set_keep_versions(self.workflow.keep_versions);
         self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
@@ -2402,6 +2503,9 @@ impl<B: AudioBackend> Shell<B> {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.song_info {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.versions {
             v.set_theme(theme.clone());
         }
         if let Some((v, _)) = &mut self.color_picker {
@@ -3007,6 +3111,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.song_info.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.song_info {
+                v.set_bounds(rect);
+            }
+        }
+        if self.versions.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.versions {
                 v.set_bounds(rect);
             }
         }
@@ -3937,6 +4047,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::SongInfo(a) = action {
                     self.song_info_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.versions.is_some() {
+            // The versions panel takes every event (typed text included); Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.versions = None;
+                return Vec::new();
+            }
+            let actions = self
+                .versions
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Versions(a) = action {
+                    self.versions_action(a);
                 }
             }
             return Vec::new();
@@ -5648,6 +5782,16 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_start_screen();
                 Vec::new()
             }
+            AppCommand::SaveVersion => {
+                self.open_versions(false);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::Versions => {
+                self.open_versions(true);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::ExportArchive => self.export_archive_request(),
             AppCommand::ImportArchive => vec![ShellRequest::PickImportArchive],
             AppCommand::CancelArchive => {
@@ -6689,6 +6833,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_file(&path);
                 Vec::new()
             }
+            PendingAction::RestoreVersion(id) => {
+                self.restore_version(id);
+                Vec::new()
+            }
         }
     }
 
@@ -7716,6 +7864,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.versions {
+            view.paint(canvas);
+        }
         if let Some((view, _)) = &self.color_picker {
             view.paint(canvas);
         }
@@ -8070,6 +8221,10 @@ mod save_tests;
 #[cfg(test)]
 #[path = "shell_templates_tests.rs"]
 mod templates_tests;
+
+#[cfg(test)]
+#[path = "shell_versions_tests.rs"]
+mod versions_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]

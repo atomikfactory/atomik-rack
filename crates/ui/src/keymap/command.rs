@@ -930,6 +930,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("file.save_version", "Save Version", G::Global, C::Global).menu(),
     cmd(
         "file.show_templates",
         "Show Template Folder",
@@ -941,6 +942,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("file.start_screen", "Start Screen", G::Global, C::Global).menu(),
     cmd("file.stress_rack", "Stress Rack", G::Global, C::Global).menu(),
     cmd("file.stress_song", "Stress Song", G::Global, C::Global).menu(),
+    cmd("file.versions", "Versions", G::Global, C::Global).menu(),
     cmd("files.delete", "Delete Library Item", G::Files, C::Files),
     cmd("files.down", "Next Item", G::Files, C::Files).rep(),
     cmd("files.end", "Last Item", G::Files, C::Files),

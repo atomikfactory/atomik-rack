@@ -953,13 +953,23 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             "Value tooltips",
             "Automation thinning",
             "Colour new tracks",
-            "Reverse clips"
+            "Reverse clips",
+            "Versions kept"
         ]
     );
     let values: Vec<&str> = l.rows.iter().map(|r| r.value.as_str()).collect();
     assert_eq!(
         values,
-        ["Dark", "100 %", "Normal", "", "Normal", "", "Notes as bars"]
+        [
+            "Dark",
+            "100 %",
+            "Normal",
+            "",
+            "Normal",
+            "",
+            "Notes as bars",
+            "20"
+        ]
     );
     assert!(!l.rows[3].on, "value tooltips start off");
     // The theme steps Dark, Light, System and back with the right button.
@@ -977,6 +987,16 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
     assert_eq!(d.preferences().unwrap().1.app_zoom, 75);
     right_click(&mut d, l.rows[1].button.center());
     assert_eq!(d.preferences().unwrap().1.app_zoom, 200, "wraps");
+    // The versions kept walk their steps both ways and wrap.
+    right_click(&mut d, l.rows[7].button.center());
+    assert_eq!(d.preferences().unwrap().1.keep_versions, 10);
+    right_click(&mut d, l.rows[7].button.center());
+    right_click(&mut d, l.rows[7].button.center());
+    assert_eq!(d.preferences().unwrap().1.keep_versions, 200, "wraps");
+    down(&mut d, l.rows[7].button.center());
+    down(&mut d, l.rows[7].button.center());
+    down(&mut d, l.rows[7].button.center());
+    assert_eq!(d.preferences().unwrap().1.keep_versions, 20);
     down(&mut d, l.rows[2].button.center());
     down(&mut d, l.rows[2].button.center());
     assert_eq!(
@@ -987,7 +1007,9 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
     down(&mut d, l.rows[4].button.center());
     down(&mut d, l.rows[5].rect.center());
     down(&mut d, l.rows[6].button.center());
+    down(&mut d, l.rows[7].button.center());
     let (_, wf) = d.preferences().unwrap();
+    assert_eq!(wf.keep_versions, 50);
     assert_eq!(wf.reverse_mode, crate::keymap_store::ReverseMode::Starts);
     assert!(wf.value_tooltips);
     assert!(wf.auto_color);
@@ -1002,6 +1024,7 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             automation_thinning: atomik_model::ThinLevel::Normal,
             auto_color: false,
             reverse_mode: crate::keymap_store::ReverseMode::Bars,
+            keep_versions: 20,
             ..wf.clone()
         },
         WorkflowPrefs::default()
