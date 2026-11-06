@@ -286,6 +286,7 @@ fn the_chip_menu_lists_the_operations_and_each_sends_its_command() {
             "Recall mutes and solos only (no change)",
             "Recall sends only (no change)",
             "Recall insert bypass only (no change)",
+            "Recall routing only (no change)",
             "Compare with this",
             "Morph to this",
             "Update from current mix",
@@ -293,6 +294,7 @@ fn the_chip_menu_lists_the_operations_and_each_sends_its_command() {
             "Edit note",
             "Include the effect parameters",
             "Next colour (red)",
+            "Add snapshot lane",
             "Move left",
             "Move right",
             "Delete snapshot",
@@ -917,5 +919,72 @@ fn the_strip_menu_compares_one_strip_with_the_current_snapshot_and_flips_it() {
             .any(|t| t.contains("strip A/B") || t.contains("Compare strip")),
         "{:?}",
         v.menu_items()
+    );
+}
+
+#[test]
+fn the_chip_menu_recalls_the_routing_alone_and_adds_and_removes_the_snapshot_lane() {
+    let (mut d, reg) = project(2);
+    let mut v = wide(d.doc(), &reg);
+    // The routing differs once a strip plays elsewhere.
+    let strip = d.doc().console.channels[0].channel.clone();
+    let drums = d.doc().console.buses[0].bus.clone();
+    d.apply(
+        con(ConsoleCommand::SetOutput {
+            strip: strip.clone(),
+            dest: atomik_model::OutputDest::Bus(drums),
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.apply(
+        con(ConsoleCommand::StoreSnapshot {
+            name: "Wired".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.apply(
+        con(ConsoleCommand::SetOutput {
+            strip,
+            dest: atomik_model::OutputDest::AudioIo(2),
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    right_click_chip(&mut v, d.doc(), &reg, 3);
+    let a = pick(&mut v, d.doc(), &reg, "Recall routing only");
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::RecallSnapshot {
+            id: 3,
+            scope: SnapshotScope::ROUTING,
+        }]
+    );
+    // Add the lane: an AddAutomationLane on the master.
+    right_click_chip(&mut v, d.doc(), &reg, 3);
+    let a = pick(&mut v, d.doc(), &reg, "Add snapshot lane");
+    let master = d.doc().console.master.clone().unwrap();
+    let added = atomik_model::SongCommand::AddAutomationLane {
+        device: master.clone(),
+        param: atomik_model::SNAPSHOT_LANE_KEY.into(),
+    };
+    assert!(
+        a.iter()
+            .any(|x| matches!(x, UiAction::Command(Command::Song(c)) if *c == added))
+    );
+    d.apply(Command::Song(added), &reg).unwrap();
+    v.sync(d.doc(), &reg);
+    // With the lane there, the row removes it.
+    right_click_chip(&mut v, d.doc(), &reg, 3);
+    let a = pick(&mut v, d.doc(), &reg, "Remove snapshot lane");
+    let removed = atomik_model::SongCommand::RemoveAutomationLane {
+        device: master,
+        param: atomik_model::SNAPSHOT_LANE_KEY.into(),
+    };
+    assert!(
+        a.iter()
+            .any(|x| matches!(x, UiAction::Command(Command::Song(c)) if *c == removed))
     );
 }

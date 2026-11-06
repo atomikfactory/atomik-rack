@@ -397,6 +397,8 @@ enum MenuItem {
     SnapMarker(u32, Option<String>),
     /// Compare this strip alone with this snapshot, or flip that compare.
     StripCompare(u32, DeviceKey),
+    /// Add the snapshot lane to the master's automation track (true), or remove it.
+    SnapLane(bool),
     Disabled,
 }
 
@@ -2893,6 +2895,7 @@ impl ConsoleView {
             ("Recall mutes and solos only", SnapshotScope::MUTES),
             ("Recall sends only", SnapshotScope::SENDS),
             ("Recall insert bypass only", SnapshotScope::INSERTS),
+            ("Recall routing only", SnapshotScope::ROUTING),
         ] {
             if !comparing && doc.snapshot_matches(id, registry, scope) {
                 items.push((format!("{label} (no change)"), MenuItem::Disabled));
@@ -2970,6 +2973,15 @@ impl ConsoleView {
                 format!("Stop recalling at {b} (no such marker)"),
                 MenuItem::SnapMarker(id, None),
             ));
+        }
+        // The lane whose points recall snapshots as the song plays.
+        if doc.snapshot_lane().is_some() {
+            items.push((
+                "Remove snapshot lane".to_string(),
+                MenuItem::SnapLane(false),
+            ));
+        } else if self.master.is_some() {
+            items.push(("Add snapshot lane".to_string(), MenuItem::SnapLane(true)));
         }
         if i > 0 {
             items.push(("Move left".to_string(), MenuItem::SnapMove(id, i - 1)));
@@ -3204,6 +3216,18 @@ impl ConsoleView {
         if let MenuItem::VcaLane(vca, kind, add) = &item {
             if let Some(device) = self.master.as_ref().map(|m| m.key.clone()) {
                 let param = atomik_model::vca_lane_key_of(*vca, *kind);
+                out.push(UiAction::Command(Command::Song(if *add {
+                    atomik_model::SongCommand::AddAutomationLane { device, param }
+                } else {
+                    atomik_model::SongCommand::RemoveAutomationLane { device, param }
+                })));
+            }
+            return;
+        }
+        // The snapshot lane lives on the master's automation track too.
+        if let MenuItem::SnapLane(add) = &item {
+            if let Some(device) = self.master.as_ref().map(|m| m.key.clone()) {
+                let param = atomik_model::SNAPSHOT_LANE_KEY.to_owned();
                 out.push(UiAction::Command(Command::Song(if *add {
                     atomik_model::SongCommand::AddAutomationLane { device, param }
                 } else {
