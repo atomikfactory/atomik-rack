@@ -22,6 +22,9 @@ strip),
 and a third round of snapshot follow-ups (the output of each strip and the members of its insert chain kept in a
 snapshot and recalled in the same undo step, with a Routing scope, and a snapshot lane: an automation lane of the
 master whose points recall a snapshot, drawn as named blocks in the arrangement and moving with its clips),
+a second round of console editing follow-ups (the master selected in the console so its settings copy and paste,
+auto make-up on the strip compressor, an E mode on the strip EQ whose bells narrow with their gain, a cable into the
+key input of a channel or a bus switching its key on, and a level CV on the master),
 and macro workflow follow-ups (a curve per assignment, linear, exp or log in the plain value, and a smoothing time
 that glides a live move; turning a driven knob in the rack moves the range of its assignment instead of being
 refused; a knob dragged with Alt+Shift onto a macro knob of a bank assigns it; and a drag sideways on MIN or MAX in the
@@ -95,7 +98,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 4: Mixing and control
 
 - **Mixer groups follow-ups.** Groups of groups (a group is a flat list of strips, so a group cannot hold another one yet), and a group solo lane that silences the other strips: the lane switches the solo of the group's own members, while the strips outside the group are silenced from the stored solo state only, as for a strip's own solo lane.
-- **Console editing follow-ups.** Copying the master's settings (the master cannot be selected as a strip yet), a remote-control base for the strip surface, auto make-up and an E band mode on the strip, key-input auto-on for channels and buses, a level CV on the master, and sorting the selected device groups.
+- **Console editing follow-ups.** A remote-control base for the strip surface, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), a pre-insert tap that stays aligned when the inserts add latency (today it is aligned only without insert latency), a bypassed container that keeps the latency of its inside, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Still to come: a bounce that recalls at markers and lane points, snapshots that add or remove the effects of a chain (today a recall moves cables between the devices the rack has), a snapshot lane for ids past 64, and a lane value that shows the snapshot's colour.
 - **MIDI learn and control surface follow-ups.** Several surfaces at once, a generic driver, command mappings, NRPN and RPN sources, MMC input as a transport, the mapping panel's port and channel fields and the preset of one device are done. Still to come: the older hardware-user-interface protocol (HUI) and other surface protocols, OSC as a transport for surfaces and tablets, level meters, flip and the function keys on the eight-fader driver, a second unit (an extender) and a choice of what the V-pots drive (sends, plugin parameters), mapping the parameters of a plugin whose editor window is open (today the parameter pane, the console and the rack are learnable), a merge group for the tempo and for several controls moved at once, an MMC device number and a switch to turn MMC off per port, and NRPN and RPN sources on a control surface's own driver (the generic driver feeds them like a port).

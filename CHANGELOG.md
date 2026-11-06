@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Console editing follow-ups.** A click on the master's name plate in the console selects it, so its settings
+  can be copied, pasted, reset and cleared like a strip's (a master copy pastes onto the master only, of this song or
+  another). The strip compressor has **auto make-up** (the M-UP button: the output is raised by the reduction a
+  full-scale signal would get, up to 24 dB, and the gain-reduction meter still reads the reduction alone) and the
+  strip EQ an **E mode** (the E button: every bell's Q grows with its gain, so a large boost or cut is narrower; the
+  drawn curve follows). A cable into the key input of a channel or a bus now switches its key on, in the same undo
+  step. The master has a **level CV** input (`fader_cv_in`, amount `fader_cv_trim`, plus or minus 24 dB around the
+  fader). The new switches and the amount are optional params that older builds ignore, and a strip or master that
+  leaves them alone sounds as before.
 - **Snapshot follow-ups: routing and insert chains, and a snapshot lane.** A snapshot now keeps where each strip
   plays (the master, a bus or an Audio I/O pair) and which effects sit on its insert chain, in order. Recall
   re-cables what differs in the same undo step as the params; what no longer fits (an effect that is gone or has
