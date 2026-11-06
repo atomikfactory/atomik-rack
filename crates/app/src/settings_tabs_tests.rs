@@ -711,7 +711,7 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let mut d = dialog();
     goto(&mut d, Tab::Workflow);
     let l = d.workflow_layout(VIEW).unwrap();
-    assert_eq!(l.toggles.len(), 7);
+    assert_eq!(l.toggles.len(), 8);
     let labels: Vec<&str> = l.toggles.iter().map(|t| t.label).collect();
     assert_eq!(
         labels,
@@ -722,7 +722,8 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
             "Automation follows the selection",
             "Show tooltips",
             "Open last project at start-up",
-            "Return to start on stop"
+            "Return to start on stop",
+            "Show the start screen at start-up"
         ]
     );
     assert!(!l.toggles[3].on, "following the selection starts off");
@@ -746,7 +747,12 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let l = d.workflow_layout(VIEW).unwrap();
     down(&mut d, l.toggles[6].rect.center());
     assert!(d.preferences().unwrap().1.return_to_start_on_stop);
+    assert!(l.toggles[7].on, "the start screen shows by default");
+    let l = d.workflow_layout(VIEW).unwrap();
+    down(&mut d, l.toggles[7].rect.center());
+    assert!(!d.preferences().unwrap().1.show_start_screen);
     let again = d.workflow_layout(VIEW).unwrap();
+    assert!(!again.toggles[7].on);
     assert!(!again.toggles[0].on && again.toggles[1].on);
     assert!(matches!(
         press(&mut d, "Return", Os::Windows),

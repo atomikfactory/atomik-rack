@@ -2,10 +2,15 @@
 //! their dates and folders) and Open. It shows when the app starts with no song to open (unless
 //! the preference says not to) and from File > Start Screen.
 //!
+//! A template under the pointer or the keys shows a card with what is in it: its tracks, tempo and
+//! meter ([`TemplatePreview`], read by the shell on demand). A recent song has a pin: a pinned
+//! song stays at the top of the list (click the pin, or press P on the row).
+//!
 //! The box only draws and picks: what a pick does is an [`AppCommand`] the shell runs, the same
 //! command the File menu runs for that row, so the question about unsaved changes, a template
 //! that is gone and a recent song that is gone behave exactly as they do there.
 
+use crate::app_core::TemplatePreview;
 use crate::commands::AppCommand;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect, Size};
 use atomik_ui::paint::{fit_label_in, fit_label_weight, measure, snap_hairline};
@@ -31,6 +36,13 @@ const RECENT_ROW: f64 = 38.0;
 const FOOT: f64 = 56.0;
 const BUTTON: (f64, f64) = (96.0, 28.0);
 const BOX: f64 = 14.0;
+/// The pin button at the right end of a recent row.
+const PIN: f64 = 22.0;
+/// The width of the template card.
+const CARD_WIDTH: f64 = 232.0;
+/// The most tracks the template card lists.
+const CARD_TRACKS: usize = 8;
+const CARD_LINE: f64 = 16.0;
 
 /// One recent song as the box lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +55,8 @@ pub struct RecentRow {
     pub date: String,
     /// Whether the file is still there.
     pub exists: bool,
+    /// Whether the song is pinned to the top of the list.
+    pub pinned: bool,
 }
 
 impl RecentRow {
@@ -57,7 +71,14 @@ impl RecentRow {
                 .unwrap_or_default(),
             date: modified.map(crate::logging::date_stamp).unwrap_or_default(),
             exists: modified.is_some(),
+            pinned: false,
         }
+    }
+
+    /// The same row, pinned or not.
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
+        self
     }
 }
 
@@ -72,6 +93,9 @@ pub enum Target {
     Template(usize),
     /// The song at this place of the recent list.
     Recent(usize),
+    /// The pin button of the song at this place of the recent list. It is hit by the pointer only:
+    /// the keys pin the song of the row they are on with P.
+    Pin(usize),
     /// The "show at start-up" check box.
     ShowAtStart,
     /// The Close button.
@@ -86,7 +110,7 @@ impl Target {
             Target::Open => Some(AppCommand::Open),
             Target::Template(i) => Some(AppCommand::NewFromTemplate(i)),
             Target::Recent(i) => Some(AppCommand::OpenRecent(i)),
-            Target::ShowAtStart | Target::Close => None,
+            Target::Pin(_) | Target::ShowAtStart | Target::Close => None,
         }
     }
 }
@@ -102,12 +126,18 @@ pub enum StartOutcome {
     Run(AppCommand),
     /// The check box was flipped: the preference is now this.
     ShowAtStart(bool),
+    /// Pin or unpin the song at this place of the recent list; the shell changes the list and
+    /// gives the box the new rows ([`StartScreen::set_recent`]).
+    TogglePin(usize),
 }
 
 /// The start screen.
 #[derive(Debug, Clone)]
 pub struct StartScreen {
     templates: Vec<String>,
+    /// What each template holds: `None` until the shell has looked (see
+    /// [`StartScreen::preview_wanted`]), then the answer.
+    previews: Vec<Option<Option<TemplatePreview>>>,
     recent: Vec<RecentRow>,
     default_song: bool,
     show_at_start: bool,
@@ -129,6 +159,7 @@ impl StartScreen {
         let mut recent = recent;
         recent.truncate(VISIBLE_RECENT);
         Self {
+            previews: vec![None; templates.len()],
             templates,
             recent,
             default_song,
@@ -156,6 +187,47 @@ impl StartScreen {
     /// The recent songs the box lists.
     pub fn recent(&self) -> &[RecentRow] {
         &self.recent
+    }
+
+    /// Replaces the recent rows (a song was pinned or unpinned) and puts the keys on the row
+    /// `focus` of the new list.
+    pub fn set_recent(&mut self, recent: Vec<RecentRow>, focus: Option<usize>) {
+        let mut recent = recent;
+        recent.truncate(VISIBLE_RECENT);
+        self.recent = recent;
+        if let Some(i) = focus.filter(|i| *i < self.recent.len()) {
+            self.focus = Target::Recent(i);
+        } else if matches!(self.focus, Target::Recent(_) | Target::Pin(_)) {
+            self.focus = Target::New;
+        }
+    }
+
+    /// The template the card describes: the one under the pointer, else the one the keys are on.
+    pub fn shown_template(&self) -> Option<usize> {
+        let of = |t: Option<Target>| match t {
+            Some(Target::Template(i)) if i < self.templates.len() => Some(i),
+            _ => None,
+        };
+        of(self.hover).or_else(|| of(Some(self.focus)))
+    }
+
+    /// The template the shell should read the preview of: the one the card is about, when it has
+    /// not been looked at yet.
+    pub fn preview_wanted(&self) -> Option<usize> {
+        self.shown_template()
+            .filter(|i| self.previews.get(*i).is_some_and(Option::is_none))
+    }
+
+    /// Gives the preview of template `i` (`None`: it cannot be read, so the card says so).
+    pub fn set_preview(&mut self, i: usize, preview: Option<TemplatePreview>) {
+        if let Some(slot) = self.previews.get_mut(i) {
+            *slot = Some(preview);
+        }
+    }
+
+    /// The preview of template `i`, when it was read and could be.
+    pub fn preview(&self, i: usize) -> Option<&TemplatePreview> {
+        self.previews.get(i)?.as_ref()?.as_ref()
     }
 
     /// The box in a window of `view` (logical units).
@@ -266,8 +338,19 @@ impl StartScreen {
             .collect()
     }
 
+    /// The pin buttons of the recent rows that fit: at the lower right of each row.
+    fn pin_rows(&self, view: Size) -> Vec<(Target, Rect)> {
+        self.recent_rows(view)
+            .into_iter()
+            .filter_map(|(t, r)| match t {
+                Target::Recent(i) => Some((Target::Pin(i), pin_rect(r))),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Every row the box shows with its rectangle: the left column, the recent column, the check
-    /// box and Close.
+    /// box and Close. The pin buttons are not rows ([`Self::pin_rows`]).
     pub fn rows(&self, view: Size) -> Vec<(Target, Rect)> {
         let mut rows = self.left_rows(view);
         rows.extend(self.recent_rows(view));
@@ -276,17 +359,18 @@ impl StartScreen {
         rows
     }
 
-    /// The row under `pos`.
+    /// The row under `pos`; a pin button wins over the row it is on.
     pub fn row_at(&self, view: Size, pos: Point) -> Option<Target> {
-        self.rows(view)
+        self.pin_rows(view)
             .into_iter()
+            .chain(self.rows(view))
             .find(|(_, r)| r.contains(pos))
             .map(|(t, _)| t)
     }
 
     /// What the row under `pos` does, for its tooltip.
     pub fn help_at(&self, view: Size, pos: Point) -> Option<Help> {
-        let rows = self.rows(view);
+        let rows = self.pin_rows(view).into_iter().chain(self.rows(view));
         let (target, rect) = rows.into_iter().find(|(_, r)| r.contains(pos))?;
         let text = match target {
             Target::New if self.default_song => "A new song from the default song",
@@ -294,6 +378,10 @@ impl StartScreen {
             Target::Open => "Choose a song file to open",
             Target::Template(_) => "A new song made from this template",
             Target::Recent(_) => "Open this song",
+            Target::Pin(i) if self.recent.get(i).is_some_and(|r| r.pinned) => {
+                "Unpin this song: it goes back to its place in the list by date"
+            }
+            Target::Pin(_) => "Pin this song: it stays at the top of the list",
             Target::ShowAtStart => "Show this screen whenever Atomik Rack starts without a song",
             Target::Close => "Close the start screen",
         };
@@ -363,6 +451,7 @@ impl StartScreen {
                 self.show_at_start = !self.show_at_start;
                 StartOutcome::ShowAtStart(self.show_at_start)
             }
+            Target::Pin(i) => StartOutcome::TogglePin(i),
             other => other
                 .command()
                 .map_or(StartOutcome::Open, StartOutcome::Run),
@@ -381,6 +470,11 @@ impl StartScreen {
                 Key::Enter | Key::Space => {
                     let target = self.focus;
                     return self.pick(target);
+                }
+                Key::Char('p' | 'P') if !modifiers.ctrl && !modifiers.alt && !modifiers.meta => {
+                    if let Target::Recent(i) = self.focus {
+                        return StartOutcome::TogglePin(i);
+                    }
                 }
                 Key::Up => self.move_in_column(view, -1),
                 Key::Down => self.move_in_column(view, 1),
@@ -407,7 +501,11 @@ impl StartScreen {
                 ..
             } => {
                 if let Some(target) = self.row_at(view, *pos) {
-                    self.focus = target;
+                    // The keys stay on the song whose pin was clicked.
+                    self.focus = match target {
+                        Target::Pin(i) => Target::Recent(i),
+                        other => other,
+                    };
                     return self.pick(target);
                 }
                 if !self.rect(view).contains(*pos) {
@@ -563,7 +661,7 @@ impl StartScreen {
                 let folder = atomik_ui::paint::tail_fit(
                     canvas,
                     &song.folder,
-                    rect.width() - 20.0,
+                    rect.width() - 20.0 - PIN,
                     11.0,
                     400,
                 );
@@ -573,8 +671,22 @@ impl StartScreen {
                     11.0,
                     theme.text_muted,
                 ));
+                // A pinned song always shows its pin; the others show it under the pointer or
+                // the keys.
+                let lit = self.hover == Some(Target::Pin(i));
+                if song.pinned || lit || self.hover == Some(target) || self.focus == target {
+                    let ink = if song.pinned {
+                        theme.highlight
+                    } else if lit {
+                        theme.text
+                    } else {
+                        theme.text_muted
+                    };
+                    paint_pin(canvas, pin_rect(rect), ink, song.pinned);
+                }
             }
         }
+        self.paint_card(canvas, theme, view);
         self.paint_check(canvas, theme, view);
         let b = self.close_button(view);
         self.paint_row_back(canvas, theme, Target::Close, b);
@@ -587,6 +699,82 @@ impl StartScreen {
             )
             .align(Align::Center),
         );
+    }
+
+    /// The card that says what the template under the pointer or the keys holds.
+    fn paint_card(&self, canvas: &mut dyn Canvas, theme: &Theme, view: Size) {
+        let Some(i) = self.shown_template().filter(|_| self.two_columns(view)) else {
+            return;
+        };
+        let Some((_, row)) = self
+            .left_rows(view)
+            .into_iter()
+            .find(|(t, _)| *t == Target::Template(i))
+        else {
+            return;
+        };
+        let (rx, rx1) = self.right_x(view);
+        let width = CARD_WIDTH.min(rx1 - rx);
+        let lines = self.card_lines(i);
+        let height = 16.0 + CARD_LINE * (lines.len() as f64 + 1.0) + 6.0;
+        let top = self.rect(view).y0 + TOP;
+        let bottom = self.list_bottom(view);
+        let y0 = (row.y0 - 8.0).clamp(top, (bottom - height).max(top));
+        let card = Rect::new(rx, y0, rx + width, y0 + height);
+        let shape = RoundedRect::from_rect(card, 8.0);
+        canvas.fill_with(shape, theme.browser_row);
+        canvas.stroke_with(shape, 1.0, theme.section_line);
+        let title = fit_label_weight(canvas, &self.templates[i], width - 24.0, 13.0, 700);
+        canvas.text(&TextRun::new(
+            title,
+            Point::new(card.x0 + 12.0, card.y0 + 20.0),
+            13.0,
+            theme.text,
+        ));
+        for (n, line) in lines.iter().enumerate() {
+            let text = fit_label_in(canvas, line, width - 24.0, 11.5);
+            canvas.text(&TextRun::new(
+                text,
+                Point::new(
+                    card.x0 + 12.0,
+                    card.y0 + 20.0 + CARD_LINE * (n as f64 + 1.0),
+                ),
+                11.5,
+                theme.text_muted,
+            ));
+        }
+    }
+
+    /// The lines of the card of template `i`: tempo and meter, then the tracks.
+    pub fn card_lines(&self, i: usize) -> Vec<String> {
+        let Some(preview) = self.preview(i) else {
+            return vec![if self.previews.get(i).is_some_and(Option::is_some) {
+                "No preview for this template".to_string()
+            } else {
+                "Reading the template...".to_string()
+            }];
+        };
+        let tempo = if preview.tempo_bpm.fract().abs() < 0.005 {
+            format!("{:.0}", preview.tempo_bpm)
+        } else {
+            format!("{:.2}", preview.tempo_bpm)
+        };
+        let mut lines = vec![format!(
+            "{tempo} BPM, {}/{}, {}",
+            preview.meter.0,
+            preview.meter.1,
+            match preview.tracks.len() {
+                0 => "no tracks".to_string(),
+                1 => "1 track".to_string(),
+                n => format!("{n} tracks"),
+            }
+        )];
+        lines.extend(preview.tracks.iter().take(CARD_TRACKS).cloned());
+        let more = preview.tracks.len().saturating_sub(CARD_TRACKS);
+        if more > 0 {
+            lines.push(format!("and {more} more"));
+        }
+        lines
     }
 
     /// The background of a row: the keys' row has a ring, the pointer's row is lit.
@@ -632,6 +820,34 @@ impl StartScreen {
             12.5,
             theme.text,
         ));
+    }
+}
+
+/// The pin button of the recent row `row`: at its lower right.
+pub(crate) fn pin_rect(row: Rect) -> Rect {
+    Rect::new(
+        row.x1 - 6.0 - PIN,
+        row.y0 + 15.0,
+        row.x1 - 6.0,
+        row.y0 + 15.0 + PIN,
+    )
+}
+
+/// A push pin in `button`: filled when the song is pinned, an outline when it is not.
+fn paint_pin(canvas: &mut dyn Canvas, button: Rect, ink: Color, filled: bool) {
+    let c = button.center();
+    let parts = [
+        Rect::new(c.x - 4.0, c.y - 8.0, c.x + 4.0, c.y - 5.0),
+        Rect::new(c.x - 2.5, c.y - 5.0, c.x + 2.5, c.y + 1.0),
+        Rect::new(c.x - 5.0, c.y + 1.0, c.x + 5.0, c.y + 2.5),
+        Rect::new(c.x - 0.75, c.y + 2.5, c.x + 0.75, c.y + 7.0),
+    ];
+    for part in parts {
+        if filled {
+            canvas.fill_with(part, ink);
+        } else {
+            canvas.stroke_with(part, 1.0, ink);
+        }
     }
 }
 

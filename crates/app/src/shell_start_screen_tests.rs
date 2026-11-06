@@ -307,3 +307,130 @@ fn a_new_song_from_the_screen_uses_the_default_song_when_one_is_chosen() {
     click_row(&mut s, Target::New);
     assert!(has(&s, "defaulted"));
 }
+
+fn click_pin(s: &mut Shell<NullBackend>, i: usize) -> Vec<ShellRequest> {
+    let size = s.size();
+    let screen = s.start_screen().expect("the start screen is open");
+    let row = screen
+        .rows(size)
+        .into_iter()
+        .find(|(t, _)| *t == Target::Recent(i))
+        .unwrap()
+        .1;
+    let at = crate::start_screen::pin_rect(row).center();
+    s.handle(&UiEvent::PointerDown {
+        pos: at,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    })
+}
+
+#[test]
+fn a_pin_keeps_a_song_at_the_top_and_is_saved_with_the_recent_list() {
+    let d = dir("pins");
+    let songs: Vec<PathBuf> = ["a", "b", "c"]
+        .iter()
+        .map(|n| saved_song(&d, &format!("{n}.atomik"), n))
+        .collect();
+    let mut s = started(&d, "{}", &[&songs[0], &songs[1], &songs[2]]);
+    s.execute(AppCommand::StartScreen);
+    // Pin the oldest song (the third row): it moves to the top and the box shows it there.
+    assert!(click_pin(&mut s, 2).is_empty());
+    assert!(
+        s.start_screen_open(),
+        "a pin does not close the box or open the song"
+    );
+    assert_eq!(s.core().recent()[0], songs[2]);
+    assert_eq!(s.core().pinned_count(), 1);
+    let screen = s.start_screen().unwrap();
+    assert_eq!(screen.recent()[0].name, "c");
+    assert!(screen.recent()[0].pinned && !screen.recent()[1].pinned);
+    assert_eq!(
+        screen.focus(),
+        Target::Recent(0),
+        "the keys follow the song"
+    );
+    // It is on disk, and a shell started later has it.
+    let file = std::fs::read_to_string(d.join("recent.json")).unwrap();
+    assert!(file.contains("pinned"), "{file}");
+    let later = crate::recent::RecentFiles::load(&d.join("recent.json"));
+    assert_eq!(later.paths()[0], songs[2]);
+    assert!(later.is_pinned(&songs[2]) && later.pinned_count() == 1);
+    // A song opened now goes below the pin.
+    s.core_mut().forget_recent(&songs[0]);
+    s.core_mut().open(&songs[0]).unwrap();
+    assert_eq!(s.core().recent()[0], songs[2]);
+    // Unpinning puts it back among the others.
+    s.execute(AppCommand::StartScreen);
+    assert!(click_pin(&mut s, 0).is_empty());
+    assert_eq!(s.core().pinned_count(), 0);
+    assert!(!s.start_screen().unwrap().recent()[0].pinned);
+}
+
+#[test]
+fn p_pins_the_song_under_the_keys_and_the_pin_limit_says_so() {
+    let d = dir("pin-keys");
+    let songs: Vec<PathBuf> = (0..6)
+        .map(|i| saved_song(&d, &format!("s{i}.atomik"), &format!("d{i}")))
+        .collect();
+    let refs: Vec<&Path> = songs.iter().map(PathBuf::as_path).collect();
+    let mut s = started(&d, "{}", &refs);
+    s.execute(AppCommand::StartScreen);
+    press(&mut s, Key::Right);
+    for _ in 0..crate::recent::MAX_PINNED {
+        press(&mut s, Key::Char('p'));
+        press(&mut s, Key::Down);
+    }
+    assert_eq!(s.core().pinned_count(), crate::recent::MAX_PINNED);
+    press(&mut s, Key::Char('p'));
+    assert_eq!(s.core().pinned_count(), crate::recent::MAX_PINNED);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("At most 4 songs can be pinned")),
+        "{:?}",
+        s.core().last_rejection()
+    );
+    assert!(s.start_screen_open());
+}
+
+#[test]
+fn the_card_reads_a_template_when_the_keys_or_the_pointer_reach_it() {
+    let d = dir("card");
+    let mut maker = started(&d, "{}", &[]);
+    add(&mut maker, "from-template");
+    maker
+        .core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+            device: DeviceKey("from-template".into()),
+        }))
+        .unwrap();
+    maker.core_mut().save_as_template("Drums").unwrap();
+    let mut s = started(&d, "{}", &[]);
+    s.execute(AppCommand::StartScreen);
+    assert_eq!(s.start_screen().unwrap().preview(0), None);
+    press(&mut s, Key::Down);
+    press(&mut s, Key::Down);
+    assert_eq!(s.start_screen().unwrap().focus(), Target::Template(0));
+    let preview = s
+        .start_screen()
+        .unwrap()
+        .preview(0)
+        .expect("read on demand");
+    assert_eq!(
+        preview.tracks.len(),
+        s.core().doc().song.tracks.len().max(1)
+    );
+    assert!(painted(&mut s).contains("BPM"));
+    // A template that cannot be read has a card that says so.
+    std::fs::write(d.join("Templates").join("Broken.atomik"), "not a project").unwrap();
+    s.execute(AppCommand::StartScreen);
+    press(&mut s, Key::Down);
+    press(&mut s, Key::Down);
+    let screen = s.start_screen().unwrap();
+    // The templates are listed by name: Broken comes first.
+    assert_eq!(screen.templates(), ["Broken", "Drums"]);
+    assert_eq!(screen.focus(), Target::Template(0));
+    assert_eq!(screen.card_lines(0), ["No preview for this template"]);
+}

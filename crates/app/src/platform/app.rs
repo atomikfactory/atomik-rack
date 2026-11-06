@@ -1321,6 +1321,16 @@ impl App {
                         self.shell.relink_project_folder(folder);
                     }
                 }
+                ShellRequest::PickMoveFolder => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Move the project into a folder (it gets a folder of its own)");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.move_project_to(&folder);
+                    }
+                }
                 ShellRequest::PickExportArchive { name } => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Export a project archive")
