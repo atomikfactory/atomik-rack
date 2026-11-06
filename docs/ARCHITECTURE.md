@@ -1371,8 +1371,12 @@ notes, and reach the track's device as the note events it already understands
   area is always open and takes everything under the ruler. `ctl_command` and the drag send `SetTrackControllers`
   instead of `SetClipControllers`; the clipboard (`paste_track_controllers`: song ticks from the playhead up to the
   song end) and the Delete and Thin commands follow the same lanes. `AppCore::piano_roll_open` is true for a clip
-  or a track; the roll closes when the track goes or stops playing notes. The roll's grid counts bars from the
-  song's first meter.
+  or a track; the roll closes when the track goes or stops playing notes. The roll's ruler and grid follow the
+  song's whole meter map in this mode (`Bars::of`, `PianoRollView::bars`; a clip's grid is one meter from its
+  start), while the Bar and Beat snap steps still use the first meter. A note track that holds lanes of its own
+  has a CC badge in its arrangement header (`TrackButton::Controllers`, only on rows of 52 px or more, left of
+  the master keyboard arrow); a click sends `UiAction::OpenTrackControllers`, which calls
+  `AppCore::open_track_controllers`.
 - **Parameter lanes** ([param_lane.rs](../crates/model/src/param_lane.rs)). A note clip can also carry
   `Clip.param_lanes: Vec<ParamLane>`: the points of one parameter of one device (`device`, `param`
   key, `AutomationPoint`s in content ticks, `Linear`, `Step` or `Bend`), sorted by `(device, param)`,
@@ -1757,7 +1761,11 @@ of them touching the engine or the audio thread.
   `CC 0` or `CC 32` just before a program change at the same tick joins it and leaves the lane;
   program changes (the last at a tick wins) and the SysEx messages are kept in `Clip.midi` (at most
   4096 changes, 1024 messages of 4096 bytes per clip; the SysEx of a file track goes to its first clip,
-  and a track with SysEx but no notes becomes a clip without notes that carries it); a marker named
+  and a track with SysEx but no notes becomes a clip without notes that carries it); a channel with
+  controllers and no notes is not a clip: its lanes are `MidiTrack::track_controllers`, which go to the
+  first track made from the same file track that has notes, else to a track of their own that has no clip
+  (`ImportedTrack.controllers`, set by `ImportMidi` with `SetTrackControllers` in the same undo step); a
+  channel with only program changes is left out; a marker named
   `<name> (end)` closes the latest earlier marker named `<name>` into a range (`MidiImport.ranges`);
   tempo (as BPM rounded to 0.001), time signatures (a change in the middle of a bar takes effect at
   the next bar line, unsupported signatures are skipped) and markers (trimmed, 64 characters) come
@@ -5952,8 +5960,8 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   `SetTempoMap` that joins the last tempo edit's undo step. The take does not retime itself.
 - **MIDI controller data.** Controller lanes belong to note clips or, outside clips, to a note track
   (Track > Edit Track Controllers, 2.12); a track's own lanes are shown only in the roll's track mode, not in the
-  arrangement. There is no per-note expression (MPE) data, and a recorded lane is one `Step` point per burst of
-  events, not a smooth curve. A ramp is played as steps of 40 ticks. Pressure is kept as a
+  arrangement (its header has a CC badge). There is no per-note expression (MPE) data, and a recorded lane is
+  one `Step` point per burst of events, not a smooth curve. A ramp is played as steps of 40 ticks. Pressure is kept as a
   modulation source in five instruments but no parameter reads it yet, and the only registered
   parameter is RPN 0 (the bend range); there is no NRPN. Points are selected, copied and thinned
   one lane at a time: there is no selection across lanes and no duplicate of points.
@@ -5962,9 +5970,9 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   file does not carry audio tracks or automation lanes. The bytes of a SysEx message cannot be typed
   yet (the piano roll adds General MIDI System On, moves, deletes and clears messages). A
   file imported as one clip merges all its tracks and channels into that clip's controller lanes
-  (the last value at a tick wins), and a channel that has controllers but no notes is left out (the
-  import does not write a track's own controller lanes yet, 2.12). The default export resolution is 15 360 ticks
-  per quarter note, which every reader should accept but a hardware sequencer may not; File > MIDI Export
+  (the last value at a tick wins), and a channel that has controllers but no notes goes to the track's own
+  controller lanes (a file imported as one clip folds those into the clip). The default export resolution is
+  15 360 ticks per quarter note, which every reader should accept but a hardware sequencer may not; File > MIDI Export
   Resolution offers 960 and 480. The file browser does not list `.mid` files, so a file can only be
   dropped from the operating system.
 - **Time-stretch.** A warped clip is rendered once into a buffer, so a change of tempo, setting or

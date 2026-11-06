@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **MIDI controller follow-ups: a badge for a track's own lanes, a file channel of controllers on the track's
+  lanes, and a meter map in the track lane grid.** A note track that holds controller lanes of its own shows a
+  **CC** badge in its header (rows of 52 px or more); a click opens the lanes in the piano roll, as Track > Edit
+  Track Controllers does. A MIDI file channel that has controllers and no notes is no longer left out on import:
+  its lanes go to the own lanes of the track made from the same file track, or to a new track without a clip,
+  in one undo step (a file imported as one clip puts them in the clip). The roll's track mode draws the song's
+  whole meter map, so its bar lines and numbers follow the meter changes. The project format is unchanged (44).
+  Still to come: lanes for per-note expression, and Bar and Beat snap that follows a changing meter in the track
+  lanes.
 - **CV utility follow-ups: a custom scale and hysteresis on the CV Quantizer, and a track mode on Sample and Hold.**
   The CV Quantizer has a **Custom scale** switch (`scale.custom`) that replaces the scale and root with twelve note
   switches (`scale.note.0` to `scale.note.11`, one per pitch class from C, starting as C major) saved with the

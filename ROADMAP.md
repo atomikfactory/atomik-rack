@@ -40,7 +40,9 @@ brings back the songs that were open next to the first one in windows of their o
 audio of other projects from an `Audio` folder they share),
 and controller lanes without a note clip (a note track holds pitch bend, aftertouch and CC lanes of its own, drawn and
 edited in the piano roll with the same lane chips, recorded when a take has controller events and no notes, played by
-the engine, the bounce and the MIDI export, and kept in the project file),
+the engine, the bounce and the MIDI export, and kept in the project file; a CC badge in the header of a track that
+holds lanes of its own opens them, a MIDI file channel with controllers and no notes is written to the track's lanes,
+and the roll's lane grid follows the song's meter map),
 and quantize follow-ups (controller lane points of a note clip that move with their notes, a grid per note taken from
 the note's own length, and a groove made from a MIDI file chosen or dropped on the quantize panel),
 and restructuring follow-ups (a drag of the end edge of a selected clip with the scale-selection role scales every
@@ -69,7 +71,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 2: The sequencer
 
 - **Automation recording follow-ups.** A touch that starts at the press instead of the first move (needs a press and release signal from every control, plugin windows included).
-- **MIDI controller data follow-ups.** MPE (per-note expression) lanes, a way to see that a track holds controller lanes of its own in the arrangement (the lanes are reached from Track > Edit Track Controllers), a MIDI file import that writes a channel with controllers and no notes to the track's lanes, and a meter map that the track lane grid follows (it counts bars from the first meter).
+- **MIDI controller data follow-ups.** MPE (per-note expression) lanes, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
 - **Loop recording and takes follow-ups.** Takes for automation passes (a loop recording of automation still lays layered clips), and a saved link between the take groups of several tracks (today the link is the track selection).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
 - **MIDI file follow-ups.** Per-note expression (MPE) kept, and typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
