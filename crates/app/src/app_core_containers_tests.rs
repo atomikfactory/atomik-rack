@@ -1124,6 +1124,10 @@ fn engine_facing_code_never_walks_the_raw_document_lists() {
         // A strip paste looks for the new top-level devices a snapshot made and for where to put
         // them; nothing is sent to the engine from these lists.
         ("app_core_strips.rs", "doc.devices"),
+        // A patch preview builds a scratch project of its own that no engine ever sees: it reads
+        // the devices and cables its paste made.
+        ("app_core_patch_preview.rs", "doc.doc().devices"),
+        ("app_core_patch_preview.rs", "doc.doc().cables"),
         // All Notes Off reaches every top-level device; `target_of` resolves a container to the
         // notes input of its split device.
         ("app_core_workflow.rs", "for d in &self.doc().devices"),

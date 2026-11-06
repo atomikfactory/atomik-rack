@@ -435,6 +435,39 @@ fn space_previews_a_clip_row_and_stops_it_but_selecting_it_stays_silent() {
 }
 
 #[test]
+fn space_previews_a_patch_or_container_row_and_stops_it_but_selecting_it_stays_silent() {
+    for (name, kind) in [
+        ("lead.atomikpatch", FileKind::Patch),
+        ("chain.atomikcontainer", FileKind::Container),
+    ] {
+        let mut v = FileBrowserView::new(Theme::default());
+        v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+        v.set_tree_fraction(0.4);
+        v.set_focused(true);
+        v.set_location(Place::Folder(PathBuf::from("/lib")));
+        let mut item = audio(name);
+        item.kind = kind;
+        item.info = None;
+        v.set_rows(vec![item]);
+        let mut v = settled(v);
+        assert!(run(&mut v, &[down(row_pt(0)), up(row_pt(0))]).is_empty());
+        assert_eq!(
+            run(&mut v, &[key(Key::Space)]),
+            vec![BrowseAction::Preview(p(name))]
+        );
+        v.set_preview(Some(p(name)), 0.4);
+        assert_eq!(
+            run(&mut v, &[key(Key::Space)]),
+            vec![BrowseAction::StopPreview]
+        );
+        assert_eq!(
+            run(&mut v, &[key(Key::Enter)]),
+            vec![BrowseAction::Load(p(name))]
+        );
+    }
+}
+
+#[test]
 fn escape_stops_the_preview_and_enter_acts_on_the_cursor() {
     let mut v = settled(view());
     assert_eq!(
@@ -1553,13 +1586,25 @@ fn double_click_on_an_item_row_loads_it_and_a_single_click_only_selects() {
 }
 
 #[test]
-fn space_and_arrow_keys_never_preview_an_item() {
+fn only_space_previews_an_item_and_only_a_patch_container_or_clip() {
     let mut rows = patch_rows();
     rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
     let mut v = library_view(LibrarySection::Patches, rows);
     click(&mut v, 0);
+    // The cursor is on the container: Space plays it (the arrows alone never do).
+    assert_eq!(
+        run(&mut v, &[key(Key::Space)]),
+        vec![BrowseAction::Preview(p("Box.atomikcontainer"))]
+    );
+    assert!(run(&mut v, &[key(Key::Down)]).is_empty());
+    assert_eq!(
+        run(&mut v, &[key(Key::Space)]),
+        vec![BrowseAction::Preview(p("Lead.atomikpatch"))]
+    );
+    // A device row does not preview.
+    assert!(run(&mut v, &[key(Key::Down)]).is_empty());
     assert!(run(&mut v, &[key(Key::Space)]).is_empty());
-    assert!(run(&mut v, &[key(Key::Down), key(Key::Down), key(Key::Down)]).is_empty());
+    assert!(run(&mut v, &[key(Key::Down)]).is_empty());
     // The cursor is on the clip now: Space plays it (the arrows alone never do).
     assert_eq!(
         run(&mut v, &[key(Key::Space)]),

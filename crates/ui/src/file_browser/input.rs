@@ -24,6 +24,14 @@ fn is_audio(row: &FileRow) -> bool {
     matches!(row.kind, FileKind::Audio(_))
 }
 
+/// Whether Space plays the row without loading it: a note clip, a patch or a container.
+fn is_previewable_item(row: &FileRow) -> bool {
+    matches!(
+        row.kind,
+        FileKind::Clip | FileKind::Patch | FileKind::Container
+    )
+}
+
 /// Whether the row is a file (audio or library item): what a star, a tag and a drag apply to.
 /// A plugin preset is a virtual row: it is loaded, never marked or dragged.
 fn is_file(row: &FileRow) -> bool {
@@ -1017,7 +1025,7 @@ impl FileBrowserView {
             Key::Space => {
                 let target = cur
                     .and_then(|c| self.row_at_pos(c))
-                    .filter(|r| is_audio(r) || r.kind == FileKind::Clip)
+                    .filter(|r| is_audio(r) || is_previewable_item(r))
                     .map(|r| r.path.clone())
                     .or_else(|| self.selected_files().into_iter().next());
                 if let Some(path) = target {
