@@ -502,8 +502,12 @@ fn two_projects_sharing_audio(t: &Tmp) -> (AppCore<RecordingSink>, PathBuf, Stri
         )
         .unwrap()
         .hash;
-    // The other project's file names its audio; its text only has to exist for the rule.
-    std::fs::write(shared.join("other.atomik"), "other project").unwrap();
+    // The other project's file names the audio it uses: its own and the one it shares.
+    std::fs::write(
+        shared.join("other.atomik"),
+        format!("{{\"assets\": [\"{mine}\", \"{theirs}\"]}}"),
+    )
+    .unwrap();
     let song = shared.join("song.atomik");
     std::fs::copy(shared.join("proj.atomik"), &song).unwrap();
     let mut c = core();
@@ -791,7 +795,72 @@ fn move_project_never_removes_audio_another_project_in_the_folder_uses() {
     );
     assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
     let message = c.last_rejection().unwrap();
-    assert!(message.contains("another project is in it"), "{message}");
+    assert!(message.contains("another project uses stay"), "{message}");
+}
+
+#[test]
+fn move_project_removes_the_old_audio_no_other_project_uses() {
+    let t = Tmp::new("move-split");
+    let (mut c, shared, mine, theirs) = two_projects_sharing_audio(&t);
+    // The first project file of the folder (a copy of the song) is not wanted any more, and the
+    // other project no longer names the audio of the song: only its own.
+    std::fs::remove_file(shared.join("proj.atomik")).unwrap();
+    std::fs::write(
+        shared.join("other.atomik"),
+        format!("{{\"assets\": [\"{theirs}\"]}}"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert!(!shared.join("song.atomik").exists());
+    assert!(!wav_of(&shared, &mine).exists(), "nobody else uses it");
+    assert!(wav_of(&shared, &theirs).exists(), "their audio stays");
+    assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("no other project uses"), "{message}");
+}
+
+#[test]
+fn move_project_removes_no_audio_when_a_project_in_the_folder_cannot_be_read() {
+    let t = Tmp::new("move-unreadable");
+    let (mut c, shared, mine, theirs) = two_projects_sharing_audio(&t);
+    std::fs::write(shared.join("other.atomik"), [0xff, 0xfe, 0x00, 0x9f]).unwrap();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert!(!shared.join("song.atomik").exists());
+    assert!(wav_of(&shared, &mine).exists());
+    assert!(wav_of(&shared, &theirs).exists());
+    assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("cannot be read"), "{message}");
+}
+
+#[test]
+fn move_project_never_touches_the_factory_folder() {
+    let t = Tmp::new("move-factory");
+    let (mut c, shared, mine, _) = two_projects_sharing_audio(&t);
+    // The folder the song lives in is the factory folder.
+    c.set_factory_root(Some(shared.clone()));
+    assert!(c.in_factory(&shared.join("song.atomik")));
+    let before: Vec<_> = std::fs::read_dir(&shared)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert!(shared.join("song.atomik").is_file());
+    assert!(wav_of(&shared, &mine).is_file());
+    assert!(!t.path("new").join("song").exists(), "nothing was written");
+    let after: Vec<_> = std::fs::read_dir(&shared)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(before.len(), after.len());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("factory"), "{message}");
 }
 
 #[test]

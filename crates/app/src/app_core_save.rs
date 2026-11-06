@@ -441,6 +441,17 @@ impl<S: EngineSink> AppCore<S> {
         let Some(stem) = old.file_stem() else {
             return Err(AppError::NoPath);
         };
+        // The factory folder is read-only: nothing of it is moved, and nothing in it is removed.
+        let old_root = self
+            .audio
+            .bundle
+            .as_ref()
+            .filter(|b| !b.scratch)
+            .map(|b| b.bundle.root().to_path_buf());
+        if self.in_factory(&old) || old_root.as_deref().is_some_and(|r| self.in_factory(r)) {
+            self.reject("The factory library is read-only: nothing was moved".to_owned());
+            return Ok(());
+        }
         let picked = folder.join(format!(
             "{}.{}",
             stem.to_string_lossy(),
@@ -457,12 +468,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         let relocate = Relocate {
             old_file: old,
-            old_root: self
-                .audio
-                .bundle
-                .as_ref()
-                .filter(|b| !b.scratch)
-                .map(|b| b.bundle.root().to_path_buf()),
+            old_root,
         };
         if self.audio.background_save {
             self.save_later(&file, root, true, false, Some(relocate))
@@ -696,9 +702,18 @@ impl<S: EngineSink> AppCore<S> {
             format!("Saved a copy in {folder}; the old project {name} was left: {why}")
         } else {
             self.forget_recent(old_file);
-            if moved.shared {
+            if let Some(why) = &moved.unreadable {
                 format!(
-                    "Moved to {folder}. The old project file {name} was removed; its audio folder stays because another project is in it"
+                    "Moved to {folder}. The old project file {name} was removed; the old audio stays because a project there cannot be read ({why})"
+                )
+            } else if moved.shared {
+                let gone = moved.removed_files.saturating_sub(1);
+                format!(
+                    "Moved to {folder}. The old project file {name} and {gone} audio file{} no other project uses were removed; {} audio file{} another project uses stay{}",
+                    if gone == 1 { "" } else { "s" },
+                    moved.kept_audio,
+                    if moved.kept_audio == 1 { "" } else { "s" },
+                    if moved.kept_audio == 1 { "s" } else { "" },
                 )
             } else if moved.folder_removed {
                 format!("Moved to {folder}. The old project folder was removed")
