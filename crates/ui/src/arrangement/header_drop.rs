@@ -50,6 +50,32 @@ impl ArrangementView {
             .then(|| (path.clone(), device))
     }
 
+    /// A row of the device browser dragged over the arrangement: the device of the track whose
+    /// header is under `pos` when `source` (what the row creates) may replace it, which is
+    /// outlined as a drop target. `None` for `pos` or `source` (the row is elsewhere, or is
+    /// nothing that replaces) clears the outline.
+    pub fn replace_hover(
+        &mut self,
+        pos: Option<Point>,
+        source: Option<&CreateSource>,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> Option<DeviceKey> {
+        let device = pos.zip(source).and_then(|(pos, source)| {
+            let device = self.song.tracks[self.header_track_at(pos)?].device.clone();
+            atomik_model::replace_reason(doc, registry, &device, source)
+                .is_none()
+                .then_some(device)
+        });
+        self.set_header_hover(device.clone());
+        device
+    }
+
+    /// The device of the track whose header is outlined as a drop target, if any.
+    pub fn header_drop_target(&self) -> Option<&DeviceKey> {
+        self.header_hover.as_ref()
+    }
+
     /// Sets the track whose header is outlined as a drop target.
     pub(super) fn set_header_hover(&mut self, device: Option<DeviceKey>) {
         if self.header_hover != device {

@@ -4491,7 +4491,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (454) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (456) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4963,8 +4963,14 @@ creation chain in the **Creation chain** bullet.
   leaves the plain move, and the whole plan is one undo step.
   [replace_device.rs](../crates/model/src/replace_device.rs) plans `ReplaceDevice`: remove and
   insert under the same key, so the track, channel, sends, note entries and chain place stay, the
-  cables whose sockets the new descriptor has are reconnected and the automation lanes of missing
-  params go (`replace_lost_lanes`; `replace_reason` is what a drop target asks first). Undo steps
+  cables whose sockets the new descriptor has are reconnected, the values of the params both
+  descriptors have (same key and unit) are carried over and the automation lanes of missing
+  params go (`replace_lost_lanes`; `replace_reason` is what a drop target asks first). A row of the
+  device browser dragged out of the rack over a track header goes through the shell (the rack
+  keeps the pointer): `RackView::dragged_replacement` says what it would create,
+  `ArrangementView::replace_hover` outlines the header, and the release is `ReplaceDevice`. The
+  Create and Replace Device submenus list `atomik_ui::browser::device_groups` (rows built by the
+  shell, `Spec::Rows`, running `create.device` and `rack.replace_device` with the type id). Undo steps
   carry a name from `Command::label` ([labels.rs](../crates/model/src/labels.rs)), kept per step
   in the `Document` and read by `undo_label` / `redo_label` for the Edit menu and `session_status`.
   Cables are coloured by `cables::role_of`, and `CableVisibility` has `SelectedOnly` and

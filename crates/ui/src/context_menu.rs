@@ -66,6 +66,9 @@ pub enum Spec {
         /// The rows of the submenu.
         items: Vec<Spec>,
     },
+    /// Rows built by the caller (names and arguments not known until the menu opens, like the
+    /// device types of the Create submenu), taken into the menu as they are.
+    Rows(Vec<Entry>),
     /// A separator line.
     Separator,
 }
@@ -271,6 +274,7 @@ fn build_entries(specs: &[Spec], registry: &Registry, keymap: &Keymap) -> Vec<En
                     entries.push(Entry::Separator);
                 }
             }
+            Spec::Rows(rows) => entries.extend(rows.iter().cloned()),
             Spec::Item {
                 command,
                 arg,

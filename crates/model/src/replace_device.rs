@@ -3,8 +3,10 @@
 //! its song track (clips, lanes, armed state), its console channel with the sends, the cables
 //! that fit the new device's sockets, the note entry of every track, the insert-chain or
 //! send/return place and the column all stay as they were. What cannot stay is left behind:
-//! the params and the sample, pattern and plugin data of the old device, the cables on sockets
-//! the new one lacks, and the automation lanes of params it lacks ([`lost_lanes`] lists those).
+//! the sample, pattern and plugin data of the old device, the params the new one lacks, the
+//! cables on sockets the new one lacks, and the automation lanes of params it lacks
+//! ([`lost_lanes`] lists those). The values of the params both devices have by key (of the same
+//! kind, a choice only with the same list of choices) are carried over, clamped to the new range.
 //! A default-named device and a default-named channel take the new device's name.
 
 use crate::console::is_console_type;
@@ -155,6 +157,50 @@ fn carried(
     (fits(&c.from) && fits(&c.to)).then(|| c.clone())
 }
 
+/// Whether `type_id` names a plugin device (its params belong to the plugin, not to a built-in
+/// descriptor).
+fn is_plugin_type(type_id: &str) -> bool {
+    type_id.starts_with("clap.") || type_id.starts_with("vst3.")
+}
+
+/// Whether `key` is a param that only means something with the device's own data: a hidden
+/// `internal.` param, or the amount of a modulation slot (the slot itself is not carried).
+fn is_bound_to_device(key: &str) -> bool {
+    key.starts_with("internal.")
+        || key
+            .strip_prefix("mod")
+            .and_then(|rest| rest.strip_suffix("_amount"))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Gives `device` (the new one, with default params) the values `old` has for the params both
+/// descriptors share by key: the same kind of param (a choice only when the list of choices is
+/// the same), the value clamped to the new range. Values equal to the new default are not
+/// stored, as everywhere else.
+fn carry_params(
+    old: &crate::RackDevice,
+    old_desc: &DeviceDescriptor,
+    new_desc: &DeviceDescriptor,
+    device: &mut crate::RackDevice,
+) {
+    for (key, value) in &old.params {
+        if is_bound_to_device(key) {
+            continue;
+        }
+        let (Some(from), Some(to)) = (old_desc.param_by_key(key), new_desc.param_by_key(key))
+        else {
+            continue;
+        };
+        if from.unit != to.unit || from.discrete != to.discrete {
+            continue;
+        }
+        let value = to.clamp(*value);
+        if value.to_bits() != to.default.to_bits() {
+            device.params.insert(key.clone(), value);
+        }
+    }
+}
+
 /// Plans the replacement of `target` by a device of `source` (see the module documentation).
 pub(crate) fn plan(
     doc: &RackDoc,
@@ -210,6 +256,9 @@ pub(crate) fn plan(
     device.column = old.column;
     device.folded = old.folded;
     device.color = old.color;
+    if matches!(source, CreateSource::Type(_)) && !is_plugin_type(&old.type_id) {
+        carry_params(&old, old_desc, new_desc, &mut device);
+    }
     let siblings: Vec<_> = doc
         .devices
         .iter()

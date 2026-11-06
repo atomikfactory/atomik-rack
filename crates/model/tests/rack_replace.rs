@@ -252,3 +252,76 @@ fn an_automation_track_whose_lanes_all_go_is_removed_with_them() {
     let text = atomik_model::save_project(d.doc());
     atomik_model::load_project(&text, &r).expect("the saved project loads");
 }
+
+// ------------------------------------------------------------------- params carried over
+
+#[test]
+fn the_params_both_devices_have_keep_their_values_and_the_rest_start_at_their_defaults() {
+    let r = reg();
+    let mut d = song_doc(&r);
+    // `filter.cutoff` exists on both synths; the choice `osc1.wave` lists other shapes on the
+    // wavetable synth, so it is not carried.
+    run(
+        &mut d,
+        &r,
+        [
+            set_param("synth", "filter.cutoff", 1234.0),
+            set_param("synth", "osc1.wave", 2.0),
+        ],
+    );
+    let old = d.doc().device(&key("synth")).unwrap().clone();
+    assert_eq!(old.params.get("filter.cutoff"), Some(&1234.0));
+    one_step(&mut d, &r, replace("synth", WAVETABLE));
+    let new = d.doc().device(&key("synth")).unwrap().clone();
+    let desc = r.descriptor(WAVETABLE).unwrap();
+    let cutoff = desc.param_by_key("filter.cutoff").unwrap();
+    assert_eq!(new.params.get("filter.cutoff"), Some(&cutoff.clamp(1234.0)));
+    assert!(
+        !new.params.contains_key("osc1.wave"),
+        "another list of choices"
+    );
+    // Everything stored is a param the new device has, inside its range.
+    for (k, v) in &new.params {
+        let p = desc.param_by_key(k).expect("only shared params are stored");
+        assert_eq!(p.clamp(*v), *v);
+        assert!(old.params.contains_key(k));
+    }
+    // One undo step brings the old values back.
+    d.undo().unwrap();
+    assert_eq!(d.doc().device(&key("synth")).unwrap().params, old.params);
+}
+
+#[test]
+fn an_effect_replaced_by_another_keeps_the_shared_values_and_never_a_hidden_param() {
+    let r = reg();
+    let mut d = song_doc(&r);
+    run(
+        &mut d,
+        &r,
+        [wf(WorkflowCommand::CreateEffect {
+            source: typ(DELAY),
+            target: CreateTarget::Selected(key("synth")),
+            key: Some(key("fx")),
+            options: CreateOptions::default(),
+        })],
+    );
+    run(
+        &mut d,
+        &r,
+        [
+            set_param("fx", "mix", 0.25),
+            set_param("fx", "feedback", 0.7),
+            set_param("fx", "bypass", 1.0),
+        ],
+    );
+    one_step(&mut d, &r, replace("fx", "atomik.reverb"));
+    let new = d.doc().device(&key("fx")).unwrap();
+    assert_eq!(new.type_id, "atomik.reverb");
+    assert_eq!(new.params.get("mix"), Some(&0.25));
+    assert_eq!(new.params.get("bypass"), Some(&1.0));
+    assert!(
+        !new.params.contains_key("feedback"),
+        "the reverb has no such param"
+    );
+    assert!(new.params.keys().all(|k| !k.starts_with("internal.")));
+}

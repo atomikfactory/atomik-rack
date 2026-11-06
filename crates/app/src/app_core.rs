@@ -3554,6 +3554,9 @@ mod midimap;
 #[path = "app_core_jacks.rs"]
 mod jack_ops;
 
+#[path = "app_core_rack_menu.rs"]
+mod rack_menu;
+
 #[path = "app_core_macros.rs"]
 mod macro_ops;
 pub use macro_ops::{Revealed, SEARCH_ROWS};

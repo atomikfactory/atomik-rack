@@ -586,6 +586,8 @@ pub struct RackView {
     tick_clock: Option<f64>,
     /// The slot a "+" handle was pressed on: the browser opened by it adds there.
     insert_at: Option<RackSlot>,
+    /// The container and index a "+" handle inside an unfolded container was pressed on.
+    insert_in: Option<(DeviceKey, usize)>,
     /// The "+" handle the pointer is on.
     plus: Option<handles::Seam>,
     /// The folded device a cable is dragged over, and when the pointer came to rest on it.
@@ -881,6 +883,7 @@ impl RackView {
             context_slot: None,
             tick_clock: None,
             insert_at: None,
+            insert_in: None,
             plus: None,
             unfold: None,
             navigator: false,
@@ -3531,7 +3534,7 @@ impl RackView {
             {
                 self.browser.highlighted = i;
                 if clicks >= 2 && button == PointerButton::Primary {
-                    let inserting = self.insert_at.is_some();
+                    let inserting = self.inserting();
                     out.extend(self.add_row_action(&rows[i], doc, modifiers));
                     if inserting {
                         self.set_browser_visible(false);
@@ -4279,6 +4282,9 @@ impl RackView {
         if let Some(slot) = self.insert_at.filter(|_| self.scope.is_empty()) {
             return self.add_row_slot_action(row, slot, modifiers);
         }
+        if let Some((container, index)) = self.insert_in.clone().filter(|_| self.scope.is_empty()) {
+            return self.add_row_inside(row, &container, index);
+        }
         match self.add_place(self.host(doc)) {
             (Some(container), index) => self.add_row_inside(row, &container, index),
             (None, index) => self.add_row_action_at(row, index, modifiers),
@@ -4375,7 +4381,7 @@ impl RackView {
                     self.browser.query_changed(registry);
                 }
                 // Create mode: Esc cancels and closes, nothing is removed.
-                Key::Escape if self.browser.create.is_some() || self.insert_at.is_some() => {
+                Key::Escape if self.browser.create.is_some() || self.inserting() => {
                     self.set_browser_visible(false)
                 }
                 Key::Escape if self.browser.query.is_empty() => self.browser.focused = false,
@@ -4395,7 +4401,7 @@ impl RackView {
                     if let Some(row) = rows.get(self.browser.highlighted)
                         && row.selectable()
                     {
-                        let inserting = self.insert_at.is_some();
+                        let inserting = self.inserting();
                         out.extend(self.add_row_action(row, doc, modifiers));
                         if inserting || (self.browser.create.is_some() && !self.browser.keep_open) {
                             self.set_browser_visible(false);

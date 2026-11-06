@@ -548,6 +548,31 @@ impl RackView {
         }
     }
 
+    /// What the browser row being dragged out would replace a device with, while one is
+    /// dragged and could replace a device at all (an instrument, an effect or a note player).
+    /// The host asks while the pointer is over another view, to offer the row to the track
+    /// headers of the arrangement.
+    pub fn dragged_replacement(&self) -> Option<CreateSource> {
+        match &self.drag {
+            Drag::Browser {
+                row, active: true, ..
+            } => {
+                self.row_family(row)?;
+                self.row_source(row)
+            }
+            _ => None,
+        }
+    }
+
+    /// The row was dropped on another view and used there: a create-mode browser closes, as it
+    /// does after a drop in the rack.
+    pub fn browser_row_taken(&mut self) {
+        if self.browser.create.is_some() && !self.browser.keep_open {
+            self.set_browser_visible(false);
+        }
+        self.repaint = true;
+    }
+
     /// The device a browser row replaces when dropped at rack position `rp`: the pointer is over
     /// the middle of the panel of a top-level device of the same kind (the edges of a panel are
     /// the gaps between devices, which insert). Only the top level, never the interface strip.
