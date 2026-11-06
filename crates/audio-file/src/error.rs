@@ -26,6 +26,12 @@ pub enum AudioFileError {
         /// Content hash of the missing asset.
         hash: String,
     },
+    /// A long copy was cancelled by the user.
+    #[error("cancelled")]
+    Cancelled,
+    /// A copy could not be shown to match its original, so nothing of the original was removed.
+    #[error("the copy could not be verified: {0}")]
+    Unverified(String),
 }
 
 /// Result alias used across the crate.
