@@ -48,7 +48,7 @@ const fn socket(
     }
 }
 
-static CHANNEL_PARAMS: [ParamDescriptor; 72] = [
+static CHANNEL_PARAMS: [ParamDescriptor; 74] = [
     param(
         0,
         "input.gain",
@@ -726,6 +726,26 @@ static CHANNEL_PARAMS: [ParamDescriptor; 72] = [
     param(
         71,
         "pcomp.pre",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        72,
+        "comp.auto_makeup",
+        0.0,
+        1.0,
+        0.0,
+        Taper::Linear,
+        Unit::Toggle,
+        true,
+    ),
+    param(
+        73,
+        "eq.e_mode",
         0.0,
         1.0,
         0.0,

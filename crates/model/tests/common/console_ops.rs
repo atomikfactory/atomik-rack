@@ -116,6 +116,7 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
         ConsoleOp::PasteSettings(ch) => c(ConsoleCommand::PasteSettings {
             strips: vec![chan(*ch)?],
             clip: atomik_model::ChannelSettingsClip {
+                master: false,
                 sections: atomik_model::SnapshotScope::ALL,
                 params: [("pan".to_owned(), 0.25), ("mute".to_owned(), 1.0)].into(),
                 inserts: Vec::new(),

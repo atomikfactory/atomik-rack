@@ -36,6 +36,12 @@
 //! * **Insert:** `insert_send_*` carry the signal at the insert point; a connected
 //!   `insert_return_*` replaces it unless `insert.bypass`.
 //! * **Fader:** the same cubic position taper as the channel ([`atomik_dsp::fader_gain`]).
+//! * **Level CV** (`fader_cv_in`, a control input read in stage 2, appended after `gr_cv_out`):
+//!   adds `fader_cv_trim · cv · 24` dB to the fader gain, `cv` being the batch mean of the input
+//!   clamped to −1..+1 and `fader_cv_trim` (−1..+1, default +1, appended after `comp.auto`) its
+//!   amount, through the fader's 5 ms smoother. The monitor and the analyser tap are fed from
+//!   the same signal as before: the CV acts on `main_*` and `monitor_*` through the fader only.
+//!   Unconnected, the master is bit-identical to one without the input.
 //! * Every gain and switch is smoothed over [`SMOOTH_MS`] (crossfades for on/off and inserts).
 //!   The first batch after `prepare`/`reset` snaps them all to their targets.
 //! * **Analyser tap** (`internal.tap_live`, set by the app while a window shows the master, never
@@ -43,9 +49,10 @@
 //!   analyse; off, nothing is written and the output is bit-identical.
 
 use crate::channel::{
-    SMOOTH_MS, Section, Step, fader, finite, is_silent, pan, send_gain, send_level, smoother, snap,
-    socket, stereo_in,
+    FADER_CV_DB, SMOOTH_MS, Section, Step, cv_trim, fader, finite, is_silent, pan, send_gain,
+    send_level, smoother, snap, socket, stereo_in,
 };
+use crate::cv_in::batch_mean;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -137,7 +144,9 @@ const P_SEND_FIRST: usize = P_MONITOR_SOURCE + 1;
 const P_TAP_LIVE: usize = P_SEND_FIRST + RETURNS;
 /// Program-dependent release of the bus compressor (appended after the analyser tap).
 const P_COMP_AUTO: usize = P_TAP_LIVE + 1;
-const PARAM_COUNT: usize = P_COMP_AUTO + 1;
+/// The amount of `fader_cv_in` (appended after the program-dependent release).
+const P_FADER_TRIM: usize = P_COMP_AUTO + 1;
+const PARAM_COUNT: usize = P_FADER_TRIM + 1;
 
 /// `monitor.source` index of *FX returns*.
 const SRC_RETURNS: usize = 1;
@@ -286,6 +295,7 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
     }
     out[P_TAP_LIVE] = toggle(P_TAP_LIVE as u32, "internal.tap_live", "Analyser tap");
     out[P_COMP_AUTO] = toggle(P_COMP_AUTO as u32, "comp.auto", "Bus comp auto release");
+    out[P_FADER_TRIM] = cv_trim(P_FADER_TRIM, "fader_cv_trim", "Fader CV trim");
     while i < P_TAP_LIVE {
         out[i] = sends[i - P_SEND_FIRST];
         i += 1;
@@ -350,7 +360,9 @@ const S_MAIN_R: u16 = S_KEY + 2;
 const S_MONITOR_L: u16 = S_KEY + 3;
 const S_MONITOR_R: u16 = S_KEY + 4;
 const S_GR: u16 = S_KEY + 5;
-const SOCKET_COUNT: usize = S_GR as usize + 1;
+/// `fader_cv_in` (stage 2): the level CV, appended after `gr_cv_out`.
+const S_FADER_CV: u16 = S_GR + 1;
+const SOCKET_COUNT: usize = S_FADER_CV as usize + 1;
 
 static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
     let bus = [
@@ -376,6 +388,13 @@ static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
             "Gain reduction CV",
             SocketKind::Cv,
             Direction::Output,
+        ),
+        socket(
+            S_FADER_CV,
+            "fader_cv_in",
+            "Fader CV",
+            SocketKind::Cv,
+            Direction::Input,
         ),
     ];
     let mut out = [tail[0]; SOCKET_COUNT];
@@ -478,6 +497,8 @@ pub struct Master {
     /// The analyser ring (allocated in `prepare`): written with the signal before the fader
     /// while `internal.tap_live` is on.
     tap: Option<Arc<ScopeTap>>,
+    /// `fader_cv_in` moved the fader target last batch (restored once when it is unplugged).
+    cv_live: bool,
 }
 
 impl Default for Master {
@@ -523,6 +544,7 @@ impl Master {
             fresh: true,
             fresh_insert: true,
             tap: None,
+            cv_live: false,
         };
         for i in 0..PARAM_COUNT {
             m.apply(i);
@@ -664,6 +686,23 @@ impl Master {
         }
     }
 
+    /// Applies the level CV (once per batch, stage 2) on top of the fader: `fader_cv_trim · cv ·
+    /// 24` dB, the batch mean of the CV clamped to −1..+1 as on a channel. Unconnected, the
+    /// fader target is left alone (restored once when the cable is removed), so the master is
+    /// bit-identical to one without the input.
+    fn apply_cv(&mut self, ctx: &ProcessContext<'_>) {
+        if ctx.is_connected(SocketId(S_FADER_CV)) {
+            let cv = batch_mean(ctx.input(SocketId(S_FADER_CV)));
+            let db = self.values[P_FADER_TRIM] * cv * FADER_CV_DB;
+            let g = fader_gain(self.values[P_FADER]) * db_to_gain(db);
+            self.fader.set_target(g);
+            self.cv_live = true;
+        } else if self.cv_live {
+            self.cv_live = false;
+            self.apply(P_FADER);
+        }
+    }
+
     /// Stage 0: the send buses, times their level, go to the FX sends.
     fn stage0(&mut self, ctx: &mut ProcessContext<'_>) {
         if self.fresh {
@@ -742,6 +781,7 @@ impl Master {
         if self.pre_comp {
             self.comp_stage(&mut l, &mut r);
         }
+        self.apply_cv(ctx);
         *ctx.output(SocketId(S_GR)) = self.gr;
         if let (true, Some(tap)) = (self.on(P_TAP_LIVE), &self.tap) {
             tap.push(&l, &r);

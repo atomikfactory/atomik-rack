@@ -58,6 +58,7 @@ fn descriptor_keys_match_contract_exactly() {
     }
     params.push("internal.tap_live".into());
     params.push("comp.auto".into());
+    params.push("fader_cv_trim".into());
     let mut sockets: Vec<String> = vec!["bus_l".into(), "bus_r".into()];
     for prefix in ["send_bus", "fx_send", "return"] {
         for k in 1..=8 {
@@ -76,6 +77,7 @@ fn descriptor_keys_match_contract_exactly() {
         "monitor_l",
         "monitor_r",
         "gr_cv_out",
+        "fader_cv_in",
     ] {
         sockets.push(s.into());
     }
@@ -93,6 +95,7 @@ fn descriptor_socket_directions() {
             Direction::SummingInput
         } else if s.key.starts_with("return")
             || s.key == "key_in"
+            || s.key == "fader_cv_in"
             || s.key.starts_with("insert_return")
         {
             Direction::Input
@@ -100,7 +103,7 @@ fn descriptor_socket_directions() {
             Direction::Output
         };
         assert_eq!(s.direction, want, "{}", s.key);
-        let kind = if s.key == "gr_cv_out" {
+        let kind = if s.key == "gr_cv_out" || s.key == "fader_cv_in" {
             SocketKind::Cv
         } else {
             SocketKind::Audio
@@ -428,6 +431,7 @@ fn stage_table_matches_plan_section_9() {
                 "monitor_l",
                 "monitor_r",
                 "gr_cv_out",
+                "fader_cv_in",
             ],
         ],
     );
@@ -631,7 +635,7 @@ fn scenario_hash(source: f32) -> u64 {
     let ins: Vec<&str> = DESCRIPTOR
         .sockets
         .iter()
-        .filter(|s| s.direction.is_input() && s.key != "insert_return_l")
+        .filter(|s| s.direction.is_input() && s.key != "insert_return_l" && s.key != "fader_cv_in")
         .map(|s| s.key)
         .collect();
     let outs = crate::test_support::output_keys(&DESCRIPTOR);
@@ -663,7 +667,7 @@ fn original_sources_and_zero_db_sends_keep_their_sound_bit_exactly() {
 
 #[test]
 fn send_level_params_are_appended_after_the_monitor_source() {
-    assert_eq!(DESCRIPTOR.params.len(), 37 + 8 + 2);
+    assert_eq!(DESCRIPTOR.params.len(), 37 + 8 + 3);
     let src = DESCRIPTOR.param_by_key("monitor.source").unwrap();
     assert_eq!(src.id.0, 36);
     for k in 1..=8u32 {
@@ -926,4 +930,103 @@ fn the_master_tap_is_written_only_while_the_switch_is_on() {
     assert_eq!(got.0, BATCH);
     assert!(l.iter().all(|x| *x > 0.2), "the bus signal reaches the tap");
     assert!(off.iter().zip(&on).all(|(a, b)| a.to_bits() == b.to_bits()));
+}
+
+// ---- the level CV
+
+/// Settled `main_l`/`main_r` for 1.0 on both bus sides with the given setup.
+fn level_out(setup: impl Fn(&mut DeviceHarness)) -> Vec<f32> {
+    let mut h = master();
+    dc(&mut h, "bus_l", 1.0);
+    dc(&mut h, "bus_r", 1.0);
+    setup(&mut h);
+    settled(&mut h, &MAIN)
+}
+
+#[test]
+fn the_level_cv_adds_trim_times_24_db_to_the_fader_and_clamps() {
+    let g = |db: f32| 10f32.powf(db / 20.0);
+    let with = |trim: f32, cv: f32| {
+        level_out(|h| {
+            h.set_param("fader_cv_trim", trim);
+            dc(h, "fader_cv_in", cv);
+        })
+    };
+    assert!(
+        approx(with(1.0, 0.25)[0], g(6.0), 1e-3),
+        "{:?}",
+        with(1.0, 0.25)
+    );
+    assert!(approx(with(1.0, -0.25)[0], g(-6.0), 1e-3));
+    assert!(approx(with(0.5, 0.5)[0], g(6.0), 1e-3), "trim scales");
+    assert!(approx(with(-1.0, 0.25)[0], g(-6.0), 1e-3), "trim inverts");
+    assert!(approx(with(1.0, 5.0)[0], g(24.0), 1e-2), "clamped to +1");
+    assert!(approx(with(1.0, -5.0)[0], g(-24.0), 1e-3), "clamped to -1");
+    // Amount 0 cancels; both sides move together; the CV rides on the knob.
+    assert!(approx(with(0.0, 1.0)[0], 1.0, 1e-5));
+    assert_eq!(with(1.0, 0.25)[0], with(1.0, 0.25)[1]);
+    let knob = level_out(|h| {
+        h.set_param("fader", 0.5);
+        dc(h, "fader_cv_in", 0.25);
+    });
+    let plain = level_out(|h| h.set_param("fader", 0.5));
+    assert!(approx(knob[0], plain[0] * g(6.0), 1e-3));
+    // A closed fader stays closed.
+    let low = level_out(|h| {
+        h.set_param("fader", 0.0);
+        dc(h, "fader_cv_in", 1.0);
+    });
+    assert!(low[0].abs() < 1e-9);
+}
+
+#[test]
+fn the_level_cv_reaches_the_monitor_and_unplugging_it_restores_the_knob() {
+    let mut h = master();
+    dc(&mut h, "bus_l", 0.5);
+    dc(&mut h, "bus_r", 0.5);
+    dc(&mut h, "fader_cv_in", 0.25);
+    let o = settled(&mut h, &["main_l", "monitor_l"]);
+    let g = 10f32.powf(6.0 / 20.0);
+    assert!(
+        approx(o[0], 0.5 * g, 1e-3) && approx(o[1], 0.5 * g, 1e-3),
+        "{o:?}"
+    );
+    h.set_connected("fader_cv_in", false);
+    let o = settled(&mut h, &["main_l", "monitor_l"]);
+    assert!(approx(o[0], 0.5, 1e-5) && approx(o[1], 0.5, 1e-5), "{o:?}");
+}
+
+#[test]
+fn a_master_with_nothing_cabled_to_the_level_cv_is_bit_identical() {
+    let run = |trim: f32| {
+        let mut h = master();
+        h.set_param("fader_cv_trim", trim);
+        h.set_param("fader", 0.6);
+        h.set_param("comp.on", 1.0);
+        crate::test_support::run_signal(
+            &mut h,
+            &["bus_l", "bus_r"],
+            crate::test_support::sine(500.0, 0.7),
+            60,
+            &["main_l", "main_r"],
+        )
+    };
+    assert_eq!(run(1.0), run(-1.0), "the trim does nothing without a cable");
+}
+
+#[test]
+fn the_level_cv_is_finite_for_any_input() {
+    let mut h = master();
+    dc(&mut h, "bus_l", 0.3);
+    dc(&mut h, "bus_r", 0.3);
+    for i in 0..300usize {
+        let v = ((i % 9) as f32 - 4.0) * 0.7;
+        dc(
+            &mut h,
+            "fader_cv_in",
+            if i % 50 == 7 { f32::NAN } else { v },
+        );
+        h.process();
+        assert!(h.output("main_l").iter().all(|x| x.is_finite()));
+    }
 }

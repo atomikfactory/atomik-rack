@@ -4789,6 +4789,7 @@ smoother; the stereo delay reads it per sample through its 5 ms smoothers. Sourc
 | Distortion | `drive_cv_in` | `drive_cv_trim` | `48 dB · (drive/48 + trim·cv)`, normalised, 0..48 dB |
 | EQ | `band2_gain_cv_in` … `band5_gain_cv_in` (low shelf, peak 1, peak 2, high shelf) | `band2.gain_cv_trim` … `band5.gain_cv_trim` | `gain + trim·cv·24 dB`, −24..+24 dB (a band whose effective gain is exactly 0 dB is off, as before) |
 | Console channel | `fader_cv_in` | `fader_cv_trim` | fader gain × 10^(trim·cv·24/20): ±24 dB around the fader position |
+| Console master | `fader_cv_in` | `fader_cv_trim` | fader gain × 10^(trim·cv·24/20), like the channel's |
 | Console channel | `pan_cv_in` | `pan_cv_trim` | `pan + trim·cv`, −1..+1 |
 | Console channel | `send1_level_cv_in` … `send8_level_cv_in` | `send1.level_cv_trim` … `send8.level_cv_trim` | `level + trim·cv·66 dB`, clamped to −60..+6 dB (−60 = off); a send that is switched off stays off |
 | Poly synth | `pitch_cv_in` | `pitch_cv_trim` | pitch of every voice + `trim·cv·24` semitones |
@@ -4865,12 +4866,17 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
   program: a one-pole average of the gain reduction (500 ms) blends the release between 60 ms and
   1.2 s, fully slow once the average reaches 6 dB. `comp.release` is not used while it is on. Off, the
   compressor and the saved project are as before.
+- **Level CV.** `fader_cv_in` (a control input read in stage 2, after `gr_cv_out`) and `fader_cv_trim` (-1 to 1,
+  default 1, appended after `comp.auto`) add `trim * cv * 24` dB to the fader, `cv` being the batch mean clamped
+  to -1..+1. Not cabled, the master is bit-identical to one without it.
+- **Settings.** A click on the name plate in the console selects the master; Mixer > Copy Channel Settings, Paste,
+  Reset Channel and Clear Inserts then act on it. Its copy pastes onto the master only (of this song or another).
 - **Taps.** The send and return taps are copies the master keeps per block in its own state (written
   in stages 0 and 1, read in stage 2); the stages, sockets and cables of the device did not change,
   and the audio thread still does not allocate.
 - **Key.** `comp.key` selects the `key_in` side-chain; adding a cable into `key_in` through a
   command also switches it on in the same undo step . Removing the cable leaves the switch on;
-  loading a project never changes a param; a channel's `key_in` is unchanged.
+  loading a project never changes a param. A channel or a bus does the same with `key.on`.
 - **In a new project.** File, New starts with Audio I/O on top and this device, named "Master",
   right under it, locked: it cannot be deleted, cut, copied or moved, and nothing can be dragged
   above it (older projects open as they are). `main_l/r` are cabled to Audio I/O outputs 1 and 2.
@@ -4899,6 +4905,9 @@ and [crates/devices/src/channel.rs](../crates/devices/src/channel.rs) (the one s
 both device types run). The console creates buses; you do not add one from the browser.
 
 - **Same strip, same keys.** The input trim and polarity (`input.gain`, `input.phase`, `input.phase_r`), the
+  compressor auto make-up (`comp.auto_makeup`: the reduction a full-scale signal gets, up to 24 dB, added to the
+  output; the meter keeps reading the reduction alone), the EQ E mode (`eq.e_mode`: every bell's Q is multiplied
+  by 1 + |gain| / 18, so a large boost or cut is narrower; shelves and 0 dB bells are unchanged),
   compressor look-ahead (`comp.lookahead`, which the bus reports as latency), the dynamics and EQ bypass
   (`dyn.bypass`, `eq.bypass`) and the
   parallel compressor (`pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`,

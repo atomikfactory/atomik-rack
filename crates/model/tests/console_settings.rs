@@ -137,6 +137,7 @@ fn a_paste_without_inserts_in_the_clip_clears_the_chain_only_when_inserts_are_a_
     let reg = console_registry();
     let (mut d, a, b) = dressed(&reg);
     let bare = ChannelSettingsClip {
+        master: false,
         sections: SnapshotScope::ALL,
         params: Default::default(),
         inserts: Vec::new(),

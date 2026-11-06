@@ -105,25 +105,35 @@ pub(crate) fn check_move(
     Ok(())
 }
 
-/// The `comp.key` switch edit that goes with a cable into the master's `key_in`: `Some` when `cable` ends at `key_in` of the console master and the master's
-/// `comp.key` is off. Channels and every other socket give `None`; removing the cable never
-/// switches the key off, and loading never calls this.
+/// The key switch edit that goes with a cable into a console strip's `key_in`: `Some` when
+/// `cable` ends at `key_in` of the console master (`comp.key`) or of a channel or a bus
+/// (`key.on`) whose switch is off. Every other socket and device gives `None`; removing the
+/// cable never switches the key off, and loading never calls this.
 pub(crate) fn key_on_edit(doc: &RackDoc, registry: &Registry, cable: &Cable) -> Option<Edit> {
-    if cable.to.socket != "key_in" || !is_master(doc, &cable.to.device) {
+    if cable.to.socket != "key_in" {
         return None;
     }
     let device = doc.device(&cable.to.device)?;
+    let key = if is_master(doc, &device.key) {
+        "comp.key"
+    } else if device.type_id == crate::console::CHANNEL_TYPE
+        || device.type_id == crate::console::BUS_TYPE
+    {
+        "key.on"
+    } else {
+        return None;
+    };
     let param = registry
         .get(&device.type_id)?
         .descriptor
-        .param_by_key("comp.key")?;
-    let old = device.params.get("comp.key").copied();
+        .param_by_key(key)?;
+    let old = device.params.get(key).copied();
     if old.unwrap_or(param.default) >= 0.5 {
         return None;
     }
     Some(Edit::Param {
         key: device.key.clone(),
-        param: "comp.key".to_owned(),
+        param: key.to_owned(),
         old,
         new: Some(param.clamp(1.0)),
         default: param.default,

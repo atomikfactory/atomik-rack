@@ -121,6 +121,7 @@ impl StripEqState {
         let curve = StripCurve {
             sample_rate,
             eq_on: get("eq.on") >= 0.5,
+            e_mode: get("eq.e_mode") >= 0.5,
             hpf: hpf_on.then(|| f64::from(get("hpf.freq"))),
             lpf: lpf_on.then(|| f64::from(get("lpf.freq"))),
             hf: band(0),

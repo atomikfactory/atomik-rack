@@ -3275,6 +3275,20 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
   the chain and `latency.adjust` add no delay. The console has a KEY button in the PARALLEL section; the tap switch is
   rack-only (`console_layout::RACK_ONLY`). A container in the chain is an effect with a `bypass` param (6e), so its
   **B** and BYP ALL work like any slot's.
+- **Auto make-up and E mode.** `comp.auto_makeup` and `eq.e_mode` are appended after `pcomp.pre` (74 params; the
+  bus has them too). With `comp.auto_makeup` the compressor's output is raised by `-threshold * (1 - 1/ratio)` dB,
+  the reduction a full-scale signal gets, capped at 24 dB, through the 5 ms smoother; `gr_cv_out` and the meters
+  read the reduction alone. With `eq.e_mode` every bell (HMF, LMF, and HF or LF in bell mode) runs at the stored Q
+  times `1 + |gain| / 18` (`atomik_dsp::strip_eq::e_mode_q`), so a large boost or cut is narrower; shelves and a
+  bell at 0 dB are unchanged and the drawn curve (`StripCurve::e_mode`) follows. Off, both are bit-identical to
+  before. The console has an M-UP button under the compressor knobs and an E button beside the EQ switch.
+- **Key auto-on.** A cable into `key_in` of a channel or a bus sets `key.on` in the same undo step (the master's
+  `comp.key` already did); removing the cable leaves the switch.
+- **Master level CV and selection.** The master has `fader_cv_in` (stage 2) and `fader_cv_trim` (appended after
+  `comp.auto`): `trim * cv * 24` dB on the fader like a channel's, bit-identical while the input is not cabled. A
+  click on the master's name plate selects it (`ConsoleView::master_selected`); the settings copy, paste, reset and
+  clear rows then act on it. A master copy (`ChannelSettingsClip::master`) pastes onto the master only, and a
+  channel or bus copy never onto it.
 - **Commands and tools.** `mixer.toggle_polarity` and `mixer.bypass_all_inserts` are registry
   commands in the Mixer menu without default keys; they act on the strips of the focused pane like
   the VCA commands (`AppCore::strips_for_vca`), flip all inverted strips back or invert all, and
