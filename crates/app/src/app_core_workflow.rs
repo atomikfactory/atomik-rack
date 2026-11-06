@@ -175,7 +175,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The index of the tempo event in effect at the playhead (what the tempo readout edits).
-    fn tempo_event_at_playhead(&self) -> usize {
+    pub(super) fn tempo_event_at_playhead(&self) -> usize {
         let at = self.position.max(0);
         self.doc()
             .song
@@ -227,6 +227,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Rewind and Forward repeat, and the taps of tap tempo are timed by it.
     pub fn transport_frame(&mut self, now_seconds: f64) {
         self.now_seconds = now_seconds;
+        self.feed_clip_preview(now_seconds);
         self.snapshot_morph_tick(now_seconds);
         self.macro_glide_tick(now_seconds);
         for action in self.transport_bar.tick(now_seconds) {
