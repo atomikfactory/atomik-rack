@@ -682,3 +682,86 @@ fn the_lane_survives_save_and_load() {
     assert_eq!(back.snapshot_lane_events(), vec![(0, 1)]);
     assert_eq!(save_project(&back), text);
 }
+
+// ----------------------------------------------------------------------------- random walks
+
+/// A few hundred wiring edits and recalls in a fixed pseudo-random order: every state stays valid,
+/// a recall is one undo step, and after a recall nothing the snapshot can still change is left
+/// (a second recall has nothing to do).
+#[test]
+fn wiring_edits_and_recalls_keep_the_document_valid() {
+    let (mut d, r) = project();
+    run(
+        &mut d,
+        &r,
+        [
+            bus("One"),
+            bus("Two"),
+            add(usize::MAX, COMP, Some("comp2")),
+            add(usize::MAX, COMP, Some("comp3")),
+        ],
+    );
+    let (one, two) = (bus_key(&d, "One"), bus_key(&d, "Two"));
+    let strips = [
+        "channel",
+        "channel-2",
+        "channel-3",
+        "channel-4",
+        &one.0,
+        &two.0,
+    ];
+    let effects = ["comp", "comp2", "comp3"];
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move |n: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % n as u64) as usize
+    };
+    let mut stored = 0;
+    for step in 0..300 {
+        let strip = strips[next(strips.len())];
+        let command = match next(7) {
+            0 => route(
+                strip,
+                match next(4) {
+                    0 => OutputDest::Master,
+                    1 => OutputDest::Bus(one.clone()),
+                    2 => OutputDest::Bus(two.clone()),
+                    _ => OutputDest::AudioIo(1 + next(4) as u16),
+                },
+            ),
+            1 => set_insert(strip, next(3), effects[next(effects.len())]),
+            2 => con(ConsoleCommand::ClearInserts { strip: key(strip) }),
+            3 => con(ConsoleCommand::MoveInsert {
+                channel: key(strip),
+                from: next(3),
+                to: next(3),
+            }),
+            4 if stored < 6 => {
+                stored += 1;
+                store(&format!("S{step}"))
+            }
+            _ if stored > 0 => recall(1 + next(stored) as u32),
+            _ => set_param(strip, "fader", 0.1 + 0.1 * next(8) as f32),
+        };
+        let recalled = matches!(
+            command,
+            Command::Console(ConsoleCommand::RecallSnapshot { .. })
+        );
+        let before = d.doc().clone();
+        if d.apply(command, &r).is_err() {
+            assert_eq!(d.doc(), &before, "a refusal changes nothing (step {step})");
+            continue;
+        }
+        d.doc()
+            .validate()
+            .unwrap_or_else(|e| panic!("step {step}: {e:?}"));
+        assert_console_invariants(d.doc());
+        if recalled {
+            d.undo().unwrap();
+            assert_eq!(d.doc(), &before, "a recall is one undo step (step {step})");
+            d.redo().unwrap();
+        }
+    }
+}
