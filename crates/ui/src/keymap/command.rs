@@ -1172,6 +1172,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("mixer.reset_strip", "Reset Channel", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.route_folder",
+        "Route Folder to New Bus",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.route_to_new_bus",
         "Route to New Output Bus",
         G::Mixer,
@@ -1256,6 +1263,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.toggle_send_follow",
         "Sends Follow Bus",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.unroute_folder",
+        "Stop Routing Folder",
         G::Mixer,
         C::Global,
     )

@@ -19,6 +19,7 @@ mod clip_lanes;
 mod clip_transform;
 mod console_bus;
 mod console_cmd;
+mod console_folder;
 mod console_insert;
 mod console_mix;
 mod console_settings;
@@ -202,6 +203,7 @@ pub use console::{
     lane_param, vca_lane_id, vca_lane_key,
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
+pub use console_folder::{FolderRoute, MAX_FOLDER_ROUTES};
 pub use console_insert::{
     bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
     section_bypass_states,
@@ -1486,6 +1488,22 @@ impl Document {
         // A VCA group that follows a track folder is brought in line with the folder in the same
         // step (a track moved in or out, added, deleted, or the folder dissolved).
         let edit = match console_vca::follow_sync(&self.doc) {
+            Some(sync) => match sync.perform(&mut self.doc) {
+                Ok(more) => {
+                    ops.extend(more);
+                    Edit::Compound(vec![edit, sync])
+                }
+                Err(fault) => {
+                    let mut back = edit;
+                    back.invert();
+                    back.perform(&mut self.doc)?;
+                    return Err(fault.into());
+                }
+            },
+            None => edit,
+        };
+        // Folders routed to a bus keep their channels on it in the same step.
+        let edit = match console_folder::sync(&self.doc, registry) {
             Some(sync) => match sync.perform(&mut self.doc) {
                 Ok(more) => {
                     ops.extend(more);

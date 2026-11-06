@@ -136,6 +136,9 @@ pub struct Console {
     /// is a source-less channel fed from the parent's parallel output. Names follow the parent
     /// and the child goes with it (see `ConsoleCommand::CreateParallel`).
     pub parallels: Vec<(DeviceKey, DeviceKey)>,
+    /// Track folders that play into a bus (see [`crate::console_folder`]); none in a plain
+    /// project.
+    pub folder_routes: Vec<crate::console_folder::FolderRoute>,
 }
 
 impl Default for Console {
@@ -152,6 +155,7 @@ impl Default for Console {
             align_returns: false,
             send_follow: false,
             parallels: Vec::new(),
+            folder_routes: Vec::new(),
         }
     }
 }
@@ -660,6 +664,31 @@ pub enum ConsoleCommand {
         vca: u32,
         /// The folder to follow, or none.
         folder: Option<u32>,
+    },
+    /// Play the track folder `folder` into the existing bus `bus`: the console channels of its
+    /// tracks (sub-folders included, a routed sub-folder keeps its own) get their output on the
+    /// bus, and a track that joins the folder later follows (see [`crate::console_folder`]). A
+    /// folder routed elsewhere moves to `bus`. Rejected: a folder with no track that has a
+    /// channel, a key that is no bus, a bus that would make a loop, and no change.
+    RouteFolderToBus {
+        /// The track folder.
+        folder: u32,
+        /// The bus device key.
+        bus: DeviceKey,
+    },
+    /// Create a bus called `name` (output on the master) and play the track folder `folder` into
+    /// it, in one undo step. The name rules are those of `CreateBus`.
+    RouteFolderToNewBus {
+        /// The track folder.
+        folder: u32,
+        /// The bus name.
+        name: String,
+    },
+    /// Stop playing the track folder `folder` into its bus: the channels that still play into it
+    /// go back to the master (the bus stays). Rejected for a folder that is not routed.
+    UnrouteFolder {
+        /// The track folder.
+        folder: u32,
     },
     /// Rename a VCA group (the same rules as `CreateVca`).
     RenameVca {

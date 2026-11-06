@@ -145,6 +145,22 @@ impl RackDoc {
                 known(format!("console.returns[{i}]"), device);
             }
         }
+        for (i, r) in c.folder_routes.iter().enumerate() {
+            if c.bus_index(&r.bus).is_none() {
+                found.add(
+                    format!("console.folder_routes[{i}].bus"),
+                    format!("{} is not a console bus", r.bus),
+                );
+            }
+            for m in &r.members {
+                if c.channel_index(m).is_none() {
+                    found.add(
+                        format!("console.folder_routes[{i}].members"),
+                        format!("{m} is not a console channel"),
+                    );
+                }
+            }
+        }
         for (i, (_, child)) in c.parallels.iter().enumerate() {
             if c.channel_index(child).is_none() {
                 found.add(

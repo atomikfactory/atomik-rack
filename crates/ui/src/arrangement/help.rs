@@ -148,6 +148,10 @@ impl ArrangementView {
                     },
                 )
             }
+            Hit::FolderFader(g) => {
+                let rr = self.folder_row(g)?;
+                help(self.folder_fader_rect(rr, g)?, self.folder_fader_help(g)?)
+            }
             Hit::AddTrack(device) => {
                 let rr = self.add_track_row(&device)?;
                 help(

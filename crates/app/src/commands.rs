@@ -282,6 +282,13 @@ pub enum AppCommand {
     /// Mixer > Create VCA from Folder: a VCA group that follows the selected track folder (its
     /// members are the channels of the folder's tracks and stay so as tracks move in and out).
     CreateVcaForFolder,
+    /// Mixer > Route Folder to New Bus: the selected track folder plays into a new output bus
+    /// (`mixer.route_folder`); with a number, into the bus at that place in the console (counted
+    /// from 1, `mixer.route_folder` with the number as its argument). The channels of the folder
+    /// follow the tracks that move in and out.
+    RouteFolder(Option<u32>),
+    /// Mixer > Stop Routing Folder: the selected track folder stops playing into its bus.
+    UnrouteFolder,
     /// Mixer > Add to VCA: the selected strips join the VCA group `id` (`mixer.add_to_vca` with
     /// the id as its argument), or the last group when there is none.
     AddToVca(Option<u32>),
@@ -793,6 +800,9 @@ impl AppCommand {
             AppCommand::LinkFaders => ("mixer.link_faders", None),
             AppCommand::MeterMode(m) => ("mixer.meter_mode", Some(m.word())),
             AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
+            AppCommand::RouteFolder(None) => ("mixer.route_folder", None),
+            AppCommand::RouteFolder(Some(_)) => return None,
+            AppCommand::UnrouteFolder => ("mixer.unroute_folder", None),
             AppCommand::CreateVca => ("mixer.create_vca", None),
             AppCommand::AddToVca(None) => ("mixer.add_to_vca", None),
             AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
@@ -1090,6 +1100,15 @@ impl AppCommand {
             ("mixer.link_faders", None) => AppCommand::LinkFaders,
             ("mixer.meter_mode", Some(a)) => AppCommand::MeterMode(MeterMode::from_word(a)?),
             ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
+            ("mixer.route_folder", None) => AppCommand::RouteFolder(None),
+            ("mixer.route_folder", Some(n)) => {
+                return n
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .map(|n| AppCommand::RouteFolder(Some(n)));
+            }
+            ("mixer.unroute_folder", None) => AppCommand::UnrouteFolder,
             ("mixer.create_vca", None) => AppCommand::CreateVca,
             ("mixer.add_to_vca", None) => AppCommand::AddToVca(None),
             ("mixer.add_to_vca", Some(id)) => {
@@ -1846,6 +1865,10 @@ pub struct VcaMenu {
     pub can_delete: bool,
     /// A track folder is selected and no group follows it yet: Create VCA from Folder works.
     pub can_folder: bool,
+    /// A track folder with a channel is selected: Route Folder to Bus works.
+    pub can_route_folder: bool,
+    /// The selected track folder plays into a bus: Stop Routing Folder works.
+    pub can_unroute_folder: bool,
 }
 
 /// What the Track menu and the context menus need to know to freeze, unfreeze and bounce.
@@ -1985,9 +2008,14 @@ pub struct SongList<'a> {
     /// The VCA groups of the song the menu belongs to: id and name (at most
     /// [`MAX_NAMED_VCAS`] are listed), for the Mixer menu's items that name a group.
     pub vcas: &'a [(u32, String)],
+    /// The output buses of the song the menu belongs to: their place in the console (from 1) and
+    /// name (at most [`MAX_NAMED_VCAS`] are listed), for the Mixer menu's Route Folder to Bus
+    /// submenu.
+    pub buses: &'a [(u32, String)],
 }
 
-/// Most groups the Mixer menu's Add to Group and Delete Group submenus list.
+/// Most groups the Mixer menu's Add to Group and Delete Group submenus list (and buses its Route
+/// Folder to Bus submenu).
 pub const MAX_NAMED_VCAS: usize = 32;
 
 /// [`menus_with_lists`], with the Window menu listing the open songs `songs`.
@@ -2528,6 +2556,16 @@ pub fn menus_with_songs(
                     "Create VCA from Folder",
                     AppCommand::CreateVcaForFolder,
                     state.vca.can_folder,
+                ),
+                enabled(
+                    "Route Folder to New Bus",
+                    AppCommand::RouteFolder(None),
+                    state.vca.can_route_folder,
+                ),
+                enabled(
+                    "Stop Routing Folder",
+                    AppCommand::UnrouteFolder,
+                    state.vca.can_unroute_folder,
                 ),
                 enabled("Add to VCA", AppCommand::AddToVca(None), state.vca.can_add),
                 enabled(
@@ -3258,7 +3296,41 @@ pub fn menus_with_songs(
         },
     ];
     name_vca_items(&mut menus, state, songs.vcas);
+    name_bus_items(&mut menus, state, songs.buses);
     menus
+}
+
+/// The Mixer menu's Route Folder to Bus submenu, with a row per output bus, after Stop Routing
+/// Folder (nothing when the song has no bus).
+fn name_bus_items(menus: &mut [Menu], state: &MenuState, buses: &[(u32, String)]) {
+    if buses.is_empty() {
+        return;
+    }
+    let entries = buses
+        .iter()
+        .take(MAX_NAMED_VCAS)
+        .map(|(n, name)| {
+            MenuEntry::Item(MenuItem {
+                label: Cow::Owned(name.clone()),
+                command: AppCommand::RouteFolder(Some(*n)),
+                shortcut: None,
+                checked: None,
+                enabled: state.vca.can_route_folder,
+            })
+        })
+        .collect();
+    let submenu = MenuEntry::Submenu(Submenu {
+        label: "Route Folder to Bus",
+        entries,
+    });
+    if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer")
+        && let Some(at) = menu
+            .entries
+            .iter()
+            .position(|e| matches!(e, MenuEntry::Item(i) if i.command == AppCommand::UnrouteFolder))
+    {
+        menu.entries.insert(at + 1, submenu);
+    }
 }
 
 /// The Mixer menu's items that name a group: with groups in the song, Add to Group and Delete
@@ -3509,6 +3581,8 @@ mod tests {
             AppCommand::ToggleSendFollow,
             AppCommand::LinkFaders,
             AppCommand::CreateVcaForFolder,
+            AppCommand::RouteFolder(None),
+            AppCommand::UnrouteFolder,
             AppCommand::MidiLearn,
             AppCommand::MidiMappings,
             AppCommand::LockSurfaces,
@@ -3778,6 +3852,7 @@ mod tests {
             names: &songs,
             current: 0,
             vcas: &[],
+            buses: &[],
         };
         let model = menus_with_songs(&state(), &keymap, &recent, &templates, &list);
         let in_menu: Vec<AppCommand> = model
@@ -4213,6 +4288,8 @@ mod tests {
                 "Delete Channel",
                 "Create VCA from Selection",
                 "Create VCA from Folder",
+                "Route Folder to New Bus",
+                "Stop Routing Folder",
                 "Add to VCA",
                 "Remove from VCA",
                 "Delete VCA",
@@ -4442,6 +4519,7 @@ mod tests {
             names: &names,
             current: 1,
             vcas: &[],
+            buses: &[],
         };
         let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
         let window = m.iter().find(|m| m.title == "Window").unwrap();
@@ -4474,6 +4552,7 @@ mod tests {
             names: &many,
             current: 0,
             vcas: &[],
+            buses: &[],
         };
         let m = menus_with_songs(&state(), &legacy(Os::Windows), &[], &[], &songs);
         let window = m.iter().find(|m| m.title == "Window").unwrap();

@@ -784,6 +784,11 @@ pub(crate) fn plan(
             clear(&mut p, "mute")?;
             crate::console_vca::clear_flags(&mut p, "mute")?;
         }
+        folder_command @ (ConsoleCommand::RouteFolderToBus { .. }
+        | ConsoleCommand::RouteFolderToNewBus { .. }
+        | ConsoleCommand::UnrouteFolder { .. }) => {
+            crate::console_folder::plan(&mut p, folder_command)?
+        }
         vca_command @ (ConsoleCommand::CreateVca { .. }
         | ConsoleCommand::CreateVcaForFolder { .. }
         | ConsoleCommand::SetVcaFollow { .. }

@@ -2404,6 +2404,10 @@ impl<S: EngineSink> AppCore<S> {
             can_remove: strips.iter().any(|s| console.vca_of(s).is_some()),
             can_delete: !console.vcas.is_empty(),
             can_folder: self.followable_folder(pane).is_some(),
+            can_route_folder: self.routable_folder(pane).is_some(),
+            can_unroute_folder: self
+                .routable_folder(pane)
+                .is_some_and(|f| console.folder_route(f).is_some()),
         }
     }
 
@@ -2417,6 +2421,62 @@ impl<S: EngineSink> AppCore<S> {
         let doc = self.doc();
         let free = doc.console.vcas.iter().all(|v| v.follows != Some(folder));
         (free && !doc.folder_strips(folder).is_empty()).then_some(folder)
+    }
+
+    /// The track folder the folder routing commands work on: the folder selected in the
+    /// arrangement when one of its tracks has a console channel.
+    fn routable_folder(&self, pane: Pane) -> Option<u32> {
+        if pane != Pane::Arrangement {
+            return None;
+        }
+        let folder = self.arrangement().selected_group()?;
+        (!self.doc().folder_route_strips(folder).is_empty()).then_some(folder)
+    }
+
+    /// Mixer > Route Folder to New Bus (`bus` none: a bus named after the folder, or `Bus n` when
+    /// that name is taken) or to the bus at place `bus` of the console (from 1), in one undo step.
+    /// False, with a message, when no folder is selected, there is no such bus or the model
+    /// refuses.
+    pub fn route_folder(&mut self, pane: Pane, bus: Option<u32>) -> bool {
+        let Some(folder) = self.routable_folder(pane) else {
+            self.reject("Select a track folder (with a track that has a channel) to route".into());
+            return false;
+        };
+        let doc = self.doc();
+        let command = match bus {
+            None => {
+                let named = doc.song.org.group(folder).map(|g| g.name.clone());
+                let name = named
+                    .filter(|n| doc.console.bus_by_name(n).is_none())
+                    .unwrap_or_else(|| doc.console.default_bus_name());
+                atomik_model::ConsoleCommand::RouteFolderToNewBus { folder, name }
+            }
+            Some(n) => {
+                let Some(target) = doc.console.buses.get(n as usize - 1) else {
+                    self.reject(format!("There is no bus number {n}"));
+                    return false;
+                };
+                atomik_model::ConsoleCommand::RouteFolderToBus {
+                    folder,
+                    bus: target.bus.clone(),
+                }
+            }
+        };
+        self.apply_command(Command::Console(command)).is_ok()
+    }
+
+    /// Mixer > Stop Routing Folder: the channels of the selected folder go back to the master.
+    /// False, with a message, when no folder is selected or it is not routed.
+    pub fn unroute_folder(&mut self, pane: Pane) -> bool {
+        let routed = self
+            .routable_folder(pane)
+            .filter(|f| self.doc().console.folder_route(*f).is_some());
+        let Some(folder) = routed else {
+            self.reject("Select a track folder that plays into a bus".into());
+            return false;
+        };
+        let command = Command::Console(atomik_model::ConsoleCommand::UnrouteFolder { folder });
+        self.apply_command(command).is_ok()
     }
 
     /// Mixer > Create VCA from Folder: a group named after the selected folder (or `VCA n` when

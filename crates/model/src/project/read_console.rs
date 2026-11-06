@@ -432,5 +432,60 @@ pub(super) fn load_console(
             console.parallels.push((parent, child));
         }
     }
+    if let Some(v) = obj.get("folder_routes") {
+        load_folder_routes(v, &path.field("folder_routes"), &mut console)?;
+    }
     Ok(console)
+}
+
+/// Reads the console's folder routes (version 44): a track folder id, a bus and the channels the
+/// route put there (console channels, none listed twice for one route). At most 64, one per
+/// folder. A folder the song does not have is dropped once the song is known (see
+/// `drop_stale_follows`).
+fn load_folder_routes(v: &Value, path: &JsonPath, console: &mut Console) -> Result<(), ModelError> {
+    let items = array(v, path)?;
+    if items.len() > MAX_FOLDER_ROUTES {
+        return Err(path.error(format!(
+            "at most {MAX_FOLDER_ROUTES} folder routes, found {}",
+            items.len()
+        )));
+    }
+    for (i, item) in items.iter().enumerate() {
+        let p = path.index(i);
+        let r = schema::current(item, &p, Obj::FolderRoute)?;
+        let fp = p.field("folder");
+        let folder = uint(&r["folder"], &fp, u64::from(u32::MAX))? as u32;
+        if folder == 0 {
+            return Err(fp.error("track folder ids count from 1"));
+        }
+        if console.folder_route(folder).is_some() {
+            return Err(fp.error(format!("folder {folder} is routed twice")));
+        }
+        let bp = p.field("bus");
+        let bus = DeviceKey(string(&r["bus"], &bp)?.to_owned());
+        if console.bus_index(&bus).is_none() {
+            return Err(bp.error(format!("{:?} is not a console bus", bus.0)));
+        }
+        let members_path = p.field("members");
+        let mut members: Vec<DeviceKey> = Vec::new();
+        for (j, m) in array(&r["members"], &members_path)?.iter().enumerate() {
+            let mp = members_path.index(j);
+            let key = DeviceKey(string(m, &mp)?.to_owned());
+            if console.channel_index(&key).is_none() {
+                return Err(mp.error(format!("{:?} is not a console channel", key.0)));
+            }
+            if members.contains(&key) {
+                return Err(mp.error(format!("{:?} is listed twice", key.0)));
+            }
+            members.push(key);
+        }
+        let order: Vec<&DeviceKey> = console.strip_keys().collect();
+        members.sort_by_key(|m| order.iter().position(|k| *k == m).unwrap_or(usize::MAX));
+        console.folder_routes.push(FolderRoute {
+            folder,
+            bus,
+            members,
+        });
+    }
+    Ok(())
 }

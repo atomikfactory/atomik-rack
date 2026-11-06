@@ -2472,6 +2472,15 @@ impl<B: AudioBackend> Shell<B> {
             .iter()
             .map(|v| (v.id, v.name.clone()))
             .collect();
+        let buses: Vec<(u32, String)> = self
+            .core
+            .doc()
+            .console
+            .buses
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (i as u32 + 1, b.name.clone()))
+            .collect();
         menus_with_songs(
             &self.menu_state(),
             self.router.keymap(),
@@ -2481,6 +2490,7 @@ impl<B: AudioBackend> Shell<B> {
                 names: &self.songs,
                 current: self.song_at,
                 vcas: &vcas,
+                buses: &buses,
             },
         )
     }
@@ -6217,6 +6227,15 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::CreateVcaForFolder => {
                 // A refusal is already reported.
                 self.core.create_vca_for_folder(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::RouteFolder(bus) => {
+                // A refusal is already reported.
+                self.core.route_folder(self.live_pane(self.focus), bus);
+                Vec::new()
+            }
+            AppCommand::UnrouteFolder => {
+                self.core.unroute_folder(self.live_pane(self.focus));
                 Vec::new()
             }
             AppCommand::LinkFaders => {
