@@ -357,12 +357,17 @@ impl<S: EngineSink> AppCore<S> {
         });
     }
 
-    /// One step of the end edge of a clip dragged with the scale-selection role: the document
-    /// is put back to what it was before the drag and `ids` scale about their earliest start to
-    /// `percent` of their tempo from there (the same preview rules as
+    /// One step of an edge of a clip dragged with the scale-selection role: the document
+    /// is put back to what it was before the drag and `ids` scale about their earliest start (or,
+    /// with `from_end`, their latest end) to `percent` of their tempo from there (the same
+    /// preview rules as
     /// [`AppCore::stretch_step`]; [`AppCore::end_stretch`] ends the drag).
-    pub(super) fn scale_step(&mut self, ids: Vec<ClipId>, percent: f64) {
-        self.trial_step(WorkflowCommand::ScaleTempo { ids, percent });
+    pub(super) fn scale_step(&mut self, ids: Vec<ClipId>, percent: f64, from_end: bool) {
+        self.trial_step(WorkflowCommand::ScaleTempo {
+            ids,
+            percent,
+            from_end,
+        });
     }
 
     /// One step of a crossfade zone dragged: the document is put back to what it was before
@@ -407,7 +412,11 @@ impl<S: EngineSink> AppCore<S> {
             Some(percent) => {
                 let ids = self.arrangement.selected_clips();
                 if !ids.is_empty() {
-                    self.trial_step(WorkflowCommand::ScaleTempo { ids, percent });
+                    self.trial_step(WorkflowCommand::ScaleTempo {
+                        ids,
+                        percent,
+                        from_end: false,
+                    });
                 }
             }
             None => self.end_stretch(false),

@@ -3,7 +3,11 @@
 //! * [`join_audio`] turns consecutive pieces of one recording on one lane back into a single
 //!   clip. It is the inverse of a split: the pieces must touch (or overlap), play the same file
 //!   without a jump, and agree on gain, warp and mute, so the joined clip sounds exactly as the
-//!   pieces did. Anything else is refused with a message that names the clips and the file.
+//!   pieces did. Warp markers are kept: the joined clip carries the markers of every piece (with
+//!   one at the join), and the join is refused when the result would not play what a piece
+//!   did. Anything else is refused with a message that names the clips and the file.
+//! * [`render_join`] puts a render of a run of clips (of any files, the app renders it) in
+//!   their place as one clip.
 //! * [`move_crossfade`] drags the overlap of two audio clips along the timeline: the later clip
 //!   starts later (or earlier) and the earlier one ends later (or earlier) by the same number of
 //!   ticks, so the overlap keeps its length and the sound outside it does not change.
@@ -13,8 +17,10 @@
 use crate::audio_edit::{extend_envelope_start, join_envelopes, slice_envelope};
 use crate::history::Edit;
 use crate::song::{AudioClipContent, Clip, ClipContent, crossfades};
-use crate::song_cmd::{bad, check_geometry, find_clip, range};
-use crate::warp::{WarpSettings, source_at_tick};
+use crate::song_cmd::{
+    audio_span_frames, bad, check_audio, check_audio_span, check_geometry, find_clip, range,
+};
+use crate::warp::{MAX_WARP_MARKERS, WarpMarker, WarpSettings, source_at_tick};
 use crate::{ClipId, DeviceKey, ModelError, RackDoc};
 
 type Found<'d> = (DeviceKey, usize, &'d Clip);
@@ -42,12 +48,97 @@ fn file_name(doc: &RackDoc, asset: &str) -> String {
         .map_or_else(|| "an unknown file".to_owned(), |m| m.original_name.clone())
 }
 
-/// The warp settings without the markers (clips with markers do not join).
+/// The warp settings without the markers (the markers are merged, not compared).
 fn plain_warp(w: &WarpSettings) -> WarpSettings {
     WarpSettings {
         markers: Vec::new(),
         ..w.clone()
     }
+}
+
+fn markers_differ(a: ClipId, b: ClipId) -> ModelError {
+    bad(format!(
+        "clips {} and {} have warp markers that do not meet: joining would change what plays",
+        a.0, b.0
+    ))
+}
+
+/// Whether the time maps of clip `a` (its content `a.1` as it stands, starting at `a.0.start`)
+/// and clip `b` agree with a clip that starts like `a` and has `markers`, everywhere they play:
+/// the source frame is within a frame and a half at every marker, start and end of the three.
+fn maps_agree(
+    song: &crate::Song,
+    rate: u32,
+    a: (&Clip, &AudioClipContent),
+    b: (&Clip, &AudioClipContent),
+    markers: &[WarpMarker],
+) -> bool {
+    if !a.1.warp.enabled {
+        return true;
+    }
+    let mut joined = a.1.clone();
+    joined.warp.markers = markers.to_vec();
+    let mut ticks = vec![a.0.start, a.0.end(), b.0.start, b.0.end()];
+    ticks.extend(a.1.warp.markers.iter().map(|m| a.0.start + m.tick));
+    ticks.extend(b.1.warp.markers.iter().map(|m| b.0.start + m.tick));
+    ticks.extend(markers.iter().map(|m| a.0.start + m.tick));
+    let at = |c: &Clip, content: &AudioClipContent, t: i64| {
+        source_at_tick(song, rate, c.start, content, t)
+    };
+    ticks.iter().all(|&t| {
+        let mine = at(a.0, &joined, t);
+        let first = !(a.0.start..=a.0.end()).contains(&t) || (at(a.0, a.1, t) - mine).abs() <= 1.5;
+        let second = !(b.0.start..=b.0.end()).contains(&t) || (at(b.0, b.1, t) - mine).abs() <= 1.5;
+        first && second
+    })
+}
+
+/// The markers of run `a` after clip `b`, which starts `shift` ticks later, joined onto it: those
+/// of `a` before the join, one at the join (where the file continues), then those of `b`. Empty
+/// when neither has any. Refused when the result would not play what the two clips played.
+fn joined_markers(
+    song: &crate::Song,
+    rate: u32,
+    a: (&Clip, &AudioClipContent),
+    b: (&Clip, &AudioClipContent),
+    shift: i64,
+) -> Result<Vec<WarpMarker>, ModelError> {
+    if a.1.warp.markers.is_empty() && b.1.warp.markers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let from = i128::from(b.1.source_offset) - i128::from(a.1.source_offset);
+    let from = u64::try_from(from).map_err(|_| markers_differ(a.0.id, b.0.id))?;
+    let mut out: Vec<WarpMarker> = Vec::new();
+    let mut push = |m: WarpMarker| {
+        if out
+            .last()
+            .is_none_or(|p| p.tick < m.tick && p.source < m.source)
+        {
+            out.push(m);
+        }
+    };
+    for m in a.1.warp.markers.iter().filter(|m| m.tick < shift) {
+        push(*m);
+    }
+    if a.1.warp.enabled {
+        push(WarpMarker {
+            tick: shift,
+            source: from,
+        });
+    }
+    for m in &b.1.warp.markers {
+        push(WarpMarker {
+            tick: m.tick + shift,
+            source: m.source.saturating_add(from),
+        });
+    }
+    if out.len() > MAX_WARP_MARKERS {
+        return Err(bad("the joined clip would have too many warp markers"));
+    }
+    if !maps_agree(song, rate, a, b, &out) {
+        return Err(markers_differ(a.0.id, b.0.id));
+    }
+    Ok(out)
 }
 
 /// Plans the join of audio clips `clips` (at least two, one lane, sorted by start).
@@ -73,12 +164,6 @@ pub(crate) fn join_audio(
                 c.id.0
             )));
         }
-        if !a.warp.markers.is_empty() {
-            return Err(bad(format!(
-                "clip {} has warp markers: a clip with markers cannot be joined",
-                c.id.0
-            )));
-        }
         if c.muted != first.muted {
             return Err(bad("mute or unmute the clips alike before joining them"));
         }
@@ -90,8 +175,8 @@ pub(crate) fn join_audio(
         let b = audio_of(next)?;
         if b.asset != acc.asset {
             return Err(bad(format!(
-                "clips {} and {} play different files ('{}' and '{}'): only pieces of one file can be \
-                 joined; bounce them in place to get one clip",
+                "clips {} and {} play different files ('{}' and '{}'): only pieces of one file join \
+                 as they are; clips of different files join by rendering them",
                 run.id.0,
                 next.id.0,
                 file_name(doc, &acc.asset),
@@ -114,6 +199,7 @@ pub(crate) fn join_audio(
         }
         let asset_frames = doc.assets.get(&acc.asset).map_or(u64::MAX, |m| m.frames);
         let delta = clock.at(next.start).saturating_sub(clock.at(run.start));
+        let delta_ticks = next.start - run.start;
         let (expected, _) = acc.piece_from(song, rate, run.start, next.start, delta, asset_frames);
         if expected.abs_diff(b.source_offset) > 1 {
             return Err(bad(format!(
@@ -139,13 +225,20 @@ pub(crate) fn join_audio(
             acc.envelope = join_envelopes(&acc.envelope, &b.envelope, delta)
                 .ok_or_else(|| bad("the joined gain envelope would have too many points"))?;
             acc.fade_out = b.fade_out;
+            acc.warp.markers = joined_markers(song, rate, (&run, &acc), (next, b), delta_ticks)?;
             end = next.end();
             run.length = end - run.start;
-        } else if b.fade_out > 0 {
-            return Err(bad(format!(
-                "clip {} fades out inside the joined clip: set its fade out to 0 first",
-                next.id.0
-            )));
+        } else {
+            if b.fade_out > 0 {
+                return Err(bad(format!(
+                    "clip {} fades out inside the joined clip: set its fade out to 0 first",
+                    next.id.0
+                )));
+            }
+            // Inside the run: it must already play what this clip plays.
+            if !maps_agree(song, rate, (&run, &acc), (next, b), &acc.warp.markers) {
+                return Err(markers_differ(run.id, next.id));
+            }
         }
     }
     let joined = Clip {
@@ -165,6 +258,122 @@ pub(crate) fn join_audio(
         })
         .collect();
     edits.push(replace(device, lane, first, joined));
+    Ok((Edit::Compound(edits), Some(first.id)))
+}
+
+/// What a join of audio clips of different files renders: the track, the span of the clips in
+/// ticks and the clips in song order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinRender {
+    /// The track's device.
+    pub device: DeviceKey,
+    /// The lane the clips are on.
+    pub lane: usize,
+    /// `[start, end)` in ticks: from the first clip's start to the latest end.
+    pub span: (i64, i64),
+    /// The clips, by start.
+    pub ids: Vec<ClipId>,
+}
+
+/// Whether joining the clips `ids` is a render: audio clips of one lane that play more than one
+/// file. `None` when it is not (one file, other kinds of clips, different lanes, unknown clips:
+/// [`WorkflowCommand::JoinClips`](crate::WorkflowCommand::JoinClips) says what is wrong).
+/// Otherwise what to render, or why the clips cannot be joined that way: a muted clip, a gap.
+pub fn join_render(doc: &RackDoc, ids: &[ClipId]) -> Option<Result<JoinRender, ModelError>> {
+    let mut clips: Vec<Found<'_>> = Vec::new();
+    for id in ids {
+        if clips.iter().any(|(_, _, c)| c.id == *id) {
+            continue;
+        }
+        clips.push(find_clip(doc, *id).ok()?);
+    }
+    if clips.len() < 2
+        || clips
+            .iter()
+            .any(|(d, l, _)| *d != clips[0].0 || *l != clips[0].1)
+    {
+        return None;
+    }
+    let mut files = std::collections::BTreeSet::new();
+    for (_, _, c) in &clips {
+        files.insert(&audio_of(c).ok()?.asset);
+    }
+    if files.len() < 2 {
+        return None;
+    }
+    clips.sort_by_key(|(_, _, c)| (c.start, c.id));
+    let (device, lane) = (clips[0].0.clone(), clips[0].1);
+    let start = clips[0].2.start;
+    let mut end = clips[0].2.end();
+    for (_, _, c) in &clips {
+        if c.muted {
+            return Some(Err(bad(format!(
+                "clip {} is muted: unmute the clips before joining them",
+                c.id.0
+            ))));
+        }
+        if c.start > end {
+            return Some(Err(bad(format!(
+                "clip {} does not touch the clip before it: move it against the previous one first",
+                c.id.0
+            ))));
+        }
+        end = end.max(c.end());
+    }
+    Some(Ok(JoinRender {
+        device,
+        lane,
+        span: (start, end),
+        ids: clips.iter().map(|(_, _, c)| c.id).collect(),
+    }))
+}
+
+/// Plans `RenderJoin`: the clips of [`join_render`] go and the first clip's id now spans them,
+/// playing `audio`, the render of what they played.
+pub(crate) fn render_join(
+    doc: &RackDoc,
+    ids: &[ClipId],
+    audio: AudioClipContent,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    let plan = join_render(doc, ids).unwrap_or_else(|| {
+        Err(bad(
+            "only audio clips of one lane that play different files join by rendering",
+        ))
+    })?;
+    if audio.reverse || audio.warp.active() {
+        return Err(bad("a rendered join is plain audio: no reverse, no warp"));
+    }
+    check_audio(doc, &audio)?;
+    let (start, end) = plan.span;
+    check_audio_span(&audio, audio_span_frames(doc, start, end - start, None))?;
+    let found: Vec<Found<'_>> = plan
+        .ids
+        .iter()
+        .map(|id| find_clip(doc, *id))
+        .collect::<Result<_, _>>()?;
+    let first = found[0].2;
+    let audio = AudioClipContent {
+        xfade: audio_of(first)?.xfade,
+        ..audio
+    };
+    let joined = Clip {
+        length: end - start,
+        offset: 0,
+        loop_length: None,
+        content: ClipContent::Audio(audio),
+        ..first.clone()
+    };
+    check_geometry(joined.start, joined.length, 0, None).map_err(range)?;
+    let mut edits: Vec<Edit> = found[1..]
+        .iter()
+        .map(|(d, l, c)| Edit::Clip {
+            device: d.clone(),
+            lane: *l,
+            old: Some((*c).clone()),
+            new: None,
+        })
+        .collect();
+    edits.push(replace(&plan.device, plan.lane, first, joined));
     Ok((Edit::Compound(edits), Some(first.id)))
 }
 

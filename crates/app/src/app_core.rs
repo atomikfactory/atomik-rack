@@ -786,6 +786,10 @@ impl<S: EngineSink> AppCore<S> {
         let Some(command) = self.render_audio_loops(command) else {
             return Ok(());
         };
+        // Joining audio clips of different files is a render, then a command.
+        let Some(command) = self.render_clip_joins(command) else {
+            return Ok(());
+        };
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
         // Muting an automation lane holds the value it gave.
@@ -924,7 +928,11 @@ impl<S: EngineSink> AppCore<S> {
                 percent,
                 from_start,
             } => self.stretch_step(ids, percent, from_start),
-            UiAction::ScaleStep { ids, percent } => self.scale_step(ids, percent),
+            UiAction::ScaleStep {
+                ids,
+                percent,
+                from_end,
+            } => self.scale_step(ids, percent, from_end),
             UiAction::StretchEnd { commit } => self.end_stretch(commit),
             UiAction::CrossfadeStep { later, delta } => self.crossfade_step(later, delta),
             UiAction::CrossfadeLengthStep { later, delta } => {
@@ -3866,6 +3874,10 @@ mod export_tests;
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]
 mod freeze_tests;
+
+#[cfg(test)]
+#[path = "app_core_join_tests.rs"]
+mod join_tests;
 
 #[cfg(test)]
 #[path = "app_core_loops_tests.rs"]

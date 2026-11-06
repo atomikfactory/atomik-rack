@@ -578,6 +578,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | WorkflowCommand::DuplicateClips { ids }
                 | WorkflowCommand::SetClipsMuted { ids, .. }
                 | WorkflowCommand::JoinClips { ids }
+                | WorkflowCommand::RenderJoin { ids, .. }
                 | WorkflowCommand::ConvertLoop { ids, .. }
                 | WorkflowCommand::TrimClips { ids, .. }
                 | WorkflowCommand::ExtendClips { ids, .. }

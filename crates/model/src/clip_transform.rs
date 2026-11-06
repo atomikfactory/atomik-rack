@@ -333,15 +333,21 @@ fn scaled_clip(doc: &RackDoc, c: &Clip, percent: f64, anchor: i64) -> Result<Cli
     Ok(new)
 }
 
-/// Plans `ScaleTempo`.
+/// Plans `ScaleTempo`: the selection scales about its earliest start, or with `from_end` about
+/// its latest end.
 pub(crate) fn scale_clips(
     doc: &RackDoc,
     ids: &[ClipId],
     percent: f64,
+    from_end: bool,
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
     check_percent(percent)?;
     let clips = selection(doc, ids)?;
-    let base = clips.iter().map(|(_, _, c)| c.start).min().unwrap_or(0);
+    let base = if from_end {
+        clips.iter().map(|(_, _, c)| c.end()).max().unwrap_or(0)
+    } else {
+        clips.iter().map(|(_, _, c)| c.start).min().unwrap_or(0)
+    };
     let mut edits = Vec::new();
     for (device, lane, c) in clips.iter().map(|(d, l, c)| (d, l, *c)) {
         let new = scaled_clip(doc, c, percent, base)?;

@@ -59,7 +59,10 @@ played on its members, a group bus, Route Group to New Bus, that plays the membe
 strips that join or leave it on the right output, and a chip with the group's name on the headers of the devices of
 the rack),
 and CV utility follow-ups (a custom scale of twelve note switches and a hysteresis on the CV Quantizer, and a track
-mode on Sample and Hold that follows its input while the clock is on and holds it while it is off).
+mode on Sample and Hold that follows its input while the clock is on and holds it while it is off),
+and more restructuring follow-ups (a drag of the start edge with the scale-selection role scales the selection about
+its latest end, Join Clips keeps the warp markers of the pieces, and audio clips of different files join into one clip
+of their render, made on a worker in one undo step).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -76,7 +79,6 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 - **MIDI controller data follow-ups.** MPE (per-note expression) lanes, the CC badge on a compact track row (the badge needs a row of 52 px or more), and snapping of the points of the track lanes to the bar lines of a changing meter (the Bar and Beat snap counts from the first meter).
 - **Quantize and groove follow-ups.** A groove from an audio loop, device-parameter lanes and a track's own controller lanes that move with the notes of a quantize (only the lanes of a note clip do today), and a quantize of the note lengths to a length grid (the grid per note picks the start grid from each note's length).
 - **MIDI file follow-ups.** Per-note expression (MPE) kept, and typing the bytes of a SysEx message (the piano roll adds General MIDI System On, moves, deletes and clears messages).
-- **Arrangement restructuring follow-ups.** Scaling a selection about its end by dragging its start edge (the end edge scales it about the start today), joining clips of different files by rendering them into one, and warp markers kept when audio clips join.
 - **Note lane follow-ups.** An S button on the chip of lane 0 (the chip shares the header's second line with the track's own buttons and has no room for a third control: use the Solo Lane menu item), a click on the record dot of a lane header to arm it (the dot shows the armed state; the Record to Lane menu item arms it today), and splitting the incoming notes between armed lanes by a rule (every armed lane gets the whole take today).
 
 ## Phase 3: Audio

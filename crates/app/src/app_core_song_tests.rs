@@ -2553,12 +2553,14 @@ fn a_scale_preview_scales_the_selection_about_its_start_and_is_one_undo_step() {
     c.handle_action(UiAction::ScaleStep {
         ids: ids.clone(),
         percent: 50.0,
+        from_end: false,
     });
     assert_eq!(geometry(&c), vec![(BAR, 2 * BAR), (BAR + 4 * BAR, 2 * BAR)]);
     // The next step starts from the original, not from the preview.
     c.handle_action(UiAction::ScaleStep {
-        ids,
+        ids: ids.clone(),
         percent: 200.0,
+        from_end: false,
     });
     assert_eq!(geometry(&c), vec![(BAR, BAR / 2), (BAR + BAR, BAR / 2)]);
     assert_eq!(
@@ -2569,6 +2571,19 @@ fn a_scale_preview_scales_the_selection_about_its_start_and_is_one_undo_step() {
     c.handle_action(UiAction::StretchEnd { commit: true });
     assert_eq!(c.document().undo_depth(), undo_before + 1);
     c.handle_action(UiAction::Undo);
+    assert_eq!(geometry(&c), vec![(BAR, BAR), (3 * BAR, BAR)]);
+    // About the latest end: the clips keep their ends' place relative to the end of the second
+    // (at 4 bars), which stays, so twice as long moves the starts back.
+    c.handle_action(UiAction::ScaleStep {
+        ids,
+        percent: 200.0,
+        from_end: true,
+    });
+    assert_eq!(
+        geometry(&c),
+        vec![(3 * BAR - BAR / 2, BAR / 2), (4 * BAR - BAR / 2, BAR / 2)]
+    );
+    c.handle_action(UiAction::StretchEnd { commit: false });
     assert_eq!(geometry(&c), vec![(BAR, BAR), (3 * BAR, BAR)]);
 }
 

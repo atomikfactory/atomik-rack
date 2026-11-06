@@ -600,14 +600,16 @@ fn reverse_scale_and_chop_work_on_the_selected_clips_in_time_order() {
         v.command("sequencer.scale_tempo", Some("double"), &doc, &reg),
         workflow(WorkflowCommand::ScaleTempo {
             ids: ids.clone(),
-            percent: 200.0
+            percent: 200.0,
+            from_end: false
         })
     );
     assert_eq!(
         v.command("sequencer.scale_tempo", Some("halve"), &doc, &reg),
         workflow(WorkflowCommand::ScaleTempo {
             ids: ids.clone(),
-            percent: 50.0
+            percent: 50.0,
+            from_end: false
         })
     );
     let first = doc.song.clip(ClipId(1)).unwrap().2.start;

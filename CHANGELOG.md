@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Restructuring follow-ups: scale about the end, warp markers that join, and joining clips of different files.**
+  With the scale-selection role held (Ctrl+Alt+Shift), a drag of the **start** edge of a selected clip scales every
+  selected clip about the latest end of the selection, which stays where it is, as the end edge already did about the
+  earliest start: the same preview, grid snap and one-step release, and a scale that would take a clip before the
+  start of the song stops at the start. **Join Clips** now keeps warp markers: the joined clip carries the markers
+  of every piece with one at the join, and the join is refused, naming the clips, when the markers would not play
+  what the pieces did. **Join Clips on audio clips of different files** renders them: the clips of one lane that
+  touch or overlap are bounced dry (each clip's gain, fades, envelope and warp, with the crossfades between them)
+  on the same worker and queue as a freeze, with progress in the status line and Cancel Freeze, and the first clip
+  then becomes one plain clip of the render spanning all of them, in one undo step. A gap, a muted clip and a
+  frozen track refuse with a message; clips of one file still join without a render. No saved field is new (the
+  project format is unchanged, 44) and no menu command id is new (the join and the gesture were already there).
 - **Takes for automation passes, and a saved link between take groups.** A loop recording of automation now stacks
   its passes as the takes of one take group on the lane (the last pass plays), like a note or audio loop recording,
   instead of laying layered clips: the take rows open under the automation lane, a take draws as a line, and the
@@ -141,9 +153,7 @@ may break APIs and the patch and project formats.
   automation lane between the lane it began on and the one under the pointer, across tracks as well. Copy and Cut
   take the parts of the clips of all of them, Delete cuts the range out of every lane in one step, Paste puts each
   part back on a lane of its own kind of its own track at the playhead, and Bounce Range in Place renders each track
-  the lanes belong to once. A range on one lane works as before. The project format is unchanged (44). Not done yet:
-  scaling a selection about its end by dragging its start edge, joining clips of different files by rendering
-  them, and warp markers kept when audio clips join.
+  the lanes belong to once. A range on one lane works as before. The project format is unchanged (44).
 - **Quantize follow-ups: controllers that follow, a grid per note and a groove from a MIDI file.** A quantize
   now carries the controller lane points of a note clip (pitch bend, aftertouch and CC) along with the notes it
   moves. The rule: a point between a note's old start (included) and its new start (excluded) moves by the same

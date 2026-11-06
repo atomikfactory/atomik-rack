@@ -56,6 +56,15 @@
 //! that render in one `RenderLoop` step. The clip keeps its id, place, name and colour. Looped
 //! note and automation clips among the selected ones convert at once, as before.
 //!
+//! # Join Clips of different files (audio)
+//!
+//! Join on audio clips of one lane that play more than one file renders them (the same dry render
+//! as the loop conversion: each clip's gain, fades, envelope and warp, the crossfades between
+//! them, before the insert effects and the strip) on the freeze worker and queue, and the first
+//! clip becomes one plain clip of that render, spanning all of them, in one `RenderJoin` step. The
+//! other clips go. Clips of one file still join as they are, without a render. A muted clip, a gap
+//! and a frozen track refuse with a message.
+//!
 //! The commands are in the Track menu, the track header menu and (bounce) the clip menu, and in
 //! the registry as `sequencer.freeze_track`, `sequencer.freeze_track_to_device`,
 //! `sequencer.freeze_tail`, `sequencer.freeze_cancel`, `sequencer.unfreeze_track`,
@@ -96,6 +105,9 @@ enum Kind {
     Bounce { mute: Vec<ClipId>, dry: bool },
     /// Replace the looped audio clip by one clip of the render (dry, the clip alone).
     Loop { clip: ClipId },
+    /// Replace these audio clips of different files by one clip of the render (dry, the clips
+    /// alone).
+    Join { clips: Vec<ClipId> },
     /// Render the frozen track again through the same effects and swap the render in.
     Refreeze,
 }
@@ -207,7 +219,7 @@ impl<S: EngineSink> AppCore<S> {
         let verb = match running.job.kind {
             Kind::Freeze => "Freezing",
             Kind::Bounce { .. } => "Bouncing",
-            Kind::Loop { .. } => "Rendering",
+            Kind::Loop { .. } | Kind::Join { .. } => "Rendering",
             Kind::Refreeze => "Re-rendering",
         };
         let waiting = self.audio.freeze.queue.len();
@@ -619,6 +631,54 @@ impl<S: EngineSink> AppCore<S> {
         }))
     }
 
+    /// Turns `JoinClips` of audio clips of different files into a render (see the module docs):
+    /// returns the command when the model is to judge it (anything that is not such a join), and
+    /// `None` when a render was queued or the clips cannot be joined that way (the message says
+    /// why).
+    pub(super) fn render_clip_joins(&mut self, command: Command) -> Option<Command> {
+        let Command::Workflow(WorkflowCommand::JoinClips { ids }) = &command else {
+            return Some(command);
+        };
+        let Some(plan) = atomik_model::join_render(self.doc(), ids) else {
+            return Some(command);
+        };
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err(e) => {
+                self.reject(e.to_string());
+                return None;
+            }
+        };
+        let name = self.track_name(&plan.device);
+        if self
+            .doc()
+            .song
+            .track(&plan.device)
+            .is_some_and(|t| t.frozen.is_some())
+        {
+            self.reject(format!("{name} is frozen: unfreeze it to join its clips"));
+            return None;
+        }
+        let job = Job {
+            id: self.next_freeze_job(),
+            kind: Kind::Join {
+                clips: plan.ids.clone(),
+            },
+            request: FreezeRequest {
+                device: plan.device,
+                effects: 0,
+                strip: false,
+                clips: Some(plan.ids),
+                span: plan.span,
+                tail_seconds: 0.0,
+            },
+            name,
+        };
+        self.audio.freeze.queue.push_back(job);
+        self.start_next_job();
+        None
+    }
+
     /// Stops the running render and drops the ones that wait.
     pub fn cancel_freeze(&mut self) {
         let waiting = std::mem::take(&mut self.audio.freeze.queue);
@@ -777,6 +837,7 @@ impl<S: EngineSink> AppCore<S> {
                 Kind::Freeze => "frozen",
                 Kind::Bounce { .. } => "bounce",
                 Kind::Loop { .. } => "loop",
+                Kind::Join { .. } => "joined",
                 Kind::Refreeze => "frozen",
             };
             let work = Work {
@@ -926,6 +987,19 @@ impl<S: EngineSink> AppCore<S> {
                 }));
                 if applied.is_ok() {
                     self.reject(format!("Converted the loop of {} to one clip", job.name));
+                }
+            }
+            Kind::Join { clips } => {
+                let count = clips.len();
+                let applied = self.apply_command(Command::Workflow(WorkflowCommand::RenderJoin {
+                    ids: clips,
+                    audio,
+                }));
+                if applied.is_ok() {
+                    self.reject(format!(
+                        "Joined {count} clips of {} by rendering them",
+                        job.name
+                    ));
                 }
             }
             Kind::Bounce { mute, dry } => {

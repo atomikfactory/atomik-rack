@@ -665,6 +665,7 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 8 => WorkflowCommand::ScaleTempo {
                     ids,
                     percent: 200.0,
+                    from_end: *t % 3 == 0,
                 },
                 9 => WorkflowCommand::ChopClips {
                     ids,

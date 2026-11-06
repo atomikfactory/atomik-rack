@@ -51,7 +51,7 @@ A role is a modifier held during a pointer gesture, not a chord. Settings, Keybo
 | Flat automation range | `Ctrl+Shift` | `Cmd+Shift` | The pencil on an automation clip holds the value where the stroke began up to the pointer |
 | Lane range select | `Alt+Shift` | `Opt+Shift` | A drag on a lane of the arrangement selects the time range it covers (Copy, Cut, Delete and Paste work on it) |
 | Assign to macro | `Alt+Shift` | `Opt+Shift` | A drag from a knob or fader in the rack onto a macro knob of a macro bank assigns it to that macro |
-| Scale selection | `Ctrl+Alt+Shift` | `Cmd+Opt+Shift` | A drag on the end edge of a selected clip in the arrangement scales every selected clip about the start of the selection (Alt alone scales each clip about its own fixed edge) |
+| Scale selection | `Ctrl+Alt+Shift` | `Cmd+Opt+Shift` | A drag on the end edge of a selected clip in the arrangement scales every selected clip about the start of the selection, a drag on the start edge about its end (Alt alone scales each clip about its own fixed edge) |
 
 The places that take a finer step from the modifier on their own (the clip inspector, the macro and plugin panels, the container editor) still use `Shift`.
 

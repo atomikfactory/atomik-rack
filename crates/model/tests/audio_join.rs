@@ -5,7 +5,7 @@ mod common;
 use atomik_model::song::{crossfades, flatten_audio};
 use atomik_model::{
     AudioClipContent, ClipContent, ClipId, Command, Document, GainPoint, ModelError, SongCommand,
-    WorkflowCommand,
+    WarpMarker, WarpSettings, WorkflowCommand, join_render, source_at_tick,
 };
 use common::audio::*;
 use common::song::*;
@@ -448,4 +448,208 @@ fn a_longer_crossfade_needs_audio_in_the_file() {
     assert!(err.to_string().contains("no audio"), "{err}");
     // Shorter needs nothing from the file.
     resize_xfade(&mut d, &reg, later, -(PPQ / 2)).unwrap();
+}
+
+// ------------------------------------------------------------------------ warp markers
+
+fn warped(markers: &[(i64, u64)]) -> AudioClipContent {
+    AudioClipContent {
+        warp: WarpSettings {
+            enabled: true,
+            markers: markers
+                .iter()
+                .map(|&(tick, source)| WarpMarker { tick, source })
+                .collect(),
+            ..Default::default()
+        },
+        ..audio(1)
+    }
+}
+
+/// The source frame the clip plays at each of a few ticks of the lane.
+fn source_map(d: &Document, id: ClipId) -> Vec<f64> {
+    let song = &d.doc().song;
+    let c = doc_clip(d.doc(), id);
+    let ClipContent::Audio(a) = &c.content else {
+        panic!("not audio");
+    };
+    (0..12)
+        .map(|i| source_at_tick(song, SR, c.start, a, c.start + i * c.length / 12))
+        .collect()
+}
+
+#[test]
+fn a_split_clip_with_markers_joins_into_the_clip_it_was() {
+    let (reg, mut d) = setup();
+    // Beat 1 plays faster than the file, beats 2 to 3 slower.
+    let id = put(
+        &mut d,
+        &reg,
+        0,
+        4 * PPQ,
+        warped(&[(PPQ, 2 * BEAT_F), (3 * PPQ, 3 * BEAT_F)]),
+    );
+    let before = source_map(&d, id);
+    for at in [PPQ + PPQ / 3, 2 * PPQ, 3 * PPQ + 5] {
+        d.apply(sc(SongCommand::SplitClip { id, at }), &reg)
+            .unwrap();
+        let right = last(&d);
+        assert_eq!(clips_on_lane(&d), 2);
+        join(&mut d, &reg, &[id, right]).unwrap();
+        assert_eq!(clips_on_lane(&d), 1);
+        let after = source_map(&d, id);
+        for (i, (a, b)) in before.iter().zip(&after).enumerate() {
+            assert!(
+                (a - b).abs() <= 1.5,
+                "split at {at}, sample {i}: {a} vs {b}"
+            );
+        }
+        assert!(!audio_of(&d, id).warp.markers.is_empty());
+    }
+}
+
+#[test]
+fn a_clip_with_markers_joins_onto_a_plain_piece_and_plays_as_both_did() {
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, 2 * PPQ, warped(&[]));
+    // Continues in the file where the first clip ends, with a stretch of its own.
+    let b = put(
+        &mut d,
+        &reg,
+        2 * PPQ,
+        2 * PPQ,
+        AudioClipContent {
+            source_offset: 2 * BEAT_F,
+            ..warped(&[(0, 0), (PPQ, 3 * BEAT_F / 2), (2 * PPQ, 3 * BEAT_F)])
+        },
+    );
+    let song = d.doc().song.clone();
+    let first = audio_of(&d, a);
+    let second = audio_of(&d, b);
+    join(&mut d, &reg, &[a, b]).unwrap();
+    let joined = audio_of(&d, a);
+    assert!(joined.warp.markers.len() >= 3, "{:?}", joined.warp.markers);
+    for t in (0..4 * PPQ).step_by((PPQ / 4) as usize) {
+        let want = if t < 2 * PPQ {
+            source_at_tick(&song, SR, 0, &first, t)
+        } else {
+            source_at_tick(&song, SR, 2 * PPQ, &second, t)
+        };
+        let got = source_at_tick(&d.doc().song, SR, 0, &joined, t);
+        assert!((want - got).abs() <= 1.5, "tick {t}: {want} vs {got}");
+    }
+    d.undo().unwrap();
+    assert_eq!(clips_on_lane(&d), 2);
+}
+
+#[test]
+fn markers_that_would_change_what_plays_refuse_the_join() {
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, 4 * PPQ, warped(&[]));
+    // Inside the first clip, playing the same frames at another speed.
+    let b = put(
+        &mut d,
+        &reg,
+        PPQ,
+        PPQ,
+        AudioClipContent {
+            source_offset: BEAT_F,
+            ..warped(&[(PPQ / 2, BEAT_F / 4)])
+        },
+    );
+    let err = join(&mut d, &reg, &[a, b]).unwrap_err().to_string();
+    assert!(err.contains("warp markers that do not meet"), "{err}");
+    assert_eq!(clips_on_lane(&d), 2);
+}
+
+// ------------------------------------------------------------------- join by rendering
+
+fn render_of(d: &mut Document, reg: &atomik_device_sdk::Registry, frames: u64) -> AudioClipContent {
+    d.apply(register(3, frames), reg).unwrap();
+    audio(3)
+}
+
+fn render_join_cmd(ids: &[ClipId], audio: AudioClipContent) -> Command {
+    wf(WorkflowCommand::RenderJoin {
+        ids: ids.to_vec(),
+        audio,
+    })
+}
+
+#[test]
+fn clips_of_different_files_are_a_render_join_and_one_file_is_not() {
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, 2 * PPQ, audio(1));
+    let b = put(&mut d, &reg, 2 * PPQ, PPQ, audio(2));
+    let c = put(&mut d, &reg, 3 * PPQ, PPQ, audio(1));
+    let plan = join_render(d.doc(), &[c, a, b]).unwrap().unwrap();
+    assert_eq!(plan.ids, vec![a, b, c]);
+    assert_eq!(plan.span, (0, 4 * PPQ));
+    assert!(join_render(d.doc(), &[a, c]).is_none(), "one file");
+    assert!(join_render(d.doc(), &[a]).is_none(), "one clip");
+    assert!(join_render(d.doc(), &[a, ClipId(99)]).is_none(), "unknown");
+}
+
+#[test]
+fn a_render_join_is_one_undo_step_and_the_first_clip_keeps_its_id() {
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, 2 * PPQ, audio(1));
+    let b = put(&mut d, &reg, 2 * PPQ, PPQ, audio(2));
+    let before = d.doc().song.clone();
+    let rendered = render_of(&mut d, &reg, 3 * BEAT_F);
+    d.apply(render_join_cmd(&[b, a], rendered), &reg).unwrap();
+    assert_eq!(clips_on_lane(&d), 1);
+    let joined = doc_clip(d.doc(), a);
+    assert_eq!((joined.start, joined.length), (0, 3 * PPQ));
+    assert_eq!(audio_of(&d, a).asset, hash(3));
+    assert_eq!(audio_of(&d, a).source_offset, 0);
+    assert_eq!(d.last_clip_id(), Some(a));
+    d.undo().unwrap();
+    assert_eq!(d.doc().song.tracks, before.tracks);
+}
+
+#[test]
+fn a_render_join_refuses_gaps_muted_clips_and_a_render_with_warp() {
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, PPQ, audio(1));
+    let gap = put(&mut d, &reg, 2 * PPQ, PPQ, audio(2));
+    let rendered = render_of(&mut d, &reg, 3 * BEAT_F);
+    let err = d
+        .apply(render_join_cmd(&[a, gap], rendered.clone()), &reg)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not touch"), "{err}");
+    d.apply(sc(SongCommand::RemoveClip { id: gap }), &reg)
+        .unwrap();
+    let b = put(&mut d, &reg, PPQ, PPQ, audio(2));
+    d.apply(
+        wf(WorkflowCommand::SetClipsMuted {
+            ids: vec![b],
+            muted: true,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let err = d
+        .apply(render_join_cmd(&[a, b], rendered.clone()), &reg)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("muted"), "{err}");
+    d.apply(
+        wf(WorkflowCommand::SetClipsMuted {
+            ids: vec![b],
+            muted: false,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let err = d
+        .apply(render_join_cmd(&[a, b], warped(&[])), &reg)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("plain audio"), "{err}");
+    // One file only: the plain join is the command for it.
+    let c = put(&mut d, &reg, 2 * PPQ, PPQ, audio(1));
+    assert!(d.apply(render_join_cmd(&[a, c], rendered), &reg).is_err());
+    assert_eq!(clips_on_lane(&d), 3);
 }

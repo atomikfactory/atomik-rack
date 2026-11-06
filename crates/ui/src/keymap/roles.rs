@@ -36,7 +36,7 @@ pub enum Role {
     /// Drag: a knob of the rack dropped on a macro knob of a macro bank is assigned to it.
     AssignMacro,
     /// Drag: the end edge of a clip of the arrangement scales the whole selection about its
-    /// start instead of resizing the clips.
+    /// start (the start edge about its end) instead of resizing the clips.
     ScaleSelection,
 }
 
