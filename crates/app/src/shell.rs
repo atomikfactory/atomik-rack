@@ -157,8 +157,8 @@ use atomik_ui::CursorHint;
 use atomik_ui::browser::CreateKind;
 use atomik_ui::context_menu::{ContextMenu, MenuOutcome};
 use atomik_ui::keymap::{
-    Context, ContextStack, KEYS_NOTE_ARGS, Keymap, KeymapEditor, Os, Profile, Resolution, Roles,
-    Route, Router, UserKeymap,
+    Context, ContextStack, GestureClass, KEYS_NOTE_ARGS, Keymap, KeymapEditor, Os, Profile,
+    Resolution, Role, Roles, Route, Router, UserKeymap,
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
@@ -3316,6 +3316,12 @@ impl<B: AudioBackend> Shell<B> {
                     pos: *pos,
                     paths: rest.clone(),
                 };
+                // The copy modifier held at the drop adds a zone to a granular sampler instead
+                // of replacing its sample.
+                let adds =
+                    self.roles
+                        .is_active(Role::CopyDrag, self.modifiers, GestureClass::DragItem);
+                self.core.set_drop_adds(adds);
                 let taken = target.is_some_and(|pane| {
                     let actions = self.forward(pane, event);
                     pane != Pane::Rack
@@ -3323,6 +3329,7 @@ impl<B: AudioBackend> Shell<B> {
                             .iter()
                             .any(|a| matches!(a, UiAction::ImportSamples { .. }))
                 });
+                self.core.set_drop_adds(false);
                 if !taken {
                     self.core.import_at_playhead(paths.clone());
                 }

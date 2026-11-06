@@ -264,3 +264,57 @@ fn the_load_button_asks_for_a_dialog_and_the_picked_files_become_zones() {
     s.core_mut().wait_background();
     assert_eq!(zone_roots(&s), [55]);
 }
+
+fn shell_with_granular() -> Shell<NullBackend> {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: 0,
+            type_id: "atomik.granular".into(),
+            key: Some(key("grn")),
+        })
+        .unwrap();
+    s
+}
+
+fn grain_zones(s: &Shell<NullBackend>) -> usize {
+    s.core().doc().device(&key("grn")).unwrap().zones.len()
+}
+
+fn grain_point(s: &Shell<NullBackend>) -> Point {
+    let r = s.core().view().device_rect(&key("grn")).unwrap();
+    let p = s
+        .core()
+        .view()
+        .rack_to_view(Point::new(r.x0 + 6.0, r.center().y));
+    Point::new(p.x, p.y + s.layout().rack.y0)
+}
+
+#[test]
+fn a_drop_on_a_granular_panel_replaces_and_one_with_the_copy_modifier_adds_a_zone() {
+    let mut s = shell_with_granular();
+    let at = grain_point(&s);
+    let drop = |s: &mut Shell<NullBackend>, name: &str| {
+        s.handle(&UiEvent::FileDrop {
+            pos: at,
+            paths: vec![wav(name, 2_400)],
+        });
+        s.core_mut().wait_background();
+    };
+    drop(&mut s, "grain_one.wav");
+    assert_eq!(grain_zones(&s), 1);
+    drop(&mut s, "grain_two.wav");
+    assert_eq!(grain_zones(&s), 1, "a plain drop replaces the sample");
+    s.handle(&UiEvent::ModifiersChanged {
+        modifiers: Modifiers::CTRL,
+    });
+    drop(&mut s, "grain_three.wav");
+    assert_eq!(grain_zones(&s), 2, "with the copy modifier it adds a zone");
+    drop(&mut s, "grain_four.wav");
+    assert_eq!(grain_zones(&s), 3);
+    s.handle(&UiEvent::ModifiersChanged {
+        modifiers: Modifiers::NONE,
+    });
+    drop(&mut s, "grain_five.wav");
+    assert_eq!(grain_zones(&s), 1, "released: replaces again");
+}

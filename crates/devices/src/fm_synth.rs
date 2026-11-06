@@ -8,7 +8,9 @@
 //! per voice:   op4 -> op3 -> op2 -> op1      (the routing, see ALGORITHMS: operator n is only
 //!              each operator = sine . envelope . level   modulated by operators above n)
 //!              carriers summed . 1/sqrt(carriers) . tremolo . key pan
-//! all voices:  sum (at 2x the rate with `oversample`, then a halfband decimator)
+//!              (`unison.voices` runs several detuned copies of the operators per voice,
+//!              each with its own phases and pan, sharing the envelopes)
+//! all voices:  sum (at 2x or 4x the rate with `oversample`, then halfband decimators)
 //!              . master level (5 ms smoothing) . soft limiter . chorus -> out L/R
 //! ```
 //!
@@ -24,7 +26,10 @@
 //!   `10^((coarse + fine) / 8)` Hz whatever the key ([`fm::op_frequency`]).
 //! * **Envelope.** Each operator has its own ADSR (`attack`, `decay`, `sustain`, `release`), and
 //!   a `delay` in ms before the attack starts, so an operator can swell in after the note. A
-//!   voice sounds until the envelopes of its carriers are idle.
+//!   voice sounds until the envelopes of its carriers are idle. `opN.slope` adds a fifth
+//!   stage after the decay: while the key is held, the level keeps falling at a rate that
+//!   would take it down by 60 dB in that many ms (0 holds the sustain level as before). A
+//!   key struck again brings the level back in about 3 ms instead of jumping.
 //! * **Velocity and key.** `velocity` is how much the key velocity scales the operator's level
 //!   (0 none, 1 from silence up to full): on a modulator, a brighter tone for a harder hit. `key_scale`
 //!   lowers the level on one side of the middle C (key 60): positive on the keys above, negative
@@ -50,7 +55,19 @@
 //!   the output's Nyquist is filtered away, the limiter lets the partials reach 1.25 times as far
 //!   (short of the filter's transition band), and a bright patch keeps more of its index on a high
 //!   key. It costs about twice the voices' CPU and reports the filter's delay
-//!   ([`LATENCY_2X`] frames) as latency. Changing it fades the sounding voices out.
+//!   ([`LATENCY_2X`] frames) as latency. `4x` runs the voices at four times the rate through two
+//!   halfband stages (latency [`LATENCY_4X`]): the index limiter reaches no further than at 2x
+//!   (the output filter's transition band is what bounds it), but the richer waves and the
+//!   feedback loop fold back less at the higher rate, for four times the CPU. Changing the
+//!   factor fades the sounding voices out.
+//! * **Unison.** `unison.voices` (1 to 7) makes each key sound that many copies of the voice:
+//!   the copies are spread evenly from `-unison.detune` to `+unison.detune` cents (the
+//!   fixed-frequency operators do not detune), start from different phases, and are panned
+//!   from left to right by `unison.spread`, around the key pan. They add in power
+//!   (a gain of `1/sqrt(copies)`) and share the voice's envelopes, so a copy costs the
+//!   operators' CPU and nothing else: the voice allocation, the steal fade and the play modes
+//!   are those of a single voice. At 1 the voice is the plain one, bit for bit. The index
+//!   limiter looks at the widest copy. Changing the count while notes sound steps their level.
 //! * **Pitch.** `pitch.env_amount` semitones decay to nothing with `pitch.env_decay` ms after each
 //!   note start; the LFO moves the pitch by `lfo.to_pitch` semitones; pitch bend moves it by up to
 //!   `bend.range` semitones (default 2). The fixed-frequency operators ignore all of them.
@@ -85,9 +102,10 @@ use atomik_device_sdk::{
 use atomik_dsp::fm::{
     self, ALGORITHM_NAMES, Algorithm, MAX_FEEDBACK_RAD, MAX_INDEX_RAD, OPERATORS,
 };
-use atomik_dsp::oversample::{LATENCY_2X, OversampleFactor, Oversampler};
+use atomik_dsp::oversample::{LATENCY_2X, LATENCY_4X, OversampleFactor, Oversampler};
 use atomik_dsp::{
-    Adsr, Chorus, Lfo, LfoShape, Smoother, balance_gains, flush_denormal, note_to_hz, sin_cycles,
+    Adsr, AdsrStage, Chorus, Lfo, LfoShape, Smoother, balance_gains, flush_denormal, note_to_hz,
+    sin_cycles,
 };
 
 use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
@@ -130,10 +148,14 @@ const PLAY_MODES: Unit = Unit::Choice(&["poly", "mono", "legato"]);
 /// The operator waveforms, see [`wave`].
 pub const WAVE_NAMES: [&str; 6] = ["sine", "half", "abs", "pulse", "triangle", "soft sq"];
 const WAVES: Unit = Unit::Choice(&WAVE_NAMES);
-const OVERSAMPLES: Unit = Unit::Choice(&["off", "2x"]);
+const OVERSAMPLES: Unit = Unit::Choice(&["off", "2x", "4x"]);
 const WAVE_KEYS: [&str; OPERATORS] = ["op1.wave", "op2.wave", "op3.wave", "op4.wave"];
 const WAVE_LABELS: [&str; OPERATORS] = ["Op 1 wave", "Op 2 wave", "Op 3 wave", "Op 4 wave"];
+const SLOPE_KEYS: [&str; OPERATORS] = ["op1.slope", "op2.slope", "op3.slope", "op4.slope"];
+const SLOPE_LABELS: [&str; OPERATORS] = ["Op 1 slope", "Op 2 slope", "Op 3 slope", "Op 4 slope"];
 const ENV_MS: (f32, f32) = (0.5, 10_000.0);
+/// Longest slope time in ms.
+const SLOPE_MAX_MS: f32 = 20_000.0;
 
 // The global params come first, then the four operators, then the rest.
 const P_SOUND: u32 = 0;
@@ -166,7 +188,14 @@ const P_CHORUS_MIX: u32 = P_POLY_GLIDE + 1;
 const P_CHORUS_RATE: u32 = P_POLY_GLIDE + 2;
 const P_CHORUS_DEPTH: u32 = P_POLY_GLIDE + 3;
 const P_OVERSAMPLE: u32 = P_POLY_GLIDE + 4;
-const PARAM_COUNT: usize = P_OVERSAMPLE as usize + 1;
+const P_UNISON_VOICES: u32 = P_OVERSAMPLE + 1;
+const P_UNISON_DETUNE: u32 = P_OVERSAMPLE + 2;
+const P_UNISON_SPREAD: u32 = P_OVERSAMPLE + 3;
+/// The four operators' slope times (`opN.slope`), after the unison params.
+const P_SLOPE_BASE: u32 = P_OVERSAMPLE + 4;
+const PARAM_COUNT: usize = P_SLOPE_BASE as usize + OPERATORS;
+/// Most detuned copies of a voice a key can sound (`unison.voices`).
+pub const UNISON_MAX: usize = 7;
 
 /// The fields of an operator, in param order.
 const F_FIXED: usize = 0;
@@ -579,16 +608,56 @@ const fn build_params() -> [ParamDescriptor; PARAM_COUNT] {
             P_OVERSAMPLE,
             "oversample",
             "Oversampling",
-            (0.0, 1.0, 0.0),
+            (0.0, 2.0, 0.0),
             Lin,
             OVERSAMPLES,
             true,
+        ),
+        param(
+            P_UNISON_VOICES,
+            "unison.voices",
+            "Unison voices",
+            (1.0, UNISON_MAX as f32, 1.0),
+            Lin,
+            Unit::None,
+            true,
+        ),
+        param(
+            P_UNISON_DETUNE,
+            "unison.detune",
+            "Unison detune",
+            (0.0, 100.0, 20.0),
+            Lin,
+            Unit::Cents,
+            false,
+        ),
+        param(
+            P_UNISON_SPREAD,
+            "unison.spread",
+            "Unison spread",
+            (0.0, 1.0, 0.5),
+            Lin,
+            Unit::Percent,
+            false,
         ),
     ];
     let mut i = 0;
     while i < later.len() {
         out[P_POLY_GLIDE as usize + i] = later[i];
         i += 1;
+    }
+    let mut op = 0;
+    while op < OPERATORS {
+        out[P_SLOPE_BASE as usize + op] = param(
+            P_SLOPE_BASE + op as u32,
+            SLOPE_KEYS[op],
+            SLOPE_LABELS[op],
+            (0.0, SLOPE_MAX_MS, 0.0),
+            Lin,
+            Unit::Ms,
+            false,
+        );
+        op += 1;
     }
     out
 }
@@ -714,6 +783,12 @@ const CONTROL_INTERVAL: u32 = 16;
 const CV_PITCH_RANGE: f32 = 24.0;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
+/// Phase step between unison copies, in cycles (the golden ratio's fraction).
+const COPY_PHASE_STEP: f64 = 0.381_966_011_250_105_1;
+/// The most a copy's phase step may reach (cycles per sample).
+const MAX_STEP: f64 = 0.49;
+/// A slope never falls below this gain (-120 dB).
+const SLOPE_FLOOR: f32 = 1.0e-6;
 /// Per-voice output gain before the master stage.
 const VOICE_GAIN: f32 = 0.5;
 /// Master gain smoothing time.
@@ -757,6 +832,9 @@ struct OpValues {
     delay_samples: u32,
     /// The waveform, an index into [`WAVE_NAMES`].
     wave: u8,
+    /// Per-sample factor of the slope stage (`opN.slope`): below 1 a held note keeps falling
+    /// after its decay; 1 means no slope.
+    slope_coef: f32,
 }
 
 /// Shared (per-device) synthesis parameters, as plain values.
@@ -766,9 +844,22 @@ struct Shared {
     sample_rate: f32,
     /// The highest partial the index limiter allows, in Hz.
     bandwidth: f32,
-    /// `log2` of the oversampling factor (0 or 1): the voices make `1 << shift` samples per
+    /// `log2` of the oversampling factor (0, 1 or 2): the voices make `1 << shift` samples per
     /// output sample.
     shift: u32,
+    /// Detuned copies of each voice (`unison.voices`), `1..=UNISON_MAX`.
+    unison: usize,
+    /// Frequency ratio of each copy (1 for a single copy), and the pan offset of each, in
+    /// `-1..=1` of the balance.
+    unison_ratio: [f32; UNISON_MAX],
+    unison_pan: [f32; UNISON_MAX],
+    /// `1/sqrt(unison)`: the copies add in power.
+    unison_gain: f32,
+    /// Detune width in cents, and the spread of the copies over the stereo field.
+    unison_detune: f32,
+    unison_spread: f32,
+    /// Per-sample recovery factor of a slope after a retrigger (about 3 ms).
+    slope_recover: f32,
     /// A new note in poly mode glides from the last one played.
     poly_glide: bool,
     algorithm: &'static Algorithm,
@@ -914,18 +1005,23 @@ struct Voice {
     gated: bool,
     /// The steal fade runs: the voice no longer counts as playing its key.
     fading: bool,
-    phase: [f64; OPERATORS],
-    step: [f64; OPERATORS],
-    /// The last two outputs of the feedback operator.
-    fb: [f32; 2],
+    /// Phase and step of every operator in each unison copy.
+    phase: [[f64; OPERATORS]; UNISON_MAX],
+    step: [[f64; OPERATORS]; UNISON_MAX],
+    /// The last two outputs of the feedback operator, per copy.
+    fb: [[f32; 2]; UNISON_MAX],
     env: [Adsr; OPERATORS],
+    /// The slope stage's gain of each operator (1 until a held note starts to fall), and
+    /// whether it is climbing back to 1 after a retrigger.
+    slope: [f32; OPERATORS],
+    slope_up: [bool; OPERATORS],
     delay_left: [u32; OPERATORS],
     level: [Ramp; OPERATORS],
     /// The phase deviation in cycles per unit of modulator output, of each operator's input.
     mscale: [Ramp; OPERATORS],
     fbscale: Ramp,
     trem: Ramp,
-    pan: (f32, f32),
+    pan: [(f32, f32); UNISON_MAX],
     countdown: u32,
     snap: bool,
 }
@@ -943,19 +1039,34 @@ impl Voice {
             pitch_env: 0.0,
             gated: false,
             fading: false,
-            phase: [0.0; OPERATORS],
-            step: [0.0; OPERATORS],
-            fb: [0.0; 2],
+            phase: [[0.0; OPERATORS]; UNISON_MAX],
+            step: [[0.0; OPERATORS]; UNISON_MAX],
+            fb: [[0.0; 2]; UNISON_MAX],
             env: [Adsr::new(48_000.0); OPERATORS],
+            slope: [1.0; OPERATORS],
+            slope_up: [false; OPERATORS],
             delay_left: [0; OPERATORS],
             level: [Ramp::new(0.0); OPERATORS],
             mscale: [Ramp::new(0.0); OPERATORS],
             fbscale: Ramp::new(0.0),
             trem: Ramp::new(1.0),
-            pan: (1.0, 1.0),
+            pan: [(1.0, 1.0); UNISON_MAX],
             countdown: 0,
             snap: true,
         }
+    }
+
+    /// Fresh phases for every copy: the first starts at zero, the others are spread by a fixed
+    /// irrational step so that the copies do not start in phase.
+    fn reset_phases(&mut self) {
+        for (c, row) in self.phase.iter_mut().enumerate() {
+            for (op, ph) in row.iter_mut().enumerate() {
+                *ph = ((c * (op + 3)) as f64 * COPY_PHASE_STEP).fract();
+            }
+        }
+        self.fb = [[0.0; 2]; UNISON_MAX];
+        self.slope = [1.0; OPERATORS];
+        self.slope_up = [false; OPERATORS];
     }
 
     /// Whether a carrier still sounds (or waits for its delay).
@@ -998,8 +1109,7 @@ impl Voice {
         self.target = f32::from(key);
         self.pitch = from.unwrap_or(self.target);
         self.pitch_env = p.pitch_env;
-        self.phase = [0.0; OPERATORS];
-        self.fb = [0.0; 2];
+        self.reset_phases();
         for e in &mut self.env {
             e.reset();
         }
@@ -1014,6 +1124,8 @@ impl Voice {
         self.velocity = velocity.clamp(0.0, 1.0);
         self.target = f32::from(key);
         self.pitch_env = p.pitch_env;
+        // A slope that has fallen climbs back instead of jumping.
+        self.slope_up = [true; OPERATORS];
         self.gate_on(p, false);
     }
 
@@ -1061,10 +1173,28 @@ impl Voice {
         let key_hz = note_to_hz(semis, p.tune_cents).min(max_hz);
         let mut freq = [0.0f32; OPERATORS];
         let mut level = [0.0f32; OPERATORS];
+        let top = if p.unison > 1 {
+            p.unison_ratio[p.unison - 1]
+        } else {
+            1.0
+        };
         for (op, v) in p.ops.iter().enumerate() {
             let hz = fm::op_frequency(v.fixed, v.coarse, v.fine, key_hz) * v.detune;
             freq[op] = hz.min(max_hz);
-            self.step[op] = f64::from(freq[op] / p.sample_rate);
+            let base = f64::from(freq[op] / p.sample_rate);
+            if p.unison == 1 {
+                self.step[0][op] = base;
+            } else {
+                for c in 0..p.unison {
+                    // The fixed-frequency operators do not detune.
+                    let ratio = if v.fixed { 1.0 } else { p.unison_ratio[c] };
+                    self.step[c][op] = (base * f64::from(ratio)).min(MAX_STEP);
+                }
+                // The limiter sees the widest copy.
+                if !v.fixed {
+                    freq[op] *= top;
+                }
+            }
             let vel = 1.0 - v.velocity * (1.0 - self.velocity);
             level[op] = v.level * vel * Self::key_scale_gain(v.key_scale, self.target);
             self.level[op].aim(level[op], snap);
@@ -1091,23 +1221,66 @@ impl Voice {
             1.0 - p.lfo_to_amp * 0.5 * (1.0 - c.lfo.clamp(-1.0, 1.0)),
             snap,
         );
-        let (gl, gr) = balance_gains(p.spread * ((self.target - 60.0) / PAN_SPAN).clamp(-1.0, 1.0));
-        self.pan = (gl, gr);
+        let key_pan = p.spread * ((self.target - 60.0) / PAN_SPAN).clamp(-1.0, 1.0);
+        if p.unison == 1 {
+            self.pan[0] = balance_gains(key_pan);
+        } else {
+            for c in 0..p.unison {
+                self.pan[c] = balance_gains(key_pan + p.unison_pan[c]);
+            }
+        }
         self.snap = false;
     }
 
-    /// One sample of the four operators through the algorithm: the mono carrier sum.
+    /// The envelope values of one sample: each operator's level, modulation depth and envelope
+    /// (the slope stage included). Shared by every unison copy.
     #[inline]
-    fn operators(&mut self, p: &Shared) -> f32 {
+    fn gains(&mut self, p: &Shared) -> ([f32; OPERATORS], [f32; OPERATORS], [f32; OPERATORS]) {
+        let mut level = [0.0f32; OPERATORS];
+        let mut mscale = [0.0f32; OPERATORS];
+        let mut env = [0.0f32; OPERATORS];
+        for op in (0..OPERATORS).rev() {
+            level[op] = self.level[op].next();
+            mscale[op] = self.mscale[op].next();
+            let mut e = self.env[op].next_sample();
+            let coef = p.ops[op].slope_coef;
+            if coef < 1.0 {
+                let g = &mut self.slope[op];
+                if self.slope_up[op] {
+                    *g += (1.0 - *g) * p.slope_recover;
+                    if *g > 0.9995 {
+                        *g = 1.0;
+                        self.slope_up[op] = false;
+                    }
+                } else if self.gated && self.env[op].stage() == AdsrStage::Sustain {
+                    *g = (*g * coef).max(SLOPE_FLOOR);
+                }
+                e *= *g;
+            }
+            env[op] = e;
+        }
+        (level, mscale, env)
+    }
+
+    /// One sample of the four operators of unison copy `c` through the algorithm: the mono
+    /// carrier sum.
+    #[inline]
+    fn operators(
+        &mut self,
+        c: usize,
+        gains: &([f32; OPERATORS], [f32; OPERATORS], [f32; OPERATORS]),
+        fb_scale: f32,
+        p: &Shared,
+    ) -> f32 {
         let alg = p.algorithm;
         let fb_op = usize::from(alg.feedback);
-        let fb_scale = self.fbscale.next();
+        let (level, mscale, env) = gains;
+        let phase = &mut self.phase[c];
+        let step = &self.step[c];
+        let fb = &mut self.fb[c];
         let mut y = [0.0f32; OPERATORS];
         let mut sum = 0.0f32;
         for op in (0..OPERATORS).rev() {
-            let level = self.level[op].next();
-            let mscale = self.mscale[op].next();
-            let env = self.env[op].next_sample();
             let mut modulation = 0.0f32;
             let mask = alg.mods[op];
             if mask != 0 {
@@ -1116,22 +1289,22 @@ impl Voice {
                         modulation += yj;
                     }
                 }
-                modulation *= mscale;
+                modulation *= mscale[op];
             }
             if op == fb_op {
                 // The average of the last two outputs: the damped feedback path.
-                modulation += 0.5 * (self.fb[0] + self.fb[1]) * fb_scale;
+                modulation += 0.5 * (fb[0] + fb[1]) * fb_scale;
             }
-            let s = wave(p.ops[op].wave, self.phase[op] + f64::from(modulation));
-            y[op] = s * level * env;
-            let ph = self.phase[op] + self.step[op];
-            self.phase[op] = ph - ph.floor();
+            let s = wave(p.ops[op].wave, phase[op] + f64::from(modulation));
+            y[op] = s * level[op] * env[op];
+            let ph = phase[op] + step[op];
+            phase[op] = ph - ph.floor();
             if alg.is_carrier(op) {
                 sum += y[op];
             }
         }
-        self.fb[1] = self.fb[0];
-        self.fb[0] = flush_denormal(y[fb_op]);
+        fb[1] = fb[0];
+        fb[0] = flush_denormal(y[fb_op]);
         sum * alg.carrier_gain()
     }
 
@@ -1157,9 +1330,15 @@ impl Voice {
                     }
                 }
             }
-            let out = self.operators(p) * self.trem.next() * VOICE_GAIN;
-            *lo += out * self.pan.0;
-            *ro += out * self.pan.1;
+            let gains = self.gains(p);
+            let fb_scale = self.fbscale.next();
+            let trem = self.trem.next();
+            for c in 0..p.unison {
+                let out =
+                    self.operators(c, &gains, fb_scale, p) * trem * VOICE_GAIN * p.unison_gain;
+                *lo += out * self.pan[c].0;
+                *ro += out * self.pan[c].1;
+            }
             if !self.is_active(p.algorithm) {
                 match self.pending.take() {
                     Some((key, velocity)) => {
@@ -1196,7 +1375,7 @@ pub struct FmSynth {
     lfo: Lfo,
     /// The device rate (the voices run at `base_rate * factor`).
     base_rate: f32,
-    /// Oversampling factor of the voices: 1 or 2.
+    /// Oversampling factor of the voices: 1, 2 or 4.
     factor: usize,
     /// Stereo decimators of the oversampled mix.
     os: [Oversampler; 2],
@@ -1235,6 +1414,7 @@ impl FmSynth {
             key_scale: 0.0,
             delay_samples: 0,
             wave: 0,
+            slope_coef: 1.0,
         };
         let mut s = Self {
             values: PARAMS.map(|p| p.default),
@@ -1242,6 +1422,13 @@ impl FmSynth {
                 sample_rate: 48_000.0,
                 bandwidth: BANDWIDTH_RATIO * 48_000.0,
                 shift: 0,
+                unison: 1,
+                unison_ratio: [1.0; UNISON_MAX],
+                unison_pan: [0.0; UNISON_MAX],
+                unison_gain: 1.0,
+                unison_detune: 20.0,
+                unison_spread: 0.5,
+                slope_recover: 0.01,
                 poly_glide: false,
                 algorithm: fm::algorithm(0),
                 feedback: 0.0,
@@ -1403,8 +1590,36 @@ impl FmSynth {
                 self.chorus
                     .set_depth_ms(self.chorus_depth * CHORUS_SWING_MS);
             }
-            P_OVERSAMPLE => self.set_oversample(v >= 0.5),
+            P_OVERSAMPLE => self.set_oversample(match choice(v) {
+                0 => 1,
+                1 => 2,
+                _ => 4,
+            }),
+            P_UNISON_VOICES => {
+                self.shared.unison = (v.round().max(1.0) as usize).min(UNISON_MAX);
+                self.spread_copies();
+            }
+            P_UNISON_DETUNE => {
+                self.shared.unison_detune = v;
+                self.spread_copies();
+            }
+            P_UNISON_SPREAD => {
+                self.shared.unison_spread = v;
+                self.spread_copies();
+            }
             _ => {
+                if (P_SLOPE_BASE..P_SLOPE_BASE + OPERATORS as u32).contains(&id) {
+                    let op = (id - P_SLOPE_BASE) as usize;
+                    self.shared.ops[op].slope_coef = if v <= 0.0 {
+                        1.0
+                    } else {
+                        // -60 dB over `v` ms.
+                        let n = (v * 0.001 * sr).max(1.0);
+                        (-3.0 * std::f32::consts::LN_10 / n)
+                            .exp()
+                            .min(1.0 - f32::EPSILON)
+                    };
+                }
                 if (P_WAVE_BASE..P_POLY_GLIDE).contains(&id) {
                     let op = (id - P_WAVE_BASE) as usize;
                     self.shared.ops[op].wave =
@@ -1414,18 +1629,34 @@ impl FmSynth {
         }
     }
 
-    /// Switches the voices to twice the rate (or back). The voices fade out first (a rate
-    /// change is not click-free), then every rate-dependent value is worked out again.
-    fn set_oversample(&mut self, on: bool) {
-        let factor = if on { 2 } else { 1 };
+    /// Spreads the unison copies: their detune ratios, pans and the power-preserving gain.
+    fn spread_copies(&mut self) {
+        let n = self.shared.unison;
+        let half = (n as f32 - 1.0) * 0.5;
+        for c in 0..UNISON_MAX {
+            // -1 for the first copy, +1 for the last, 0 for a lone one.
+            let k = if n > 1 && c < n {
+                (c as f32 - half) / half
+            } else {
+                0.0
+            };
+            self.shared.unison_ratio[c] = (k * self.shared.unison_detune / 1_200.0).exp2();
+            self.shared.unison_pan[c] = k * self.shared.unison_spread;
+        }
+        self.shared.unison_gain = 1.0 / (n as f32).sqrt();
+    }
+
+    /// Switches the voices to `factor` (1, 2 or 4) times the rate. The voices fade out first (a
+    /// rate change is not click-free), then every rate-dependent value is worked out again.
+    fn set_oversample(&mut self, factor: usize) {
         if factor == self.factor {
             return;
         }
         self.factor = factor;
-        let (of, shift) = if on {
-            (OversampleFactor::X2, 1)
-        } else {
-            (OversampleFactor::X1, 0)
+        let (of, shift) = match factor {
+            2 => (OversampleFactor::X2, 1),
+            4 => (OversampleFactor::X4, 2),
+            _ => (OversampleFactor::X1, 0),
         };
         for o in &mut self.os {
             o.set_factor(of);
@@ -1449,11 +1680,13 @@ impl FmSynth {
         // partial would fold back.
         self.shared.bandwidth = BANDWIDTH_RATIO
             * self.base_rate
-            * if self.factor == 2 {
+            * if self.factor >= 2 {
                 OVERSAMPLE_REACH
             } else {
                 1.0
             };
+        // About 3 ms to climb back after a retrigger.
+        self.shared.slope_recover = 1.0 - (-1.0 / (0.003 * rate)).exp();
         for v in &mut self.voices {
             for e in &mut v.env {
                 e.set_sample_rate(rate);
@@ -1466,6 +1699,10 @@ impl FmSynth {
             );
         }
         for id in [P_PITCH_DECAY, P_GLIDE] {
+            self.apply(id, self.values[id as usize]);
+        }
+        for op in 0..OPERATORS {
+            let id = P_SLOPE_BASE + op as u32;
             self.apply(id, self.values[id as usize]);
         }
     }
@@ -1668,7 +1905,9 @@ impl Device for FmSynth {
             v.pending = None;
             v.gated = false;
             v.fading = false;
-            v.fb = [0.0; 2];
+            v.fb = [[0.0; 2]; UNISON_MAX];
+            v.slope = [1.0; OPERATORS];
+            v.slope_up = [false; OPERATORS];
         }
         self.next_order = 0;
         self.held_len = 0;
@@ -1687,7 +1926,11 @@ impl Device for FmSynth {
     }
 
     fn latency_frames(&self) -> u32 {
-        if self.factor == 2 { LATENCY_2X } else { 0 }
+        match self.factor {
+            2 => LATENCY_2X,
+            4 => LATENCY_4X,
+            _ => 0,
+        }
     }
 
     fn variable_latency(&self) -> bool {
@@ -1717,7 +1960,7 @@ impl Device for FmSynth {
         let cv_index = *ctx.input(INDEX_CV_IN);
         // The voices render at `1 << shift` times the output rate into these buffers.
         let shift = self.shared.shift;
-        let (mut hi_l, mut hi_r) = ([0.0f32; 2 * BATCH], [0.0f32; 2 * BATCH]);
+        let (mut hi_l, mut hi_r) = ([0.0f32; 4 * BATCH], [0.0f32; 4 * BATCH]);
         let mut ctl_gain = [1.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
@@ -1757,7 +2000,7 @@ impl Device for FmSynth {
                 .iter_mut()
                 .zip([(&hi_l, &mut left), (&hi_r, &mut right)])
             {
-                o.upsample(&zeros).copy_from_slice(&hi[..2 * BATCH]);
+                o.upsample(&zeros).copy_from_slice(&hi[..BATCH << shift]);
                 o.downsample(out);
             }
         }

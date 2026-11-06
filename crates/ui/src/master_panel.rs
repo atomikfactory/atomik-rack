@@ -28,18 +28,23 @@ pub const PICK_LIST_MIN: usize = 16;
 /// A factory-sound or algorithm choice opens a pick list from this many entries: stepping
 /// through six or more of them one click at a time is slow, and the list shows what is there.
 pub const NAMED_PICK_LIST_MIN: usize = 6;
+/// The grain sampler's play mode and zone mode, which open a pick list from two entries.
+pub const GRAIN_PICK_KEYS: [&str; 2] = ["voice.mode", "zone.mode"];
 /// Label of an unused slot.
 pub const FREE_LABEL: &str = "free";
 
 /// Whether a click on `p` opens a pick list: a long choice such as the control-room source, or
 /// a `sound`, `algorithm` or wavetable `table` choice of [`NAMED_PICK_LIST_MIN`] entries or
-/// more. A right-click still steps back through the choices.
+/// more, or the grain sampler's `voice.mode` and `zone.mode` ([`GRAIN_PICK_KEYS`]). A right-click still steps back through the choices.
 pub fn is_pick_list(p: &ParamDescriptor) -> bool {
     match p.unit {
         atomik_core::Unit::Choice(names) => {
             names.len() >= PICK_LIST_MIN
                 || (names.len() >= NAMED_PICK_LIST_MIN
                     && matches!(p.key, "sound" | "algorithm" | "osc1.table" | "osc2.table"))
+                // The grain sampler's play mode and zone mode name what they do, so they open
+                // a list too, whatever their length.
+                || GRAIN_PICK_KEYS.contains(&p.key)
         }
         _ => false,
     }

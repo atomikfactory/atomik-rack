@@ -21,7 +21,9 @@
 //!   just started and fading as it nears its end.
 //!
 //! A click or a drag on the waveform sets the position knob to the place under the pointer (one
-//! undo step per drag, Escape puts the start value back).
+//! undo step per drag, Escape puts the start value back). The two edges of the spray band carry
+//! short handles in the lower half: a press on one drags the spray knob instead, the band
+//! following the pointer (its width is twice the distance from the position).
 //!
 //! Position and spray are the published values of the newest voice, so the markers follow the
 //! scan, the LFO, the mod envelope, the wheel and the CVs; with no voice sounding they show the
@@ -40,7 +42,7 @@ use atomik_device_sdk::DeviceDescriptor;
 use atomik_dsp::grain::default_source;
 use atomik_model::{RackDevice, RackDoc, ZoneDoc};
 use std::sync::OnceLock;
-use vello::kurbo::{BezPath, Line, Rect, RoundedRect};
+use vello::kurbo::{BezPath, Line, Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
 /// Type id of the granular sampler (it has its own panel, [`granular_layout`]).
@@ -92,6 +94,32 @@ pub fn position_at(area: Rect, x: f64) -> f32 {
     let inner = wave_inner(area);
     let f = ((x - inner.x0) / inner.width().max(1.0)).clamp(0.0, 1.0);
     ((f * 1000.0).round() / 1000.0) as f32
+}
+
+/// How close, in pixels, a press must be to an edge of the spray band to take it.
+const EDGE_GRAB: f64 = 4.0;
+
+/// Whether a press at `p` (panel coordinates) of the display `area` takes an edge of the spray
+/// band (centred on `position`, `spray` wide, both `0..=1` of the window) rather than setting
+/// the position. An edge is taken within [`EDGE_GRAB`] pixels, and where it lies on the
+/// position line (a narrow band) only by a press in the lower half of the display.
+pub fn spray_edge_at(area: Rect, position: f32, spray: f32, p: Point) -> bool {
+    if spray <= 0.0 {
+        return false;
+    }
+    let inner = wave_inner(area);
+    let x_of = |f: f32| inner.x0 + f64::from(f.clamp(0.0, 1.0)) * inner.width();
+    let near = |f: f32| (p.x - x_of(f)).abs() <= EDGE_GRAB;
+    let (lo, hi) = (position - spray * 0.5, position + spray * 0.5);
+    let on_line = near(position);
+    (near(lo) || near(hi)) && (!on_line || p.y > inner.center().y)
+}
+
+/// The spray `0..=1`, rounded to a tenth of a percent, that puts the band edge at x `x` of a
+/// display whose frame is `area` when the band is centred on `position`: twice the distance.
+pub fn spray_at(area: Rect, position: f32, x: f64) -> f32 {
+    let at = position_at(area, x);
+    (((2.0 * (at - position).abs()).min(1.0) * 1000.0).round() / 1000.0).clamp(0.0, 1.0)
 }
 
 /// What the strip says about the loaded sample (view state, from the document).
@@ -421,6 +449,17 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
         );
     }
     paint_wave(c, theme, inner, device, grain, accent);
+    if spray > 0.0 {
+        // The edges of the band are handles: short bars in the lower half.
+        for f in [lo, hi] {
+            let x = x_of(f).round() + 0.5;
+            c.stroke_with(
+                Line::new(pt(x, inner.center().y), pt(x, inner.y1)),
+                2.0,
+                accent.with_alpha(0.7),
+            );
+        }
+    }
     // The grains that sound.
     for (pos, life) in live_grains(grain.meters) {
         let x = x_of(pos).round() + 0.5;

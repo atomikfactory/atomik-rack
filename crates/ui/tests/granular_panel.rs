@@ -788,3 +788,156 @@ fn the_panel_reads_the_longer_grain_trail() {
     let values = meters(1.0, 0.3, 0.2, &grains);
     assert_eq!(live_grains(&values).len(), 29);
 }
+
+// ------------------------------------------------------------------ spray band and pick lists
+
+fn param_commands(actions: &[UiAction], key: &str) -> Vec<(f32, Option<u64>)> {
+    commands(actions)
+        .into_iter()
+        .filter_map(|c| match c {
+            atomik_model::Command::SetParam {
+                param,
+                value,
+                merge,
+                ..
+            } if param == key => Some((value, merge)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A point of the waveform at `fraction` of the window and `height` of the display (0 top).
+fn wave_point(v: &RackView, fraction: f64, height: f64) -> atomik_ui::kurbo::Point {
+    let r = v.wave_rect(&key("grain")).expect("a waveform");
+    let inner = atomik_ui::granular_panel::wave_inner(r);
+    atomik_ui::kurbo::Point::new(
+        inner.x0 + inner.width() * fraction,
+        inner.y0 + inner.height() * height,
+    )
+}
+
+#[test]
+fn an_edge_of_the_spray_band_drags_the_spray_as_one_step() {
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.5), ("pos.spray", 0.2)]);
+    let reg = registry();
+    // The band runs from 0.4 to 0.6: its right edge is a handle in the lower half.
+    let a = v.handle(&down(wave_point(&v, 0.6, 0.75)), &doc, &reg);
+    assert!(position_commands(&a).is_empty(), "{a:?}");
+    let first = param_commands(&a, "pos.spray");
+    assert_eq!(first.len(), 1, "{a:?}");
+    assert!((first[0].0 - 0.2).abs() < 0.01, "{first:?}");
+    let merge = first[0].1.expect("a drag merges");
+    // Dragging the edge out to 0.8 makes the band 0.6 wide (twice the distance from the
+    // position), and dragging it in past the position makes it as wide the other way.
+    let a = v.handle(&mv(wave_point(&v, 0.8, 0.75)), &doc, &reg);
+    let moved = param_commands(&a, "pos.spray");
+    assert_eq!(moved.len(), 1, "{a:?}");
+    assert!((moved[0].0 - 0.6).abs() < 0.01, "{moved:?}");
+    assert_eq!(moved[0].1, Some(merge));
+    let a = v.handle(&mv(wave_point(&v, 0.45, 0.75)), &doc, &reg);
+    let moved = param_commands(&a, "pos.spray");
+    assert!((moved[0].0 - 0.1).abs() < 0.01, "{moved:?}");
+    // A drag far out stops at a full-window band.
+    let a = v.handle(&mv(wave_point(&v, 5.0, 0.75)), &doc, &reg);
+    assert!((param_commands(&a, "pos.spray")[0].0 - 1.0).abs() < f32::EPSILON);
+    let a = v.handle(&up(wave_point(&v, 0.8, 0.75)), &doc, &reg);
+    assert!(a.contains(&UiAction::EndMerge));
+    assert!(position_commands(&a).is_empty());
+}
+
+#[test]
+fn escape_during_a_spray_drag_restores_the_spray() {
+    use atomik_ui::Key;
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.5), ("pos.spray", 0.2)]);
+    let reg = registry();
+    let _ = v.handle(&down(wave_point(&v, 0.4, 0.75)), &doc, &reg);
+    let _ = v.handle(&mv(wave_point(&v, 0.9, 0.75)), &doc, &reg);
+    let a = v.handle(
+        &support::song::press(Key::Escape, atomik_ui::Modifiers::NONE),
+        &doc,
+        &reg,
+    );
+    let got = param_commands(&a, "pos.spray");
+    assert_eq!(got.len(), 1, "{a:?}");
+    assert!((got[0].0 - 0.2).abs() < 1e-3, "{got:?}");
+    assert!(a.contains(&UiAction::EndMerge));
+}
+
+#[test]
+fn a_press_away_from_the_edges_or_with_no_band_still_sets_the_position() {
+    let reg = registry();
+    // Inside the band, between the edges.
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.5), ("pos.spray", 0.2)]);
+    let a = v.handle(&down(wave_point(&v, 0.55, 0.75)), &doc, &reg);
+    assert_eq!(position_commands(&a).len(), 1, "{a:?}");
+    assert!(param_commands(&a, "pos.spray").is_empty());
+    let _ = v.handle(&up(wave_point(&v, 0.55, 0.75)), &doc, &reg);
+    // No band: nothing to grab.
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.5), ("pos.spray", 0.0)]);
+    let a = v.handle(&down(wave_point(&v, 0.5, 0.75)), &doc, &reg);
+    assert_eq!(position_commands(&a).len(), 1, "{a:?}");
+    assert!(param_commands(&a, "pos.spray").is_empty());
+}
+
+#[test]
+fn a_narrow_band_gives_its_edges_only_to_the_lower_half() {
+    use atomik_ui::granular_panel::{spray_at, spray_edge_at, wave_inner};
+    let reg = registry();
+    let (doc, mut v) = setup(one_zone(), &[("pos.position", 0.5), ("pos.spray", 0.004)]);
+    // The edges lie within a couple of pixels of the position line.
+    let top = v.handle(&down(wave_point(&v, 0.5, 0.2)), &doc, &reg);
+    assert_eq!(position_commands(&top).len(), 1, "{top:?}");
+    let _ = v.handle(&up(wave_point(&v, 0.5, 0.2)), &doc, &reg);
+    let low = v.handle(&down(wave_point(&v, 0.5, 0.8)), &doc, &reg);
+    assert_eq!(param_commands(&low, "pos.spray").len(), 1, "{low:?}");
+    assert!(position_commands(&low).is_empty());
+    // The helpers agree: a zero band has no edge, and the spray is twice the distance.
+    let area = v.wave_rect(&key("grain")).unwrap();
+    let inner = wave_inner(area);
+    let at = |f: f64| atomik_ui::kurbo::Point::new(inner.x0 + inner.width() * f, inner.y1 - 1.0);
+    assert!(!spray_edge_at(area, 0.5, 0.0, at(0.5)));
+    assert!(spray_edge_at(area, 0.5, 0.2, at(0.6)));
+    assert!(!spray_edge_at(area, 0.5, 0.2, at(0.7)));
+    assert!((spray_at(area, 0.5, inner.x0 + inner.width() * 0.7) - 0.4).abs() < 0.002);
+}
+
+#[test]
+fn the_band_edges_are_drawn_as_handles_only_while_there_is_a_band() {
+    let (doc_a, mut a) = setup(one_zone(), &[("pos.spray", 0.2)]);
+    let (doc_b, mut b) = setup(one_zone(), &[("pos.spray", 0.0)]);
+    let (ja, jb) = (json_of(&mut a, &doc_a), json_of(&mut b, &doc_b));
+    assert_ne!(ja, jb);
+}
+
+#[test]
+fn the_play_mode_and_the_zone_mode_open_pick_lists() {
+    use atomik_ui::master_panel::is_pick_list;
+    let reg = registry();
+    let desc = reg.get(GRANULAR_TYPE).unwrap().descriptor;
+    for k in ["voice.mode", "zone.mode"] {
+        assert!(is_pick_list(desc.param_by_key(k).unwrap()), "{k}");
+    }
+    // The other short choices still cycle.
+    for k in ["grain.window", "filter.mode", "lfo.scope", "lfo.wave"] {
+        assert!(!is_pick_list(desc.param_by_key(k).unwrap()), "{k}");
+    }
+    let (doc, mut v) = setup(Vec::new(), &[]);
+    for (k, row, want) in [("voice.mode", 1, 1.0), ("zone.mode", 1, 1.0)] {
+        let at = v.choice_center(&key("grain"), k).unwrap();
+        let a = v.handle(&down(at), &doc, &reg);
+        assert!(set_param(&a).is_empty(), "{k}: a click opens the list");
+        let _ = v.handle(&up(at), &doc, &reg);
+        assert!(!v.choice_menu_labels().is_empty(), "{k}");
+        let target = v.choice_menu_row_center(row).unwrap();
+        let a = v.handle(&down(target), &doc, &reg);
+        assert_eq!(set_param(&a), vec![(k.to_string(), want)], "{k}");
+        let _ = v.handle(&up(target), &doc, &reg);
+    }
+    let labels = {
+        let at = v.choice_center(&key("grain"), "voice.mode").unwrap();
+        let _ = v.handle(&down(at), &doc, &reg);
+        let _ = v.handle(&up(at), &doc, &reg);
+        v.choice_menu_labels()
+    };
+    assert_eq!(labels, vec!["poly", "mono", "legato"]);
+}

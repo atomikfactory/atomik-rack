@@ -1073,3 +1073,69 @@ fn the_wavetable_panel_gets_the_positions_its_device_publishes() {
     c.frame();
     assert_eq!(c.view().device_meters(&key("wts")), &[0.5, 0.75]);
 }
+
+// ------------------------------------------------------------------ granular sampler: more zones
+
+#[test]
+fn adding_samples_keeps_the_zones_a_granular_sampler_has_in_one_undo_step() {
+    let t = Tmp::new("granular-add");
+    let mut c = granular_core();
+    drop_on_granular(&mut c, vec![wav(&t, "pad.wav", 4_800, 1.0)], None);
+    c.add_samples(vec![wav(&t, "other.wav", 2_400, 0.5)], key("grn"), Some(48));
+    c.wait_background();
+    assert!(c.last_rejection().is_some_and(|m| m.contains("2 zone")));
+    let zones = granular_zones(&c);
+    assert_eq!(zones.len(), 2);
+    assert_eq!((zones[0].root_key, zones[0].end), (60, 4_800));
+    assert_eq!((zones[1].root_key, zones[1].end), (48, 2_400));
+    assert_eq!(c.doc().assets.len(), 2);
+    // One map for the engine with both zones, and one undo step back to the first sample.
+    let sent = sample_calls(&c.sink_mut().take());
+    assert_eq!(sent.last().unwrap().1.as_ref().unwrap().zones().len(), 2);
+    assert!(c.undo());
+    assert_eq!(granular_zones(&c).len(), 1);
+}
+
+#[test]
+fn adding_several_files_makes_a_zone_each_and_names_none_as_ignored() {
+    let t = Tmp::new("granular-add-many");
+    let mut c = granular_core();
+    c.add_samples(
+        vec![
+            wav(&t, "low_C3.wav", 4_800, 1.0),
+            wav(&t, "high_C5.wav", 2_400, 0.5),
+        ],
+        key("grn"),
+        None,
+    );
+    c.wait_background();
+    let zones = granular_zones(&c);
+    let mut roots: Vec<u8> = zones.iter().map(|z| z.root_key).collect();
+    roots.sort_unstable();
+    assert_eq!(roots, [48, 72]);
+    let message = c.last_rejection().unwrap();
+    assert!(!message.contains("ignored"), "{message}");
+}
+
+#[test]
+fn the_drop_adds_only_when_the_shell_says_the_modifier_was_held() {
+    let t = Tmp::new("granular-drop-adds");
+    let mut c = granular_core();
+    drop_on_granular(&mut c, vec![wav(&t, "pad.wav", 4_800, 1.0)], None);
+    c.set_drop_adds(true);
+    drop_on_granular(&mut c, vec![wav(&t, "more.wav", 2_400, 0.5)], None);
+    assert_eq!(granular_zones(&c).len(), 2);
+    // The flag is used up by the drop: the next one replaces again.
+    drop_on_granular(&mut c, vec![wav(&t, "last.wav", 1_200, 0.25)], None);
+    assert_eq!(granular_zones(&c).len(), 1);
+}
+
+#[test]
+fn adding_to_a_plain_sampler_behaves_as_a_plain_import() {
+    let t = Tmp::new("add-other");
+    let mut c = sampler_core_with(RecordingSink::new());
+    let before = c.doc().device(&key("smp")).unwrap().zones.len();
+    c.add_samples(vec![wav(&t, "x_C3.wav", 2_400, 1.0)], key("smp"), None);
+    c.wait_background();
+    assert_eq!(c.doc().device(&key("smp")).unwrap().zones.len(), before + 1);
+}

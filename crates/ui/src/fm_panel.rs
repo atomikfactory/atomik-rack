@@ -58,8 +58,9 @@ pub struct FmPanel {
 }
 
 /// The sections in layout order.
-const SECTION_ORDER: [&str; 12] = [
-    "fm", "op1", "op2", "op3", "op4", "wave", "pitch", "lfo", "play", "chorus", "master", "cv",
+const SECTION_ORDER: [&str; 14] = [
+    "fm", "op1", "op2", "op3", "op4", "wave", "slope", "pitch", "lfo", "play", "unison", "chorus",
+    "master", "cv",
 ];
 
 /// The section of a param key: the single knobs gather in a few sections.
@@ -71,6 +72,8 @@ fn section_prefix(key: &str) -> &str {
         "oversample" => "master",
         // The four operator waves share one row, so the operator rows stay as wide as before.
         _ if key.starts_with("op") && key.ends_with(".wave") => "wave",
+        // The slope stages share a row for the same reason.
+        _ if key.starts_with("op") && key.ends_with(".slope") => "slope",
         _ => autolayout::group_prefix(key),
     }
 }
@@ -95,6 +98,13 @@ pub fn fm_label(key: &str) -> Option<&'static str> {
         "chorus.rate" => "Rate",
         "chorus.depth" => "Depth",
         "oversample" => "Oversamp.",
+        "unison.voices" => "Voices",
+        "unison.detune" => "Detune",
+        "unison.spread" => "Spread",
+        "op1.slope" => "Op 1",
+        "op2.slope" => "Op 2",
+        "op3.slope" => "Op 3",
+        "op4.slope" => "Op 4",
         "op1.wave" => "Op 1",
         "op2.wave" => "Op 2",
         "op3.wave" => "Op 3",
@@ -135,6 +145,9 @@ pub fn fm_help(key: &str) -> Option<&'static str> {
             "wave" => {
                 "Waveform of this operator: sine, half, rectified, pulse, triangle or soft square"
             }
+            "slope" => {
+                "Time for a held note to fall by 60 dB after its decay; 0 holds the sustain level"
+            }
             _ => return None,
         });
     }
@@ -160,8 +173,11 @@ pub fn fm_help(key: &str) -> Option<&'static str> {
         "chorus.rate" => "Speed of the chorus sweep in Hz",
         "chorus.depth" => "How far the chorus swings the delay",
         "oversample" => {
-            "Runs the voices at twice the rate: brighter patches without aliasing, at twice the CPU"
+            "Runs the voices at twice or four times the rate: less aliasing, at twice or four times the CPU"
         }
+        "unison.voices" => "Detuned copies of every note, spread across the stereo field: 1 is off",
+        "unison.detune" => "How far the outer copies are detuned from the key, in cents",
+        "unison.spread" => "How far the copies are panned apart",
         "voices" => "Most notes sounding at once in poly: the oldest is stolen past it",
         "spread" => "Pans the notes by key: low to the left, high to the right",
         "master.level" => "Output level",
@@ -291,6 +307,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
             decay: p("decay"),
             sustain: p("sustain"),
             release: p("release"),
+            slope: p("slope"),
         };
         paint_envelope(
             c,
@@ -400,17 +417,26 @@ pub struct EnvShape {
     pub sustain: f32,
     /// Release in ms.
     pub release: f32,
+    /// Slope time in ms: the time a held note takes to fall by 60 dB (0 holds the sustain).
+    pub slope: f32,
 }
 
 /// The corner points of an envelope in `0..=1` of the display's width and height (height 1 is
 /// the top): the delay, attack, decay, a sustain stretch and the release. The times use a
-/// square-root scale.
+/// square-root scale. With a slope the sustain stretch ends lower than it began, by the
+/// fraction of 60 dB the stretch would cover.
 pub fn envelope_points(e: &EnvShape) -> [(f64, f64); 6] {
     let t = |ms: f32| f64::from(ms.max(0.0)).sqrt();
     let (d, a, dc, r) = (t(e.delay), t(e.attack), t(e.decay), t(e.release));
     let hold = 0.3 * (d + a + dc + r).max(10.0);
     let total = d + a + dc + hold + r;
     let s = f64::from(e.sustain.clamp(0.0, 1.0));
+    // The hold stretch is `hold` on the square-root scale, so `hold^2` ms.
+    let end = if e.slope > 0.0 {
+        s * 10f64.powf(-3.0 * (hold * hold / f64::from(e.slope)).min(1.0))
+    } else {
+        s
+    };
     let mut x = 0.0;
     let mut p = |w: f64, y: f64| {
         x += w / total;
@@ -421,7 +447,7 @@ pub fn envelope_points(e: &EnvShape) -> [(f64, f64); 6] {
         p(d, 0.0),
         p(a, 1.0),
         p(dc, s),
-        p(hold, s),
+        p(hold, end),
         p(r, 0.0),
     ]
 }

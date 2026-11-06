@@ -661,8 +661,9 @@ of five other waves) that phase-modulate each other through one of twelve routin
 each with its own frequency ratio (or a fixed frequency), envelope with a delay, velocity
 sensitivity and key scaling; a damped feedback path on operator 4; a pitch envelope, an LFO, the
 mod wheel on the modulation index, poly (with voice stealing), mono and legato play with glide
-(poly too, when asked), a chorus, an optional 2x oversampling and ten factory sounds. There is no
-filter: an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation
+(poly too, when asked), a chorus, an optional 2x or 4x oversampling, a unison stage (up to seven
+detuned copies of every voice), a slope stage after each envelope's decay and ten factory sounds.
+There is no filter: an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation
 synthesis. The routings, the frequency rule and the bandwidth limiter are in
 [dsp/src/fm.rs](../crates/dsp/src/fm.rs).
 
@@ -708,9 +709,9 @@ In every routing operator 4 is the feedback operator.
 ### Params
 
 Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve params each, ids 4
-to 51), then the rest (ids 52 to 68), then the params added later (ids 69 to 78: the operator waves,
-poly glide, the chorus and oversampling), appended so that older patches load unchanged. The ids
-are the indices.
+to 51), then the rest (ids 52 to 68), then the params added later (ids 69 to 85: the operator waves,
+poly glide, the chorus, oversampling, the unison and the four slopes), appended so that older
+patches load unchanged. The ids are the indices.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -753,15 +754,20 @@ are the indices.
 | `chorus.mix` | 0 to 1 | 0 | percent | Linear | no |
 | `chorus.rate` | 0.05 to 5 | 0.8 | Hz | Exponential | no |
 | `chorus.depth` | 0 to 1 | 0.5 | percent | Linear | no |
-| `oversample` | 0–1: off, 2x | 0 | choice | Linear | yes |
+| `oversample` | 0–2: off, 2x, 4x | 0 | choice | Linear | yes |
+| `unison.voices` | 1 to 7 | 1 | none | Linear | yes |
+| `unison.detune` | 0 to 100 | 20 | cents | Linear | no |
+| `unison.spread` | 0 to 1 | 0.5 | percent | Linear | no |
+| `opN.slope` (ids 82 to 85) | 0 to 20000 | 0 | ms | Linear | no |
 
 ### Behaviour (as built)
 
 - **Frequency.** Ratio mode: the played pitch × (`coarse` + `fine`), where coarse step 0 is the
   ratio 0.5 and step *n* is *n*; `detune` adds cents. Fixed mode (`fixed` on): 10^((`coarse` +
   `fine`) / 8) Hz whatever the key, 1 Hz at step 0 and a decade every eight steps (about 9.9 kHz at
-  the top); pitch bend, the pitch envelope, the LFO and the pitch CV do not move it. Operator
-  frequencies are held under 0.45 of the sample rate. The phase accumulators are `f64`.
+  the top); pitch bend, the pitch envelope, the LFO and the pitch CV do not move it (nor does the
+  unison detune). Operator frequencies are held under 0.45 of the sample rate. The phase
+  accumulators are `f64`.
 - **Waves.** `opN.wave` picks the shape one operator runs: a sine (0, the original sound, bit for bit),
   a half sine (1), the rectified sine (2), a full sine squeezed into the first half of the cycle
   (3), a triangle (4) and a sine pushed towards a square (5). Every shape stays within ±1 and has
@@ -772,6 +778,12 @@ are the indices.
   sounds until the envelopes of its carriers are idle; a note off during a carrier's delay cancels
   the note. A same-key retrigger restarts every envelope from its current level and ignores the
   delays.
+- **Slope.** `opN.slope` adds a fifth stage after the decay: while the key is held and the envelope
+  sits at its sustain level, the level keeps falling, by 60 dB over that many ms (0, the default,
+  holds the sustain as before, bit for bit). The fall stops at the key release, which takes over
+  from where the level is; a key struck again brings the level back in about 3 ms rather than
+  jumping. It multiplies the operator's envelope, so on a modulator it closes the sound over a
+  held note and on a carrier it fades the note. The panel draws it in the envelope shape.
 - **Velocity and key scaling.** The operator level is `level` × (1 − `velocity` × (1 − key
   velocity)) × the key scaling gain. Key scaling lowers the level on one side of middle C (key 60):
   `key_scale` > 0 above it, < 0 below it, by 0.4 dB per semitone × |`key_scale`|.
@@ -797,7 +809,19 @@ are the indices.
   filter's transition band): a bright patch keeps more of its index on a high key. The cost is about
   twice the voice CPU and the filter's 29 frames of latency, which the device reports (so the
   engine can align it with the other tracks). Switching it fades the sounding voices out, since a
-  rate change cannot be click free.
+  rate change cannot be click free. `4x` runs the voices at four times the rate through two
+  halfband stages (35 frames of latency, about four times the voice CPU). The limiter reaches no
+  further than at 2x, since the output filter's transition band is what bounds it, so 4x helps
+  where the richer waves and the feedback loop fold back at the doubled rate; with sine operators
+  it sounds like 2x.
+- **Unison.** `unison.voices` copies of each voice sound for a key. They share the voice's
+  envelopes, level and pan law, so a copy costs the operators' CPU and nothing else, and the
+  voice allocation, the steal fade and the play modes are those of one voice. The copies are
+  spread evenly from −`unison.detune` to +`unison.detune` cents around the pitch (the
+  fixed-frequency operators do not detune), start from different phases, and are panned from left
+  to right by `unison.spread` around the key pan. They add in power (a gain of 1/√copies), and the
+  index limiter looks at the widest copy. At 1 voice the output is the plain voice, bit for bit.
+  Changing the count while notes sound steps their level.
 - **Pitch.** Semitones = key (gliding in the mono modes) + bend + `pitch.env_amount` ×
   e^(−t/`pitch.env_decay`) (restarted at each note) + LFO × `lfo.to_pitch` + `pitch_cv_trim` × 24 ×
   `pitch_cv_in`.
@@ -850,9 +874,12 @@ key scaling, the index from the wheel, the LFO and the CV, the mono modes and th
 a bright patch on high keys (with an unlimited reference that does alias), determinism and reset,
 every param at its extremes, the factory sounds, the waves (bounded, periodic, no DC, the harmonics
 of the triangle and the soft square), poly glide (also through a steal), the chorus (off at zero,
-tail, restart) and the oversampling (pitch, level and timing kept, a brighter patch without aliasing,
-a switch during a note, the reported latency). A proptest (`qa_devices`) drives random params,
-CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in
+tail, restart), the oversampling (pitch, level and timing kept at 2x and 4x, a brighter patch without
+aliasing, a switch during a note, the reported latency), the unison (beating, level and pitch kept,
+the stereo spread, a full chord bounded and freed, fixed operators not detuned), the slope (a fall of
+60 dB over its time at every oversampling, continuity on a retrigger, the release) and the plain
+defaults (every factory sound renders bit for bit as before the stages existed, pinned on Windows).
+A proptest (`qa_devices`) drives random params, CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in
 [crates/ui/tests/fm_panel.rs](../crates/ui/tests/fm_panel.rs) and the demo patch
 `examples/patches/fm-demo.json` bounces in
 [crates/render/tests/fm_demo.rs](../crates/render/tests/fm_demo.rs).
@@ -879,16 +906,21 @@ velocity range match a note plays (`zone.mode` first, the default); its start an
 **window** the grains read (position 0 to 100 % is that window), and its root key, transpose, tune,
 gain and pan apply; its loop and trigger fields are ignored. With a map that has no zone for a note,
 that note is silent. A sample swap allocates nothing and fades a voice that loses its zone in 5 ms,
-as the sampler does. A map with several zones comes from a project or patch file; a drop on the
-panel still builds one.
+as the sampler does. **Several zones** are built on the panel by dropping with the copy modifier
+held (Ctrl on Windows and Linux, Alt on macOS, as for copying in the arrangement): the drop adds a
+zone for each file (a single file covers the keyboard, files named after notes spread over it, as
+for the sampler) and keeps the zones it has, in one undo step; the sample editor then sets their key
+and velocity ranges. A plain drop still replaces the sample. The copy modifier is read from the
+modifiers the window last reported, so on a system that does not report them during a file drag the
+drop replaces; a map can also come from a project or patch file.
 
 | Param | Range | Default | Meaning |
 |---|---|---|---|
 | `sound` | choice | Init | Factory sound (see below). |
 | `voices` | 1 to 16 | 8 | Notes at once; the oldest is stolen (2 ms fade). |
-| `voice.mode` | poly, mono, legato | poly | Poly gives every key a voice; mono plays one note (the last key, back to a held key on release); legato also keeps the grains and envelopes running under a held key and changes the pitch only. |
+| `voice.mode` | poly, mono, legato (a pick list) | poly | Poly gives every key a voice; mono plays one note (the last key, back to a held key on release); legato also keeps the grains and envelopes running under a held key and changes the pitch only. |
 | `voice.glide` | 0 to 2000 ms | 0 | Time a pitch takes to cover most of the way to a new key in the mono modes. |
-| `zone.mode` | first, layered | first | First plays the first matching zone. Layered plays every matching zone (at most 8, one voice each) with round-robin slots and velocity crossfades as the sampler has them; the mono modes play the first of them. |
+| `zone.mode` | first, layered (a pick list) | first | First plays the first matching zone. Layered plays every matching zone (at most 8, one voice each) with round-robin slots and velocity crossfades as the sampler has them; the mono modes play the first of them. |
 | `master.level` | -60 to 6 dB | -6 | Output level. |
 | `grain.density` | 1 to 200 Hz | 24 | Grains started a second per voice. |
 | `grain.size` | 5 to 500 ms | 90 | Grain length. |
@@ -930,7 +962,10 @@ Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_c
   shows the position, the spray band and the live grains from the device's published values (63
   meter values: source, position, spray, grain and voice counts, the last 29 grains as position and
   life). A click or a drag on the waveform sets `pos.position` to the place under the pointer (one
-  undo step per drag; Escape puts the start value back).
+  undo step per drag; Escape puts the start value back). The two edges of the spray band carry short
+  handles in the lower half of the display: a press on one drags `pos.spray` instead, the band
+  following the pointer (its width is twice the distance from the position; on a band so narrow
+  that its edges lie on the position line, only a press in the lower half takes an edge).
 
 ### Sounds
 

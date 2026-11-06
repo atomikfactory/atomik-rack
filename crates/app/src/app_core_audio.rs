@@ -106,6 +106,9 @@ pub(super) struct ProjectBundle {
 pub(super) struct SampleImport {
     pub(super) device: DeviceKey,
     pub(super) at_key: Option<u8>,
+    /// The files are added to the device's zones instead of replacing them (a granular
+    /// sampler's drop with the copy modifier held).
+    pub(super) add: bool,
     /// Files a loop slicer left out (it takes one loop, the first).
     pub(super) ignored: Vec<String>,
     /// `(asset id, original file name, frames)` in the order the files finished.
@@ -151,6 +154,8 @@ pub(super) struct AudioState {
     /// The speaker tool's audition ([`super::audition`]).
     pub(super) audition: super::audition::AuditionState,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
+    /// The next sample drop adds zones (the shell saw the copy modifier held at the drop).
+    pub(super) drop_adds: bool,
     /// Whole-asset RAM buffers for samplers: shared with the memory assets of
     /// audio tracks where those exist, loaded by a worker for streamed ones. Keeping the
     /// `Arc`s is what lets a sampler voice survive a zone edit (same buffer, same pointer).
@@ -222,6 +227,7 @@ impl AudioState {
             onsets: super::clip_editor::OnsetState::default(),
             audition: super::audition::AuditionState::default(),
             peaks: BTreeMap::new(),
+            drop_adds: false,
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
             converting: None,
@@ -806,6 +812,42 @@ impl<S: EngineSink> AppCore<S> {
     /// step, so undo removes all the new zones at once. A failing file is reported by name and
     /// the others still import.
     pub fn import_samples(&mut self, paths: Vec<PathBuf>, device: DeviceKey, at_key: Option<u8>) {
+        self.import_samples_mode(paths, device, at_key, false);
+    }
+
+    /// As [`Self::import_samples`], but a granular sampler keeps the zones it has and gets one
+    /// more per file (mapped as [`atomik_model::auto_map`] does, so a single file covers the
+    /// keyboard): the way to build several zones on the panel. Every other device behaves as
+    /// for a plain import.
+    pub fn add_samples(&mut self, paths: Vec<PathBuf>, device: DeviceKey, at_key: Option<u8>) {
+        self.import_samples_mode(paths, device, at_key, true);
+    }
+
+    /// Makes the next sample drop add zones where the device allows it (see
+    /// [`Self::add_samples`]). The shell sets it from the modifiers held at the drop; the drop
+    /// clears it.
+    pub fn set_drop_adds(&mut self, adds: bool) {
+        self.audio.drop_adds = adds;
+    }
+
+    /// The drop of files on a sampler: adds zones when the copy modifier was held.
+    pub(super) fn drop_samples(
+        &mut self,
+        paths: Vec<PathBuf>,
+        device: DeviceKey,
+        at_key: Option<u8>,
+    ) {
+        let add = std::mem::take(&mut self.audio.drop_adds);
+        self.import_samples_mode(paths, device, at_key, add);
+    }
+
+    fn import_samples_mode(
+        &mut self,
+        paths: Vec<PathBuf>,
+        device: DeviceKey,
+        at_key: Option<u8>,
+        add: bool,
+    ) {
         let takes = self
             .doc()
             .resolve(&device)
@@ -822,13 +864,18 @@ impl<S: EngineSink> AppCore<S> {
         }
         let mut paths = paths;
         let mut ignored = Vec::new();
-        // A loop slicer takes one loop; a granular sampler or a convolver one sample.
-        if (self.is_loop_slicer(&device) || self.is_one_sample(&device)) && paths.len() > 1 {
+        // Only a granular sampler can add zones.
+        let add = add && self.is_granular(&device);
+        // A loop slicer takes one loop; a granular sampler or a convolver one sample (unless
+        // the files are added as zones).
+        if (self.is_loop_slicer(&device) || self.is_one_sample(&device)) && paths.len() > 1 && !add
+        {
             ignored = paths.split_off(1).iter().map(|p| display_name(p)).collect();
         }
         let samples = SampleImport {
             device,
             at_key,
+            add,
             ignored,
             files: Vec::new(),
         };
@@ -861,15 +908,22 @@ impl<S: EngineSink> AppCore<S> {
             });
         }
         let (zones, dropped) =
-            super::drums::zones_after_import(device, &import.files, import.at_key);
+            super::drums::zones_after_import(device, &import.files, import.at_key, import.add);
         let name = device.name.clone();
         let one_sample = super::samples::takes_one_sample(&device.type_id);
+        let added = (import.add && super::samples::is_granular_type(&device.type_id))
+            .then_some(zones.len());
         // A rejection is already reported.
         let _ = self.apply_command(Command::SetZones {
             device: import.device,
             zones,
             merge: None,
         });
+        if let Some(total) = added {
+            return Some(format!(
+                "{name}: now {total} zone(s); the sample editor sets their keys"
+            ));
+        }
         if one_sample {
             return (!import.ignored.is_empty()).then(|| {
                 format!(

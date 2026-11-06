@@ -52,7 +52,19 @@ pub(super) fn takes_one_sample(type_id: &str) -> bool {
     type_id == GRANULAR || type_id == CONVOLVER || type_id == WAVETABLE
 }
 
+/// Whether the device type is the granular sampler (the one one-sample device that can hold
+/// several zones, added with the copy modifier).
+pub(super) fn is_granular_type(type_id: &str) -> bool {
+    type_id == GRANULAR
+}
+
 impl<S: EngineSink> AppCore<S> {
+    pub(super) fn is_granular(&self, device: &DeviceKey) -> bool {
+        self.doc()
+            .resolve(device)
+            .is_some_and(|d| is_granular_type(&d.type_id))
+    }
+
     pub(super) fn is_one_sample(&self, device: &DeviceKey) -> bool {
         self.doc()
             .resolve(device)

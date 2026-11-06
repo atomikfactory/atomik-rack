@@ -291,6 +291,7 @@ impl<S: EngineSink> AppCore<S> {
         let import = SampleImport {
             device,
             at_key,
+            add: false,
             ignored: Vec::new(),
             // The name that picks the root key reads digits as a key number: the asset is
             // called `Sample N`, the zone is mapped from a name that says nothing.

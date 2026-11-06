@@ -55,6 +55,7 @@ pub(super) fn zones_after_import(
     device: &RackDevice,
     files: &[(String, String, u64)],
     at_key: Option<u8>,
+    add: bool,
 ) -> (Vec<ZoneDoc>, Vec<String>) {
     if device.type_id == DRUM_MACHINE {
         return match at_key.and_then(pad_of_key) {
@@ -67,6 +68,12 @@ pub(super) fn zones_after_import(
                 (zones, names.into_iter().skip(skip).cloned().collect())
             }
         };
+    }
+    if add && super::samples::is_granular_type(&device.type_id) {
+        // The granular sampler keeps its zones and gains one per file.
+        let mut zones = device.zones.clone();
+        zones.extend(auto_map(files, at_key));
+        return (zones, Vec::new());
     }
     if super::samples::takes_one_sample(&device.type_id) {
         // One sample: the first file replaces the old one.

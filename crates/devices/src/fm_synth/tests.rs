@@ -151,6 +151,13 @@ fn descriptor_validates() {
             "chorus.rate",
             "chorus.depth",
             "oversample",
+            "unison.voices",
+            "unison.detune",
+            "unison.spread",
+            "op1.slope",
+            "op2.slope",
+            "op3.slope",
+            "op4.slope",
         ]
         .map(String::from),
     );
@@ -169,7 +176,7 @@ fn descriptor_validates() {
             "lfo_cv_out",
         ],
     );
-    assert_eq!(PARAMS.len(), 79);
+    assert_eq!(PARAMS.len(), 86);
     assert_eq!(DESCRIPTOR.type_id, "atomik.fm-synth");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
     assert_eq!(
@@ -1645,6 +1652,8 @@ fn oversampling_reports_its_latency() {
     assert!(s.variable_latency());
     s.set_param(ParamId(P_OVERSAMPLE), 1.0);
     assert_eq!(s.latency_frames(), LATENCY_2X);
+    s.set_param(ParamId(P_OVERSAMPLE), 2.0);
+    assert_eq!(s.latency_frames(), LATENCY_4X);
     s.set_param(ParamId(P_OVERSAMPLE), 0.0);
     assert_eq!(s.latency_frames(), 0);
 }
@@ -1755,4 +1764,310 @@ fn the_new_factory_sounds_use_what_was_added() {
     assert!(has(by("Glide Lead"), "op2.wave"));
     assert!(has(by("Square Keys"), "op1.wave"));
     assert!(has(by("Marimba"), "op2.coarse"));
+}
+
+// ------------------------------------------------------------------------- unchanged defaults
+
+/// A hash over the exact bits of every sample.
+fn bits_hash(chunks: &[&[f32]]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for c in chunks {
+        for v in *c {
+            h ^= u64::from(v.to_bits());
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// Plays a chord, a release and a retrigger of every factory sound at the plain rate and with
+/// 2x oversampling, and hashes the output.
+fn defaults_render_hash() -> u64 {
+    let mut all = Vec::new();
+    for sound in 0..sounds::SOUND_NAMES.len() {
+        for over in [0.0, 1.0] {
+            let (mut h, _) = synth();
+            for (k, v) in sounds::values(sound) {
+                h.set_param(k, v);
+            }
+            h.set_param("oversample", over);
+            for (i, k) in [48u8, 60, 67, 72].iter().enumerate() {
+                h.push_note("notes_in", on(i as u16 * 7, *k, 0.5 + 0.1 * i as f32));
+            }
+            let a = h.render(seconds(0.25), &OUT);
+            h.push_note("notes_in", off(0, 60));
+            h.push_note("notes_in", on(40, 60, 0.9));
+            let b = h.render(seconds(0.25), &OUT);
+            h.push_note(
+                "notes_in",
+                NoteEvent {
+                    offset: 0,
+                    kind: NoteKind::AllOff,
+                },
+            );
+            let c = h.render(seconds(0.25), &OUT);
+            for x in [a, b, c] {
+                all.extend(x.into_iter().flatten());
+            }
+        }
+    }
+    bits_hash(&[&all])
+}
+
+#[test]
+fn the_default_unison_and_slope_leave_the_output_bit_for_bit() {
+    let hash = defaults_render_hash();
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    assert_eq!(hash, PINNED_DEFAULTS_HASH, "{hash:016x}");
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    let _ = hash;
+}
+
+/// The hash of [`defaults_render_hash`] before the unison, slope and 4x stages existed.
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+const PINNED_DEFAULTS_HASH: u64 = 0xc28f_f653_4065_e932;
+
+// ------------------------------------------------------------------------------- 4x oversampling
+
+#[test]
+fn four_times_oversampling_keeps_pitch_level_and_timing() {
+    let delay_patch = |h: &mut DeviceHarness| {
+        pure(h);
+        h.set_param("op1.delay", 100.0);
+        h.set_param("op1.attack", 5.0);
+    };
+    let (a, b) = (
+        quality_tone(0.0, 69, delay_patch),
+        quality_tone(2.0, 69, delay_patch),
+    );
+    let fb = dominant_frequency(&b[12_000..12_000 + 32_768], SR);
+    assert!((fb - 440.0).abs() < 0.5, "{fb}");
+    let (ra, rb) = (rms(&a[12_000..]), rms(&b[12_000..]));
+    assert!((ra / rb - 1.0).abs() < 0.02, "level {ra} vs {rb}");
+    let onset = |x: &[f32]| x.iter().position(|v| v.abs() > 0.02).unwrap();
+    let (oa, ob) = (onset(&a), onset(&b));
+    assert!(ob.abs_diff(oa) < 80, "{oa} vs {ob}");
+}
+
+#[test]
+fn four_times_oversampling_keeps_a_bright_patch_clean() {
+    let stack = |h: &mut DeviceHarness| {
+        patch(h, 0, [0.6, 1.0, 1.0, 1.0], [1.0, 1.0, 2.0, 1.0]);
+        h.set_param("feedback", 1.0);
+        for n in 1..=4 {
+            h.set_param(&format!("op{n}.wave"), 5.0);
+        }
+    };
+    for key in [84u8, 96] {
+        let plain = quality_tone(0.0, key, stack);
+        let two = quality_tone(1.0, key, stack);
+        let four = quality_tone(2.0, key, stack);
+        let db = |x: &[f32]| aliasing_db(&x[9_600..], hz(key));
+        // The richer waves put partials past what the limiter counts: every doubling of the
+        // rate leaves less of them to fold back.
+        assert!(db(&two) < db(&plain) - 3.0, "key {key}");
+        assert!(db(&four) < db(&two) + 0.5, "key {key}");
+        assert!(four.iter().all(|v| v.is_finite() && v.abs() <= 1.5));
+    }
+}
+
+#[test]
+fn four_times_renders_are_identical_and_switching_stays_bounded() {
+    let run = || quality_tone(2.0, 64, |h| patch(h, 1, LEVELS, COARSE));
+    let (a, b) = (run(), run());
+    assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()));
+    let (mut h, _) = synth();
+    patch(&mut h, 0, [0.6, 1.0, 1.0, 1.0], [1.0, 1.0, 2.0, 1.0]);
+    h.push_note("notes_in", on(0, 72, 1.0));
+    h.render(seconds(0.1), &OUT);
+    for over in [2.0, 1.0, 2.0, 0.0, 2.0] {
+        h.set_param("oversample", over);
+        let o = h.render(seconds(0.1), &OUT);
+        assert!(
+            o[0].iter()
+                .chain(&o[1])
+                .all(|v| v.is_finite() && v.abs() <= 1.5)
+        );
+    }
+    h.render(seconds(0.3), &OUT);
+    h.push_note("notes_in", on(0, 60, 1.0));
+    let o = h.render(seconds(0.3), &OUT);
+    assert!(peak(&o[0]) > 0.05);
+}
+
+// ------------------------------------------------------------------------------------- unison
+
+/// RMS of consecutive 1/20 s blocks.
+fn block_rms(x: &[f32]) -> Vec<f32> {
+    x.chunks(2_400)
+        .filter(|c| c.len() == 2_400)
+        .map(rms)
+        .collect()
+}
+
+/// The ratio of the loudest block to the quietest.
+fn swing(x: &[f32]) -> f32 {
+    let b = block_rms(x);
+    let (lo, hi) = b
+        .iter()
+        .fold((f32::MAX, 0.0f32), |(l, h), v| (l.min(*v), h.max(*v)));
+    hi / lo
+}
+
+fn unison_tone(voices: f32, detune: f32, spread: f32, key: u8) -> Vec<Vec<f32>> {
+    let (mut h, _) = synth();
+    pure(&mut h);
+    h.set_param("unison.voices", voices);
+    h.set_param("unison.detune", detune);
+    h.set_param("unison.spread", spread);
+    h.push_note("notes_in", on(0, key, 1.0));
+    h.render(seconds(1.0), &OUT)
+}
+
+#[test]
+fn a_detuned_unison_beats_and_keeps_the_level_and_the_pitch() {
+    let one = unison_tone(1.0, 30.0, 0.0, 69);
+    let three = unison_tone(3.0, 30.0, 0.0, 69);
+    // The copies sit 30 cents apart: 440 Hz and about 7.6 Hz either side beat against each
+    // other, so the level swings from block to block where a single voice is steady.
+    assert!(swing(&one[0][4_800..]) < 1.02);
+    assert!(swing(&three[0][4_800..]) > 1.3);
+    // Power is shared out over the copies: the level stays close to the single voice.
+    let (r1, r3) = (rms(&one[0][4_800..]), rms(&three[0][4_800..]));
+    assert!((r3 / r1 - 1.0).abs() < 0.25, "{r1} vs {r3}");
+    let f = dominant_frequency(&three[0][12_000..12_000 + 32_768], SR);
+    assert!((f - 440.0).abs() < 10.0, "{f}");
+    assert!(three[0].iter().all(|v| v.is_finite() && v.abs() <= 1.5));
+}
+
+#[test]
+fn unison_with_no_detune_does_not_beat() {
+    let x = unison_tone(5.0, 0.0, 0.0, 69);
+    assert!(swing(&x[0][4_800..]) < 1.02);
+}
+
+#[test]
+fn unison_spread_pans_the_copies_and_zero_spread_is_centred() {
+    let flat = unison_tone(4.0, 20.0, 0.0, 60);
+    assert!(
+        flat[0]
+            .iter()
+            .zip(&flat[1])
+            .all(|(l, r)| l.to_bits() == r.to_bits())
+    );
+    let wide = unison_tone(4.0, 20.0, 1.0, 60);
+    let diff: f32 = wide[0]
+        .iter()
+        .zip(&wide[1])
+        .map(|(l, r)| (l - r).abs())
+        .sum();
+    assert!(diff > 1.0, "{diff}");
+    // The two sides are about as loud: the copies are spread symmetrically.
+    let (l, r) = (rms(&wide[0][4_800..]), rms(&wide[1][4_800..]));
+    assert!((l / r - 1.0).abs() < 0.2, "{l} {r}");
+}
+
+#[test]
+fn a_full_unison_chord_stays_bounded_and_every_voice_still_frees() {
+    let (mut h, probe) = synth();
+    patch(&mut h, 0, [0.6, 1.0, 1.0, 1.0], [1.0, 1.0, 2.0, 1.0]);
+    h.set_param("unison.voices", 7.0);
+    h.set_param("unison.detune", 100.0);
+    h.set_param("unison.spread", 1.0);
+    h.set_param("voices", 16.0);
+    for (i, k) in (36u8..52).enumerate() {
+        h.push_note("notes_in", on(i as u16, k, 1.0));
+    }
+    let o = h.render(seconds(0.5), &OUT);
+    assert!(
+        o[0].iter()
+            .chain(&o[1])
+            .all(|v| v.is_finite() && v.abs() <= 4.0)
+    );
+    assert!(probe.active() >= 16);
+    for k in 36u8..52 {
+        h.push_note("notes_in", off(0, k));
+    }
+    h.render(seconds(3.0), &OUT);
+    assert_eq!(probe.active(), 0);
+}
+
+#[test]
+fn unison_renders_are_identical_and_a_fixed_operator_does_not_detune() {
+    let a = unison_tone(5.0, 40.0, 0.7, 64);
+    let b = unison_tone(5.0, 40.0, 0.7, 64);
+    assert!(
+        a[0].iter()
+            .zip(&b[0])
+            .all(|(x, y)| x.to_bits() == y.to_bits())
+    );
+    // A fixed-frequency operator keeps its pitch under unison whatever the key.
+    let (mut h, _) = synth();
+    pure(&mut h);
+    h.set_param("op1.fixed", 1.0);
+    h.set_param("op1.coarse", 21.0);
+    h.set_param("unison.voices", 3.0);
+    h.set_param("unison.detune", 100.0);
+    h.push_note("notes_in", on(0, 40, 1.0));
+    let x = h.render(seconds(1.0), &OUT).remove(0);
+    assert!(swing(&x[4_800..]) < 1.05, "fixed copies do not beat");
+}
+
+// -------------------------------------------------------------------------------------- slope
+
+fn level_at(x: &[f32], seconds: f64) -> f32 {
+    let at = (seconds * SR) as usize;
+    rms(&x[at..at + 2_400])
+}
+
+#[test]
+fn a_slope_makes_a_held_note_fall_after_its_decay() {
+    let held = |slope: f32| {
+        let (mut h, _) = synth();
+        pure(&mut h);
+        h.set_param("op1.sustain", 1.0);
+        h.set_param("op1.slope", slope);
+        h.push_note("notes_in", on(0, 69, 1.0));
+        h.render(seconds(2.0), &OUT).remove(0)
+    };
+    let flat = held(0.0);
+    assert!((level_at(&flat, 0.2) / level_at(&flat, 1.8) - 1.0).abs() < 0.02);
+    // -60 dB over 1000 ms: a second later the level is a thousandth of what it was.
+    let falling = held(1_000.0);
+    let drop = 20.0 * (level_at(&falling, 0.3) / level_at(&falling, 1.3)).log10();
+    assert!((drop - 60.0).abs() < 6.0, "{drop} dB");
+}
+
+#[test]
+fn the_slope_is_continuous_on_a_retrigger_and_releases_normally() {
+    let (mut h, probe) = synth();
+    pure(&mut h);
+    h.set_param("op1.slope", 300.0);
+    h.set_param("op1.release", 50.0);
+    h.push_note("notes_in", on(0, 69, 1.0));
+    let o_before = h.render(seconds(1.0), &OUT).remove(0);
+    // The note has fallen; hitting the key again brings it back without a jump.
+    let before = level_at(&o_before, 0.9);
+    h.push_note("notes_in", on(0, 69, 1.0));
+    let o = h.render(seconds(0.3), &OUT).remove(0);
+    assert!(max_step(&o) < 0.3, "{}", max_step(&o));
+    assert!(rms(&o[2_400..4_800]) > 100.0 * before);
+    h.push_note("notes_in", off(0, 69));
+    h.render(seconds(1.0), &OUT);
+    assert_eq!(probe.active(), 0);
+}
+
+#[test]
+fn the_slope_time_holds_at_every_oversampling() {
+    for over in [0.0, 1.0, 2.0] {
+        let (mut h, _) = synth();
+        pure(&mut h);
+        h.set_param("oversample", over);
+        h.set_param("op1.sustain", 1.0);
+        h.set_param("op1.slope", 1_000.0);
+        h.push_note("notes_in", on(0, 69, 1.0));
+        let x = h.render(seconds(1.6), &OUT).remove(0);
+        let d = 20.0 * (level_at(&x, 0.3) / level_at(&x, 1.3)).log10();
+        assert!((d - 60.0).abs() < 6.0, "oversample {over}: {d} dB");
+    }
 }
