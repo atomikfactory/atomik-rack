@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Macro follow-ups: the inside of a container, lanes of driven params, typed ranges.** A macro bank can now
+  drive a param of a device inside a container (a path such as `layer/synth`, from the right-click menu inside the
+  container, the Macros panel or the MCP `macros` tool): the engine, a bounce, the saved project and the container's
+  own view (the macro tag and the macro's value) follow. A container's macro and a bank never drive the same
+  param, and a device that holds driven params cannot move into or out of a container, since the assignment names it
+  by its place. A param a macro drives may now have an **automation lane of its own**: the lane sets the base and
+  the macro adds its range (nothing at macro 0, or at macro 1 when inverted), clamped to the param's range, and
+  when the macro has a lane too the two are joined at the points of either; a bounce and the live song play the
+  same, a move of the macro re-plays the lane, and following the selection shows the param's own lane once it has
+  one. In the Macros panel a middle click on MIN or MAX, or Enter with the pointer on it, **types the value** in
+  place (a number in the param's unit, with `k` for kilohertz, `s` for seconds and a percent as 0 to 100).
+  No project format change.
 - **Console editing follow-ups.** A click on the master's name plate in the console selects it, so its settings
   can be copied, pasted, reset and cleared like a strip's (a master copy pastes onto the master only, of this song or
   another). The strip compressor has **auto make-up** (the M-UP button: the output is raised by the reduction a

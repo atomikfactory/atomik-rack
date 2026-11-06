@@ -776,10 +776,12 @@ sound moved. The views show an overlay instead
   player would not (it applies lanes only while playing).
 - **Which lanes play.** The tracks of `effective_tracks` (mute and solo applied), not frozen ones
   (they play their render), lanes with clips, and not a param a macro bank drives (it follows the
-  macro). A container's or a bank's macro knob is an ordinary param of that device, so its own lane
+  macro, or its lane plus the macro, see "A lane on a driven param" below; the shown value is the macro's alone for
+  now). A container's or a bank's macro knob is an ordinary param of that device, so its own lane
   moves it, and the params a bank drives show the macro's value (`view_with_driven_values` runs on
   the overlaid document); the view of a container's inside shows stored values, so its driven
-  controls do not follow a lane on the container's macro yet.
+  controls do not follow a lane on the container's macro yet (the params a bank drives there do show
+  the macro's value).
 - **The document is not touched.** `RackDoc::view_with_shown` copies the devices with the shown
   values in place (an empty song: no view reads it); the document, its history and `is_dirty` never
   see the overlay. The rack applies it in `prepare`, the console and the plugin list in `sync`;
@@ -802,7 +804,7 @@ like an instrument: `SongCommand::AddAutomationLane` makes it a **track that hol
 alone** (`Track::is_automation_only()`: at least one lane, all of them automation lanes; no note
 lane, no audio lane). A device with a Notes input still gets a note track (lane 0 notes), an
 `atomik.audio-track` still has its single audio lane and takes no automation lane, internal params
-(`console::is_internal_param`) and params a macro bank drives are refused as before. The track is
+(`console::is_internal_param`) are refused as before; a param a macro bank drives takes a lane too (its base). The track is
 bound to the device by its key, so it is renamed, coloured, moved, foldered and removed like any
 track, goes with the device when the device is removed (`Planner`), and is copied with it
 (`DuplicateTrack`, paste, `paste_tracks`).
@@ -3591,16 +3593,18 @@ as before (`crates/render/tests/macros.rs`).
   put a param.
 - **Assignments.** `RackDoc::macros: MacroSet { assigns, names }`. A
   `MacroAssign { id, bank, index, device, param, min, max, invert, curve, smooth_ms }` binds macro
-  `index` (0 to 7) of a bank to a param of a **top-level** device; `min` and `max` are plain values
+  `index` (0 to 7) of a bank to a param of a device of the rack or **inside a container** (a path key
+  such as `layer/synth`); `min` and `max` are plain values
   of the param (at macro 0 and macro 1), `invert` runs the macro backwards, `curve` bends the travel
   and `smooth_ms` is a live glide time. Rules: a param follows **at most one
   macro** in the project (assigning it again moves it, in the same undo step); a macro may drive any
-  number of params (512 in all); the target is not a bank, not a container (a container has its own
-  macros, section 6e) and not a device inside one, the param exists and is not `internal.*`, and
-  `solo` of a console strip is refused (the mix derives the silenced strips from it); a target with
-  automation clips on its own lane is refused (the lane would fight the macro) and no lane or clip
-  can be added for a driven param (automate the macro instead; a lane that is already there and
-  empty is skipped by the song builder). A direct `SetParam` on a driven param is refused with
+  number of params (512 in all); the target is not a bank and not a container (a container has its own
+  macros, section 6e; a param one of those drives is refused, and the container macro that wants a
+  param a bank drives is refused too), the param exists and is not `internal.*`, and `solo` of a
+  console strip is refused (the mix derives the silenced strips from it). A device that holds driven
+  params cannot move into or out of a container (`check_not_driven`): the assignment names it by its
+  key, which the move would change. A target may have an automation lane (see "A lane on a driven param"). A direct
+  `SetParam` on a driven param is refused with
   `MacroDriven` naming the macro, so the model never hides where a value came from. The rack's
   controls do not send that command for a driven knob: `AppCore::redirect_driven_edit` turns the
   edit into `MacroCommand::MoveRange`, which shifts the range of the assignment by the amount that
@@ -3628,14 +3632,16 @@ as before (`crates/render/tests/macros.rs`).
 - **Where it is applied.** `RackDoc::expand` sets the driven params of the expanded devices
   (`macros::apply`) and lists the targets with the container macros in
   `ExpandedRack::macro_targets`, so a live engine rebuild, a bounce and `macro_values` read the same
-  values. A song lane on a macro param is expanded by `expand_bank_lane` into one lane per live
+  values (an inside target is found by its path key in the expansion). A song lane on a macro param is expanded by
+  `expand_bank_lane` into one lane per live
   target with every point mapped by `assign_value` (a discrete target rounds each point), and
   `atomik_render::project::song_input_with_warps` joins each lane to the target's own track (a
-  target without a track gets an automation-only one, a frozen target is left out) and skips the
-  lane of a driven param, so the macro always wins: the lane equals hand-made lanes on the targets
-  bit for bit. In the app, a `ParamChanged` of a bank's `macroN` and `MacrosChanged` run
+  target without a track gets an automation-only one, a frozen target is left out); the lane equals
+  hand-made lanes on the targets bit for bit, except for a target that has a lane of its own (see "A lane on a driven
+  param"). In the app, a `ParamChanged` of a bank's `macroN` and `MacrosChanged` run
   `send_macro_values` (one `set_param` per changed target; a freed param gets its stored value
-  back), the song is rebuilt, and `engine_lanes` makes an automation take hold every target of a
+  back), the song is rebuilt (and, when a target has a lane of its own, on every move of the macro:
+  `bank_shapes_lanes`), and `engine_lanes` makes an automation take hold every target of a
   macro lane. **Smoothing** has two layers. The device's own: the engine sets the value at the
   control rate and each device ramps it as it ramps a knob (5 ms on the channel strip's gains), the
   same path as a MIDI-mapped move, and a lane is applied per 64-frame batch like any automation
@@ -3660,7 +3666,10 @@ as before (`crates/render/tests/macros.rs`).
   CLEAR) and the params each drives (MIN and MAX moved by a fiftieth of the param's range or one
   step on a click, or continuously by a drag sideways, one merged undo step; CURVE and SM for the
   shape and the smoothing; INV, remove, a click on the target selects it in the rack); a bank is
-  chosen by its chip and NEW BANK makes one. A rack knob dragged with `Role::AssignMacro` held
+  chosen by its chip and NEW BANK makes one. A middle click on MIN or MAX, or Enter with the pointer
+  on it, types the value in place (`EntryUnit` reads Hz, kHz, ms, s and percent; the value is held to
+  the param's range and rounded for a stepped param; Enter is one `SetRange`). A rack knob dragged with
+  `Role::AssignMacro` held
   (`Alt+Shift`; `crates/ui/src/rack/macro_drag.rs`) onto a macro knob of a bank panel ends in
   `MacrosAction::Assign`, which `AppCore::assign_to_bank_macro` applies.
 - **File.** Project format 29 saves
@@ -3672,14 +3681,28 @@ as before (`crates/render/tests/macros.rs`).
   not check the references. Plugin param rows a macro drives are written with the layout like those
   a lane uses. An assignment may also carry `"curve"` (`"exp"` or `"log"`, written only when not linear)
   and `"smooth_ms"` (a live glide time up to 5000 ms, written only when set); both are ignorable fields
-  under format 43, so no version bump was needed.
+  under format 43, so no version bump was needed. The `"device"` of an assignment may be a path key
+  (`"layer/synth"`); a loader that does not find the device keeps the assignment dormant.
+- **A lane on a driven param (see "A lane on a driven param").** `crates/model/src/macro_lane.rs`: a driven param with
+a lane of its
+  own plays `clamp(lane(t) + (max - min) x share(macro(t)))`: the lane is the base and the macro adds
+  its range (the macro at 0 leaves the lane as drawn; an inverted one adds nothing at 1). The macro is
+  the bank's stored value or its own lane. `RackDoc::driven_lane_points` joins the two flattened lanes
+  at the points of either (`compose`; the sum of two straight or held segments is straight, so that is
+  exact; a bent segment is cut into `BEND_PARTS` straight pieces; a jump stays a jump, the segment
+  before it ending one tick early), and `song_input_with_warps` plays the result in the target's own
+  track while `expand_bank_lane` leaves out a target with such a lane, so a bounce and the live song
+  agree (`crates/render/tests/macros.rs`, `app_core_macros_tests.rs`). Following the selection shows
+  the param's own lane once it has one. The knob shows the macro's value, not the sum, while the song
+  plays.
 - **Automation follows the selection.** The workflow preference `follow_selection` (View menu, the
   Workflow tab; `workflow.json`, an app setting, off by default) makes every
   `UiAction::ParamTouched` (a press on a rack control, a console control or a row of the parameter
   pane, locked or not) show the touched param's lane: `AppCore::param_touched` records it as the
   device's last touched param and, with the switch on, `follow_param` resolves the lane host (the
   param's own lane when its device has a track, **the macro's lane on the bank's track** when a
-  macro drives it, nothing for an audio track, a device inside a container or an internal param; an
+  macro drives it unless the param has a lane of its own, nothing for an audio track, a device inside a
+  container or an internal param; an
   effect or a channel strip gets an automation track, see 2.6b), adds the lane when it is missing
   (`AddAutomationLane`, one undo step; an **empty lane is a view, no automation data exists until
   something is written**; never while an automation take records), opens the folders that hide the
