@@ -440,7 +440,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             BrowseAction::ListChildren(path) => self.submit(BrowseJob::Children(path)),
             BrowseAction::Preview(path) => {
-                // Audio files and note clips are previewed: not a device row, not a patch.
+                // Audio files, note clips, patches and containers are previewed: not a device row.
                 let kind = classify(&path, false);
                 let audio = device_type_of(&path).is_none()
                     && !kind.is_some_and(atomik_library::FileKind::is_item);
@@ -448,6 +448,14 @@ impl<S: EngineSink> AppCore<S> {
                     self.start_preview(path);
                 } else if kind == Some(atomik_library::FileKind::Clip) {
                     self.preview_library_clip(&path);
+                } else if matches!(
+                    kind,
+                    Some(atomik_library::FileKind::Patch | atomik_library::FileKind::Container)
+                ) {
+                    self.preview_library_patch(
+                        &path,
+                        kind == Some(atomik_library::FileKind::Container),
+                    );
                 }
             }
             BrowseAction::StopPreview => self.stop_preview(),
@@ -1114,6 +1122,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts a preview: the stream reaches the engine now, the decoder thread fills it.
     fn start_preview(&mut self, path: PathBuf) {
         self.stop_clip_preview();
+        self.forget_patch_preview();
         let (feed, stream) = preview_channel();
         let monitor = stream.monitor();
         // Gain is fixed at 0 dB.
@@ -1150,6 +1159,7 @@ impl<S: EngineSink> AppCore<S> {
 
     pub(super) fn stop_preview(&mut self) {
         self.stop_clip_preview();
+        self.forget_patch_preview();
         if self.browser.preview.take().is_some() || self.sink.preview_active() {
             let _ = self.sink.preview_stop();
         }
