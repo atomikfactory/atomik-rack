@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mixer group follow-ups: a group bus, and automation of a group's mute and solo.** Mixer > **Route Group to New
+  Bus** (and a **Route Group to Bus** list with a row per group, or Route to New Bus on the group's plate menu)
+  plays the members of a VCA group into a bus named after the group, in one undo step; a strip that joins the group
+  goes to the bus, one that leaves it or is removed goes back to the master, in the same step. **Stop Routing Group**
+  sends the members back to the master. The group keeps its own level, mute and solo. A group can also have a
+  **mute lane** and a **solo lane** next to its level lane on the master's track (the group plate menu shows each
+  one separately): recorded from the group's M and S buttons, played on every member, held when the lane is muted,
+  and shown on the plate while the song plays. A solo lane switches the solo of the group's own members; the other
+  strips are silenced from the stored solo state, as for a strip's own solo lane. Saved as two optional fields of a
+  group that older builds ignore; the project format is unchanged (44). New commands `mixer.route_vca` and
+  `mixer.unroute_vca` (the group id is the argument). Groups of groups are still to come.
 - **Track organisation follow-ups: a folder routed to an output bus, and a level bar on the folder header.** Mixer >
   **Route Folder to New Bus** (and the folder row's context menu, or a **Route Folder to Bus** submenu that lists
   the buses of the song) makes the channels of a folder's tracks play into a bus named after the folder, in one

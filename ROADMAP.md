@@ -53,9 +53,11 @@ and recording and note lane follow-ups (the part of a looped clip that no repeti
 inspector's fade unit remembered between sessions, and a take written to every note lane armed with Record to Lane),
 freeze and export follow-ups (a container instrument or a container effect frozen with everything inside it, a
 Freeze with Strip option that bakes the channel strip into the render, and Export Selection as Audio File and a
-SELECTION range for stems that take the time range selected on the lanes), and mixer group automation (the level of
-a VCA group as an automation lane on the master's track, recorded from the group's fader and played on its members,
-and a chip with the group's name on the headers of the devices of the rack),
+SELECTION range for stems that take the time range selected on the lanes), and mixer group automation (the level, the
+mute and the solo of a VCA group as automation lanes on the master's track, recorded from the group's controls and
+played on its members, a group bus, Route Group to New Bus, that plays the members of a group into a bus and keeps
+strips that join or leave it on the right output, and a chip with the group's name on the headers of the devices of
+the rack),
 and CV utility follow-ups (a custom scale of twelve note switches and a hysteresis on the CV Quantizer, and a track
 mode on Sample and Hold that follows its input while the clock is on and holds it while it is off).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
@@ -88,7 +90,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 4: Mixing and control
 
-- **Mixer groups follow-ups.** Groups of groups, a VCA that routes its members to a bus (a group bus), and automation of a group's mute and solo (only its level has a lane).
+- **Mixer groups follow-ups.** Groups of groups (a group is a flat list of strips, so a group cannot hold another one yet), and a group solo lane that silences the other strips: the lane switches the solo of the group's own members, while the strips outside the group are silenced from the stored solo state only, as for a strip's own solo lane.
 - **Console editing follow-ups.** Copying the master's settings (the master cannot be selected as a strip yet), a remote-control base for the strip surface, auto make-up and an E band mode on the strip, key-input auto-on for channels and buses, a level CV on the master, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), a pre-insert tap that stays aligned when the inserts add latency (today it is aligned only without insert latency), a bypassed container that keeps the latency of its inside, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Snapshots that capture the output routing and the insert chains' members, and snapshot recall as an automation lane (a recall at a marker is done, but a lane would also move with the arrangement and could be drawn).

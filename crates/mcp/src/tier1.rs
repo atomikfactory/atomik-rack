@@ -447,7 +447,7 @@ fn snapshot_summary(doc: &RackDoc) -> Vec<Value> {
         .collect()
 }
 
-/// The VCA groups: id (what `mixer.add_to_vca` and `mixer.delete_vca` take as their argument),
+/// The VCA groups: id (what the `mixer.*_vca` commands take as their argument),
 /// name, colour, offset in dB, mute, solo and the members with the level each plays at (its own
 /// fader plus the offset; `null` for -inf).
 fn vca_summary(doc: &RackDoc) -> Vec<Value> {
