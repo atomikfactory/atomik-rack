@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Project versions.** Every save keeps the project file it replaces as an automatic version in a versions folder
+  next to the project (`Versions/` inside its bundle folder, else `<name> Versions/` beside the file), and the
+  oldest automatic versions beyond a number are pruned (Settings > Interface > "Versions kept": 5 to 200, default
+  20, `keep_versions` in `workflow.json`). A version is the plain text of a project file under a `.atomikver` name
+  plus a small index, `versions.txt`, so the project format is unchanged (44). File > Save Version... keeps the song
+  as it is, unsaved changes included, under a name; named versions and any version marked protected are never
+  pruned. File > Versions... lists them newest first (date in UTC, name, NAMED or PROTECTED), with Protect and
+  Restore. Restore asks about unsaved changes, keeps the current state as an automatic version first, then opens the
+  chosen version as the song, unsaved, so Save writes it over the project and restoring the version kept first
+  undoes the restore. A save that changes nothing keeps nothing, and a version identical to the newest one is not
+  kept twice. Audio a kept version uses is no longer deleted as unused, so a restored version still plays. Pruning
+  deletes only the files the index lists as automatic and unprotected inside the versions folder; any other file
+  there, named versions, protected versions and everything outside the folder stay. Move Project carries the
+  versions along (copied, compared byte for byte, then removed from the old place); Save As starts a history of its
+  own; project archives and Collect Files leave the versions out. The command count is 469.
 - **Library browser tidy-up.** Audio rows of the file browser draw a small waveform at the end of the name column
   (48 bars of the first thirty seconds of the file, on a square-root scale so quiet files show). A worker reads it
   for the visible rows only, newest request first, from the loudness picture the info pane already uses; the answer
