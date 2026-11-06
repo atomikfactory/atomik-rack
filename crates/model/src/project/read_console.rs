@@ -1,6 +1,8 @@
 //! Reading the console: channels, buses, VCA groups and mixer snapshots.
 
 use super::*;
+use crate::console::{INSERT_SLOTS, OutputDest};
+use crate::console_snapshot_wiring::SnapshotWiring;
 
 /// Reads the console's VCA groups (version 26): ids from 1 and unique, a trimmed name of at
 /// most 32 characters unique ignoring case, an optional colour, a `level_db` within the VCA
@@ -240,6 +242,9 @@ pub(super) fn load_snapshots(
             }
         }
         state.effects = flag(s, &p, "effects")?;
+        if let Some(w) = s.get("wiring") {
+            state.wiring = Some(read_wiring(w, &p.field("wiring"))?);
+        }
         let note = match s.get("note") {
             Some(n) => {
                 let np = p.field("note");
@@ -278,6 +283,61 @@ pub(super) fn load_snapshots(
         });
     }
     Ok(())
+}
+
+/// Reads the wiring of a snapshot (version 44): an object from strip key to `{"output", "inserts"}`
+/// where the output is `master`, `bus:<key>` or `io:<pair>` and the inserts are at most
+/// [`INSERT_SLOTS`] device keys. The keys are not checked against the rack (see
+/// [`load_snapshots`]).
+fn read_wiring(
+    v: &Value,
+    path: &JsonPath,
+) -> Result<BTreeMap<DeviceKey, SnapshotWiring>, ModelError> {
+    let map = v
+        .as_object()
+        .ok_or_else(|| path.error("expected an object from strip key to its wiring"))?;
+    let mut out = BTreeMap::new();
+    for (key, entry) in map {
+        let ep = path.field(key);
+        let entry = entry
+            .as_object()
+            .ok_or_else(|| ep.error("expected an object with an output and inserts"))?;
+        let output = match entry.get("output") {
+            None => None,
+            Some(o) => {
+                let op = ep.field("output");
+                let text = string(o, &op)?;
+                Some(if text == "master" {
+                    OutputDest::Master
+                } else if let Some(bus) = text.strip_prefix("bus:") {
+                    OutputDest::Bus(DeviceKey(bus.to_owned()))
+                } else if let Some(pair) = text.strip_prefix("io:") {
+                    match pair.parse::<u16>() {
+                        Ok(n) if n > 0 => OutputDest::AudioIo(n),
+                        _ => return Err(op.error(format!("{text:?} is not an Audio I/O pair"))),
+                    }
+                } else {
+                    return Err(op.error(format!("{text:?} is not master, bus:<key> or io:<pair>")));
+                })
+            }
+        };
+        let ip = ep.field("inserts");
+        let items = array(
+            entry
+                .get("inserts")
+                .ok_or_else(|| ep.error("missing \"inserts\""))?,
+            &ip,
+        )?;
+        if items.len() > INSERT_SLOTS {
+            return Err(ip.error(format!("at most {INSERT_SLOTS} inserts")));
+        }
+        let mut inserts = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            inserts.push(DeviceKey(string(item, &ip.index(i))?.to_owned()));
+        }
+        out.insert(DeviceKey(key.clone()), SnapshotWiring { output, inserts });
+    }
+    Ok(out)
 }
 
 /// Reads and validates the console section against the loaded rack (the invariants

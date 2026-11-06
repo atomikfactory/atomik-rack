@@ -25,6 +25,8 @@ mod console_insert;
 mod console_mix;
 mod console_settings;
 mod console_snapshot;
+mod console_snapshot_lane;
+mod console_snapshot_wiring;
 mod console_vca;
 mod container;
 mod container_cmd;
@@ -216,6 +218,8 @@ pub use console_snapshot::{
     CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOT_NOTE_CHARS, MAX_SNAPSHOTS, MixerSnapshot,
     MixerState, SnapshotScope, SnapshotVca,
 };
+pub use console_snapshot_lane::{SNAPSHOT_LANE_KEY, SNAPSHOT_LANE_PARAM, lane_snapshot};
+pub use console_snapshot_wiring::SnapshotWiring;
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 pub use history::InvariantError;

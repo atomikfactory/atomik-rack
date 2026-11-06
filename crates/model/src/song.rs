@@ -2087,6 +2087,9 @@ impl Track {
                 (LaneKind::Automation(p), None) if p == crate::steps::PATTERN_PARAM => {
                     "Pattern".into()
                 }
+                (LaneKind::Automation(p), None) if p == crate::SNAPSHOT_LANE_KEY => {
+                    "Snapshots".into()
+                }
                 (LaneKind::Automation(p), None) => match crate::console_vca::vca_lane_parts(p) {
                     Some((id, kind)) => format!("Group {id} {}", kind.word()),
                     None => p.clone(),

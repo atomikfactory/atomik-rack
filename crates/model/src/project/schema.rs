@@ -351,6 +351,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Snapshot, "note", 43).ignorable(),
     field(Snapshot, "color", 43).ignorable(),
     field(Snapshot, "marker", 43).ignorable(),
+    field(Snapshot, "wiring", 44).ignorable(),
     field(MacroAssign, "id", 29).req(),
     field(MacroAssign, "bank", 29).req(),
     field(MacroAssign, "macro", 29).req(),

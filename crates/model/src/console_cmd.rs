@@ -127,6 +127,21 @@ impl<'r> Planner<'r> {
         Ok(())
     }
 
+    /// Runs `plan` as a step that either happens whole or not at all: when it fails, the document
+    /// and the edits are as they were before it, and the error comes back.
+    pub(crate) fn attempt(
+        &mut self,
+        plan: impl FnOnce(&mut Self) -> Result<(), ModelError>,
+    ) -> Result<(), ModelError> {
+        let (scratch, planned) = (self.scratch.clone(), self.edits.len());
+        let result = plan(self);
+        if result.is_err() {
+            self.scratch = scratch;
+            self.edits.truncate(planned);
+        }
+        result
+    }
+
     /// Removes every cable matching `pred`.
     pub(crate) fn disconnect_where(&mut self, pred: impl Fn(&Cable) -> bool) {
         let doomed: Vec<Cable> = self

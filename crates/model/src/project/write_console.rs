@@ -1,6 +1,7 @@
 //! Writing the console.
 
 use super::*;
+use crate::console::OutputDest;
 
 pub(super) fn key_or_null(k: Option<&DeviceKey>) -> String {
     k.map_or_else(|| "null".to_owned(), |k| json_str(&k.0))
@@ -163,6 +164,29 @@ pub(super) fn snapshot_json(s: &MixerSnapshot) -> String {
     }
     if let Some(marker) = &s.marker {
         let _ = write!(out, ", \"marker\": {}", json_str(marker));
+    }
+    if let Some(wiring) = &s.state.wiring {
+        let strips: Vec<String> = wiring
+            .iter()
+            .map(|(key, w)| {
+                let mut entry = String::from("{");
+                if let Some(dest) = &w.output {
+                    let text = match dest {
+                        OutputDest::Master => Some("master".to_owned()),
+                        OutputDest::Bus(b) => Some(format!("bus:{}", b.0)),
+                        OutputDest::AudioIo(n) => Some(format!("io:{n}")),
+                        _ => None,
+                    };
+                    if let Some(text) = text {
+                        let _ = write!(entry, "\"output\": {}, ", json_str(&text));
+                    }
+                }
+                let inserts: Vec<String> = w.inserts.iter().map(|k| json_str(&k.0)).collect();
+                let _ = write!(entry, "\"inserts\": [{}]}}", inserts.join(", "));
+                format!("{}: {entry}", json_str(&key.0))
+            })
+            .collect();
+        let _ = write!(out, ", \"wiring\": {{{}}}", strips.join(", "));
     }
     if !s.state.vcas.is_empty() {
         let vcas: Vec<String> = s

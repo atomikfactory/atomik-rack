@@ -246,12 +246,14 @@ pub fn vca_lane_id(key: &str) -> Option<u32> {
 }
 
 /// The descriptor of lane param `key` of a device of type `desc`: its own param, or on the master
-/// the level, mute or solo of a group (see [`VcaLaneKind::descriptor`]). The one lookup every lane
-/// check goes through.
+/// the level, mute or solo of a group (see [`VcaLaneKind::descriptor`]) or the snapshot lane (see
+/// [`crate::console_snapshot_lane`]). The one lookup every lane check goes through.
 pub fn lane_param<'a>(desc: &'a DeviceDescriptor, key: &str) -> Option<&'a ParamDescriptor> {
     desc.param_by_key(key).or_else(|| {
         if desc.type_id == crate::console::MASTER_TYPE {
-            vca_lane_parts(key).map(|(_, kind)| kind.descriptor())
+            vca_lane_parts(key)
+                .map(|(_, kind)| kind.descriptor())
+                .or_else(|| crate::console_snapshot_lane::lane_descriptor(desc.type_id, key))
         } else {
             None
         }

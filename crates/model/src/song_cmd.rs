@@ -1310,6 +1310,9 @@ pub(crate) fn plan(
                 return Err(bad(format!("{device} has no automation lane for {param}")));
             };
             let desc = device_descriptor(doc, registry, &device)?;
+            if param == crate::SNAPSHOT_LANE_KEY && desc.type_id == crate::console::MASTER_TYPE {
+                return Err(bad("the snapshot lane has no static value"));
+            }
             let value = match value {
                 Some(v) if v.is_nan() => return Err(range("the static value is NaN")),
                 // A dead plugin param has no descriptor: its value is kept as it is.
