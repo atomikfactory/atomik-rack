@@ -1402,7 +1402,7 @@ pub(crate) fn plan(
             {
                 return Err(ModelError::UnknownKey(param));
             }
-            if let Some(id) = crate::console_vca::vca_lane_id(&param)
+            if let Some((id, _)) = crate::console_vca::vca_lane_parts(&param)
                 && doc.console.vca(id).is_none()
             {
                 return Err(bad(format!("there is no VCA group {id}")));

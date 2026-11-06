@@ -36,8 +36,12 @@ pub enum ConsoleOp {
     UnrouteFolder(usize),
     /// A strip joins a group or leaves its group.
     AssignVca(usize, Option<usize>),
-    /// A group gets its level lane (on the master's track).
-    VcaLane(usize),
+    /// A group gets a lane (level, mute or solo by `kind % 3`) on the master's track.
+    VcaLane(usize, usize),
+    /// A group plays into a new bus (`None`) or into an existing one.
+    RouteVca(usize, Option<usize>),
+    /// A group stops playing into its bus.
+    UnrouteVca(usize),
     /// A group is deleted (with its level lane).
     DeleteVca(usize),
 }
@@ -65,7 +69,9 @@ pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
         2 => (i(), proptest::option::of(i())).prop_map(|(f, b)| ConsoleOp::RouteFolder(f, b)),
         1 => i().prop_map(ConsoleOp::UnrouteFolder),
         2 => (i(), proptest::option::of(i())).prop_map(|(c, v)| ConsoleOp::AssignVca(c, v)),
-        1 => i().prop_map(ConsoleOp::VcaLane),
+        2 => (i(), 0usize..3).prop_map(|(v, k)| ConsoleOp::VcaLane(v, k)),
+        2 => (i(), proptest::option::of(i())).prop_map(|(v, b)| ConsoleOp::RouteVca(v, b)),
+        1 => i().prop_map(ConsoleOp::UnrouteVca),
         1 => i().prop_map(ConsoleOp::DeleteVca),
     ]
 }
@@ -167,12 +173,35 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
                 strips: vec![chan(*ch)?],
             })
         }
-        ConsoleOp::VcaLane(v) => {
+        ConsoleOp::VcaLane(v, kind) => {
             let vcas = &doc.console.vcas;
             let id = vcas.get(v % vcas.len().max(1))?.id;
             Command::Song(atomik_model::SongCommand::AddAutomationLane {
                 device: doc.console.master.clone()?,
-                param: atomik_model::vca_lane_key(id),
+                param: atomik_model::vca_lane_key_of(id, atomik_model::VcaLaneKind::ALL[kind % 3]),
+            })
+        }
+        ConsoleOp::RouteVca(v, bus) => {
+            let vcas = &doc.console.vcas;
+            let vca = vcas.get(v % vcas.len().max(1))?.id;
+            match bus {
+                None => c(ConsoleCommand::RouteVcaToNewBus {
+                    vca,
+                    name: format!("Group bus {}", doc.console.buses.len() + 1),
+                }),
+                Some(b) => {
+                    let buses = &doc.console.buses;
+                    c(ConsoleCommand::RouteVcaToBus {
+                        vca,
+                        bus: buses.get(b % buses.len().max(1))?.bus.clone(),
+                    })
+                }
+            }
+        }
+        ConsoleOp::UnrouteVca(v) => {
+            let vcas = &doc.console.vcas;
+            c(ConsoleCommand::UnrouteVca {
+                vca: vcas.get(v % vcas.len().max(1))?.id,
             })
         }
         ConsoleOp::DeleteVca(v) => {
@@ -266,6 +295,13 @@ pub fn assert_console_invariants(doc: &RackDoc) {
         assert!(!vca_names.contains(&name), "{:?} used twice", v.name);
         vca_names.push(name);
         assert!((-60.0..=12.0).contains(&v.level_db), "{}", v.level_db);
+        match &v.bus {
+            Some(b) => assert!(console.bus_index(b).is_some(), "group bus {b} is not a bus"),
+            None => assert!(v.routed.is_empty(), "routed strips without a bus"),
+        }
+        for r in &v.routed {
+            assert!(v.members.contains(r), "routed strip {r} is not a member");
+        }
         for m in &v.members {
             assert!(
                 console.channel_index(m).is_some() || console.bus_index(m).is_some(),

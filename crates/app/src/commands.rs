@@ -297,6 +297,13 @@ pub enum AppCommand {
     /// Mixer > Delete VCA: the group `id` (`mixer.delete_vca` with the id as its argument), or
     /// the groups the selected strips are in.
     DeleteVca(Option<u32>),
+    /// Mixer > Route Group to New Bus: the members of the VCA group `id` (`mixer.route_vca` with
+    /// the id as its argument), or of the groups the selected strips are in, play into a new
+    /// output bus; strips that join the group follow.
+    RouteVca(Option<u32>),
+    /// Mixer > Stop Routing Group: the group `id` (`mixer.unroute_vca` with the id as its
+    /// argument), or the groups the selected strips are in, stop playing into their bus.
+    UnrouteVca(Option<u32>),
     /// Mixer > Store Snapshot: the mix as a new snapshot (named `A`, `B`, `1`, ...).
     StoreSnapshot,
     /// Mixer > Update Snapshot: overwrites a snapshot with the mix (`mixer.update_snapshot`, the
@@ -806,7 +813,12 @@ impl AppCommand {
             AppCommand::CreateVca => ("mixer.create_vca", None),
             AppCommand::AddToVca(None) => ("mixer.add_to_vca", None),
             AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
-            AppCommand::AddToVca(Some(_)) | AppCommand::DeleteVca(Some(_)) => return None,
+            AppCommand::RouteVca(None) => ("mixer.route_vca", None),
+            AppCommand::UnrouteVca(None) => ("mixer.unroute_vca", None),
+            AppCommand::AddToVca(Some(_))
+            | AppCommand::DeleteVca(Some(_))
+            | AppCommand::RouteVca(Some(_))
+            | AppCommand::UnrouteVca(Some(_)) => return None,
             AppCommand::RemoveFromVca => ("mixer.remove_from_vca", None),
             AppCommand::StoreSnapshot => ("mixer.store_snapshot", None),
             AppCommand::UpdateSnapshot(None) => ("mixer.update_snapshot", None),
@@ -1168,6 +1180,14 @@ impl AppCommand {
             ("mixer.delete_vca", None) => AppCommand::DeleteVca(None),
             ("mixer.delete_vca", Some(id)) => {
                 return id.parse().ok().map(|id| AppCommand::DeleteVca(Some(id)));
+            }
+            ("mixer.route_vca", None) => AppCommand::RouteVca(None),
+            ("mixer.route_vca", Some(id)) => {
+                return id.parse().ok().map(|id| AppCommand::RouteVca(Some(id)));
+            }
+            ("mixer.unroute_vca", None) => AppCommand::UnrouteVca(None),
+            ("mixer.unroute_vca", Some(id)) => {
+                return id.parse().ok().map(|id| AppCommand::UnrouteVca(Some(id)));
             }
             ("mixer.toggle_compensation", None) => AppCommand::ToggleCompensation,
             ("mixer.toggle_return_alignment", None) => AppCommand::ToggleReturnAlignment,
@@ -1863,6 +1883,11 @@ pub struct VcaMenu {
     pub can_remove: bool,
     /// A group exists: Delete VCA works (on the selected strips' groups, or the last one).
     pub can_delete: bool,
+    /// A group with members exists (on the selected strips, or the last one): Route Group to New
+    /// Bus works.
+    pub can_route: bool,
+    /// A group plays into a bus (one of the selected strips', or any): Stop Routing Group works.
+    pub can_unroute: bool,
     /// A track folder is selected and no group follows it yet: Create VCA from Folder works.
     pub can_folder: bool,
     /// A track folder with a channel is selected: Route Folder to Bus works.
@@ -2577,6 +2602,16 @@ pub fn menus_with_songs(
                     "Delete VCA",
                     AppCommand::DeleteVca(None),
                     state.vca.can_delete,
+                ),
+                enabled(
+                    "Route Group to New Bus",
+                    AppCommand::RouteVca(None),
+                    state.vca.can_route,
+                ),
+                enabled(
+                    "Stop Routing Group",
+                    AppCommand::UnrouteVca(None),
+                    state.vca.can_unroute,
                 ),
                 check("Link Faders", AppCommand::LinkFaders, state.link_faders),
                 MenuEntry::Separator,
@@ -3362,6 +3397,14 @@ fn name_vca_items(menus: &mut [Menu], state: &MenuState, vcas: &[(u32, String)])
             label: "Delete Group",
             entries: rows(|id| AppCommand::DeleteVca(Some(id)), true),
         }),
+        MenuEntry::Submenu(Submenu {
+            label: "Route Group to Bus",
+            entries: rows(|id| AppCommand::RouteVca(Some(id)), state.vca.can_route),
+        }),
+        MenuEntry::Submenu(Submenu {
+            label: "Stop Routing Group",
+            entries: rows(|id| AppCommand::UnrouteVca(Some(id)), state.vca.can_unroute),
+        }),
     ];
     if let Some(menu) = menus.iter_mut().find(|m| m.title == "Mixer")
         && let Some(at) = menu.entries.iter().position(
@@ -3583,6 +3626,8 @@ mod tests {
             AppCommand::CreateVcaForFolder,
             AppCommand::RouteFolder(None),
             AppCommand::UnrouteFolder,
+            AppCommand::RouteVca(None),
+            AppCommand::UnrouteVca(None),
             AppCommand::MidiLearn,
             AppCommand::MidiMappings,
             AppCommand::LockSurfaces,
@@ -4293,6 +4338,8 @@ mod tests {
                 "Add to VCA",
                 "Remove from VCA",
                 "Delete VCA",
+                "Route Group to New Bus",
+                "Stop Routing Group",
                 "Link Faders",
                 "Toggle Polarity",
                 "Bypass All Inserts",

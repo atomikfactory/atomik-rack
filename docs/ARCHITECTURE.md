@@ -3114,8 +3114,18 @@ tracks, and a group can also **follow** a folder (below).
   the song again when the members of a group with a lane change (`RackDoc::vca_lanes`). A group fader move is
   offered to the automation take as a move of the `vca.<id>` param (`AppCore::apply_command`), the engine hold of a
   written lane is the members' `internal.vca_db`, `hold_on_mute` batches `SetVcaLevel` and the console fader shows
-  the lane's value through `view_with_shown`. The console's group menu has Show Automation Lane and Remove
-  Automation Lane, the fader carries the automation mark, and the arrangement labels the lane "Group N level".
+  the lane's value through `view_with_shown`. The console's group menu has a Show and a Remove row for each lane,
+  the fader carries the automation mark, and the arrangement labels the lane "Group N level".
+- **Mute and solo lanes.** A group's mute and solo are lanes of the same track, `vca.<id>.mute` and `vca.<id>.solo`
+  (`VcaLaneKind` names the three kinds, `vca_lane_parts` splits a key, `vca_lane_key_of` builds one; `vca_lane_id`
+  still means the level lane only). Their values are 0 or 1 (a value from 0.5 up is on, and the points are clamped
+  to 0..1). They expand into the `internal.vca_mute` and `internal.vca_solo` lane of every member
+  (`RackDoc::vca_kind_targets`), `DeleteVca` removes every lane of the group in its step, and the loader and
+  `RackDoc::validate` refuse a lane of a missing group. A move of the group's M or S button is offered to the
+  automation take as a move of the lane's param, a muted lane holds the flag it gave (`SetVcaMute` and `SetVcaSolo`
+  can be batched like `SetVcaLevel`), and `view_with_shown` shows the lane's flag. The other strips' solo silence
+  (`internal.solo_silence`) is derived from the stored flags only, so a solo lane never silences a strip outside the
+  group: the same limit as the solo lane of a single channel.
 - **Rack chip.** A device of the rack that is in a group wears its name on its plate, in the group's colour
   (`group_chip::chips_of` in the rack view): a channel or a bus that is a member and the instrument of an automatic
   channel. It sits above the output display of an unfolded plate and after the CPU readout of a folded one.
@@ -3130,6 +3140,30 @@ tracks, and a group can also **follow** a folder (below).
   groups, Add to Group and Delete Group submenus follow Delete VCA with a row that names each group
   (`AddToVca(Some(id))`, `DeleteVca(Some(id))`). The track header and folder row context menus
   have Create VCA (and the folder row Create VCA that Follows).
+
+### Groups routed to a bus
+
+[crates/model/src/console_group_bus.rs](../crates/model/src/console_group_bus.rs). A VCA group can play its members
+into an output bus, the way a folder can (see the next section): `RouteVcaToBus { vca, bus }` and
+`RouteVcaToNewBus { vca, name }` set the output of the member strips (channels and buses) to the bus with the
+ordinary `SetOutput` cables, and `UnrouteVca { vca }` sends the members that still play into it back to the master
+(the bus stays). The group itself keeps no audio: it stays a master fader, mute and solo over the members. The route
+lives on the group (`VcaGroup::bus`, and `VcaGroup::routed`, the members the route has put on the bus), so a
+project without a group bus is exactly what it was.
+
+- **Following.** `console_group_bus::sync` runs after every command, in the same undo step (it joins the command's
+  `Edit::Compound`, after the VCA follow): a strip that joins the group gets its output on the bus (a strip that
+  would make a loop, or the bus itself, stays where it is), one that leaves or is removed goes back to the master if
+  it still plays into the bus, and a route whose bus is deleted is forgotten with the cables left alone. A strip
+  the route owns is never moved again, so an output chosen by hand for one member stays.
+- **Saved.** Optional `bus` and `routed` fields of a group (`console.vcas[]`), written only when the group is
+  routed, at project format 44 and `.ignorable()`. The loader refuses a bus that is not a console bus and a routed
+  strip that is not a member; `RackDoc::validate` checks the same.
+- **Commands.** `mixer.route_vca` (Route Group to New Bus) and `mixer.unroute_vca` (Stop Routing Group) are in the
+  Mixer menu without a default key, with the id of a group as their argument (otherwise the groups of the selected
+  strips); Route Group to Bus and Stop Routing Group submenus with a row per group follow Delete Group
+  (`RouteVca(Some(id))`, `UnrouteVca(Some(id))`). The group plate menu has Route to New Bus and Stop Routing to
+  Bus.
 
 ### Folders routed to a bus
 
@@ -4571,7 +4605,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (461) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (463) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

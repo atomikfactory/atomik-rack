@@ -211,6 +211,8 @@ fn a_mapped_vca_strip_is_marked() {
         solo: false,
         members: vec![key("ch-bass")],
         follows: None,
+        bus: None,
+        routed: Vec::new(),
     }];
     let mut v = console_view(&doc, &reg);
     v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1600.0, 760.0));

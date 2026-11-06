@@ -1077,3 +1077,46 @@ fn a_project_without_audio_tracks_reads_no_console_meter_for_the_headers() {
         "nothing to show: nothing read"
     );
 }
+
+#[test]
+fn route_vca_plays_the_group_into_a_new_bus_and_stop_routing_ends_it() {
+    use atomik_model::{OutputDest, output_dest};
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    // Nothing to route yet.
+    assert!(!c.route_vca(Pane::Rack, None));
+    assert!(c.last_rejection().unwrap().contains("Select a channel"));
+    assert!(!c.vca_menu(Pane::Rack).can_route);
+    create_vca(&mut c, &[&ka]);
+    assert!(c.vca_menu(Pane::Rack).can_route);
+    assert!(!c.vca_menu(Pane::Rack).can_unroute);
+    assert!(!c.unroute_vca(Pane::Rack, Some(1)), "not routed yet");
+    // A named group goes to a bus named after it, in one undo step.
+    assert!(c.route_vca(Pane::Rack, Some(1)));
+    let group = c.doc().console.vca(1).unwrap().clone();
+    let bus = group.bus.clone().unwrap();
+    assert_eq!(c.doc().console.bus_by_name(&group.name).unwrap().bus, bus);
+    assert_eq!(
+        output_dest(c.doc(), &ka),
+        OutputDest::Bus(bus.clone()),
+        "the member plays into the bus"
+    );
+    assert_eq!(output_dest(c.doc(), &kb), OutputDest::Master);
+    assert!(c.vca_menu(Pane::Rack).can_unroute);
+    // A strip that joins the group follows it.
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    assert!(c.add_selection_to_vca(Pane::Rack, Some(1)));
+    assert_eq!(output_dest(c.doc(), &kb), OutputDest::Bus(bus.clone()));
+    // The selection names the group when none is given.
+    assert!(c.unroute_vca(Pane::Rack, None));
+    assert!(c.doc().console.vca(1).unwrap().bus.is_none());
+    assert_eq!(output_dest(c.doc(), &ka), OutputDest::Master);
+    assert_eq!(output_dest(c.doc(), &kb), OutputDest::Master);
+    // One undo step brings the route back, another takes the group's bus away.
+    assert!(c.undo());
+    assert_eq!(output_dest(c.doc(), &ka), OutputDest::Bus(bus));
+    // Routing again when the bus name is taken uses the next free name.
+    assert!(c.unroute_vca(Pane::Rack, Some(1)));
+    assert!(c.route_vca(Pane::Rack, Some(1)));
+    assert_eq!(c.doc().console.buses.len(), 2);
+}

@@ -60,6 +60,13 @@ pub(super) fn write_console(w: &mut String, console: &Console) {
                 if let Some(folder) = v.follows {
                     let _ = write!(out, ", \"follows\": {folder}");
                 }
+                if let Some(bus) = &v.bus {
+                    let _ = write!(out, ", \"bus\": {}", json_str(&bus.0));
+                    if !v.routed.is_empty() {
+                        let routed: Vec<String> = v.routed.iter().map(|m| json_str(&m.0)).collect();
+                        let _ = write!(out, ", \"routed\": [{}]", routed.join(", "));
+                    }
+                }
                 out.push('}');
                 out
             }),

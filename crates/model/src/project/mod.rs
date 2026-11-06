@@ -14,7 +14,8 @@
 //!   "console": { "channels": [{ "channel": key, "source": key | null }…],
 //!                "buses"?: [{ "bus": key, "name": string }…]     (v12; written only when non-empty),
 //!                "vcas"?: [{ "id", "name", "color"? ("#rrggbb"), "level_db"?, "mute"?, "solo"?,
-//!                            "members": [key…] }…]            (v26; written only when non-empty),
+//!                            "members": [key…], "follows"? (v43), "bus"?: key, "routed"?: [key…]
+//!                            (v44, ignorable) }…]             (v26; written only when non-empty),
 //!                "snapshots"?: [{ "id", "name", "devices": {"<key>": {"<param>": value…}…},
 //!                                 "vcas"?: [{ "id", "name", "level_db"?, "mute"?, "solo"?,
 //!                                            "members": [key…] }…] }…]
@@ -424,7 +425,10 @@
 //! written only when a folder plays into a bus; `"bus"` is a console bus and `"members"` lists the
 //! console channels the route put there. The cables carry the routing, so a reader that drops the field
 //! plays the same mix and only forgets which folder feeds the bus: it is ignorable. A route whose folder
-//! the song lacks is dropped on load. Saving always writes version 44.
+//! the song lacks is dropped on load. A VCA group may carry `"bus"` and `"routed"` the same way (see
+//! [`crate::console_group_bus`]): the console bus its members play into and the members the route put
+//! there; the cables carry the routing, so both are ignorable, and `"routed"` needs a `"bus"` and lists
+//! members only. Saving always writes version 44.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -746,19 +750,19 @@ fn drop_stale_follows(doc: &mut RackDoc) {
         .retain(|r| !song.group_tracks(r.folder).is_empty());
 }
 
-/// A level lane of a VCA group (`vca.<id>`) needs the group and the master's track.
+/// A lane of a VCA group (`vca.<id>`, `.mute`, `.solo`) needs the group and the master's track.
 fn check_vca_lanes(doc: &RackDoc, path: &JsonPath) -> Result<(), ModelError> {
     for (t, track) in doc.song.tracks.iter().enumerate() {
         for lane in &track.lanes {
             let LaneKind::Automation(key) = &lane.kind else {
                 continue;
             };
-            let Some(id) = crate::console_vca::vca_lane_id(key) else {
+            let Some((id, _)) = crate::console_vca::vca_lane_parts(key) else {
                 continue;
             };
             if doc.console.vca(id).is_none() || doc.console.master.as_ref() != Some(&track.device) {
                 return Err(path.index(t).error(format!(
-                    "the level lane {key:?} needs VCA group {id} and the master"
+                    "the group lane {key:?} needs VCA group {id} and the master"
                 )));
             }
         }

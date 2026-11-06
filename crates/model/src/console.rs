@@ -37,8 +37,9 @@ pub use crate::console_snapshot::{
     MixerState, SnapshotScope, SnapshotVca,
 };
 pub use crate::console_vca::{
-    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_LANE_PARAM, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
-    lane_param, vca_lane_id, vca_lane_key,
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_LANE_PARAM, VCA_MUTE_LANE_PARAM, VCA_PALETTE,
+    VCA_SOLO_LANE_PARAM, VcaFeed, VcaGroup, VcaLaneKind, clamp_vca_db, lane_param, vca_lane_id,
+    vca_lane_key, vca_lane_key_of, vca_lane_parts,
 };
 use crate::{Cable, DeviceKey, INTERFACE_KEY, RackDoc, SocketRef};
 
@@ -689,6 +690,32 @@ pub enum ConsoleCommand {
     UnrouteFolder {
         /// The track folder.
         folder: u32,
+    },
+    /// Play the members of the VCA group `vca` into the existing bus `bus`: each member strip
+    /// gets its output on the bus, and a strip that joins the group later follows (see
+    /// [`crate::console_group_bus`]). A group routed elsewhere moves to `bus`. Rejected: an
+    /// unknown group, a key that is no bus, a group with no member that can play into the bus
+    /// (none, or each would make a loop), and no change.
+    RouteVcaToBus {
+        /// The group id.
+        vca: u32,
+        /// The bus device key.
+        bus: DeviceKey,
+    },
+    /// Create a bus called `name` (output on the master) and play the members of the group `vca`
+    /// into it, in one undo step. The name rules are those of `CreateBus`; the group needs a
+    /// member.
+    RouteVcaToNewBus {
+        /// The group id.
+        vca: u32,
+        /// The bus name.
+        name: String,
+    },
+    /// Stop playing the group `vca` into its bus: the members that still play into it go back to
+    /// the master (the bus stays). Rejected for a group that is not routed.
+    UnrouteVca {
+        /// The group id.
+        vca: u32,
     },
     /// Rename a VCA group (the same rules as `CreateVca`).
     RenameVca {

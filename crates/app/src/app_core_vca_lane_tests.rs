@@ -6,7 +6,9 @@ use super::*;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_engine::TransportState;
 use atomik_model::console::{CHANNEL_TYPE, VCA_DB_PARAM};
-use atomik_model::{ClipContent, Command, ConsoleCommand, DeviceKey, SongCommand, vca_lane_key};
+use atomik_model::{
+    ClipContent, Command, ConsoleCommand, DeviceKey, SongCommand, VcaLaneKind, vca_lane_key,
+};
 use atomik_ui::{TransportAction, UiAction};
 
 const SYNTH: &str = "atomik.poly-synth";
@@ -250,4 +252,180 @@ fn the_level_lane_can_be_shown_removed_and_given_a_static_value() {
     );
     assert!(c.clear_automation_of(&master, &lane_key()));
     assert!(c.doc().song.track(&master).is_none());
+}
+
+fn kind_key(kind: VcaLaneKind) -> String {
+    atomik_model::vca_lane_key_of(1, kind)
+}
+
+/// The core of `core()` with a lane of `kind` too (the lane index is that of the level lane + 1).
+fn core_with(kind: VcaLaneKind) -> (AppCore<RecordingSink>, DeviceKey, Vec<DeviceKey>) {
+    let (mut c, master, channels) = core();
+    c.apply_command(Command::Song(SongCommand::AddAutomationLane {
+        device: master.clone(),
+        param: kind_key(kind),
+    }))
+    .unwrap();
+    c.sink_mut().take();
+    (c, master, channels)
+}
+
+fn flag_clip(points: &[(i64, f32)]) -> atomik_model::Clip {
+    atomik_model::Clip {
+        id: atomik_model::ClipId(0),
+        start: 0,
+        length: 15360,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        scale: None,
+        param_lanes: Vec::new(),
+        midi: Default::default(),
+        groove: None,
+        controllers: Vec::new(),
+        name: None,
+        color: None,
+        grid: None,
+        content: ClipContent::Automation(
+            points
+                .iter()
+                .map(|(tick, value)| atomik_model::AutomationPoint {
+                    tick: *tick,
+                    value: *value,
+                    curve: atomik_model::Curve::Step,
+                })
+                .collect(),
+        ),
+    }
+}
+
+#[test]
+fn a_mute_toggle_is_recorded_into_the_armed_mute_lane() {
+    let (mut c, master, _) = core_with(VcaLaneKind::Mute);
+    let lane = kind_key(VcaLaneKind::Mute);
+    c.handle_action(UiAction::ToggleLaneArm {
+        device: master.clone(),
+        param: lane.clone(),
+    });
+    assert!(c.automation_armed(&master, &lane));
+    c.handle_action(UiAction::Transport(TransportAction::ToggleRecord));
+    assert!(c.is_recording(), "{:?}", c.last_rejection());
+    c.sink_mut().take();
+    at(&mut c, 1000);
+    c.apply_command(Command::Console(ConsoleCommand::SetVcaMute {
+        vca: 1,
+        on: true,
+    }))
+    .unwrap();
+    at(&mut c, 3000);
+    c.apply_command(Command::Console(ConsoleCommand::SetVcaMute {
+        vca: 1,
+        on: false,
+    }))
+    .unwrap();
+    at(&mut c, 6000);
+    c.handle_action(UiAction::Transport(TransportAction::ToggleRecord));
+    assert!(!c.is_recording());
+    let track = c.doc().song.track(&master).unwrap();
+    let lane_index = track.automation_lane(&lane).unwrap();
+    // Each toggle is a pass of its own: the clips together hold the on and the off.
+    let mut values: Vec<f32> = Vec::new();
+    for clip in &track.lanes[lane_index].clips {
+        let ClipContent::Automation(points) = &clip.content else {
+            panic!("automation");
+        };
+        values.extend(points.iter().map(|p| p.value));
+    }
+    assert!(values.contains(&1.0) && values.contains(&0.0), "{values:?}");
+}
+
+#[test]
+fn a_mute_and_a_solo_lane_play_on_the_members_and_follow_them() {
+    for (kind, param) in [
+        (VcaLaneKind::Mute, atomik_model::console::VCA_MUTE_PARAM),
+        (VcaLaneKind::Solo, atomik_model::console::VCA_SOLO_PARAM),
+    ] {
+        let (mut c, master, channels) = core_with(kind);
+        let lane = c
+            .doc()
+            .song
+            .track(&master)
+            .unwrap()
+            .automation_lane(&kind_key(kind))
+            .unwrap();
+        c.apply_command(Command::Song(SongCommand::AddClip {
+            device: master.clone(),
+            lane,
+            clip: flag_clip(&[(0, 0.0), (7680, 1.0)]),
+        }))
+        .unwrap();
+        let id = c
+            .registry()
+            .get(CHANNEL_TYPE)
+            .unwrap()
+            .descriptor
+            .param_by_key(param)
+            .unwrap()
+            .id;
+        let lanes_of = |calls: &[SinkCall]| -> Option<usize> {
+            calls.iter().rev().find_map(|call| match call {
+                SinkCall::Song(input) => Some(
+                    input
+                        .tracks
+                        .iter()
+                        .filter(|t| t.automation.iter().any(|l| l.param == id))
+                        .count(),
+                ),
+                _ => None,
+            })
+        };
+        let calls = c.sink_mut().take();
+        assert_eq!(
+            lanes_of(&calls),
+            Some(2),
+            "{kind:?}: one engine lane per member"
+        );
+        c.apply_command(Command::Console(ConsoleCommand::AssignToVca {
+            vca: None,
+            strips: vec![channels[1].clone()],
+        }))
+        .unwrap();
+        assert_eq!(lanes_of(&c.sink_mut().take()), Some(1), "{kind:?}");
+    }
+}
+
+#[test]
+fn muting_a_mute_lane_holds_the_flag_it_gave_and_the_static_value_reads_it() {
+    let (mut c, master, _) = core_with(VcaLaneKind::Mute);
+    let lane_name = kind_key(VcaLaneKind::Mute);
+    let lane = c
+        .doc()
+        .song
+        .track(&master)
+        .unwrap()
+        .automation_lane(&lane_name)
+        .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: master.clone(),
+        lane,
+        clip: flag_clip(&[(0, 1.0)]),
+    }))
+    .unwrap();
+    assert!(!c.doc().console.vca(1).unwrap().mute);
+    c.toggle_automation_lane_mute(&master, &lane_name);
+    assert!(c.doc().console.vca(1).unwrap().mute, "the lane's 1 is held");
+    assert!(c.undo());
+    assert!(!c.doc().console.vca(1).unwrap().mute);
+    // The control's own value is what a static value takes.
+    c.apply_command(Command::Console(ConsoleCommand::SetVcaMute {
+        vca: 1,
+        on: true,
+    }))
+    .unwrap();
+    assert!(c.set_static_from_control(&master, &lane_name));
+    let track = c.doc().song.track(&master).unwrap();
+    assert_eq!(
+        track.lanes[track.automation_lane(&lane_name).unwrap()].static_value,
+        Some(1.0)
+    );
 }

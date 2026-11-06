@@ -56,9 +56,13 @@ pub struct VcaView {
     pub members: usize,
     /// The group follows a track folder (its menu offers to stop).
     pub follows: bool,
-    /// The group's level has an automation lane (`sync` sets it from the document: the lane is
-    /// not part of the group).
+    /// The group has an automation lane of any kind (`sync` sets it from the document: the lanes
+    /// are not part of the group).
     pub lane: bool,
+    /// Which lanes the group has, in the order of `VcaLaneKind::ALL` (level, mute, solo).
+    pub lanes: [bool; 3],
+    /// The group plays into a bus (its menu offers to stop).
+    pub routed: bool,
 }
 
 impl VcaView {
@@ -74,6 +78,8 @@ impl VcaView {
             follows: g.follows.is_some(),
             members: g.members.len(),
             lane: false,
+            lanes: [false; 3],
+            routed: g.bus.is_some(),
         }
     }
 }

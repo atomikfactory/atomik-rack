@@ -804,11 +804,24 @@ impl<S: EngineSink> AppCore<S> {
         // A device that goes away takes its latest plugin state into the undo history.
         self.plugins_flush_dirty(false);
         let merge = param_merge(&command);
-        // A group's fader moved by hand is a move of its level lane's param, for recording.
+        // A group's fader, mute or solo moved by hand is a move of its lane's param, for
+        // recording.
         let vca_move = match &command {
-            Command::Console(atomik_model::ConsoleCommand::SetVcaLevel { vca, db, .. }) => {
-                Some((*vca, atomik_model::clamp_vca_db(*db)))
-            }
+            Command::Console(atomik_model::ConsoleCommand::SetVcaLevel { vca, db, .. }) => Some((
+                *vca,
+                atomik_model::VcaLaneKind::Level,
+                atomik_model::clamp_vca_db(*db),
+            )),
+            Command::Console(atomik_model::ConsoleCommand::SetVcaMute { vca, on }) => Some((
+                *vca,
+                atomik_model::VcaLaneKind::Mute,
+                if *on { 1.0 } else { 0.0 },
+            )),
+            Command::Console(atomik_model::ConsoleCommand::SetVcaSolo { vca, on }) => Some((
+                *vca,
+                atomik_model::VcaLaneKind::Solo,
+                if *on { 1.0 } else { 0.0 },
+            )),
             _ => None,
         };
         // Any edit of the user's other than the morph's own steps takes the mix over.
@@ -862,15 +875,15 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 self.sync_ops(&ops);
                 let mut ops = ops;
-                if let (Some((vca, db)), false, Some(master)) = (
+                if let (Some((vca, kind, value)), false, Some(master)) = (
                     vca_move,
                     ops.is_empty(),
                     self.document.doc().console.master.clone(),
                 ) {
                     ops.push(SyncOp::ParamChanged {
                         key: master,
-                        param: atomik_model::vca_lane_key(vca),
-                        value: db,
+                        param: atomik_model::vca_lane_key_of(vca, kind),
+                        value,
                     });
                 }
                 self.capture_automation(&ops, merge);
@@ -2403,6 +2416,8 @@ impl<S: EngineSink> AppCore<S> {
             can_add: !strips.is_empty() && !console.vcas.is_empty(),
             can_remove: strips.iter().any(|s| console.vca_of(s).is_some()),
             can_delete: !console.vcas.is_empty(),
+            can_route: console.vcas.iter().any(|v| !v.members.is_empty()),
+            can_unroute: console.vcas.iter().any(|v| v.bus.is_some()),
             can_folder: self.followable_folder(pane).is_some(),
             can_route_folder: self.routable_folder(pane).is_some(),
             can_unroute_folder: self
@@ -2555,27 +2570,80 @@ impl<S: EngineSink> AppCore<S> {
     /// Mixer > Delete VCA: group `vca`, or else the groups the selected strips are in (each one
     /// undo step; the members keep their faders). False, with a message, when no group matches.
     pub fn delete_vca(&mut self, pane: Pane, vca: Option<u32>) -> bool {
-        let ids: Vec<u32> = match vca {
-            Some(id) => vec![id],
-            None => {
-                let console = &self.doc().console;
-                let mut ids: Vec<u32> = Vec::new();
-                for s in self.strips_for_vca(pane) {
-                    if let Some(g) = console.vca_of(&s)
-                        && !ids.contains(&g.id)
-                    {
-                        ids.push(g.id);
-                    }
-                }
-                ids
-            }
-        };
+        let ids = self.vca_ids(pane, vca);
         if ids.is_empty() {
             self.reject("Select a channel in a VCA group to delete it".into());
             return false;
         }
         ids.into_iter().all(|id| {
             self.apply_command(Command::Console(atomik_model::ConsoleCommand::DeleteVca {
+                vca: id,
+            }))
+            .is_ok()
+        })
+    }
+
+    /// The groups a group command works on: `vca` when it is named, else the groups the selected
+    /// strips are in.
+    fn vca_ids(&self, pane: Pane, vca: Option<u32>) -> Vec<u32> {
+        if let Some(id) = vca {
+            return vec![id];
+        }
+        let console = &self.doc().console;
+        let mut ids: Vec<u32> = Vec::new();
+        for s in self.strips_for_vca(pane) {
+            if let Some(g) = console.vca_of(&s)
+                && !ids.contains(&g.id)
+            {
+                ids.push(g.id);
+            }
+        }
+        ids
+    }
+
+    /// Mixer > Route Group to New Bus: each group `vca` names (else the groups the selected strips
+    /// are in) plays into a new bus named after the group (`Bus n` when that name is taken), one
+    /// undo step each. False, with a message, when no group matches or the model refuses.
+    pub fn route_vca(&mut self, pane: Pane, vca: Option<u32>) -> bool {
+        let ids = self.vca_ids(pane, vca);
+        if ids.is_empty() {
+            self.reject("Select a channel in a VCA group to route it to a bus".into());
+            return false;
+        }
+        ids.into_iter().all(|id| {
+            let console = &self.doc().console;
+            let Some(group) = console.vca(id) else {
+                self.reject(format!("There is no VCA group {id}"));
+                return false;
+            };
+            let name = if console.bus_by_name(&group.name).is_none() {
+                group.name.clone()
+            } else {
+                console.default_bus_name()
+            };
+            self.apply_command(Command::Console(
+                atomik_model::ConsoleCommand::RouteVcaToNewBus { vca: id, name },
+            ))
+            .is_ok()
+        })
+    }
+
+    /// Mixer > Stop Routing Group: the members of each group `vca` names (else of the groups the
+    /// selected strips are in) go back to the master. False, with a message, when no group that
+    /// plays into a bus matches.
+    pub fn unroute_vca(&mut self, pane: Pane, vca: Option<u32>) -> bool {
+        let console = &self.doc().console;
+        let ids: Vec<u32> = self
+            .vca_ids(pane, vca)
+            .into_iter()
+            .filter(|id| console.vca(*id).is_some_and(|g| g.bus.is_some()))
+            .collect();
+        if ids.is_empty() {
+            self.reject("Select a channel in a VCA group that plays into a bus".into());
+            return false;
+        }
+        ids.into_iter().all(|id| {
+            self.apply_command(Command::Console(atomik_model::ConsoleCommand::UnrouteVca {
                 vca: id,
             }))
             .is_ok()

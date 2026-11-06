@@ -20,6 +20,7 @@ mod clip_transform;
 mod console_bus;
 mod console_cmd;
 mod console_folder;
+mod console_group_bus;
 mod console_insert;
 mod console_mix;
 mod console_settings;
@@ -199,8 +200,9 @@ pub use automation_view::{AutomationCurves, ShownValues};
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
-    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_LANE_PARAM, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
-    lane_param, vca_lane_id, vca_lane_key,
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_LANE_PARAM, VCA_MUTE_LANE_PARAM, VCA_PALETTE,
+    VCA_SOLO_LANE_PARAM, VcaFeed, VcaGroup, VcaLaneKind, clamp_vca_db, lane_param, vca_lane_id,
+    vca_lane_key, vca_lane_key_of, vca_lane_parts,
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_folder::{FolderRoute, MAX_FOLDER_ROUTES};
@@ -1502,6 +1504,22 @@ impl Document {
             },
             None => edit,
         };
+        // Groups routed to a bus keep their members on it in the same step.
+        let edit = match console_group_bus::sync(&self.doc, registry) {
+            Some(sync) => match sync.perform(&mut self.doc) {
+                Ok(more) => {
+                    ops.extend(more);
+                    Edit::Compound(vec![edit, sync])
+                }
+                Err(fault) => {
+                    let mut back = edit;
+                    back.invert();
+                    back.perform(&mut self.doc)?;
+                    return Err(fault.into());
+                }
+            },
+            None => edit,
+        };
         // Folders routed to a bus keep their channels on it in the same step.
         let edit = match console_folder::sync(&self.doc, registry) {
             Some(sync) => match sync.perform(&mut self.doc) {
@@ -1946,7 +1964,11 @@ impl Document {
                                     | ContainerCommand::RenameMacro { .. }
                             )
                             | Command::SetColor { .. }
-                            | Command::Console(ConsoleCommand::SetVcaLevel { .. })
+                            | Command::Console(
+                                ConsoleCommand::SetVcaLevel { .. }
+                                    | ConsoleCommand::SetVcaMute { .. }
+                                    | ConsoleCommand::SetVcaSolo { .. }
+                            )
                             | Command::Song(
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
@@ -1970,7 +1992,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode and SetVcaLevel can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

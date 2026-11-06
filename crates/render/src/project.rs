@@ -430,15 +430,16 @@ fn song_input_inner(
                 }
                 continue;
             }
-            // A group's level lane (on the master's track) plays as the `internal.vca_db` lane of
-            // each member, like a macro bank's lane plays on its targets.
-            if let Some(group) = atomik_model::vca_lane_id(key) {
+            // A group's lane (on the master's track) plays as the `internal.vca_db`,
+            // `internal.vca_mute` or `internal.vca_solo` lane of each member, like a macro bank's
+            // lane plays on its targets.
+            if let Some((group, kind)) = atomik_model::vca_lane_parts(key) {
                 let points: Vec<AutomationPoint> = flatten_automation(track, i)
                     .into_iter()
                     .map(|(tick, value, curve)| AutomationPoint { tick, value, curve })
                     .collect();
                 if !points.is_empty() {
-                    for (member, param) in doc.vca_lane_targets(group) {
+                    for (member, param) in doc.vca_kind_targets(group, kind) {
                         bank_lanes.push((member, param.to_string(), points.clone()));
                     }
                 }

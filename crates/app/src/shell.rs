@@ -6259,6 +6259,15 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.delete_vca(self.live_pane(self.focus), id);
                 Vec::new()
             }
+            AppCommand::RouteVca(id) => {
+                // A refusal is already reported.
+                self.core.route_vca(self.live_pane(self.focus), id);
+                Vec::new()
+            }
+            AppCommand::UnrouteVca(id) => {
+                self.core.unroute_vca(self.live_pane(self.focus), id);
+                Vec::new()
+            }
             AppCommand::StoreSnapshot => {
                 self.core.store_snapshot(None);
                 Vec::new()

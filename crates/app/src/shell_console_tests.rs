@@ -207,6 +207,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Add to VCA", None),
             ("Remove from VCA", None),
             ("Delete VCA", None),
+            ("Route Group to New Bus", None),
+            ("Stop Routing Group", None),
             ("Link Faders", None),
             ("Toggle Polarity", None),
             ("Bypass All Inserts", None),
@@ -987,6 +989,16 @@ fn the_vca_commands_are_mixer_menu_items_without_keys_and_name_a_group_by_id() {
             AppCommand::DeleteVca(None),
             "mixer.delete_vca",
         ),
+        (
+            "Route Group to New Bus",
+            AppCommand::RouteVca(None),
+            "mixer.route_vca",
+        ),
+        (
+            "Stop Routing Group",
+            AppCommand::UnrouteVca(None),
+            "mixer.unroute_vca",
+        ),
     ] {
         let item = mixer
             .items()
@@ -1007,6 +1019,15 @@ fn the_vca_commands_are_mixer_menu_items_without_keys_and_name_a_group_by_id() {
         AppCommand::from_command("mixer.delete_vca", Some("7")),
         Some(AppCommand::DeleteVca(Some(7)))
     );
+    assert_eq!(
+        AppCommand::from_command("mixer.route_vca", Some("2")),
+        Some(AppCommand::RouteVca(Some(2)))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.unroute_vca", Some("2")),
+        Some(AppCommand::UnrouteVca(Some(2)))
+    );
+    assert_eq!(AppCommand::RouteVca(Some(2)).command_id(), None);
     assert_eq!(
         AppCommand::from_command("mixer.add_to_vca", Some("x")),
         None
@@ -1045,6 +1066,44 @@ fn the_vca_menu_items_enable_with_the_selection_and_run_through_the_shell() {
     assert!(s.core().doc().console.vcas[0].members.is_empty());
     s.execute(AppCommand::DeleteVca(Some(1)));
     assert!(s.core().doc().console.vcas.is_empty());
+}
+
+#[test]
+fn the_group_routing_items_run_through_the_shell_and_name_the_groups() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(DeviceKey("a".into())),
+        })
+        .unwrap();
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[DeviceKey("a".into())], Some(&DeviceKey("a".into())));
+    let enabled = |s: &Shell<NullBackend>, command: AppCommand| {
+        s.menu_model()
+            .iter()
+            .flat_map(|m| m.items())
+            .find(|i| i.command == command)
+            .map(|i| i.enabled)
+    };
+    assert_eq!(enabled(&s, AppCommand::RouteVca(None)), Some(false));
+    s.execute(AppCommand::CreateVca);
+    assert_eq!(enabled(&s, AppCommand::RouteVca(None)), Some(true));
+    assert_eq!(enabled(&s, AppCommand::UnrouteVca(None)), Some(false));
+    // The named rows are in the Mixer menu, one per group.
+    for command in [
+        AppCommand::RouteVca(Some(1)),
+        AppCommand::UnrouteVca(Some(1)),
+    ] {
+        assert!(enabled(&s, command).is_some(), "{command:?} has a row");
+    }
+    s.execute(AppCommand::RouteVca(None));
+    assert!(s.core().doc().console.vcas[0].bus.is_some());
+    assert_eq!(enabled(&s, AppCommand::UnrouteVca(Some(1))), Some(true));
+    s.execute(AppCommand::UnrouteVca(Some(1)));
+    assert!(s.core().doc().console.vcas[0].bus.is_none());
 }
 
 #[test]

@@ -1186,6 +1186,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "mixer.route_vca",
+        "Route Group to New Bus",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.scroll_end",
         "Scroll to Last Channel",
         G::Mixer,
@@ -1270,6 +1277,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.unroute_folder",
         "Stop Routing Folder",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.unroute_vca",
+        "Stop Routing Group",
         G::Mixer,
         C::Global,
     )

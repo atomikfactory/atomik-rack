@@ -338,6 +338,8 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Vca, "solo", 1),
     field(Vca, "members", 1).req(),
     field(Vca, "follows", 43).ignorable(),
+    field(Vca, "bus", 44).ignorable(),
+    field(Vca, "routed", 44).ignorable(),
     field(FolderRoute, "folder", 44).req().ignorable(),
     field(FolderRoute, "bus", 44).req().ignorable(),
     field(FolderRoute, "members", 44).req().ignorable(),

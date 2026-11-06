@@ -145,6 +145,27 @@ impl RackDoc {
                 known(format!("console.returns[{i}]"), device);
             }
         }
+        for (i, g) in c.vcas.iter().enumerate() {
+            match &g.bus {
+                Some(b) if c.bus_index(b).is_none() => found.add(
+                    format!("console.vcas[{i}].bus"),
+                    format!("{b} is not a console bus"),
+                ),
+                None if !g.routed.is_empty() => found.add(
+                    format!("console.vcas[{i}].routed"),
+                    "a group without a bus has routed strips".to_owned(),
+                ),
+                _ => {}
+            }
+            for m in &g.routed {
+                if !g.members.contains(m) {
+                    found.add(
+                        format!("console.vcas[{i}].routed"),
+                        format!("{m} is not a member of the group"),
+                    );
+                }
+            }
+        }
         for (i, r) in c.folder_routes.iter().enumerate() {
             if c.bus_index(&r.bus).is_none() {
                 found.add(
@@ -208,13 +229,13 @@ impl RackDoc {
             for (l, lane) in track.lanes.iter().enumerate() {
                 let is_automation = matches!(lane.kind, LaneKind::Automation(_));
                 if let LaneKind::Automation(key) = &lane.kind
-                    && let Some(id) = crate::console_vca::vca_lane_id(key)
+                    && let Some((id, _)) = crate::console_vca::vca_lane_parts(key)
                     && (self.console.vca(id).is_none()
                         || self.console.master.as_ref() != Some(&track.device))
                 {
                     found.add(
                         format!("{at}.lanes[{l}]"),
-                        format!("the level lane of VCA group {id} needs the group and the master"),
+                        format!("a lane of VCA group {id} needs the group and the master"),
                     );
                 }
                 if lane

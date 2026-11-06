@@ -789,6 +789,11 @@ pub(crate) fn plan(
         | ConsoleCommand::UnrouteFolder { .. }) => {
             crate::console_folder::plan(&mut p, folder_command)?
         }
+        group_command @ (ConsoleCommand::RouteVcaToBus { .. }
+        | ConsoleCommand::RouteVcaToNewBus { .. }
+        | ConsoleCommand::UnrouteVca { .. }) => {
+            crate::console_group_bus::plan(&mut p, group_command)?
+        }
         vca_command @ (ConsoleCommand::CreateVca { .. }
         | ConsoleCommand::CreateVcaForFolder { .. }
         | ConsoleCommand::SetVcaFollow { .. }
