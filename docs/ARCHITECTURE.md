@@ -4967,7 +4967,9 @@ creation chain in the **Creation chain** bullet.
   step, so no undo step exists until the release commits one). The end edge dragged with
   `Role::ScaleSelection` (Ctrl+Alt+Shift) is the same drag with `whole` set: it scales the whole selection about
   its earliest start, so its steps are `ScaleTempo` previews (`UiAction::ScaleStep`, `AppCore::scale_step`) on the
-  ratio of the grabbed edge's new place to its old one, both counted from that start. The same trial serves the Scale
+  ratio of the grabbed edge's new place to its old one, both counted from that start. Held on a start edge it is the
+  same drag about the latest end of the selection (`ScaleTempo` with `from_end`, `scale_ratio_from_end` keeps every
+  start at tick 0 or later). The same trial serves the Scale
   Tempo panel (`ScaleView`, opened by `sequencer.scale_tempo` with `dialog`: every usable value
   previews through `AppCore::scale_preview`, Enter commits with `AppCore::scale_apply`) and the
   crossfade drag (`Drag::Crossfade`, `UiAction::CrossfadeStep`): `MoveCrossfade` (`audio_join` in
@@ -4979,7 +4981,12 @@ creation chain in the **Creation chain** bullet.
   the earlier clip ends where the zone does and neither clip plays backwards or loops. `JoinClips`
   on an audio lane (`join_audio`) merges consecutive pieces of one file that continue each other
   (`piece_from` gives the source frame the second piece must start at) and merges their gain
-  envelopes (`join_envelopes`); anything that would change the sound is refused. *Clipboard*
+  envelopes (`join_envelopes`) and their warp markers (`joined_markers`: the markers of the first
+  piece before the join, one at the join, the later piece's after it, checked to give the same
+  source frame as each piece at every marker, start and end); anything that would change the sound
+  is refused. Pieces of different files are a render: `join_render` plans it (one lane, no gap, no
+  muted clip), the app queues a dry `Kind::Join` render on the freeze worker (the same as the loop
+  render) and `RenderJoin` swaps the clips for one clip of the render in one undo step. *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of
