@@ -285,6 +285,7 @@ fn assign_row(id: u32, target: &str, min: f32, max: f32, invert: bool) -> MacroA
         min_text: format!("{min:.0} Hz"),
         max_text: format!("{max:.0} Hz"),
         missing: false,
+        unit: atomik_ui::EntryUnit::Hz,
     }
 }
 
@@ -1273,4 +1274,123 @@ fn the_panel_shows_the_curve_and_the_smoothing_of_an_assignment() {
     for want in ["EXP", "SM 250ms", "LIN", "SM off"] {
         assert!(shown.iter().any(|t| t == want), "{want}: {shown:?}");
     }
+}
+
+// ---- Typing the range of an assignment -----------------------------------------------------------
+
+fn type_text(v: &mut MacrosView, text: &str) {
+    for c in text.chars() {
+        key_event(v, Key::Char(c), Modifiers::NONE);
+    }
+}
+
+fn open_entry_on(v: &mut MacrosView, what: &str) {
+    let at = v.assign_center(0, 0, what).unwrap();
+    assert!(click_at(v, at, PointerButton::Middle).is_empty());
+    assert!(v.is_editing());
+}
+
+#[test]
+fn a_middle_click_on_min_types_the_value_in_place() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    open_entry_on(&mut v, "min");
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl);
+    assert!(
+        texts(&dl).iter().any(|t| t == "MIN 200|"),
+        "{:?}",
+        texts(&dl)
+    );
+    // The first character replaces the value; a k makes it kilohertz.
+    type_text(&mut v, "1.5k");
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl);
+    assert!(texts(&dl).iter().any(|t| t == "MIN 1.5k|"));
+    assert_eq!(
+        key_event(&mut v, Key::Enter, Modifiers::NONE),
+        [MacrosAction::SetRange {
+            id: 1,
+            min: 1500.0,
+            max: 2000.0,
+            invert: false
+        }]
+    );
+    assert!(!v.is_editing());
+}
+
+#[test]
+fn a_typed_max_is_held_to_the_param_range_and_keeps_the_direction() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    let at = v.assign_center(0, 1, "max").unwrap();
+    click_at(&mut v, at, PointerButton::Middle);
+    type_text(&mut v, "90000");
+    assert_eq!(
+        key_event(&mut v, Key::Enter, Modifiers::NONE),
+        [MacrosAction::SetRange {
+            id: 2,
+            min: 400.0,
+            max: 20_000.0,
+            invert: true
+        }]
+    );
+}
+
+#[test]
+fn escape_an_unchanged_value_and_text_that_is_no_number_send_nothing() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    open_entry_on(&mut v, "min");
+    type_text(&mut v, "900");
+    assert!(key_event(&mut v, Key::Escape, Modifiers::NONE).is_empty());
+    assert!(!v.is_editing());
+    open_entry_on(&mut v, "min");
+    assert!(key_event(&mut v, Key::Enter, Modifiers::NONE).is_empty());
+    open_entry_on(&mut v, "max");
+    type_text(&mut v, "loud");
+    assert!(key_event(&mut v, Key::Enter, Modifiers::NONE).is_empty());
+    // Backspace clears a fresh value, and the text has a limit.
+    open_entry_on(&mut v, "max");
+    key_event(&mut v, Key::Backspace, Modifiers::NONE);
+    type_text(&mut v, "1111111111111111111111");
+    key_event(&mut v, Key::Escape, Modifiers::NONE);
+}
+
+#[test]
+fn enter_with_the_pointer_on_the_value_opens_it_and_a_click_elsewhere_keeps_it() {
+    let mut v = macros_view(vec![bank_row("bank", "Macro Bank", true)]);
+    let at = v.assign_center(0, 0, "max").unwrap();
+    v.handle(&mv(at));
+    assert!(key_event(&mut v, Key::Enter, Modifiers::NONE).is_empty());
+    assert!(v.is_editing());
+    type_text(&mut v, "3000");
+    // The tooltip gives way while typing.
+    assert!(v.help_at(at).is_none());
+    let elsewhere = v.macro_center(4, "bar").unwrap();
+    let actions = click_at(&mut v, elsewhere, PointerButton::Primary);
+    assert!(matches!(
+        actions.first(),
+        Some(MacrosAction::SetRange { id: 1, max, .. }) if (*max - 3000.0).abs() < 1e-3
+    ));
+    assert!(matches!(
+        actions.get(1),
+        Some(MacrosAction::SetValue { index: 4, .. })
+    ));
+}
+
+#[test]
+fn typed_text_means_a_value_in_the_unit_of_the_param() {
+    use atomik_ui::EntryUnit;
+    assert_eq!(EntryUnit::Hz.parse("2k"), Some(2000.0));
+    assert_eq!(EntryUnit::Hz.parse(" 440 Hz "), Some(440.0));
+    assert_eq!(EntryUnit::Hz.parse("1.5 kHz"), Some(1500.0));
+    assert_eq!(EntryUnit::Ms.parse("0.5s"), Some(500.0));
+    assert_eq!(EntryUnit::Ms.parse("250ms"), Some(250.0));
+    assert_eq!(EntryUnit::Percent.parse("50%"), Some(0.5));
+    assert_eq!(EntryUnit::Percent.parse("12.5"), Some(0.125));
+    assert_eq!(EntryUnit::Number.parse("-6 dB"), Some(-6.0));
+    assert_eq!(EntryUnit::Number.parse("+3"), Some(3.0));
+    assert_eq!(EntryUnit::Number.parse("abc"), None);
+    assert_eq!(EntryUnit::Number.parse(""), None);
+    assert_eq!(EntryUnit::Percent.text(0.125), "12.5");
+    assert_eq!(EntryUnit::Hz.text(1500.0), "1500");
+    assert_eq!(EntryUnit::Number.text(-6.0), "-6");
 }

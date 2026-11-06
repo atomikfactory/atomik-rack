@@ -1005,3 +1005,56 @@ fn ctrl_d_duplicates_the_selected_container_at_every_level() {
     let a = send_key(&mut v, d.doc(), Key::Char('d'));
     assert!(commands(&a).is_empty());
 }
+
+// ------------------------------------------------------------------ a bank drives the inside
+
+#[test]
+fn a_param_a_bank_drives_inside_a_container_wears_the_tag_and_shows_the_macro_value() {
+    let mut d = layered();
+    let plain = scoped_view(d.doc(), &["layer"]);
+    let mut dl = atomik_ui::DisplayList::new();
+    let mut v = plain;
+    v.paint(&mut dl, d.doc(), &registry());
+    assert!(!dl.texts().contains(&"M2"));
+    apply(
+        &mut d,
+        Command::Macro(atomik_model::MacroCommand::Assign {
+            bank: None,
+            index: 1,
+            device: key("layer/pad"),
+            param: "filter.cutoff".into(),
+            min: Some(200.0),
+            max: Some(2000.0),
+            invert: false,
+        }),
+    );
+    let bank = d.doc().banks().next().unwrap().key.clone();
+    apply(
+        &mut d,
+        Command::SetParam {
+            key: bank,
+            param: "macro2".into(),
+            value: 0.5,
+            merge: None,
+        },
+    );
+    let mut v = scoped_view(d.doc(), &["layer"]);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, d.doc(), &registry());
+    assert!(dl.texts().contains(&"M2"), "{:?}", dl.texts());
+    // The knob is locked like a container's: a drag sets nothing by itself (the app turns an
+    // edit of it into a range move, as at the top level).
+    let p = v.control_center(&key("pad"), "filter.cutoff").unwrap();
+    let reg = registry();
+    let _ = v.handle(&down(p), d.doc(), &reg);
+    let a = v.handle(&mv(Point::new(p.x, p.y - 30.0)), d.doc(), &reg);
+    let _ = v.handle(&up(p), d.doc(), &reg);
+    for c in commands(&a) {
+        match c {
+            Command::SetParam { key: k, param, .. } => {
+                assert_eq!((k, param.as_str()), (key("layer/pad"), "filter.cutoff"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}

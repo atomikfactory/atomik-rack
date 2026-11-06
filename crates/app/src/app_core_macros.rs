@@ -46,7 +46,7 @@ use atomik_model::{
     MACRO_BANK_TYPE, MAX_RESULTS, MacroAssign, MacroCommand, ParamEntry, ParamIndex, SearchTarget,
     SongCommand, macro_key,
 };
-use atomik_ui::{MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, ParamSearchRow};
+use atomik_ui::{EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, ParamSearchRow};
 
 /// The most rows the search lists.
 pub const SEARCH_ROWS: usize = 100;
@@ -410,6 +410,12 @@ impl<S: EngineSink> AppCore<S> {
             min_text: text(a.min),
             max_text: text(a.max),
             missing: desc.is_none() || !doc.macro_assign_live(a),
+            unit: desc.map_or(EntryUnit::Number, |p| match p.unit {
+                atomik_core::Unit::Percent => EntryUnit::Percent,
+                atomik_core::Unit::Hz => EntryUnit::Hz,
+                atomik_core::Unit::Ms => EntryUnit::Ms,
+                _ => EntryUnit::Number,
+            }),
         }
     }
 
