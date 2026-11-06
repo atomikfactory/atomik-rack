@@ -426,6 +426,9 @@ impl<S: EngineSink> AppCore<S> {
         if device_type_of(path).is_some() {
             return Err("Built-in devices cannot be deleted".into());
         }
+        if self.in_factory(path) {
+            return Err(format!("{name} is factory content and cannot be deleted"));
+        }
         let root = self.library_folder()?;
         let inside = path != root
             && path.starts_with(&root)
@@ -482,6 +485,12 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn rename_item(&self, path: &Path, to: &str) -> Result<PathBuf, String> {
+        if self.in_factory(path) {
+            return Err(format!(
+                "{} is factory content and cannot be renamed",
+                file_name(path)
+            ));
+        }
         let root = self.library_folder()?;
         let inside = path != root
             && path.starts_with(&root)

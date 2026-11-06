@@ -4095,6 +4095,10 @@ mod browser_tests;
 mod library_tests;
 
 #[cfg(test)]
+#[path = "app_core_factory_tests.rs"]
+mod factory_tests;
+
+#[cfg(test)]
 #[path = "app_core_patches_tests.rs"]
 mod patches_tests;
 

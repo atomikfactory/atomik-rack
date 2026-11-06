@@ -85,6 +85,9 @@ pub struct PlacesData {
     pub tags: Vec<(String, usize)>,
     /// Named favourite lists with their file counts, in the order they were made.
     pub lists: Vec<(String, usize)>,
+    /// The sections the factory library holds items for, in tree order (empty: the tree has no
+    /// Factory entry).
+    pub factory: Vec<atomik_library::LibrarySection>,
     /// Bookmarked folders, in order (expandable).
     pub bookmarks: Vec<PathBuf>,
     /// Drives / file-system roots and the home folder (expandable).
