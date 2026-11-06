@@ -54,7 +54,8 @@
 //!                                      "solo"? and "color"? (v43, notes lanes, after "muted"),
 //!                                      "param"?,
 //!                                      "write"? (v18, automation lanes: "overwrite" | "latch"),
-//!                                      "take_groups"? (v20, notes and audio lanes, after "clips"),
+//!                                      "take_groups"? (v20, notes and audio lanes, automation
+//!                                                      lanes too from v44; after "clips"),
 //!                                      "clips": [{ "id", "start", "length", "offset",
 //!                                                  "loop_length" (int or null), "muted",
 //!                                                  "name"? (v37, a trimmed text of 1 to 64
@@ -219,7 +220,9 @@
 //! `"clips"` names the lane clips compiled from
 //! the comp (an id that is not on the lane, a comp clip removed or moved since, is dropped on
 //! load and not written). The field is omitted when the lane has no groups; a loaded song numbers
-//! its groups from 1 in file order (ids are not stored). **Version 20** files have no groove
+//! its groups from 1 in file order (ids are not stored). A group may carry `"link": tag` (an
+//! integer from 1, written only when set, added under version 44): the groups that share a tag
+//! are linked, so a comp gesture in one applies to all. **Version 20** files have no groove
 //! library: from version 21 a song may carry `"grooves": [{"name", "step": "eighth" | "sixteenth"
 //! | "thirty_second", "slots": [[offset, velocity]…]}…]` after its `"track_heights"` (see
 //! [`crate::groove`]): a name is trimmed, non-empty, at most 32 characters, unique and not the

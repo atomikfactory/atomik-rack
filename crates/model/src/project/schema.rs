@@ -445,10 +445,12 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(AutomationLane, "muted", 36),
     field(AutomationLane, "static", 36),
     field(AutomationLane, "clips", 1).req(),
+    field(AutomationLane, "take_groups", 44).ignorable(),
     field(TakeGroup, "takes", 1).req(),
     field(TakeGroup, "comp", 1).req(),
     field(TakeGroup, "clips", 1).req(),
     field(TakeGroup, "open", 22),
+    field(TakeGroup, "link", 44).ignorable(),
     // Clips: the last field of each is its content.
     field(NoteClip, "id", 1).req(),
     field(NoteClip, "start", 1).req(),

@@ -18,6 +18,17 @@ pub(super) fn load_take_groups(
         let gp = path.index(g);
         let obj = schema::object(item, &gp, Obj::TakeGroup, version)?;
         loose.open.push(flag(obj, &gp, "open")?);
+        let link = match obj.get("link") {
+            Some(v) => {
+                let lp = gp.field("link");
+                let tag = uint(v, &lp, u64::from(u32::MAX))?;
+                if tag == 0 {
+                    return Err(lp.error("a link tag is 1 or more"));
+                }
+                Some(tag as u32)
+            }
+            None => None,
+        };
         let takes_path = gp.field("takes");
         let mut takes = Vec::new();
         for (k, t) in array(&obj["takes"], &takes_path)?.iter().enumerate() {
@@ -42,6 +53,7 @@ pub(super) fn load_take_groups(
             takes,
             comp: Vec::new(),
             clips: Vec::new(),
+            link,
         };
         let comp_path = gp.field("comp");
         for (i, item) in array(&obj["comp"], &comp_path)?.iter().enumerate() {

@@ -199,7 +199,7 @@ fn a_new_group_is_refused_for_bad_input_and_changes_nothing() {
         }),
         &reg,
     );
-    // An automation lane takes no takes.
+    // A notes clip does not fit an automation lane.
     d.apply(
         sc(SongCommand::AddAutomationLane {
             device: key("lead"),
@@ -208,8 +208,7 @@ fn a_new_group_is_refused_for_bad_input_and_changes_nothing() {
         &reg,
     )
     .unwrap();
-    let e = rejects(&mut d, cmd(1, vec![take(0, BAR, 60)]), &reg);
-    assert!(e.to_string().contains("notes and audio"), "{e}");
+    rejects(&mut d, cmd(1, vec![take(0, BAR, 60)]), &reg);
 }
 
 // ---- PickTake ---------------------------------------------------------------------------------

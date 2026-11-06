@@ -81,6 +81,10 @@ pub struct TakeGroup {
     pub comp: Vec<CompSegment>,
     /// The lane clips compiled from the comp (see the module docs).
     pub clips: Vec<ClipId>,
+    /// The groups that share this tag are linked: a comp gesture in one applies to all of them
+    /// (see [`crate::song::SongCommand::LinkTakeGroups`]). Saved as the tag number; a tag that
+    /// only one group holds links nothing.
+    pub link: Option<u32>,
 }
 
 impl TakeGroup {

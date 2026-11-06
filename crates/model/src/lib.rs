@@ -1980,6 +1980,7 @@ impl Document {
                                     | SongCommand::SetAudioClip { .. }
                                     | SongCommand::SetWarpMarkers { .. }
                                     | SongCommand::SplitClip { .. }
+                                    | SongCommand::NewTakeGroup { .. }
                                     | SongCommand::StripSilence { .. }
                                     | SongCommand::SetTrackColor { .. }
                                     | SongCommand::SetGroupCollapsed { .. }

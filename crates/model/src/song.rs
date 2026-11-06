@@ -1455,6 +1455,21 @@ pub enum SongCommand {
         /// End tick (exclusive).
         end: i64,
     },
+    /// Link take groups of several tracks: a comp gesture in one of them then applies to all of
+    /// them (as `SetLinkedComp` does), and the link is saved with the project. Two to 64
+    /// groups, each listed once; the groups share a new tag, so a group that was linked to
+    /// others before leaves them. An error when the groups are all linked to each other
+    /// already. One undo step.
+    LinkTakeGroups {
+        /// Group ids.
+        groups: Vec<u32>,
+    },
+    /// Take a group out of its link (the rest stay linked). An error when it is not linked. One
+    /// undo step.
+    UnlinkTakeGroup {
+        /// Group id.
+        group: u32,
+    },
     /// Delete a take: the ranges it played go to the take below it (above it for the bottom
     /// take). Deleting the last take removes the group and its clips. One undo step.
     DeleteTake {
