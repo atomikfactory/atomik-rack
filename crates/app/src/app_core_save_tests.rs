@@ -558,3 +558,317 @@ fn a_project_alone_in_its_bundle_still_drops_audio_it_no_longer_uses() {
     assert!(wav_of(&root, &hash).exists());
     assert!(!wav_of(&root, &stray).exists(), "unused audio is tidied");
 }
+
+// ---------------------------------------------------------------- collect preview, cancel, move
+
+/// A song of the shared folder `<tmp>/proj/` (next to `proj.atomik`), opened, with its audio still
+/// in the shared folder.
+fn shared_song(t: &Tmp) -> (AppCore<RecordingSink>, PathBuf, String) {
+    let (_, hash) = project_with_audio(t);
+    let shared = t.path("proj");
+    let file = shared.join("song.atomik");
+    std::fs::copy(shared.join("proj.atomik"), &file).unwrap();
+    let mut c = core();
+    c.open(&file).unwrap();
+    c.wait_background();
+    (c, file, hash)
+}
+
+#[test]
+fn the_collect_preview_says_what_would_be_copied_and_writes_nothing() {
+    let t = Tmp::new("collect-preview");
+    let (c, _, hash) = shared_song(&t);
+    let before = std::fs::read_dir(t.path("proj")).unwrap().count();
+
+    let preview = c.collect_preview().unwrap();
+    assert_eq!(preview.folder, t.path("proj").join("song"));
+    assert_eq!(
+        preview
+            .plan
+            .to_copy
+            .iter()
+            .map(|(h, _)| h.clone())
+            .collect::<Vec<_>>(),
+        vec![hash.clone()]
+    );
+    assert!(preview.plan.bytes() > 0 && preview.plan.missing.is_empty());
+    let text = c.collect_preview_message().unwrap();
+    assert!(
+        text.starts_with("Collect Files would copy 1 audio file ("),
+        "{text}"
+    );
+    assert!(text.contains("into song"), "{text}");
+    assert!(
+        !t.path("proj").join("song").exists(),
+        "a preview writes nothing"
+    );
+    assert_eq!(std::fs::read_dir(t.path("proj")).unwrap().count(), before);
+
+    // After the collection there is nothing left to copy.
+    let mut c = c;
+    c.collect_files().unwrap();
+    c.wait_background();
+    let text = c.collect_preview_message().unwrap();
+    assert!(
+        text.starts_with("Collect Files would copy nothing"),
+        "{text}"
+    );
+    assert!(c.collect_preview().unwrap().plan.to_copy.is_empty());
+}
+
+#[test]
+fn the_collect_preview_names_audio_no_folder_has_and_needs_a_project() {
+    let t = Tmp::new("collect-preview-missing");
+    assert!(matches!(
+        core().collect_preview().unwrap_err(),
+        AppError::NoPath
+    ));
+    let (c, _, hash) = shared_song(&t);
+    std::fs::remove_file(wav_of(&t.path("proj"), &hash)).unwrap();
+    let preview = c.collect_preview().unwrap();
+    assert!(preview.plan.to_copy.is_empty());
+    assert_eq!(preview.plan.missing, vec![hash]);
+    let text = c.collect_preview_message().unwrap();
+    assert!(text.contains("not found"), "{text}");
+    // No audio at all.
+    let mut bare = core();
+    bare.save_as(&t.path("bare.atomik")).unwrap();
+    assert_eq!(
+        bare.collect_preview_message().unwrap(),
+        "The project uses no audio files"
+    );
+}
+
+#[test]
+fn a_cancelled_collection_writes_nothing_and_leaves_the_project_alone() {
+    let t = Tmp::new("collect-cancel");
+    let (mut c, file, hash) = shared_song(&t);
+    let text_before = std::fs::read_to_string(&file).unwrap();
+    let root = collect_root(&file);
+    let job = c.prepare_save(&file, Some(root.clone()), true);
+    job.progress.cancel();
+    c.launch(job, false, true).unwrap();
+    assert!(c.saving() && c.collect_busy());
+    c.settle_save();
+    assert!(!c.saving() && !c.collect_busy());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text_before);
+    assert!(
+        !wav_of(&root, &hash).exists(),
+        "no audio was copied into the new folder"
+    );
+    assert!(wav_of(&t.path("proj"), &hash).exists());
+    assert_eq!(c.bundle_root(), Some(t.path("proj").as_path()));
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.starts_with("Collect Files cancelled after 0 of 1"),
+        "{message}"
+    );
+    assert!(message.contains("nothing was removed"), "{message}");
+
+    // Doing it again, uncancelled, finishes the job.
+    c.collect_files().unwrap();
+    c.wait_background();
+    assert!(wav_of(&root, &hash).exists());
+}
+
+#[test]
+fn cancelling_with_no_save_running_does_nothing() {
+    let mut c = core();
+    assert!(!c.cancel_collect());
+    assert!(!c.collect_busy());
+    assert!(c.save_progress().is_none());
+}
+
+#[test]
+fn a_running_collection_shows_its_progress_and_can_be_cancelled() {
+    let t = Tmp::new("collect-progress");
+    let (mut c, file, _) = shared_song(&t);
+    let job = c.prepare_save(&file, Some(collect_root(&file)), true);
+    c.launch(job, false, true).unwrap();
+    // The status line names the work while it runs (or the save already ended).
+    if let Some(text) = c.save_progress() {
+        assert!(
+            text == "Saving..." || text.starts_with("Collecting audio"),
+            "{text}"
+        );
+    }
+    assert!(c.cancel_collect() || !c.saving());
+    c.settle_save();
+    assert!(!c.saving());
+}
+
+fn recent_core(t: &Tmp) -> AppCore<RecordingSink> {
+    let mut c = core();
+    c.set_recent_path(t.path("recent.json"));
+    c
+}
+
+#[test]
+fn move_project_copies_the_project_then_removes_the_old_folder() {
+    let t = Tmp::new("move-ok");
+    let mut c = recent_core(&t);
+    let hash = import_ramp(&mut c, &t, "one.wav", 4_800);
+    let old = t.path("old");
+    std::fs::create_dir_all(&old).unwrap();
+    c.save_as(&old.join("song.atomik")).unwrap();
+    let old_file = c.file().unwrap().to_path_buf();
+    let old_root = c.bundle_root().unwrap().to_path_buf();
+    assert!(old_file.is_file() && wav_of(&old_root, &hash).is_file());
+    let original = std::fs::read(wav_of(&old_root, &hash)).unwrap();
+
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+
+    let new_root = t.path("new").join("song");
+    assert_eq!(c.file(), Some(new_root.join("song.atomik").as_path()));
+    assert_eq!(c.bundle_root(), Some(new_root.as_path()));
+    assert!(!c.is_dirty());
+    assert_eq!(std::fs::read(wav_of(&new_root, &hash)).unwrap(), original);
+    assert!(!old_root.exists(), "the old project folder is gone");
+    assert!(!old_file.exists());
+    let message = c.last_rejection().unwrap();
+    assert!(message.starts_with("Moved to "), "{message}");
+    assert!(
+        message.contains("old project folder was removed"),
+        "{message}"
+    );
+    assert_eq!(c.recent().first(), Some(&new_root.join("song.atomik")));
+    assert!(!c.recent().contains(&old_file));
+    // The moved project opens on its own.
+    let mut again = core();
+    again.open(&new_root.join("song.atomik")).unwrap();
+    again.wait_background();
+    assert!(!again.doc().assets.is_empty());
+    assert!(
+        again
+            .doc()
+            .assets
+            .keys()
+            .all(|h| wav_of(&new_root, h).is_file())
+    );
+}
+
+#[test]
+fn move_project_in_the_background_does_the_same_on_the_worker() {
+    let t = Tmp::new("move-bg");
+    let mut c = recent_core(&t);
+    let hash = import_ramp(&mut c, &t, "one.wav", 4_800);
+    std::fs::create_dir_all(t.path("old")).unwrap();
+    c.save_as(&t.path("old").join("song.atomik")).unwrap();
+    let old_root = c.bundle_root().unwrap().to_path_buf();
+    c.set_background_save(true);
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.settle_save();
+    c.wait_background();
+    assert!(!old_root.exists());
+    assert!(wav_of(&t.path("new").join("song"), &hash).is_file());
+    assert!(c.last_rejection().unwrap().starts_with("Moved to "));
+}
+
+#[test]
+fn move_project_never_removes_audio_another_project_in_the_folder_uses() {
+    let t = Tmp::new("move-shared");
+    let (mut c, shared, mine, theirs) = two_projects_sharing_audio(&t);
+    let other_text = std::fs::read_to_string(shared.join("other.atomik")).unwrap();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+
+    assert!(
+        !shared.join("song.atomik").exists(),
+        "the old project file goes"
+    );
+    assert_eq!(
+        std::fs::read_to_string(shared.join("other.atomik")).unwrap(),
+        other_text
+    );
+    assert!(wav_of(&shared, &theirs).exists(), "their audio stays");
+    assert!(
+        wav_of(&shared, &mine).exists(),
+        "shared audio stays where it is"
+    );
+    assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("another project is in it"), "{message}");
+}
+
+#[test]
+fn move_project_keeps_a_folder_that_holds_other_files() {
+    let t = Tmp::new("move-leftovers");
+    let mut c = recent_core(&t);
+    import_ramp(&mut c, &t, "one.wav", 4_800);
+    std::fs::create_dir_all(t.path("old")).unwrap();
+    c.save_as(&t.path("old").join("song.atomik")).unwrap();
+    let old_root = c.bundle_root().unwrap().to_path_buf();
+    std::fs::write(old_root.join("notes.txt"), "mine").unwrap();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert_eq!(
+        std::fs::read_to_string(old_root.join("notes.txt")).unwrap(),
+        "mine"
+    );
+    assert!(!old_root.join("song.atomik").exists());
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("other files in the old folder stay"),
+        "{message}"
+    );
+}
+
+#[test]
+fn move_project_into_a_folder_that_has_that_project_moves_nothing() {
+    let t = Tmp::new("move-taken");
+    let (mut c, file, hash) = shared_song(&t);
+    std::fs::create_dir_all(t.path("new").join("song")).unwrap();
+    std::fs::write(t.path("new").join("song").join("keep.txt"), "x").unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert_eq!(c.file(), Some(file.as_path()), "the project did not move");
+    assert!(file.is_file() && wav_of(&t.path("proj"), &hash).is_file());
+    assert!(t.path("new").join("song").join("keep.txt").is_file());
+    assert!(!t.path("new").join("song").join("song.atomik").exists());
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("already exists in that folder"),
+        "{message}"
+    );
+}
+
+#[test]
+fn move_project_needs_a_saved_project() {
+    let t = Tmp::new("move-nopath");
+    let mut c = core();
+    assert!(matches!(
+        c.move_project(&t.path("new")).unwrap_err(),
+        AppError::NoPath
+    ));
+}
+
+#[test]
+fn a_cancelled_move_removes_nothing() {
+    let t = Tmp::new("move-cancel");
+    let mut c = recent_core(&t);
+    let hash = import_ramp(&mut c, &t, "one.wav", 4_800);
+    std::fs::create_dir_all(t.path("old")).unwrap();
+    c.save_as(&t.path("old").join("song.atomik")).unwrap();
+    let old_file = c.file().unwrap().to_path_buf();
+    let old_root = c.bundle_root().unwrap().to_path_buf();
+    let new_root = t.path("new").join("song");
+    let mut job = c.prepare_save(&new_root.join("song.atomik"), Some(new_root.clone()), false);
+    job.relocate = Some(Relocate {
+        old_file: old_file.clone(),
+        old_root: Some(old_root.clone()),
+    });
+    job.progress.cancel();
+    c.launch(job, true, false).unwrap();
+    c.settle_save();
+    assert!(old_file.is_file() && wav_of(&old_root, &hash).is_file());
+    assert_eq!(c.file(), Some(old_file.as_path()));
+    assert!(!new_root.join("song.atomik").exists());
+    let message = c.last_rejection().unwrap();
+    assert!(message.starts_with("Move Project cancelled"), "{message}");
+    assert!(c.recent().contains(&old_file));
+}

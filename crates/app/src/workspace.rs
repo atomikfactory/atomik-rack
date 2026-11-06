@@ -62,6 +62,8 @@ pub struct Workspace<B: AudioBackend> {
     declined: Vec<DocId>,
     /// The recent list every song has (see [`Self::sync_shared`]).
     recent: Vec<std::path::PathBuf>,
+    /// How many songs at the start of `recent` are pinned.
+    pinned: usize,
     /// The library revision each song had when it was last compared, by song id.
     library_seen: Vec<(DocId, u64)>,
 }
@@ -110,9 +112,11 @@ impl<B: AudioBackend> Workspace<B> {
             asking: None,
             declined: Vec::new(),
             recent: Vec::new(),
+            pinned: 0,
             library_seen: Vec::new(),
         };
         workspace.recent = workspace.songs[0].shell.core().recent().to_vec();
+        workspace.pinned = workspace.songs[0].shell.core().pinned_count();
         workspace.library_seen = vec![(
             DocId::FIRST,
             workspace.songs[0].shell.core().library_revision(),
@@ -261,7 +265,7 @@ impl<B: AudioBackend> Workspace<B> {
         shell
             .core_mut()
             .adopt_library(self.songs[from].shell.core().library_copy());
-        shell.core_mut().adopt_recent(&self.recent);
+        shell.core_mut().adopt_recent(&self.recent, self.pinned);
         self.library_seen
             .push((id, shell.core().library_revision()));
         self.songs.push(Song { id, shell });
@@ -423,15 +427,18 @@ impl<B: AudioBackend> Workspace<B> {
     /// drop the change. Costs a comparison per song; called after every event and every frame.
     pub fn sync_shared(&mut self) {
         // The recent list: the first song whose list is not the shared one changed it.
-        let changed = self
-            .songs
-            .iter()
-            .position(|s| s.shell.core().recent() != self.recent.as_slice());
+        let changed = self.songs.iter().position(|s| {
+            let core = s.shell.core();
+            core.recent() != self.recent.as_slice() || core.pinned_count() != self.pinned
+        });
         if let Some(i) = changed {
             self.recent = self.songs[i].shell.core().recent().to_vec();
+            self.pinned = self.songs[i].shell.core().pinned_count();
             for (j, song) in self.songs.iter_mut().enumerate() {
                 if j != i {
-                    song.shell.core_mut().adopt_recent(&self.recent);
+                    song.shell
+                        .core_mut()
+                        .adopt_recent(&self.recent, self.pinned);
                 }
             }
         }

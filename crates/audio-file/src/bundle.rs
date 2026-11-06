@@ -442,19 +442,7 @@ impl Bundle {
     /// it would copy (and how big each file is), which the bundle holds already and which no
     /// source has.
     pub fn plan_collect(&self, sources: &[PathBuf], wanted: &BTreeSet<String>) -> CollectPlan {
-        let mut plan = CollectPlan::default();
-        let sources = self.readable_sources(sources);
-        for hash in wanted {
-            if self.exists(hash) {
-                plan.present.push(hash.clone());
-            } else if let Some(source) = sources.iter().find(|s| s.exists(hash)) {
-                let size = fs::metadata(source.asset_path(hash)).map_or(0, |m| m.len());
-                plan.to_copy.push((hash.clone(), size));
-            } else {
-                plan.missing.push(hash.clone());
-            }
-        }
-        plan
+        plan_collect_into(&self.root, sources, wanted)
     }
 
     /// [`Self::collect_from`] that `progress` can cancel from another thread and that counts the
@@ -587,6 +575,31 @@ impl Bundle {
         }
         Ok(orphans)
     }
+}
+
+/// [`Bundle::plan_collect`] for the bundle folder `root`, which need not exist yet (nothing is
+/// created: a folder that is not there holds none of the assets).
+pub fn plan_collect_into(
+    root: &Path,
+    sources: &[PathBuf],
+    wanted: &BTreeSet<String>,
+) -> CollectPlan {
+    let target = Bundle {
+        root: root.to_path_buf(),
+    };
+    let mut plan = CollectPlan::default();
+    let sources = target.readable_sources(sources);
+    for hash in wanted {
+        if target.exists(hash) {
+            plan.present.push(hash.clone());
+        } else if let Some(source) = sources.iter().find(|s| s.exists(hash)) {
+            let size = fs::metadata(source.asset_path(hash)).map_or(0, |m| m.len());
+            plan.to_copy.push((hash.clone(), size));
+        } else {
+            plan.missing.push(hash.clone());
+        }
+    }
+    plan
 }
 
 fn remove_if_present(path: &Path) -> Result<()> {

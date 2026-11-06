@@ -27,7 +27,8 @@ pub use archive::{
     archive_work, extract_archive, is_safe_component, read_archive_project, write_archive,
 };
 pub use bundle::{
-    AssetInfo, Bundle, CollectPlan, CollectProgress, CollectReport, is_valid_hash, save_text_atomic,
+    AssetInfo, Bundle, CollectPlan, CollectProgress, CollectReport, is_valid_hash,
+    plan_collect_into, save_text_atomic,
 };
 pub use data::AudioData;
 pub use decode::{

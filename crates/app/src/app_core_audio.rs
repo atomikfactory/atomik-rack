@@ -1406,6 +1406,7 @@ impl<S: EngineSink> AppCore<S> {
 
 #[path = "app_core_save.rs"]
 mod save;
+pub use save::CollectPreview;
 
 #[path = "app_core_relink.rs"]
 mod relink;

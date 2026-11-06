@@ -681,18 +681,42 @@ impl<S: EngineSink> AppCore<S> {
         self.recent_path = Some(path);
     }
 
-    /// Takes the recent list another song changed. The other song writes the file, so nothing
-    /// is saved here.
-    pub fn adopt_recent(&mut self, paths: &[PathBuf]) {
-        let mut list = crate::recent::RecentFiles::default();
-        // The list is newest first: pushing from the oldest end keeps that order.
-        for path in paths.iter().rev() {
-            list.push(path);
-        }
-        self.recent = list;
+    /// Takes the recent list another song changed (its first `pinned` songs are pinned). The
+    /// other song writes the file, so nothing is saved here.
+    pub fn adopt_recent(&mut self, paths: &[PathBuf], pinned: usize) {
+        self.recent = crate::recent::RecentFiles::from_parts(paths, pinned);
     }
 
-    /// Forgets every recent song.
+    /// How many songs at the start of [`AppCore::recent`] are pinned.
+    pub fn pinned_count(&self) -> usize {
+        self.recent.pinned_count()
+    }
+
+    /// Whether `path` is a pinned song.
+    pub fn is_pinned(&self, path: &Path) -> bool {
+        self.recent.is_pinned(path)
+    }
+
+    /// Pins a song of the recent list (it stays at the top of it); false when it is not listed,
+    /// pinned already, or the limit of pinned songs is reached.
+    pub fn pin_recent(&mut self, path: &Path) -> bool {
+        let done = self.recent.pin(path);
+        if done {
+            self.store_recent();
+        }
+        done
+    }
+
+    /// Unpins a song; it stays in the list as the newest of the songs that are not pinned.
+    pub fn unpin_recent(&mut self, path: &Path) -> bool {
+        let done = self.recent.unpin(path);
+        if done {
+            self.store_recent();
+        }
+        done
+    }
+
+    /// Forgets every recent song that is not pinned.
     pub fn clear_recent(&mut self) {
         if self.recent.clear() {
             self.store_recent();
@@ -3663,6 +3687,7 @@ impl<S: EngineSink> Drop for AppCore<S> {
 #[path = "app_core_audio.rs"]
 mod audio;
 use audio::AudioState;
+pub use audio::CollectPreview;
 
 #[path = "app_core_rec_audio.rs"]
 mod rec;
@@ -3825,7 +3850,8 @@ pub use library::LoadTarget;
 #[path = "app_core_templates.rs"]
 mod templates;
 pub use templates::{
-    DEFAULT_SONG_NAME, MAX_TEMPLATES, TEMPLATES_FOLDER, TemplateEntry, list_templates,
+    DEFAULT_SONG_NAME, MAX_TEMPLATES, TEMPLATES_FOLDER, TemplateEntry, TemplatePreview,
+    list_templates,
 };
 
 #[path = "app_core_archive.rs"]

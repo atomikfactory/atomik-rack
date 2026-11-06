@@ -879,6 +879,40 @@ fn a_song_saved_in_one_window_shows_in_the_recent_list_of_every_song() {
 }
 
 #[test]
+fn a_song_pinned_in_one_window_is_pinned_in_every_song_and_survives_clear_menu() {
+    let (mut w, _backend) = workspace();
+    let first = w.routed();
+    let second = w.new_song();
+    let dir = std::env::temp_dir().join(format!("atomik-workspace-pins-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("a.atomik"), dir.join("b.atomik"));
+    w.core_mut().save_as(&a).unwrap();
+    w.frame_all(0.0);
+    w.select(first);
+    w.core_mut().save_as(&b).unwrap();
+    w.frame_all(0.0);
+    // Pin the older song in one window: it moves to the top of the list of both.
+    assert!(w.core_mut().pin_recent(&a));
+    w.frame_all(0.0);
+    for id in [first, second] {
+        let core = w.song(id).unwrap().core();
+        assert_eq!(core.recent(), [a.clone(), b.clone()], "song {id:?}");
+        assert_eq!(core.pinned_count(), 1, "song {id:?}");
+    }
+    // Clear Menu in the other window keeps the pin.
+    w.select(second);
+    w.core_mut().clear_recent();
+    w.frame_all(0.0);
+    for id in [first, second] {
+        let core = w.song(id).unwrap().core();
+        assert_eq!(core.recent(), std::slice::from_ref(&a), "song {id:?}");
+        assert!(core.is_pinned(&a));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_favourite_marked_in_one_song_shows_in_the_others_and_a_new_song_starts_with_it() {
     use atomik_ui::BrowseAction;
     let (mut w, _backend) = workspace();
