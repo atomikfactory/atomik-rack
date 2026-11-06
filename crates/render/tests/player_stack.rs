@@ -258,6 +258,7 @@ fn freeze_request(doc: &RackDoc) -> FreezeRequest {
     FreezeRequest {
         device: key("synth"),
         effects: 0,
+        strip: false,
         clips: None,
         span: clips_span(doc.song.track(&key("synth")).unwrap()).unwrap(),
         tail_seconds: 0.0,

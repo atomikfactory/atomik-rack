@@ -178,6 +178,7 @@ fn request(doc: &RackDoc, effects: usize, tail_seconds: f64) -> FreezeRequest {
     FreezeRequest {
         device: key("lead"),
         effects,
+        strip: false,
         clips: None,
         span: clips_span(doc.song.track(&key("lead")).unwrap()).unwrap(),
         tail_seconds,
@@ -238,6 +239,7 @@ fn frozen_doc(
                 length: render.length,
                 audio: AudioClipContent::new(info.hash, 0),
                 effects: effects.to_vec(),
+                strip: false,
             },
         }),
         &registry,
@@ -433,6 +435,7 @@ fn bouncing_chosen_clips_renders_only_those_through_the_chain() {
     let req = FreezeRequest {
         device: key("lead"),
         effects: 1,
+        strip: false,
         clips: Some(vec![ids[1]]),
         span: (second.start, second.end()),
         tail_seconds: 3.0,
@@ -535,6 +538,7 @@ fn a_freeze_that_cannot_render_says_why() {
             &doc,
             &FreezeRequest {
                 effects: 2,
+                strip: false,
                 ..ok.clone()
             }
         )
@@ -619,6 +623,7 @@ fn plugins_render_in_a_freeze_and_a_frozen_plugin_is_not_built() {
     let req = FreezeRequest {
         device: key("lead"),
         effects: 1,
+        strip: false,
         clips: None,
         span: clips_span(doc.song.track(&key("lead")).unwrap()).unwrap(),
         tail_seconds: 2.0,
@@ -674,6 +679,7 @@ fn plugins_render_in_a_freeze_and_a_frozen_plugin_is_not_built() {
                 length: a.length,
                 audio: AudioClipContent::new(info.hash, 0),
                 effects: chain.effects.clone(),
+                strip: false,
             },
         }),
         &registry,
@@ -787,6 +793,7 @@ fn an_audio_track_freezes_through_its_insert_effects_too() {
     let req = FreezeRequest {
         device: key("audio-track"),
         effects: 1,
+        strip: false,
         clips: None,
         span: clips_span(doc.song.track(&key("audio-track")).unwrap()).unwrap(),
         tail_seconds: 8.0,
@@ -830,6 +837,7 @@ fn an_audio_track_freezes_through_its_insert_effects_too() {
                     length: render.length,
                     audio: AudioClipContent::new(frozen_info.hash, 0),
                     effects: fx,
+                    strip: false,
                 },
             }),
             &registry,
@@ -849,6 +857,7 @@ fn a_dry_clip_bounce_is_the_source_before_the_strip() {
     let dry = FreezeRequest {
         device: key("lead"),
         effects: 0,
+        strip: false,
         clips: Some(vec![clip.id]),
         span: (clip.start, clip.end()),
         tail_seconds: 0.0,
@@ -860,6 +869,7 @@ fn a_dry_clip_bounce_is_the_source_before_the_strip() {
         &doc,
         &FreezeRequest {
             effects: 1,
+            strip: false,
             ..dry.clone()
         },
     );
@@ -880,4 +890,243 @@ fn a_dry_clip_bounce_is_the_source_before_the_strip() {
         );
     }
     assert_eq!(render_now(d.doc(), &dry).audio, render.audio);
+}
+
+// ---------------------------------------------------------------------- containers and the strip
+
+/// `request` for any track of `doc`, whole span.
+fn request_of(
+    doc: &RackDoc,
+    device: &DeviceKey,
+    effects: usize,
+    (strip, tail_seconds): (bool, f64),
+) -> FreezeRequest {
+    FreezeRequest {
+        device: device.clone(),
+        effects,
+        strip,
+        clips: None,
+        span: clips_span(doc.song.track(device).unwrap()).unwrap(),
+        tail_seconds,
+    }
+}
+
+/// `frozen_doc` for any track: stores `render` and freezes `device` through `effects`.
+fn frozen_doc_of(
+    doc: &RackDoc,
+    render: &FreezeRender,
+    (device, effects, strip): (&DeviceKey, &[DeviceKey], bool),
+    tag: &str,
+) -> (RackDoc, Bundle, TempDir) {
+    let dir = TempDir::new(tag);
+    let mut bundle = Bundle::create(&dir.0.join("song")).unwrap();
+    let info = bundle.add_recording(&render.audio, "freeze.wav").unwrap();
+    let registry = default_registry();
+    let mut d = Document::new(doc.clone());
+    d.apply(
+        Command::RegisterAsset {
+            hash: info.hash.clone(),
+            meta: AssetMeta {
+                channels: info.channels,
+                sample_rate: info.sample_rate,
+                frames: info.frames,
+                original_name: info.original_name.clone(),
+            },
+        },
+        &registry,
+    )
+    .unwrap();
+    d.apply(
+        Command::Song(SongCommand::FreezeTrack {
+            device: device.clone(),
+            frozen: Frozen {
+                start: render.start,
+                length: render.length,
+                audio: AudioClipContent::new(info.hash, 0),
+                effects: effects.to_vec(),
+                strip,
+            },
+        }),
+        &registry,
+    )
+    .unwrap();
+    (d.doc().clone(), bundle, dir)
+}
+
+fn combine(d: &mut Document, keys: &[&DeviceKey]) {
+    apply(
+        d,
+        Command::Container(atomik_model::ContainerCommand::Combine {
+            keys: keys.iter().map(|k| (*k).clone()).collect(),
+            name: String::new(),
+        }),
+    );
+}
+
+/// The device of the track of `doc` that is a container.
+fn container_track(doc: &RackDoc) -> DeviceKey {
+    doc.song
+        .tracks
+        .iter()
+        .map(|t| t.device.clone())
+        .find(|k| doc.device(k).is_some_and(|d| d.inner.is_some()))
+        .expect("a track on a container")
+}
+
+#[test]
+fn a_frozen_container_instrument_bounces_bit_for_bit_like_the_unfrozen_project() {
+    let mut d = project(0);
+    combine(&mut d, &[&key("lead")]);
+    let doc = d.doc().clone();
+    let device = container_track(&doc);
+    let req = request_of(&doc, &device, 0, (false, 0.0));
+    let render = render_now(&doc, &req);
+    assert!(render.audio.channels[0].iter().any(|x| x.abs() > 0.01));
+    // Everything inside the container is left out of the engine, and the project sounds as before.
+    let (frozen, bundle, _dir) = frozen_doc_of(&doc, &render, (&device, &[], false), "cont-inst");
+    let plain = bounce(&doc, None);
+    let with_freeze = bounce(&frozen, Some(&bundle));
+    assert!(peak(&plain) > 0.01);
+    assert_eq!(plain.channels, with_freeze.channels);
+    // The same sound as the project without the container.
+    let flat = render_now(
+        &project(0).doc().clone(),
+        &request(project(0).doc(), 0, 0.0),
+    );
+    assert_eq!(render.audio, flat.audio);
+}
+
+#[test]
+fn a_frozen_container_effect_bounces_like_the_unfrozen_one() {
+    let mut d = project(2);
+    let fx = chain(d.doc());
+    combine(&mut d, &[&fx[0]]);
+    let doc = d.doc().clone();
+    let fx = chain(&doc);
+    assert_eq!(fx.len(), 2);
+    assert!(doc.device(&fx[0]).unwrap().inner.is_some());
+    let plain = bounce(&doc, None);
+    for through in [1usize, 2] {
+        let render = render_now(&doc, &request(&doc, through, 8.0));
+        let (frozen, bundle, _dir) = frozen_doc(&doc, &render, &fx[..through], "cont-fx");
+        let diff = max_diff(&plain, &bounce(&frozen, Some(&bundle)));
+        assert!(
+            diff < 2e-4,
+            "through {through}: the bounces differ by {diff}"
+        );
+    }
+}
+
+#[test]
+fn a_container_effect_with_latency_renders_as_the_same_effect_outside_it() {
+    let latent = |container: bool, lookahead: f32| {
+        let mut d = project(0);
+        let lead_channel = d
+            .doc()
+            .console
+            .channels
+            .iter()
+            .find(|c| c.source.as_ref() == Some(&key("lead")))
+            .unwrap()
+            .channel
+            .clone();
+        apply(
+            &mut d,
+            Command::Console(ConsoleCommand::SetInsert {
+                channel: lead_channel,
+                slot: 0,
+                effect: Some(InsertEffect::New {
+                    type_id: "atomik.compressor".into(),
+                }),
+            }),
+        );
+        let fx = chain(d.doc());
+        apply(
+            &mut d,
+            Command::SetParam {
+                key: fx[0].clone(),
+                param: "lookahead".into(),
+                value: lookahead,
+                merge: None,
+            },
+        );
+        if container {
+            combine(&mut d, &[&fx[0]]);
+        }
+        let doc = d.doc().clone();
+        render_now(&doc, &request(&doc, 1, 0.0))
+    };
+    let plain = latent(false, 5.0);
+    let inside = latent(true, 5.0);
+    assert_eq!(
+        plain.audio, inside.audio,
+        "the delay of the effect inside a container is cut like the one outside"
+    );
+    // The look-ahead is a real delay: without it the render starts 240 frames earlier.
+    assert_ne!(plain.audio, latent(false, 0.0).audio);
+}
+
+#[test]
+fn a_frozen_strip_bounces_like_the_unfrozen_project_and_leaves_the_channel_out() {
+    let mut d = project(1);
+    let channel = d
+        .doc()
+        .console
+        .channels
+        .iter()
+        .find(|c| c.source.as_ref() == Some(&key("lead")))
+        .unwrap()
+        .channel
+        .clone();
+    // A fader and a pan that are not the defaults: the render has to carry them.
+    for (param, value) in [("fader", 0.55), ("pan", -0.4)] {
+        apply(
+            &mut d,
+            Command::SetParam {
+                key: channel.clone(),
+                param: param.into(),
+                value,
+                merge: None,
+            },
+        );
+    }
+    let doc = d.doc().clone();
+    let fx = chain(&doc);
+    let strip = render_now(&doc, &request_of(&doc, &key("lead"), 1, (true, 8.0)));
+    let inserts = render_now(&doc, &request(&doc, 1, 8.0));
+    assert_ne!(strip.audio, inserts.audio, "the strip changes the render");
+    let peak_of = |r: &FreezeRender, c: usize| {
+        r.audio.channels[c]
+            .iter()
+            .fold(0.0f32, |m, x| m.max(x.abs()))
+    };
+    // Panned left: the left channel is the louder one.
+    assert!(peak_of(&strip, 0) > peak_of(&strip, 1) * 1.2);
+    let (frozen, bundle, _dir) = frozen_doc_of(&doc, &strip, (&key("lead"), &fx, true), "strip");
+    let x = frozen.expand(&default_registry());
+    assert!(
+        x.devices
+            .iter()
+            .filter(|d| d.key == channel || d.key == key("lead"))
+            .all(|d| d.frozen)
+    );
+    let plain = bounce(&doc, None);
+    let diff = max_diff(&plain, &bounce(&frozen, Some(&bundle)));
+    assert!(diff < 2e-4, "the bounces differ by {diff}");
+    // A render that asks for the strip with only part of the chain is refused.
+    let mut partial = request_of(&doc, &key("lead"), 0, (true, 0.0));
+    partial.effects = 0;
+    let err = render_freeze(
+        &doc,
+        &default_registry(),
+        (&options(512, 0), None),
+        &mut PluginBounce::default(),
+        &partial,
+        RenderControl::default(),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("whole") || err.to_string().contains("all"),
+        "{err}"
+    );
 }

@@ -2,7 +2,9 @@
 //!
 //! **File > Export Song as Audio File** renders from the start to the song End and keeps the
 //! tail that is still audible; **Export Loop as Audio File** renders exactly the range between
-//! the locators (see [`atomik_render::export`] for the rules). The render runs on a worker thread
+//! the locators and **Export Selection as Audio File** the time range selected on the lanes of the
+//! arrangement, exactly and with no tail (see [`atomik_render::export`] for the rules). The render
+//! runs on a worker thread
 //! ([`crate::export_worker`]) through the offline bounce path, on a copy of the document taken
 //! when it starts, so the live engine is not touched: the song keeps playing, and editing goes on
 //! (an edit after the start is not in the file). One export runs at a time.
@@ -10,8 +12,8 @@
 //! **Export Stems as Audio Files** ([`ExportScope::Stems`]) is the same export with one file per
 //! strip of the console ([`atomik_render::stems`]): the path is the folder the files go into, and
 //! the panel's values say the container, depth, dither, rate, tail, whether the channels are
-//! taken before their strips and whether only the range between the locators is exported (the
-//! same range as Export Loop, with no tail).
+//! taken before their strips and whether only the range between the locators (the same range as
+//! Export Loop) or the time selection is exported, with no tail.
 //!
 //! A finished export says how loud it is: the toast (and the log) carry the integrated loudness,
 //! the true peak and the loudness range of the audio that was written
@@ -61,9 +63,17 @@ impl ExportState {
     }
 }
 
-fn span_of(scope: ExportScope, values: &ExportValues) -> ExportSpan {
+/// The range the panel's choices mean; `selection` is the time selection in ticks, when there is
+/// one (a selection that does not exist is an empty range, which the render refuses).
+fn span_of(scope: ExportScope, values: &ExportValues, selection: Option<(i64, i64)>) -> ExportSpan {
+    let range = || {
+        let (start, end) = selection.unwrap_or((0, 0));
+        ExportSpan::Range(start, end)
+    };
     match scope {
         ExportScope::Song => ExportSpan::Song,
+        ExportScope::Selection => range(),
+        ExportScope::Stems if values.selection => range(),
         ExportScope::Stems if values.locators => ExportSpan::Loop,
         ExportScope::Stems => ExportSpan::Song,
         ExportScope::Loop => ExportSpan::Loop,
@@ -98,9 +108,13 @@ pub fn export_format(values: &ExportValues) -> ExportFormat {
     }
 }
 
-/// The render request the panel's values mean: a loop has no tail.
-pub fn export_request(scope: ExportScope, values: &ExportValues) -> ExportRequest {
-    let span = span_of(scope, values);
+/// The render request the panel's values mean: a loop and a selection have no tail.
+pub fn export_request(
+    scope: ExportScope,
+    values: &ExportValues,
+    selection: Option<(i64, i64)>,
+) -> ExportRequest {
+    let span = span_of(scope, values, selection);
     ExportRequest {
         span,
         tail_seconds: if span == ExportSpan::Song && values.tail {
@@ -218,9 +232,20 @@ impl<S: EngineSink> AppCore<S> {
         if scope == ExportScope::Stems && self.doc().console.channels.is_empty() {
             return Some("There are no mixer strips to export as stems".to_owned());
         }
-        span_frames(self.doc(), span_of(scope, &ExportValues::default()))
-            .err()
-            .map(|e| e.to_string())
+        if scope == ExportScope::Selection && self.export_selection().is_none() {
+            return Some("Select a time range on a lane to export it".to_owned());
+        }
+        let span = span_of(scope, &ExportValues::default(), self.export_selection());
+        span_frames(self.doc(), span).err().map(|e| e.to_string())
+    }
+
+    /// The time selection an export can take: the range selected on the lanes of the
+    /// arrangement, as `(start, end)` ticks, when it is not empty.
+    pub fn export_selection(&self) -> Option<(i64, i64)> {
+        self.arrangement
+            .lane_ranges()
+            .map(|(_, start, end)| (start, end))
+            .filter(|(start, end)| start < end)
     }
 
     /// The sample rate of the project in Hz (the rate of an export that does not convert).
@@ -235,6 +260,7 @@ impl<S: EngineSink> AppCore<S> {
         let what = match running.scope {
             ExportScope::Song => "Rendering the song",
             ExportScope::Loop => "Rendering the loop",
+            ExportScope::Selection => "Rendering the selection",
             ExportScope::Stems => "Rendering the stems",
         };
         Some((fraction, what.to_owned()))
@@ -257,10 +283,13 @@ impl<S: EngineSink> AppCore<S> {
             if values.file == ExportFile::Flac && values.depth == ExportDepth::Float32 {
                 return Some("FLAC holds 16-bit and 24-bit audio, not 32-bit float".to_owned());
             }
-            // Stems between the locators need a range of their own.
-            span_frames(self.doc(), span_of(scope, &values))
-                .err()
-                .map(|e| e.to_string())
+            if scope == ExportScope::Stems && values.selection && self.export_selection().is_none()
+            {
+                return Some("Select a time range on a lane to export it".to_owned());
+            }
+            // Stems between the locators or the selection need a range of their own.
+            let span = span_of(scope, &values, self.export_selection());
+            span_frames(self.doc(), span).err().map(|e| e.to_string())
         });
         if let Some(why) = refusal {
             self.reject(why.clone());
@@ -281,7 +310,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.export.next_job += 1;
         let work = Work {
             doc: self.doc().clone(),
-            request: export_request(scope, &values),
+            request: export_request(scope, &values, self.export_selection()),
             format: export_format(&values),
             target: match scope {
                 ExportScope::Stems => Target::Stems {

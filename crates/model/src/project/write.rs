@@ -252,8 +252,9 @@ pub(super) fn write_song(w: &mut String, song: &Song) {
                     let keys: Vec<String> = f.effects.iter().map(|k| json_str(&k.0)).collect();
                     format!(" \"effects\": [{}],", keys.join(", "))
                 };
+                let strip = if f.strip { " \"strip\": true," } else { "" };
                 format!(
-                    " \"frozen\": {{\"start\": {}, \"length\": {},{effects} \"audio\": {}}},",
+                    " \"frozen\": {{\"start\": {}, \"length\": {},{effects}{strip} \"audio\": {}}},",
                     f.start,
                     f.length,
                     audio_json(&f.audio)

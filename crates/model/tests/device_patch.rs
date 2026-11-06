@@ -447,6 +447,7 @@ fn a_frozen_device_refuses_a_patch_and_a_reset() {
                     length: 2 * BAR,
                     audio: audio(1),
                     effects: Vec::new(),
+                    strip: false,
                 },
             }),
             set_param("other", "filter.cutoff", 500.0),

@@ -1107,6 +1107,7 @@ impl App {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title(match scope {
                             atomik_ui::ExportScope::Loop => "Export loop as audio file",
+                            atomik_ui::ExportScope::Selection => "Export selection as audio file",
                             _ => "Export song as audio file",
                         })
                         .add_filter("Audio file", &["wav", "aif", "aiff", "flac"])

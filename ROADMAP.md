@@ -48,7 +48,10 @@ selected clip about the start of the selection, previewed and kept as one undo s
 on audio clips, which play on from their file and reach back only as far as it has audio; and a time range selected
 across several lanes of one or more tracks, copied, cut, deleted, pasted back on lanes of their own kind and bounced),
 and recording and note lane follow-ups (the part of a looped clip that no repetition plays dimmed in the piano roll, the
-inspector's fade unit remembered between sessions, and a take written to every note lane armed with Record to Lane).
+inspector's fade unit remembered between sessions, and a take written to every note lane armed with Record to Lane),
+and freeze and export follow-ups (a container instrument or a container effect frozen with everything inside it, a
+Freeze with Strip option that bakes the channel strip into the render, and Export Selection as Audio File and a
+SELECTION range for stems that take the time range selected on the lanes).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -73,8 +76,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 3: Audio
 
 - **Time-stretch follow-ups.** Warp markers are edited by hand in the audio clip editor's Slice mode; still to come are the Vocal and Comp modes of the editor and slicing for a reversed clip (a reversed clip can be warped, transposed and quantized, but the slice editor and Clip to Loop Slicer still refuse it); a real-time stretcher that keeps the pitch (WSOLA: the preview that plays before a clip's buffer is rendered resamples through the warp markers, so a transposed clip is at the wrong pitch until the buffer is ready); formant-preserving pitch shift; stereo-linked phase locking in the Tonal mode; and warping streamed assets without holding the rendered clip in memory (the cache holds 512 MiB).
-- **Freeze and bounce follow-ups.** Freezing a container instrument or a container effect in the chain, a freeze that bakes the sends or the whole channel strip into the render as an option (today the strip and the sends are never frozen and stay live), a render that follows tempo changes (today the tempo is locked while a track is frozen), freezing with in-process plugins (today the sandbox is needed), and a latency-compensated mix (a frozen track is aligned to the others but the mix is that much earlier).
-- **Stem and selection export follow-ups.** Per-strip stems in WAV, AIFF and FLAC with dither, stems between the locators and a loudness report are done. Still to come: MP3 (held back until its licence is settled) and exporting a time selection (today the range is the one between the locators).
+- **Freeze and bounce follow-ups.** A freeze that also bakes the sends into the render (a strip with a send on into a return, or a parallel channel, is refused when the strip is baked in, since their signal would go silent), a render that follows tempo changes (today the tempo is locked while a track is frozen), freezing with in-process plugins (today the sandbox is needed), and a latency-compensated mix (a frozen track is aligned to the others but the mix is that much earlier).
+- **Stem and selection export follow-ups.** Per-strip stems in WAV, AIFF and FLAC with dither, stems between the locators or over the selected time range, the selection as one file and a loudness report are done. Still to come: MP3 (held back until its licence is settled), and the selection in the MCP export tool (it takes the song or the locators).
 - **Audio to notes follow-ups.** Polyphonic extraction (chords and several voices), a re-attack of one pitch with a shorter dip in level than 20 ms, a snare struck with a hat (a hit is one drum, except a kick with a hat), and a drum machine track with the pads filled from the audio.
 - **Spectrum and metering follow-ups.** A spectrogram, a stored reference curve, a loudness history graph with the range and a target line, the K-weighting, a 16384-point FFT with smoothing across bins and the display settings as user presets are done. Still to come: the same meters as console panels (a spectrum and a phase meter on a channel or a bus without an insert; today they are devices in a chain, and the console keeps its peak and RMS meters), a second device as the reference curve, meters for plugin devices (they have no scope tap), and FFT sizes above 16384.
 

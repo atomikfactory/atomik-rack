@@ -417,6 +417,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Frozen, "start", 1).req(),
     field(Frozen, "length", 1).req(),
     field(Frozen, "effects", 1),
+    field(Frozen, "strip", 44).ignorable(),
     field(Frozen, "audio", 1).req(),
     // Lanes.
     field(NotesLane, "kind", 1).req(),

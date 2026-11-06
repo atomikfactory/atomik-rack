@@ -181,6 +181,7 @@ fn request(clips: Option<Vec<ClipId>>, span: (i64, i64)) -> FreezeRequest {
     FreezeRequest {
         device: key("lead"),
         effects: 0,
+        strip: false,
         clips,
         span,
         tail_seconds: 0.0,

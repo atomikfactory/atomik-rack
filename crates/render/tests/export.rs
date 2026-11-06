@@ -463,3 +463,49 @@ fn the_report_carries_the_loudness_of_what_was_written() {
     let again = converted.loudness.integrated_lufs.unwrap();
     assert!((again - lufs).abs() < 0.3, "{again} against {lufs}");
 }
+
+#[test]
+fn a_range_export_is_exactly_the_frames_of_the_selection_and_ignores_the_locators() {
+    let mut doc = demo();
+    // The locators are elsewhere: the range decides, and it needs no loop.
+    doc.song_mut().loop_range = (0, BAR);
+    doc.song_mut().loop_enabled = false;
+    let (start, end) = (2 * BAR, 3 * BAR + BAR / 2);
+    let export = render(
+        &doc,
+        &ExportRequest {
+            span: ExportSpan::Range(start, end),
+            tail_seconds: DEFAULT_TAIL_SECONDS,
+        },
+    );
+    let (from, to) = (4 * 48_000, 7 * 48_000);
+    assert_eq!(export.audio.frames(), to - from);
+    assert_eq!(export.span_frames, (to - from) as u64);
+    assert_eq!(export.tail_frames, 0, "a range has no tail");
+    let bounce = render_doc(&doc, &default_registry(), &options()).unwrap();
+    assert_eq!(
+        bits(&export.audio.channels),
+        bits(
+            &bounce
+                .channels
+                .iter()
+                .map(|c| c[from..to].to_vec())
+                .collect::<Vec<_>>()
+        )
+    );
+    assert!(export.audio.channels[0].iter().any(|x| x.abs() > 1e-3));
+    // An empty range is refused with a message that names the selection.
+    let err = render_export(
+        &doc,
+        &default_registry(),
+        (&options(), None),
+        &mut PluginBounce::default(),
+        &ExportRequest {
+            span: ExportSpan::Range(BAR, BAR),
+            tail_seconds: 0.0,
+        },
+        RenderControl::default(),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("selection is empty"), "{err}");
+}

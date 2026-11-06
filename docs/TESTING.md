@@ -947,7 +947,11 @@ a cancel that leaves no file, the mapping of the panel values to the render) and
 the proposed name, the options and progress panels, the choices saved in `export.json` and restored,
 CANCEL and Esc, the items disabled while an export runs); `crates/ui/tests/export_panel.rs` the
 panel itself. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
-loop, argument validation and the path policy).
+loop, argument validation and the path policy). A time selection is tested at the three layers: the
+render exports exactly the frames of `ExportSpan::Range` (the bounce slice, no tail, locators ignored,
+an empty range refused) and stems cut the same frames, the app takes the range selected on a lane
+(and refuses with a message when there is none, for the file and for stems) and the panel offers
+SELECTION beside the other two ranges without overlap.
 
 Hand checks, not automated: the native save dialog (WAV filter, proposed name and folder), the look
 of the options and progress panels in a real window, the cancel of a long export, and an export of a
@@ -976,6 +980,14 @@ muted track renders as if it played, a render can be stopped and reports increas
 way a freeze can fail says why, an audio track freezes through its inserts, and the plugin demo (the
 CLAP test plugins, one with 128 frames of latency and a sidechain) renders in a freeze, bounces with
 two plugins fewer built and lines up with the unfrozen mix 128 frames earlier.
+Container instruments and effects are frozen in the same files: the expansion flags every device
+inside the container and taps the inner output that feeds its output, a frozen container instrument
+bounces bit for bit like the unfrozen project (and renders the same audio as the project without the
+container), a frozen container effect bounces within 2e-4, a latent effect inside a container is cut
+by the same delay as outside it, a device inside a frozen container refuses edits, and a baked strip
+(`Frozen::strip`) unplugs the channel and feeds what it fed from the player, bounces within 2e-4 with
+a fader and pan that are not the defaults, refuses a partial chain, a send that is on and a parallel
+channel, saves and loads the ignorable `strip` field, and survives Re-render Frozen Track.
 `crates/ui/tests/freeze.rs` covers the header mark and the labelled render, nothing to grab where a
 frozen track's clips are, the tracks a command works on and the registry.
 `crates/app/src/app_core_freeze_tests.rs` runs the worker end to end on a recording sink (the

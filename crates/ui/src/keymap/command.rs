@@ -838,6 +838,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("file.export_patch", "Export Patch", G::Global, C::Global).menu(),
     cmd(
+        "file.export_selection_audio",
+        "Export Selection as Audio File",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_song_audio",
         "Export Song as Audio File",
         G::Global,
@@ -1742,6 +1749,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.freeze_cancel",
         "Cancel Freeze",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.freeze_strip",
+        "Freeze with Strip",
         G::Sequencer,
         C::Sequencer,
     )

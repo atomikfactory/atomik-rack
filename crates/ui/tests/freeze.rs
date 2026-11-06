@@ -19,6 +19,7 @@ fn frozen_doc() -> RackDoc {
         length: 2 * BAR,
         audio: AudioClipContent::new(HASH_A, 0),
         effects: Vec::new(),
+        strip: false,
     });
     doc
 }
@@ -117,6 +118,7 @@ fn the_freeze_commands_are_registered_with_menu_items() {
         "sequencer.freeze_track",
         "sequencer.freeze_track_to_device",
         "sequencer.freeze_tail",
+        "sequencer.freeze_strip",
         "sequencer.freeze_cancel",
         "sequencer.unfreeze_track",
         "sequencer.unfreeze_track_keep",

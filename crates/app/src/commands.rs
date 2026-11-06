@@ -94,6 +94,8 @@ pub enum AppCommand {
     ExportSongAudio,
     /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
     ExportLoopAudio,
+    /// File ▸ Export Selection as Audio File…: exactly the time range selected on the lanes.
+    ExportSelectionAudio,
     /// File ▸ Export Stems as Audio Files…: one file per mixer strip, in a folder.
     ExportStems,
     /// Help ▸ Export Device Parameter List…: a text table of every built-in device parameter.
@@ -405,6 +407,8 @@ pub enum AppCommand {
     FreezeTrackToDevice,
     /// Track ▸ Freeze with Tail: keep the decay of reverbs and delays past the end of the clips.
     FreezeTail,
+    /// Track ▸ Freeze with Strip: Freeze Track bakes the channel strip into the render.
+    FreezeStrip,
     /// Track ▸ Cancel Freeze: stop the running render and drop the waiting ones.
     FreezeCancel,
     /// Track ▸ Unfreeze Track: the original track, instrument and effects again.
@@ -689,6 +693,7 @@ impl AppCommand {
             AppCommand::ExportMidiSong => ("file.export_midi_song", None),
             AppCommand::ExportSongAudio => ("file.export_song_audio", None),
             AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
+            AppCommand::ExportSelectionAudio => ("file.export_selection_audio", None),
             AppCommand::ExportStems => ("file.export_stems", None),
             AppCommand::ExportDeviceInfo => ("file.export_device_info", None),
             AppCommand::StressRack => ("file.stress_rack", None),
@@ -861,6 +866,7 @@ impl AppCommand {
             AppCommand::FreezeTrack => ("sequencer.freeze_track", None),
             AppCommand::FreezeTrackToDevice => ("sequencer.freeze_track_to_device", None),
             AppCommand::FreezeTail => ("sequencer.freeze_tail", None),
+            AppCommand::FreezeStrip => ("sequencer.freeze_strip", None),
             AppCommand::FreezeCancel => ("sequencer.freeze_cancel", None),
             AppCommand::UnfreezeTrack => ("sequencer.unfreeze_track", None),
             AppCommand::UnfreezeTrackKeep => ("sequencer.unfreeze_track_keep", None),
@@ -989,6 +995,7 @@ impl AppCommand {
             ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
             ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
             ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
+            ("file.export_selection_audio", None) => AppCommand::ExportSelectionAudio,
             ("file.export_stems", None) => AppCommand::ExportStems,
             ("file.export_device_info", None) => AppCommand::ExportDeviceInfo,
             ("file.stress_rack", None) => AppCommand::StressRack,
@@ -1188,6 +1195,7 @@ impl AppCommand {
             ("sequencer.freeze_track", None) => AppCommand::FreezeTrack,
             ("sequencer.freeze_track_to_device", None) => AppCommand::FreezeTrackToDevice,
             ("sequencer.freeze_tail", None) => AppCommand::FreezeTail,
+            ("sequencer.freeze_strip", None) => AppCommand::FreezeStrip,
             ("sequencer.freeze_cancel", None) => AppCommand::FreezeCancel,
             ("sequencer.unfreeze_track", None) => AppCommand::UnfreezeTrack,
             ("sequencer.unfreeze_track_keep", None) => AppCommand::UnfreezeTrackKeep,
@@ -1682,6 +1690,9 @@ pub struct MenuState {
     /// The loop can be exported as audio: its locators are apart and no export runs (File >
     /// Export Loop as Audio File is available).
     pub export_loop: bool,
+    /// A time range is selected on the lanes and no export runs (File > Export Selection as
+    /// Audio File is available).
+    pub export_selection: bool,
     /// The console has strips and no export runs (File > Export Stems as Audio Files is
     /// available).
     pub export_stems: bool,
@@ -1857,6 +1868,8 @@ pub struct FreezeMenu {
     pub busy: bool,
     /// Freezes keep the tail of the chain (the item is checked).
     pub tail: bool,
+    /// Freeze Track bakes the channel strip into the render (the item is checked).
+    pub strip: bool,
     /// A selected track has players above its instrument (the player stack items work).
     pub players: bool,
     /// Every selected stack's track records Direct (the item is checked).
@@ -2171,6 +2184,11 @@ pub fn menus_with_songs(
                     "Export Loop as Audio File\u{2026}",
                     AppCommand::ExportLoopAudio,
                     state.export_loop,
+                ),
+                enabled(
+                    "Export Selection as Audio File\u{2026}",
+                    AppCommand::ExportSelectionAudio,
+                    state.export_selection,
                 ),
                 enabled(
                     "Export Stems as Audio Files\u{2026}",
@@ -2808,6 +2826,11 @@ pub fn menus_with_songs(
                     AppCommand::FreezeTail,
                     state.freeze.tail,
                 ),
+                check(
+                    "Freeze with Strip",
+                    AppCommand::FreezeStrip,
+                    state.freeze.strip,
+                ),
                 enabled(
                     "Re-render Frozen Track",
                     AppCommand::RefreezeTrack,
@@ -3355,6 +3378,7 @@ mod tests {
             midi_song: false,
             export_song: false,
             export_loop: false,
+            export_selection: false,
             export_stems: false,
             org: OrgMenu::default(),
             lane: LaneMenu::default(),
@@ -3403,6 +3427,7 @@ mod tests {
             AppCommand::ExportMidiSong,
             AppCommand::ExportSongAudio,
             AppCommand::ExportLoopAudio,
+            AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
             AppCommand::StressRack,
             AppCommand::StressSong,
@@ -3523,6 +3548,7 @@ mod tests {
             AppCommand::FreezeTrack,
             AppCommand::FreezeTrackToDevice,
             AppCommand::FreezeTail,
+            AppCommand::FreezeStrip,
             AppCommand::FreezeCancel,
             AppCommand::UnfreezeTrack,
             AppCommand::UnfreezeTrackKeep,
@@ -4068,6 +4094,7 @@ mod tests {
                 "480 per quarter",
                 "Export Song as Audio File\u{2026}",
                 "Export Loop as Audio File\u{2026}",
+                "Export Selection as Audio File\u{2026}",
                 "Export Stems as Audio Files\u{2026}",
                 "Stress Rack",
                 "Stress Song",
@@ -4264,6 +4291,7 @@ mod tests {
                 "Freeze Track",
                 "Freeze Track up to Selected Device",
                 "Freeze with Tail",
+                "Freeze with Strip",
                 "Re-render Frozen Track",
                 "Unfreeze Track",
                 "Unfreeze Track and Keep Audio",
@@ -4680,6 +4708,7 @@ mod tests {
                 midi_song: true,
                 export_song: true,
                 export_loop: true,
+                export_selection: true,
                 export_stems: true,
                 org: OrgMenu::default(),
                 lane: LaneMenu::default(),

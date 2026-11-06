@@ -118,7 +118,7 @@ pub use expand::{
 };
 pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
-    ticks_for_frames, track_chain,
+    frozen_tap, strip_blocker, ticks_for_frames, track_chain, within,
 };
 pub use lane_cmd::ExtractMode;
 pub use loop_convert::LoopConvert;

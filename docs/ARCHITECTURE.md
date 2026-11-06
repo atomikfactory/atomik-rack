@@ -972,6 +972,11 @@ keys) write the project as a WAV, AIFF or FLAC file, or one file per mixer strip
   file; the app puts it in the toast and the log, and `session_export` returns it.
 - **Range of stems.** `ExportValues::locators` makes a stems export use `ExportSpan::Loop`
   (the frames between the locators, no tail) instead of the song with its tail.
+- **Time selection.** `ExportSpan::Range(start, end)` is a range in ticks, cut out like a loop with
+  no tail. File > Export Selection as Audio File (`ExportScope::Selection`) and the SELECTION range
+  of stems (`ExportValues::selection`, which is not saved in `export.json`) take the range selected
+  on the lanes of the arrangement (`AppCore::export_selection`, the first and last tick of
+  `lane_ranges`); with none selected the command is greyed and says so.
 - **Stems** ([render/src/stems.rs](../crates/render/src/stems.rs),
   [model/src/stems.rs](../crates/model/src/stems.rs)). `stem_sources` lists the strips of the
   console in mixer order (channels, buses, FX returns, master) with the sockets that carry each
@@ -2182,17 +2187,25 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
 
 - **The chain** ([model/src/freeze.rs](../crates/model/src/freeze.rs)). A track's chain is its
   instrument (or an audio track's player) and the effects of its console channel's insert loop
-  ([`insert_chain`], at most sixteen, a container effect ends it). A freeze goes *through* the first
-  `n` of them (`0..=len`): the render is the signal at the output of the last of them, and the
-  effects after it stay live on the frozen audio. The channel strip (fader, pan, width, sends, mute,
-  solo, output) is never frozen, nor are send effects; the strip's input section (gain, filters,
-  dynamics and EQ when they come before the insert point) is part of the signal at the tap, so it is
-  frozen with a chain of one or more effects. A track needs a console channel it is cabled to; a
-  container instrument is refused.
-- **The frozen state.** `Track::frozen` is a `Frozen { start, length, audio, effects }`: the render
-  as a plain audio clip (an asset of the pool, no reverse, no warp, placed in ticks) and the frozen
-  effects. The track's clips, instrument and effects stay in the document untouched, so unfreezing
-  restores it exactly. `SongCommand::FreezeTrack`, `RefreezeTrack` (the render of a track that is
+  ([`insert_chain`], at most sixteen, a container effect is one of them). A freeze goes *through* the
+  first `n` of them (`0..=len`): the render is the signal at the output of the last of them, and the
+  effects after it stay live on the frozen audio. Unless the strip is baked in, the channel strip
+  (fader, pan, width, sends, mute, solo, output) is not frozen, nor are send effects; the strip's
+  input section (gain, filters, dynamics and EQ when they come before the insert point) is part of
+  the signal at the tap, so it is frozen with a chain of one or more effects. A track needs a console
+  channel it is cabled to. A container instrument or effect freezes with everything inside it: every
+  flat device whose path starts with the container's key (`within`) is flagged, and the tap of a
+  container effect is the inner output that feeds the container's output (`ExpandedRack::exits`,
+  traced by the expansion itself, so a bypassed container taps what feeds it). **Baking the strip**
+  (`Frozen::strip`, `frozen_tap`) takes the tap at the channel's `out_l`/`out_r`, includes the whole
+  insert chain, flags the channel like the instrument and re-sources what the channel fed to the
+  player; the channel's sends and parallel output cables are dropped, so `strip_blocker` refuses a
+  strip with a send on into a return that holds an effect, or one that feeds a parallel channel.
+- **The frozen state.** `Track::frozen` is a `Frozen { start, length, audio, effects, strip }`: the
+  render as a plain audio clip (an asset of the pool, no reverse, no warp, placed in ticks), the
+  frozen effects and whether the strip is baked in (the saved `strip` field is ignorable, so older
+  files load and format 44 is unchanged). The track's clips, instrument and effects stay in the
+  document untouched, so unfreezing restores it exactly. `SongCommand::FreezeTrack`, `RefreezeTrack` (the render of a track that is
   frozen already replaced by a new one through the same checks, `plan_refreeze`; the effects must
   still be the first of the insert chain), `UnfreezeTrack { keep_audio }` (which can also
   leave the render as a clip on a new audio track, in the same step) and `AddRenderedTrack` (bounce
@@ -2200,7 +2213,8 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   with their own `Edit` (`Edit::Frozen`); the asset counts as referenced while the track is frozen
   and while the undo history holds it, so it goes at the first save after that. A relink swaps it.
   Commands that would change a frozen track (its clips, notes and automation), a device it freezes
-  (parameters, cables, removal), the console channel it plays through (removal), the frozen part of
+  (parameters, cables, removal; a device inside a frozen container counts, and so does the channel
+  of a baked strip), the console channel it plays through (removal), the frozen part of
   an insert chain or the tempo and meter maps are refused with a message that says to unfreeze
   (`freeze::guard`, called by `Document::plan`, so every path is covered; undo and redo restore
   consistent states and never come through it). The tempo is locked because the render is tied to
@@ -2228,14 +2242,16 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   goes on for up to 10 s past the end (60 s at most) and is cut where the signal stays below -90
   dBFS (`TAIL_FLOOR`), so a dry track gets none; without one it is exactly the span. A chain that
   reports latency is compensated: the tap sits in front of the master's delay compensation, so the
-  render is cut by the latencies the engine published for the chain (read at the end of the render,
-  after the plugins' pre-roll), which keeps the track aligned with the others. For bounce in place
+  render is cut by the latency of the chain (`path_latency`: the longest path of the latencies the
+  engine published for the devices of the chain, read at the end of the render after the plugins'
+  pre-roll, over the flat cables between them, with the channel split into its input stage and the
+  rest), which keeps the track aligned with the others. For bounce in place
   the other clips of the track are removed from the rendered copy of the document. `RenderControl`
   (a cancel flag read once per 64-frame batch, a progress callback) can stop a render, which then
   returns `None`; neither changes a sample.
 - **App** ([app_core_freeze.rs](../crates/app/src/app_core_freeze.rs),
   [freeze_worker.rs](../crates/app/src/freeze_worker.rs)). The commands in the Track menu
-  (`sequencer.freeze_track`, `freeze_track_to_device`, `freeze_tail`, `freeze_cancel`,
+  (`sequencer.freeze_track`, `freeze_track_to_device`, `freeze_tail`, `freeze_strip`, `freeze_cancel`,
   `unfreeze_track`, `unfreeze_track_keep`, `refreeze_track`, `bounce_in_place`,
   `bounce_in_place_mute`, `bounce_range`; no default keys), in the track header menu and (bounce)
   in the clip menu queue jobs; one `atomik-freeze`
@@ -4495,7 +4511,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (457) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (459) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

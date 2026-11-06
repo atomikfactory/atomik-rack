@@ -2646,6 +2646,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_song: self.core.can_export_midi(MidiExport::Song),
             export_song: self.core.can_export_audio(ExportScope::Song),
             export_loop: self.core.can_export_audio(ExportScope::Loop),
+            export_selection: self.core.can_export_audio(ExportScope::Selection),
             export_stems: self.core.can_export_audio(ExportScope::Stems),
             org: self.core.arrangement().org_menu(),
             lane: self.core.arrangement().lane_menu(),
@@ -5613,6 +5614,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
             AppCommand::ExportSongAudio => self.export_audio_request(ExportScope::Song),
             AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
+            AppCommand::ExportSelectionAudio => self.export_audio_request(ExportScope::Selection),
             AppCommand::ExportStems => self.export_audio_request(ExportScope::Stems),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
@@ -5666,6 +5668,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::FreezeTrack
             | AppCommand::FreezeTrackToDevice
             | AppCommand::FreezeTail
+            | AppCommand::FreezeStrip
             | AppCommand::FreezeCancel
             | AppCommand::UnfreezeTrack
             | AppCommand::UnfreezeTrackKeep
@@ -5680,6 +5683,7 @@ impl<B: AudioBackend> Shell<B> {
                         self.core.freeze_tracks(FreezeThrough::SelectedDevice);
                     }
                     AppCommand::FreezeTail => self.core.toggle_freeze_tail(),
+                    AppCommand::FreezeStrip => self.core.toggle_freeze_strip(),
                     AppCommand::FreezeCancel => self.core.cancel_freeze(),
                     AppCommand::UnfreezeTrack => self.core.unfreeze_tracks(false),
                     AppCommand::UnfreezeTrackKeep => self.core.unfreeze_tracks(true),
