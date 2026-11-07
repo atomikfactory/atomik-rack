@@ -32,6 +32,7 @@
 
 use atomik_core::PPQ;
 use atomik_device_sdk::Registry;
+use atomik_dsp::RotationFix;
 use atomik_dsp::kick_bass::{self, Check};
 use atomik_model::ConsoleChannel;
 use atomik_model::{
@@ -150,6 +151,20 @@ pub struct Analysis {
     /// What was said about the fixes that could not be tried (a bass that is no synth, a kick
     /// that is no drum machine).
     pub notes: Vec<String>,
+    /// The phase rotation that evens out the positive and negative peaks of the bass, when one
+    /// gains headroom (see [`Headroom`]).
+    pub headroom: Option<Headroom>,
+}
+
+/// The "fix asymmetry" helper: the bass swings further one way than the other, and a phase
+/// rotation can even the two out, which lowers its peak without changing how it sounds alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Headroom {
+    /// What the search found: the angle, the peaks before and after and the headroom gained.
+    pub found: RotationFix,
+    /// The rotation with the strip the song gives with it. A rotation that is inaudible alone
+    /// can change how the bass adds to the kick, which is why it is rendered and checked too.
+    pub trial: Trial,
 }
 
 /// The two channel strips as mono signals.
@@ -489,7 +504,7 @@ pub fn needs_fix(check: &Check) -> bool {
 
 /// The steps of the whole analysis, for the progress bar: the base render, then at most this
 /// many trial renders.
-const MAX_STEPS: usize = 1 + 4 + 1 + 1 + 1 + 4;
+const MAX_STEPS: usize = 1 + 1 + 4 + 1 + 1 + 1 + 4;
 
 /// Runs the analysis of `setup` on `doc` (see the module docs). `progress` is told how far it
 /// is, 0 to 1; `cancel` stops it (the result is then `Ok(None)`).
@@ -535,7 +550,42 @@ pub fn analyse(
         base: base.clone(),
         trials: Vec::new(),
         notes: Vec::new(),
+        headroom: None,
     };
+    // The fix-asymmetry helper: the angle that evens out the peaks of the bass, proven by a render.
+    let bass_hz = base.bass_hz.unwrap_or(FALLBACK_HZ);
+    let hz = bass_hz.clamp(20.0, 1000.0).round();
+    let found = atomik_dsp::best_rotation(&pair.bass, rate as f32, hz);
+    if found.angle_deg > 0.0 {
+        let fix = Fix::Rotate {
+            degrees: found.angle_deg,
+            hz,
+        };
+        let mut scratch = Scratch {
+            document: Document::new(doc.clone()),
+            registry,
+        };
+        if apply_fix(&mut scratch, setup, &fix, rate).is_ok() {
+            let Some(fixed) = render_pair(
+                scratch.document.doc(),
+                registry,
+                bundle_root,
+                setup,
+                Some(cancel),
+            )?
+            else {
+                return Ok(None);
+            };
+            analysis.headroom = Some(Headroom {
+                found,
+                trial: Trial {
+                    fix,
+                    check: kick_bass::check(&fixed.kick, &fixed.bass, rate),
+                },
+            });
+        }
+    }
+    tick(1);
     if base.hits.is_empty() {
         analysis
             .notes
@@ -545,7 +595,6 @@ pub fn analyse(
     if !needs_fix(&base) {
         return Ok(Some(analysis));
     }
-    let bass_hz = base.bass_hz.unwrap_or(FALLBACK_HZ);
     let mut candidates: Vec<Vec<Fix>> = Vec::new();
     if is_type(doc, &setup.bass, &PHASE_TYPES) {
         candidates.push(

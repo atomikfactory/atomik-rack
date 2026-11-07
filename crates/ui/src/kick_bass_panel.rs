@@ -48,7 +48,7 @@ const FONT: f32 = 10.5;
 /// The difference in dB at which a bar of a strip is full height.
 pub const FULL_DB: f32 = 6.0;
 /// The most fix rows the panel shows.
-pub const MAX_FIXES: usize = 5;
+pub const MAX_FIXES: usize = 6;
 /// A hit this close to the power sum (dB) is drawn as a tick.
 const TICK_DB: f32 = 1.5;
 

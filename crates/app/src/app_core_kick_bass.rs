@@ -289,7 +289,13 @@ impl<S: EngineSink> AppCore<S> {
         if revision != self.document.revision() {
             return self.report("The song changed since the check: check again before a fix");
         }
-        let Some(trial) = analysis.trials.get(n) else {
+        // The rows are the fixes, then the helper that evens out the peaks of the bass.
+        let trial = analysis.trials.get(n).or_else(|| {
+            (n == analysis.trials.len())
+                .then(|| analysis.headroom.as_ref().map(|h| &h.trial))
+                .flatten()
+        });
+        let Some(trial) = trial else {
             return;
         };
         let rate = self.doc().sample_rate;
@@ -343,6 +349,22 @@ impl<S: EngineSink> AppCore<S> {
                         gain: format!("{:+.1} dB", t.check.overall_db - analysis.base.overall_db),
                     })
                     .collect();
+                if let Some(h) = &analysis.headroom {
+                    let (p, q) = h.found.before;
+                    let (p2, q2) = h.found.after;
+                    info.fixes.push(FixView {
+                        label: format!(
+                            "Even out the peaks of the bass ({:.2} up, {:.2} down, then {:.2} and {:.2}): {}",
+                            p,
+                            q,
+                            p2,
+                            q2,
+                            h.trial.fix.label(analysis.base.sample_rate)
+                        ),
+                        strip: strip_of(&h.trial.check),
+                        gain: format!("{:+.1} dB headroom", h.found.headroom_db),
+                    });
+                }
                 if analysis.trials.is_empty() && kb::needs_fix(&analysis.base) {
                     info.notes.push(format!(
                         "No change that was tried gains {MIN_GAIN:.1} dB or more"

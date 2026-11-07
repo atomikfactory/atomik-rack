@@ -152,3 +152,56 @@ fn applying_before_a_check_is_refused() {
     assert!(c.last_rejection().unwrap().contains("Run the kick"));
     assert_eq!(save_project(c.doc()), before);
 }
+
+#[test]
+fn the_peak_evening_row_shows_the_headroom_and_applies_like_a_fix() {
+    let mut doc = Document::new(scene(0.0));
+    let registry = default_registry();
+    for (param, value) in [
+        ("osc2.wave", 3.0),
+        ("osc2.octave", 1.0),
+        ("osc.mix", 0.4),
+        ("osc.phase_start", 60.0),
+    ] {
+        doc.apply(
+            Command::SetParam {
+                key: key("bass"),
+                param: param.to_owned(),
+                value,
+                merge: None,
+            },
+            &registry,
+        )
+        .unwrap();
+    }
+    let mut c = AppCore::with_registry(
+        RecordingSink::new(),
+        default_registry(),
+        doc.doc().clone(),
+        None,
+    );
+    picked(&mut c);
+    c.kick_bass_run();
+    wait(&mut c);
+    let info = c.kick_bass_info();
+    let row = info.fixes.last().expect("the helper row");
+    assert!(row.gain.ends_with("dB headroom"), "{}", row.gain);
+    assert!(row.label.contains("Even out the peaks"), "{}", row.label);
+    let before = save_project(c.doc());
+    c.kick_bass_apply(info.fixes.len() - 1);
+    assert!(c.last_rejection().unwrap().contains("Rotate the phase"));
+    let tool = c
+        .doc()
+        .devices
+        .iter()
+        .find(|d| d.type_id == "atomik.stereo-tool")
+        .expect("a Stereo Tool on the bass channel");
+    let rotate = c
+        .doc()
+        .param_value(&tool.key, "rotate", c.registry())
+        .unwrap();
+    assert!(rotate > 0.0);
+    wait(&mut c);
+    assert!(c.undo());
+    assert_eq!(save_project(c.doc()), before);
+}

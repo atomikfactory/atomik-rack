@@ -317,3 +317,28 @@ fn the_labels_say_what_each_fix_does() {
     };
     assert!(rotate.label(rate).contains("40 degrees at 55 Hz"));
 }
+
+#[test]
+fn an_uneven_bass_gets_the_peak_evening_rotation_proven_by_a_render() {
+    let registry = default_registry();
+    let mut doc = Document::new(scene(0.0));
+    for (param, value) in [
+        ("osc2.wave", 3.0),
+        ("osc2.octave", 1.0),
+        ("osc.mix", 0.4),
+        ("osc.phase_start", 60.0),
+    ] {
+        set(&mut doc, &registry, "bass", param, value);
+    }
+    let a = analysis_of(doc.doc());
+    let h = a.headroom.expect("the bass is uneven");
+    assert!(h.found.angle_deg > 0.0, "{h:?}");
+    assert!(h.found.headroom_db > 0.3, "{h:?}");
+    assert!(
+        matches!(h.trial.fix, Fix::Rotate { degrees, .. } if (degrees - h.found.angle_deg).abs() < 1e-6)
+    );
+    // The trial was rendered: it has hits of its own.
+    assert!(!h.trial.check.hits.is_empty());
+    // A plain sine has nothing to even out.
+    assert!(analysis_of(&scene(0.0)).headroom.is_none());
+}
