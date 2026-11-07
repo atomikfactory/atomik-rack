@@ -36,6 +36,7 @@ pub mod controller;
 pub mod controller_edit;
 mod curves;
 mod curves_cmd;
+mod delivery;
 mod device_patch;
 mod doc_compare;
 mod drums;
@@ -68,6 +69,7 @@ mod organise_cmd;
 pub mod param_lane;
 mod param_search;
 mod patch;
+pub mod peak_surgeon;
 mod plugin;
 mod plugin_cmd;
 mod plugin_files;
@@ -85,6 +87,7 @@ pub mod repetition;
 mod replace_device;
 pub mod reverb_send;
 mod rules;
+pub mod rumble;
 pub mod slice_edit;
 mod slices;
 mod song_cmd;
@@ -99,6 +102,7 @@ pub mod takes;
 mod takes_cmd;
 pub mod theory;
 mod time_edit;
+pub mod transition;
 mod validate;
 pub mod warp;
 mod workflow;
@@ -124,6 +128,10 @@ pub use container::{
     MacroTarget, NoteSplit, SPLIT_TYPE, SplitPass, boundary_sockets, scoped_cable, split_path,
 };
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
+pub use delivery::{
+    CEILING_RANGE, Delivery, DeliveryTarget, LUFS_RANGE, MAX_DELIVERY_NAME_CHARS, TARGETS,
+    Verdict as DeliveryVerdict, assess as assess_delivery, check_delivery,
+};
 pub use device_patch::MAX_PATCH_NAME_CHARS;
 pub use doc_compare::{DiffSection, DocDiff, compare_docs};
 pub use drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
@@ -226,8 +234,8 @@ pub use console::{
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_folder::{FolderRoute, MAX_FOLDER_ROUTES};
 pub use console_insert::{
-    bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
-    section_bypass_states,
+    bypass_inserts_commands, insert_bypass_states, insert_chain, insert_owner, inserts_bypassed,
+    master_stack, section_bypass_states, send_chain, send_slot_of,
 };
 pub use console_settings::{ChannelSettingsClip, InsertClip};
 pub use console_snapshot::{
@@ -435,6 +443,9 @@ pub struct RackDoc {
     /// The reference tracks the song is compared against (see [`crate::references`]); empty for
     /// a new project. Project data with no part in the sound.
     pub references: Vec<Reference>,
+    /// The delivery target the song works to (see [`crate::delivery`]); `None` for a new project.
+    /// Project data with no part in the sound.
+    pub delivery: Option<Delivery>,
 }
 
 /// An edit. Every command is undoable.
@@ -609,6 +620,10 @@ pub enum Command {
     /// path twice), one undo step; a list equal to the current one is rejected. Reports
     /// [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
     SetReferences(Vec<Reference>),
+    /// Sets or clears the delivery target the song works to (see [`Delivery`]), one undo step; a
+    /// target equal to the current one is rejected. Reports [`SyncOp::ViewChanged`]. Also accepted
+    /// by [`Command::Batch`], so a limiter's ceiling and the target are one step.
+    SetDelivery(Option<Delivery>),
     /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
     /// in one undo step. The app has already resampled the assets the song uses and registered
     /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
@@ -849,6 +864,7 @@ pub enum Command {
 /// | `SetInputChannels`, `SetOutputChannels` | `RoutingChanged` |
 /// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
 /// | `SetReferences` (also undo/redo) | `ViewChanged` |
+/// | `SetDelivery` (also undo/redo, also in a `Batch`) | `ViewChanged` |
 /// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
@@ -1993,6 +2009,7 @@ impl Document {
                                     | ContainerCommand::RenameMacro { .. }
                             )
                             | Command::SetColor { .. }
+                            | Command::SetDelivery(_)
                             | Command::Console(
                                 ConsoleCommand::SetVcaLevel { .. }
                                     | ConsoleCommand::SetVcaMute { .. }
@@ -2022,7 +2039,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetDelivery, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic, SetLaneWriteMode, SetVcaLevel, SetVcaMute and SetVcaSolo can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
@@ -2291,6 +2308,7 @@ impl Document {
             Command::SetMasterTune(cents) => master_tune::plan_set(doc, cents)?,
             Command::SetRackSort(mode) => rack_groups::plan_set(doc, registry, mode)?,
             Command::SetReferences(list) => references::plan_set(doc, &list)?,
+            Command::SetDelivery(target) => delivery::plan_set(doc, &target)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
@@ -2469,6 +2487,7 @@ pub fn empty_doc() -> RackDoc {
         tune_cents: 0.0,
         sort_mode: RackSort::Free,
         references: Vec::new(),
+        delivery: None,
     }
 }
 

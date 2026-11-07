@@ -47,7 +47,6 @@ fn key(k: &str) -> DeviceKey {
 
 fn core(lib: &Tmp) -> AppCore<RecordingSink> {
     let mut c = AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None);
-    c.view_mut().set_show_console_devices(false);
     c.set_library_root(Some(lib.path("Library")));
     c
 }

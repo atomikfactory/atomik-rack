@@ -123,8 +123,8 @@
 //! Tell the view the pane state with [`ConsoleView::set_maximised`] (lights the MAX button).
 //! Each frame the app passes `set_meters` (engine readings, linear amplitude) then
 //! `set_frame_time` (monotonic seconds); after a routing change, `set_latency_readouts` and
-//! `set_pdc_warning`. Console edits arrive as `Command::Console(..)`. The rack shows console
-//! devices unless [`RackView::set_show_console_devices`] is off (on by default), draws
+//! `set_pdc_warning`. Console edits arrive as `Command::Console(..)`. The rack always shows the
+//! console devices (a channel or bus as a compact mix channel panel, see [`mix_panel`]), draws
 //! the channel to master links only while [`RackView::set_show_console_links`] is on (a channel
 //! then reads "Output: Master", see [`RackView::output_display`]) and locks the Master Section
 //! while it is the first device ([`RackView::is_locked`]).
@@ -307,6 +307,10 @@
 //! - **Bass read.** [`BassReadView`] is the modal panel of "Will the bass read?": a list of the strips (the master
 //!   and the tracks), a meter of how much of the low note a small speaker still plays through its harmonics and the
 //!   verdict; it emits [`UiAction::BassRead`] and the host feeds it a [`BassReadData`].
+//! - **Delivery.** [`DeliveryView`] is the modal panel of the delivery targets and the Peak Surgeon: what common
+//!   loudness targets would do to the measured master with a warning for a quiet master that would be turned up into
+//!   a limiter, and the highest peaks of an audio clip ranked with a threshold, a step and a width; it emits
+//!   [`UiAction::Delivery`] and the host feeds it a [`DeliveryData`].
 //! - **Sound Analyst.** [`SoundAnalystView`] is the modal panel of "recreate this sound": the measured level, brightness
 //!   and pitch curves of an audio file with the numbers, the proposed patch and the distances between the target and
 //!   the patch's render; it emits [`UiAction::SoundAnalyst`] and the host feeds it a [`SoundAnalystData`].
@@ -369,6 +373,7 @@ pub mod controller_lane;
 #[cfg(feature = "cpu-canvas")]
 pub mod cpu_canvas;
 pub mod cursor;
+pub mod delivery_panel;
 pub mod display_list;
 pub mod drum_gen_panel;
 pub mod duck_panel;
@@ -395,6 +400,7 @@ pub mod master_panel;
 pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
+pub mod mix_panel;
 pub mod mixcheck_panel;
 pub mod mod_matrix_panel;
 pub mod modsrc_panel;
@@ -472,6 +478,10 @@ pub use console_meter::ChannelMeters;
 pub use console_vca::VcaPart;
 pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use cursor::CursorHint;
+pub use delivery_panel::{
+    DeliveryAction, DeliveryData, DeliveryPage, DeliveryView, PeakRow, PeaksData, TargetMark,
+    TargetRow, TargetsData,
+};
 pub use display_list::{DisplayList, Op};
 pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
@@ -506,8 +516,8 @@ pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
-    COLUMN_GAP, CableVisibility, Flip, JackChoice, JackGroup, JackMenu, JackOp, JackPeer,
-    LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
+    COLUMN_GAP, CableVisibility, Flip, InsertAreaInfo, JackChoice, JackGroup, JackMenu, JackOp,
+    JackPeer, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use repetition_panel::{

@@ -47,6 +47,7 @@ impl Command {
             Command::SetMasterTune(_) => "Change Master Tune",
             Command::SetRackSort(_) => "Sort Rack",
             Command::SetReferences(_) => "Edit Reference Tracks",
+            Command::SetDelivery(_) => "Set Delivery Target",
             Command::ConvertSampleRate { .. } => "Convert Sample Rate",
             Command::Console(c) => console_label(c),
             Command::Container(c) => container_label(c),
@@ -121,7 +122,10 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
         ConsoleCommand::RemoveChannel { .. } => "Delete Channel",
         ConsoleCommand::MoveChannel { .. } => "Move Channel",
         ConsoleCommand::SetReturn { .. } => "Set Send Effect",
-        ConsoleCommand::SetInsert { .. } | ConsoleCommand::MoveInsert { .. } => "Edit Inserts",
+        ConsoleCommand::SetInsert { .. }
+        | ConsoleCommand::AddInsert { .. }
+        | ConsoleCommand::ExtractInsert { .. }
+        | ConsoleCommand::MoveInsert { .. } => "Edit Inserts",
         ConsoleCommand::PasteSettings { .. } => "Paste Channel Settings",
         ConsoleCommand::ResetStrip { .. } => "Reset Channel",
         ConsoleCommand::ClearInserts { .. } => "Clear Inserts",
@@ -190,6 +194,12 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::ReplaceDevice { .. } => "Replace Device",
         WorkflowCommand::SplitSub { .. } => "Split Sub",
         WorkflowCommand::AddReverbSend { .. } => "Add Reverb Send",
+        WorkflowCommand::AddRumble { .. } => "Add Rumble",
+        WorkflowCommand::AddTransition { edit, .. } => match edit {
+            crate::transition::TransitionEdit::FilterDown { .. } => "Add Filter Down Transition",
+            crate::transition::TransitionEdit::Silence => "Add Silence Transition",
+            crate::transition::TransitionEdit::Fill { .. } => "Add Fill Transition",
+        },
         WorkflowCommand::SetFoldedMany { .. } => "Fold Devices",
         WorkflowCommand::SetModSlot { value, .. } => match value {
             Some(_) => "Set Modulation",

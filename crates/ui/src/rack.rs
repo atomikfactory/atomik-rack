@@ -14,6 +14,7 @@ use crate::fx::FxKind;
 use crate::interface::{boundary_in_descriptor, boundary_out_descriptor, interface_descriptor};
 use crate::keymap::{CommandOutcome, Roles};
 use crate::library_drop;
+use crate::mix_panel::MixButton;
 use crate::paint::{self, CableLook, PanelInfo, Ring};
 use crate::plugin_data::{PluginDeviceStatus, PluginEntryInfo};
 use crate::plugin_panel::{PluginButton, PluginInfo};
@@ -52,6 +53,7 @@ mod group_chip;
 mod handles;
 mod help;
 mod inline;
+mod insert_area;
 mod io_input;
 mod jacks;
 mod live_panels;
@@ -60,6 +62,7 @@ mod navigator;
 pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
+mod mix_input;
 mod name_input;
 mod player_input;
 mod plugin_input;
@@ -70,6 +73,7 @@ pub use crate::paint::Side as Flip;
 pub use columns::COLUMN_GAP;
 pub use console_links::OutputDisplay;
 pub use cpu_readout::load_under;
+pub use insert_area::{InsertAreaInfo, SendGroupInfo};
 
 /// Time constant of the fall of a CV activity indicator, seconds.
 pub const CV_DECAY_SECONDS: f32 = 0.18;
@@ -194,6 +198,11 @@ enum Hit {
     Player(usize, PlayerBtn),
     /// A button of a container panel.
     Container(usize, ContainerButton),
+    /// A button of a mix channel panel (a channel or an output bus).
+    Mix(usize, MixButton),
+    /// The header line or the drop row of the insert area under a mix channel panel (device
+    /// index of the channel or bus).
+    AreaRow(usize),
     /// The name of a macro on a container panel (device index, macro 0-based).
     MacroName(usize, u8),
     /// A button of a plugin panel.
@@ -264,6 +273,8 @@ impl Hit {
             | Hit::PresetGrid(i)
             | Hit::Player(i, _)
             | Hit::Container(i, _)
+            | Hit::Mix(i, _)
+            | Hit::AreaRow(i)
             | Hit::MacroName(i, _)
             | Hit::Plugin(i, _)
             | Hit::Bypass(i)
@@ -322,6 +333,9 @@ struct DeviceView {
     resonance: crate::resonance_marks::ResonanceView,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
+    /// Mix channel panel (a channel or bus): the insert bypass state, the fold state of the
+    /// insert area and the output display.
+    mix: crate::mix_panel::MixData,
     /// Compressor panel: the name of the device cabled to the sidechain input.
     sc: Option<String>,
     /// Character panel: whether the Transform and Dry/Wet CV inputs have a cable.
@@ -388,6 +402,33 @@ impl DeviceView {
         self.revision.saturating_sub(self.live)
     }
 
+    /// The name the plate shows: a channel follows its source instrument's name.
+    fn plate_name(&self) -> &str {
+        self.mix
+            .follows
+            .as_ref()
+            .map_or(self.name.as_str(), |(_, name)| name.as_str())
+    }
+    /// The device a rename of the plate's name renames.
+    fn name_target(&self) -> &DeviceKey {
+        self.mix.follows.as_ref().map_or(&self.key, |(key, _)| key)
+    }
+    /// The panel is a mix channel panel (a console channel or an output bus).
+    fn is_mix(&self) -> bool {
+        self.device.is_some()
+            && self
+                .desc
+                .as_ref()
+                .is_some_and(|d| crate::mix_panel::has_mix_top(d.type_id))
+    }
+    /// The panel is the master section panel.
+    fn is_master(&self) -> bool {
+        self.device.is_some()
+            && self
+                .desc
+                .as_ref()
+                .is_some_and(|d| d.type_id == crate::master_panel::MASTER_TYPE)
+    }
     /// The panel has the BYPASS switch of the name strip (see
     /// [`autolayout::has_strip_bypass`]).
     fn has_strip_bypass(&self) -> bool {
@@ -444,6 +485,7 @@ enum Drag {
         slot: usize,
         drag: ValueDrag,
         merge: u64,
+        /// The pointer's last coordinate along the drag: y, or x for the mix channel's fader.
         last_y: f64,
         start: f32,
         value: f32,
@@ -621,9 +663,11 @@ pub struct RackView {
     /// The revision stamp of the navigator's cached block list.
     nav_revision: u64,
     nav_cache: Option<navigator::NavCache>,
-    show_console: bool,
     /// Lay every column out as one: the devices stack in rack order (view state, never saved).
     single_column: bool,
+    /// The channels, buses and masters whose SHOW INSERT FX switch is off (view state, never
+    /// saved): every device starts with its insert area shown.
+    inserts_hidden: BTreeSet<DeviceKey>,
     /// Draw the channel-to-master console links as cables (default off).
     show_links: bool,
     /// The console links of the document in view (hidden unless `show_links`).
@@ -735,6 +779,16 @@ pub struct RackView {
     inline: bool,
     /// The frames around the inside of the unfolded containers.
     frames: Vec<inline::Frame>,
+    /// The insert areas under the channels and buses (see [`insert_area`]).
+    areas: Vec<insert_area::InsertArea>,
+    /// The effects drawn stacked under a channel or bus (shown or hidden) and the send effects
+    /// grouped under the master.
+    stacked: BTreeSet<DeviceKey>,
+    /// The send groups under the master section (see [`insert_area`]).
+    sends: Vec<insert_area::SendGroup>,
+    /// The master's insert area was clicked while the master was selected: an effect created
+    /// now becomes a master insert instead of a send (cleared by any selection change).
+    area_pick: Option<DeviceKey>,
 }
 
 /// What a [`Rename`] types.
@@ -937,8 +991,8 @@ impl RackView {
             nav_layout: 0,
             nav_revision: 0,
             nav_cache: None,
-            show_console: true,
             single_column: false,
+            inserts_hidden: BTreeSet::new(),
             show_links: false,
             links: BTreeSet::new(),
             outputs: BTreeMap::new(),
@@ -989,6 +1043,10 @@ impl RackView {
             auto_route: true,
             inline: false,
             frames: Vec::new(),
+            areas: Vec::new(),
+            stacked: BTreeSet::new(),
+            sends: Vec::new(),
+            area_pick: None,
         }
     }
 
@@ -1039,24 +1097,6 @@ impl RackView {
         } else {
             doc.columns.max(1)
         }
-    }
-
-    /// Shows or hides the console's channel-strip and master devices. Since
-    /// They are shown by default (the app persists the choice). Hidden devices keep
-    /// their cables, but cables to them are not drawn. The device browser lists the console
-    /// device types only while they are shown.
-    pub fn set_show_console_devices(&mut self, show: bool) {
-        if show != self.show_console {
-            self.show_console = show;
-            self.browser.show_console = show;
-            self.synced = false;
-            self.repaint = true;
-        }
-    }
-
-    /// Whether console devices are shown in the rack.
-    pub fn show_console_devices(&self) -> bool {
-        self.show_console
     }
 
     /// Aims the patch browse colour at device `key` (or at none): its patch name is drawn in
@@ -1134,12 +1174,10 @@ impl RackView {
         self.outputs.get(&self.local_key(key))
     }
 
-    /// The document devices shown in the rack, in rack order.
+    /// The document devices shown in the rack, in rack order: every one, the channels, buses
+    /// and the master included.
     fn shown<'a>(&self, doc: &'a RackDoc, registry: &Registry) -> Vec<&'a RackDevice> {
-        doc.devices
-            .iter()
-            .filter(|d| self.show_console || !crate::console::is_console_device(doc, registry, d))
-            .collect()
+        self.displayed(doc, registry)
     }
 
     // ------------------------------------------------------------------ sync
@@ -1186,7 +1224,7 @@ impl RackView {
                         && (v.fx != Some(FxKind::AudioTrack)
                             || v.spec.fx.is_some() == v.analyser.tuner_on))
                 });
-        if !same_structure {
+        if !same_structure || !self.areas_current(doc, registry) {
             self.rebuild(doc, registry);
             self.repaint = true;
             return;
@@ -1267,6 +1305,7 @@ impl RackView {
         self.refresh_master(doc);
         self.refresh_io();
         self.refresh_console(doc, registry, cables_changed || renewed);
+        self.refresh_mix(doc, registry);
         self.refresh_groups(doc);
     }
 
@@ -1375,6 +1414,12 @@ impl RackView {
             }
             (Some(d), _) if type_id == container_panel::CONTAINER_TYPE => {
                 container_panel::container_layout(d)
+            }
+            (Some(d), _) if crate::mix_panel::is_mix_type(type_id) => {
+                crate::mix_panel::mix_layout(d)
+            }
+            (Some(d), _) if type_id == crate::master_panel::MASTER_TYPE => {
+                crate::master_panel::master_layout(d)
             }
             (Some(d), _) if type_id == crate::modsrc_panel::MODSRC_TYPE => {
                 crate::modsrc_panel::modsrc_layout(d)
@@ -1500,6 +1545,7 @@ impl RackView {
             analyser: Default::default(),
             resonance: Default::default(),
             master: Default::default(),
+            mix: Default::default(),
             sc: None,
             cv: [false; 2],
             anim: 0,
@@ -1524,6 +1570,10 @@ impl RackView {
         let columns = self.laid_columns(doc, scoped);
         let mut ys = vec![0.0; usize::from(columns)];
         ys[0] = height;
+        // The insert area of a channel or bus takes room under its panel and under its stack.
+        let stacks = self.stacks(doc, registry);
+        let send_stacks = self.send_stacks(doc, registry, &stacks);
+        let gaps = self.area_gaps(doc, &stacks, &send_stacks);
 
         for d in self.shown(doc, registry) {
             let column = d.column.min(columns - 1);
@@ -1605,6 +1655,7 @@ impl RackView {
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
             let match_db = prev.as_ref().and_then(|p| p.match_db);
+            let mix = prev.as_ref().map(|p| p.mix.clone()).unwrap_or_default();
             let anim = prev.as_ref().map_or(0, |p| p.anim);
             let live = prev.as_ref().map_or(0, |p| p.live);
             let mini = prev.as_mut().and_then(|p| p.mini.take());
@@ -1682,6 +1733,7 @@ impl RackView {
                 analyser,
                 resonance,
                 master,
+                mix,
                 sc,
                 cv,
                 anim,
@@ -1702,7 +1754,7 @@ impl RackView {
                 revision,
                 lists,
             });
-            ys[usize::from(column)] += height;
+            ys[usize::from(column)] += height + gaps.get(&d.key).copied().unwrap_or(0.0);
         }
         let y = ys[0];
         if scoped {
@@ -1740,6 +1792,7 @@ impl RackView {
                 analyser: Default::default(),
                 resonance: Default::default(),
                 master: Default::default(),
+                mix: Default::default(),
                 sc: None,
                 cv: [false; 2],
                 anim: 0,
@@ -1766,8 +1819,10 @@ impl RackView {
         self.columns = columns;
         self.content_height = ys.iter().copied().fold(0.0, f64::max);
         self.compute_frames(doc);
+        self.compute_areas(doc, &stacks, &send_stacks);
         self.cables.clone_from(&doc.cables);
         self.refresh_console(doc, registry, true);
+        self.refresh_mix(doc, registry);
         self.refresh_groups(doc);
         self.input_channels = doc.input_channels;
         self.output_channels = doc.output_channels;
@@ -1936,6 +1991,9 @@ impl RackView {
                                 tree.add(dn, *r + off, Hit::MacroName(i, n as u8), false);
                             }
                         }
+                        for (r, hit) in self.mix_hits(i) {
+                            tree.add(dn, r + off, hit, false);
+                        }
                         for (r, hit) in Self::plugin_hits(d, i) {
                             tree.add(dn, r + off, hit, false);
                         }
@@ -2011,7 +2069,7 @@ impl RackView {
                             }
                         }
                         if desc.type_id == crate::master_panel::MASTER_TYPE && d.device.is_some() {
-                            for (slot, r) in crate::master_panel::edit_rects(&d.spec, &desc) {
+                            for (slot, r) in crate::master_panel::edit_rects() {
                                 tree.add(dn, r + off, Hit::ReturnEdit(i, slot), false);
                             }
                         }
@@ -2074,6 +2132,9 @@ impl RackView {
                     },
                 );
             }
+        }
+        for (rect, hit) in self.area_hits() {
+            tree.add(root, rect, hit, false);
         }
         self.tree = tree;
         self.sockets = sockets;
@@ -2666,6 +2727,7 @@ impl RackView {
 
     /// Selects a device (no action emitted).
     pub fn set_selected(&mut self, key: Option<DeviceKey>) {
+        self.area_pick = None;
         self.selected = key.map(|k| self.local_key(&k));
         self.selection = self.selected.iter().cloned().collect();
         self.anchor.clone_from(&self.selected);
@@ -2951,7 +3013,7 @@ impl RackView {
                 let text = (d.fx == Some(FxKind::Character))
                     .then(|| crate::fx::character_value_text(p.key, *value))
                     .flatten()
-                    .unwrap_or_else(|| widget::format_value(p, *value));
+                    .unwrap_or_else(|| mix_input::value_text(p, *value));
                 Some(format!("{}  {}", autolayout::control_label(p), text))
             }
             Drag::None => match self.hover {
@@ -2960,6 +3022,7 @@ impl RackView {
                     self.io_tooltip(h)
                 }
                 Some(h @ Hit::ReturnEdit(..)) if self.button_tips => self.return_edit_tooltip(h),
+                Some(Hit::AreaRow(i)) if self.button_tips => self.area_tip(i),
                 Some(Hit::Preset(i, n)) => self.preset_name(i, n),
                 // A control a macro drives says what it shows and who moves it.
                 Some(Hit::Control(i, slot)) => {
@@ -2969,14 +3032,14 @@ impl RackView {
                             return Some(format!(
                                 "{}  {}  (automated)",
                                 autolayout::control_label(p),
-                                widget::format_value(p, value)
+                                mix_input::value_text(p, value)
                             ));
                         }
                         return self.value_tips.then(|| {
                             format!(
                                 "{}  {}",
                                 autolayout::control_label(p),
-                                widget::format_value(p, value)
+                                mix_input::value_text(p, value)
                             )
                         });
                     };
@@ -3526,7 +3589,13 @@ impl RackView {
                 let Some((p, _, _)) = self.param_of(dev, slot) else {
                     return;
                 };
-                let v = drag.update(p, last_y - pos.y, self.fine_adjust(modifiers));
+                let horizontal = self.is_mix_fader(dev, p.key);
+                let (along, delta) = if horizontal {
+                    (pos.x, pos.x - last_y)
+                } else {
+                    (pos.y, last_y - pos.y)
+                };
+                let v = drag.update(p, delta, self.fine_adjust(modifiers));
                 if v.to_bits() != value.to_bits() {
                     out.push(param_cmd(&self.devices[dev].key, p.key, v, Some(merge)));
                 }
@@ -3535,7 +3604,7 @@ impl RackView {
                     slot,
                     drag,
                     merge,
-                    last_y: pos.y,
+                    last_y: along,
                     start,
                     value: v,
                 };
@@ -3847,6 +3916,8 @@ impl RackView {
                 });
             }
             (Hit::Container(i, b), PointerButton::Primary) => self.container_down(i, b, out),
+            (Hit::Mix(i, b), PointerButton::Primary) => self.mix_down(i, b, doc, registry, out),
+            (Hit::AreaRow(i), PointerButton::Primary) => self.area_row_down(i, out),
             (Hit::MacroName(i, n), PointerButton::Primary) => {
                 self.macro_name_down(i, n, clicks, out);
             }
@@ -3915,6 +3986,7 @@ impl RackView {
                 | Hit::PresetGrid(i)
                 | Hit::Player(i, _)
                 | Hit::Container(i, _)
+                | Hit::Mix(i, _)
                 | Hit::MacroName(i, _)
                 | Hit::Plugin(i, _)
                 | Hit::ScButton(i)
@@ -4045,7 +4117,12 @@ impl RackView {
                 if clicks >= 2 || self.reset_click(modifiers) {
                     out.push(param_cmd(&key, p.key, p.clamp(p.default), None));
                 } else {
-                    let ppr = if kind == ControlKind::Fader {
+                    // The mix channel's fader runs along its track: its length is the range.
+                    let horizontal = self.is_mix_fader(i, p.key);
+                    let ppr = if horizontal {
+                        let (x0, x1, _) = self.mix_travel(i, p.key);
+                        (x1 - x0) * self.zoom
+                    } else if kind == ControlKind::Fader {
                         widget::FADER_PIXELS_PER_RANGE
                     } else {
                         widget::KNOB_PIXELS_PER_RANGE
@@ -4057,7 +4134,11 @@ impl RackView {
                         slot,
                         drag: ValueDrag::new(p, value, ppr * self.knob_range.travel()),
                         merge,
-                        last_y: self.pointer.y,
+                        last_y: if horizontal {
+                            self.pointer.x
+                        } else {
+                            self.pointer.y
+                        },
                         start: value,
                         value,
                     };
@@ -4377,14 +4458,19 @@ impl RackView {
             },
             CreateKind::Effect => WorkflowCommand::CreateEffect {
                 source,
-                target: self
-                    .selected
-                    .clone()
-                    .map_or(CreateTarget::Nothing, CreateTarget::Selected),
+                target: self.effect_create_target(),
                 key: None,
                 options,
             },
         }))
+    }
+
+    /// What an effect created now is routed from: the selected device, or the master's insert
+    /// area right after a click on it.
+    pub fn effect_create_target(&self) -> CreateTarget {
+        self.selected
+            .clone()
+            .map_or(CreateTarget::Nothing, |k| self.effect_target(k))
     }
 
     /// The creation command of a note player: the stack of the selected device, route = the
@@ -4702,6 +4788,7 @@ impl RackView {
             }
         }
         self.paint_frames(canvas, top, bottom);
+        self.paint_areas(canvas, top, bottom);
         let side = self.flip as usize;
         for i in 0..self.devices.len() {
             let d = &self.devices[i];
@@ -4750,7 +4837,7 @@ impl RackView {
         let d = &self.devices[i];
         let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
         let info = PanelInfo {
-            name: &d.name,
+            name: d.plate_name(),
             editing_name: self
                 .rename
                 .as_ref()
@@ -4806,6 +4893,7 @@ impl RackView {
             automated: &d.automated,
             io: self.io.info(),
             master: d.master.info(),
+            mix: d.mix.info(if d.is_mix() { &d.meters } else { &[] }),
             from_clip: self.clip_scale.is_some(),
             sampling: self.sampling.as_ref() == Some(&d.key),
             previewing: self.previewing.as_ref() == Some(&d.key),
@@ -4867,7 +4955,10 @@ impl RackView {
                 continue;
             }
             let plate = paint::plate_rect(d.height, d.folded) + d.offset();
-            if let Some(o) = self.outputs.get(&d.key) {
+            // A mix channel panel carries its own AUDIO OUTPUT display while it is unfolded.
+            if let Some(o) = self.outputs.get(&d.key)
+                && !(d.is_mix() && !d.folded)
+            {
                 paint::output_display(c, theme, plate, d.folded, &o.text, o.warn);
             }
             if let Some(pct) = self.cpu.get(&d.key) {

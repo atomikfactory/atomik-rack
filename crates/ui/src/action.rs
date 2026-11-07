@@ -80,6 +80,9 @@ pub enum UiAction {
     Redo,
     /// The selected device changed (the selection is that one device).
     Select(DeviceKey),
+    /// EDIT on an insert row of the console: the rack shows the strip with its insert area
+    /// unfolded and the effect selected.
+    EditInsert(DeviceKey),
     /// The rack selection holds several devices: `primary` is the device
     /// the editors and the live keyboard follow (the last clicked), `keys` the whole selection
     /// in rack order (path keys inside a container). View state, not an undo step.
@@ -659,6 +662,9 @@ pub enum UiAction {
     /// The "Will the bass read?" panel ([`crate::BassReadView`]) asks for something: choose the
     /// strip, measure, stop, or close.
     BassRead(crate::bass_read_panel::BassReadAction),
+    /// The Delivery panel ([`crate::DeliveryView`]) asks for something: a page, a target, a
+    /// measurement, the ceiling, or a trim of the Peak Surgeon.
+    Delivery(crate::delivery_panel::DeliveryAction),
     /// The Sound Analyst panel ([`crate::SoundAnalystView`]) asks for something: pick a file, stop
     /// the analysis, make the patch, match it, or close.
     SoundAnalyst(crate::sound_analyst_panel::SoundAnalystAction),

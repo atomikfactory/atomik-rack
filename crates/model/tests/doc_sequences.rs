@@ -64,6 +64,11 @@ enum WfOp {
     /// The reverb send wizard on a top-level device (the first value picks it), with one of four
     /// option sets: plain, a vocal, no duck and pre-fader, and one with an option out of range.
     ReverbSend(usize, u8),
+    /// A rumble track after a track (the second value: the start in beats and a choice of options).
+    Rumble(usize, u8),
+    /// A transition (the kind 0 filter down, 1 silence, 2 fill) at a boundary of bars 1 to 5 on a
+    /// top-level device (the second value picks it: the filter's strip, the fill's track).
+    Transition(u8, u8, usize),
     /// A device takes the patch of another one of its type (the second index; the same device
     /// when none else is of its type), or, for `true`, goes back to a new device's sound.
     ApplyPatch(usize, usize, bool),
@@ -106,6 +111,8 @@ enum WfOp {
     Tune(u8),
     Sort(u8),
     References(u8),
+    /// The delivery target: none or one of the table's entries.
+    Delivery(u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -306,6 +313,8 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
         (0usize..12, 0u8..4).prop_map(|(d, f)| WfOp::SplitSub(d, f)),
         (0usize..12, 0u8..4).prop_map(|(d, o)| WfOp::ReverbSend(d, o)),
+        (0usize..12, 0u8..8).prop_map(|(d, o)| WfOp::Rumble(d, o)),
+        (0u8..3, 1u8..6, 0usize..12).prop_map(|(k, b, d)| WfOp::Transition(k, b, d)),
         (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
         (sel(), 0i64..12, proptest::option::of(0usize..3)).prop_map(|(s, b, t)| WfOp::PasteClips(
             s,
@@ -325,6 +334,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..5).prop_map(WfOp::Tune),
         (0u8..3).prop_map(WfOp::Sort),
         (0u8..4).prop_map(WfOp::References),
+        (0u8..5).prop_map(WfOp::Delivery),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0u8..8, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
@@ -549,6 +559,49 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             wf(WorkflowCommand::AddReverbSend {
                 track: pick(&top, *i)?,
                 options,
+            })
+        }
+        WfOp::Rumble(i, o) => {
+            let defaults = atomik_model::rumble::RumbleTrackOptions::default();
+            let options = match o % 4 {
+                0 => defaults,
+                1 => atomik_model::rumble::RumbleTrackOptions {
+                    low_pass: 90.0,
+                    depth: 1.0,
+                    ..defaults
+                },
+                2 => atomik_model::rumble::RumbleTrackOptions {
+                    release_ms: 600.0,
+                    ..defaults
+                },
+                _ => atomik_model::rumble::RumbleTrackOptions {
+                    high_pass: 5.0,
+                    ..defaults
+                },
+            };
+            wf(WorkflowCommand::AddRumble {
+                kick: pick(&top, *i)?,
+                start: i64::from(*o) * PPQ,
+                length: BAR,
+                audio: audio(2),
+                name: (o % 2 == 0).then(|| "Rumble".to_owned()),
+                options,
+            })
+        }
+        WfOp::Transition(kind, bar, i) => {
+            let edit = match kind % 3 {
+                0 => atomik_model::transition::TransitionEdit::FilterDown {
+                    target: doc.console.master.clone()?,
+                    bars: bar % 5,
+                },
+                1 => atomik_model::transition::TransitionEdit::Silence,
+                _ => atomik_model::transition::TransitionEdit::Fill {
+                    track: pick(&top, *i)?,
+                },
+            };
+            wf(WorkflowCommand::AddTransition {
+                at: i64::from(*bar) * BAR,
+                edit,
             })
         }
         WfOp::FoldMany(s, folded) => wf(WorkflowCommand::SetFoldedMany {
@@ -845,6 +898,11 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             ],
             _ => vec![atomik_model::Reference::new("three.wav")],
         }),
+        WfOp::Delivery(step) => Command::SetDelivery(
+            atomik_model::TARGETS
+                .get(usize::from(*step))
+                .map(atomik_model::Delivery::of),
+        ),
         WfOp::Sort(mode) => Command::SetRackSort(
             [RackSort::Free, RackSort::PerTrack, RackSort::AutoGroup][usize::from(*mode)],
         ),

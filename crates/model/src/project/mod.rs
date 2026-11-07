@@ -31,6 +31,7 @@
 //!   "tune_cents"?: number                  (v40, -100..=100 around A = 440 Hz; written only when not 0),
 //!   "rack_sort"?: "per_track" | "auto_group"  (v42, ignorable; written only when not free),
 //!   "references"?: [{ "path", "cue_ms"? }…]  (v44, ignorable; written only when non-empty),
+//!   "delivery"?: { "name", "lufs", "ceiling" }  (v44, ignorable; written only when set),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
@@ -728,6 +729,12 @@ fn load_value(
     }
     if let Some(refs) = obj.get("references") {
         doc.references = crate::references::load_references(refs, &root.field("references"))?;
+    }
+    if let Some(target) = obj.get("delivery") {
+        doc.delivery = Some(crate::delivery::load_delivery(
+            target,
+            &root.field("delivery"),
+        )?);
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)
