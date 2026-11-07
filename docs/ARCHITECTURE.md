@@ -4138,6 +4138,7 @@ parameter tables are in [DEVICES.md](DEVICES.md).
 | `atomik.compressor` | Peak or RMS detector, soft knee, auto release, key filters, sidechain input, look-ahead 0 to 5 ms reported as latency. |
 | `atomik.eq` | Six bands (cut slopes 12/24/48 dB per octave), coarse band levels published for the analyser. |
 | `atomik.distortion` | Ten curves (the last five with ADAA, see [shaper.rs](../crates/dsp/src/shaper.rs)), cut and body sections, off/2x/4x halfband oversampling; the oversampler latency is reported and the dry path is delayed to match. |
+| `atomik.clipper` | Clipper: a hard-to-soft curve ([clipper.rs](../crates/dsp/src/clipper.rs)) with symmetry and a DC blocker, off/2x/4x/8x oversampling (latency 0/29/35/37 reported, dry and delta aligned), a 2 or 3 band mode on the mastering crossovers, a delta switch and published clip activity. |
 | `atomik.echo` | Stereo echo on the dsp `Echo` line (glided time, wobble): colour, crush and diffusion in the loop, ducking, triggered and roll modes; latency 0. |
 | `atomik.modulation` | Chorus, flanger, phaser with tempo sync from the transport. |
 | `atomik.mastering` | 3-band multiband, mid/side width (optionally split by band), soft clip, true-peak limiter with a 0.5/1.5/4 ms look-ahead (4x detector), BS.1770 / R128 loudness and true-peak meter. |
@@ -5985,7 +5986,7 @@ The six effects (reverb, compressor, EQ, distortion, modulation, mastering) and 
 hand-made rack panels with labelled sections and a small visual each
 ([ui/src/fx_layout.rs](../crates/ui/src/fx_layout.rs), [fx_paint.rs](../crates/ui/src/fx_paint.rs),
 maths in [fx.rs](../crates/ui/src/fx.rs): decay sketch, transfer curve, EQ response with draggable
-handles, distortion curve, LFO sketch, crossover and loudness readouts). The app calls
+handles, distortion and clipper curves, LFO sketch, crossover and loudness readouts). The app calls
 `RackView::set_device_meter_values(&DeviceKey, &[f32])` once per frame with
 `AppCore::device_meter_values` for the effect devices; the view turns the values into dB display
 values and repaints a panel only when one changed. The compressor panel's "SC from..." list
