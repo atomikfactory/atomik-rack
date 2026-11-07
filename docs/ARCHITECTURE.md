@@ -5697,6 +5697,31 @@ synth. The analysis never changes the song; Make Patch is the one undo step.
   routes audio files dropped on the open panel to the analysis (nothing is imported behind it) and
   `ShellRequest::PickSoundFile` asks the platform for one. The result is dropped with the project.
 
+### Reverb sends: the wizard and the keyed reverbs
+
+Track > Add Reverb Send builds a parallel reverb for a track, and the reverbs it builds can be ducked and gated
+by the track.
+
+- **The key.** Both reverbs share the engine in `reverb.rs`; `reverb/keyed.rs` (`Keyed`) is the duck and the gate
+  of the wet path. The key is `sc_in_l/r` when one is cabled (a lone side feeds both), else the main input; its
+  level is a peak follower (5 ms attack, `duck_release` fall). `engage` is linear between half the threshold and
+  the threshold (no `log` on the audio path); `duck * engage` is the share taken out of the wet signal: all of it
+  for the broadband mode, the part under `duck_freq` (a Linkwitz-Riley split, so with the duck on the mode adds
+  an allpass to the wet signal) or a bell of Q 2 at `duck_freq` (designed every 32 samples, at most 40 dB). The key
+  gate reuses the `Gate` of the space reverb on the key. Everything happens after the output gain and the space
+  reverb's own high cut and gate, before the mix, so the dry signal is bit-identical.
+- **The command.** `WorkflowCommand::AddReverbSend` (`reverb_send::plan`) plans one edit on a scratch document: the
+  EQ, the reverb and, for a vocal, a de-esser join the rack after the last device on a return, the first of them
+  goes to the lowest free slot with `SetReturn`, the others follow in series (`series_after`, shared with
+  creating an effect on a return), the EQ and the reverb get their params, the channel's `out_l/r` are cabled to
+  the reverb's key when the duck is on, and the channel's `send{k}.on`, `.level` and `.pre` are set. A track without
+  a console channel, a device inside a container, a frozen track, no free slot and an option out of range are
+  refused and change nothing. `suggested_decay` reads the played notes of the track (`flatten_track_notes`).
+- **App and panel.** `AppCore::add_reverb_send` takes the track selected in the rack or the arrangement, applies
+  the command, selects the new reverb and says what was built; `reverb_of_return` finds it. The wizard is
+  `atomik_ui::ReverbSendView` (steppers, like the strip silence panel), reporting through `UiAction::ReverbSend`;
+  the shell keeps its choices between openings and feeds it the track and the suggested decay.
+
 ## 6l. The library
 
 The Library sections of the file browser (Devices, Patches, Containers, Clips, Projects) list what
