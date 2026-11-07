@@ -49,6 +49,8 @@
 //!   The per-sample path uses only `+ - * /` and `floor` (Hermite delays, parabolic LFOs); `exp`
 //!   is replaced by [`atomik_dsp::exp2_det`] at batch rate. Non-finite input samples are
 //!   treated as 0 on the wet path, and the wet output is clamped to +-32.
+//! * **Key.** `sc_in_l/r` (the compressor's convention: the main input when neither is cabled)
+//!   drive a duck and a gate of the wet path only, see [`keyed`]. The dry signal is never touched.
 //! * **Meter values** (`has_meter_values`): `[output peak L, output peak R, tail RMS]`, linear,
 //!   of the last batch.
 
@@ -64,6 +66,9 @@ use atomik_dsp::{
     flush_denormal,
 };
 
+pub(crate) mod keyed;
+#[cfg(test)]
+mod keyed_tests;
 #[cfg(test)]
 mod tests;
 
@@ -88,7 +93,7 @@ pub(crate) const P_HIGHCUT: u32 = 13;
 pub(crate) const P_GATE: u32 = 14;
 pub(crate) const P_GATE_LEVEL: u32 = 15;
 
-static PARAMS: [ParamDescriptor; 14] = [
+static PARAMS: [ParamDescriptor; 21] = [
     ParamDescriptor {
         id: ParamId(P_ALGORITHM),
         key: "algorithm",
@@ -232,7 +237,14 @@ static PARAMS: [ParamDescriptor; 14] = [
         unit: Unit::Percent,
         discrete: false,
     },
-    bypass_param(13),
+    keyed::param(0, 13),
+    keyed::param(1, 14),
+    keyed::param(2, 15),
+    keyed::param(3, 16),
+    keyed::param(4, 17),
+    keyed::param(5, 18),
+    keyed::param(6, 19),
+    bypass_param(20),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -240,8 +252,10 @@ const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
 const MIX_CV: SocketId = SocketId(4);
+const SC_IN_L: SocketId = SocketId(5);
+const SC_IN_R: SocketId = SocketId(6);
 
-static SOCKETS: [SocketDescriptor; 5] = [
+static SOCKETS: [SocketDescriptor; 7] = [
     SocketDescriptor {
         id: IN_L,
         key: "in_l",
@@ -275,6 +289,20 @@ static SOCKETS: [SocketDescriptor; 5] = [
         key: "mix_cv_in",
         name: "Mix CV",
         kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: SC_IN_L,
+        key: "sc_in_l",
+        name: "Key L",
+        kind: SocketKind::Audio,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: SC_IN_R,
+        key: "sc_in_r",
+        name: "Key R",
+        kind: SocketKind::Audio,
         direction: Direction::Input,
     },
 ];
@@ -616,6 +644,8 @@ pub struct Reverb {
     /// Wet high-cut one-pole state per channel (Space only).
     hc: [f32; 2],
     gate: Gate,
+    /// The key-driven duck and gate of the wet path.
+    keyed: keyed::Keyed,
 }
 
 /// The gated tail (Space only): the wet output closes `hold` after the input falls below the
@@ -737,6 +767,7 @@ impl Reverb {
             tail_rms: 0.0,
             hc: [0.0; 2],
             gate: Gate::new(),
+            keyed: keyed::Keyed::new(),
         }
     }
 
@@ -850,6 +881,7 @@ impl Device for Reverb {
         });
         self.set_smoothing_times();
         self.gate.set_rate(sr);
+        self.keyed.set_rate(sr);
         self.reset();
     }
 
@@ -870,6 +902,7 @@ impl Device for Reverb {
         self.tail_rms = 0.0;
         self.hc = [0.0; 2];
         self.gate.clear();
+        self.keyed.clear();
         self.reseed();
         self.fresh = true;
     }
@@ -900,7 +933,16 @@ impl Device for Reverb {
             P_GATE_LEVEL if self.variant == Variant::Space => {
                 self.gate_level_db = v.clamp(-60.0, 0.0);
             }
-            _ => {}
+            other => {
+                // The keyed group follows the last param of the variant's own set.
+                let first = match self.variant {
+                    Variant::Classic => P_HIGHCUT,
+                    Variant::Space => P_GATE_LEVEL + 1,
+                };
+                if let Some(slot) = other.checked_sub(first).filter(|s| *s < keyed::PARAMS) {
+                    self.keyed.set(slot, v);
+                }
+            }
         }
     }
 
@@ -943,6 +985,10 @@ impl Device for Reverb {
             std::array::from_fn(|i| (g_end[i] - g_start[i]) / BATCH as f32);
 
         let space = self.variant == Variant::Space;
+        let keyed = self.keyed.active();
+        self.keyed.batch();
+        let (key_l, key_r) = (ctx.is_connected(SC_IN_L), ctx.is_connected(SC_IN_R));
+        let (sc_l, sc_r) = (*ctx.input(SC_IN_L), *ctx.input(SC_IN_R));
         let gate_threshold = exp2_det(self.gate_level_db * (std::f32::consts::LOG2_10 / 20.0));
         let gate_hold = (self.gate_hold_ms * 0.001 * sr).round() as u32;
         let mut out_l = [0.0f32; BATCH];
@@ -1034,6 +1080,19 @@ impl Device for Reverb {
                 let g = self.gate.tick(level, gate_threshold, gate_hold);
                 wet_l = self.hc[0] * g;
                 wet_r = self.hc[1] * g;
+            }
+            if keyed {
+                let key = if key_l || key_r {
+                    let (a, b) = (finite(sc_l[n]).abs(), finite(sc_r[n]).abs());
+                    match (key_l, key_r) {
+                        (true, false) => a,
+                        (false, true) => b,
+                        _ => a.max(b),
+                    }
+                } else {
+                    xl.abs().max(xr.abs())
+                };
+                [wet_l, wet_r] = self.keyed.tick(key, [wet_l, wet_r]);
             }
             let (yl, yr) = if mix == 0.0 {
                 (dry_l, dry_r)

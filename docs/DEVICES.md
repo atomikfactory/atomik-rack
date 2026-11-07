@@ -1262,6 +1262,9 @@ A stereo algorithmic reverb with three algorithms. Source:
 | `in_r` | Audio | in | |
 | `out_l` | Audio | out | |
 | `out_r` | Audio | out | |
+| `mix_cv_in` | CV | in | added to `mix` through `mix_cv_trim` |
+| `sc_in_l` | Audio | in | the key of the duck and the gate (see below) |
+| `sc_in_r` | Audio | in | |
 
 ### Params
 
@@ -1279,10 +1282,33 @@ A stereo algorithmic reverb with three algorithms. Source:
 | `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
 | `freeze` | 0 or 1 | 0 | toggle | Linear | yes |
 | `output` | −24 to 12 | 0 | dB | Linear | no |
+| `mix_cv_trim` | −1 to 1 | 1 | percent | Linear | no |
+| `duck` | 0 to 1 | 0 (off) | percent | Linear | no |
+| `duck_release` | 20 to 2000 | 300 | ms | Exp | no |
+| `duck_mode` | 0–2: broadband, low band, band | 0 | choice | Linear | yes |
+| `duck_freq` | 60 to 8000 | 250 | Hz | Exp | no |
+| `duck_threshold` | −60 to 0 | −30 | dB | Linear | no |
+| `key_gate` | 0 or 1 | 0 | toggle | Linear | yes |
+| `key_gate_hold` | 0 to 500 | 80 | ms | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
+- **Duck and key gate (the key).** The reverb can be ducked, and gated, by the level of another
+  signal, on the wet path only: the dry signal is never touched, bit for bit. The key is `sc_in_l`
+  and `sc_in_r` when one of them is cabled (a lone side feeds both) and the main input otherwise.
+  Its level is the larger of the two channels, followed by a peak follower with a 5 ms attack and
+  a `duck_release` fall. Both read the same `duck_threshold`. The duck engages linearly between
+  half the threshold (6 dB under) and the threshold; at full engagement it takes the share `duck`
+  out of the part it works on. *Broadband* turns the whole wet signal down; with the duck at 0 or
+  the key silent the wet signal is untouched. *Low band* splits the wet signal at `duck_freq` with
+  a 24 dB per octave Linkwitz-Riley pair and turns the part under it down (the halves add up to
+  an allpass of the wet signal, so this mode shifts the phase around `duck_freq` while the duck is
+  on). *Band* cuts a bell of Q 2 at `duck_freq` (at most 40 dB at its centre). The key gate
+  (`key_gate`) closes the wet output `key_gate_hold` ms after the key last exceeded the threshold,
+  with a 12 ms fade, and opens within 1 ms: the tail stops when the dry track stops. A hold of 0
+  keeps it open. The reverb of the Add Reverb Send wizard cables the track's channel to the key
+  and turns the duck on.
 - **Structure.** Pre-delay, a one-pole low cut, six early-reflection taps per side from a tapped
   delay, and a late tail from an 8-line feedback route network (Hermite-interpolated delay lines, a
   damping lowpass, a feedback gain and an in-loop allpass per line, mixed by an orthonormal 8×8
@@ -1341,10 +1367,13 @@ freeze, mix behaviour, buffers) with four other algorithms and two extra output 
 | `out_l` | Audio | out | |
 | `out_r` | Audio | out | |
 | `mix_cv_in` | CV | in | added to `mix` through `mix_cv_trim`, as in the reverb |
+| `sc_in_l` | Audio | in | the key of the duck and the gate, as in the reverb |
+| `sc_in_r` | Audio | in | |
 
 ### Params
 
 The first thirteen params are those of the reverb with the same meaning; `decay` defaults to 3 s.
+The last seven before `bypass` (`duck` to `key_gate_hold`) are the reverb's keyed duck and gate.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -1364,6 +1393,13 @@ The first thirteen params are those of the reverb with the same meaning; `decay`
 | `highcut` | 1000 to 20000 | 20000 | Hz | Exp | no |
 | `gate` | 0 (off) to 500 | 0 | ms | Linear | no |
 | `gate_level` | −60 to 0 | −40 | dB | Linear | no |
+| `duck` | 0 to 1 | 0 (off) | percent | Linear | no |
+| `duck_release` | 20 to 2000 | 300 | ms | Exp | no |
+| `duck_mode` | 0–2: broadband, low band, band | 0 | choice | Linear | yes |
+| `duck_freq` | 60 to 8000 | 250 | Hz | Exp | no |
+| `duck_threshold` | −60 to 0 | −30 | dB | Linear | no |
+| `key_gate` | 0 or 1 | 0 | toggle | Linear | yes |
+| `key_gate_hold` | 0 to 500 | 80 | ms | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
@@ -1376,7 +1412,9 @@ The first thirteen params are those of the reverb with the same meaning; `decay`
 - **High cut.** A one-pole lowpass on the wet signal, smoothed like the other controls.
 - **Gate.** `gate` is the hold time and `gate_level` the input level that keeps the gate open. The
   wet output fades out over 12 ms `gate` ms after the input last exceeded the level, and opens again
-  within 1 ms. `gate` 0 keeps it open.
+  within 1 ms. `gate` 0 keeps it open. This gate listens to the reverb's own input; the key gate
+  (see the reverb) listens to the key.
+- **Duck and key gate.** As the reverb, after the high cut and the gate.
 - **Mix and latency.** As the reverb: latency 0, and at `mix` 0 the input is copied bit for bit.
 - **Meter values.** `[output peak L, output peak R, tail RMS]`.
 
