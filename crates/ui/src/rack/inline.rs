@@ -268,6 +268,7 @@ impl RackView {
             scope: crate::modsrc_panel::Scope::new(),
             sample: None,
             analyser: Default::default(),
+            resonance: Default::default(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],

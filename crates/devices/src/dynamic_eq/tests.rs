@@ -109,7 +109,7 @@ fn descriptor_validates() {
             keys.push(format!("band{b}.{k}"));
         }
     }
-    for k in ["output", "bypass", "internal.analyser_live"] {
+    for k in ["output", "delta", "bypass", "internal.analyser_live"] {
         keys.push(k.to_string());
     }
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
@@ -120,7 +120,7 @@ fn descriptor_validates() {
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.dynamic-eq");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
-    assert_eq!(DESCRIPTOR.params.len(), BANDS * PER_BAND + 3);
+    assert_eq!(DESCRIPTOR.params.len(), BANDS * PER_BAND + 4);
 }
 
 #[test]
@@ -544,4 +544,120 @@ fn a_changing_static_gain_does_not_jump() {
     );
     let worst = y.windows(2).fold(0.0f32, |m, w| m.max((w[1] - w[0]).abs()));
     assert!(worst < 0.2, "largest step {worst}");
+}
+
+#[test]
+fn the_delta_of_a_neutral_device_is_silence() {
+    let mut h = eq();
+    h.set_param("delta", 1.0);
+    let (nl, nr) = (noise(1, 0.7), noise(2, 0.7));
+    let (yl, yr) = run_lr(&mut h, &nl, &nr, None, ms(300.0));
+    // The switch crossfades from the sound over 10 ms (a 100 ms margin lets it finish); then the
+    // delta of an untouched signal is exactly zero.
+    let from = ms(100.0);
+    assert!(
+        yl[from..]
+            .iter()
+            .chain(&yr[from..])
+            .all(|v| v.to_bits() == 0.0f32.to_bits())
+    );
+    // Bands that are on but do nothing (no gain, no range) are neutral as well.
+    set(&mut h, 2, "on", 1.0);
+    set(&mut h, 2, "range", 0.0);
+    let (yl, _) = run_lr(&mut h, &nl, &nr, None, ms(300.0));
+    assert!(yl.iter().all(|v| *v == 0.0));
+}
+
+#[test]
+fn the_delta_is_the_input_minus_the_output() {
+    let t = sine(1_000.0, 0.5);
+    let mut cut = bell(0.0, -60.0);
+    set(&mut cut, 2, "gain", -9.0);
+    let (processed, _) = run_lr(&mut cut, &t, &t, None, ms(500.0));
+    let mut h = bell(0.0, -60.0);
+    set(&mut h, 2, "gain", -9.0);
+    h.set_param("delta", 1.0);
+    let (delta, _) = run_lr(&mut h, &t, &t, None, ms(500.0));
+    // After the fade the delta is what the cut removed: x - y sample for sample.
+    let from = ms(100.0);
+    for n in from..delta.len() {
+        let want = t(n) - processed[n];
+        assert!(
+            (delta[n] - want).abs() < 1e-6,
+            "{n}: {} vs {want}",
+            delta[n]
+        );
+    }
+    // A 9 dB cut of a sine removes 1 - 10^(-9/20) = 0.65 of its amplitude.
+    let removed = db(tone_amplitude(
+        &delta[delta.len() - ms(100.0)..],
+        1_000.0,
+        delta.len() - ms(100.0),
+    ));
+    assert!((removed - db(0.5 * 0.646)).abs() < 0.3, "{removed}");
+}
+
+#[test]
+fn the_delta_ignores_the_output_gain_and_switches_without_a_jump() {
+    let t = sine(500.0, 0.4);
+    let mut h = bell(0.0, -60.0);
+    set(&mut h, 2, "gain", -6.0);
+    h.set_param("output", 12.0);
+    run_lr(&mut h, &t, &t, None, ms(200.0));
+    h.set_param("delta", 1.0);
+    let (y, _) = run_lr(
+        &mut h,
+        |n| t(n + ms(200.0)),
+        |n| t(n + ms(200.0)),
+        None,
+        ms(200.0),
+    );
+    let worst = y.windows(2).fold(0.0f32, |m, w| m.max((w[1] - w[0]).abs()));
+    assert!(worst < 0.4, "largest step {worst}");
+    assert!(
+        y[y.len() - 1].abs() < 0.4,
+        "the 12 dB output gain is not applied to the delta"
+    );
+}
+
+#[test]
+fn cuts_from_found_resonances_act_only_while_the_peak_is_there() {
+    use atomik_dsp::resonance::{Settings, find_resonances};
+    // Find a 1.2 kHz resonance over a quiet noise floor.
+    let n = (6.0 * SR) as usize;
+    let mut r = Rng::new(21);
+    let floor: Vec<f32> = (0..n).map(|_| 0.02 * r.next_bipolar()).collect();
+    let tone = sine(1_200.0, 0.1);
+    let mix: Vec<f32> = (0..n).map(|i| floor[i] + tone(i)).collect();
+    let found = find_resonances(&mix, &mix, SR as f32, &Settings::default());
+    assert_eq!(found.len(), 1, "{found:?}");
+    let free = cuts::free_bells(&[false; BANDS]);
+    assert_eq!(free, vec![1, 2, 3]);
+    let plan = cuts::plan(&found, &free);
+    assert_eq!(plan.len(), 1);
+    let (band, cut) = plan[0];
+    assert_eq!(band, 1);
+    assert!(cut.range_db <= -3.0 && cut.range_db >= -12.0);
+    assert!((cut.freq_hz - 1_200.0).abs() < 25.0);
+    let apply = |h: &mut DeviceHarness| {
+        for (k, v) in cut.params(band) {
+            h.set_param(&k, v);
+        }
+    };
+    // With the resonance present the band cuts it.
+    let mut h = eq();
+    apply(&mut h);
+    let (y, _) = run_lr(&mut h, &tone, &tone, None, ms(800.0));
+    let cut_db = tail_db(&y, 1_200.0) - db(0.1);
+    assert!(cut_db < -3.0, "{cut_db}");
+    // At the level of the surrounding sound it leaves the band alone.
+    let quiet = sine(1_200.0, 0.0015);
+    let mut h = eq();
+    apply(&mut h);
+    let (y, _) = run_lr(&mut h, &quiet, &quiet, None, ms(800.0));
+    let quiet_db = tail_db(&y, 1_200.0) - db(0.0015);
+    assert!(quiet_db > -0.5, "{quiet_db}");
+    // Bands that are on are not touched: nothing is free.
+    assert!(cuts::free_bells(&[true; BANDS]).is_empty());
+    assert!(cuts::plan(&found, &[]).is_empty());
 }

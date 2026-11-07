@@ -285,6 +285,8 @@ pub struct AppCore<S: EngineSink> {
     tuners: tuner::Tuners,
     /// The EQs whose analyser the engine was told to run.
     eq_live: eq_live::EqLive,
+    /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
+    resonance: resonance_finder::Finder,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
     /// The note player preview that runs (see `app_core_preview.rs`).
@@ -547,6 +549,7 @@ impl<S: EngineSink> AppCore<S> {
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
+            resonance: resonance_finder::Finder::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
             clip_preview: None,
@@ -1013,6 +1016,8 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
             UiAction::SetTuner { device, on } => self.set_tuner(device, on),
             UiAction::PreviewPlayer(device) => self.toggle_player_preview(&device),
+            UiAction::FindResonances(device) => self.find_resonances(&device),
+            UiAction::CutResonances(device) => self.cut_resonances(&device),
             UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
             UiAction::CycleSamplingInput => self.cycle_sampling_input(),
             UiAction::EditSample {
@@ -1662,6 +1667,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_tuners();
         self.feed_spectrum_eq();
         self.feed_eq_analysers();
+        self.poll_resonances();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
@@ -3749,6 +3755,9 @@ mod spectrum_eq;
 
 #[path = "app_core_eq_live.rs"]
 mod eq_live;
+
+#[path = "app_core_resonance.rs"]
+mod resonance_finder;
 
 #[path = "app_core_tuner.rs"]
 mod tuner;

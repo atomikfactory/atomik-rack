@@ -55,6 +55,7 @@ mod parabolic_lfo;
 mod pass_filter;
 pub mod phaser;
 mod pitch;
+pub mod resonance;
 pub mod ringmod;
 pub mod rng;
 pub mod room;

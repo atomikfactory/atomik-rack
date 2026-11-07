@@ -8,6 +8,7 @@ use crate::breadcrumb::{self, CrumbHit};
 use crate::container_panel::ContainerButton;
 use crate::drum_gen_panel::DrumButton;
 use crate::plugin_panel::PluginButton;
+use crate::resonance_marks::ResonanceBtn;
 use crate::seq_panel::SeqButton;
 use crate::tooltip::Help;
 use atomik_device_sdk::ControlKind;
@@ -99,6 +100,12 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::SliceBtn(_) => s("Slice the loop at its transients (the knob sets how many)"),
         Hit::ToTrack(_) => s("Lay the slices out as notes on a new track"),
         Hit::ScButton(_) => s("Choose the sidechain source of this effect"),
+        Hit::Resonance(_, ResonanceBtn::Find) => s(
+            "Listen to the range between the locators at this device's input and mark its resonances",
+        ),
+        Hit::Resonance(_, ResonanceBtn::Cut) => s(
+            "Cut the marked resonances with the free bells: dynamic cuts that act only while the peak sounds",
+        ),
         Hit::TunerButton(_) => s("Show or hide the tuner: it reads this track's input"),
         Hit::Preview(_) => s(
             "Preview this player: it and the players after it run while the song is stopped (click again to stop)",
