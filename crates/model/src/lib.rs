@@ -78,6 +78,7 @@ mod rate_convert;
 mod read_limit;
 mod rec_source;
 mod record_over;
+mod references;
 mod relink;
 mod replace_device;
 mod rules;
@@ -166,6 +167,9 @@ pub use read_limit::{
     read_text_limited,
 };
 pub use record_over::{covering_note_clip, layered_clip, merge_laps};
+pub use references::{
+    MAX_REFERENCE_CUE_MS, MAX_REFERENCE_PATH_CHARS, MAX_REFERENCES, Reference, check_references,
+};
 pub use replace_device::{lost_lanes as replace_lost_lanes, replace_reason};
 pub use slices::{
     MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
@@ -422,6 +426,9 @@ pub struct RackDoc {
     /// How the rack arranges its devices (see [`RackSort`]); view data, [`RackSort::Free`] for a
     /// new document and for a project saved without the field.
     pub sort_mode: RackSort,
+    /// The reference tracks the song is compared against (see [`crate::references`]); empty for
+    /// a new project. Project data with no part in the sound.
+    pub references: Vec<Reference>,
 }
 
 /// An edit. Every command is undoable.
@@ -592,6 +599,10 @@ pub enum Command {
     /// one undo step; the current mode is rejected. Reports [`SyncOp::ViewChanged`] only. Not
     /// accepted by [`Command::Batch`].
     SetRackSort(RackSort),
+    /// Replaces the list of reference tracks (see [`Reference`], at most [`MAX_REFERENCES`], no
+    /// path twice), one undo step; a list equal to the current one is rejected. Reports
+    /// [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
+    SetReferences(Vec<Reference>),
     /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
     /// in one undo step. The app has already resampled the assets the song uses and registered
     /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
@@ -831,6 +842,7 @@ pub enum Command {
 /// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
 /// | `SetInputChannels`, `SetOutputChannels` | `RoutingChanged` |
 /// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
+/// | `SetReferences` (also undo/redo) | `ViewChanged` |
 /// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
@@ -2272,6 +2284,7 @@ impl Document {
             Command::SetSongInfo(info) => song_info::plan_set(doc, &info)?,
             Command::SetMasterTune(cents) => master_tune::plan_set(doc, cents)?,
             Command::SetRackSort(mode) => rack_groups::plan_set(doc, registry, mode)?,
+            Command::SetReferences(list) => references::plan_set(doc, &list)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
@@ -2449,6 +2462,7 @@ pub fn empty_doc() -> RackDoc {
         info: SongInfo::default(),
         tune_cents: 0.0,
         sort_mode: RackSort::Free,
+        references: Vec::new(),
     }
 }
 

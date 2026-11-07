@@ -79,6 +79,9 @@ impl RackDoc {
         if let Err(e) = self.info.check() {
             found.add("info", e.to_string());
         }
+        if let Err(e) = crate::references::check_references(&self.references) {
+            found.add("references", e.to_string());
+        }
         self.validate_tempo(&mut found);
         self.validate_console(&mut found);
         self.validate_song(&mut found);
