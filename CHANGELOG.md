@@ -746,6 +746,20 @@ may break APIs and the patch and project formats.
   43: a program change with a bank is saved as `[tick, program, bank MSB, bank LSB]`, the usual one as before,
   and a clip's data is changed by the new `SetClipMidi` command. Not done yet: per-note expression (MPE), a
   groove taken from a MIDI file, and typing the bytes of a SysEx message.
+- **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
+  curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
+  slope 1 and settles on the ceiling), with a symmetry control that lowers one half of the wave (it adds even
+  harmonics, and an 8 Hz high-pass takes the offset out), off, 2x, 4x or 8x oversampling with the filter latency
+  reported (0, 29, 35 or 37 samples) and the dry path and the delta lined up with it, an output gain and a mix. A
+  multiband mode splits the sound in two or three bands with the flat-sum crossovers of the mastering device and
+  gives each band its own drive in front of its own curve. A delta switch plays what the clipper removes. The panel
+  draws the transfer curve with the level of the moment, and reads the clip activity: the share of clipped samples
+  and the longest clipped run in milliseconds, which turns warm past one millisecond, the number to judge
+  audibility by. With a hard curve, no oversampling, no symmetry, one band, a full mix and 0 dB gains the clipper
+  is bit-transparent below the ceiling. A guard (on by default) holds the single-band output to the ceiling after
+  the oversampling filters. The oversampler gains an 8x stage (37 samples of latency; images at least 84 dB
+  down). The project format stays 44 and the command count 469. Not done: a lookahead limiter stage after the
+  clipper, a user-drawn curve, and a per-band ceiling.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
