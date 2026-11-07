@@ -4172,6 +4172,7 @@ mod audition_tests;
 #[path = "app_core_keys_tests.rs"]
 mod keys_tests;
 
+#[cfg(test)]
 #[path = "app_core_blind_tests.rs"]
 mod blind_tests;
 #[cfg(test)]
