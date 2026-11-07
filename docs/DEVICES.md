@@ -5333,6 +5333,15 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
   2.6b); the strip and the master draw the automation mark on the control and follow the lane while
   the song plays, and a bounce plays it like an instrument's lane.
 
+- **Rack panels of the console devices.** A console channel and an output bus draw as a one-unit mix channel
+  panel and the master as a four-unit master section panel; the sockets and params that a panel does not
+  draw stay in the descriptor and keep working. Channel and bus back: Input L/R (`in_l/r`, or `bus_l/r` on a
+  bus), Insert FX TO DEVICE (`insert_send_l/r`), Insert FX FROM DEVICE (`insert_return_l/r`) and Output L/R
+  (`out_l/r`). Master back: FX SEND 1-8 (`fx_send{k}_l/r`), FX RETURN 1-8 (`return{k}_l/r`), Insert FX TO and
+  FROM DEVICE, Master Out (`main_l/r`) and Control Room Out (`monitor_l/r`). Master front: `fader`, the eight
+  `return{k}.level` sliders and the insert switches; the bus compressor, the control-room source and level,
+  the key input and the send levels are edited in the console view.
+
 ## Console output bus: `atomik.bus` (Mixer)
 
 A console strip that mixes other strips: the same strip as `atomik.channel`, fed by a stereo summing

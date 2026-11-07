@@ -3102,6 +3102,29 @@ planned on a scratch copy.
   `UiAction::EditInsert`, which `AppCore` answers with `RackView::reveal_insert` (the area unfolds, the effect is
   selected and the rack scrolls to it). The fold state stays view state (see above): it is not saved with the
   project, so a project opens with every insert area shown.
+- **Master section panel** ([ui/src/master_panel.rs](../crates/ui/src/master_panel.rs),
+  [rack/master_input.rs](../crates/ui/src/rack/master_input.rs)). The master draws as a hand-made four-unit panel
+  (`master_layout`) that shares the top row of the mix channel panel (`mix_panel::has_mix_top`: the horizontal
+  `fader`, the meter fed by `set_mix_meters`, BYPASS INSERT FX, SHOW INSERT FX and the output display) and adds eight
+  send rows (`return_row`): the number, the name of the effect on the return slot (`master_data`, from
+  `Console::returns`), the `return{k}.level` param as a horizontal slider (`mix_travel` gives the track of the
+  fader being dragged) and an EDIT button (`edit_rects`, `Hit::ReturnEdit`). The back draws `fx_send{k}_l/r`,
+  `return{k}_l/r`, the insert loop, `main_l/r` and `monitor_l/r` (`socket_label`); the other sockets have no
+  jack. The bus compressor, the control room source and the key input are console view only. The master has the
+  insert area of a channel (`has_mix_top` in `insert_area.rs`), with the master as the owner of `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert`; `insert_owner` includes it, so the console's E button and
+  `reveal_insert` work for it. The shared send effects are grouped by `console_insert::send_chain` (the effects
+  cabled in series from `fx_send{k}`) and `master_stack` (the master's inserts, then the effects of sends 1 to 8 that
+  sit in the master's column): `RackView::send_stacks` lists each send's effects after the master's stack,
+  `area_gaps` adds a header line above each group and `compute_areas` records the groups
+  (`RackView::send_groups`, `SendGroupInfo`), drawn as a frame labelled "Send N". The groups have no drop row. In the
+  model `console_insert::stack` on the master gathers its inserts and then the send effects right after it, a
+  move of the master takes `master_stack` along and a move never lands inside it (`rack_groups`), a new send goes
+  after the stack (`send_effect_index`) and `AssignSend` moves the effect there. `CreateTarget::Selected(master)`
+  keeps the send rule (a ninth effect is added unrouted with the "All 8 send and return slots are in use" note);
+  `CreateTarget::MasterInserts` (what `RackView::effect_create_target` answers after a click on the master's drop
+  row, cleared by any selection change), `CreateEffect` after an insert of the master and `CreateEffectAt` right
+  under the master panel make a master insert. The fold state is view state, as for the channels.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band

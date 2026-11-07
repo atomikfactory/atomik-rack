@@ -32,6 +32,22 @@ may break APIs and the patch and project formats.
   mixer the insert rows of a strip reorder by drag and each has an E that shows the effect in the rack, with the
   insert area unfolded and the effect selected. New commands `AddInsert` and `ExtractInsert`. The fold state is view
   state for now and is not saved with the project.
+- **Master section panel.** The console master is a compact four-unit panel in the rack. The front carries the master
+  fader (the same horizontal fader, readout and meter as a mix channel panel), BYPASS INSERT FX, SHOW INSERT FX, the
+  AUDIO OUTPUT display and eight send rows: the number, the name of the effect on the send (or "free"), its return
+  level as a slider (a drag, a double-click resets it) and an EDIT button that selects that effect and scrolls the rack
+  to it. The back carries FX SEND 1-8 and FX RETURN 1-8 (left and right jacks), INSERT FX TO DEVICE and FROM
+  DEVICE, MASTER OUT and CONTROL ROOM OUT; the summing inputs, the key and the CV sockets keep working but have no
+  jack in the rack, and the bus compressor and the control room stay on the mixer. The master has the same insert
+  area as a channel (still after its compressor): effects stacked under it, the same gestures, one undo step each, `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert` with the master as the strip, and in the mixer its insert rows
+  reorder by drag and have an E. The effects of the 8 shared sends sit under the master's insert area, each send in
+  a framed group labelled "Send N" (a send with several effects in series shows them all), and they move with the
+  master; they stay ordinary devices shared by all channels. Creating an effect with the master selected still makes
+  the next free send (with all 8 in use the effect is added unrouted and the status line says that all 8 send and
+  return slots are in use), creating one after a click on the master's insert area, with one of its inserts selected
+  or by dropping it right under the panel makes a master insert, and "Use as Send Effect" brings the effect under the
+  master. SHOW INSERT FX stays view state (not saved with the project, no format change).
 - **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
   renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
   true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,
