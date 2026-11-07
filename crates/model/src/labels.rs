@@ -191,6 +191,11 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::SplitSub { .. } => "Split Sub",
         WorkflowCommand::AddReverbSend { .. } => "Add Reverb Send",
         WorkflowCommand::AddRumble { .. } => "Add Rumble",
+        WorkflowCommand::AddTransition { edit, .. } => match edit {
+            crate::transition::TransitionEdit::FilterDown { .. } => "Add Filter Down Transition",
+            crate::transition::TransitionEdit::Silence => "Add Silence Transition",
+            crate::transition::TransitionEdit::Fill { .. } => "Add Fill Transition",
+        },
         WorkflowCommand::SetFoldedMany { .. } => "Fold Devices",
         WorkflowCommand::SetModSlot { value, .. } => match value {
             Some(_) => "Set Modulation",

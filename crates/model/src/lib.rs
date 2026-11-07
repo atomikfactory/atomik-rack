@@ -100,6 +100,7 @@ pub mod takes;
 mod takes_cmd;
 pub mod theory;
 mod time_edit;
+pub mod transition;
 mod validate;
 pub mod warp;
 mod workflow;

@@ -216,6 +216,18 @@ pub enum WorkflowCommand {
         /// The choices of the track's inserts.
         options: crate::rumble::RumbleTrackOptions,
     },
+    /// A transition at the section boundary `at` that is an edit (see [`crate::transition`]): a
+    /// filter that closes on the master or a group over the last bars, the master fader at zero
+    /// for one beat, or the last beat of a note track played twice at double rate. All of it is
+    /// one undo step. A boundary at the start of the song, a frozen track, a strip that is not the
+    /// master or a group bus, a fill with no note in the last beat and a clip that overlaps
+    /// another on its lane are rejected.
+    AddTransition {
+        /// The boundary: the song tick where the next section starts.
+        at: i64,
+        /// Which transition and its choices.
+        edit: crate::transition::TransitionEdit,
+    },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
     /// channel.
@@ -937,6 +949,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::AddReverbSend { track, options } => {
             plain(crate::reverb_send::plan(doc, registry, &track, &options))
+        }
+        WorkflowCommand::AddTransition { at, edit } => {
+            plain(crate::transition::plan(doc, registry, at, &edit))
         }
         WorkflowCommand::AddRumble {
             kick,
