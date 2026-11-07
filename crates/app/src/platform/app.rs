@@ -360,6 +360,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         zorder: BTreeMap::new(),
         last_focused: (DocId::FIRST, WindowKind::Main),
         drag_noted: false,
+        foreign_hover: None,
         text: TextEngine::new(),
         modifiers: Modifiers::NONE,
         mod_events: translate::ModifierTracker::default(),
@@ -429,6 +430,8 @@ struct App {
     last_focused: Key,
     /// The note about drags between windows was said for this drag.
     drag_noted: bool,
+    /// The song whose window the files of a drag out of another song's file browser hover over.
+    foreign_hover: Option<DocId>,
     text: TextEngine,
     modifiers: Modifiers,
     /// Emits `UiEvent::ModifiersChanged` once per real modifier change.
@@ -798,18 +801,87 @@ impl App {
         windows::window_under(&rects, point, self.zorder.entry(doc).or_default())
     }
 
+    /// The window of another song under a pointer that is at `pos` in `kind`'s window, during a
+    /// drag: the song and the point in its window. The song that last had the focus is looked
+    /// at first, then the others in the order they were opened; `None` when the OS gives no
+    /// positions (Wayland) or no other song has a window there.
+    fn other_song_under(&mut self, key: Key, pos: Point) -> Option<(DocId, WindowHit)> {
+        let (doc, kind) = key;
+        let rects = self.desktop_rects(doc)?;
+        let own = rects.iter().find(|r| r.kind == kind)?;
+        let zoom = self.shell.song(doc).map_or(1.0, |s| s.app_zoom());
+        let point = windows::to_desktop(
+            own.space,
+            (own.x, own.y),
+            own.scale,
+            (pos.x * own.scale * zoom, pos.y * own.scale * zoom),
+        );
+        let mut docs: Vec<DocId> = self.windows.keys().map(|k| k.0).collect();
+        docs.dedup();
+        docs.retain(|d| *d != doc);
+        let focused = self.last_focused.0;
+        docs.sort_by_key(|d| (*d != focused, *d));
+        for other in docs {
+            let Some(rects) = self.desktop_rects(other) else {
+                continue;
+            };
+            let Some(mut hit) =
+                windows::window_under(&rects, point, self.zorder.entry(other).or_default())
+            else {
+                continue;
+            };
+            // The windows of a song take their points in its own zoom.
+            let zoom = self.shell.song(other).map_or(1.0, |s| s.app_zoom());
+            hit.logical = (hit.logical.0 / zoom, hit.logical.1 / zoom);
+            return Some((other, hit));
+        }
+        None
+    }
+
     /// Hands one event of `kind`'s window to the shell. During a drag of files the window under
     /// the pointer is worked out here, since the OS keeps sending the events to the window
-    /// that got the press.
+    /// that got the press. A drag of the selection (clips, devices, a track) and a drag of files
+    /// can end over a window of another song: the selection is copied there, the files are
+    /// dropped there.
     fn dispatch(&mut self, key: Key, event: &UiEvent) -> Vec<ShellRequest> {
         self.shell.select(key.0);
         let kind = key.1;
+        if let UiEvent::PointerUp { pos, .. } = event
+            && self.shell.song_drag().is_some()
+            && self.window_under_pointer(key, *pos).is_none()
+            && let Some((to, hit)) = self.other_song_under(key, *pos)
+            && self.shell.drag_to_song(key.0, to, hit)
+        {
+            return Vec::new();
+        }
         let Some(pos) = window_logic::pointer_of(event).filter(|_| self.shell.cross_window_drag())
         else {
             self.drag_noted = false;
+            if let Some(left) = self.foreign_hover.take() {
+                self.shell.files_left_song(left);
+            }
             return self.shell.handle_in(kind, event);
         };
         let under = self.window_under_pointer(key, pos);
+        let over = match under {
+            Some(_) => None,
+            None => self.other_song_under(key, pos),
+        };
+        // The song the files hover over changed: the one they left lets go of its hover.
+        let now = over.as_ref().map(|(to, _)| *to);
+        if let Some(left) = self.foreign_hover.filter(|s| Some(*s) != now) {
+            self.shell.files_left_song(left);
+        }
+        self.foreign_hover = None;
+        if let Some((to, hit)) = over {
+            let release = matches!(event, UiEvent::PointerUp { .. });
+            if self.shell.files_to_song(key.0, to, hit, release) {
+                self.foreign_hover = (!release).then_some(to);
+                // This song sees the pointer over no window of its own: its hover ends and a
+                // release ends the gesture.
+                return self.shell.handle_routed(kind, event, None);
+            }
+        }
         self.shell.handle_routed(kind, event, under)
     }
 

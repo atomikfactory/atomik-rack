@@ -195,11 +195,20 @@ impl<B: AudioBackend> Workspace<B> {
         let Some(data) = self.songs[a].shell.core().clipboard().get().cloned() else {
             return;
         };
-        // The audio of what was copied stays in the bundle of the song it was copied in (and in
-        // the ones that song itself borrowed from): a paste fetches what it lacks from there.
+        self.lend_audio(a, b);
+        let target = self.songs[b].shell.core_mut().clipboard_mut();
+        if target.get() != Some(&data) {
+            target.set(data);
+        }
+    }
+
+    /// The audio of what was copied (or dragged) stays in the bundle of the song it came from
+    /// (and in the ones that song itself borrowed from): song `b`, at index `to`, fetches or
+    /// converts what a paste lacks from there.
+    fn lend_audio(&mut self, from: usize, to: usize) {
         let mut lenders: Vec<std::path::PathBuf> = Vec::new();
-        let lent = self.songs[a].shell.core().audio_lenders();
-        for root in self.songs[a]
+        let lent = self.songs[from].shell.core().audio_lenders();
+        for root in self.songs[from]
             .shell
             .core()
             .bundle_root()
@@ -210,10 +219,56 @@ impl<B: AudioBackend> Workspace<B> {
                 lenders.push(root.to_path_buf());
             }
         }
-        self.songs[b].shell.core_mut().set_audio_lenders(lenders);
-        let target = self.songs[b].shell.core_mut().clipboard_mut();
-        if target.get() != Some(&data) {
-            target.set(data);
+        self.songs[to].shell.core_mut().set_audio_lenders(lenders);
+    }
+
+    /// A drag of the selection in song `from` was let go over `hit`, a point of a window of
+    /// song `to`: the drag ends without moving anything in `from` and `to` pastes what it
+    /// carried at that point, audio and sample rate included, as one undo step (the same result
+    /// as Copy in `from` and Paste in `to`; neither clipboard is touched, and the audio does
+    /// not change hands). False when no such songs are open, they are the same song, or `from`
+    /// carries nothing.
+    pub fn drag_to_song(&mut self, from: DocId, to: DocId, hit: WindowHit) -> bool {
+        if from == to || !self.has(from) || !self.has(to) {
+            return false;
+        }
+        let (a, b) = (self.index_of(from), self.index_of(to));
+        let Some(data) = self.songs[a].shell.take_song_drag() else {
+            return false;
+        };
+        self.lend_audio(a, b);
+        let at = atomik_ui::kurbo::Point::new(hit.logical.0, hit.logical.1);
+        self.songs[b].shell.drop_song_data(hit.kind, at, data);
+        true
+    }
+
+    /// The files of the drag out of song `from`'s file browser, when one is in progress.
+    pub fn file_drag_paths(&self, from: DocId) -> Option<Vec<std::path::PathBuf>> {
+        self.song(from).and_then(Shell::file_drag_paths)
+    }
+
+    /// Files dragged out of song `from`'s file browser are over `hit` in song `to` (`release`:
+    /// they were dropped): `to` hovers or takes them as it does for a drag of its own. False
+    /// when no such songs are open, they are the same song, or `from` drags no files.
+    pub fn files_to_song(&mut self, from: DocId, to: DocId, hit: WindowHit, release: bool) -> bool {
+        if from == to || !self.has(to) {
+            return false;
+        }
+        let Some(paths) = self.file_drag_paths(from) else {
+            return false;
+        };
+        let at = atomik_ui::kurbo::Point::new(hit.logical.0, hit.logical.1);
+        let b = self.index_of(to);
+        self.songs[b]
+            .shell
+            .foreign_file_drag(hit.kind, at, paths, release);
+        true
+    }
+
+    /// The files of a drag out of another song's file browser left song `to`'s windows.
+    pub fn files_left_song(&mut self, to: DocId) {
+        if let Some(song) = self.song_mut(to) {
+            song.foreign_file_drag_left();
         }
     }
 

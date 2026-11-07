@@ -4138,6 +4138,7 @@ parameter tables are in [DEVICES.md](DEVICES.md).
 | `atomik.compressor` | Peak or RMS detector, soft knee, auto release, key filters, sidechain input, look-ahead 0 to 5 ms reported as latency. |
 | `atomik.eq` | Six bands (cut slopes 12/24/48 dB per octave), coarse band levels published for the analyser. |
 | `atomik.distortion` | Ten curves (the last five with ADAA, see [shaper.rs](../crates/dsp/src/shaper.rs)), cut and body sections, off/2x/4x halfband oversampling; the oversampler latency is reported and the dry path is delayed to match. |
+| `atomik.clipper` | Clipper: a hard-to-soft curve ([clipper.rs](../crates/dsp/src/clipper.rs)) with symmetry and a DC blocker, off/2x/4x/8x oversampling (latency 0/29/35/37 reported, dry and delta aligned), a 2 or 3 band mode on the mastering crossovers, a delta switch and published clip activity. |
 | `atomik.echo` | Stereo echo on the dsp `Echo` line (glided time, wobble): colour, crush and diffusion in the loop, ducking, triggered and roll modes; latency 0. |
 | `atomik.modulation` | Chorus, flanger, phaser with tempo sync from the transport. |
 | `atomik.mastering` | 3-band multiband, mid/side width (optionally split by band), soft clip, true-peak limiter with a 0.5/1.5/4 ms look-ahead (4x detector), BS.1770 / R128 loudness and true-peak meter. |
@@ -4720,7 +4721,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (478) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (479) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5825,7 +5826,32 @@ single-song app) and the one with the **play focus**.
   lacks (`workflow_pre`) and `AppCore::fetch_lent_audio` has a worker (`spawn_fetch`, thread `atomik-fetch`) copy
   the files from the lending bundles into the song's own (a scratch bundle when it has none) and load them; a file
   the lender no longer has is listed as missing like any lost audio. Assets are content hashes, so nothing in the
-  pasted material is rewritten. The sample rate of the other song is not converted.
+  pasted material is rewritten while both songs run at one rate.
+- **Audio at another sample rate.** A paste whose pool entries are not at the song's rate
+  (`atomik_model::assets_off_rate`) never reaches the model as it is: `AppCore::convert_pasted_audio`, called from
+  `apply_command`, holds the command back and starts a worker (`spawn_convert_paste`, thread `atomik-paste-rate`;
+  never the audio or the UI thread) that reads each original from the song's own bundle or else from a lending one
+  and stores only the resampled copy in the song's bundle (`Bundle::convert_rate_from`: the lender is never
+  written). `apply_paste_converted` then loads and registers the copies (not an undo step) and applies the command
+  again with `DeviceSnapshot::at_rate`, `ClipSnapshot::at_rate` or `TakeSnapshot::at_rate`, which point clips, takes,
+  frozen renders and zones at the copies and scale every frame position by the rate ratio, the same arithmetic as
+  `Command::ConvertSampleRate` (they share `rate_convert.rs`). The paste is one undo step; a copy made once is
+  remembered per asset and rate, so the next paste of the same audio needs no worker. A pending paste counts in
+  `AudioState::pending`, which keeps the save's orphan tidy off the new files.
+- **Dragging between song windows.** A drag of clips, a track header or devices that is let go over a window of
+  another open song is Copy in the first song and Paste in the second, at the point of the drop, without touching
+  either clipboard. The platform layer (`App::dispatch`) asks `App::other_song_under` which song's window holds
+  the pointer when the release is over none of the dragging song's own windows, and calls
+  `Workspace::drag_to_song`: `Shell::take_song_drag` ends the drag (`ArrangementView::cancel_carried` or
+  `RackView::drop_carried`, which put back what the gesture had moved) and returns the snapshot Copy would take
+  (`AppCore::carried_data`); the audio lenders are set as for a paste; `Shell::drop_song_data` converts the point
+  to the pane's own coordinates and `AppCore::drop_carried` places the data: clips on the lane and snapped tick
+  under the pointer (`ArrangementView::drop_spot_at`, a note or audio lane that fits, else each clip on its own
+  lane kind), devices at the rack slot there (`RackView::drop_slot_at`), tracks after the track there. Files
+  dragged out of the file browser follow the same hit test (`Workspace::files_to_song`,
+  `Shell::foreign_file_drag`), so a patch, a container or a device row of the shared library drops on whichever
+  song is under the pointer, with the hover outline there. Both go through the ordinary paste commands, so the
+  audio fetch and the rate conversion above apply and the drop is one undo step.
 - **Recovery of the other songs.** A song next to the first keeps its snapshots in `recovery/song-<n>` with its own
   session marker. At start, `crashed_song_snapshots` looks in those folders for a marker whose process is gone
   (and removes it, so the copies are offered once) and `Workspace::recover_songs` opens the newest snapshot of
@@ -5833,8 +5859,8 @@ single-song app) and the one with the **play focus**.
   in the first song says how many came back. The first song's own copy is offered by its banner as before.
 - **Not done yet.** Separate Input Focus and Play Focus buttons on the interface panel (the song that has the
   stream also has the MIDI inputs, so the two are one today: they need a way to feed a song's live notes into the
-  engine of another), dragging clips between song windows, and a session of the MCP server with several songs (it
-  stays one song).
+  engine of another), a drop marker in the window under the pointer while clips or devices (not files) are dragged
+  over another song, and a session of the MCP server with several songs (it stays one song).
 
 ## 6n. Logs, crash reports and diagnostics
 
@@ -6017,7 +6043,7 @@ The six effects (reverb, compressor, EQ, distortion, modulation, mastering) and 
 hand-made rack panels with labelled sections and a small visual each
 ([ui/src/fx_layout.rs](../crates/ui/src/fx_layout.rs), [fx_paint.rs](../crates/ui/src/fx_paint.rs),
 maths in [fx.rs](../crates/ui/src/fx.rs): decay sketch, transfer curve, EQ response with draggable
-handles, distortion curve, LFO sketch, crossover and loudness readouts). The app calls
+handles, distortion and clipper curves, LFO sketch, crossover and loudness readouts). The app calls
 `RackView::set_device_meter_values(&DeviceKey, &[f32])` once per frame with
 `AppCore::device_meter_values` for the effect devices; the view turns the values into dB display
 values and repaints a panel only when one changed. The compressor panel's "SC from..." list

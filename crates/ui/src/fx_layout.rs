@@ -13,6 +13,7 @@
 //! | character | preset matrix, screen, meters | its own 3 U layout, [`crate::character_panel`] | PRESET, SCREEN, METER, CONTROLS |
 //! | spectrum | log-frequency plot or 1/3-octave bars, peak hold, loudest-bin readout, input peaks | across the top, 200 high | ANALYSIS, SMOOTHING, DISPLAY |
 //! | audio track | the tuner display (needle, note, cents, Hz), only while the TUNER button of its name plate is on | across the top, 92 high | INPUT, TUNER (with the display) |
+//! | clipper | transfer curve, clip activity readout, in/out meters | left, 172 wide | INPUT, SHAPE, OUTPUT, MULTIBAND |
 //! | phase meter | goniometer, correlation, balance and width bars, level bars, loudness readouts | across the top, 148 high | STEREO, LEVEL, SCOPE, LOUDNESS |
 //!
 //! The height is the smallest whole number of rack units where the front (visual and sections)
@@ -32,6 +33,7 @@ use vello::kurbo::Rect;
 const LEFT_REVERB: f64 = 196.0;
 const LEFT_COMPRESSOR: f64 = 210.0;
 const LEFT_DISTORTION: f64 = 172.0;
+const LEFT_CLIPPER: f64 = 172.0;
 const LEFT_MODULATION: f64 = 196.0;
 const LEFT_AMP: f64 = 168.0;
 /// Height (title included) of the visual placed above the sections.
@@ -181,6 +183,22 @@ fn sections(kind: FxKind) -> Def {
             ("TUNER", &["tuner_mute", "tuner_ref"]),
         ],
         FxKind::Tuner => &[("SETTINGS", &["mute", "ref"])],
+        FxKind::Clipper => &[
+            ("INPUT", &["gain", "ceiling"]),
+            ("SHAPE", &["curve", "symmetry", "guard"]),
+            ("OUTPUT", &["output", "mix", "oversample", "delta"]),
+            (
+                "MULTIBAND",
+                &[
+                    "bands",
+                    "xover.low",
+                    "xover.high",
+                    "band1.drive",
+                    "band2.drive",
+                    "band3.drive",
+                ],
+            ),
+        ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
             ("MULTIBAND", &["multiband.on", "xover.low", "xover.high"]),
@@ -247,6 +265,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Spectrum => "SPECTRUM",
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
         FxKind::AudioTrack | FxKind::Tuner => "TUNER",
+        FxKind::Clipper => "CURVE",
     }
 }
 
@@ -264,6 +283,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
         FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
+        FxKind::Clipper => (LEFT_CLIPPER, 0.0),
     }
 }
 
@@ -407,7 +427,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
                 Some(Rect::new(v.x0, v.y1 - 19.0, v.x1, v.y1 - 1.0)),
             )
         }
-        FxKind::Distortion => {
+        FxKind::Distortion | FxKind::Clipper => {
             let s = (v.height() - 2.0).clamp(40.0, 118.0);
             let plot = Rect::new(v.x0, v.y0 + 1.0, v.x0 + s, v.y0 + 1.0 + s);
             (
