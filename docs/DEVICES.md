@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships sixty-five original devices: the poly synth (with its mono bass and dual layer
+Atomik Rack ships sixty-six original devices: the poly synth (with its mono bass and dual layer
 variants), the semi-modular synth, the organ, the wavetable synth, the FM synth, the grain sampler, line mixer
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
@@ -8,7 +8,7 @@ a hardware synth or a virtual port), the effects (reverb, space reverb, convolut
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, tuner, pitch shifter, rotary speaker,
+sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter, rotary speaker,
 the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
 envelope follower) and the two spiders), the note players (step sequencer, arpeggiator,
 note filter, key &
@@ -3820,6 +3820,72 @@ and has a flag off still plays and releases its notes.
   was open, leaves an `AllOff` on every output for the next batch.
 - Offsets are preserved and non-decreasing per output. An output that is not connected simply drops
   its events. Latency 0. `process`, `set_param` and `reset` never allocate (fixed 8 x 128 tables).
+
+---
+
+## Dynamic EQ: `atomik.dynamic-eq` (Effect)
+
+A five-band stereo equaliser whose bands move with the level of the signal, or of a key signal, in
+their own frequency range: a resonance is cut only while it sounds, a band is lifted only when it is
+loud. Source: [crates/devices/src/dynamic_eq.rs](../crates/devices/src/dynamic_eq.rs).
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `sc_in_l`, `sc_in_r` (Audio in, the key; a lone connected side feeds both
+channels, as on the compressor), `out_l`, `out_r` (Audio out).
+
+### Params
+
+Every band has the same eleven params, `bandN.<name>` for N = 1 to 5. Band 1 is a low shelf, bands 2
+to 4 are bells, band 5 is a high shelf. The param ids run band by band (`band1.on` is 0,
+`band2.on` is 11).
+
+| Key (`bandN.`) | Range | Default | Unit |
+|---|---|---|---|
+| `on` | 0 or 1 | 0 | toggle |
+| `freq` | shelves 20 to 5000 Hz (low) and 500 to 20000 Hz (high), bells 20 to 20000 Hz | 120 / 400 / 1500 / 4000 / 8000 | Hz |
+| `q` | shelves 0.3 to 2, bells 0.1 to 18 | 0.707 (shelves), 1 (bells) | none |
+| `gain` (static) | -24 to 24 | 0 | dB |
+| `threshold` | -60 to 0 | -24 | dB |
+| `range` | -24 to 24 (negative cuts, positive lifts) | -6 | dB |
+| `ratio` | 1.5 to 20 | 4 | none |
+| `attack` | 0.1 to 200 | 10 | ms |
+| `release` | 5 to 2000 | 100 | ms |
+| `source` | 0 to 1: band, key | 0 | choice |
+| `channel` | 0 to 2: stereo, mid, side | 0 | choice |
+
+Shared: `output` (-24 to 24 dB, default 0), `bypass` (0 or 1, see [Effect bypass](#effect-bypass)) and
+the never-stored `internal.analyser_live` (0 or 1) that the rack view sets for the panels on screen.
+Frequencies, Q, ratio, attack and release use the exponential taper.
+
+### Behaviour (as built)
+
+- **A band.** A band-pass at the band's frequency (unity gain at the centre, width `q` kept between
+  0.5 and 8) feeds a level follower of the rectified signal (`attack` rising, `release` falling),
+  scaled by pi/2 so a sine of peak A reads A when attack and release are equal. The overshoot above
+  `threshold` goes through a soft-knee curve (6 dB knee) with slope `1 - 1/ratio` and stops at
+  `|range|`; with a negative `range` the band's gain falls by that much, with a positive one it rises.
+  The band's gain is the static `gain` plus that dynamic part, limited to 36 dB.
+- **Source.** `band` listens to the device input (not to what the other bands did), `key` to the
+  key sockets band-passed at the band's own frequency; with no cable in the key sockets a band set to
+  `key` listens to its input. A shelf listens around its corner frequency.
+- **Channel.** `stereo` filters left and right and the detector follows the louder side, so the image
+  does not move. `mid` and `side` filter one signal, `(L + R) / 2` or `(L - R) / 2`, add the change
+  back (the same on both sides for mid, opposite on the two for side) and listen to that signal.
+- **Smoothing.** The static gain, the frequency and the Q follow a 10 ms one-pole; the coefficients
+  are RBJ sections with `f64` state, recomputed every 16 samples while something moves.
+- **Bit-transparent when idle.** A band that is off, or on with a static gain and a range of exactly
+  0 dB, fades out over 10 ms and is skipped with its state reset. With every band off and `output`
+  at 0 dB the input is copied bit for bit (the default state). A band that comes on starts clean and
+  fades in over 10 ms.
+- **No latency**, no look-ahead. Non-finite input counts as 0; nothing allocates on the audio thread.
+- **Meter values** (40): `[0..5)` the gain each band applies now in dB (0 for a band that is off),
+  `[5..21)` the energies of 16 band-pass filters over the mono mix of the INPUT (centres from
+  `atomik_devices::eq::analyser_centres`, linear power, smoothed over 50 ms), `[21..37)` the same for
+  the KEY (0 without a cable), `[37]`, `[38]` the output peaks, `[39]` 1 when a cable is in the key
+  sockets. The two analyser banks run only while `internal.analyser_live` is 1; the audio is the same
+  either way.
+- **Not built:** the EQ's low and high cut, a hold time and a look-ahead.
 
 ---
 
