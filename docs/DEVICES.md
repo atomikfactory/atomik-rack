@@ -3984,9 +3984,10 @@ to 4 are bells, band 5 is a high shelf. The param ids run band by band (`band1.o
 | `source` | 0 to 1: band, key | 0 | choice |
 | `channel` | 0 to 2: stereo, mid, side | 0 | choice |
 
-Shared: `output` (-24 to 24 dB, default 0), `bypass` (0 or 1, see [Effect bypass](#effect-bypass)) and
-the never-stored `internal.analyser_live` (0 or 1) that the rack view sets for the panels on screen.
-Frequencies, Q, ratio, attack and release use the exponential taper.
+Shared: `output` (-24 to 24 dB, default 0, id 55), `delta` (0 or 1, default 0, id 56: listen to what the
+bands take out), `bypass` (0 or 1, id 57, see [Effect bypass](#effect-bypass)) and the never-stored
+`internal.analyser_live` (0 or 1, id 58) that the rack view sets for the panels on screen. Frequencies, Q, ratio,
+attack and release use the exponential taper.
 
 ### Behaviour (as built)
 
@@ -4004,6 +4005,11 @@ Frequencies, Q, ratio, attack and release use the exponential taper.
   back (the same on both sides for mid, opposite on the two for side) and listen to that signal.
 - **Smoothing.** The static gain, the frequency and the Q follow a 10 ms one-pole; the coefficients
   are RBJ sections with `f64` state, recomputed every 16 samples while something moves.
+- **Delta.** With `delta` on the device plays the input minus the output of the bands (before `output`): a cut
+  is heard as the part of the sound that was taken out, a lift as the same part with the opposite sign. The switch
+  crossfades over 10 ms. With every band off, or with bands that have no gain and no range, the delta is exactly
+  0.0, so a neutral device is silent. It covers all five bands together; to hear one band, switch the others
+  off. The meter values and peaks follow what is played.
 - **Bit-transparent when idle.** A band that is off, or on with a static gain and a range of exactly
   0 dB, fades out over 10 ms and is skipped with its state reset. With every band off and `output`
   at 0 dB the input is copied bit for bit (the default state). A band that comes on starts clean and
@@ -4022,6 +4028,29 @@ Frequencies, Q, ratio, attack and release use the exponential taper.
   band's live gain is. A handle drags its frequency (sideways) and static gain (up and down), the wheel
   over it steps the Q, a double click switches the band; every control has a tooltip. The panel is nine
   rack units tall.
+- **Resonance finder (panel buttons FIND and CUT).** It is a function of this device, not a device of its own:
+  the cuts it makes are ordinary bands that can be edited, switched off or automated, so nothing is gained by a
+  second device that would hold the same five bands. FIND renders the range between the locators (at most 30
+  seconds from its start) offline, with the renderer of a bounce, on a worker, with one tap on whatever feeds
+  `in_l` and `in_r` ([crates/render/src/device_input.rs](../crates/render/src/device_input.rs)): the device hears
+  exactly what it hears in playback and its own settings change nothing in it. The audio goes through
+  [crates/dsp/src/resonance.rs](../crates/dsp/src/resonance.rs): the average power spectrum (Hann windows of 8192
+  points, 16384 from 88.2 kHz, half-window hop, silent windows skipped), a trend of that spectrum in dB smoothed
+  over a third of an octave (at least 13 bins wide, a second pass clipped to 3 dB above the first so a peak does
+  not lift its own trend), and the local maxima between 50 Hz and 16 kHz that stand at least 6 dB above it. A
+  peak's frequency is refined with a parabola through its three bins, its Q is its frequency over its width 3 dB
+  under the top (half the prominence for a lower peak), kept within 0.7 and 18; peaks closer than a sixth of an
+  octave to a stronger one are dropped and at most 12 are kept, strongest first (by height over the trend). The
+  result is the same on every platform: the maths is the deterministic FFT and dB of the spectrum analyser. A
+  stationary tone is found within a bin and 2 % of its frequency (the tests use 2 % or one bin, whichever is
+  larger). The panel marks each resonance with a line at its frequency, a bar as wide as its Q and its rank. The
+  search changes nothing in the song and is not an undo step; a plugin that cannot be built offline sounds as a
+  silent stand-in. CUT takes the strongest resonances in order and sets the bells (bands 2 to 4) that are off, one
+  each, in one undo step: the band on, `freq` at the resonance, `q` its Q within 1 to 18, `gain` 0, `range` minus
+  its height over the trend within 3 to 12 dB, `threshold` a quarter of the way from the trend's level to the
+  peak's level in the detector's scale, `ratio` 20, `attack` 8 ms, `release` 120 ms, `source` the input and
+  `channel` stereo. So each cut acts only while the sound at its frequency is above the trend. A bell that is on
+  is never touched; with none free CUT says so. The device itself has no find mode: `delta` is its listening aid.
 - **Not built:** the EQ's low and high cut, a hold time and a look-ahead.
 
 ---

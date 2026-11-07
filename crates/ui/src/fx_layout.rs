@@ -230,7 +230,7 @@ fn sections(kind: FxKind) -> Def {
             ("BELL 2", DYNEQ_BAND_3),
             ("BELL 3", DYNEQ_BAND_4),
             ("HIGH SHELF", DYNEQ_BAND_5),
-            ("OUTPUT", &["output"]),
+            ("OUTPUT", &["output", "delta"]),
         ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),

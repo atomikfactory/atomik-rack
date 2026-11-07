@@ -235,6 +235,13 @@ pub enum UiAction {
     /// heard through the track's instrument), or stop it when it runs. The app answers with
     /// [`crate::RackView::set_previewing`]. View state, not an undo step.
     PreviewPlayer(DeviceKey),
+    /// The FIND button of a dynamic EQ: the app renders a few seconds of what reaches the
+    /// device's input on a worker, finds the resonances in it and answers with
+    /// [`crate::RackView::set_resonances`]. Changes nothing in the song.
+    FindResonances(DeviceKey),
+    /// The CUT button of a dynamic EQ: the resonances found last go into the free bells of the
+    /// device as dynamic cuts, in one undo step.
+    CutResonances(DeviceKey),
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.

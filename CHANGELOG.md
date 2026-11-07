@@ -814,6 +814,16 @@ may break APIs and the patch and project formats.
   cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
   switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
   format is still 44; not done: the low and high cut, a hold time and a look-ahead.
+- **Resonance finder and delta on the Dynamic EQ.** The panel has FIND and CUT buttons in the corner of its plot.
+  FIND renders the range between the locators (up to 30 seconds) offline on a worker, with one tap on what feeds the
+  device's input, and marks the narrow peaks that stand 6 dB or more above the third-octave trend of the average
+  spectrum, strongest first, each with a frequency and a Q estimated from its width (a line, a bar and a rank on the
+  plot, and the frequencies in the status line). CUT sets the bells that are off, one per resonance, as dynamic
+  cuts that act only while the sound at that frequency is above the trend, in one undo step; a bell that is on is
+  never touched. A search changes nothing in the song. New param `delta` (id 56, the output is 55, bypass moves to
+  57 and the never-stored analyser switch to 58; the device is new in this release): the device plays the input
+  minus the output of its bands, so a cut is heard as the part that was taken out, and a neutral device is silent.
+  The format is still 44 and the command count 469.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

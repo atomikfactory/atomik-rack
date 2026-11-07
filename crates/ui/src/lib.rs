@@ -380,6 +380,7 @@ pub mod plugin_settings;
 pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
+pub mod resonance_marks;
 pub mod sample_editor;
 pub mod scale_panel;
 pub mod scene_canvas;

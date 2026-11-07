@@ -769,6 +769,12 @@ fn dynamic_eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &
             Some(key_color()),
         );
     }
+    let free = fx::DYNEQ_SHAPES
+        .iter()
+        .zip(&stat)
+        .filter(|(shape, b)| **shape == fx::EqShape::Peak && !b.on)
+        .count();
+    resonance_overlay(c, theme, r, info.resonance, free);
     c.pop_clip();
     eq_axes(c, theme, r);
     level_bars(
@@ -786,6 +792,67 @@ fn dynamic_eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &
         ],
         10.0,
     );
+}
+
+/// The colour of the resonance markers.
+fn resonance_color() -> Color {
+    hsl(22.0, 0.85, 0.62)
+}
+
+/// The resonance finder on the plot: a marker per resonance found (a line at its frequency, a
+/// bar as wide as its Q and its rank above) and the FIND and CUT buttons. CUT says how many
+/// of the resonances the free bells can take.
+fn resonance_overlay<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    view: &crate::resonance_marks::ResonanceView,
+    free: usize,
+) {
+    let color = resonance_color();
+    for (n, m) in view.marks.iter().enumerate() {
+        let f = f64::from(m.freq_hz);
+        let x = eq_x_of(r, f).round() + 0.5;
+        c.stroke_with(
+            Line::new(pt(x, r.y0 + 24.0), pt(x, r.y1)),
+            1.0,
+            alpha(color, 0.35),
+        );
+        let half = 0.5 / f64::from(m.q.max(0.5));
+        let (xa, xb) = (eq_x_of(r, f * (1.0 - half)), eq_x_of(r, f * (1.0 + half)));
+        c.fill_with(
+            Rect::new(xa, r.y0 + 24.0, xb.max(xa + 2.0), r.y0 + 26.0),
+            alpha(color, 0.8),
+        );
+        small(
+            c,
+            theme,
+            format!("{}", n + 1),
+            pt(x, r.y0 + 22.0),
+            Align::Center,
+            Some(color),
+        );
+    }
+    for (btn, b) in crate::resonance_marks::buttons(r) {
+        let (label, enabled) = match btn {
+            crate::resonance_marks::ResonanceBtn::Find => (
+                if view.busy { "..." } else { "FIND" }.to_owned(),
+                !view.busy,
+            ),
+            crate::resonance_marks::ResonanceBtn::Cut => {
+                let n = view.marks.len().min(free);
+                (
+                    if n > 0 {
+                        format!("CUT {n}")
+                    } else {
+                        "CUT".to_owned()
+                    },
+                    n > 0,
+                )
+            }
+        };
+        crate::paint::button_sized(c, theme, b, &label, enabled, 8.5, 0.8);
+    }
 }
 
 // ------------------------------------------------------------------ distortion
