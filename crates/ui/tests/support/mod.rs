@@ -117,11 +117,10 @@ pub fn view(doc: &RackDoc, reg: &Registry) -> RackView {
     v
 }
 
-/// [`view`] with the console devices hidden: the rack with the console devices hidden (they show by
-/// default now), for tests that are not about them.
+/// [`view`] under its old name, for the tests that are not about the console devices (they are
+/// always in the rack now).
 pub fn plain_view(doc: &RackDoc, reg: &Registry) -> RackView {
     let mut v = RackView::new(Theme::dark());
-    v.set_show_console_devices(false);
     let _ = v.handle(&UiEvent::Resize(VIEW), doc, reg);
     v.sync(doc, reg);
     v

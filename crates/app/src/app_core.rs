@@ -1049,6 +1049,12 @@ impl<S: EngineSink> AppCore<S> {
             }
             // A device picked in the console (an insert slot) is selected in the rack too.
             UiAction::Select(key) => self.view.set_selected(Some(key)),
+            // EDIT on an insert row of the console: the rack scrolls to the strip with its
+            // insert area unfolded and the effect selected.
+            UiAction::EditInsert(key) => {
+                self.view
+                    .reveal_insert(self.document.doc(), &self.registry, &key);
+            }
             UiAction::OpenBrowser => {}
             // A note clip of a drum machine opens in the step editor (View > Piano Roll
             // still opens it in the piano roll).
@@ -2383,7 +2389,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Feeds the console view this frame's meters, then the monotonic time in seconds (call
-    /// once per frame while the console shows). The readings are kept for
+    /// once per frame while the console shows, or the rack shows a mix channel panel); the rack's
+    /// mix channel panels get the same peaks. The readings are kept for
     /// [`Self::feed_rec_input`], which feeds the track headers from the same read.
     pub fn update_console_meters(&mut self, now_seconds: f64) {
         // The endpoints read earlier this frame (a read resets the peak); the cache stays for
@@ -2393,6 +2400,13 @@ impl<S: EngineSink> AppCore<S> {
         self.io_meters.shared = shared;
         self.console.set_meters(&readings);
         self.console.set_frame_time(now_seconds);
+        // The mix channel panels of the rack show the same peaks as the console strips.
+        for (key, _) in &readings {
+            if let Some(m) = self.console.meter(key) {
+                let peaks = [m.peak[0].level_db, m.peak[1].level_db];
+                self.view.set_mix_meters(key, peaks);
+            }
+        }
         self.frame_readings = readings;
         self.readings_fresh = true;
     }

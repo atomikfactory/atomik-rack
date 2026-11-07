@@ -40,7 +40,10 @@ fn keys_in_view(v: &RackView) -> Vec<String> {
 fn the_inside_shows_the_boundary_panels_around_the_inner_devices_in_rack_order() {
     let d = layered();
     let mut v = view(d.doc(), &registry());
-    assert_eq!(keys_in_view(&v), ["interface", "lead", "layer"]);
+    assert_eq!(
+        keys_in_view(&v),
+        ["interface", "lead", "layer", "channel", "master"]
+    );
     let _ = enter(&d, &mut v, "layer");
     assert_eq!(
         keys_in_view(&v),
@@ -181,7 +184,7 @@ fn the_view_pops_to_the_nearest_scope_that_still_exists() {
     apply(&mut d, Command::RemoveDevice { key: key("layer") });
     v.sync(d.doc(), &reg);
     assert!(v.scope().is_empty());
-    assert_eq!(keys_in_view(&v), ["interface", "lead"]);
+    assert_eq!(keys_in_view(&v), ["interface", "lead", "channel", "master"]);
     // Undo brings the container back; the view stays where it is.
     d.undo().unwrap();
     v.sync(d.doc(), &reg);

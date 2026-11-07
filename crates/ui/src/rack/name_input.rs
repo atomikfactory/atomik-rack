@@ -37,7 +37,7 @@ impl RackView {
         self.rename = Some(Rename {
             dev: i,
             index: 0,
-            text: self.devices[i].name.clone(),
+            text: self.devices[i].plate_name().to_string(),
             kind: RenameKind::Device,
         });
         self.bump(i);
@@ -81,9 +81,9 @@ impl RackView {
         self.bump(r.dev);
         let d = &self.devices[r.dev];
         let name = r.text.trim();
-        if name != d.name {
+        if name != d.plate_name() {
             out.push(UiAction::Command(Command::Rename {
-                key: d.key.clone(),
+                key: d.name_target().clone(),
                 name: name.to_string(),
             }));
         }

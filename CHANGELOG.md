@@ -9,6 +9,45 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mix channel panel.** A console channel or output bus is a compact one-unit panel in the rack, in place of the
+  generated panel of its descriptor. Its front carries MUTE and SOLO, a horizontal fader (a drag along the track, a
+  double-click resets it, a readout in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the
+  AUDIO OUTPUT display (Master Section, the bus name or the Audio I/O pair). The controls drive the same params as the
+  console strip, so the rack and the mixer stay in step; BYPASS INSERT FX bypasses every insert effect (and the
+  dynamics and EQ sections in use) in one undo step, as the B-all button of the strip does. The plate shows the name of
+  the source instrument and a rename changes it. SHOW INSERT FX is view state for now (it starts on and is not saved
+  with the project); it folds the insert stack under the panel (see below). The back carries four pairs of jacks and
+  nothing else: INPUT, INSERT FX TO DEVICE, INSERT FX FROM DEVICE and OUTPUT. The sends, the parallel output, the key,
+  the CV inputs and the gain reduction output have no jack in the rack; they keep working and their cables stay.
+  The meters of the panels are fed while the rack shows them, with or without the console.
+- **Insert stack in the rack.** The insert effects of a channel or an output bus are stacked right under its panel, in
+  chain order, inside a frame in the strip's colour that ends with a drop row ("drop or create an effect here"). With
+  SHOW INSERT FX off the frame shrinks to one header line that names the effects; a click on it shows them again.
+  Creating an effect with an insert selected puts it after that insert, and with the strip selected at the end of the
+  chain; dropping a device or a browser row in the frame adds it at the place under the pointer; dragging an insert up
+  or down moves it in the chain; dragging it out to the plain rack takes it out of the chain, which closes behind it,
+  and leaves the effect uncabled in the rack; deleting an insert reconnects its neighbours. Each gesture is one undo
+  step, and a refusal (a device that is no stereo effect, a full chain) says why in the status line. Moving a
+  channel or a bus moves its inserts along, and a move never lands between the effects of another strip. In the
+  mixer the insert rows of a strip reorder by drag and each has an E that shows the effect in the rack, with the
+  insert area unfolded and the effect selected. New commands `AddInsert` and `ExtractInsert`. The fold state is view
+  state for now and is not saved with the project.
+- **Master section panel.** The console master is a compact four-unit panel in the rack. The front carries the master
+  fader (the same horizontal fader, readout and meter as a mix channel panel), BYPASS INSERT FX, SHOW INSERT FX, the
+  AUDIO OUTPUT display and eight send rows: the number, the name of the effect on the send (or "free"), its return
+  level as a slider (a drag, a double-click resets it) and an EDIT button that selects that effect and scrolls the rack
+  to it. The back carries FX SEND 1-8 and FX RETURN 1-8 (left and right jacks), INSERT FX TO DEVICE and FROM
+  DEVICE, MASTER OUT and CONTROL ROOM OUT; the summing inputs, the key and the CV sockets keep working but have no
+  jack in the rack, and the bus compressor and the control room stay on the mixer. The master has the same insert
+  area as a channel (still after its compressor): effects stacked under it, the same gestures, one undo step each, `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert` with the master as the strip, and in the mixer its insert rows
+  reorder by drag and have an E. The effects of the 8 shared sends sit under the master's insert area, each send in
+  a framed group labelled "Send N" (a send with several effects in series shows them all), and they move with the
+  master; they stay ordinary devices shared by all channels. Creating an effect with the master selected still makes
+  the next free send (with all 8 in use the effect is added unrouted and the status line says that all 8 send and
+  return slots are in use), creating one after a click on the master's insert area, with one of its inserts selected
+  or by dropping it right under the panel makes a master insert, and "Use as Send Effect" brings the effect under the
+  master. SHOW INSERT FX stays view state (not saved with the project, no format change).
 - **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
   renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
   true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,
@@ -1049,6 +1088,13 @@ may break APIs and the patch and project formats.
   synths that start every note at the same angle (Clean Kick Sub on the Poly Synth, Mono Sub Bass, Reset Pluck
   Bass on the Wavetable Synth) and a Double Clip container (a soft clipper then a hard one, with Drive and
   Softness macros). The Factory root now lists 42 patches and 14 containers.
+
+### Changed
+- **Channels, buses and the master are always in the rack.** View > Show Console Devices in Rack and its command
+  (`view.toggle_console_devices`) are gone, with the one-time notice about it; the registry lists 500 commands. An
+  older `ui-state.json` that still has `show_console_devices` or `console_notice_seen` loads as before and both keys
+  are ignored.
+
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.

@@ -237,6 +237,9 @@ impl RackView {
                 _ => None,
             };
         }
+        if let Hit::Mix(i, b) = hit {
+            return Some(Help::new(rect, self.mix_button_help(i, b)));
+        }
         Some(Help::new(rect, text(hit)?))
     }
 }

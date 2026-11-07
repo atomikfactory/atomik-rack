@@ -2816,13 +2816,6 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
-        "view.toggle_console_devices",
-        "Show Console Devices in Rack",
-        G::View,
-        C::Global,
-    )
-    .menu(),
-    cmd(
         "view.toggle_console_links",
         "Show Console Links",
         G::View,

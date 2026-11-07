@@ -1309,6 +1309,10 @@ fn rerouted_move(
         .devices
         .iter()
         .filter(|d| keys.contains(&d.key) && workflow_create::reroutable(doc, registry, &d.key))
+        // The inserts of a channel that moves with them stay in its chain.
+        .filter(|d| {
+            !crate::insert_owner(doc, registry, &d.key).is_some_and(|strip| keys.contains(&strip))
+        })
         .map(|d| d.key.clone())
         .collect();
     if movers.is_empty() {

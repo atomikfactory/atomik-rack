@@ -273,6 +273,7 @@ impl RackView {
             analyser: Default::default(),
             resonance: Default::default(),
             master: Default::default(),
+            mix: Default::default(),
             sc: None,
             cv: [false; 2],
             anim: 0,
@@ -413,10 +414,15 @@ impl RackView {
     /// it is an unfolded container (the inside moves and drops with it).
     pub(super) fn block_bottom(&self, i: usize) -> f64 {
         let d = &self.devices[i];
+        let area = self
+            .areas
+            .iter()
+            .find(|a| a.owner == d.key)
+            .map_or(d.y + d.height, |a| a.rect.y1);
         self.frames
             .iter()
             .find(|f| f.container == d.key)
-            .map_or(d.y + d.height, |f| f.rect.y1)
+            .map_or(area, |f| f.rect.y1.max(area))
     }
 
     /// The place of a drop at `rp` inside the container `container` while the views flagged

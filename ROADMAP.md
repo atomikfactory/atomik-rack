@@ -91,7 +91,13 @@ worker into the folder of the song it lands in, scaled to its rate, with the ori
 and delivery targets (File > Delivery Targets measures the master and says what eight common loudness and true-peak
 targets would do to it, warning where a quiet master with hot peaks would be turned up into a limiter, and sets the
 ceiling of the master's limiter and the export report's target in one undo step) with a Peak Surgeon (the shortest
-peaks of an audio clip dipped over a few samples in its gain envelope, in one undo step).
+peaks of an audio clip dipped over a few samples in its gain envelope, in one undo step),
+and the mixer in the rack (channels, buses and the master always shown, with a compact one-unit mix
+channel panel for a channel or a bus: mute, solo, a horizontal fader, pan, a meter, a bypass for the whole insert
+chain, a switch for the insert area and the output display, and a back with only the input, the insert send and
+return and the output; the insert effects stacked under the panel; and a compact master section panel with the
+master fader, the meter, the insert switches and eight send rows, its own insert area and the shared send effects
+grouped under it).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -121,6 +127,18 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 4: Mixing and control
 
 - **Mixer groups follow-ups.** Groups of groups (a group is a flat list of strips, so a group cannot hold another one yet), and a group solo lane that silences the other strips: the lane switches the solo of the group's own members, while the strips outside the group are silenced from the stored solo state only, as for a strip's own solo lane.
+- **Mixer in the rack.** Done: the mix channel panel of a channel or a bus (see above), the insert effects of a
+  channel or a bus stacked under its panel inside a frame that the SHOW INSERT FX switch folds to one header line
+  (create, drop, reorder, drag out and delete are one undo step each, a channel moves with its inserts, and the
+  mixer's insert rows reorder by drag and have an E that shows the effect in the rack), and the master section panel:
+  a four-unit front with the master fader, the meter, BYPASS INSERT FX, SHOW INSERT FX and eight send rows (the name
+  of the effect, its return level as a slider and an EDIT button), a back with the 8 FX sends, the 8 FX returns, the
+  insert loop and the master and control room outputs, the master's insert area with the channel's gestures, and the
+  effects of the shared sends grouped under it, each send labelled "Send N", moving with the master. The mixer's
+  master column reorders its inserts and has the E too. Still to come: keeping the fold state of the insert areas
+  with the project (it is view state today and every area opens shown), cutting and copying a channel together with
+  its stack, and a send group that takes a drop (a send effect is made by selecting the master, or by "Use as Send
+  Effect", which now brings the effect under the master).
 - **Console editing follow-ups.** A remote-control base for the strip surface, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), a pre-insert tap that stays aligned when the inserts add latency (today it is aligned only without insert latency), a bypassed container that keeps the latency of its inside, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Still to come: a bounce that recalls at markers and lane points, snapshots that add or remove the effects of a chain (today a recall moves cables between the devices the rack has), a snapshot lane for ids past 64, and a lane value that shows the snapshot's colour.

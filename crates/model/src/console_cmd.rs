@@ -759,6 +759,14 @@ pub(crate) fn plan(
             slot,
             effect,
         } => crate::console_insert::set_insert(&mut p, &channel, slot, effect)?,
+        ConsoleCommand::AddInsert {
+            channel,
+            slot,
+            effect,
+        } => crate::console_insert::add_insert(&mut p, &channel, slot, effect)?,
+        ConsoleCommand::ExtractInsert { channel, slot, to } => {
+            crate::console_insert::extract_insert(&mut p, &channel, slot, to)?
+        }
         ConsoleCommand::MoveInsert { channel, from, to } => {
             crate::console_insert::move_insert(&mut p, &channel, from, to)?
         }

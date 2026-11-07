@@ -122,7 +122,10 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
         ConsoleCommand::RemoveChannel { .. } => "Delete Channel",
         ConsoleCommand::MoveChannel { .. } => "Move Channel",
         ConsoleCommand::SetReturn { .. } => "Set Send Effect",
-        ConsoleCommand::SetInsert { .. } | ConsoleCommand::MoveInsert { .. } => "Edit Inserts",
+        ConsoleCommand::SetInsert { .. }
+        | ConsoleCommand::AddInsert { .. }
+        | ConsoleCommand::ExtractInsert { .. }
+        | ConsoleCommand::MoveInsert { .. } => "Edit Inserts",
         ConsoleCommand::PasteSettings { .. } => "Paste Channel Settings",
         ConsoleCommand::ResetStrip { .. } => "Reset Channel",
         ConsoleCommand::ClearInserts { .. } => "Clear Inserts",
