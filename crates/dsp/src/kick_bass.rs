@@ -16,7 +16,7 @@
 //!    sub that is too loud on those hits is also the one that clips the master). A window whose
 //!    expected power is below [`FLOOR_POWER`] counts as silent and is not reported.
 //! 4. The **fundamentals** are the median over the hits of the pitch of each sub in the second
-//!    half of its window, measured from the spacing of the rising zero crossings (a sub is close
+//!    two thirds of its sounding window, measured from the spacing of the rising zero crossings (a sub is close
 //!    to a sine, so the median spacing is the period). When the two are within
 //!    [`BEAT_SEMITONES`] of each other and not identical they beat: the level of their sum
 //!    swells and fades at the difference of the two frequencies, so the low end is uneven from
@@ -172,7 +172,7 @@ fn db(p: f64) -> f32 {
 
 /// The pitch in Hz of a near-sine `x`: the median spacing of its rising zero crossings (the
 /// crossing instants are interpolated). `None` for a signal that is too quiet or has fewer
-/// than three crossings.
+/// than two crossings.
 pub fn tone_hz(x: &[f32], sample_rate: u32) -> Option<f32> {
     if power(x) < FLOOR_POWER {
         return None;
@@ -184,13 +184,25 @@ pub fn tone_hz(x: &[f32], sample_rate: u32) -> Option<f32> {
             crossings.push(i as f64 + t);
         }
     }
-    if crossings.len() < 3 {
+    if crossings.len() < 2 {
         return None;
     }
     let mut periods: Vec<f64> = crossings.windows(2).map(|c| c[1] - c[0]).collect();
     periods.sort_by(f64::total_cmp);
     let median = periods[periods.len() / 2];
     (median > 0.0).then(|| (f64::from(sample_rate) / median) as f32)
+}
+
+/// The last two thirds of the part of `x` that still sounds: the end of `x` is cut where the signal
+/// has fallen below a tenth of its largest swing for good (a kick that stops before the window
+/// does has no pitch in the silence after it).
+fn late_part(x: &[f32]) -> &[f32] {
+    let peak = x.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+    let live = x
+        .iter()
+        .rposition(|s| s.abs() >= 0.1 * peak)
+        .map_or(0, |i| i + 1);
+    &x[live / 3..live]
 }
 
 fn median(mut v: Vec<f32>) -> Option<f32> {
@@ -286,11 +298,10 @@ fn analyse(kick_sub: &[f32], bass_sub: &[f32], onsets: &[u64], sample_rate: u32)
             verdict,
         });
         let from = (start + settle).min(end);
-        let half = from + (end - from) / 2;
-        if let Some(hz) = tone_hz(&kick_sub[half..end], sample_rate) {
+        if let Some(hz) = tone_hz(late_part(&kick_sub[from..end]), sample_rate) {
             kick_tones.push(hz);
         }
-        if let Some(hz) = tone_hz(&bass_sub[half..end], sample_rate) {
+        if let Some(hz) = tone_hz(late_part(&bass_sub[from..end]), sample_rate) {
             bass_tones.push(hz);
         }
     }

@@ -126,3 +126,21 @@ fn the_mono_sum_averages_and_ignores_non_finite_samples() {
     let m = mono(&[1.0, f32::NAN, 0.5], &[0.0, 1.0, 0.5, 9.0]);
     assert_eq!(m, vec![0.5, 0.5, 0.5]);
 }
+
+#[test]
+fn a_kick_that_stops_early_still_gives_its_pitch() {
+    // 120 ms of 50 Hz, then silence until the next hit.
+    let k: Vec<f32> = (0..SR as usize * 4)
+        .map(|i| {
+            let t = (i % GAP) as f32 / SR as f32;
+            if t < 0.12 {
+                0.8 * (2.0 * PI * 50.0 * t).sin()
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let c = check(&k, &bass(50.0, 0.0, 0.5, 4), SR);
+    let hz = c.kick_hz.expect("a pitch");
+    assert!((hz - 50.0).abs() < 2.0, "{hz}");
+}
