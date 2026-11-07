@@ -670,6 +670,9 @@ pub enum UiAction {
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),
+    /// The reverb send wizard ([`crate::ReverbSendView`]) asks for something: add the send of the
+    /// target track with its choices, or close.
+    ReverbSend(crate::reverb_send_panel::ReverbSendAction),
     /// The Scale Tempo panel ([`crate::ScaleView`]) asks for something: preview the selected
     /// clips scaled by its percentage, make that their new tempo, or close.
     ScaleTempo(crate::scale_panel::ScaleAction),

@@ -527,6 +527,9 @@ pub enum AppCommand {
     BypassPlayers,
     /// Track > Add Pattern Lane: the lane of the selected device's `pattern` param.
     AddPatternLane,
+    /// Track > Add Reverb Send...: opens the wizard that gives the selected track a send to a new
+    /// FX return with an EQ and a keyed Space Reverb.
+    AddReverbSend,
     /// Track > Pattern Lane to Notes: the notes the lane's patterns play, on a new note lane.
     PatternLaneToNotes,
     /// Track > Edit Track Controllers: the piano roll on the pitch bend, aftertouch and CC lanes
@@ -1029,6 +1032,7 @@ impl AppCommand {
             AppCommand::FoldPlayers => ("sequencer.fold_players", None),
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
+            AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
             AppCommand::PatternLaneToNotes => ("sequencer.pattern_lane_to_notes", None),
             AppCommand::EditTrackControllers => ("sequencer.track_controllers", None),
             AppCommand::BounceClipDry => ("sequencer.bounce_clip_dry", None),
@@ -1418,6 +1422,7 @@ impl AppCommand {
             ("sequencer.fold_players", None) => AppCommand::FoldPlayers,
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
+            ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
             ("sequencer.pattern_lane_to_notes", None) => AppCommand::PatternLaneToNotes,
             ("sequencer.track_controllers", None) => AppCommand::EditTrackControllers,
             ("sequencer.bounce_clip_dry", None) => AppCommand::BounceClipDry,
@@ -1801,6 +1806,9 @@ pub struct MenuState {
     pub can_uncombine: bool,
     /// A Mono Bass with a track is selected: Split Sub works.
     pub can_split_sub: bool,
+    /// A track with a console channel is selected and a send/return slot is free: Add Reverb Send
+    /// works.
+    pub can_reverb_send: bool,
     /// The translation lens of the live output.
     pub lens: atomik_engine::LensSettings,
     /// The arrangement area is shown.
@@ -3339,6 +3347,11 @@ pub fn menus_with_songs(
                 item("Add Pattern Lane", AppCommand::AddPatternLane),
                 item("Pattern Lane to Notes", AppCommand::PatternLaneToNotes),
                 item("Edit Track Controllers", AppCommand::EditTrackControllers),
+                enabled(
+                    "Add Reverb Send\u{2026}",
+                    AppCommand::AddReverbSend,
+                    state.can_reverb_send,
+                ),
                 MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
@@ -3818,6 +3831,7 @@ mod tests {
             can_combine: false,
             can_uncombine: false,
             can_split_sub: false,
+            can_reverb_send: false,
             lens: Default::default(),
             song_visible: true,
             piano_roll: false,
@@ -4078,6 +4092,7 @@ mod tests {
             AppCommand::AddPatternLane,
             AppCommand::PatternLaneToNotes,
             AppCommand::EditTrackControllers,
+            AppCommand::AddReverbSend,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
@@ -4879,6 +4894,7 @@ mod tests {
                 "Add Pattern Lane",
                 "Pattern Lane to Notes",
                 "Edit Track Controllers",
+                "Add Reverb Send\u{2026}",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",
@@ -5234,6 +5250,7 @@ mod tests {
                 can_combine: false,
                 can_uncombine: false,
                 can_split_sub: false,
+                can_reverb_send: false,
                 lens: Default::default(),
                 song_visible: false,
                 piano_roll: true,

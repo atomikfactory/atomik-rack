@@ -160,6 +160,7 @@ fn the_track_menu_follows_the_selection() {
             "Add Pattern Lane",
             "Pattern Lane to Notes",
             "Edit Track Controllers",
+            "Add Reverb Send\u{2026}",
             "Fold Automation Lanes",
             "Unfold Automation Lanes",
             "Track Height: Small",

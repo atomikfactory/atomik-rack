@@ -175,6 +175,7 @@ use atomik_ui::{
     SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem, VersionsAction,
     VersionsView, WarpAction, WarpValues, WarpView, ZoneAction, ZoneView,
 };
+use atomik_ui::{ReverbSendAction, ReverbSendValues, ReverbSendView};
 use atomik_ui::{WavetableAction, WavetableView};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -546,6 +547,10 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The reverb send wizard (Track > Add Reverb Send) while it is open.
+    reverb_send: Option<ReverbSendView>,
+    /// Its choices, kept between openings.
+    reverb_send_values: ReverbSendValues,
     /// The kick and bass check panel (Mixer > Kick and Bass Check) while it is open.
     kick_bass: Option<KickBassView>,
     /// The references and decision zone panel (Mixer > Reference > Reference Panel) while it is
@@ -749,6 +754,8 @@ impl<B: AudioBackend> Shell<B> {
             blind: None,
             silence: None,
             song_info: None,
+            reverb_send: None,
+            reverb_send_values: ReverbSendValues::default(),
             kick_bass: None,
             zone: None,
             versions: None,
@@ -1149,6 +1156,82 @@ impl<B: AudioBackend> Shell<B> {
             Some(actions) => self.pane_actions(&actions),
             None => self.core.report("Select an audio clip first"),
         }
+        self.repaint = true;
+    }
+
+    /// Whether the reverb send wizard is open.
+    pub fn reverb_send_open(&self) -> bool {
+        self.reverb_send.is_some()
+    }
+
+    /// The reverb send wizard, while it is open.
+    pub fn reverb_send_view(&self) -> Option<&ReverbSendView> {
+        self.reverb_send.as_ref()
+    }
+
+    /// The choices of the wizard (those of the open panel, else the last ones).
+    pub fn reverb_send_values(&self) -> &ReverbSendValues {
+        self.reverb_send
+            .as_ref()
+            .map_or(&self.reverb_send_values, ReverbSendView::values)
+    }
+
+    /// Opens the reverb send wizard with the choices of the last time.
+    fn open_reverb_send(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = ReverbSendView::new(theme, self.reverb_send_values.clone());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.reverb_send = Some(view);
+        self.sync_reverb_send();
+        self.repaint = true;
+    }
+
+    /// Closes the reverb send wizard, keeping its choices for the next time.
+    fn close_reverb_send(&mut self) {
+        if let Some(view) = self.reverb_send.take() {
+            self.reverb_send_values = view.values().clone();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the wizard the track it works on and the decay that track suggests.
+    fn sync_reverb_send(&mut self) {
+        let Some(vocal) = self.reverb_send.as_ref().map(|v| v.values().vocal) else {
+            return;
+        };
+        let (name, decay) = self.core.reverb_send_info(vocal).unwrap_or_default();
+        if let Some(view) = &mut self.reverb_send {
+            view.set_target(name, decay);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the reverb send wizard asked for.
+    fn reverb_send_action(&mut self, action: ReverbSendAction) {
+        match action {
+            ReverbSendAction::Close => self.close_reverb_send(),
+            ReverbSendAction::Add => {
+                let v = self.reverb_send_values().clone();
+                let options = atomik_model::reverb_send::ReverbSendOptions {
+                    vocal: v.vocal,
+                    decay: v.decay,
+                    duck: v.duck,
+                    high_pass: v.high_pass as f32,
+                    low_pass: v.low_pass as f32,
+                    send_db: v.send_db as f32,
+                    pre_fader: v.pre_fader,
+                };
+                // The panel closes when the send is made; it stays, with the reason in the
+                // status line, when the model refuses.
+                if self.core.add_reverb_send(options) {
+                    self.close_reverb_send();
+                }
+            }
+        }
+        self.sync_reverb_send();
         self.repaint = true;
     }
 
@@ -3134,6 +3217,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.reverb_send {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.kick_bass {
             v.set_theme(theme.clone());
         }
@@ -3440,6 +3526,7 @@ impl<B: AudioBackend> Shell<B> {
             can_combine,
             can_uncombine,
             can_split_sub: self.core.split_sub_menu(),
+            can_reverb_send: self.core.reverb_send_menu(),
             lens: self.core.lens(),
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
@@ -3774,6 +3861,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.song_info.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.song_info {
+                v.set_bounds(rect);
+            }
+        }
+        if self.reverb_send.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.reverb_send {
                 v.set_bounds(rect);
             }
         }
@@ -5055,6 +5148,31 @@ impl<B: AudioBackend> Shell<B> {
             }
             return Vec::new();
         }
+        if self.reverb_send.is_some() {
+            // The reverb send wizard takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_reverb_send();
+                return Vec::new();
+            }
+            let actions = self
+                .reverb_send
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::ReverbSend(a) = action {
+                    self.reverb_send_action(a);
+                }
+            }
+            self.sync_reverb_send();
+            return Vec::new();
+        }
         if self.silence.is_some() {
             // The strip silence panel takes every event; Esc closes it.
             self.repaint = true;
@@ -5465,6 +5583,7 @@ impl<B: AudioBackend> Shell<B> {
             ("rack.replace_device", Some(type_id)) => self.core.replace_selected_device(type_id),
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
+            ("sequencer.add_reverb_send", None) => self.open_reverb_send(),
             ("sequencer.scale_tempo", Some("dialog")) => self.open_scale(),
             ("sequencer.audio_to_notes", None) => self.open_notes(),
             ("sequencer.audio_quantize", None) => self.quantize_audio(),
@@ -6969,6 +7088,11 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::AudioStripSilence => {
                 self.open_silence();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AddReverbSend => {
+                self.open_reverb_send();
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -8967,6 +9091,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.reverb_send {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.kick_bass {
             view.paint(canvas);
         }
@@ -9225,6 +9352,10 @@ mod macros_tests;
 #[cfg(test)]
 #[path = "shell_kick_bass_tests.rs"]
 mod kick_bass_tests;
+
+#[cfg(test)]
+#[path = "shell_reverb_send_tests.rs"]
+mod reverb_send_tests;
 
 #[cfg(test)]
 #[path = "shell_key_chord_tests.rs"]

@@ -279,6 +279,10 @@
 //! - **Kick and bass check.** [`KickBassView`] is the modal panel of the check of a kick and a
 //!   bass track (the strip of cancellation and build-up, the fixes); it emits
 //!   [`UiAction::KickBass`].
+//! - **Reverb send wizard.** [`ReverbSendView`] is the modal panel of Track > Add Reverb Send: the
+//!   de-esser, the duck, the send position, the decay, the high-pass, the low-pass and the send
+//!   level; it emits [`UiAction::ReverbSend`] (`ADD`, `CLOSE`) and the app feeds it with
+//!   [`ReverbSendView::set_target`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
 //!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
@@ -411,6 +415,7 @@ pub mod rack;
 pub mod relink_panel;
 pub mod repetition_panel;
 pub mod resonance_marks;
+pub mod reverb_send_panel;
 pub mod sample_editor;
 pub mod scale_panel;
 pub mod scene_canvas;
@@ -508,6 +513,7 @@ pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use repetition_panel::{
     RepetitionAction, RepetitionChoice, RepetitionData, RepetitionRow, RepetitionView,
 };
+pub use reverb_send_panel::{ReverbSendAction, ReverbSendRow, ReverbSendValues, ReverbSendView};
 pub use sample_editor::SampleEditorView;
 pub use scale_panel::{ScaleAction, ScaleView, parse_percent};
 pub use scene_canvas::{SceneCache, SceneCanvas};
