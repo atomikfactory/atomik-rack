@@ -1,11 +1,11 @@
 //! The file browser's worker threads and every disk access it makes besides the library file.
 //!
-//! Five threads, all message-passing: `atomik-browse` lists folders, sub-folders, favourite
+//! Six threads, all message-passing: `atomik-browse` lists folders, sub-folders, favourite
 //! and tag places, the drives, and walks folders for the recursive search and the library
 //! sections; `atomik-probe` reads audio headers and summarises library items; `atomik-library`
 //! copies the audio of a saved library item beside it; `atomik-preview` decodes the file being
 //! previewed into the engine's ring. `atomik-detail` reads the tempo and a loudness picture of the one file the info
-//! pane shows. They answer over one channel of [`BrowseMsg`]s which
+//! pane shows; `atomik-thumbs` reads the small waveform each visible audio row draws. They answer over one channel of [`BrowseMsg`]s which
 //! [`crate::AppCore`] drains with `try_recv` every frame. Each submitted job ends with exactly
 //! one [`BrowseMsg::Done`] (also when it panics or the result is stale), so the core can count
 //! jobs in flight.
@@ -121,6 +121,13 @@ pub(crate) enum BrowseMsg {
         tempo: Option<f64>,
         levels: Vec<f32>,
     },
+    /// The waveform thumbnail of an audio row: levels from 0 to 255 (empty when the file could
+    /// not be read) and the file size they were read at.
+    Thumb {
+        path: PathBuf,
+        size: u64,
+        levels: Vec<u8>,
+    },
     /// One submitted job (or probe request) ended.
     Done,
 }
@@ -168,14 +175,15 @@ pub(crate) struct Workers {
     preview: Sender<PreviewJob>,
     library: Sender<CopyAssets>,
     detail: Sender<PathBuf>,
-    /// Answers of all four workers.
+    thumbs: Sender<Vec<PathBuf>>,
+    /// Answers of all the workers.
     pub(crate) rx: Receiver<BrowseMsg>,
     /// Bumped by the core whenever a listing is replaced; walks stop when theirs is stale.
     pub(crate) generation: Arc<AtomicU64>,
 }
 
 impl Workers {
-    /// Starts the four threads.
+    /// Starts the threads.
     pub(crate) fn spawn() -> Self {
         let (tx, rx) = channel();
         let generation = Arc::new(AtomicU64::new(0));
@@ -184,6 +192,7 @@ impl Workers {
         let (preview, preview_rx) = channel();
         let (library, library_rx) = channel();
         let (detail, detail_rx) = channel();
+        let (thumbs, thumbs_rx) = channel();
         let t = tx.clone();
         let g = Arc::clone(&generation);
         spawn_named("atomik-browse", move || browse_thread(&browse_rx, &t, &g));
@@ -193,6 +202,8 @@ impl Workers {
         spawn_named("atomik-library", move || library_thread(&library_rx, &t));
         let t = tx.clone();
         spawn_named("atomik-detail", move || detail_thread(&detail_rx, &t));
+        let t = tx.clone();
+        spawn_named("atomik-thumbs", move || thumbs_thread(&thumbs_rx, &t));
         spawn_named("atomik-preview", move || preview_thread(&preview_rx, &tx));
         Self {
             browse,
@@ -200,6 +211,7 @@ impl Workers {
             preview,
             library,
             detail,
+            thumbs,
             rx,
             generation,
         }
@@ -219,6 +231,11 @@ impl Workers {
     /// yet); false when the thread is gone.
     pub(crate) fn detail(&self, path: PathBuf) -> bool {
         self.detail.send(path).is_ok()
+    }
+
+    /// Queues audio rows for a thumbnail (visible rows first); false when the thread is gone.
+    pub(crate) fn thumbs(&self, paths: Vec<PathBuf>) -> bool {
+        self.thumbs.send(paths).is_ok()
     }
 
     /// Hands a preview to the decoder thread; false when the thread is gone.
@@ -733,6 +750,67 @@ fn detail_thread(rx: &Receiver<PathBuf>, tx: &Sender<BrowseMsg>) {
             return;
         }
         if !finish_requests(tx, &mut requests) {
+            return;
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------- thumbs
+
+/// The frames of a file a thumbnail reads at most (thirty seconds at 48 kHz): a longer file
+/// shows its beginning.
+pub(crate) const THUMB_MAX_FRAMES: u64 = 48_000 * 30;
+/// Bars of a thumbnail.
+pub(crate) const THUMB_BUCKETS: usize = 48;
+
+/// The thumbnail levels of `path`, from the loudness picture the info pane uses: each level
+/// from 0 to 255 on a square-root scale so quiet files still show; empty for a file that
+/// cannot be decoded.
+pub(crate) fn thumb_of(path: &Path) -> Vec<u8> {
+    overview_levels(path, THUMB_BUCKETS, THUMB_MAX_FRAMES)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|level| (level.clamp(0.0, 1.0).sqrt() * 255.0).round() as u8)
+        .collect()
+}
+
+fn thumbs_thread(rx: &Receiver<Vec<PathBuf>>, tx: &Sender<BrowseMsg>) {
+    // Newest requests first, one file between two looks at the channel: the rows on screen
+    // are the latest ones asked for, and a file can take a moment to decode.
+    let mut queue: VecDeque<PathBuf> = VecDeque::new();
+    let mut queued: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut requests = 0usize;
+    loop {
+        if queue.is_empty() {
+            if requests > 0 && !finish_requests(tx, &mut requests) {
+                return;
+            }
+            match rx.recv() {
+                Ok(paths) => {
+                    requests += 1;
+                    enqueue(&mut queue, &mut queued, paths);
+                }
+                Err(_) => return,
+            }
+        }
+        while let Ok(paths) = rx.try_recv() {
+            requests += 1;
+            enqueue(&mut queue, &mut queued, paths);
+        }
+        let Some(path) = queue.pop_front() else {
+            continue;
+        };
+        queued.remove(&path);
+        // A device URI is not a file; nothing about it is read.
+        if device_type_of(&path).is_some() {
+            continue;
+        }
+        let read = catch_unwind(AssertUnwindSafe(|| {
+            let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+            (size, thumb_of(&path))
+        }));
+        let (size, levels) = read.unwrap_or((0, Vec::new()));
+        if tx.send(BrowseMsg::Thumb { path, size, levels }).is_err() {
             return;
         }
     }

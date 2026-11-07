@@ -15,6 +15,8 @@ use vello::peniko::Color;
 const ROW_FONT: f32 = 11.0;
 const TREE_FONT: f32 = 10.0;
 const SMALL_FONT: f32 = 9.0;
+/// Width of the waveform thumbnail at the end of an audio row's name column.
+const THUMB_W: f64 = 64.0;
 
 /// What an empty library section says.
 const EMPTY_SECTION_HINT: &str =
@@ -343,10 +345,25 @@ impl FileBrowserView {
         let bar = lay.path;
         c.fill_with(bar, t.lcd);
         c.push_clip(&bar.into());
-        if self.entry.is_none() {
+        if self.entry.is_none() && self.confirm.is_none() {
             self.paint_nav_buttons(c, lay);
         }
-        if let Some(e) = &self.entry {
+        if let Some(path) = &self.confirm {
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            // A long name gives way so that the keys always show.
+            let fixed = measure(c, "Delete ''? Enter deletes, Esc cancels", SMALL_FONT, 400);
+            let room = (bar.width() - 2.0 * lay::PAD - fixed).max(24.0);
+            let name = fit_label_in(c, &name, room, SMALL_FONT);
+            let shown = format!("Delete '{name}'? Enter deletes, Esc cancels");
+            c.text(&TextRun::new(
+                shown,
+                pt(bar.x0 + lay::PAD, baseline(bar, SMALL_FONT)),
+                SMALL_FONT,
+                t.warning,
+            ));
+        } else if let Some(e) = &self.entry {
             let label = match e.kind {
                 super::EntryKind::NewTag => "New tag",
                 super::EntryKind::RenameTag(_)
@@ -702,8 +719,13 @@ impl FileBrowserView {
         } else {
             cols.name.1
         };
+        let thumb = self
+            .thumb_of(r)
+            .filter(|_| cols.name.1 - name_x > THUMB_W + 140.0);
         let name_w = if item {
             (right - name_x - 8.0) * 0.5
+        } else if thumb.is_some() {
+            cols.name.1 - name_x - 4.0 - THUMB_W - 6.0
         } else {
             cols.name.1 - name_x - 4.0
         };
@@ -734,6 +756,14 @@ impl FileBrowserView {
         }
         if is_folder {
             return;
+        }
+        if let Some(levels) = thumb {
+            let x1 = cols.name.1 - 6.0;
+            self.paint_thumb(
+                c,
+                Rect::new(x1 - THUMB_W, rect.y0 + 4.0, x1, rect.y1 - 4.0),
+                levels,
+            );
         }
         if item {
             let detail = r.item.as_ref().map_or("", |i| i.detail.as_str());
@@ -791,6 +821,34 @@ impl FileBrowserView {
                     t.text_muted,
                 )
                 .align(Align::End),
+            );
+        }
+    }
+
+    /// The thumbnail levels of an audio row, when it has a readable one of its current size.
+    fn thumb_of(&self, r: &FileRow) -> Option<&[u8]> {
+        if !matches!(r.kind, FileKind::Audio(_)) {
+            return None;
+        }
+        self.thumbs
+            .get(&r.path)
+            .filter(|(size, levels)| *size == r.size && !levels.is_empty())
+            .map(|(_, levels)| levels.as_slice())
+    }
+
+    /// A small waveform: one bar per level, centred in `area`.
+    fn paint_thumb(&self, c: &mut dyn Canvas, area: Rect, levels: &[u8]) {
+        let color = self.theme.cable_audio.with_alpha(0.75);
+        let mid = area.center().y;
+        let half = area.height() / 2.0;
+        let n = levels.len() as f64;
+        let step = area.width() / n;
+        for (i, &level) in levels.iter().enumerate() {
+            let h = (f64::from(level) / 255.0 * half).max(0.5);
+            let x = area.x0 + i as f64 * step;
+            c.fill_with(
+                Rect::new(x, mid - h, x + (step - 0.5).max(0.5), mid + h),
+                color,
             );
         }
     }

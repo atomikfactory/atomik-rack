@@ -2660,6 +2660,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-probe` | file browser: audio header reads (`probe_file`), visible rows first | Yes (disk) |
 | `atomik-preview` | file browser: decodes the previewed file and fills the preview ring | Yes (disk) |
 | `atomik-detail` | file browser: the tempo a file states and its loudness picture for the info pane (newest request only) | Yes (disk) |
+| `atomik-thumbs` | file browser: the 48-bar waveform thumbnail of each visible audio row (first thirty seconds, newest request first) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
@@ -4690,7 +4691,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (466) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (467) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5346,7 +5347,12 @@ and on Rename, and nowhere else.
   batches, capped at 100 000 entries). `atomik-probe` reads audio headers for the rows the view asks
   for, visible rows first, and the results patch the rows by path. `atomik-detail` streams the one
   file of the info pane into 480 loudness levels (`overview_levels`, at most ten minutes of it, no
-  more than the newest request) and reads its tempo from the file's metadata. Every listing, walk and lookup
+  more than the newest request) and reads its tempo from the file's metadata. `atomik-thumbs` reads the
+  same picture at 48 bars for each visible audio row (thirty seconds at most, newest request first) and the
+  panel keeps it per file and size. Deleting a library item (`delete_library_item` in
+  [app_core_library.rs](../crates/app/src/app_core_library.rs)) runs on the UI thread: it removes the
+  item file and only the audio of its own sibling bundle that no neighbour of the same name lists, never
+  recursively. Every listing, walk and lookup
   carries a generation, so a newer request makes older answers stale and stops a running walk.
   Folders are not watched: a folder is listed again when it is shown and on refresh.
 - **The library file** ([app/src/library_store.rs](../crates/app/src/library_store.rs),

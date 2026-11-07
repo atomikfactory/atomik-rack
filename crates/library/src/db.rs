@@ -189,6 +189,19 @@ impl LibraryDb {
         true
     }
 
+    /// Forgets everything remembered of `path` (a deleted file): its mark and its places in the
+    /// favourite lists. Returns whether anything was held.
+    pub fn forget_path(&mut self, path: &Path) -> bool {
+        let key = PathKey::new(path);
+        let mut held = self.entries.remove(&key).is_some();
+        for list in &mut self.lists {
+            let before = list.paths.len();
+            list.paths.retain(|k| *k != key);
+            held |= list.paths.len() != before;
+        }
+        held
+    }
+
     /// Every tag in use with the number of files carrying it, ordered by tag.
     pub fn all_tags(&self) -> Vec<(Tag, usize)> {
         let mut counts: BTreeMap<Tag, usize> = BTreeMap::new();
@@ -1168,6 +1181,22 @@ mod tests {
         assert_eq!(m.categories.len(), 2);
         assert!(db.move_path(&p("/b"), &p("/c")));
         assert_eq!(db.author(&p("/c")), "Bob");
+    }
+
+    #[test]
+    fn forget_path_drops_the_mark_and_the_list_places_of_one_file() {
+        let mut db = LibraryDb::new();
+        db.toggle_favorite(&[p("/a")]);
+        db.add_tag(&p("/a"), &t("x"));
+        db.set_author(&p("/a"), "Ada");
+        db.add_to_list(&t("Drums"), &[p("/a"), p("/b")]);
+        db.toggle_favorite(&[p("/b")]);
+        assert!(db.forget_path(&p("/a")));
+        assert_eq!(db.mark(&p("/a")), Mark::default());
+        assert!(!db.in_list(&t("Drums"), &p("/a")) && db.in_list(&t("Drums"), &p("/b")));
+        assert!(db.is_favorite(&p("/b")), "other files keep their marks");
+        assert!(!db.forget_path(&p("/a")), "nothing left to forget");
+        assert!(!db.forget_path(&p("/never-marked")));
     }
 
     #[test]

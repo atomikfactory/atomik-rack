@@ -1689,6 +1689,82 @@ fn a_file_that_cannot_be_decoded_gets_an_empty_picture_and_the_core_stays_idle()
     assert!(levels.is_empty());
 }
 
+// ------------------------------------------------------------------------------- thumbnails
+
+fn thumbs_of(c: &AppCore<impl EngineSink>) -> Vec<(PathBuf, u64, Vec<u8>)> {
+    trace(c)
+        .iter()
+        .filter_map(|t| match t {
+            ViewCall::Thumb(p, size, levels) => Some((p.clone(), *size, levels.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn visible_audio_rows_get_a_thumbnail_from_a_worker_once_and_folders_get_none() {
+    let lib = library("thumbs");
+    let mut c = core();
+    show(&mut c, &lib.0);
+    wait_browser(&mut c);
+    let thumbs = thumbs_of(&c);
+    let mut names: Vec<String> = thumbs
+        .iter()
+        .map(|(p, _, _)| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["kick 10.wav", "kick 2.wav"], "{thumbs:?}");
+    for (path, size, levels) in &thumbs {
+        assert_eq!(*size, std::fs::metadata(path).unwrap().len());
+        assert!(
+            levels.len() > 1 && levels.iter().any(|l| *l > 150),
+            "{levels:?}"
+        );
+    }
+    // Further frames ask for nothing again.
+    for _ in 0..5 {
+        c.frame();
+    }
+    wait_browser(&mut c);
+    assert_eq!(thumbs_of(&c).len(), 2);
+}
+
+#[test]
+fn an_undecodable_file_gets_an_empty_thumbnail_and_is_not_asked_again() {
+    let lib = Tmp::new("thumbs-bad");
+    std::fs::write(lib.path("broken.wav"), b"not a wav").unwrap();
+    assert!(crate::browser_workers::thumb_of(&lib.path("broken.wav")).is_empty());
+    let mut c = core();
+    show(&mut c, &lib.0);
+    wait_browser(&mut c);
+    let thumbs = thumbs_of(&c);
+    assert_eq!(thumbs.len(), 1);
+    assert!(thumbs[0].2.is_empty());
+    for _ in 0..5 {
+        c.frame();
+    }
+    wait_browser(&mut c);
+    assert_eq!(thumbs_of(&c).len(), 1);
+}
+
+#[test]
+fn a_thumbnail_follows_the_shape_of_the_sound() {
+    let lib = Tmp::new("thumbs-shape");
+    // Silence, then a loud half.
+    let mut data = vec![0.0f32; 4_096 * 48];
+    data.extend((0..4_096 * 48).map(|i| (i as f32 * 0.05).sin() * 0.9));
+    write_wav_f32(
+        &lib.path("a.wav"),
+        &AudioData::new(48_000, vec![data]).unwrap(),
+    )
+    .unwrap();
+    let levels = crate::browser_workers::thumb_of(&lib.path("a.wav"));
+    assert_eq!(levels.len(), crate::browser_workers::THUMB_BUCKETS);
+    let half = levels.len() / 2;
+    assert!(levels[..half - 2].iter().all(|l| *l == 0), "{levels:?}");
+    assert!(levels[half + 2..].iter().all(|l| *l > 200), "{levels:?}");
+}
+
 #[test]
 fn midi_files_are_listed_with_their_own_kind_in_every_case() {
     let lib = library("midi-rows");
