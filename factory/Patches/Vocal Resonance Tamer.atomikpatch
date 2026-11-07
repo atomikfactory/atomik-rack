@@ -1,0 +1,58 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.dynamic-eq",
+      "name": "Dynamic EQ", "folded": false, "patch": "Vocal Resonance Tamer",
+      "params": {
+        "band2.attack": 8,
+        "band2.freq": 300,
+        "band2.on": 1,
+        "band2.q": 5,
+        "band2.range": -6,
+        "band2.release": 120,
+        "band2.threshold": -30,
+        "band3.attack": 5,
+        "band3.freq": 2400,
+        "band3.on": 1,
+        "band3.q": 6,
+        "band3.range": -5,
+        "band3.release": 80,
+        "band3.threshold": -28,
+        "band4.attack": 3,
+        "band4.freq": 5200,
+        "band4.on": 1,
+        "band4.q": 6,
+        "band4.range": -6,
+        "band4.release": 60,
+        "band4.threshold": -30
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
