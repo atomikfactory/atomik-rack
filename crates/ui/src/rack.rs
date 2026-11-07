@@ -1926,7 +1926,7 @@ impl RackView {
                             tree.add(dn, kc.from_clip + off, hit, false);
                         }
                         if let Some(fx) = d.spec.fx {
-                            if fx.kind == FxKind::Eq {
+                            if matches!(fx.kind, FxKind::Eq | FxKind::DynamicEq) {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
                             }
                             if let Some(b) = fx.button {

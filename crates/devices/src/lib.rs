@@ -37,6 +37,7 @@ pub mod drum_generator;
 pub mod drum_machine;
 pub mod dual_layer;
 pub mod duck;
+pub mod dynamic_eq;
 pub mod dynamics;
 pub mod echo;
 pub mod env_filter;
@@ -181,6 +182,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(de_esser::factory())?;
     registry.register(distortion::factory())?;
     registry.register(duck::factory())?;
+    registry.register(dynamic_eq::factory())?;
     registry.register(echo::factory())?;
     registry.register(dynamics::factory())?;
     registry.register(env_filter::factory())?;
@@ -225,7 +227,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 65] = [
+    const TYPE_IDS: [&str; 66] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
@@ -244,6 +246,7 @@ mod tests {
         "atomik.drum-machine",
         "atomik.dual-layer",
         "atomik.duck",
+        "atomik.dynamic-eq",
         "atomik.dynamics",
         "atomik.echo",
         "atomik.env-filter",
@@ -294,7 +297,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all sixty-five devices.
+    // Name kept; it now covers all sixty-six devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -334,6 +337,7 @@ mod tests {
             "atomik.cv-quantizer",
             "atomik.de-esser",
             "atomik.duck",
+            "atomik.dynamic-eq",
             "atomik.dynamics",
             "atomik.env-filter",
             "atomik.envelope-follower",

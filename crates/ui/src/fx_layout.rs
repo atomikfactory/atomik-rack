@@ -11,6 +11,7 @@
 //! | modulation | LFO sketch (left and right) | left, 196 wide | LFO, VOICE, OUTPUT |
 //! | mastering | crossover and band GR, LUFS readouts, GR meters | across the top, 96 high | INPUT, MULTIBAND, BAND 1-3, STEREO, LIMITER, OUTPUT |
 //! | character | preset matrix, screen, meters | its own 3 U layout, [`crate::character_panel`] | PRESET, SCREEN, METER, CONTROLS |
+//! | dynamic EQ | static and live response curves, input and key spectra, a handle per band, output peaks | across the top, 170 high | LOW SHELF, BELL 1-3, HIGH SHELF, OUTPUT |
 //! | spectrum | log-frequency plot or 1/3-octave bars, peak hold, loudest-bin readout, input peaks | across the top, 200 high | ANALYSIS, SMOOTHING, DISPLAY |
 //! | audio track | the tuner display (needle, note, cents, Hz), only while the TUNER button of its name plate is on | across the top, 92 high | INPUT, TUNER (with the display) |
 //! | phase meter | goniometer, correlation, balance and width bars, level bars, loudness readouts | across the top, 148 high | STEREO, LEVEL, SCOPE, LOUDNESS |
@@ -45,6 +46,30 @@ const TOP_TUNER: f64 = 92.0;
 const SETUP_CELL_W: f64 = 140.0;
 
 type Def = &'static [(&'static str, &'static [&'static str])];
+
+macro_rules! dyneq_band {
+    ($n:literal) => {
+        &[
+            concat!("band", $n, ".on"),
+            concat!("band", $n, ".freq"),
+            concat!("band", $n, ".q"),
+            concat!("band", $n, ".gain"),
+            concat!("band", $n, ".threshold"),
+            concat!("band", $n, ".range"),
+            concat!("band", $n, ".ratio"),
+            concat!("band", $n, ".attack"),
+            concat!("band", $n, ".release"),
+            concat!("band", $n, ".source"),
+            concat!("band", $n, ".channel"),
+        ]
+    };
+}
+
+const DYNEQ_BAND_1: &[&str] = dyneq_band!(1);
+const DYNEQ_BAND_2: &[&str] = dyneq_band!(2);
+const DYNEQ_BAND_3: &[&str] = dyneq_band!(3);
+const DYNEQ_BAND_4: &[&str] = dyneq_band!(4);
+const DYNEQ_BAND_5: &[&str] = dyneq_band!(5);
 
 fn sections(kind: FxKind) -> Def {
     match kind {
@@ -181,6 +206,14 @@ fn sections(kind: FxKind) -> Def {
             ("TUNER", &["tuner_mute", "tuner_ref"]),
         ],
         FxKind::Tuner => &[("SETTINGS", &["mute", "ref"])],
+        FxKind::DynamicEq => &[
+            ("LOW SHELF", DYNEQ_BAND_1),
+            ("BELL 1", DYNEQ_BAND_2),
+            ("BELL 2", DYNEQ_BAND_3),
+            ("BELL 3", DYNEQ_BAND_4),
+            ("HIGH SHELF", DYNEQ_BAND_5),
+            ("OUTPUT", &["output"]),
+        ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
             ("MULTIBAND", &["multiband.on", "xover.low", "xover.high"]),
@@ -239,6 +272,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Reverb => "DECAY",
         FxKind::Compressor => "TRANSFER",
         FxKind::Eq => "RESPONSE",
+        FxKind::DynamicEq => "DYNAMIC RESPONSE",
         FxKind::Distortion => "CURVE",
         FxKind::GuitarAmp => "AMP",
         FxKind::Modulation => "LFO",
@@ -255,7 +289,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
     match kind {
         FxKind::Reverb => (LEFT_REVERB, 0.0),
         FxKind::Compressor => (LEFT_COMPRESSOR, 0.0),
-        FxKind::Eq => (0.0, TOP_EQ),
+        FxKind::Eq | FxKind::DynamicEq => (0.0, TOP_EQ),
         FxKind::Distortion => (LEFT_DISTORTION, 0.0),
         FxKind::GuitarAmp => (LEFT_AMP, 0.0),
         FxKind::Modulation => (LEFT_MODULATION, 0.0),
@@ -429,7 +463,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             empty,
             None,
         ),
-        FxKind::Eq => (
+        FxKind::Eq | FxKind::DynamicEq => (
             Rect::new(v.x0 + 26.0, v.y0, v.x1 - 40.0, v.y1 - 12.0),
             Rect::new(v.x1 - 32.0, v.y0, v.x1, v.y1 - 12.0),
             empty,
@@ -518,7 +552,7 @@ pub fn eq_handle_pos(plot: Rect, b: &EqBand) -> Point {
 
 /// The band whose handle is nearest to `p` within [`EQ_PICK_R`] (later bands win ties, so the
 /// topmost drawn handle is picked).
-pub fn eq_pick(plot: Rect, bands: &[EqBand; 6], p: Point) -> Option<usize> {
+pub fn eq_pick(plot: Rect, bands: &[EqBand], p: Point) -> Option<usize> {
     let mut best: Option<(usize, f64)> = None;
     for (i, b) in bands.iter().enumerate() {
         let d = eq_handle_pos(plot, b).distance(p);
