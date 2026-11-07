@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Drawn duck curve, learn from kick and band mode in the Sidechain Tool.** A new curve mode (`curve`) ducks
+  along a hand-drawn gain curve of up to eight points with bends over one sixteenth, eighth, quarter or half
+  note or one bar (in song time, so it follows tempo changes), started by every hit on the key, every note at
+  the new `notes_in` socket, or either (`trigger`). A hit during a curve enters the new one where it first
+  reaches the dip that is playing, so a double kick never lifts the gain. The panel now draws the curve across
+  its top: drag a point, drag the line to bend a segment, click to add a point, double-click to remove one,
+  Escape to put a drag back; the plot shows the running position. LEARN renders the range between the locators
+  at the key (the sidechain cable, else the input) on a worker, averages the envelope of its hits over the
+  curve length and puts a curve of up to eight points and the curve mode into the device in one undo step. The
+  new `band` switch and `band_freq` duck only the part of the sound under the split (a 24 dB per octave
+  Linkwitz-Riley pair added back, an allpass at rest), in every mode. The points are stored in the new
+  `hidden.*` params, which are saved and undone with the device but offered to no macro, automation lane, MIDI
+  mapping or search; the project format is unchanged (44). The `bypass` param of the device moved from id 8 to
+  12 (projects store params by key). Four factory patches draw curves. Not done: a chosen track as the key
+  without a cable, and more than eight points.
 - **Translation lens, "Will the bass read?" and Split Sub.** Mixer > Translation Lens (and five rows in the
   transport bar's more menu) switches the live master between headphones (as it is), a small speaker (a 12 dB per
   octave high-pass at 140 Hz and a +3 dB bell at 3 kHz), a club sub system (a 12 dB per octave high-pass at 32 Hz)

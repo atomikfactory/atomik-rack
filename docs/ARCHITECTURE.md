@@ -4187,9 +4187,15 @@ parameter tables are in [DEVICES.md](DEVICES.md).
   builders of `devices/src/tool_support.rs`, use the deterministic `log2_det`/`exp2_det`, and the
   gate is `atomik_dsp::Gate` in its deterministic mode (the channel strip's gate keeps its own maths
   and goldens). The Sidechain Tool's pump mode is a pure function of the transport position of the
-  batch, so it needs no history and a locate gives the same gain. They have the automatic panel
-  layout. The render test `utility_devices.rs` bounces each effect and checks the merge alignment.
-  See [DEVICES.md](DEVICES.md#utility-devices).
+  batch, so it needs no history and a locate gives the same gain; its curve mode plays up to eight points
+  with bends (`atomik_dsp::duck_curve`) from every key hit or note, entering a retrigger where the curve
+  reaches the dip that is playing. The points live in `hidden.*` params (`console::is_hidden_param`): stored
+  and undoable like any param, offered to no list of targets, so the project format did not change. The
+  Sidechain Tool has a panel of its own (`duck_panel.rs`, `rack/duck_input.rs`: the curve editor) and
+  LEARN (`app_core_duck_learn.rs`: the key is rendered offline on the worker `atomik-duck-learn` by
+  `render_device_key`, `atomik_dsp::duck_learn::learn` turns its hits into points, one undo step); the others
+  have the automatic panel layout. The render test `utility_devices.rs` bounces each effect and checks the
+  merge alignment. See [DEVICES.md](DEVICES.md#utility-devices).
 - **Meters.** Reduction, levels, loudness and EQ band energies reach the UI through the device meter
   values of section 5; `RackView::set_device_meter_values` feeds the panels once per frame.
 - **Sidechain helper.** The UI emits one `Command::Batch` (disconnect the old source, connect the
@@ -5720,7 +5726,7 @@ items are ordinary project texts, plus one small new file type.
   path inside the factory folder first, so a factory item is never changed whatever the library folder is, and
   `stepping_folder` follows a shown factory section for patch stepping. Packaging copies `factory/` into every
   artifact (`scripts/release/package-*.sh`, the `.iss` file) and the smoke test checks `factory.json`. Every item
-  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 38 device patches
+  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 42 device patches
   (`Def`; the semi-modular ones fill modulation slots by key), 14 containers (`ContainerDef`: eleven effect chains wired
   in series, three modular instruments with explicit cables, macros whose position is set from the first target's
   value so the container sounds as designed), 12 note clips (`app_core_factory_clips.rs`, step and chord patterns
