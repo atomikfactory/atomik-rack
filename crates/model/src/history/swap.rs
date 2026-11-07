@@ -97,6 +97,11 @@ swaps! {
         doc.info.clone_from(new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// The reference tracks (see [`crate::Reference`]).
+    References {}: Vec<crate::Reference> => |doc, new| {
+        doc.references.clone_from(new);
+        Ok(vec![SyncOp::ViewChanged])
+    };
     /// The master tune in cents.
     Tune {}: f32 => |doc, new| {
         doc.tune_cents = *new;

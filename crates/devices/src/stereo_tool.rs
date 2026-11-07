@@ -4,11 +4,17 @@
 //! # Signal flow (per sample)
 //!
 //! ```text
-//! in -> polarity (invert L / R) -> width -> balance -> M/S mode -> mono -> out
+//! in -> polarity (invert L / R) -> rotation -> width -> balance -> M/S mode -> mono -> out
 //! ```
 //!
 //! * **Polarity.** `invert_l` / `invert_r` multiply a channel by -1 (a smoothed -1..+1 ramp, so
 //!   the switch does not click).
+//! * **Rotation.** `rotate` (0 to 180 degrees) turns the phase of both channels by that angle
+//!   at `rotate_hz` with a first-order all-pass ([`atomik_dsp::PhaseRotator`]): the level is
+//!   untouched at every frequency, the turn is less below `rotate_hz` and more above it, and 180
+//!   is a polarity inversion. It reshapes the waveform of a bass or a kick (see the kick and
+//!   bass check). At 0 the stage is skipped, so the input passes bit for bit. A change of the
+//!   angle or the frequency takes effect at once, like the mode switch.
 //! * **Width.** The mid/side width of `atomik_dsp::stereo_width`: `M = (L + R) / 2`,
 //!   `S = (L - R) / 2 * width`. 0 is mono, 1 leaves the signal alone, 2 doubles the side signal.
 //!   With `low_bypass` above 20 Hz the signal is first split into a low and a high band by a
@@ -35,7 +41,7 @@ use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, PrepareInfo, ProcessContext,
     SocketDescriptor, SocketId,
 };
-use atomik_dsp::{BlockSmoother, Crossover};
+use atomik_dsp::{BlockSmoother, Crossover, PhaseRotator};
 
 const P_MODE: u32 = 0;
 const P_INVERT_L: u32 = 1;
@@ -44,13 +50,15 @@ const P_WIDTH: u32 = 3;
 const P_LOW_BYPASS: u32 = 4;
 const P_BALANCE: u32 = 5;
 const P_MONO: u32 = 6;
+const P_ROTATE: u32 = 7;
+const P_ROTATE_HZ: u32 = 8;
 
 /// Corner at or below which the low-band bypass is off.
 const LOW_BYPASS_OFF_HZ: f32 = 20.5;
 
 static MODES: [&str; 3] = ["stereo", "encode", "decode"];
 
-static PARAMS: [ParamDescriptor; 8] = [
+static PARAMS: [ParamDescriptor; 10] = [
     choice(P_MODE, "mode", "Mid/side", &MODES, 0.0),
     toggle(P_INVERT_L, "invert_l", "Invert L", 0.0),
     toggle(P_INVERT_R, "invert_r", "Invert R", 0.0),
@@ -66,7 +74,17 @@ static PARAMS: [ParamDescriptor; 8] = [
     ),
     linear(P_BALANCE, "balance", "Balance", -1.0, 1.0, 0.0, Unit::None),
     toggle(P_MONO, "mono", "Mono", 0.0),
-    bypass_param(7),
+    linear(P_ROTATE, "rotate", "Rotate", 0.0, 180.0, 0.0, Unit::None),
+    expo(
+        P_ROTATE_HZ,
+        "rotate_hz",
+        "Rotate at",
+        20.0,
+        1000.0,
+        100.0,
+        Unit::Hz,
+    ),
+    bypass_param(9),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -95,7 +113,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 /// Factory registering [`StereoTool`].
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
-        descriptor: &DESCRIPTOR,
+        descriptor: crate::bypass::matched(&DESCRIPTOR),
         create: || Box::new(Bypassable::new(StereoTool::new())),
     }
 }
@@ -110,6 +128,10 @@ pub struct StereoTool {
     low_bypass: f32,
     balance: f32,
     mono: bool,
+    rotate: f32,
+    rotate_hz: f32,
+    sample_rate: f32,
+    rotor: [PhaseRotator; 2],
     fresh: bool,
     split: [Crossover; 2],
     pol_l: BlockSmoother,
@@ -137,6 +159,10 @@ impl StereoTool {
             low_bypass: 20.0,
             balance: 0.0,
             mono: false,
+            rotate: 0.0,
+            rotate_hz: 100.0,
+            sample_rate: 48_000.0,
+            rotor: [PhaseRotator::new(); 2],
             fresh: true,
             split: [Crossover::new(48_000.0), Crossover::new(48_000.0)],
             pol_l: BlockSmoother::new(1.0),
@@ -150,6 +176,12 @@ impl StereoTool {
 
     fn low_split(&self) -> bool {
         self.low_bypass > LOW_BYPASS_OFF_HZ
+    }
+
+    fn apply_rotation(&mut self) {
+        for r in &mut self.rotor {
+            r.set(self.rotate, self.rotate_hz, self.sample_rate);
+        }
     }
 
     fn apply_low_bypass(&mut self) {
@@ -166,6 +198,8 @@ impl Device for StereoTool {
 
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
+        self.sample_rate = sr;
+        self.apply_rotation();
         self.split = [Crossover::new(sr), Crossover::new(sr)];
         self.apply_low_bypass();
         for s in [
@@ -185,6 +219,9 @@ impl Device for StereoTool {
         for c in &mut self.split {
             c.reset();
         }
+        for r in &mut self.rotor {
+            r.reset();
+        }
         self.fresh = true;
     }
 
@@ -201,6 +238,14 @@ impl Device for StereoTool {
             }
             P_BALANCE => self.balance = v.clamp(-1.0, 1.0),
             P_MONO => self.mono = v >= 0.5,
+            P_ROTATE => {
+                self.rotate = v.clamp(0.0, 180.0);
+                self.apply_rotation();
+            }
+            P_ROTATE_HZ => {
+                self.rotate_hz = v.clamp(20.0, 1000.0);
+                self.apply_rotation();
+            }
             _ => {}
         }
     }
@@ -233,6 +278,10 @@ impl Device for StereoTool {
         for n in 0..BATCH {
             let mut l = finite(in_l[n]) * pl.at(n);
             let mut r = finite(in_r[n]) * pr.at(n);
+            if !self.rotor[0].is_identity() {
+                l = self.rotor[0].process(l);
+                r = self.rotor[1].process(r);
+            }
             let wn = w.at(n);
             if wn != 1.0 {
                 if split {

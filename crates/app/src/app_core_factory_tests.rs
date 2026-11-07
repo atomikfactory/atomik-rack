@@ -362,7 +362,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     assert_eq!(KITS.len(), 4);
     assert_eq!(CLIPS.len(), 12);
     let chains = CONTAINERS.iter().filter(|c| c.chain).count();
-    assert_eq!(chains, 10, "effect chains");
+    assert_eq!(chains, 11, "effect chains");
     assert_eq!(CONTAINERS.len() - chains, 3, "modular containers");
     // Patches: one file per patch and kit, and a folder per kit that holds only its audio.
     let mut patches: Vec<String> = DEFS

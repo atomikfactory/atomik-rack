@@ -175,6 +175,8 @@ enum Hit {
     EqPlot(usize),
     /// The "SC from" button of a compressor panel.
     ScButton(usize),
+    /// The FIND or CUT button of a dynamic EQ plot.
+    Resonance(usize, crate::resonance_marks::ResonanceBtn),
     /// The TUNER button of an audio track panel.
     TunerButton(usize),
     /// A button of the Character preset matrix (device index, preset 0..16).
@@ -246,6 +248,7 @@ impl Hit {
             | Hit::Wave(i)
             | Hit::EqPlot(i)
             | Hit::ScButton(i)
+            | Hit::Resonance(i, _)
             | Hit::TunerButton(i)
             | Hit::Preset(i, _)
             | Hit::PresetGrid(i)
@@ -297,12 +300,16 @@ struct DeviceView {
     /// Effect panels: display meter values (see [`fx::update_display`]); player panels: the
     /// published meter values, rounded.
     meters: Vec<f32>,
+    /// The loudness match gain the strip shows, in dB (`None`: the match is off).
+    match_db: Option<f32>,
     /// Mod Source panel: the scope history fed from the published meter values.
     scope: crate::modsrc_panel::Scope,
     /// Granular panel: what the sample strip says about the loaded sample.
     sample: Option<crate::granular_panel::SampleInfo>,
     /// Spectrum and phase meter panels: what the app fed from the device's scope tap.
     analyser: crate::analyser::AnalyserData,
+    /// The resonance finder's markers and state (dynamic EQ panels).
+    resonance: crate::resonance_marks::ResonanceView,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Compressor panel: the name of the device cabled to the sidechain input.
@@ -791,6 +798,30 @@ impl RackView {
         }
         self.previewing = device;
         self.repaint = true;
+    }
+
+    /// Tells the panel of `key` the gain its loudness match applies, in dB (`None`: the match is
+    /// off, nothing is drawn). The app calls it every frame; the value is shown to 0.1 dB and
+    /// the panel is re-recorded only when that reading changes.
+    pub fn set_match_gain(&mut self, key: &DeviceKey, db: Option<f32>) {
+        let Some(i) = self.device_index(key) else {
+            return;
+        };
+        let db = db.map(paint::match_reading);
+        if self.devices[i].match_db == db {
+            return;
+        }
+        self.devices[i].match_db = db;
+        self.devices[i].bump_live();
+        if self.flip == Flip::Front && !self.devices[i].folded {
+            self.repaint = true;
+        }
+    }
+
+    /// The loudness match gain the panel of `key` shows, in dB.
+    pub fn match_gain(&self, key: &DeviceKey) -> Option<f32> {
+        self.device_index(key)
+            .and_then(|i| self.devices[i].match_db)
     }
 
     /// The note player whose preview the panels show (see [`Self::set_previewing`]).
@@ -1451,9 +1482,11 @@ impl RackView {
             fx_mode: 0,
             fx: None,
             meters: Vec::new(),
+            match_db: None,
             scope: crate::modsrc_panel::Scope::new(),
             sample: None,
             analyser: Default::default(),
+            resonance: Default::default(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],
@@ -1559,6 +1592,7 @@ impl RackView {
             let has_channel = doc.console.channel_of(&d.key).is_some();
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
+            let match_db = prev.as_ref().and_then(|p| p.match_db);
             let anim = prev.as_ref().map_or(0, |p| p.anim);
             let live = prev.as_ref().map_or(0, |p| p.live);
             let mini = prev.as_mut().and_then(|p| p.mini.take());
@@ -1569,6 +1603,10 @@ impl RackView {
             let analyser = prev
                 .as_mut()
                 .map(|p| std::mem::take(&mut p.analyser))
+                .unwrap_or_default();
+            let resonance = prev
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.resonance))
                 .unwrap_or_default();
             let cv = if fx == Some(FxKind::Character) {
                 cv_cabled_of(&d.key, &doc.cables)
@@ -1626,9 +1664,11 @@ impl RackView {
                 fx_mode,
                 fx,
                 meters,
+                match_db,
                 scope,
                 sample,
                 analyser,
+                resonance,
                 master,
                 sc,
                 cv,
@@ -1682,9 +1722,11 @@ impl RackView {
                 fx_mode: 0,
                 fx: None,
                 meters: Vec::new(),
+                match_db: None,
                 scope: crate::modsrc_panel::Scope::new(),
                 sample: None,
                 analyser: Default::default(),
+                resonance: Default::default(),
                 master: Default::default(),
                 sc: None,
                 cv: [false; 2],
@@ -1926,8 +1968,13 @@ impl RackView {
                             tree.add(dn, kc.from_clip + off, hit, false);
                         }
                         if let Some(fx) = d.spec.fx {
-                            if fx.kind == FxKind::Eq {
+                            if matches!(fx.kind, FxKind::Eq | FxKind::DynamicEq) {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
+                            }
+                            if fx.kind == FxKind::DynamicEq {
+                                for (btn, r) in crate::resonance_marks::buttons(fx.plot) {
+                                    tree.add(dn, r + off, Hit::Resonance(i, btn), false);
+                                }
                             }
                             if let Some(b) = fx.button {
                                 tree.add(dn, b + off, Hit::ScButton(i), false);
@@ -3790,6 +3837,7 @@ impl RackView {
             (Hit::Wave(i), PointerButton::Primary) => self.wave_down(i, rp, out),
             (Hit::Preset(i, n), PointerButton::Primary) => self.preset_down(i, n, out),
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
+            (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
             (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
             (h @ (Hit::IoClip(..) | Hit::IoHeader(_)), PointerButton::Primary) => self.io_down(h),
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
@@ -3826,6 +3874,7 @@ impl RackView {
                 | Hit::MacroName(i, _)
                 | Hit::Plugin(i, _)
                 | Hit::ScButton(i)
+                | Hit::Resonance(i, _)
                 | Hit::Preview(i)
                 | Hit::TunerButton(i),
                 _,
@@ -4678,6 +4727,7 @@ impl RackView {
             sc_source: d.sc.as_deref(),
             fx_cv: d.cv,
             fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
+            resonance: &d.resonance,
             player: PlayerInfo {
                 edit: d.edit,
                 meters: &d.meters,
@@ -4711,6 +4761,7 @@ impl RackView {
             from_clip: self.clip_scale.is_some(),
             sampling: self.sampling.as_ref() == Some(&d.key),
             previewing: self.previewing.as_ref() == Some(&d.key),
+            match_db: d.match_db,
             grain: crate::granular_panel::GrainInfo {
                 meters: &d.meters,
                 sample: d.sample.as_ref(),

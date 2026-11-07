@@ -235,6 +235,13 @@ pub enum UiAction {
     /// heard through the track's instrument), or stop it when it runs. The app answers with
     /// [`crate::RackView::set_previewing`]. View state, not an undo step.
     PreviewPlayer(DeviceKey),
+    /// The FIND button of a dynamic EQ: the app renders a few seconds of what reaches the
+    /// device's input on a worker, finds the resonances in it and answers with
+    /// [`crate::RackView::set_resonances`]. Changes nothing in the song.
+    FindResonances(DeviceKey),
+    /// The CUT button of a dynamic EQ: the resonances found last go into the free bells of the
+    /// device as dynamic cuts, in one undo step.
+    CutResonances(DeviceKey),
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.
@@ -642,6 +649,9 @@ pub enum UiAction {
     /// The quantize panel ([`crate::QuantizeView`]) asks for something: apply its settings, measure
     /// a groove from a clip, delete one, or close.
     Quantize(crate::quantize_panel::QuantizeAction),
+    /// The blind A/B panel ([`crate::BlindView`]) asks for something: play X or Y, pick one,
+    /// switch the level match, run again, or close.
+    Blind(crate::blind_panel::BlindAction),
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),
@@ -651,9 +661,21 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The kick and bass check panel ([`crate::KickBassView`]) asks for something: pick a track,
+    /// run or stop the check, apply a fix, or close.
+    KickBass(crate::kick_bass_panel::KickBassAction),
+    /// The references and decision zone panel ([`crate::ZoneView`]) asks for something: select a
+    /// reference, measure the mix again, switch the listening, or close.
+    Zone(crate::zone_panel::ZoneAction),
     /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
     /// restore one, protect one, or close.
     Versions(crate::versions_panel::VersionsAction),
+    /// The masking map panel ([`crate::MaskingView`]) asks for something: analyse the song, stop
+    /// the analysis, locate a clash, de-mask a band, or close.
+    Masking(crate::masking_panel::MaskingAction),
+    /// The mix check panel ([`crate::MixCheckView`]) asks for something: run the check, stop it,
+    /// locate a peak, apply a fix, open a tool, or close.
+    MixCheck(crate::mixcheck_panel::MixCheckAction),
     /// The colour menu's Custom item: the app opens the colour picker
     /// ([`crate::ColorPickerView`]) for this target, from the colour it has now.
     PickColor(crate::color_picker::ColorTarget),

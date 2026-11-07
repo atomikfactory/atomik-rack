@@ -170,7 +170,9 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::Reverb => reverb(c, theme, fx, info, &p),
         FxKind::Compressor => compressor(c, theme, fx, info, &p),
         FxKind::Eq => eq(c, theme, fx, info),
+        FxKind::DynamicEq => dynamic_eq(c, theme, fx, info),
         FxKind::Distortion => distortion(c, theme, fx, info, &p),
+        FxKind::Clipper => clipper(c, theme, fx, info, &p),
         FxKind::GuitarAmp => guitar_amp(c, theme, fx, info, &p),
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),
@@ -487,12 +489,8 @@ fn band_color(i: usize) -> Color {
     hsl(i as f32 * 52.0 + 8.0, 0.65, 0.62)
 }
 
-fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInfo<'_>) {
-    let r = fx.plot;
-    lcd(c, theme, r);
-    let Some(desc) = info.desc else { return };
-    let bands = fx::eq_bands_of(desc, info.device);
-    c.push_clip(&r.into());
+/// The grid of a response plot: a line every 6 dB and the decades of the frequency axis.
+fn eq_grid<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
     // Grid.
     for db in (-4..=4).map(|k| f64::from(k) * 6.0) {
         let y = eq_y_of(r, db).round() + 0.5;
@@ -517,6 +515,52 @@ fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInf
             alpha(theme.ink, a),
         );
     }
+}
+
+/// The labels of a response plot's axes.
+fn eq_axes<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
+    // Axis labels.
+    for (f, label) in [
+        (30.0, "30"),
+        (100.0, "100"),
+        (300.0, "300"),
+        (1000.0, "1k"),
+        (3000.0, "3k"),
+        (10000.0, "10k"),
+    ] {
+        small(
+            c,
+            theme,
+            label,
+            pt(eq_x_of(r, f), r.y1 + 9.0),
+            Align::Center,
+            None,
+        );
+    }
+    for db in [-18.0, -12.0, 0.0, 12.0, 18.0] {
+        let text = if db == 0.0 {
+            "0".to_string()
+        } else {
+            format!("{db:+.0}")
+        };
+        small(
+            c,
+            theme,
+            text,
+            pt(r.x0 - 4.0, eq_y_of(r, db) + 2.5),
+            Align::End,
+            None,
+        );
+    }
+}
+
+fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInfo<'_>) {
+    let r = fx.plot;
+    lcd(c, theme, r);
+    let Some(desc) = info.desc else { return };
+    let bands = fx::eq_bands_of(desc, info.device);
+    c.push_clip(&r.into());
+    eq_grid(c, theme, r);
     // Analyser bars.
     for k in 0..fx::EQ_BANDS_ANALYSER {
         let db = meter(info, k, LEVEL_FLOOR_DB);
@@ -576,39 +620,7 @@ fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInf
         );
     }
     c.pop_clip();
-    // Axis labels.
-    for (f, label) in [
-        (30.0, "30"),
-        (100.0, "100"),
-        (300.0, "300"),
-        (1000.0, "1k"),
-        (3000.0, "3k"),
-        (10000.0, "10k"),
-    ] {
-        small(
-            c,
-            theme,
-            label,
-            pt(eq_x_of(r, f), r.y1 + 9.0),
-            Align::Center,
-            None,
-        );
-    }
-    for db in [-18.0, -12.0, 0.0, 12.0, 18.0] {
-        let text = if db == 0.0 {
-            "0".to_string()
-        } else {
-            format!("{db:+.0}")
-        };
-        small(
-            c,
-            theme,
-            text,
-            pt(r.x0 - 4.0, eq_y_of(r, db) + 2.5),
-            Align::End,
-            None,
-        );
-    }
+    eq_axes(c, theme, r);
     level_bars(
         c,
         theme,
@@ -624,6 +636,223 @@ fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInf
         ],
         10.0,
     );
+}
+
+// ------------------------------------------------------------------ dynamic EQ
+
+/// The colour of the key spectrum.
+fn key_color() -> Color {
+    hsl(196.0, 0.6, 0.6)
+}
+
+/// The dynamic EQ: the input spectrum (and the key's, while a cable is in the key sockets), the
+/// static curve (every band at its own gain), the live curve (every band at the gain it has now,
+/// from the published meter values), the range each band can move over as a bar above or below
+/// its handle, and a handle per band with a dot where the band's live gain is.
+fn dynamic_eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInfo<'_>) {
+    let r = fx.plot;
+    lcd(c, theme, r);
+    let Some(desc) = info.desc else { return };
+    let stat = fx::dyneq_bands_of(desc, info.device);
+    let fed = info.fx_meters.len() >= fx::DYNEQ_METERS;
+    let live: Vec<fx::EqBand> = stat
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let mut l = *b;
+            if fed && b.on {
+                l.gain = f64::from(meter(info, fx::DYNEQ_GAINS + i, 0.0));
+            }
+            l
+        })
+        .collect();
+    let keyed = fed && meter(info, fx::DYNEQ_KEY_CABLED, 0.0) >= 0.5;
+    c.push_clip(&r.into());
+    eq_grid(c, theme, r);
+    // The spectra: the key behind, the input in front.
+    let bars = |c: &mut C, first: usize, color: Color, a: f32| {
+        for k in 0..fx::EQ_BANDS_ANALYSER {
+            let n = level_norm(meter(info, first + k, LEVEL_FLOOR_DB), -84.0, -6.0);
+            if n <= 0.0 {
+                continue;
+            }
+            let f = fx::analyser_centre(k);
+            let (xa, xb) = (eq_x_of(r, f / 1.19), eq_x_of(r, f * 1.19));
+            let h = n * r.height() * 0.6;
+            c.fill_with(
+                Rect::new(xa + 1.0, r.y1 - h, xb - 1.0, r.y1),
+                alpha(color, a),
+            );
+        }
+    };
+    if keyed {
+        bars(c, fx::DYNEQ_KEY, key_color(), 0.3);
+    }
+    bars(c, fx::DYNEQ_INPUT, info.accent, 0.28);
+    // The reach of each band's dynamics.
+    for (i, b) in stat.iter().enumerate() {
+        let range = fx::dyneq_range_of(desc, info.device, i);
+        if !b.on || range == 0.0 {
+            continue;
+        }
+        let at = eq_handle_pos(r, b);
+        let to = eq_y_of(r, b.gain + range);
+        let x = at.x.round() + 0.5;
+        c.stroke_with(
+            Line::new(pt(x, at.y), pt(x, to)),
+            3.0,
+            alpha(band_color(i), 0.35),
+        );
+    }
+    // The static curve and the live curve.
+    let steps = (r.width() / 2.0).floor().max(2.0) as usize;
+    let curve = |bands: &[fx::EqBand]| -> Vec<Point> {
+        (0..=steps)
+            .map(|k| {
+                let t = k as f64 / steps as f64;
+                let db = fx::eq_response_db(bands, fx::eq_freq_at(t), EQ_DRAW_RATE);
+                pt(r.x0 + t * r.width(), eq_y_of(r, db))
+            })
+            .collect()
+    };
+    let stat_pts = curve(&stat);
+    c.stroke_with(
+        polyline(stat_pts.iter().copied()),
+        1.0,
+        alpha(theme.ink, 0.45),
+    );
+    let live_pts = curve(&live);
+    let zero = eq_y_of(r, 0.0);
+    let mut fill = polyline(live_pts.iter().copied());
+    fill.line_to(pt(r.x1, zero));
+    fill.line_to(pt(r.x0, zero));
+    fill.close_path();
+    c.fill_with(fill, alpha(info.accent, 0.14));
+    c.stroke_with(
+        polyline(live_pts.iter().copied()),
+        1.75,
+        mix(info.accent, Color::WHITE, 0.35),
+    );
+    // Handles at the static gain, a dot at the live gain.
+    for (i, b) in stat.iter().enumerate() {
+        let at = eq_handle_pos(r, b);
+        let col = band_color(i);
+        if b.on {
+            c.fill_with(Circle::new(at, EQ_HANDLE_R + 3.0), alpha(col, 0.2));
+            c.fill_with(Circle::new(at, EQ_HANDLE_R), col);
+            let now = eq_y_of(r, live[i].gain);
+            if (now - at.y).abs() > 1.5 {
+                c.fill_with(Circle::new(pt(at.x, now), 2.5), Color::WHITE);
+            }
+        } else {
+            c.fill_with(Circle::new(at, EQ_HANDLE_R), alpha(Color::BLACK, 0.5));
+            c.stroke_with(Circle::new(at, EQ_HANDLE_R - 0.5), 1.25, alpha(col, 0.6));
+        }
+        c.text(
+            &TextRun::new(
+                format!("{}", i + 1),
+                pt(at.x, at.y + 2.6),
+                7.0,
+                if b.on { Color::BLACK } else { theme.text_muted },
+            )
+            .align(Align::Center)
+            .weight(700),
+        );
+    }
+    if keyed {
+        small(
+            c,
+            theme,
+            "KEY",
+            pt(r.x0 + 6.0, r.y0 + 11.0),
+            Align::Start,
+            Some(key_color()),
+        );
+    }
+    let free = fx::DYNEQ_SHAPES
+        .iter()
+        .zip(&stat)
+        .filter(|(shape, b)| **shape == fx::EqShape::Peak && !b.on)
+        .count();
+    resonance_overlay(c, theme, r, info.resonance, free);
+    c.pop_clip();
+    eq_axes(c, theme, r);
+    level_bars(
+        c,
+        theme,
+        Rect::new(
+            fx.meters.x0,
+            fx.meters.y0,
+            fx.meters.x1,
+            fx.meters.y1 + 10.0,
+        ),
+        &[
+            ("L", meter(info, fx::DYNEQ_PEAKS, LEVEL_FLOOR_DB)),
+            ("R", meter(info, fx::DYNEQ_PEAKS + 1, LEVEL_FLOOR_DB)),
+        ],
+        10.0,
+    );
+}
+
+/// The colour of the resonance markers.
+fn resonance_color() -> Color {
+    hsl(22.0, 0.85, 0.62)
+}
+
+/// The resonance finder on the plot: a marker per resonance found (a line at its frequency, a
+/// bar as wide as its Q and its rank above) and the FIND and CUT buttons. CUT says how many
+/// of the resonances the free bells can take.
+fn resonance_overlay<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    view: &crate::resonance_marks::ResonanceView,
+    free: usize,
+) {
+    let color = resonance_color();
+    for (n, m) in view.marks.iter().enumerate() {
+        let f = f64::from(m.freq_hz);
+        let x = eq_x_of(r, f).round() + 0.5;
+        c.stroke_with(
+            Line::new(pt(x, r.y0 + 24.0), pt(x, r.y1)),
+            1.0,
+            alpha(color, 0.35),
+        );
+        let half = 0.5 / f64::from(m.q.max(0.5));
+        let (xa, xb) = (eq_x_of(r, f * (1.0 - half)), eq_x_of(r, f * (1.0 + half)));
+        c.fill_with(
+            Rect::new(xa, r.y0 + 24.0, xb.max(xa + 2.0), r.y0 + 26.0),
+            alpha(color, 0.8),
+        );
+        small(
+            c,
+            theme,
+            format!("{}", n + 1),
+            pt(x, r.y0 + 22.0),
+            Align::Center,
+            Some(color),
+        );
+    }
+    for (btn, b) in crate::resonance_marks::buttons(r) {
+        let (label, enabled) = match btn {
+            crate::resonance_marks::ResonanceBtn::Find => (
+                if view.busy { "..." } else { "FIND" }.to_owned(),
+                !view.busy,
+            ),
+            crate::resonance_marks::ResonanceBtn::Cut => {
+                let n = view.marks.len().min(free);
+                (
+                    if n > 0 {
+                        format!("CUT {n}")
+                    } else {
+                        "CUT".to_owned()
+                    },
+                    n > 0,
+                )
+            }
+        };
+        crate::paint::button_sized(c, theme, b, &label, enabled, 8.5, 0.8);
+    }
 }
 
 // ------------------------------------------------------------------ distortion
@@ -685,6 +914,122 @@ fn distortion<C: Canvas + ?Sized>(
         pt(r.x1 - 5.0, r.y1 - 4.0),
         Align::End,
         None,
+    );
+    level_bars(
+        c,
+        theme,
+        fx.meters,
+        &[
+            ("IN", meter(info, 0, LEVEL_FLOOR_DB)),
+            ("OUT", meter(info, 1, LEVEL_FLOOR_DB)),
+        ],
+        10.0,
+    );
+}
+
+// ------------------------------------------------------------------ clipper
+
+/// The plot shows inputs up to this many ceilings.
+const CLIPPER_SPAN: f32 = 2.0;
+
+fn clipper<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    fx: FxPanel,
+    info: &PanelInfo<'_>,
+    p: &Params<'_>,
+) {
+    let r = fx.plot;
+    lcd(c, theme, r);
+    let (curve, symmetry, ceiling_db) = (p.get("curve"), p.get("symmetry"), p.get("ceiling"));
+    // Both axes run -2..2 ceilings, so the unity line is the diagonal and the ceiling is a line
+    // at half way to the edge.
+    let at = |x: f32, y: f32| {
+        let u =
+            |v: f32| f64::from((v.clamp(-CLIPPER_SPAN, CLIPPER_SPAN) / CLIPPER_SPAN + 1.0) / 2.0);
+        pt(r.x0 + u(x) * r.width(), r.y1 - u(y) * r.height())
+    };
+    let faint = alpha(theme.ink, 0.12);
+    c.stroke_with(Line::new(at(-2.0, 0.0), at(2.0, 0.0)), 1.0, faint);
+    c.stroke_with(Line::new(at(0.0, -2.0), at(0.0, 2.0)), 1.0, faint);
+    c.stroke_with(
+        Line::new(at(-2.0, -2.0), at(2.0, 2.0)),
+        1.0,
+        alpha(theme.ink, 0.07),
+    );
+    for y in [-1.0, 1.0] {
+        c.stroke_with(
+            Line::new(at(-2.0, y), at(2.0, y)),
+            1.0,
+            alpha(info.accent, 0.3),
+        );
+    }
+    // Where the driven level of the moment reaches: its peak, in ceilings.
+    let driven_db = meter(info, 0, LEVEL_FLOOR_DB);
+    if driven_db > LEVEL_FLOOR_DB {
+        let x = 10f32.powf((driven_db - ceiling_db) / 20.0);
+        let hot = x > 1.0;
+        let col = if hot {
+            hsl(28.0, 0.85, 0.55)
+        } else {
+            alpha(theme.ink, 0.35)
+        };
+        for s in [-1.0, 1.0] {
+            c.stroke_with(Line::new(at(s * x, -2.0), at(s * x, 2.0)), 1.0, col);
+        }
+    }
+    let n = 160;
+    let path = polyline((0..=n).map(|k| {
+        let x = -CLIPPER_SPAN + 2.0 * CLIPPER_SPAN * k as f32 / n as f32;
+        at(x, fx::clipper_transfer(curve, symmetry, x))
+    }));
+    c.push_clip(&r.into());
+    c.stroke_with(path, 1.75, info.accent);
+    c.pop_clip();
+    let name = if curve <= 0.005 {
+        "HARD CLIP".to_string()
+    } else {
+        format!("SOFT {:.0} %", curve * 100.0)
+    };
+    small(
+        c,
+        theme,
+        if symmetry == 0.0 {
+            name
+        } else {
+            format!("{name}, ASYM")
+        },
+        pt(r.x0 + 5.0, r.y0 + 10.0),
+        Align::Start,
+        Some(info.accent),
+    );
+    small(
+        c,
+        theme,
+        format!("{ceiling_db:+.1} dB"),
+        pt(r.x1 - 5.0, r.y0 + 10.0),
+        Align::End,
+        None,
+    );
+    // The clip activity: the share of clipped samples and the longest run.
+    let share = meter(info, 2, 0.0);
+    let run = meter(info, 3, 0.0);
+    let warm = (run > fx::CLIPPER_RUN_SAFE_MS).then(|| hsl(28.0, 0.85, 0.55));
+    small(
+        c,
+        theme,
+        format!("CLIPPED {share:.1} %"),
+        pt(r.x1 - 5.0, r.y1 - 14.0),
+        Align::End,
+        None,
+    );
+    small(
+        c,
+        theme,
+        format!("RUN {run:.2} ms"),
+        pt(r.x1 - 5.0, r.y1 - 4.0),
+        Align::End,
+        warm,
     );
     level_bars(
         c,

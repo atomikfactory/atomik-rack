@@ -237,6 +237,25 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Peak Meters", None),
             ("PPM Meters", None),
             ("VU Meters", None),
+            ("Masking Map\u{2026}", None),
+            ("Check Mix\u{2026}", None),
+            ("Listen to Reference", Some("Ctrl+Alt+R")),
+            ("Add Reference Track\u{2026}", None),
+            ("Reference 1", None),
+            ("Next Reference Track", None),
+            ("Remove Reference Track", None),
+            ("Start at Playhead Position", None),
+            ("Follow Playhead", None),
+            ("Match Reference Level", None),
+            ("Full Range", None),
+            ("Sub", None),
+            ("Low", None),
+            ("Mid", None),
+            ("High", None),
+            ("Left and Right", None),
+            ("Mid", None),
+            ("Side", None),
+            ("Reference Panel\u{2026}", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Previous track", None),
@@ -251,6 +270,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Clear MIDI Mappings", None),
             ("Macros\u{2026}", None),
             ("New Macro Bank", None),
+            ("Kick and Bass Check\u{2026}", None),
         ]
     );
     assert!(model[4].entries.contains(&MenuEntry::Separator));
@@ -1988,4 +2008,124 @@ fn the_mixer_menu_names_each_group_in_add_to_group_and_delete_group() {
             .1,
         ["VCA 1"]
     );
+}
+
+#[test]
+fn the_reference_commands_reach_the_core_and_the_menu_state_follows() {
+    use atomik_engine::{ReferenceBand, ReferenceSolo};
+    let mut s = shell();
+    // The key with no reference says so and changes nothing.
+    s.execute(AppCommand::ToggleReference);
+    assert!(!s.menu_state().reference.listening);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("Add a reference"))
+    );
+    // Add asks for a file; the picked file joins the list.
+    assert_eq!(
+        s.execute(AppCommand::AddReference),
+        vec![ShellRequest::PickReference]
+    );
+    s.add_reference_file(std::path::Path::new("no-such-reference.wav"));
+    assert_eq!(s.menu_state().reference.count, 1);
+    // The same file again is refused with a message.
+    s.add_reference_file(std::path::Path::new("no-such-reference.wav"));
+    assert_eq!(s.menu_state().reference.count, 1);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("not added"))
+    );
+    s.execute(AppCommand::ReferenceBand(ReferenceBand::Low));
+    s.execute(AppCommand::ReferenceSolo(ReferenceSolo::Side));
+    s.execute(AppCommand::ReferenceMatch);
+    s.execute(AppCommand::ReferenceCue(true));
+    let menu = s.menu_state().reference;
+    assert_eq!(menu.band, ReferenceBand::Low);
+    assert_eq!(menu.solo, ReferenceSolo::Side);
+    assert!(!menu.level_match && menu.has_cue);
+    s.execute(AppCommand::ReferenceCue(false));
+    assert!(!s.menu_state().reference.has_cue);
+    s.execute(AppCommand::RemoveReference);
+    assert_eq!(s.menu_state().reference.count, 0);
+    // The ids the keymap and the MCP use round-trip.
+    for command in [
+        AppCommand::ToggleReference,
+        AppCommand::SelectReference(15),
+        AppCommand::ReferenceBand(ReferenceBand::High),
+        AppCommand::ReferenceSolo(ReferenceSolo::Mid),
+        AppCommand::ReferenceCue(true),
+    ] {
+        let (id, arg) = command.command_id().expect("has an id");
+        assert_eq!(AppCommand::from_command(id, arg), Some(command));
+    }
+}
+
+#[test]
+fn the_reference_panel_opens_from_the_menu_and_the_ids_round_trip() {
+    let (id, arg) = AppCommand::ReferencePanel.command_id().expect("has an id");
+    assert_eq!(
+        AppCommand::from_command(id, arg),
+        Some(AppCommand::ReferencePanel)
+    );
+    let mut s = shell();
+    assert!(!s.zone_open());
+    s.execute(AppCommand::ReferencePanel);
+    assert!(s.zone_open());
+    // Nothing is listed: the panel says what to do and no analysis starts.
+    let data = s.zone_view().unwrap().data().clone();
+    assert!(data.references.is_empty() && !data.busy);
+    assert!(data.status.contains("Add a reference"), "{}", data.status);
+    assert_eq!(data.rows.len(), 7);
+    // Esc closes it and the song is as it was.
+    s.handle(&key(Key::Escape, Modifiers::default()));
+    assert!(!s.zone_open());
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // a real worker is waited for in real time
+fn the_reference_panel_lists_selects_and_refreshes_through_its_buttons() {
+    let mut s = shell();
+    s.add_reference_file(std::path::Path::new("no-such-one.wav"));
+    s.add_reference_file(std::path::Path::new("no-such-two.wav"));
+    s.execute(AppCommand::ReferencePanel);
+    let data = s.zone_view().unwrap().data().clone();
+    assert_eq!(data.references.len(), 2);
+    assert!(data.references[1].selected);
+    // A click on the first row selects it.
+    let first = {
+        let v = s.zone_view().unwrap();
+        let p = v.panel();
+        Point::new(p.x0 + 60.0, p.y0 + 34.0 + 22.0 + 10.0)
+    };
+    click(&mut s, first);
+    s.frame();
+    assert!(s.zone_view().unwrap().data().references[0].selected);
+    assert_eq!(s.core().reference_info().selected, 0);
+    // Down moves to the next one.
+    s.handle(&key(Key::Down, Modifiers::default()));
+    assert_eq!(s.core().reference_info().selected, 1);
+    // REFRESH measures (the files are missing, so every reading is an error) and the panel
+    // follows the worker.
+    let refresh = s.zone_view().unwrap().refresh_rect().center();
+    click(&mut s, refresh);
+    assert!(s.core().zone_busy() || s.core().zone_measured());
+    let start = std::time::Instant::now();
+    while s.core().zone_busy() {
+        s.frame();
+        assert!(
+            start.elapsed().as_secs() < 60,
+            "the analysis did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    s.frame();
+    let data = s.zone_view().unwrap().data().clone();
+    assert!(!data.busy);
+    assert!(data.status.contains("could not be read"), "{}", data.status);
+    // CLOSE closes it.
+    let close = s.zone_view().unwrap().close_rect().center();
+    click(&mut s, close);
+    assert!(!s.zone_open());
 }

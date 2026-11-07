@@ -73,7 +73,7 @@ pub(super) struct PatchPreview {
 }
 
 /// A note of the phrase in beats: `(start, length, key, velocity)`.
-type Phrase = &'static [(f64, f64, u8, f32)];
+pub(super) type Phrase = &'static [(f64, f64, u8, f32)];
 
 /// The phrase an instrument plays: a four-note arpeggio, then a chord held two beats.
 const INSTRUMENT_PHRASE: Phrase = &[
@@ -109,7 +109,7 @@ const DRUM_PHRASE: Phrase = &[
 const DRUM_TYPE: &str = "atomik.drum-machine";
 
 /// The phrase an effect hears: short notes with gaps between them.
-const EFFECT_PHRASE: Phrase = &[
+pub(super) const EFFECT_PHRASE: Phrase = &[
     (0.0, 0.25, 60, 0.9),
     (1.0, 0.25, 64, 0.8),
     (2.0, 0.25, 67, 0.8),
@@ -117,7 +117,7 @@ const EFFECT_PHRASE: Phrase = &[
 ];
 
 /// A note clip of `phrase` at tick 0, a bar long.
-fn phrase_clip(phrase: Phrase) -> Clip {
+pub(super) fn phrase_clip(phrase: Phrase) -> Clip {
     #[allow(clippy::cast_possible_truncation)] // beats of a constant table
     let ticks = |beats: f64| (beats * PPQ as f64).round() as i64;
     let notes: Vec<Note> = phrase

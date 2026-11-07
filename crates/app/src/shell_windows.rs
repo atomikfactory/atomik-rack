@@ -317,13 +317,28 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.scale {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.blind {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.silence {
                     v.set_scale(scale);
                 }
                 if let Some(v) = &mut self.song_info {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.kick_bass {
+                    v.set_scale(scale);
+                }
+                if let Some(v) = &mut self.zone {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.versions {
+                    v.set_scale(scale);
+                }
+                if let Some(v) = &mut self.masking {
+                    v.set_scale(scale);
+                }
+                if let Some(v) = &mut self.mixcheck {
                     v.set_scale(scale);
                 }
                 if let Some((v, _)) = &mut self.color_picker {
@@ -522,9 +537,14 @@ impl<B: AudioBackend> Shell<B> {
             || self.param_search.is_some()
             || self.quantize.is_some()
             || self.scale.is_some()
+            || self.blind.is_some()
             || self.silence.is_some()
             || self.song_info.is_some()
+            || self.kick_bass.is_some()
+            || self.zone.is_some()
             || self.versions.is_some()
+            || self.masking.is_some()
+            || self.mixcheck.is_some()
             || self.color_picker.is_some()
             || self.notes.is_some()
             || self.warp.is_some()

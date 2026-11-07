@@ -192,6 +192,7 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         info: doc.info.clone(),
         tune_cents: doc.tune_cents,
         sort_mode: doc.sort_mode,
+        references: Vec::new(),
     })
 }
 
@@ -265,9 +266,11 @@ impl RackView {
             fx_mode: 0,
             fx: None,
             meters: Vec::new(),
+            match_db: None,
             scope: crate::modsrc_panel::Scope::new(),
             sample: None,
             analyser: Default::default(),
+            resonance: Default::default(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],

@@ -147,6 +147,10 @@ pub(super) struct AudioState {
     pub(super) freeze: super::freeze::FreezeState,
     /// The audio export that runs ([`super::export`]).
     pub(super) export: super::export::ExportState,
+    /// The masking analysis that runs, and its result ([`super::masking`]).
+    pub(super) masking: super::masking::MaskingState,
+    /// The mix check that runs, and its result ([`super::mixcheck`]).
+    pub(super) mixcheck: super::mixcheck::MixCheckState,
     /// The Audio to Notes extraction that is running ([`super::notes`]).
     pub(super) notes: super::notes::NotesState,
     /// The transients of the audio clip editor ([`super::clip_editor`]).
@@ -230,6 +234,8 @@ impl AudioState {
             warp_work: super::warp::WarpWork::default(),
             freeze: super::freeze::FreezeState::default(),
             export: super::export::ExportState::default(),
+            masking: super::masking::MaskingState::default(),
+            mixcheck: super::mixcheck::MixCheckState::default(),
             notes: super::notes::NotesState::default(),
             onsets: super::clip_editor::OnsetState::default(),
             audition: super::audition::AuditionState::default(),
@@ -333,7 +339,11 @@ impl<S: EngineSink> AppCore<S> {
 
     /// True while an import or an asset load runs, or the file browser has work in flight.
     pub fn is_busy(&self) -> bool {
-        self.audio.pending > 0 || self.saving() || self.browser_busy()
+        self.audio.pending > 0
+            || self.saving()
+            || self.browser_busy()
+            || self.kick_bass_running()
+            || self.zone_busy()
     }
 
     /// A status-bar text while audio is being imported or loaded.
@@ -555,6 +565,16 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_exported(job, *result),
+                Msg::Masked {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_masked(job, *result),
+                Msg::Checked {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_checked(job, *result),
                 Msg::Noted {
                     generation,
                     job,
@@ -617,6 +637,8 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Warped { .. }
                 | Msg::Frozen { .. }
                 | Msg::Exported { .. }
+                | Msg::Masked { .. }
+                | Msg::Checked { .. }
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
                 | Msg::Scanned { .. }
@@ -1319,6 +1341,8 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.warp_work.reset();
         self.audio.freeze.reset();
         self.audio.export.reset();
+        self.audio.masking.reset();
+        self.audio.mixcheck.reset();
         self.audio.notes.reset();
         self.audio.buffers.clear();
         self.audio.ram_pending.clear();

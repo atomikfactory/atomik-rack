@@ -106,6 +106,60 @@ impl RackView {
         }
     }
 
+    /// A press on FIND or CUT of the dynamic EQ panel `i`: selects the device and asks the app.
+    pub(super) fn resonance_down(
+        &mut self,
+        i: usize,
+        btn: crate::resonance_marks::ResonanceBtn,
+        out: &mut Vec<UiAction>,
+    ) {
+        self.select(i, out);
+        let device = self.devices[i].key.clone();
+        out.push(match btn {
+            crate::resonance_marks::ResonanceBtn::Find => UiAction::FindResonances(device),
+            crate::resonance_marks::ResonanceBtn::Cut => UiAction::CutResonances(device),
+        });
+    }
+
+    /// Sets what the dynamic EQ `key` shows of the resonance finder: the markers of the last
+    /// search (strongest first) and whether a search runs. Anything but a dynamic EQ is ignored.
+    /// The panel is re-recorded and a repaint requested only when something changed and the panel
+    /// is on screen.
+    pub fn set_resonances(
+        &mut self,
+        key: &DeviceKey,
+        marks: &[crate::resonance_marks::ResonanceMark],
+        busy: bool,
+    ) {
+        let Some(i) = self.device_index(key) else {
+            return;
+        };
+        let d = &mut self.devices[i];
+        if d.fx != Some(FxKind::DynamicEq)
+            || (d.resonance.marks == marks && d.resonance.busy == busy)
+        {
+            return;
+        }
+        d.resonance.marks.clear();
+        d.resonance.marks.extend_from_slice(marks);
+        d.resonance.busy = busy;
+        d.revision += 1;
+        let (top, bottom) = (
+            self.view_to_rack(Point::new(0.0, 0.0)).y,
+            self.view_to_rack(Point::new(0.0, self.size.height)).y,
+        );
+        let d = &self.devices[i];
+        if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
+            self.repaint = true;
+        }
+    }
+
+    /// The finder's markers of a dynamic EQ panel (empty for other devices).
+    pub fn resonance_marks(&self, key: &DeviceKey) -> &[crate::resonance_marks::ResonanceMark] {
+        self.device_index(key)
+            .map_or(&[][..], |i| &self.devices[i].resonance.marks)
+    }
+
     /// The analyser data of a spectrum or phase meter panel (`None` for other devices).
     pub fn analyser_data(&self, key: &DeviceKey) -> Option<&crate::analyser::AnalyserData> {
         let d = &self.devices[self.device_index(key)?];
@@ -203,14 +257,34 @@ impl RackView {
 
     /// Centre of an EQ band's handle (logical view coordinates), front side only.
     pub fn eq_handle_center(&self, key: &DeviceKey, band: usize) -> Option<Point> {
-        if self.flip != super::Flip::Front || band >= 6 {
+        if self.flip != super::Flip::Front {
             return None;
         }
         let d = &self.devices[self.device_index(key)?];
-        let fx = d.spec.fx.filter(|f| f.kind == FxKind::Eq)?;
-        let bands = fx::eq_bands_of(&d.desc?, d.device.as_ref());
-        let p = fx_layout::eq_handle_pos(fx.plot, &bands[band]);
+        let fx = d
+            .spec
+            .fx
+            .filter(|f| matches!(f.kind, FxKind::Eq | FxKind::DynamicEq))?;
+        let bands = fx::handle_bands(fx.kind, &d.desc?, d.device.as_ref());
+        let p = fx_layout::eq_handle_pos(fx.plot, bands.get(band)?);
         Some(self.rack_to_view(p + d.offset()))
+    }
+
+    /// Centre of the FIND or CUT button of a dynamic EQ panel (logical view coordinates).
+    pub fn resonance_button_center(
+        &self,
+        key: &DeviceKey,
+        btn: crate::resonance_marks::ResonanceBtn,
+    ) -> Option<Point> {
+        if self.flip != super::Flip::Front {
+            return None;
+        }
+        let d = &self.devices[self.device_index(key)?];
+        let fx = d.spec.fx.filter(|f| f.kind == FxKind::DynamicEq)?;
+        let (_, b) = crate::resonance_marks::buttons(fx.plot)
+            .into_iter()
+            .find(|(k, _)| *k == btn)?;
+        (!d.folded).then(|| self.rack_to_view(b.center() + d.offset()))
     }
 
     /// Centre of the "SC from" button of a compressor panel (logical view coordinates).
@@ -271,13 +345,28 @@ impl RackView {
 
     fn eq_plot(&self, i: usize) -> Option<Rect> {
         let d = self.devices.get(i)?;
-        let fx = d.spec.fx.filter(|f| f.kind == FxKind::Eq)?;
+        let fx = d
+            .spec
+            .fx
+            .filter(|f| matches!(f.kind, FxKind::Eq | FxKind::DynamicEq))?;
         Some(fx.plot + d.offset())
     }
 
-    fn eq_bands(&self, i: usize) -> Option<[fx::EqBand; 6]> {
+    /// The effect kind of the response plot of panel `i` (the EQ unless it is the dynamic EQ).
+    fn plot_kind(&self, i: usize) -> FxKind {
+        match self.devices.get(i).and_then(|d| d.fx) {
+            Some(FxKind::DynamicEq) => FxKind::DynamicEq,
+            _ => FxKind::Eq,
+        }
+    }
+
+    fn eq_bands(&self, i: usize) -> Option<Vec<fx::EqBand>> {
         let d = self.devices.get(i)?;
-        Some(fx::eq_bands_of(&d.desc?, d.device.as_ref()))
+        Some(fx::handle_bands(
+            self.plot_kind(i),
+            &d.desc?,
+            d.device.as_ref(),
+        ))
     }
 
     /// A press on an EQ plot: picks a handle (double-click toggles its band) or selects the
@@ -290,7 +379,7 @@ impl RackView {
             self.select(i, out);
             return;
         };
-        let keys = fx::eq_keys(band);
+        let keys = fx::handle_keys(self.plot_kind(i), band);
         let key = self.devices[i].key.clone();
         if clicks >= 2 {
             let on = if bands[band].on { 0.0 } else { 1.0 };
@@ -322,7 +411,8 @@ impl RackView {
         let Some(plot) = self.eq_plot(e.dev) else {
             return;
         };
-        let cut = fx::EQ_SHAPES[e.band].is_cut();
+        let kind = self.plot_kind(e.dev);
+        let cut = fx::handle_is_cut(kind, e.band);
         if e.axis.is_none() {
             let (dx, dy) = (rp.x - e.origin.x, rp.y - e.origin.y);
             if dx.hypot(dy) < 3.0 {
@@ -336,7 +426,7 @@ impl RackView {
             });
         }
         let target = rp + e.grab;
-        let keys = fx::eq_keys(e.band);
+        let keys = fx::handle_keys(kind, e.band);
         let key = self.devices[e.dev].key.clone();
         match e.axis {
             Some(EqAxis::Freq) => {
@@ -368,7 +458,7 @@ impl RackView {
 
     /// Esc during an EQ drag: restores the start value of the param the drag moved.
     pub(super) fn eq_cancel(&mut self, e: &EqDrag, out: &mut Vec<UiAction>) {
-        let keys = fx::eq_keys(e.band);
+        let keys = fx::handle_keys(self.plot_kind(e.dev), e.band);
         let key = self.devices[e.dev].key.clone();
         match e.axis {
             Some(EqAxis::Freq) if e.freq.to_bits() != e.start_freq.to_bits() => {
@@ -399,7 +489,7 @@ impl RackView {
         let Some(band) = fx_layout::eq_pick(plot, &bands, rp) else {
             return false;
         };
-        let keys = fx::eq_keys(band);
+        let keys = fx::handle_keys(self.plot_kind(i), band);
         if let Some(p) = self.param_of_key(i, &keys.q) {
             let q = bands[band].q as f32;
             let new = widget::wheel_value(p, q, notches, fine);

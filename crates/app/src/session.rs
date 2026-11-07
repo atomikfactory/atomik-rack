@@ -1468,6 +1468,37 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             .is_some_and(|r| r.handle.preview_active())
     }
 
+    fn reference_start(
+        &mut self,
+        stream: atomik_engine::PreviewStream,
+        settings: atomik_engine::ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        // Without an engine the stream is dropped: its feed sees it abandoned.
+        match &mut self.running {
+            Some(r) => counted(
+                &mut self.control_stalled,
+                r.handle.reference_start(stream, settings),
+            ),
+            None => Ok(()),
+        }
+    }
+
+    fn reference_set(
+        &mut self,
+        settings: atomik_engine::ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        match &mut self.running {
+            Some(r) => counted(&mut self.control_stalled, r.handle.reference_set(settings)),
+            None => Ok(()),
+        }
+    }
+
+    fn reference_level(&self) -> Option<f32> {
+        self.running
+            .as_ref()
+            .and_then(|r| r.handle.reference_shared().short_term_lufs())
+    }
+
     fn engine_error(&self) -> Option<String> {
         self.status.error.clone()
     }

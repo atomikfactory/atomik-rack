@@ -135,6 +135,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.scale {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.blind {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.silence {
             return v.help_at(pos);
         }
@@ -144,7 +147,19 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.song_info {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.kick_bass {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.zone {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.versions {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.masking {
+            return v.help_at(pos);
+        }
+        if let Some(v) = &self.mixcheck {
             return v.help_at(pos);
         }
         if let Some((v, _)) = &self.color_picker {

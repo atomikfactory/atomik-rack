@@ -45,6 +45,11 @@ fn scene() -> impl Strategy<Value = Scene> {
 
 /// Plays `scene` through device `id` for one second and checks every audio output.
 fn check_bounded(id: &str, s: &Scene) -> Result<(), TestCaseError> {
+    check_bounded_to(id, s, BOUND)
+}
+
+/// [`check_bounded`] with its own output bound.
+fn check_bounded_to(id: &str, s: &Scene, bound: f32) -> Result<(), TestCaseError> {
     let sr = [44_100.0, 48_000.0, 96_000.0][s.sr_index];
     let mut r = Registry::new();
     crate::register_all(&mut r).unwrap();
@@ -111,7 +116,7 @@ fn check_bounded(id: &str, s: &Scene) -> Result<(), TestCaseError> {
         for key in &outs {
             for v in h.output(key) {
                 prop_assert!(
-                    v.is_finite() && v.abs() <= BOUND,
+                    v.is_finite() && v.abs() <= bound,
                     "{id} {sr} Hz, {key}: {v}"
                 );
             }
@@ -241,6 +246,13 @@ proptest! {
         check_bounded("atomik.de-esser", &s)?;
     }
 
+    /// The dynamic EQ: any params and loud noise (five boosted bands may stack up to a large
+    /// but finite gain, so the bound is the stability bound).
+    #[test]
+    fn qa_dynamic_eq_any_params_bounded_at_every_sample_rate(s in scene()) {
+        check_bounded_to("atomik.dynamic-eq", &s, 1.0e6)?;
+    }
+
     /// The transient shaper: any params and loud noise.
     #[test]
     fn qa_transient_shaper_any_params_bounded_at_every_sample_rate(s in scene()) {
@@ -251,6 +263,16 @@ proptest! {
     #[test]
     fn qa_rotary_speaker_any_params_bounded_at_every_sample_rate(s in scene()) {
         check_bounded("atomik.rotary-speaker", &s)?;
+    }
+
+    /// The clipper: any params, loud noise, every oversampling and band mode.
+    #[test]
+    fn qa_clipper_any_params_bounded_at_every_sample_rate(s in scene()) {
+        // The delta switch (param 7) plays the excess over the ceiling, which grows with the
+        // input gain and has no bound of its own: it stays off here.
+        let mut s = s;
+        s.norms[7] = 0.0;
+        check_bounded("atomik.clipper", &s)?;
     }
 
     /// The pitch shifter: any params and loud noise.

@@ -8,12 +8,14 @@
 use crate::midi_file::MidiResolution;
 use crate::record::InputQuantize;
 use crate::windows::WindowKind;
+use atomik_engine::{ReferenceBand, ReferenceSolo};
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::big_meter::MeterMode;
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, MAP_COMMAND_ARGS, MORPH_TIME_ARGS,
-    OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, SONG_ARGS, TEMPLATE_ARGS,
+    OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS, REFERENCE_BAND_ARGS, REFERENCE_CUE_ARGS,
+    REFERENCE_SELECT_ARGS, REFERENCE_SOLO_ARGS, SONG_ARGS, TEMPLATE_ARGS,
 };
 use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
 use std::borrow::Cow;
@@ -251,6 +253,12 @@ pub enum AppCommand {
     /// Mixer > Link Faders (on/off, kept with the window state): a fader or send level of a strip
     /// in a VCA group moves the levels of the whole group by the same dB.
     LinkFaders,
+    /// Mixer > Masking Map: opens the panel that analyses the channels for tracks that cover each
+    /// other and de-masks a clash with a keyed Dynamic EQ band.
+    MaskingMap,
+    /// Mixer > Check Mix: opens the panel that analyses the song (levels, bass, low mids, peaks and
+    /// mono) and lists what the mix needs, each finding with a one-click fix or a tool.
+    CheckMix,
     /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
@@ -316,6 +324,9 @@ pub enum AppCommand {
     /// Mixer > Stop Routing Group: the group `id` (`mixer.unroute_vca` with the id as its
     /// argument), or the groups the selected strips are in, stop playing into their bus.
     UnrouteVca(Option<u32>),
+    /// Mixer > Kick and Bass Check: opens the panel that checks how a kick track and a bass
+    /// track add up in the sub range and offers fixes.
+    KickBassCheck,
     /// Mixer > Store Snapshot: the mix as a new snapshot (named `A`, `B`, `1`, ...).
     StoreSnapshot,
     /// Mixer > Update Snapshot: overwrites a snapshot with the mix (`mixer.update_snapshot`, the
@@ -335,6 +346,32 @@ pub enum AppCommand {
     MorphPreviousSnapshot,
     /// Mixer > Morph Time: how long a morph takes, in seconds (`mixer.morph_time`).
     MorphTime(u8),
+    /// Mixer > Reference > Listen to Reference: switches between the mix and the selected
+    /// reference track (`mixer.toggle_reference`).
+    ToggleReference,
+    /// Mixer > Reference > Add Reference Track: picks an audio file (`mixer.add_reference`).
+    AddReference,
+    /// Mixer > Reference > Select Reference Track: the reference at this index
+    /// (`mixer.select_reference`, counted from 1 as the argument).
+    SelectReference(u8),
+    /// Mixer > Reference > Next Reference Track (`mixer.next_reference`).
+    NextReference,
+    /// Mixer > Reference > Remove Reference Track: the selected one (`mixer.remove_reference`).
+    RemoveReference,
+    /// Mixer > Reference > Reference Start: `true` gives the selected reference the playhead as
+    /// its own start, `false` makes it follow the playhead (`mixer.reference_cue`).
+    ReferenceCue(bool),
+    /// Mixer > Reference > Match Reference Level (`mixer.reference_match`).
+    ReferenceMatch,
+    /// Mixer > Reference > Band: limits the mix and the reference to a band
+    /// (`mixer.reference_band`).
+    ReferenceBand(ReferenceBand),
+    /// Mixer > Reference > Stereo Solo: limits the mix and the reference to the mid or the side
+    /// (`mixer.reference_solo`).
+    ReferenceSolo(ReferenceSolo),
+    /// Mixer > Reference > Reference Panel: the references and the decision zone
+    /// (`mixer.reference_panel`).
+    ReferencePanel,
     /// Mixer > Meter Mode: the ballistics of the console strip meters (`mixer.meter_mode`).
     MeterMode(MeterMode),
     /// Mixer > Snapshot Includes Effects: the current snapshot holds the effect parameters too.
@@ -822,6 +859,8 @@ impl AppCommand {
             AppCommand::CreateParallel => ("mixer.create_parallel", None),
             AppCommand::ToggleSendFollow => ("mixer.toggle_send_follow", None),
             AppCommand::LinkFaders => ("mixer.link_faders", None),
+            AppCommand::MaskingMap => ("mixer.masking_map", None),
+            AppCommand::CheckMix => ("mixer.check_mix", None),
             AppCommand::MeterMode(m) => ("mixer.meter_mode", Some(m.word())),
             AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
             AppCommand::RouteFolder(None) => ("mixer.route_folder", None),
@@ -837,6 +876,7 @@ impl AppCommand {
             | AppCommand::RouteVca(Some(_))
             | AppCommand::UnrouteVca(Some(_)) => return None,
             AppCommand::RemoveFromVca => ("mixer.remove_from_vca", None),
+            AppCommand::KickBassCheck => ("mixer.kick_bass_check", None),
             AppCommand::StoreSnapshot => ("mixer.store_snapshot", None),
             AppCommand::UpdateSnapshot(None) => ("mixer.update_snapshot", None),
             AppCommand::RecallSnapshot(None) => ("mixer.recall_snapshot", None),
@@ -847,6 +887,38 @@ impl AppCommand {
             AppCommand::MorphPreviousSnapshot => ("mixer.morph_previous_snapshot", None),
             AppCommand::MorphTime(s) => ("mixer.morph_time", Some(arg_of(MORPH_TIME_ARGS, *s)?)),
             AppCommand::SnapshotEffects => ("mixer.snapshot_effects", None),
+            AppCommand::ToggleReference => ("mixer.toggle_reference", None),
+            AppCommand::AddReference => ("mixer.add_reference", None),
+            AppCommand::SelectReference(n) => (
+                "mixer.select_reference",
+                Some(arg_of(REFERENCE_SELECT_ARGS, u16::from(*n) + 1)?),
+            ),
+            AppCommand::NextReference => ("mixer.next_reference", None),
+            AppCommand::RemoveReference => ("mixer.remove_reference", None),
+            AppCommand::ReferenceCue(on) => (
+                "mixer.reference_cue",
+                Some(REFERENCE_CUE_ARGS[usize::from(!*on)]),
+            ),
+            AppCommand::ReferenceMatch => ("mixer.reference_match", None),
+            AppCommand::ReferencePanel => ("mixer.reference_panel", None),
+            AppCommand::ReferenceBand(b) => (
+                "mixer.reference_band",
+                Some(
+                    *ReferenceBand::ALL
+                        .iter()
+                        .position(|x| x == b)
+                        .and_then(|i| REFERENCE_BAND_ARGS.get(i))?,
+                ),
+            ),
+            AppCommand::ReferenceSolo(s) => (
+                "mixer.reference_solo",
+                Some(
+                    *ReferenceSolo::ALL
+                        .iter()
+                        .position(|x| x == s)
+                        .and_then(|i| REFERENCE_SOLO_ARGS.get(i))?,
+                ),
+            ),
             AppCommand::CompareSnapshot(None) => ("mixer.compare_snapshot", None),
             AppCommand::EndCompare => ("mixer.end_compare", None),
             AppCommand::DeleteSnapshot(None) => ("mixer.delete_snapshot", None),
@@ -1132,6 +1204,8 @@ impl AppCommand {
             ("mixer.create_parallel", None) => AppCommand::CreateParallel,
             ("mixer.toggle_send_follow", None) => AppCommand::ToggleSendFollow,
             ("mixer.link_faders", None) => AppCommand::LinkFaders,
+            ("mixer.masking_map", None) => AppCommand::MaskingMap,
+            ("mixer.check_mix", None) => AppCommand::CheckMix,
             ("mixer.meter_mode", Some(a)) => AppCommand::MeterMode(MeterMode::from_word(a)?),
             ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
             ("mixer.route_folder", None) => AppCommand::RouteFolder(None),
@@ -1149,6 +1223,7 @@ impl AppCommand {
                 return id.parse().ok().map(|id| AppCommand::AddToVca(Some(id)));
             }
             ("mixer.remove_from_vca", None) => AppCommand::RemoveFromVca,
+            ("mixer.kick_bass_check", None) => AppCommand::KickBassCheck,
             ("mixer.store_snapshot", None) => AppCommand::StoreSnapshot,
             ("mixer.update_snapshot", None) => AppCommand::UpdateSnapshot(None),
             ("mixer.recall_snapshot", None) => AppCommand::RecallSnapshot(None),
@@ -1164,6 +1239,31 @@ impl AppCommand {
             ("mixer.morph_previous_snapshot", None) => AppCommand::MorphPreviousSnapshot,
             ("mixer.morph_time", Some(a)) => AppCommand::MorphTime(num_arg(MORPH_TIME_ARGS, a)?),
             ("mixer.snapshot_effects", None) => AppCommand::SnapshotEffects,
+            ("mixer.toggle_reference", None) => AppCommand::ToggleReference,
+            ("mixer.add_reference", None) => AppCommand::AddReference,
+            ("mixer.select_reference", Some(a)) => {
+                let n: u8 = num_arg(REFERENCE_SELECT_ARGS, a)?;
+                AppCommand::SelectReference(n - 1)
+            }
+            ("mixer.next_reference", None) => AppCommand::NextReference,
+            ("mixer.remove_reference", None) => AppCommand::RemoveReference,
+            ("mixer.reference_cue", Some(a)) => {
+                AppCommand::ReferenceCue(REFERENCE_CUE_ARGS.iter().position(|x| *x == a)? == 0)
+            }
+            ("mixer.reference_match", None) => AppCommand::ReferenceMatch,
+            ("mixer.reference_panel", None) => AppCommand::ReferencePanel,
+            ("mixer.reference_band", Some(a)) => AppCommand::ReferenceBand(
+                *REFERENCE_BAND_ARGS
+                    .iter()
+                    .position(|x| *x == a)
+                    .and_then(|i| ReferenceBand::ALL.get(i))?,
+            ),
+            ("mixer.reference_solo", Some(a)) => AppCommand::ReferenceSolo(
+                *REFERENCE_SOLO_ARGS
+                    .iter()
+                    .position(|x| *x == a)
+                    .and_then(|i| ReferenceSolo::ALL.get(i))?,
+            ),
             ("mixer.compare_snapshot", None) => AppCommand::CompareSnapshot(None),
             ("mixer.end_compare", None) => AppCommand::EndCompare,
             ("mixer.delete_snapshot", None) => AppCommand::DeleteSnapshot(None),
@@ -1772,6 +1872,8 @@ pub struct MenuState {
     pub strip: StripMenu,
     /// What the mixer snapshots allow (the Mixer menu).
     pub snapshots: SnapshotMenu,
+    /// What the reference tracks allow (the Mixer menu).
+    pub reference: ReferenceMenu,
     /// What MIDI Learn and the mappings allow (the Mixer menu).
     pub midi: MidiMenu,
     /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
@@ -1843,6 +1945,45 @@ pub struct StripMenu {
     /// The ballistics the strip meters show (Meter Mode).
     pub meter_mode: MeterMode,
 }
+
+/// What the Reference submenu of the Mixer menu needs to know.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReferenceMenu {
+    /// How many reference tracks the song lists.
+    pub count: u8,
+    /// The selected one (an index).
+    pub selected: u8,
+    /// The reference is what is heard.
+    pub listening: bool,
+    /// The level match is on.
+    pub level_match: bool,
+    /// The selected reference has a start of its own (it does not follow the playhead).
+    pub has_cue: bool,
+    /// The band solo.
+    pub band: ReferenceBand,
+    /// The stereo solo.
+    pub solo: ReferenceSolo,
+}
+
+/// The labels of the Select Reference Track submenu.
+const REFERENCE_LABELS: [&str; 16] = [
+    "Reference 1",
+    "Reference 2",
+    "Reference 3",
+    "Reference 4",
+    "Reference 5",
+    "Reference 6",
+    "Reference 7",
+    "Reference 8",
+    "Reference 9",
+    "Reference 10",
+    "Reference 11",
+    "Reference 12",
+    "Reference 13",
+    "Reference 14",
+    "Reference 15",
+    "Reference 16",
+];
 
 /// What a Copy Channel Settings takes from the strip: everything, or one section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2787,6 +2928,107 @@ pub fn menus_with_songs(
                     })
                     .collect(),
                 }),
+                enabled("Masking Map\u{2026}", AppCommand::MaskingMap, true),
+                enabled("Check Mix\u{2026}", AppCommand::CheckMix, true),
+                MenuEntry::Submenu(Submenu {
+                    label: "Reference",
+                    entries: vec![
+                        check(
+                            "Listen to Reference",
+                            AppCommand::ToggleReference,
+                            state.reference.listening,
+                        ),
+                        enabled(
+                            "Add Reference Track\u{2026}",
+                            AppCommand::AddReference,
+                            usize::from(state.reference.count) < atomik_model::MAX_REFERENCES,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Select Reference Track",
+                            // Without a reference the first row is there, greyed.
+                            entries: REFERENCE_LABELS
+                                .iter()
+                                .take(usize::from(state.reference.count).max(1))
+                                .enumerate()
+                                .map(|(i, label)| {
+                                    if i < usize::from(state.reference.count) {
+                                        check(
+                                            label,
+                                            AppCommand::SelectReference(i as u8),
+                                            usize::from(state.reference.selected) == i,
+                                        )
+                                    } else {
+                                        enabled(label, AppCommand::SelectReference(0), false)
+                                    }
+                                })
+                                .collect(),
+                        }),
+                        enabled(
+                            "Next Reference Track",
+                            AppCommand::NextReference,
+                            state.reference.count > 1,
+                        ),
+                        enabled(
+                            "Remove Reference Track",
+                            AppCommand::RemoveReference,
+                            state.reference.count > 0,
+                        ),
+                        MenuEntry::Separator,
+                        enabled(
+                            "Start at Playhead Position",
+                            AppCommand::ReferenceCue(true),
+                            state.reference.count > 0,
+                        ),
+                        check(
+                            "Follow Playhead",
+                            AppCommand::ReferenceCue(false),
+                            state.reference.count > 0 && !state.reference.has_cue,
+                        ),
+                        check(
+                            "Match Reference Level",
+                            AppCommand::ReferenceMatch,
+                            state.reference.level_match,
+                        ),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Reference Band",
+                            entries: [
+                                ("Full Range", ReferenceBand::Full),
+                                ("Sub", ReferenceBand::Sub),
+                                ("Low", ReferenceBand::Low),
+                                ("Mid", ReferenceBand::Mid),
+                                ("High", ReferenceBand::High),
+                            ]
+                            .into_iter()
+                            .map(|(label, band)| {
+                                check(
+                                    label,
+                                    AppCommand::ReferenceBand(band),
+                                    state.reference.band == band,
+                                )
+                            })
+                            .collect(),
+                        }),
+                        MenuEntry::Submenu(Submenu {
+                            label: "Reference Stereo Solo",
+                            entries: [
+                                ("Left and Right", ReferenceSolo::Off),
+                                ("Mid", ReferenceSolo::Mid),
+                                ("Side", ReferenceSolo::Side),
+                            ]
+                            .into_iter()
+                            .map(|(label, solo)| {
+                                check(
+                                    label,
+                                    AppCommand::ReferenceSolo(solo),
+                                    state.reference.solo == solo,
+                                )
+                            })
+                            .collect(),
+                        }),
+                        MenuEntry::Separator,
+                        enabled("Reference Panel\u{2026}", AppCommand::ReferencePanel, true),
+                    ],
+                }),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
@@ -2829,6 +3071,12 @@ pub fn menus_with_songs(
                 MenuEntry::Separator,
                 enabled("Macros\u{2026}", AppCommand::MacroPanel, true),
                 enabled("New Macro Bank", AppCommand::NewMacroBank, true),
+                MenuEntry::Separator,
+                enabled(
+                    "Kick and Bass Check\u{2026}",
+                    AppCommand::KickBassCheck,
+                    true,
+                ),
             ],
         },
         Menu {
@@ -3536,6 +3784,7 @@ mod tests {
             vca: VcaMenu::default(),
             strip: StripMenu::default(),
             snapshots: SnapshotMenu::default(),
+            reference: ReferenceMenu::default(),
             midi: MidiMenu::default(),
             freeze: FreezeMenu::default(),
             follow_selection: false,
@@ -3663,6 +3912,8 @@ mod tests {
             AppCommand::ToggleReturnAlignment,
             AppCommand::ToggleSendFollow,
             AppCommand::LinkFaders,
+            AppCommand::MaskingMap,
+            AppCommand::CheckMix,
             AppCommand::CreateVcaForFolder,
             AppCommand::RouteFolder(None),
             AppCommand::UnrouteFolder,
@@ -3676,6 +3927,7 @@ mod tests {
             AppCommand::ClearMidiMaps,
             AppCommand::MacroPanel,
             AppCommand::NewMacroBank,
+            AppCommand::KickBassCheck,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
             AppCommand::CreatePlayer,
@@ -3799,6 +4051,23 @@ mod tests {
         v.push(AppCommand::MorphSnapshot(None));
         v.push(AppCommand::MorphPreviousSnapshot);
         v.push(AppCommand::SnapshotEffects);
+        v.push(AppCommand::ToggleReference);
+        v.push(AppCommand::AddReference);
+        v.push(AppCommand::NextReference);
+        v.push(AppCommand::RemoveReference);
+        v.push(AppCommand::ReferenceMatch);
+        v.push(AppCommand::ReferencePanel);
+        for n in 0..16 {
+            v.push(AppCommand::SelectReference(n));
+        }
+        v.push(AppCommand::ReferenceCue(true));
+        v.push(AppCommand::ReferenceCue(false));
+        for b in ReferenceBand::ALL {
+            v.push(AppCommand::ReferenceBand(b));
+        }
+        for s in ReferenceSolo::ALL {
+            v.push(AppCommand::ReferenceSolo(s));
+        }
         for n in [1, 2, 4, 8, 16, 32] {
             v.push(AppCommand::OutputChannels(n));
         }
@@ -4413,6 +4682,25 @@ mod tests {
                 "Peak Meters",
                 "PPM Meters",
                 "VU Meters",
+                "Masking Map\u{2026}",
+                "Check Mix\u{2026}",
+                "Listen to Reference",
+                "Add Reference Track\u{2026}",
+                "Reference 1",
+                "Next Reference Track",
+                "Remove Reference Track",
+                "Start at Playhead Position",
+                "Follow Playhead",
+                "Match Reference Level",
+                "Full Range",
+                "Sub",
+                "Low",
+                "Mid",
+                "High",
+                "Left and Right",
+                "Mid",
+                "Side",
+                "Reference Panel\u{2026}",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Previous track",
@@ -4426,7 +4714,8 @@ mod tests {
                 "Import MIDI Mapping Preset\u{2026}",
                 "Clear MIDI Mappings",
                 "Macros\u{2026}",
-                "New Macro Bank"
+                "New Macro Bank",
+                "Kick and Bass Check\u{2026}"
             ]
         );
         assert_eq!(
@@ -4888,6 +5177,7 @@ mod tests {
                 vca: VcaMenu::default(),
                 strip: StripMenu::default(),
                 snapshots: SnapshotMenu::default(),
+                reference: ReferenceMenu::default(),
                 midi: MidiMenu::default(),
                 freeze: FreezeMenu {
                     tail: true,

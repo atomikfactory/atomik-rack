@@ -55,6 +55,11 @@ pub struct MenuEnable {
     pub midi_out: bool,
     /// Rack: the primary device has a modulation matrix (Modulation Matrix opens it).
     pub mod_matrix: bool,
+    /// Rack: the primary device is an effect with the loudness match (Match Loudness and Blind
+    /// A/B Test work).
+    pub effect: bool,
+    /// Rack: the primary effect has the loudness match on (the item is checked).
+    pub matching: bool,
     /// Rack: the primary device is a note player (Preview Player works).
     pub player: bool,
     /// A player preview runs (the item reads Stop Preview).
@@ -644,6 +649,14 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 Spec::Separator,
                 item("rack.midi_out_port", e.midi_out),
                 item("rack.mod_matrix", e.mod_matrix),
+                Spec::Item {
+                    command: "rack.toggle_match",
+                    arg: None,
+                    label: None,
+                    enabled: e.effect,
+                    checked: Some(e.matching),
+                },
+                item("rack.blind_ab", e.effect),
                 if e.previewing {
                     item("rack.preview_player", e.player || e.previewing)
                         .labelled("Stop Player Preview")
@@ -1187,12 +1200,27 @@ pub fn midi_out_entries(ports: &[String], current: Option<&str>) -> Vec<Entry> {
 }
 
 /// The rows of the pop-up on a patch name: one check item per patch (the current one checked)
-/// that runs `rack.patch_pick` with the patch file as its argument.
-pub fn patch_entries(items: &[(String, std::path::PathBuf)], current: Option<usize>) -> Vec<Entry> {
-    items
-        .iter()
-        .enumerate()
-        .map(|(i, (name, path))| {
+/// that runs `rack.patch_pick` with the patch file as its argument. For a bass instrument
+/// (`clean_up`) the first row is Clean Up Bass, followed by a separator when patches follow.
+pub fn patch_entries(
+    items: &[(String, std::path::PathBuf)],
+    current: Option<usize>,
+    clean_up: bool,
+) -> Vec<Entry> {
+    let head = clean_up.then(|| {
+        Entry::Item(MenuItemDef {
+            command: "rack.clean_up_bass".to_string(),
+            arg: None,
+            label: "Clean Up Bass".to_string(),
+            shortcut: None,
+            enabled: true,
+            checked: None,
+        })
+    });
+    let separator = (clean_up && !items.is_empty()).then_some(Entry::Separator);
+    head.into_iter()
+        .chain(separator)
+        .chain(items.iter().enumerate().map(|(i, (name, path))| {
             Entry::Item(MenuItemDef {
                 command: "rack.patch_pick".to_string(),
                 arg: Some(path.to_string_lossy().into_owned()),
@@ -1201,7 +1229,7 @@ pub fn patch_entries(items: &[(String, std::path::PathBuf)], current: Option<usi
                 enabled: true,
                 checked: Some(current == Some(i)),
             })
-        })
+        }))
         .collect()
 }
 
@@ -1376,6 +1404,8 @@ mod tests {
                 "rack.patch_next",
                 "rack.midi_out_port",
                 "rack.mod_matrix",
+                "rack.toggle_match",
+                "rack.blind_ab",
                 "rack.preview_player",
             ]
         );

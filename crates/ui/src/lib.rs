@@ -276,16 +276,30 @@
 //! - **Scale Tempo.** [`ScaleView`] is the modal panel of one free percentage for the selected
 //!   clips; it emits [`UiAction::ScaleTempo`] (`Preview` while the text changes, `APPLY`,
 //!   `CLOSE`) and the app feeds it with [`ScaleView::set_target`].
+//! - **Kick and bass check.** [`KickBassView`] is the modal panel of the check of a kick and a
+//!   bass track (the strip of cancellation and build-up, the fixes); it emits
+//!   [`UiAction::KickBass`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
 //!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
 //!   [`UiEvent::Ime`] for the window system's input method and installs the system clipboard with
 //!   [`clipboard::install`] on the UI thread (without one the text stays inside the app).
+//! - **References and decision zone.** [`ZoneView`] is the modal panel that lists the song's
+//!   reference tracks and draws, for each attribute of the mix, the range the references span with
+//!   the mix as a marker; the app feeds it a [`ZoneData`] and handles [`UiAction::Zone`]
+//!   (`Select`, `Refresh`, `Listen`, `Close`).
 //! - **Versions.** [`VersionsView`] is the modal panel of the project's version history: a name
 //!   and SAVE VERSION to keep the song as it is, the versions newest first, RESTORE and
 //!   PROTECT and COMPARE; it emits [`UiAction::Versions`] and the host replaces the rows with
 //!   [`VersionsView::set_items`] after each answer, or shows a comparison with
 //!   [`VersionsView::show_report`].
+//! - **Masking map.** [`MaskingView`] is the modal panel of the masking analysis: the worst pairs of
+//!   tracks, the two spectra of the chosen pair with the clash bands shaded, the time ranges that
+//!   locate the playhead and DE-MASK; it emits [`UiAction::Masking`] and the host feeds it a
+//!   [`MaskingData`] and the progress of the analysis.
+//! - **Mix check.** [`MixCheckView`] is the modal panel of the mix check: the findings of the analysis of
+//!   the song with the track, the measured number, a line on why, a one-click fix button and a button that
+//!   opens the tool; it emits [`UiAction::MixCheck`] and the host feeds it a [`MixCheckData`] and the progress.
 //! - **Modulation matrix.** [`ModMatrixView`] is the modal panel of a device's eight modulation
 //!   slots (source, target and via pickers on a [`context_menu::ContextMenu`], an amount bar); the host feeds it
 //!   [`ModMatrixInfo`] and its edits are ordinary [`UiAction::Command`]s, with
@@ -313,6 +327,7 @@ pub mod audio;
 pub mod audio_editor;
 pub mod autolayout;
 pub mod big_meter;
+pub mod blind_panel;
 pub mod breadcrumb;
 pub mod browser;
 pub mod cables;
@@ -351,14 +366,17 @@ pub mod io_panel;
 pub mod key_chord_panel;
 pub mod key_rows;
 pub mod keymap;
+pub mod kick_bass_panel;
 mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
 pub mod marker_edit;
+pub mod masking_panel;
 pub mod master_panel;
 pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
+pub mod mixcheck_panel;
 pub mod mod_matrix_panel;
 pub mod modsrc_panel;
 pub mod note_tool_args;
@@ -376,6 +394,7 @@ pub mod plugin_settings;
 pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
+pub mod resonance_marks;
 pub mod sample_editor;
 pub mod scale_panel;
 pub mod scene_canvas;
@@ -408,6 +427,7 @@ pub mod wave_paint;
 pub mod wavetable_panel;
 pub mod widget;
 pub mod zone_edit;
+pub mod zone_panel;
 
 pub use action::{
     BrowseAction, ContextTarget, ImportTarget, PatchOp, Place, SampleOp, SliceMode,
@@ -419,6 +439,7 @@ pub use arrangement::{
     PointField, PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use audio_editor::{AudioEditorView, AudioMode};
+pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use color_picker::{ColorPickerAction, ColorPickerView, ColorTarget};
@@ -435,12 +456,17 @@ pub use export_panel::{
 };
 pub use file_browser::{DetailData, FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
+pub use kick_bass_panel::{
+    FixView, KickBassAction, KickBassInfo, KickBassView, RunView, StripHit, StripView,
+};
 pub use macros_panel::{
     EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView,
 };
 pub use marker_edit::MarkSel;
+pub use masking_panel::{MaskingAction, MaskingData, MaskingPair, MaskingView};
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
+pub use mixcheck_panel::{MixCheckAction, MixCheckData, MixCheckRow, MixCheckView};
 pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};
 pub use notes_panel::{
     DrumKit, DrumMap, NotesAction, NotesMode, NotesProgress, NotesRow, NotesValues, NotesView,
@@ -484,3 +510,4 @@ pub use vello::{kurbo, peniko};
 pub use versions_panel::{REPORT_LINES, VersionItem, VersionsAction, VersionsView};
 pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};
+pub use zone_panel::{Standing, ZoneAction, ZoneData, ZoneReference, ZoneRowData, ZoneView};

@@ -37,7 +37,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
 | `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
-| `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
+| `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
@@ -4138,6 +4138,7 @@ parameter tables are in [DEVICES.md](DEVICES.md).
 | `atomik.compressor` | Peak or RMS detector, soft knee, auto release, key filters, sidechain input, look-ahead 0 to 5 ms reported as latency. |
 | `atomik.eq` | Six bands (cut slopes 12/24/48 dB per octave), coarse band levels published for the analyser. |
 | `atomik.distortion` | Ten curves (the last five with ADAA, see [shaper.rs](../crates/dsp/src/shaper.rs)), cut and body sections, off/2x/4x halfband oversampling; the oversampler latency is reported and the dry path is delayed to match. |
+| `atomik.clipper` | Clipper: a hard-to-soft curve ([clipper.rs](../crates/dsp/src/clipper.rs)) with symmetry and a DC blocker, off/2x/4x/8x oversampling (latency 0/29/35/37 reported, dry and delta aligned), a 2 or 3 band mode on the mastering crossovers, a delta switch and published clip activity. |
 | `atomik.echo` | Stereo echo on the dsp `Echo` line (glided time, wobble): colour, crush and diffusion in the loop, ducking, triggered and roll modes; latency 0. |
 | `atomik.modulation` | Chorus, flanger, phaser with tempo sync from the transport. |
 | `atomik.mastering` | 3-band multiband, mid/side width (optionally split by band), soft clip, true-peak limiter with a 0.5/1.5/4 ms look-ahead (4x detector), BS.1770 / R128 loudness and true-peak meter. |
@@ -4720,7 +4721,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (469) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (485) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5483,6 +5484,25 @@ Device::process                              AppCore::feed_device_scopes
   correlation, balance, width, mid and side, sample and true peak, momentary, short-term and
   integrated LUFS from the mastering device's BS.1770 meter) are computed in `process`, because they
   are cheap and exact there, and published as 16 meter values.
+- **Kick and bass check** ([app/src/kick_bass.rs](../crates/app/src/kick_bass.rs) the analysis and the
+  fixes, [app_core_kick_bass.rs](../crates/app/src/app_core_kick_bass.rs) the worker and the picks,
+  [kick_bass_panel.rs](../crates/ui/src/kick_bass_panel.rs) the panel, `Mixer > Kick and Bass Check`).
+  `analyse` runs on the worker `atomik-kick-bass` on a copy of the song: it renders the two channel strips
+  of the picked tracks in one `render_stems` pass (the first 20 seconds, plugins as stand-ins), mixes each
+  to mono and hands them to `atomik_dsp::kick_bass::check`, which low-passes both at 120 Hz (the sum of the
+  subs is the sub of the sum), takes the kick onsets of `detect_onsets` as the hits, and compares in the
+  window of each hit the mean power of the sum with the power sum of the two (a delta below -1.5 dB cancels,
+  above +1.5 dB builds up). The fundamentals are the median spacing of rising zero crossings in the
+  sounding tail of each hit; two within two semitones and not the same pitch are said to beat. When the
+  check finds a problem, every fix that fits (`Fix`) is built by the same `apply_fix` that the real apply
+  uses, on a scratch `Document`, rendered again and checked again; a fix is offered when its score
+  (overall delta plus a quarter of the worst hit) is 0.5 dB better. The rotation angle and the bass delay
+  are searched on the signals first (`atomik_dsp::PhaseRotator`, `best_bass_delay`) and proven by the
+  render. The fix-asymmetry row (`Headroom`) is `atomik_dsp::best_rotation` on the bass alone, also proven
+  by a render, and is offered whether or not anything cancels. Applying runs the steps through
+  `AppCore::apply_command` with `join_next`, so the whole fix is one undo step, and a result that
+  belongs to an older revision of the song offers no fix. The strip and the fix rows are drawn from
+  `KickBassInfo`, which the app rebuilds every frame while the panel is open.
 - **Panels** ([ui/src/analyser.rs](../crates/ui/src/analyser.rs) the data and the maths,
   [analyser_paint.rs](../crates/ui/src/analyser_paint.rs) the drawing; `FxKind::Spectrum` and
   `FxKind::PhaseMeter`): the spectrum plot over 20 Hz to 20 kHz and the device's dB `range`, the
@@ -5503,6 +5523,57 @@ Device::process                              AppCore::feed_device_scopes
 - **Not covered.** Plugin devices have no tap; a console channel strip has no meter panel of this
   kind (the console's own peak and RMS meters stay); the reference curve is a stored one, not a
   second device (see the roadmap).
+
+### Mix analysis: the masking map
+
+Mixer > Masking Map answers "which tracks cover each other, where and when" without changing the song.
+
+- **Band maps.** `atomik_render::masking::render_maps` renders every console channel as a stem
+  (`render_stems`, one deterministic pass, the strips as they sound in the mix) over the song or the time
+  selection and hands each stem to `atomik_dsp::masking::analyse` at once, so only a band map per track is kept:
+  the level of 27 one-third-octave bands from 40 Hz to 18 kHz for every block of 4096 frames (windows of 8192,
+  Hann, the channels summed to mono; 0 dB is a full-scale sine). The FFT, the window and the dB are the
+  deterministic ones, so the maps are the same bits on every platform and at every host block size.
+- **Score.** `rank_pairs` compares every pair. A cell (one band of one block) clashes when both tracks have
+  content in it (above -60 dB and within 40 dB of the track's loudest cell) and one leads by 3 dB or more; it
+  scores the lead over 18 dB (at most 1) times a weight that fades out under -20 dB. A band's score is the
+  percentage of the analysed time it is covered; the pair takes the direction with the larger total, is ranked by
+  its worst band and keeps the time ranges in which that band clashes and the mean spectra of both tracks there.
+  The exact numbers are in the module documentation of `atomik_dsp::masking`.
+- **Worker and state.** `AppCore::start_masking` runs `masking_worker` on a thread of its own (the engine keeps
+  its cores); the result, `AppCore::masking`, is dropped with the project and never touches the song.
+  `locate_masking` moves the playhead to the start of a clash.
+- **De-mask.** `AppCore::demask` is one undo step: a new Dynamic EQ at the end of the covered channel's insert
+  chain (or one already there with a free bell band and no other key), its key cabled from the covering channel's
+  insert send, and a bell band on at the clash band, listening to the key, cutting half the lead (2 to 6 dB) from
+  6 dB under the covering track's average level. The panel is `atomik_ui::MaskingView`; it draws and reports, the
+  shell does the rest.
+
+### Mix analysis: the mix check
+
+Mixer > Check Mix lists what the mix needs, with a measured number for each finding, and never changes the song
+by itself.
+
+- **What is read.** `atomik_render::mixcheck::plan` takes every console channel (up to 48), the FX returns and
+  the master as stems, plus the feed of every non-linear insert (compressor, dynamics, distortion, Character,
+  guitar amp, mastering and the clipper's type id): the output of the stage before it on the chain, or the
+  insert send for the first. `render_check` renders them in the stem passes and keeps, per stem, a
+  `SignalStats` and a band map, so the audio is never held at once.
+- **Measurements.** `atomik_dsp::mixcheck::measure` reads the level over the blocks that are not silent, a peak
+  envelope per 1024 frames and the energy of the low end (a fourth-order crossover at 120 Hz) for the stereo
+  pair and its mono sum. The thresholds and their reasons are constants of that module, in one place.
+- **Findings.** `atomik_render::mixcheck::findings` is a pure function of the document and the measurements:
+  bass root (the key at the middle of the held time of the bass track's notes), weak fundamental (bass and
+  kick, against the 2nd to 4th harmonic in the mean band map), low-mid share with the tracks that fill it,
+  peaks (the highest windows of the master and the tracks loudest there), mono loss and device feeds. A
+  finding may carry a `Fix` and a `Tool` (the masking map, a Clipper on the master and the kick and bass check;
+  `Tool::available` is true for all three). `mixcheck_clipper` adds the Clipper in one undo step and
+  `mixcheck_kick_bass` picks the finding's track before the shell opens the check.
+- **Worker, state and fixes.** `AppCore::start_mixcheck` runs `mixcheck_worker` on its own thread;
+  `AppCore::mixcheck` is dropped with the project. `fix_mixcheck` is one undo step: a Gain Tool inserted before
+  the device with the trim to -18 dBFS RMS, a static band of a Dynamic EQ (a free bell of one on the chain, or a
+  new device) at the loudest low-mid band of the track, or a Stereo Tool with Mono on at the end of the chain. The
+  panel is `atomik_ui::MixCheckView`.
 
 ## 6l. The library
 
@@ -5575,8 +5646,8 @@ items are ordinary project texts, plus one small new file type.
   path inside the factory folder first, so a factory item is never changed whatever the library folder is, and
   `stepping_folder` follows a shown factory section for patch stepping. Packaging copies `factory/` into every
   artifact (`scripts/release/package-*.sh`, the `.iss` file) and the smoke test checks `factory.json`. Every item
-  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 27 device patches
-  (`Def`; the semi-modular ones fill modulation slots by key), 13 containers (`ContainerDef`: ten effect chains wired
+  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 38 device patches
+  (`Def`; the semi-modular ones fill modulation slots by key), 14 containers (`ContainerDef`: eleven effect chains wired
   in series, three modular instruments with explicit cables, macros whose position is set from the first target's
   value so the container sounds as designed), 12 note clips (`app_core_factory_clips.rs`, step and chord patterns
   written with `save_clip_file`) and 4 drum kits (`app_core_factory_kits.rs`). A kit sample is rendered by
@@ -5897,6 +5968,56 @@ stderr is their output).
   plugin cache and the plugin journal, the last crash report and the end of the log. Everything
   under the user's home folder is written as `~`.
 
+## 6o. Reference tracks
+
+A song keeps up to 16 reference audio files to compare the mix with. The list is project data with no part in the
+sound: `RackDoc::references` (`Reference`: a path and an optional cue in milliseconds), edited by
+`Command::SetReferences` (one undo step, `ViewChanged`) and saved as the optional root `"references"` (written only
+when there is an entry, ignorable, so the project format stays 44). Save As, a save to a new place and Collect Files
+copy a reference that lies outside the project into its `Files` folder with the same helper as the plugin files and
+point the list at the copy in one undo step; the files are never changed or removed.
+
+**The voice** ([engine/src/reference.rs](../crates/engine/src/reference.rs)). `ReferenceVoice` lives in the engine
+beside the preview voice and reuses its stream (`preview_channel`, the same 4-point Hermite resampling, the same
+retire queue). It runs at the end of `Engine::run_batch`, after the routing and the master meters and before the click,
+on interface outputs 1 and 2, and only live: nothing offline ever calls `EngineHandle::reference_start`, and a voice
+that is told nothing leaves the outputs bit for bit as they were. `ReferenceSettings` (listening, linear gain, band,
+stereo solo, measure) reach it through `ControlOp::ReferenceStart`, `ReferenceSet` and `ReferenceClear`.
+Listening crossfades the mix and the reference linearly over 30 ms; the gain glides with a 150 ms time constant. A band
+(`ReferenceBand`: Linkwitz-Riley filters at 80 Hz, 300 Hz and 4 kHz) and a mid or side solo (`ReferenceSolo`) go through
+two identical paths, one for the mix and one for the reference, and a change of either ducks the output for 5 ms each
+way around the swap. While `measure` is on, the voice measures the short-term loudness of the mix (the K-weighting of
+`atomik_dsp::k_weighting`, 3 s windows every 100 ms) and publishes it in `ReferenceShared`. The engine therefore
+depends on `atomik-dsp` now.
+
+**The session** ([app/src/app_core_reference.rs](../crates/app/src/app_core_reference.rs)). Selecting a
+reference decodes it on the worker `atomik-reference` and measures `measure_loudest`: the maximum of the 3 s window over the file. The
+reference key (`AppCore::toggle_reference`) fills the ring from the song position in seconds (through the tempo map) or
+from the cue, then sends `EngineSink::reference_start`; a feeder thread keeps the ring full. While any reference exists
+the engine measures the mix; the matched gain is the mix reading minus the loudest section, moved at most 0.5 dB every
+15 frames, the first reading at once, readings at or under -60 LUFS ignored. A new engine (`rebuild_engine`) returns the
+song to the mix. Commands: `mixer.toggle_reference` (Ctrl+Alt+R), `mixer.add_reference`, `mixer.select_reference`,
+`mixer.next_reference`, `mixer.remove_reference`, `mixer.reference_cue`, `mixer.reference_match`,
+`mixer.reference_band` and `mixer.reference_solo`, all in the Mixer menu's Reference submenu.
+
+**The decision zone** ([render/src/zone.rs](../crates/render/src/zone.rs),
+[app/src/app_core_zone.rs](../crates/app/src/app_core_zone.rs),
+[ui/src/zone_panel.rs](../crates/ui/src/zone_panel.rs)). `atomik_render::zone::measure` reads seven numbers from
+the first two channels of a file: gated integrated loudness, the loudest 3 s loudness, punch (sample peak minus
+integrated loudness), brightness (the least-squares slope of the octave-band energies at 125 Hz to 8 kHz, each
+band two band-pass sections in `f64`), the low end (share of the energy under 120 Hz through a Linkwitz-Riley
+low-pass), width (side over mid energy, held to -60..+20 dB) and correlation. It is a pure function of the samples,
+so it reads the same on every platform within the resolution shown. Every attribute but the two loudness ones is a
+ratio, so it does not move when a file is scaled (`Attribute::normalised`); a test scales a file and checks it.
+`zone_row` sets a mix against a list of references: the range is the lowest and highest reading, and the `Verdict`
+is `Inside` (within the attribute's resolution of the range), `Above(distance)` or `Below(distance)`.
+`AppCore::refresh_zone` runs the analysis on the worker `atomik-zone`: each reference is decoded from its file (a
+reading is kept by path while the file stays listed), and the mix is a render of the song with `render_doc_in`, the
+renderer of a bounce, so it never contains the reference voice. A song with third-party plugins is refused. The
+result never touches the document (no command, no undo step); `AppCore::zone_data` turns it into the `ZoneData` that
+`ZoneView` draws, and says when the song changed since the render started (`Document::revision`). The same
+measurement is the `zone` entry of the MCP audio report. The panel opens with `mixer.reference_panel`.
+
 ## 7. The UI crate
 
 `atomik-ui` has no window-system dependency and no time source. The app feeds `UiEvent`s and applies
@@ -6010,7 +6131,7 @@ The six effects (reverb, compressor, EQ, distortion, modulation, mastering) and 
 hand-made rack panels with labelled sections and a small visual each
 ([ui/src/fx_layout.rs](../crates/ui/src/fx_layout.rs), [fx_paint.rs](../crates/ui/src/fx_paint.rs),
 maths in [fx.rs](../crates/ui/src/fx.rs): decay sketch, transfer curve, EQ response with draggable
-handles, distortion curve, LFO sketch, crossover and loudness readouts). The app calls
+handles, distortion and clipper curves, LFO sketch, crossover and loudness readouts). The app calls
 `RackView::set_device_meter_values(&DeviceKey, &[f32])` once per frame with
 `AppCore::device_meter_values` for the effect devices; the view turns the values into dB display
 values and repaints a panel only when one changed. The compressor panel's "SC from..." list

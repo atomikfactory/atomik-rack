@@ -163,14 +163,16 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
-    ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, MacrosAction, MacrosView,
-    MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
-    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
-    RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView,
-    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem,
-    VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
+    BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
+    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
+    KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
+    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
+    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
+    UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
+    ZoneAction, ZoneView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -313,6 +315,9 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a MIDI file (the quantize panel's GROOVE FROM MIDI FILE),
     /// then call [`Shell::groove_from_midi_file`] with the picked path.
     PickGrooveMidi,
+    /// Show an open-file dialog for a reference track (Mixer > Reference > Add Reference
+    /// Track), then call [`Shell::add_reference_file`] with the picked path.
+    PickReference,
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
@@ -530,12 +535,23 @@ pub struct Shell<B: AudioBackend> {
     scale: Option<ScaleView>,
     /// The percentage the panel opened with last time (view state, not in the project).
     scale_percent: f64,
+    /// The blind A/B panel (device context menu) while it is open.
+    blind: Option<BlindView>,
     /// The strip silence panel (Edit > Strip Silence) while it is open.
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The kick and bass check panel (Mixer > Kick and Bass Check) while it is open.
+    kick_bass: Option<KickBassView>,
+    /// The references and decision zone panel (Mixer > Reference > Reference Panel) while it is
+    /// open.
+    zone: Option<ZoneView>,
     /// The versions panel, while it is open.
     versions: Option<VersionsView>,
+    /// The masking map panel (Mixer > Masking Map), while it is open.
+    masking: Option<MaskingView>,
+    /// The mix check panel (Mixer > Check Mix), while it is open.
+    mixcheck: Option<MixCheckView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -716,9 +732,14 @@ impl<B: AudioBackend> Shell<B> {
             quantize_values: QuantizeValues::default(),
             scale: None,
             scale_percent: 150.0,
+            blind: None,
             silence: None,
             song_info: None,
+            kick_bass: None,
+            zone: None,
             versions: None,
+            masking: None,
+            mixcheck: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -894,6 +915,62 @@ impl<B: AudioBackend> Shell<B> {
         self.quantize
             .as_ref()
             .map_or(&self.quantize_values, QuantizeView::values)
+    }
+
+    /// The blind A/B panel, while it is open.
+    pub fn blind_view(&self) -> Option<&BlindView> {
+        self.blind.as_ref()
+    }
+
+    /// Opens the blind A/B panel for the selected effect and starts a test; says why when the
+    /// selection cannot be tested.
+    fn open_blind(&mut self) {
+        let Some(device) = self.core.view().primary() else {
+            self.core.report("Select an effect to test first");
+            return;
+        };
+        if let Err(message) = self.core.blind_start(&device, 0) {
+            self.core.report(message);
+            return;
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = BlindView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.blind = Some(view);
+        self.sync_blind();
+        self.repaint = true;
+    }
+
+    /// Feeds the blind panel what the test shows; the panel closes when the test is gone.
+    fn sync_blind(&mut self) {
+        if self.blind.is_none() {
+            return;
+        }
+        match self.core.blind_info() {
+            Some(info) => {
+                if let Some(view) = &mut self.blind {
+                    view.set_info(info);
+                    if view.needs_repaint() {
+                        self.repaint = true;
+                    }
+                }
+            }
+            None => {
+                self.blind = None;
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the blind panel asked for.
+    fn blind_action(&mut self, action: BlindAction) {
+        self.core.blind_action(action);
+        if action == BlindAction::Close {
+            self.blind = None;
+        }
+        self.sync_blind();
+        self.repaint = true;
     }
 
     /// Whether the strip silence panel is open.
@@ -1212,6 +1289,112 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Whether the kick and bass check panel is open.
+    pub fn kick_bass_open(&self) -> bool {
+        self.kick_bass.is_some()
+    }
+
+    /// The kick and bass check panel, while it is open.
+    pub fn kick_bass_view(&self) -> Option<&KickBassView> {
+        self.kick_bass.as_ref()
+    }
+
+    /// Opens the kick and bass check panel (the picks are guessed from the track names).
+    fn open_kick_bass(&mut self) {
+        self.core.kick_bass_open();
+        let theme = self.core.view().theme().clone();
+        let mut view = KickBassView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_info(self.core.kick_bass_info());
+        self.kick_bass = Some(view);
+        self.repaint = true;
+    }
+
+    /// Hands the open kick and bass panel what the app knows now (the worker's progress and
+    /// result included).
+    fn sync_kick_bass(&mut self) {
+        if self.kick_bass.is_none() {
+            return;
+        }
+        let info = self.core.kick_bass_info();
+        if let Some(v) = &mut self.kick_bass {
+            v.set_info(info);
+            if v.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the kick and bass panel asked for.
+    fn kick_bass_action(&mut self, action: KickBassAction) {
+        match action {
+            KickBassAction::Close => {
+                self.kick_bass = None;
+                self.repaint = true;
+                return;
+            }
+            KickBassAction::Kick(d) => self.core.kick_bass_pick(false, d),
+            KickBassAction::Bass(d) => self.core.kick_bass_pick(true, d),
+            KickBassAction::Run => self.core.kick_bass_run(),
+            KickBassAction::Cancel => self.core.kick_bass_cancel(),
+            KickBassAction::Apply(n) => self.core.kick_bass_apply(n),
+        }
+        self.sync_kick_bass();
+    }
+
+    /// Whether the references and decision zone panel is open.
+    pub fn zone_open(&self) -> bool {
+        self.zone.is_some()
+    }
+
+    /// The references and decision zone panel, while it is open.
+    pub fn zone_view(&self) -> Option<&ZoneView> {
+        self.zone.as_ref()
+    }
+
+    /// Opens the references and decision zone panel. The first time, with a reference listed, it
+    /// starts measuring the mix.
+    fn open_zone(&mut self) {
+        let theme = self.core.view().theme().clone();
+        if !self.core.zone_measured() {
+            self.core.refresh_zone();
+        }
+        let mut view = ZoneView::new(theme, self.core.zone_data());
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.zone = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open decision zone panel in step with the core (a reading that landed, a
+    /// reference that was added or selected).
+    fn sync_zone(&mut self) {
+        if self.zone.is_none() {
+            return;
+        }
+        let data = self.core.zone_data();
+        if let Some(view) = &mut self.zone
+            && view.set_data(data)
+        {
+            self.repaint = true;
+        }
+    }
+
+    /// What the references and decision zone panel asked for.
+    fn zone_action(&mut self, action: ZoneAction) {
+        match action {
+            ZoneAction::Close => self.zone = None,
+            ZoneAction::Refresh => {
+                self.core.refresh_zone();
+            }
+            ZoneAction::Select(index) => self.core.select_reference(index),
+            ZoneAction::Listen => self.core.toggle_reference(),
+        }
+        self.sync_zone();
+        self.repaint = true;
+    }
+
     /// Whether the versions panel is open.
     pub fn versions_open(&self) -> bool {
         self.versions.is_some()
@@ -1236,6 +1419,165 @@ impl<B: AudioBackend> Shell<B> {
                 protected: v.protected,
             })
             .collect()
+    }
+
+    /// Whether the masking map panel is open.
+    pub fn masking_open(&self) -> bool {
+        self.masking.is_some()
+    }
+
+    /// The masking map panel, while it is open.
+    pub fn masking_view(&self) -> Option<&MaskingView> {
+        self.masking.as_ref()
+    }
+
+    /// Mixer > Masking Map: opens the panel (with the last result, if the project has one).
+    fn open_masking(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MaskingView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.masking_data());
+        view.set_progress(self.core.masking_progress());
+        self.masking = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open masking panel in step with the analysis: its progress, its result, and the
+    /// line that says how it ended.
+    fn sync_masking(&mut self) {
+        let Some(view) = &mut self.masking else {
+            return;
+        };
+        let was_busy = view.busy();
+        view.set_progress(self.core.masking_progress());
+        view.set_data(self.core.masking_data());
+        if was_busy && !view.busy() {
+            view.set_note(self.core.last_rejection().unwrap_or(""));
+        }
+        if view.needs_repaint() {
+            self.repaint = true;
+        }
+    }
+
+    /// What the masking panel asked for.
+    fn masking_action(&mut self, action: MaskingAction) {
+        match action {
+            MaskingAction::Close => self.masking = None,
+            MaskingAction::Analyse => {
+                let _ = self.core.start_masking();
+                self.sync_masking();
+                if let Some(v) = &mut self.masking {
+                    v.set_note(
+                        self.core
+                            .last_rejection()
+                            .filter(|_| !self.core.masking_running())
+                            .unwrap_or(""),
+                    );
+                }
+            }
+            MaskingAction::Cancel => self.core.cancel_masking(),
+            MaskingAction::Locate { pair, range } => self.core.locate_masking(pair, range),
+            MaskingAction::Demask { pair, band } => {
+                let note = match self.core.demask(pair, band) {
+                    Ok(_) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                };
+                if let Some(v) = &mut self.masking {
+                    v.set_note(&note);
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Whether the mix check panel is open.
+    pub fn mixcheck_open(&self) -> bool {
+        self.mixcheck.is_some()
+    }
+
+    /// The mix check panel, while it is open.
+    pub fn mixcheck_view(&self) -> Option<&MixCheckView> {
+        self.mixcheck.as_ref()
+    }
+
+    /// Mixer > Check Mix: opens the panel (with the last result, if the project has one).
+    fn open_mixcheck(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MixCheckView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.mixcheck_data());
+        view.set_progress(self.core.mixcheck_progress());
+        self.mixcheck = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open mix check panel in step with the check: its progress, its result, and the
+    /// line that says how it ended.
+    fn sync_mixcheck(&mut self) {
+        let Some(view) = &mut self.mixcheck else {
+            return;
+        };
+        let was_busy = view.busy();
+        view.set_progress(self.core.mixcheck_progress());
+        view.set_data(self.core.mixcheck_data());
+        if was_busy && !view.busy() {
+            view.set_note(self.core.last_rejection().unwrap_or(""));
+        }
+        if view.needs_repaint() {
+            self.repaint = true;
+        }
+    }
+
+    /// What the mix check panel asked for.
+    fn mixcheck_action(&mut self, action: MixCheckAction) {
+        let mut note = None;
+        match action {
+            MixCheckAction::Close => self.mixcheck = None,
+            MixCheckAction::Run => {
+                let _ = self.core.start_mixcheck();
+                self.sync_mixcheck();
+                note = Some(
+                    self.core
+                        .last_rejection()
+                        .filter(|_| !self.core.mixcheck_running())
+                        .unwrap_or("")
+                        .to_owned(),
+                );
+            }
+            MixCheckAction::Cancel => self.core.cancel_mixcheck(),
+            MixCheckAction::Locate(n) => self.core.locate_mixcheck(n),
+            MixCheckAction::Fix(n) => {
+                note = Some(match self.core.fix_mixcheck(n) {
+                    Ok(()) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                });
+            }
+            MixCheckAction::Open(n) => match self.core.mixcheck_tool(n) {
+                Some(atomik_render::mixcheck::Tool::MaskingMap) => {
+                    self.mixcheck = None;
+                    self.open_masking();
+                    self.masking_action(MaskingAction::Analyse);
+                }
+                Some(atomik_render::mixcheck::Tool::KickBassCheck) => {
+                    self.core.mixcheck_kick_bass(n);
+                    self.mixcheck = None;
+                    self.open_kick_bass();
+                }
+                Some(atomik_render::mixcheck::Tool::Clipper) => {
+                    let _ = self.core.mixcheck_clipper(n);
+                    note = Some(self.core.last_rejection().unwrap_or("").to_owned());
+                }
+                None => {
+                    note = Some(self.core.last_rejection().unwrap_or("").to_owned());
+                }
+            },
+        }
+        if let (Some(v), Some(note)) = (&mut self.mixcheck, note) {
+            v.set_note(&note);
+        }
+        self.repaint = true;
     }
 
     /// File > Save Version and File > Versions: opens the versions panel (the name has the keys;
@@ -1784,6 +2126,15 @@ impl<B: AudioBackend> Shell<B> {
             if let Some(view) = &mut self.quantize {
                 view.select_groove(&name);
             }
+        }
+        self.repaint = true;
+    }
+
+    /// Adds the audio file the Add Reference Track dialog picked to the song's reference
+    /// tracks (a refusal goes to the status line).
+    pub fn add_reference_file(&mut self, path: &Path) {
+        if let Err(e) = self.core.add_reference(path) {
+            self.core.report(format!("Reference track not added: {e}"));
         }
         self.repaint = true;
     }
@@ -2514,13 +2865,28 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.scale {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.blind {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.silence {
             v.set_theme(theme.clone());
         }
         if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.kick_bass {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.zone {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.versions {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.masking {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.mixcheck {
             v.set_theme(theme.clone());
         }
         if let Some((v, _)) = &mut self.color_picker {
@@ -2860,6 +3226,7 @@ impl<B: AudioBackend> Shell<B> {
             vca: self.core.vca_menu(self.live_pane(self.focus)),
             strip: self.core.strip_menu(self.live_pane(self.focus)),
             snapshots: self.core.snapshot_menu(),
+            reference: self.core.reference_menu(),
             midi: self.core.midi_menu(),
             freeze: self.core.freeze_menu(),
             follow_selection: self.core.follow_selection(),
@@ -3117,6 +3484,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.blind.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.blind {
+                v.set_bounds(rect);
+            }
+        }
         if self.silence.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.silence {
@@ -3129,9 +3502,33 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.kick_bass.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.kick_bass {
+                v.set_bounds(rect);
+            }
+        }
+        if self.zone.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.zone {
+                v.set_bounds(rect);
+            }
+        }
         if self.versions.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.versions {
+                v.set_bounds(rect);
+            }
+        }
+        if self.masking.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.masking {
+                v.set_bounds(rect);
+            }
+        }
+        if self.mixcheck.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.mixcheck {
                 v.set_bounds(rect);
             }
         }
@@ -3648,6 +4045,12 @@ impl<B: AudioBackend> Shell<B> {
         true
     }
 
+    /// Switches the loudness match of the selected effects.
+    fn toggle_match_of_selection(&mut self) {
+        let keys = self.core.view().selection();
+        self.core.toggle_match(&keys);
+    }
+
     /// Previous (`-1`) or next (`1`) patch for the device the patch browser is aimed at, else the
     /// primary selected device.
     fn step_patch_of_selection(&mut self, delta: i32) {
@@ -3666,7 +4069,8 @@ impl<B: AudioBackend> Shell<B> {
     /// (the current one checked). A choice runs `rack.patch_pick` with the file.
     fn open_patch_siblings(&mut self, device: &DeviceKey) {
         let (items, current) = self.core.patch_siblings(device);
-        if items.is_empty() {
+        let can_clean = self.core.can_clean_up_bass(device);
+        if items.is_empty() && !can_clean {
             self.core
                 .report("There are no patches for this device type in the folder");
             return;
@@ -3679,7 +4083,7 @@ impl<B: AudioBackend> Shell<B> {
             return;
         };
         let at = self.rack_window_point(at);
-        let entries = context_menus::patch_entries(&items, current);
+        let entries = context_menus::patch_entries(&items, current, can_clean);
         self.patch_menu = Some(device.clone());
         let (window, size) = self.menu_window(Pane::Rack);
         let menu = ContextMenu::from_entries(entries, at, size);
@@ -4066,6 +4470,102 @@ impl<B: AudioBackend> Shell<B> {
             }
             return Vec::new();
         }
+        if self.kick_bass.is_some() {
+            // The kick and bass panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.kick_bass = None;
+                return Vec::new();
+            }
+            let actions = self
+                .kick_bass
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::KickBass(a) = action {
+                    self.kick_bass_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.masking.is_some() {
+            // The masking panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.masking = None;
+                return Vec::new();
+            }
+            let actions = self
+                .masking
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Masking(a) = action {
+                    self.masking_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.mixcheck.is_some() {
+            // The mix check panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.mixcheck = None;
+                return Vec::new();
+            }
+            let actions = self
+                .mixcheck
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::MixCheck(a) = action {
+                    self.mixcheck_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.zone.is_some() {
+            // The decision zone panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.zone = None;
+                return Vec::new();
+            }
+            let actions = self
+                .zone
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Zone(a) = action {
+                    self.zone_action(a);
+                }
+            }
+            return Vec::new();
+        }
         if self.versions.is_some() {
             // The versions panel takes every event (typed text included); Esc closes it.
             self.repaint = true;
@@ -4113,6 +4613,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::ColorPicker(a) = action {
                     self.color_picker_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.blind.is_some() {
+            // The blind panel takes every event; Esc ends the test.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.blind_action(BlindAction::Close);
+                return Vec::new();
+            }
+            let actions = self
+                .blind
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Blind(a) = action {
+                    self.blind_action(a);
                 }
             }
             return Vec::new();
@@ -4575,6 +5099,10 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a device first"),
             },
             ("rack.reset_device", None) => self.core.reset_selected_device(),
+            ("rack.clean_up_bass", None) => {
+                self.patch_menu = None;
+                self.core.clean_up_bass();
+            }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
             ("rack.combine", None) => {
                 self.core.combine_selection();
@@ -4597,6 +5125,8 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("rack.blind_ab", None) => self.open_blind(),
+            ("rack.toggle_match", None) => self.toggle_match_of_selection(),
             ("rack.mod_matrix", None) => match self.core.view().primary() {
                 Some(device) => self.open_mod_matrix(&device),
                 None => self
@@ -5162,6 +5692,9 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .primary()
                     .is_some_and(|d| core.has_mod_matrix(&d)),
+            effect: pane == Pane::Rack && core.view().primary().is_some_and(|d| core.has_match(&d)),
+            matching: pane == Pane::Rack
+                && core.view().primary().is_some_and(|d| core.match_on(&d)),
             player: pane == Pane::Rack
                 && core
                     .view()
@@ -5796,12 +6329,30 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_song_info();
                 Vec::new()
             }
+            AppCommand::KickBassCheck => {
+                self.open_kick_bass();
+                Vec::new()
+            }
+            AppCommand::ReferencePanel => {
+                self.open_zone();
+                Vec::new()
+            }
             AppCommand::StartScreen => {
                 self.open_start_screen();
                 Vec::new()
             }
             AppCommand::SaveVersion => {
                 self.open_versions(false);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::MaskingMap => {
+                self.open_masking();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::CheckMix => {
+                self.open_mixcheck();
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -6577,6 +7128,42 @@ impl<B: AudioBackend> Shell<B> {
                 self.ui_changed();
                 Vec::new()
             }
+            AppCommand::ToggleReference => {
+                self.core.toggle_reference();
+                Vec::new()
+            }
+            AppCommand::AddReference => vec![ShellRequest::PickReference],
+            AppCommand::SelectReference(n) => {
+                self.core.select_reference(usize::from(n));
+                Vec::new()
+            }
+            AppCommand::NextReference => {
+                self.core.next_reference();
+                Vec::new()
+            }
+            AppCommand::RemoveReference => {
+                let selected = self.core.reference_info().selected;
+                self.core.remove_reference(selected);
+                Vec::new()
+            }
+            AppCommand::ReferenceCue(on) => {
+                let selected = self.core.reference_info().selected;
+                self.core.set_reference_cue(selected, on);
+                Vec::new()
+            }
+            AppCommand::ReferenceMatch => {
+                let on = !self.core.reference_info().level_match;
+                self.core.set_reference_level_match(on);
+                Vec::new()
+            }
+            AppCommand::ReferenceBand(band) => {
+                self.core.set_reference_band(band);
+                Vec::new()
+            }
+            AppCommand::ReferenceSolo(solo) => {
+                self.core.set_reference_solo(solo);
+                Vec::new()
+            }
             AppCommand::MorphTime(seconds) => {
                 self.core.set_morph_seconds(seconds);
                 self.ui.morph_seconds = seconds.clamp(1, 8);
@@ -7086,11 +7673,16 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_library_ui();
         self.sync_relink();
         self.sync_export();
+        self.sync_masking();
+        self.sync_mixcheck();
         self.sync_midi_maps();
         self.sync_macros();
         self.sync_mod_matrix();
+        self.sync_blind();
         self.sync_param_search();
         self.sync_quantize();
+        self.sync_kick_bass();
+        self.sync_zone();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -7876,13 +8468,28 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.scale {
             view.paint(canvas);
         }
+        if let Some(view) = &self.blind {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.silence {
             view.paint(canvas);
         }
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.kick_bass {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.zone {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.versions {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.masking {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.mixcheck {
             view.paint(canvas);
         }
         if let Some((view, _)) = &self.color_picker {
@@ -8114,6 +8721,10 @@ mod midimap_tests;
 mod macros_tests;
 
 #[cfg(test)]
+#[path = "shell_kick_bass_tests.rs"]
+mod kick_bass_tests;
+
+#[cfg(test)]
 #[path = "shell_key_chord_tests.rs"]
 mod key_chord_tests;
 
@@ -8243,6 +8854,14 @@ mod templates_tests;
 #[cfg(test)]
 #[path = "shell_versions_tests.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "shell_masking_tests.rs"]
+mod masking_tests;
+
+#[cfg(test)]
+#[path = "shell_mixcheck_tests.rs"]
+mod mixcheck_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]

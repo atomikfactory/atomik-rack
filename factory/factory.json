@@ -168,6 +168,18 @@
         "pad"
       ]
     },
+    "Containers/Double Clip.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Dynamics"
+      ],
+      "tags": [
+        "chain",
+        "clipper",
+        "loud",
+        "density"
+      ]
+    },
     "Containers/Drum Punch.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -300,6 +312,18 @@
         "pulsing"
       ]
     },
+    "Patches/Air Lift.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Mix"
+      ],
+      "tags": [
+        "dynamic eq",
+        "air",
+        "bright",
+        "lift"
+      ]
+    },
     "Patches/Aurora Stack.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -336,6 +360,18 @@
         "round"
       ]
     },
+    "Patches/Bass Warm Clip.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "clipper",
+        "bass",
+        "warm",
+        "even harmonics"
+      ]
+    },
     "Patches/Brass Rail.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -346,6 +382,18 @@
         "bright",
         "driven",
         "percussive"
+      ]
+    },
+    "Patches/Clean Kick Sub.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "kick",
+        "sub",
+        "sine",
+        "reset phase"
       ]
     },
     "Patches/Comb Pluck.atomikpatch": {
@@ -370,6 +418,42 @@
         "short",
         "bright",
         "echo"
+      ]
+    },
+    "Patches/De-boxer.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "dynamic eq",
+        "drums",
+        "boxy",
+        "room"
+      ]
+    },
+    "Patches/Drum Bus De-harsh.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "dynamic eq",
+        "drums",
+        "bus",
+        "smooth"
+      ]
+    },
+    "Patches/Drum Bus Soft Clip.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "clipper",
+        "drums",
+        "soft",
+        "density"
       ]
     },
     "Patches/Dusk Clavier.atomikpatch": {
@@ -480,6 +564,30 @@
         "punchy"
       ]
     },
+    "Patches/Kick Click Tamer.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Drums"
+      ],
+      "tags": [
+        "clipper",
+        "kick",
+        "click",
+        "tame"
+      ]
+    },
+    "Patches/Master Peak Trim.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Mastering"
+      ],
+      "tags": [
+        "clipper",
+        "master",
+        "peaks",
+        "transparent"
+      ]
+    },
     "Patches/Mist Bed.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -490,6 +598,18 @@
         "soft",
         "slow",
         "vocal"
+      ]
+    },
+    "Patches/Mono Sub Bass.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "sub",
+        "mono",
+        "reset phase",
+        "clean"
       ]
     },
     "Patches/Neon Stab.atomikpatch": {
@@ -526,6 +646,18 @@
         "soft",
         "vibrato",
         "warm"
+      ]
+    },
+    "Patches/Reset Pluck Bass.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "pluck",
+        "bass",
+        "wavetable",
+        "reset phase"
       ]
     },
     "Patches/Rubber Floor.atomikpatch": {
@@ -646,6 +778,18 @@
         "soft",
         "tremolo",
         "mellow"
+      ]
+    },
+    "Patches/Vocal Resonance Tamer.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Vocal"
+      ],
+      "tags": [
+        "dynamic eq",
+        "vocal",
+        "resonance",
+        "smooth"
       ]
     },
     "Patches/Vowel Drift.atomikpatch": {

@@ -152,11 +152,19 @@ pub(super) struct ExternalReport {
     missing: Vec<String>,
     /// Names of the files left where they are, with the reason.
     refused: Vec<(String, &'static str)>,
+    /// Names of the reference tracks copied into the project.
+    references_copied: Vec<String>,
+    /// Reference tracks left where they are: not found, too big or not copyable.
+    references_left: usize,
 }
 
 impl ExternalReport {
     fn is_empty(&self) -> bool {
-        self.copied.is_empty() && self.missing.is_empty() && self.refused.is_empty()
+        self.copied.is_empty()
+            && self.missing.is_empty()
+            && self.refused.is_empty()
+            && self.references_copied.is_empty()
+            && self.references_left == 0
     }
 
     /// What happened, for the end of a toast; empty when there is nothing to say.
@@ -194,11 +202,26 @@ impl ExternalReport {
                 list(names)
             ));
         }
-        if parts.is_empty() {
-            String::new()
-        } else {
-            format!("plugin files: {}", parts.join(", "))
+        let mut texts = Vec::new();
+        if !parts.is_empty() {
+            texts.push(format!("plugin files: {}", parts.join(", ")));
         }
+        let mut refs = Vec::new();
+        if !self.references_copied.is_empty() {
+            let names = self.references_copied.iter().map(String::as_str).collect();
+            refs.push(format!(
+                "{} copied into {EXTERNAL_FOLDER}: {}",
+                self.references_copied.len(),
+                list(names)
+            ));
+        }
+        if self.references_left > 0 {
+            refs.push(format!("{} left where they are", self.references_left));
+        }
+        if !refs.is_empty() {
+            texts.push(format!("reference tracks: {}", refs.join(", ")));
+        }
+        texts.join("; ")
     }
 }
 
@@ -390,7 +413,9 @@ impl<S: EngineSink> AppCore<S> {
             self.reject("The factory library is read-only: nothing was collected".to_owned());
             return Ok(());
         }
-        if self.document.referenced_assets().is_empty() && self.doc().plugin_file_refs().is_empty()
+        if self.document.referenced_assets().is_empty()
+            && self.doc().plugin_file_refs().is_empty()
+            && self.doc().references.is_empty()
         {
             self.reject("The project uses no audio files".to_owned());
             return Ok(());
@@ -491,6 +516,63 @@ impl<S: EngineSink> AppCore<S> {
         report
     }
 
+    /// Gathers the reference tracks that lie outside `folder` into its `Files/` folder and
+    /// points the list at the copies (one undo step). A file that
+    /// is not there, or too big, stays where it is; nothing is written into the factory folder.
+    fn collect_reference_files(&mut self, folder: &Path, report: &mut ExternalReport) {
+        let list = self.doc().references.clone();
+        if list.is_empty() || self.in_factory(folder) {
+            return;
+        }
+        let dest_dir = folder.join(EXTERNAL_FOLDER);
+        let mut moved = list.clone();
+        for r in &mut moved {
+            let src = Path::new(&r.path).to_path_buf();
+            let name = src
+                .file_name()
+                .map_or_else(|| r.path.clone(), |n| n.to_string_lossy().into_owned());
+            match collect_external_file(&src, &dest_dir) {
+                Ok(ExternalCopy::Copied { dest, .. }) => {
+                    report.references_copied.push(name);
+                    r.path = dest.to_string_lossy().into_owned();
+                }
+                Ok(ExternalCopy::Present { dest }) => {
+                    r.path = dest.to_string_lossy().into_owned();
+                }
+                Ok(ExternalCopy::Missing | ExternalCopy::Refused(_)) => report.references_left += 1,
+                Err(e) => {
+                    log::warn!("collect: cannot copy {}: {e}", r.path);
+                    report.references_left += 1;
+                }
+            }
+        }
+        // Two references that now share a file keep the first.
+        let mut seen = BTreeSet::new();
+        moved.retain(|r| seen.insert(r.path.clone()));
+        if moved == list {
+            return;
+        }
+        let done = self.apply_command(Command::SetReferences(moved));
+        if let Err(e) = done {
+            log::warn!("collect: cannot point the reference tracks at their copies: {e}");
+        }
+    }
+
+    /// The reference tracks Collect Files would copy, and the ones it cannot find.
+    fn reference_files_preview(&self, folder: &Path) -> (usize, usize) {
+        let dest = folder.join(EXTERNAL_FOLDER);
+        let (mut copy, mut missing) = (0, 0);
+        for r in &self.doc().references {
+            let src = Path::new(&r.path);
+            if !src.is_file() {
+                missing += 1;
+            } else if !src.starts_with(&dest) {
+                copy += 1;
+            }
+        }
+        (copy, missing)
+    }
+
     /// The files plugin states name that Collect Files would copy, and the ones it cannot find.
     fn plugin_files_preview(&self, folder: &Path) -> (usize, Vec<String>) {
         let dest = folder.join(EXTERNAL_FOLDER);
@@ -566,12 +648,25 @@ impl<S: EngineSink> AppCore<S> {
     pub fn collect_preview_message(&self) -> Result<String, AppError> {
         let preview = self.collect_preview()?;
         let (plugin_copy, plugin_missing) = self.plugin_files_preview(&preview.folder);
+        let (ref_copy, ref_missing) = self.reference_files_preview(&preview.folder);
+        let refs_text = match (ref_copy, ref_missing) {
+            (0, 0) => String::new(),
+            (c, m) => format!(
+                "; {c} reference track{} to copy{}",
+                if c == 1 { "" } else { "s" },
+                if m > 0 {
+                    format!(", {m} not found")
+                } else {
+                    String::new()
+                }
+            ),
+        };
         if self.document.referenced_assets().is_empty() {
-            if plugin_copy == 0 && plugin_missing.is_empty() {
+            if plugin_copy == 0 && plugin_missing.is_empty() && refs_text.is_empty() {
                 return Ok("The project uses no audio files".to_owned());
             }
             return Ok(format!(
-                "Collect Files would copy {plugin_copy} plugin file{}{}",
+                "Collect Files would copy {plugin_copy} plugin file{}{}{refs_text}",
                 if plugin_copy == 1 { "" } else { "s" },
                 if plugin_missing.is_empty() {
                     String::new()
@@ -643,6 +738,7 @@ impl<S: EngineSink> AppCore<S> {
                 plugin_missing.join(", ")
             ));
         }
+        text.push_str(&refs_text);
         Ok(text)
     }
 
@@ -842,7 +938,8 @@ impl<S: EngineSink> AppCore<S> {
         // A save to a new place and Collect Files bring the files the plugins name along.
         if collect || self.file.as_deref() != Some(file) {
             let folder = root.clone().unwrap_or_else(|| collect_root(file));
-            let report = self.collect_plugin_files(&folder);
+            let mut report = self.collect_plugin_files(&folder);
+            self.collect_reference_files(&folder, &mut report);
             self.audio.externals = (!report.is_empty()).then_some(report);
         }
         let keep = self.document.referenced_assets();

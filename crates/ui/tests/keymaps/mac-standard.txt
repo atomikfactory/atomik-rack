@@ -111,6 +111,7 @@ mixer.scroll_left | mixer | Cmd+Left, Cmd+Shift+Left
 mixer.scroll_right | mixer | Cmd+Right, Cmd+Shift+Right
 mixer.select_left | mixer | Left
 mixer.select_right | mixer | Right
+mixer.toggle_reference | global | Cmd+Opt+R
 mixer.value_down | mixer | Down
 mixer.value_down_fine | mixer | Shift+Down
 mixer.value_page_down | mixer | PageDown

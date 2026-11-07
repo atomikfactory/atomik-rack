@@ -285,14 +285,25 @@ pub struct AppCore<S: EngineSink> {
     tuners: tuner::Tuners,
     /// The EQs whose analyser the engine was told to run.
     eq_live: eq_live::EqLive,
+    /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
+    resonance: resonance_finder::Finder,
+    /// The blind A/B test and the loudness match readouts.
+    blind: blind::Blind,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
     /// The note player preview that runs (see `app_core_preview.rs`).
     player_preview: Option<preview_ops::PlayerPreview>,
+    /// The reference tracks session: selection, listening, level match (see
+    /// `app_core_reference.rs`).
+    reference: reference_ops::ReferenceState,
+    /// The decision zone: readings of the mix and the references (see `app_core_zone.rs`).
+    zone: zone_ops::ZoneState,
     /// The library clip preview that plays through a track (see `app_core_clip_preview.rs`).
     clip_preview: Option<clip_preview_ops::LiveClipPreview>,
     /// The library patch preview that renders on a worker (see `app_core_patch_preview.rs`).
     patch_preview: Option<patch_preview_ops::PatchPreview>,
+    /// The kick and bass check: the picked tracks and the worker (see `app_core_kick_bass.rs`).
+    kick_bass: kick_bass_ops::KickBass,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: (
         Option<atomik_model::PatternDoc>,
@@ -547,10 +558,15 @@ impl<S: EngineSink> AppCore<S> {
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
+            resonance: resonance_finder::Finder::default(),
+            blind: blind::Blind::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
+            reference: reference_ops::ReferenceState::new(),
+            zone: zone_ops::ZoneState::new(),
             clip_preview: None,
             patch_preview: None,
+            kick_bass: kick_bass_ops::KickBass::default(),
             pattern_clip_seen: (None, None),
             drum_draws: clock_entropy(),
             transport_bar: TransportBar::new(theme.clone()),
@@ -1017,6 +1033,8 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
             UiAction::SetTuner { device, on } => self.set_tuner(device, on),
             UiAction::PreviewPlayer(device) => self.toggle_player_preview(&device),
+            UiAction::FindResonances(device) => self.find_resonances(&device),
+            UiAction::CutResonances(device) => self.cut_resonances(&device),
             UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
             UiAction::CycleSamplingInput => self.cycle_sampling_input(),
             UiAction::EditSample {
@@ -1581,6 +1599,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_before_reset();
         self.sink.reset(&config);
         self.plugins_after_reset();
+        self.reference_after_reset();
         // A fresh engine starts in tune; a project that is not has its tune in force at once.
         if self.doc().tune_cents.to_bits() != 0 {
             let result = self.sink.set_master_tune(self.doc().tune_cents, false);
@@ -1593,6 +1612,7 @@ impl<S: EngineSink> AppCore<S> {
         self.analysers.restart();
         self.tuners.restart();
         self.eq_live.restart();
+        self.blind.restart();
         self.speq.restart();
         self.next_id = 1;
         self.sent_loop = None;
@@ -1666,9 +1686,13 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_tuners();
         self.feed_spectrum_eq();
         self.feed_eq_analysers();
+        self.poll_resonances();
+        self.feed_match_gains();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
+        self.reference_frame();
+        self.zone_frame();
         self.browser_frame();
     }
 
@@ -3760,6 +3784,11 @@ mod spectrum_eq;
 #[path = "app_core_eq_live.rs"]
 mod eq_live;
 
+#[path = "app_core_blind.rs"]
+mod blind;
+#[path = "app_core_resonance.rs"]
+mod resonance_finder;
+
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
@@ -3785,14 +3814,20 @@ mod setups;
 mod clip_preview_ops;
 #[path = "app_core_dub.rs"]
 mod dub_ops;
+#[path = "app_core_kick_bass.rs"]
+mod kick_bass_ops;
 #[path = "app_core_patch_preview.rs"]
 mod patch_preview_ops;
 #[path = "app_core_player_stack.rs"]
 mod player_stack_ops;
 #[path = "app_core_preview.rs"]
 mod preview_ops;
+#[path = "app_core_reference.rs"]
+mod reference_ops;
 #[path = "app_core_takes.rs"]
 mod takes_ops;
+#[path = "app_core_zone.rs"]
+mod zone_ops;
 
 #[path = "app_core_mix.rs"]
 mod mix_ops;
@@ -3879,6 +3914,13 @@ pub use templates::{
     list_templates,
 };
 
+#[path = "app_core_masking.rs"]
+mod masking;
+pub use masking::DemaskReport;
+
+#[path = "app_core_mixcheck.rs"]
+mod mixcheck;
+
 #[path = "app_core_versions.rs"]
 mod versions;
 pub use versions::{VersionComparison, VersionRow};
@@ -3939,6 +3981,14 @@ mod tuner_tests;
 #[cfg(test)]
 #[path = "app_core_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "app_core_masking_tests.rs"]
+mod masking_tests;
+
+#[cfg(test)]
+#[path = "app_core_mixcheck_tests.rs"]
+mod mixcheck_tests;
 
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]
@@ -4117,6 +4167,10 @@ mod factory_tests;
 mod patches_tests;
 
 #[cfg(test)]
+#[path = "app_core_kick_bass_tests.rs"]
+mod kick_bass_tests;
+
+#[cfg(test)]
 #[path = "app_core_midi_out_tests.rs"]
 mod midi_out_tests;
 
@@ -4155,3 +4209,15 @@ mod audition_tests;
 #[cfg(test)]
 #[path = "app_core_keys_tests.rs"]
 mod keys_tests;
+
+#[cfg(test)]
+#[path = "app_core_blind_tests.rs"]
+mod blind_tests;
+
+#[cfg(test)]
+#[path = "app_core_reference_tests.rs"]
+mod reference_tests;
+
+#[cfg(test)]
+#[path = "app_core_zone_tests.rs"]
+mod zone_tests;
