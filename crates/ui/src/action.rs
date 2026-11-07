@@ -664,6 +664,9 @@ pub enum UiAction {
     /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
     /// restore one, protect one, or close.
     Versions(crate::versions_panel::VersionsAction),
+    /// The masking map panel ([`crate::MaskingView`]) asks for something: analyse the song, stop
+    /// the analysis, locate a clash, de-mask a band, or close.
+    Masking(crate::masking_panel::MaskingAction),
     /// The colour menu's Custom item: the app opens the colour picker
     /// ([`crate::ColorPickerView`]) for this target, from the colour it has now.
     PickColor(crate::color_picker::ColorTarget),

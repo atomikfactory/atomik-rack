@@ -39,6 +39,7 @@ pub mod keymap_store;
 pub mod kick_bass;
 pub mod library_store;
 pub mod logging;
+pub mod masking_worker;
 pub mod master_keyboard;
 pub mod menubar;
 pub mod midi;

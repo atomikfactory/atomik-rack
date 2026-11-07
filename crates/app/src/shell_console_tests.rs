@@ -237,6 +237,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Peak Meters", None),
             ("PPM Meters", None),
             ("VU Meters", None),
+            ("Masking Map\u{2026}", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Previous track", None),

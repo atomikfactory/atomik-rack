@@ -289,6 +289,10 @@
 //!   PROTECT and COMPARE; it emits [`UiAction::Versions`] and the host replaces the rows with
 //!   [`VersionsView::set_items`] after each answer, or shows a comparison with
 //!   [`VersionsView::show_report`].
+//! - **Masking map.** [`MaskingView`] is the modal panel of the masking analysis: the worst pairs of
+//!   tracks, the two spectra of the chosen pair with the clash bands shaded, the time ranges that
+//!   locate the playhead and DE-MASK; it emits [`UiAction::Masking`] and the host feeds it a
+//!   [`MaskingData`] and the progress of the analysis.
 //! - **Modulation matrix.** [`ModMatrixView`] is the modal panel of a device's eight modulation
 //!   slots (source, target and via pickers on a [`context_menu::ContextMenu`], an amount bar); the host feeds it
 //!   [`ModMatrixInfo`] and its edits are ordinary [`UiAction::Command`]s, with
@@ -359,6 +363,7 @@ mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
 pub mod marker_edit;
+pub mod masking_panel;
 pub mod master_panel;
 pub mod midi_lane;
 pub mod midi_maps_panel;
@@ -447,6 +452,7 @@ pub use macros_panel::{
     EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView,
 };
 pub use marker_edit::MarkSel;
+pub use masking_panel::{MaskingAction, MaskingData, MaskingPair, MaskingView};
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
 pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};

@@ -823,7 +823,16 @@ may break APIs and the patch and project formats.
   never touched. A search changes nothing in the song. New param `delta` (id 56, the output is 55, bypass moves to
   57 and the never-stored analyser switch to 58; the device is new in this release): the device plays the input
   minus the output of its bands, so a cut is heard as the part that was taken out, and a neutral device is silent.
-  The format is still 44 and the command count 469.
+  The format is still 44 and no command is added.
+- **Masking map.** Mixer > Masking Map renders every channel of the song (or the selected time range) as a stem on
+  a worker, measures each in 27 one-third-octave bands from 40 Hz to 18 kHz and ranks the pairs of tracks by how
+  much the louder one covers the other in a band at the same time (the score is the percentage of the time, so a
+  clash that lasts is worth more than a blip). The panel lists the worst pairs, draws the two spectra of the chosen
+  pair with the clash bands shaded, and a time range moves the playhead to where it starts. DE-MASK on a band adds
+  a Dynamic EQ to the covered channel (or uses one that has a free bell band and no other key), cables its key from
+  the covering channel's insert send and switches a bell band on at the clash band, cutting half the lead (2 to
+  6 dB) while the covering track is loud there; it is one undo step and the status line says what it did. The
+  analysis never changes the song. The format is still 44 and the command is `mixer.masking_map`.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

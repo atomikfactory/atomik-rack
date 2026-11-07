@@ -251,6 +251,9 @@ pub enum AppCommand {
     /// Mixer > Link Faders (on/off, kept with the window state): a fader or send level of a strip
     /// in a VCA group moves the levels of the whole group by the same dB.
     LinkFaders,
+    /// Mixer > Masking Map: opens the panel that analyses the channels for tracks that cover each
+    /// other and de-masks a clash with a keyed Dynamic EQ band.
+    MaskingMap,
     /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
@@ -825,6 +828,7 @@ impl AppCommand {
             AppCommand::CreateParallel => ("mixer.create_parallel", None),
             AppCommand::ToggleSendFollow => ("mixer.toggle_send_follow", None),
             AppCommand::LinkFaders => ("mixer.link_faders", None),
+            AppCommand::MaskingMap => ("mixer.masking_map", None),
             AppCommand::MeterMode(m) => ("mixer.meter_mode", Some(m.word())),
             AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
             AppCommand::RouteFolder(None) => ("mixer.route_folder", None),
@@ -1136,6 +1140,7 @@ impl AppCommand {
             ("mixer.create_parallel", None) => AppCommand::CreateParallel,
             ("mixer.toggle_send_follow", None) => AppCommand::ToggleSendFollow,
             ("mixer.link_faders", None) => AppCommand::LinkFaders,
+            ("mixer.masking_map", None) => AppCommand::MaskingMap,
             ("mixer.meter_mode", Some(a)) => AppCommand::MeterMode(MeterMode::from_word(a)?),
             ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
             ("mixer.route_folder", None) => AppCommand::RouteFolder(None),
@@ -2792,6 +2797,7 @@ pub fn menus_with_songs(
                     })
                     .collect(),
                 }),
+                enabled("Masking Map\u{2026}", AppCommand::MaskingMap, true),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
@@ -3674,6 +3680,7 @@ mod tests {
             AppCommand::ToggleReturnAlignment,
             AppCommand::ToggleSendFollow,
             AppCommand::LinkFaders,
+            AppCommand::MaskingMap,
             AppCommand::CreateVcaForFolder,
             AppCommand::RouteFolder(None),
             AppCommand::UnrouteFolder,
@@ -4425,6 +4432,7 @@ mod tests {
                 "Peak Meters",
                 "PPM Meters",
                 "VU Meters",
+                "Masking Map\u{2026}",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Previous track",

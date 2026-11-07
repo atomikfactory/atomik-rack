@@ -3893,6 +3893,10 @@ pub use templates::{
     list_templates,
 };
 
+#[path = "app_core_masking.rs"]
+mod masking;
+pub use masking::DemaskReport;
+
 #[path = "app_core_versions.rs"]
 mod versions;
 pub use versions::{VersionComparison, VersionRow};
@@ -3953,6 +3957,10 @@ mod tuner_tests;
 #[cfg(test)]
 #[path = "app_core_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "app_core_masking_tests.rs"]
+mod masking_tests;
 
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]
