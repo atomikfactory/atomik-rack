@@ -194,6 +194,40 @@ fn a_right_click_on_the_name_opens_the_pop_up_and_a_choice_applies_it() {
 }
 
 #[test]
+fn the_pop_up_of_a_synth_offers_clean_up_bass_first_and_it_is_one_undo_step() {
+    let dir = Tmp::new("clean-bass");
+    let mut s = setup(&dir, false);
+    s.core_mut().after_view_change();
+    s.pane_actions(&[UiAction::DevicePatch {
+        device: key("d"),
+        op: PatchOp::Siblings,
+    }]);
+    let menu = s.context_menu().expect("the pop-up opens");
+    let commands: Vec<&str> = menu.items().map(|i| i.command.as_str()).collect();
+    assert_eq!(commands[0], "rack.clean_up_bass");
+    assert_eq!(commands.len(), 4, "the three patches follow: {commands:?}");
+    s.context_menu = None;
+    let phase = |s: &Shell<NullBackend>| {
+        s.core()
+            .doc()
+            .param_value(&key("d"), "osc.phase_start", s.core().registry())
+    };
+    s.core_mut()
+        .apply_command(Command::SetParam {
+            key: key("d"),
+            param: "osc.phase_start".to_string(),
+            value: 200.0,
+            merge: None,
+        })
+        .unwrap();
+    s.run_command("rack.clean_up_bass", None);
+    assert_eq!(phase(&s), Some(0.0));
+    assert!(s.core().last_rejection().unwrap().contains("Clean Up Bass"));
+    assert!(s.core_mut().undo());
+    assert_eq!(phase(&s), Some(200.0));
+}
+
+#[test]
 fn the_folder_browsed_for_a_type_is_kept_in_the_ui_state() {
     let dir = Tmp::new("ui-state");
     let mut s = setup(&dir, true);
