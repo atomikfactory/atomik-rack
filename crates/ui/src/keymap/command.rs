@@ -1050,6 +1050,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("mixer.check_mix", "Check Mix...", G::Mixer, C::Global).menu(),
     cmd("mixer.clear_inserts", "Clear Inserts", G::Mixer, C::Global).menu(),
     cmd("mixer.compare_snapshot", "Compare A/B", G::Mixer, C::Global).menu(),
     cmd(

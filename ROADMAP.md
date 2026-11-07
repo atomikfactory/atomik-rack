@@ -120,10 +120,18 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   the selected time range and compared in one-third-octave bands from 40 Hz, the worst pairs are ranked with the
   band and the time ranges where one track covers the other (the score is the share of the time, weighted by
   level), the panel draws the two spectra with the clash bands shaded and moves the playhead to a clash, and
-  De-mask puts a Dynamic EQ band on the covered track keyed from the other in one undo step. Still to come: a
-  choice of tracks to compare (all channels are analysed, up to 48), buses and returns in the comparison, a
-  stereo-aware score (the tracks are summed to mono), a re-analysis that shows what a de-mask changed, a kick and
-  bass check and a one-panel mix check that reuses the per-track band maps.
+  De-mask puts a Dynamic EQ band on the covered track keyed from the other in one undo step. A mix check
+  (Mixer > Check Mix) renders the channels, the returns and the master and lists findings, each with the track,
+  the measured number and a line on why: a bass root outside about 40 to 60 Hz, a bass or kick whose fundamental
+  is weaker than its harmonics, a low-mid build-up (150 to 500 Hz) broken down by track with the returns, the
+  master's highest peaks and the tracks that drive them, the low end lost when the master is summed to mono, and
+  a compressor, distortion, saturation, amp or mastering device fed far from -18 dBFS RMS. A finding can carry a
+  one-click fix in one undo step (a Gain Tool before the device, a static Dynamic EQ cut on the loudest track in
+  the low mids, a Stereo Tool with Mono on) or open the masking map. Still to come: a choice of tracks to compare
+  (all channels are analysed, up to 48), buses and returns in the masking comparison, a stereo-aware masking score
+  (the tracks are summed to mono), a re-analysis that shows what a de-mask or a fix changed, a check of the kick
+  against the bass (timing, phase and tuning), buttons that open a clipper for the peaks and a kick and bass tool
+  from their findings (the findings give the number and the reason today), and tunable thresholds.
 
 ## Phase 5: Devices
 

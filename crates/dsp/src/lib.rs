@@ -43,6 +43,7 @@ pub mod leveller;
 mod lfo;
 pub mod loudness_history;
 pub mod masking;
+pub mod mixcheck;
 mod mod_delay;
 pub mod mod_source;
 pub mod modal;

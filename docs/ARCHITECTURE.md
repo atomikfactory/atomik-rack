@@ -4720,7 +4720,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (470) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (471) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5528,6 +5528,31 @@ Mixer > Masking Map answers "which tracks cover each other, where and when" with
   insert send, and a bell band on at the clash band, listening to the key, cutting half the lead (2 to 6 dB) from
   6 dB under the covering track's average level. The panel is `atomik_ui::MaskingView`; it draws and reports, the
   shell does the rest.
+
+### Mix analysis: the mix check
+
+Mixer > Check Mix lists what the mix needs, with a measured number for each finding, and never changes the song
+by itself.
+
+- **What is read.** `atomik_render::mixcheck::plan` takes every console channel (up to 48), the FX returns and
+  the master as stems, plus the feed of every non-linear insert (compressor, dynamics, distortion, Character,
+  guitar amp, mastering and the clipper's type id): the output of the stage before it on the chain, or the
+  insert send for the first. `render_check` renders them in the stem passes and keeps, per stem, a
+  `SignalStats` and a band map, so the audio is never held at once.
+- **Measurements.** `atomik_dsp::mixcheck::measure` reads the level over the blocks that are not silent, a peak
+  envelope per 1024 frames and the energy of the low end (a fourth-order crossover at 120 Hz) for the stereo
+  pair and its mono sum. The thresholds and their reasons are constants of that module, in one place.
+- **Findings.** `atomik_render::mixcheck::findings` is a pure function of the document and the measurements:
+  bass root (the key at the middle of the held time of the bass track's notes), weak fundamental (bass and
+  kick, against the 2nd to 4th harmonic in the mean band map), low-mid share with the tracks that fill it,
+  peaks (the highest windows of the master and the tracks loudest there), mono loss and device feeds. A
+  finding may carry a `Fix` and a `Tool`; only the masking map exists as a tool today, the clipper and the
+  kick and bass check are hooks (`Tool::available` is false) that the panel shows no button for.
+- **Worker, state and fixes.** `AppCore::start_mixcheck` runs `mixcheck_worker` on its own thread;
+  `AppCore::mixcheck` is dropped with the project. `fix_mixcheck` is one undo step: a Gain Tool inserted before
+  the device with the trim to -18 dBFS RMS, a static band of a Dynamic EQ (a free bell of one on the chain, or a
+  new device) at the loudest low-mid band of the track, or a Stereo Tool with Mono on at the end of the chain. The
+  panel is `atomik_ui::MixCheckView`.
 
 ## 6l. The library
 

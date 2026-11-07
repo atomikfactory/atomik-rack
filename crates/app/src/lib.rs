@@ -44,6 +44,7 @@ pub mod menubar;
 pub mod midi;
 pub mod midi_control;
 pub mod midi_file;
+pub mod mixcheck_worker;
 #[cfg(test)]
 pub(crate) mod offline_sink;
 pub mod platform;
