@@ -13,8 +13,8 @@
 //! ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib write_the_factory_library -- --ignored
 //! ```
 //!
-//! which rewrites every item of the `factory` folder (patches, drum kits with their audio,
-//! containers and note clips) and `factory/factory.json`.
+//! which rewrites every item of the `factory` folder (patches, drum kits and drawn tables with
+//! their audio, containers and note clips) and `factory/factory.json`.
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
@@ -31,10 +31,15 @@ pub(in crate::app_core) mod clips;
 pub(in crate::app_core) mod examples;
 #[path = "app_core_factory_kits.rs"]
 pub(in crate::app_core) mod kits;
+#[path = "app_core_factory_tables.rs"]
+pub(in crate::app_core) mod tables;
 
 pub(in crate::app_core) use clips::{CLIPS, ClipDef, clip_notes, clip_text};
 pub(in crate::app_core) use examples::{EXAMPLES, write_examples};
-pub(in crate::app_core) use kits::{KITS, KitDef, build_kit, kit_item, write_audio};
+pub(in crate::app_core) use kits::{
+    KITS, KitDef, build_kit, kit_item, write_audio, write_audio_for,
+};
+pub(in crate::app_core) use tables::{TABLES, build_table};
 
 pub(super) const POLY: &str = "atomik.poly-synth";
 pub(super) const BASS: &str = "atomik.mono-bass";
@@ -2606,6 +2611,13 @@ pub(super) fn marks() -> Vec<Mark> {
             tags: k.tags,
         });
     }
+    for t in TABLES {
+        out.push(Mark {
+            path: patch_path(t.name),
+            category: t.category,
+            tags: t.tags,
+        });
+    }
     for c in CONTAINERS {
         out.push(Mark {
             path: container_path(c.name),
@@ -2670,6 +2682,11 @@ pub(super) fn write_all(root: &Path) {
         write_audio(&root.join("Patches"), kit, &built);
         write(patch_path(kit.name), built.text.clone());
         built_kits.push((kit.name, built));
+    }
+    for def in TABLES {
+        let built = build_table(def);
+        write_audio_for(&root.join("Patches"), def.name, &built);
+        write(patch_path(def.name), built.text);
     }
     for def in CONTAINERS {
         write(container_path(def.name), container_text(def));

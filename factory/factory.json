@@ -324,6 +324,18 @@
         "lift"
       ]
     },
+    "Patches/Aligned Saw Pad.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "phase-safe",
+        "wide"
+      ]
+    },
     "Patches/Aurora Stack.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -430,6 +442,18 @@
         "drums",
         "boxy",
         "room"
+      ]
+    },
+    "Patches/Drawn Bell Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pluck"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "bell",
+        "bright"
       ]
     },
     "Patches/Drum Bus De-harsh.atomikpatch": {
@@ -802,6 +826,18 @@
         "sharp",
         "bright",
         "sync"
+      ]
+    },
+    "Patches/Table Sub Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "sub",
+        "mono"
       ]
     },
     "Patches/Tidewater Strings.atomikpatch": {
