@@ -29,7 +29,17 @@
 //!   delayed input bit-for-bit.
 //! * **Initial state.** The first batch after `prepare` or `reset` snaps to the current target
 //!   instead of fading, so a project that loads bypassed starts bypassed.
+//! * **Loudness match.** The wrapper adds one hidden param after the effect's own, `internal.match`
+//!   (a 0/1 toggle, default 0, see [`matched`]; like every `internal.` param it is set by the app
+//!   and never stored, so no project or bounce has it on). While it is on the K-weighted short-term loudness
+//!   of the input and of what the effect produced are measured and a slowly smoothed gain is
+//!   applied to the produced signal so both read the same (see [`matching`]). Off, the wrapper
+//!   is bit-identical to one without the switch. The applied gain is published after the
+//!   effect's own meter values (see [`match_gain_of`]).
 //! * Deterministic and allocation-free outside `prepare`.
+
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
 
 use atomik_core::{BATCH, Batch, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -58,6 +68,47 @@ pub(crate) const fn bypass_param(id: u32) -> ParamDescriptor {
         taper: Taper::Linear,
         unit: Unit::Toggle,
         discrete: true,
+    }
+}
+
+pub use matching::{MATCH_KEY, MAX_GAIN_DB};
+use matching::{METER_TAG, Matcher};
+
+/// The descriptor a [`Bypassable`] built on `inner` reports: `inner` plus the hidden
+/// `internal.match` toggle as the last param. Built once per device type and kept for the life
+/// of the program (a few dozen small tables); every effect factory registers this one.
+pub(crate) fn matched(inner: &'static DeviceDescriptor) -> &'static DeviceDescriptor {
+    static CACHE: OnceLock<Mutex<BTreeMap<&'static str, &'static DeviceDescriptor>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+    cache.entry(inner.type_id).or_insert_with(|| {
+        let mut params = inner.params.to_vec();
+        params.push(ParamDescriptor {
+            id: ParamId(params.len() as u32),
+            key: MATCH_KEY,
+            name: "Match loudness",
+            min: 0.0,
+            max: 1.0,
+            default: 0.0,
+            taper: Taper::Linear,
+            unit: Unit::Toggle,
+            discrete: true,
+        });
+        Box::leak(Box::new(DeviceDescriptor {
+            params: Box::leak(params.into_boxed_slice()),
+            ..*inner
+        }))
+    })
+}
+
+/// The loudness match gain in dB that a wrapped effect published at the end of `values` (its
+/// meter values), and how many values come before it. `None` while the match is off (nothing
+/// was appended).
+pub fn match_gain_of(values: &[f32]) -> Option<(f32, usize)> {
+    match values {
+        [.., gain, tag] if *tag == METER_TAG => Some((*gain, values.len() - 2)),
+        _ => None,
     }
 }
 
@@ -113,7 +164,12 @@ impl std::error::Error for BypassError {}
 /// An effect with a bypass (see the module docs).
 pub struct Bypassable<D: Device> {
     inner: D,
+    /// The inner descriptor plus the `internal.match` param.
+    desc: &'static DeviceDescriptor,
     bypass_id: ParamId,
+    match_id: ParamId,
+    matching: bool,
+    matcher: Matcher,
     in_l: SocketId,
     in_r: SocketId,
     out_l: SocketId,
@@ -155,6 +211,7 @@ impl<D: Device> Bypassable<D> {
     /// device.
     pub fn try_new(inner: D) -> Result<Self, BypassError> {
         let d = inner.descriptor();
+        let desc = matched(d);
         let type_id = d.type_id;
         let socket = |key: &'static str| {
             d.socket_by_key(key)
@@ -185,9 +242,17 @@ impl<D: Device> Bypassable<D> {
             })
             .map(|s| s.id)
             .collect();
+        let match_id = desc
+            .param_by_key(MATCH_KEY)
+            .ok_or(BypassError::MissingParam { type_id })?
+            .id;
         Ok(Self {
             inner,
+            desc,
             bypass_id,
+            match_id,
+            matching: false,
+            matcher: Matcher::new(48_000.0),
             in_l,
             in_r,
             out_l,
@@ -244,13 +309,14 @@ impl<D: Device> Bypassable<D> {
 
 impl<D: Device> Device for Bypassable<D> {
     fn descriptor(&self) -> &'static DeviceDescriptor {
-        self.inner.descriptor()
+        self.desc
     }
 
     fn prepare(&mut self, info: &PrepareInfo) {
         self.inner.prepare(info);
         let sr = info.sample_rate.hz();
         self.fade_step = fade_step_for(sr);
+        self.matcher = Matcher::new(sr);
         let len = ((sr * RING_SECONDS).ceil() as usize)
             .max(MIN_RING)
             .next_power_of_two();
@@ -266,6 +332,7 @@ impl<D: Device> Device for Bypassable<D> {
 
     fn reset(&mut self) {
         self.inner.reset();
+        self.matcher.reset();
         for r in &mut self.ring {
             r.fill(0.0);
         }
@@ -279,6 +346,14 @@ impl<D: Device> Device for Bypassable<D> {
         if id == self.bypass_id {
             if plain.is_finite() {
                 self.bypassed = plain >= 0.5;
+            }
+        } else if id == self.match_id {
+            if plain.is_finite() {
+                let on = plain >= 0.5;
+                if on && !self.matching {
+                    self.matcher.restart();
+                }
+                self.matching = on;
             }
         } else {
             self.inner.set_param(id, plain);
@@ -308,6 +383,13 @@ impl<D: Device> Device for Bypassable<D> {
         }
         let latency = (self.inner.latency_frames() as usize).min(self.mask);
         let (mut left, mut right) = (*ctx.output(self.out_l), *ctx.output(self.out_r));
+        if self.matching || !self.matcher.is_unity() {
+            if self.matching {
+                self.matcher.measure(&dry_in, &[left, right]);
+            }
+            let ramp = self.matcher.step(self.matching);
+            Matcher::apply(ramp, &mut left, &mut right);
+        }
         for i in 0..BATCH {
             let w = self.write;
             self.ring[0][w & self.mask] = dry_in[0][i];
@@ -356,11 +438,22 @@ impl<D: Device> Device for Bypassable<D> {
     }
 
     fn has_meter_values(&self) -> bool {
-        self.inner.has_meter_values()
+        // The applied match gain rides along, so every effect publishes.
+        true
     }
 
     fn meter_values(&self, out: &mut [f32]) -> usize {
-        self.inner.meter_values(out)
+        let n = if self.inner.has_meter_values() {
+            self.inner.meter_values(out)
+        } else {
+            0
+        };
+        if (self.matching || !self.matcher.is_unity()) && n + 2 <= out.len() {
+            out[n] = self.matcher.applied_db();
+            out[n + 1] = METER_TAG;
+            return n + 2;
+        }
+        n
     }
 
     fn scope_tap(&self) -> Option<std::sync::Arc<atomik_device_sdk::ScopeTap>> {
@@ -387,6 +480,8 @@ impl<D: Device> Device for Bypassable<D> {
         self.inner.set_run_mode(mode);
     }
 }
+
+mod matching;
 
 #[cfg(test)]
 mod tests;

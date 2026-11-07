@@ -297,6 +297,8 @@ struct DeviceView {
     /// Effect panels: display meter values (see [`fx::update_display`]); player panels: the
     /// published meter values, rounded.
     meters: Vec<f32>,
+    /// The loudness match gain the strip shows, in dB (`None`: the match is off).
+    match_db: Option<f32>,
     /// Mod Source panel: the scope history fed from the published meter values.
     scope: crate::modsrc_panel::Scope,
     /// Granular panel: what the sample strip says about the loaded sample.
@@ -791,6 +793,30 @@ impl RackView {
         }
         self.previewing = device;
         self.repaint = true;
+    }
+
+    /// Tells the panel of `key` the gain its loudness match applies, in dB (`None`: the match is
+    /// off, nothing is drawn). The app calls it every frame; the value is shown to 0.1 dB and
+    /// the panel is re-recorded only when that reading changes.
+    pub fn set_match_gain(&mut self, key: &DeviceKey, db: Option<f32>) {
+        let Some(i) = self.device_index(key) else {
+            return;
+        };
+        let db = db.map(paint::match_reading);
+        if self.devices[i].match_db == db {
+            return;
+        }
+        self.devices[i].match_db = db;
+        self.devices[i].bump_live();
+        if self.flip == Flip::Front && !self.devices[i].folded {
+            self.repaint = true;
+        }
+    }
+
+    /// The loudness match gain the panel of `key` shows, in dB.
+    pub fn match_gain(&self, key: &DeviceKey) -> Option<f32> {
+        self.device_index(key)
+            .and_then(|i| self.devices[i].match_db)
     }
 
     /// The note player whose preview the panels show (see [`Self::set_previewing`]).
@@ -1451,6 +1477,7 @@ impl RackView {
             fx_mode: 0,
             fx: None,
             meters: Vec::new(),
+            match_db: None,
             scope: crate::modsrc_panel::Scope::new(),
             sample: None,
             analyser: Default::default(),
@@ -1559,6 +1586,7 @@ impl RackView {
             let has_channel = doc.console.channel_of(&d.key).is_some();
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
+            let match_db = prev.as_ref().and_then(|p| p.match_db);
             let anim = prev.as_ref().map_or(0, |p| p.anim);
             let live = prev.as_ref().map_or(0, |p| p.live);
             let mini = prev.as_mut().and_then(|p| p.mini.take());
@@ -1626,6 +1654,7 @@ impl RackView {
                 fx_mode,
                 fx,
                 meters,
+                match_db,
                 scope,
                 sample,
                 analyser,
@@ -1682,6 +1711,7 @@ impl RackView {
                 fx_mode: 0,
                 fx: None,
                 meters: Vec::new(),
+                match_db: None,
                 scope: crate::modsrc_panel::Scope::new(),
                 sample: None,
                 analyser: Default::default(),
@@ -4711,6 +4741,7 @@ impl RackView {
             from_clip: self.clip_scale.is_some(),
             sampling: self.sampling.as_ref() == Some(&d.key),
             previewing: self.previewing.as_ref() == Some(&d.key),
+            match_db: d.match_db,
             grain: crate::granular_panel::GrainInfo {
                 meters: &d.meters,
                 sample: d.sample.as_ref(),
