@@ -60,6 +60,8 @@ impl RackView {
                 self.devices[i].mix.shown = shown;
                 self.devices[i].revision += 1;
             }
+            // The stack under the strip comes or goes: the rack is laid out again.
+            self.synced = false;
             self.repaint = true;
         }
         changed

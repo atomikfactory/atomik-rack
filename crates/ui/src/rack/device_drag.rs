@@ -56,6 +56,7 @@ impl RackView {
                 .filter(|&i| {
                     !moving[i]
                         && !is_inner(&self.devices[i].key)
+                        && !self.stacked.contains(&self.devices[i].key)
                         && self.devices[i].column == column
                 })
                 .collect()
@@ -123,7 +124,20 @@ impl RackView {
         let pos = |k: &DeviceKey| others.iter().position(|o| *o == k);
         match dp.above.checked_sub(1) {
             None => dp.keys.first().and_then(pos).unwrap_or(others.len()),
-            Some(n) => dp.keys.get(n).and_then(pos).map_or(others.len(), |p| p + 1),
+            Some(n) => {
+                let after = dp.keys.get(n).and_then(pos).map_or(others.len(), |p| p + 1);
+                // A strip's stacked inserts belong to its block: the slot is after them.
+                let stack = dp
+                    .keys
+                    .get(n)
+                    .and_then(|k| self.areas.iter().find(|a| a.owner == *k))
+                    .map_or(&[][..], |a| &a.members[..]);
+                let mut end = after;
+                while others.get(end).is_some_and(|o| stack.contains(*o)) {
+                    end += 1;
+                }
+                end
+            }
         }
     }
 
@@ -153,6 +167,12 @@ impl RackView {
             self.toast = Some(Self::MASTER_LOCKED_TEXT.to_string());
             return;
         }
+        // Into an insert area, out of one, or inside one: a chain edit.
+        if self.stack_drop(&moving, doc, registry, out) {
+            return;
+        }
+        // A channel or bus moves with the effects stacked under it.
+        let moving = self.with_stacks(moving);
         let flags = self.moving_flags(&moving);
         // Over a container's panel the device goes inside, over the breadcrumb's project
         // segment it leaves the open container.
@@ -327,6 +347,17 @@ impl RackView {
         {
             out.push(action);
             if self.browser.create.is_some() && !self.browser.keep_open {
+                self.set_browser_visible(false);
+            }
+            return;
+        }
+        // Over an insert area the effect is created in the chain, at the place under the pointer.
+        if let Some(ai) = self.area_at(self.view_to_rack(self.pointer), &[]) {
+            if self.area_browser_drop(ai, row, doc, registry, out)
+                && self.browser.create.is_some()
+                && !self.browser.keep_open
+                && !out.is_empty()
+            {
                 self.set_browser_visible(false);
             }
             return;
@@ -520,7 +551,7 @@ impl RackView {
     // ------------------------------------------------------------------ replace by drop
 
     /// What kind of device a browser row is, for replacing: instrument, effect or note player.
-    fn row_family(&self, row: &BrowserRow) -> Option<&'static str> {
+    pub(super) fn row_family(&self, row: &BrowserRow) -> Option<&'static str> {
         match row {
             BrowserRow::Device(d) => replace_family(d),
             BrowserRow::Plugin(n) => match self.plugin_catalog.get(*n)?.kind {
@@ -533,7 +564,7 @@ impl RackView {
     }
 
     /// What dropping `row` creates, for [`WorkflowCommand::ReplaceDevice`].
-    fn row_source(&self, row: &BrowserRow) -> Option<CreateSource> {
+    pub(super) fn row_source(&self, row: &BrowserRow) -> Option<CreateSource> {
         match row {
             BrowserRow::Device(d) => Some(CreateSource::Type(d.type_id.to_string())),
             BrowserRow::Plugin(n) => {
@@ -678,6 +709,7 @@ impl RackView {
                 } else {
                     vec![self.devices[*dev].key.clone()]
                 };
+                let keys = self.with_stacks(keys);
                 (self.moving_flags(&keys), keys)
             }
             _ => (vec![false; self.devices.len()], Vec::new()),
@@ -707,6 +739,10 @@ impl RackView {
             return;
         }
         let rp = self.view_to_rack(self.pointer);
+        // Over an insert area the line shows among the stacked effects.
+        if self.paint_area_drop(c, &moving_keys) {
+            return;
+        }
         // Over the frame of an unfolded container the line shows among its devices.
         if let Some(f) = self.frame_at(rp, &moving_keys) {
             let (_, line_y, column) = self.inside_drop(&f.container, rp, &moving);

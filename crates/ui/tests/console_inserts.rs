@@ -501,3 +501,66 @@ fn the_b_of_a_container_slot_toggles_the_bypass_of_the_container() {
         [("fx2".to_string(), "bypass".to_string(), 0.0)]
     );
 }
+
+fn drag(v: &mut ConsoleView, doc: &RackDoc, reg: &Registry, a: Point, b: Point) -> Vec<UiAction> {
+    let mut out = v.handle(&down(a), doc, reg);
+    out.extend(v.handle(&mv(Point::new(a.x, a.y + 3.0)), doc, reg));
+    out.extend(v.handle(&mv(b), doc, reg));
+    out.extend(v.handle(&up(b), doc, reg));
+    out
+}
+
+#[test]
+fn dragging_an_insert_row_reorders_the_chain_in_one_command() {
+    let (doc, reg) = (doc_with(3), console_registry());
+    let mut v = view(&doc, &reg);
+    let ch = key("ch-bass");
+    // The first row is dragged below the last one (the name part of the row, left of the E).
+    let from = v.insert_slot_center(&ch, 0).unwrap() - Vec2::new(14.0, 0.0);
+    let to = v.insert_slot_center(&ch, 2).unwrap() + Vec2::new(0.0, 4.0) - Vec2::new(14.0, 0.0);
+    let a = drag(&mut v, &doc, &reg, from, to);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::MoveInsert {
+            channel: ch.clone(),
+            from: 0,
+            to: 2
+        }]
+    );
+    assert!(
+        !a.iter().any(|x| matches!(x, UiAction::Select(_))),
+        "a drag does not select"
+    );
+    // The last row dragged to the top moves up.
+    let from = v.insert_slot_center(&ch, 2).unwrap() - Vec2::new(14.0, 0.0);
+    let to = v.insert_slot_center(&ch, 0).unwrap() - Vec2::new(14.0, 4.0);
+    let a = drag(&mut v, &doc, &reg, from, to);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::MoveInsert {
+            channel: ch.clone(),
+            from: 2,
+            to: 0
+        }]
+    );
+    // A drag that ends on its own row changes nothing.
+    let at = v.insert_slot_center(&ch, 1).unwrap() - Vec2::new(14.0, 0.0);
+    let a = drag(&mut v, &doc, &reg, at, at + Vec2::new(0.0, 5.0));
+    assert!(console_cmds(&a).is_empty());
+}
+
+#[test]
+fn the_e_of_a_row_asks_the_rack_to_show_its_effect() {
+    let (doc, reg) = (doc_with(2), console_registry());
+    let mut v = view(&doc, &reg);
+    let ch = key("ch-bass");
+    let e = v.insert_edit_center(&ch, 1).unwrap();
+    assert_eq!(
+        click(&mut v, &doc, &reg, e),
+        [UiAction::EditInsert(key("fx2"))]
+    );
+    assert!(
+        v.insert_edit_center(&ch, 2).is_none(),
+        "an empty row has no E"
+    );
+}

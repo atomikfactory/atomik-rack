@@ -1049,6 +1049,12 @@ impl<S: EngineSink> AppCore<S> {
             }
             // A device picked in the console (an insert slot) is selected in the rack too.
             UiAction::Select(key) => self.view.set_selected(Some(key)),
+            // EDIT on an insert row of the console: the rack scrolls to the strip with its
+            // insert area unfolded and the effect selected.
+            UiAction::EditInsert(key) => {
+                self.view
+                    .reveal_insert(self.document.doc(), &self.registry, &key);
+            }
             UiAction::OpenBrowser => {}
             // A note clip of a drum machine opens in the step editor (View > Piano Roll
             // still opens it in the piano roll).
