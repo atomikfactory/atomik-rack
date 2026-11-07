@@ -1,0 +1,90 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Clean Low Hall", "folded": false, "patch": "Clean Low Hall",
+      "params": {
+        "macro1": 0.81250006,
+        "macro2": 0.33333334
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 200,
+              "band1.on": 1,
+              "band6.freq": 6000,
+              "band6.on": 1
+            }
+          },
+          {
+            "id": "arena", "type": "atomik.space-reverb",
+            "name": "Space Reverb", "folded": false,
+            "params": {
+              "algorithm": 0,
+              "decay": 3.2,
+              "duck": 0.85,
+              "duck_freq": 400,
+              "duck_mode": 1,
+              "duck_release": 450,
+              "duck_threshold": -34,
+              "mix": 1
+            }
+          }
+        ],
+        "cables": [
+          {"from": "arena:out_l", "to": "boundary:out_l"},
+          {"from": "arena:out_r", "to": "boundary:out_r"},
+          {"from": "boundary:in_l", "to": "eq:in_l"},
+          {"from": "boundary:in_r", "to": "eq:in_r"},
+          {"from": "eq:out_l", "to": "arena:in_l"},
+          {"from": "eq:out_r", "to": "arena:in_r"}
+        ],
+        "macros": [
+          {"name": "Clean", "targets": [
+            {"device": "arena", "param": "duck", "min": 0.2, "max": 1}
+          ]},
+          {"name": "Split", "targets": [
+            {"device": "arena", "param": "duck_freq", "min": 150, "max": 900}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

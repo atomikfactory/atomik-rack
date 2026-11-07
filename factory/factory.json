@@ -168,6 +168,19 @@
         "pad"
       ]
     },
+    "Containers/Clean Low Hall.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "duck",
+        "low end",
+        "send"
+      ]
+    },
     "Containers/Double Clip.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -192,6 +205,19 @@
         "tight"
       ]
     },
+    "Containers/Ducked Vocal Reverb.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "vocal",
+        "duck",
+        "send"
+      ]
+    },
     "Containers/Envelope Sweep Pad.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -202,6 +228,19 @@
         "pad",
         "sweep",
         "evolving"
+      ]
+    },
+    "Containers/Gated Plate.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "gated",
+        "drums",
+        "send"
       ]
     },
     "Containers/Ping Pong Tide.atomikcontainer": {
