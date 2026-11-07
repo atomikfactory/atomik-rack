@@ -70,7 +70,13 @@ fn the_index_lists_every_param_of_every_device_and_the_vca_levels() {
                 .count()
         })
         .sum::<usize>()
-        + r.get(DELAY).unwrap().descriptor.params.len() // the delay inside the container
+        + r.get(DELAY)
+            .unwrap()
+            .descriptor
+            .params
+            .iter()
+            .filter(|p| !p.key.starts_with("internal."))
+            .count() // the delay inside the container
         + 1; // the VCA
     assert_eq!(index.len(), expected);
     assert!(!index.is_empty());

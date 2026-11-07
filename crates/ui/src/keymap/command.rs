@@ -1381,6 +1381,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
+    cmd("rack.blind_ab", "Blind A/B Test...", G::Rack, C::Rack),
     cmd("rack.browse_patch", "Browse Patches", G::Rack, C::Rack),
     cmd("rack.clean_up_bass", "Clean Up Bass", G::Rack, C::Rack),
     cmd("rack.combine", "Combine", G::Rack, C::Rack).menu(),
@@ -1427,6 +1428,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Rack,
     )
     .rep(),
+    cmd("rack.toggle_match", "Match Loudness", G::Rack, C::Rack),
     cmd("rack.uncombine", "Uncombine", G::Rack, C::Rack).menu(),
     cmd(
         "sequencer.add_note_lane",

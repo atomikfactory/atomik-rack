@@ -407,6 +407,20 @@ pub struct PanelInfo<'a> {
     pub sampling: bool,
     /// The preview of this note player runs: its play button on the name strip is lit.
     pub previewing: bool,
+    /// The loudness match of this effect is on and applies this gain, in dB (drawn above the
+    /// BYPASS switch).
+    pub match_db: Option<f32>,
+}
+
+/// A match gain as the strip shows it: rounded to 0.1 dB (and never `-0.0`).
+pub fn match_reading(db: f32) -> f32 {
+    let r = (db * 10.0).round() / 10.0;
+    if r == 0.0 { 0.0 } else { r }
+}
+
+/// The text the strip shows for a loudness match gain.
+pub fn match_text(db: f32) -> String {
+    format!("MATCH {db:+.1} dB")
 }
 
 /// Fold button centre in panel coordinates.
@@ -743,6 +757,14 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
             Some(bypassed(info)),
             true,
             info.accent,
+        );
+    }
+    if let (Some(db), true, false, Side::Front) =
+        (info.match_db, has_bypass, info.folded, info.side)
+    {
+        let b = bypass_button_rect(info.height, false);
+        c.text(
+            &TextRun::new(match_text(db), pt(b.x0 + 1.0, b.y0 - 4.0), 9.0, info.accent).weight(700),
         );
     }
     // The TUNER switch of an audio track (front only: the back is for the sockets).

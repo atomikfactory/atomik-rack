@@ -163,12 +163,12 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
-    ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, KickBassAction,
-    KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView, MidiMapsAction,
-    MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView, Modifiers,
-    NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place,
-    PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
+    ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
+    KickBassAction, KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView,
+    MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
     QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
     SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
     UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
@@ -531,6 +531,8 @@ pub struct Shell<B: AudioBackend> {
     scale: Option<ScaleView>,
     /// The percentage the panel opened with last time (view state, not in the project).
     scale_percent: f64,
+    /// The blind A/B panel (device context menu) while it is open.
+    blind: Option<BlindView>,
     /// The strip silence panel (Edit > Strip Silence) while it is open.
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
@@ -723,6 +725,7 @@ impl<B: AudioBackend> Shell<B> {
             quantize_values: QuantizeValues::default(),
             scale: None,
             scale_percent: 150.0,
+            blind: None,
             silence: None,
             song_info: None,
             kick_bass: None,
@@ -904,6 +907,62 @@ impl<B: AudioBackend> Shell<B> {
         self.quantize
             .as_ref()
             .map_or(&self.quantize_values, QuantizeView::values)
+    }
+
+    /// The blind A/B panel, while it is open.
+    pub fn blind_view(&self) -> Option<&BlindView> {
+        self.blind.as_ref()
+    }
+
+    /// Opens the blind A/B panel for the selected effect and starts a test; says why when the
+    /// selection cannot be tested.
+    fn open_blind(&mut self) {
+        let Some(device) = self.core.view().primary() else {
+            self.core.report("Select an effect to test first");
+            return;
+        };
+        if let Err(message) = self.core.blind_start(&device, 0) {
+            self.core.report(message);
+            return;
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = BlindView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        self.blind = Some(view);
+        self.sync_blind();
+        self.repaint = true;
+    }
+
+    /// Feeds the blind panel what the test shows; the panel closes when the test is gone.
+    fn sync_blind(&mut self) {
+        if self.blind.is_none() {
+            return;
+        }
+        match self.core.blind_info() {
+            Some(info) => {
+                if let Some(view) = &mut self.blind {
+                    view.set_info(info);
+                    if view.needs_repaint() {
+                        self.repaint = true;
+                    }
+                }
+            }
+            None => {
+                self.blind = None;
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the blind panel asked for.
+    fn blind_action(&mut self, action: BlindAction) {
+        self.core.blind_action(action);
+        if action == BlindAction::Close {
+            self.blind = None;
+        }
+        self.sync_blind();
+        self.repaint = true;
     }
 
     /// Whether the strip silence panel is open.
@@ -2729,6 +2788,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.scale {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.blind {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.silence {
             v.set_theme(theme.clone());
         }
@@ -3341,6 +3403,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.blind.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.blind {
+                v.set_bounds(rect);
+            }
+        }
         if self.silence.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.silence {
@@ -3890,6 +3958,12 @@ impl<B: AudioBackend> Shell<B> {
         true
     }
 
+    /// Switches the loudness match of the selected effects.
+    fn toggle_match_of_selection(&mut self) {
+        let keys = self.core.view().selection();
+        self.core.toggle_match(&keys);
+    }
+
     /// Previous (`-1`) or next (`1`) patch for the device the patch browser is aimed at, else the
     /// primary selected device.
     fn step_patch_of_selection(&mut self, delta: i32) {
@@ -4432,6 +4506,30 @@ impl<B: AudioBackend> Shell<B> {
             }
             return Vec::new();
         }
+        if self.blind.is_some() {
+            // The blind panel takes every event; Esc ends the test.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.blind_action(BlindAction::Close);
+                return Vec::new();
+            }
+            let actions = self
+                .blind
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Blind(a) = action {
+                    self.blind_action(a);
+                }
+            }
+            return Vec::new();
+        }
         if self.silence.is_some() {
             // The strip silence panel takes every event; Esc closes it.
             self.repaint = true;
@@ -4916,6 +5014,8 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a MIDI Out device first"),
             },
             ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
+            ("rack.blind_ab", None) => self.open_blind(),
+            ("rack.toggle_match", None) => self.toggle_match_of_selection(),
             ("rack.mod_matrix", None) => match self.core.view().primary() {
                 Some(device) => self.open_mod_matrix(&device),
                 None => self
@@ -5481,6 +5581,9 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .primary()
                     .is_some_and(|d| core.has_mod_matrix(&d)),
+            effect: pane == Pane::Rack && core.view().primary().is_some_and(|d| core.has_match(&d)),
+            matching: pane == Pane::Rack
+                && core.view().primary().is_some_and(|d| core.match_on(&d)),
             player: pane == Pane::Rack
                 && core
                     .view()
@@ -7424,6 +7527,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_midi_maps();
         self.sync_macros();
         self.sync_mod_matrix();
+        self.sync_blind();
         self.sync_param_search();
         self.sync_quantize();
         self.sync_kick_bass();
@@ -8210,6 +8314,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.scale {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.blind {
             view.paint(canvas);
         }
         if let Some(view) = &self.silence {

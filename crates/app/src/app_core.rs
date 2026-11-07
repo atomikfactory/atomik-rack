@@ -287,6 +287,8 @@ pub struct AppCore<S: EngineSink> {
     eq_live: eq_live::EqLive,
     /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
     resonance: resonance_finder::Finder,
+    /// The blind A/B test and the loudness match readouts.
+    blind: blind::Blind,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
     /// The note player preview that runs (see `app_core_preview.rs`).
@@ -552,6 +554,7 @@ impl<S: EngineSink> AppCore<S> {
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
             resonance: resonance_finder::Finder::default(),
+            blind: blind::Blind::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
             clip_preview: None,
@@ -1601,6 +1604,7 @@ impl<S: EngineSink> AppCore<S> {
         self.analysers.restart();
         self.tuners.restart();
         self.eq_live.restart();
+        self.blind.restart();
         self.speq.restart();
         self.next_id = 1;
         self.sent_loop = None;
@@ -1675,6 +1679,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_spectrum_eq();
         self.feed_eq_analysers();
         self.poll_resonances();
+        self.feed_match_gains();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
@@ -3769,6 +3774,8 @@ mod spectrum_eq;
 #[path = "app_core_eq_live.rs"]
 mod eq_live;
 
+#[path = "app_core_blind.rs"]
+mod blind;
 #[path = "app_core_resonance.rs"]
 mod resonance_finder;
 
@@ -4188,3 +4195,7 @@ mod audition_tests;
 #[cfg(test)]
 #[path = "app_core_keys_tests.rs"]
 mod keys_tests;
+
+#[cfg(test)]
+#[path = "app_core_blind_tests.rs"]
+mod blind_tests;

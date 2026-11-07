@@ -539,3 +539,136 @@ fn a_malformed_descriptor_is_an_error_not_a_panic() {
         assert!(r.create(id).is_some(), "{id}");
     }
 }
+
+// ----- loudness match -----
+
+/// Short-term loudness of what `h` gets and gives over `batches` batches of noise, measured
+/// over the last 3 s only (as LUFS) with the Mastering meter.
+fn short_term_pair(h: &mut DeviceHarness, batches: usize, amp: f32) -> (f32, f32) {
+    use crate::mastering::loudness::LoudnessMeter;
+    let (mut mi, mut mo) = (LoudnessMeter::new(SR), LoudnessMeter::new(SR));
+    let mut n = Noise::new();
+    for _ in 0..batches {
+        let (x, y) = step(h, &mut n, amp);
+        mi.process(&x[0], &x[1]);
+        mo.process(&y[0], &y[1]);
+    }
+    (mi.short_term(), mo.short_term())
+}
+
+#[test]
+fn every_effect_ends_with_the_hidden_match_toggle() {
+    let r = registry();
+    for id in effect_ids() {
+        let d = r.descriptor(id).unwrap();
+        let p = d.params.last().unwrap();
+        assert_eq!(p.key, MATCH_KEY, "{id}");
+        assert_eq!(p.id.0 as usize, d.params.len() - 1, "{id}");
+        assert_eq!((p.min, p.max, p.default), (0.0, 1.0, 0.0));
+        assert_eq!(d.validate(), Ok(()), "{id}");
+    }
+}
+
+#[test]
+fn a_plus_six_db_stage_reads_like_its_input_with_match_on() {
+    let mut h = wrapped("atomik.gain-tool");
+    h.set_param("gain", 6.0);
+    h.set_param(MATCH_KEY, 1.0);
+    // 14 s: the windows are full and the gain has settled for a long time.
+    let (i, o) = short_term_pair(&mut h, 14 * 48_000 / BATCH, 0.2);
+    assert!((i - o).abs() < 0.5, "input {i} LUFS, output {o} LUFS");
+    let mut m = [0.0f32; 8];
+    let n = h.device().meter_values(&mut m);
+    let (db, before) = match_gain_of(&m[..n]).expect("the gain is published");
+    assert_eq!(before, 0);
+    assert!((db + 6.0).abs() < 0.5, "applied {db} dB");
+}
+
+#[test]
+fn match_follows_a_change_of_the_effect_and_can_cut_as_well_as_boost() {
+    let mut h = wrapped("atomik.gain-tool");
+    h.set_param(MATCH_KEY, 1.0);
+    h.set_param("gain", -12.0);
+    let (i, o) = short_term_pair(&mut h, 14 * 48_000 / BATCH, 0.4);
+    assert!((i - o).abs() < 0.5, "cut: input {i}, output {o}");
+    h.set_param("gain", 9.0);
+    let (i, o) = short_term_pair(&mut h, 14 * 48_000 / BATCH, 0.1);
+    assert!((i - o).abs() < 0.5, "boost: input {i}, output {o}");
+}
+
+#[test]
+fn match_is_silent_and_exact_until_it_is_switched_on_and_after_it_is_off_again() {
+    let (mut a, mut b) = (wrapped("atomik.gain-tool"), raw("atomik.gain-tool"));
+    for h in [&mut a, &mut b] {
+        h.set_param("gain", 6.0);
+    }
+    let mut m = [0.0f32; 8];
+    assert_eq!(a.device().meter_values(&mut m), 0, "nothing published");
+    // On for a while, then off: the gain walks back to exactly 1.
+    a.set_param(MATCH_KEY, 1.0);
+    let mut n = Noise::new();
+    for _ in 0..4 * 48_000 / BATCH {
+        step(&mut a, &mut n, 0.2);
+    }
+    a.set_param(MATCH_KEY, 0.0);
+    for _ in 0..12 * 48_000 / BATCH {
+        step(&mut a, &mut n, 0.2);
+    }
+    assert_eq!(a.device().meter_values(&mut m), 0, "back to nothing");
+    let (mut na, mut nb) = (Noise::new(), Noise::new());
+    for _ in 0..20 {
+        let (_, oa) = step(&mut a, &mut na, 0.2);
+        let (_, ob) = step(&mut b, &mut nb, 0.2);
+        for c in 0..2 {
+            assert_eq!(bits(&oa[c]), bits(&ob[c]), "ch {c}");
+        }
+    }
+}
+
+#[test]
+fn match_holds_its_gain_over_silence_and_never_exceeds_the_limit() {
+    let mut h = wrapped("atomik.gain-tool");
+    h.set_param("gain", 24.0);
+    h.set_param(MATCH_KEY, 1.0);
+    short_term_pair(&mut h, 14 * 48_000 / BATCH, 0.001);
+    let mut m = [0.0f32; 8];
+    let n = h.device().meter_values(&mut m);
+    let (db, _) = match_gain_of(&m[..n]).unwrap();
+    assert!(
+        (-MAX_GAIN_DB - 1e-3..=MAX_GAIN_DB + 1e-3).contains(&db),
+        "{db}"
+    );
+    // Silence in: the gain stays where it was.
+    let mut quiet = Noise::new();
+    for _ in 0..200 {
+        step(&mut h, &mut quiet, 0.0);
+    }
+    let n = h.device().meter_values(&mut m);
+    let (held, _) = match_gain_of(&m[..n]).unwrap();
+    assert!((held - db).abs() < 0.2, "{held} vs {db}");
+}
+
+#[test]
+fn match_never_allocates_and_the_meter_of_a_metered_effect_keeps_its_values() {
+    let mut h = wrapped("atomik.compressor");
+    let mut n = Noise::new();
+    assert_no_alloc(|| h.set_param(MATCH_KEY, 1.0));
+    for _ in 0..200 {
+        step(&mut h, &mut n, 0.5);
+    }
+    let (mut with, mut without) = ([0.0f32; 16], [0.0f32; 16]);
+    let k = h.device().meter_values(&mut with);
+    let (db, before) = match_gain_of(&with[..k]).unwrap();
+    assert!(db.is_finite());
+    assert!(before > 0, "the compressor's own values come first");
+    assert_no_alloc(|| h.set_param(MATCH_KEY, 0.0));
+    // The compressor's own values are the same ones, in the same places.
+    let mut b = raw("atomik.compressor");
+    let mut nb = Noise::new();
+    for _ in 0..200 {
+        step(&mut b, &mut nb, 0.5);
+    }
+    let kb = b.device().meter_values(&mut without);
+    assert_eq!(kb, before);
+    assert!(without[..kb].iter().all(|v| v.is_finite()));
+}

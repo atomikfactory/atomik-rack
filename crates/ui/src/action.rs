@@ -649,6 +649,9 @@ pub enum UiAction {
     /// The quantize panel ([`crate::QuantizeView`]) asks for something: apply its settings, measure
     /// a groove from a clip, delete one, or close.
     Quantize(crate::quantize_panel::QuantizeAction),
+    /// The blind A/B panel ([`crate::BlindView`]) asks for something: play X or Y, pick one,
+    /// switch the level match, run again, or close.
+    Blind(crate::blind_panel::BlindAction),
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),

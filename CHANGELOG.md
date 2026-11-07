@@ -846,6 +846,20 @@ may break APIs and the patch and project formats.
   Stereo Tool with Mono on. A peak finding moves the playhead to it and a low-mid finding opens the masking map.
   The thresholds are constants with their reasons in one place. The check never changes the song, the format is
   still 44 and the command count 471.
+- **Loudness match and a blind A/B test for every built-in effect.** Right-click an effect and choose Match Loudness:
+  the effect's bypass wrapper then measures the K-weighted short-term loudness (the Mastering meter's filters, 100 ms
+  steps over 3 s) of what goes in and of what the effect makes, and applies a gain, smoothed over about a second, to
+  the effect's output so the two read the same. Switching Bypass then compares sound, not level. The gain (never more
+  than 24 dB either way, held over silence) shows in the name strip as `MATCH +x.x dB` while the match is on.
+  Switched off, the effect is bit-identical to before. The match is a listening aid: it is a hidden `internal.match`
+  param that the app sets, so it is not saved in the project, not an undo step, and never part of a bounce or an
+  export. Blind A/B Test (same menu) opens a panel for the selected effect: ten trials, each with two sounds X and Y,
+  one with the effect on and one bypassed in an order drawn anew for every trial and never shown; play either as
+  often as you like, then pick the one you prefer (a pick needs both heard; the panel has its own Match Level
+  switch). The result lines say how often the effect won and the exact two-sided chance of a score that lopsided by
+  guessing, and whether you reliably prefer it. The test sets bypass on the engine only, hands the effect back as
+  the project has it when it ends, and changes nothing in the project. New commands `rack.toggle_match` and
+  `rack.blind_ab` (no default keys); the command count is 471 and the format is still 44.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
