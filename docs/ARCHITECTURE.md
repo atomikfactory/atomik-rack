@@ -5756,6 +5756,35 @@ bundle, so the print is saved, collected and undone like any other audio, and no
   swell and one at tick 0 is refused). The result is checked against the document as for a freeze and applied as
   one undo step; the new clip is selected and the status line says what was made.
 
+### Transition kit
+
+Add Transition (`sequencer.add_transition`, the choice as its argument) puts a transition at a section boundary.
+The edits are one model command, the prints reuse the freeze worker of the section above, and nothing runs on the
+audio thread.
+
+- **The boundary** ([model/src/transition.rs](../crates/model/src/transition.rs)). `boundaries` lists the starts of the
+  sections after the first (markers, range starts, else the section lines of the energy map) and `nearest_boundary`
+  picks the first at or after a tick. The view keeps the boundary a context menu opened on
+  (`ArrangementView::take_transition_boundary`: a marker's tick, a range's start, or the bar line nearest to the
+  pointer in the ruler); the app falls back to the selected marker or range, then the playhead.
+- **The edits.** `WorkflowCommand::AddTransition { at, edit }` plans one edit on a scratch document with
+  `TransitionEdit::FilterDown`, `Silence` or `Fill`. A filter down adds an Auto-Filter as the last insert of the
+  master or a group bus (reusing the one a former filter down made) and a `cutoff` clip of nine linear points that
+  follow an exponential curve from 20 kHz to 300 Hz over the last bars; the lane's static value holds the open
+  cutoff outside the clip. A silence is a one-point step clip of the master's `fader` lane over one beat, its static
+  value the fader as it was. A fill rewrites the plain, unmuted, unlooped note clips of a track that cover the beat
+  before the boundary (`SetClipContent`, content ticks through the clip's offset). A clip that would overlap another
+  on its lane is refused.
+- **The prints.** `first_hit` names the track whose first note or audio clip start in the first beat after the
+  boundary is earliest (a drum machine first, then track order) and `hit_span` its span. The app queues
+  `Kind::Riser` (`Post::ReverseReverb`, ending at the boundary through `swell_place`, as in the section above) or
+  `Kind::Impact` (`Post::Impact`, which pads the render with the reverb's seconds and runs
+  `atomik_dsp::transition::impact`: a tanh saturator driven to four times the peak and scaled back to it, the large
+  `Room` at three seconds added at 0.9 of the dry peak, a 30 ms fade out). Both land with `AddRenderedTrack`.
+- **The count.** `overuse` says when a kind is on more than half of the boundaries and on at least three of them.
+  The app keeps `(boundary, kind, undo depth)` for the session; an undo takes the entries above the new depth off,
+  a new or opened project clears it, and the warning is added to the status line message.
+
 ## 6l. The library
 
 The Library sections of the file browser (Devices, Patches, Containers, Clips, Projects) list what
