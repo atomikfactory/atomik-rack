@@ -276,6 +276,9 @@
 //! - **Scale Tempo.** [`ScaleView`] is the modal panel of one free percentage for the selected
 //!   clips; it emits [`UiAction::ScaleTempo`] (`Preview` while the text changes, `APPLY`,
 //!   `CLOSE`) and the app feeds it with [`ScaleView::set_target`].
+//! - **Kick and bass check.** [`KickBassView`] is the modal panel of the check of a kick and a
+//!   bass track (the strip of cancellation and build-up, the fixes); it emits
+//!   [`UiAction::KickBass`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
 //!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
@@ -351,6 +354,7 @@ pub mod io_panel;
 pub mod key_chord_panel;
 pub mod key_rows;
 pub mod keymap;
+pub mod kick_bass_panel;
 mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
@@ -435,6 +439,9 @@ pub use export_panel::{
 };
 pub use file_browser::{DetailData, FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
+pub use kick_bass_panel::{
+    FixView, KickBassAction, KickBassInfo, KickBassView, RunView, StripHit, StripView,
+};
 pub use macros_panel::{
     EntryUnit, MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView,
 };
