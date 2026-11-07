@@ -480,6 +480,18 @@
         "dusty"
       ]
     },
+    "Patches/Eighth Chop.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Keys"
+      ],
+      "tags": [
+        "sidechain",
+        "chop",
+        "rhythm",
+        "curve"
+      ]
+    },
     "Patches/Fold Drone.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -490,6 +502,18 @@
         "drone",
         "fold",
         "evolving"
+      ]
+    },
+    "Patches/Four Floor Pump.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "sidechain",
+        "pump",
+        "curve",
+        "kick"
       ]
     },
     "Patches/Glass Choir.atomikpatch": {
@@ -526,6 +550,18 @@
         "mono",
         "gritty",
         "heavy"
+      ]
+    },
+    "Patches/Half Bar Breath.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "sidechain",
+        "pad",
+        "slow",
+        "curve"
       ]
     },
     "Patches/Harmonic Sunrise.atomikpatch": {
@@ -742,6 +778,18 @@
         "tight",
         "bright",
         "electronic"
+      ]
+    },
+    "Patches/Sub Only Duck.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "sidechain",
+        "band",
+        "low end",
+        "kick"
       ]
     },
     "Patches/Sync Razor.atomikpatch": {

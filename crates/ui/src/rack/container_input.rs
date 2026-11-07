@@ -469,6 +469,7 @@ impl RackView {
             },
             UiAction::FindResonances(d) => UiAction::FindResonances(k(d)),
             UiAction::CutResonances(d) => UiAction::CutResonances(k(d)),
+            UiAction::LearnDuck(d) => UiAction::LearnDuck(k(d)),
             UiAction::OpenSampleEditor(d) => UiAction::OpenSampleEditor(k(d)),
             UiAction::OpenSliceEditor(d) => UiAction::OpenSliceEditor(k(d)),
             UiAction::OpenStepEditor { device, clip } => UiAction::OpenStepEditor {

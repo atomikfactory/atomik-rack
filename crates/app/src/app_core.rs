@@ -287,6 +287,8 @@ pub struct AppCore<S: EngineSink> {
     eq_live: eq_live::EqLive,
     /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
     resonance: resonance_finder::Finder,
+    /// Learn from kick of the Sidechain Tool (see `app_core_duck_learn.rs`).
+    duck_learn: duck_learner::Learner,
     /// The blind A/B test and the loudness match readouts.
     blind: blind::Blind,
     /// The SAMPLE button's recording and input choice.
@@ -565,6 +567,7 @@ impl<S: EngineSink> AppCore<S> {
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
             resonance: resonance_finder::Finder::default(),
+            duck_learn: duck_learner::Learner::default(),
             blind: blind::Blind::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
@@ -1044,6 +1047,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::PreviewPlayer(device) => self.toggle_player_preview(&device),
             UiAction::FindResonances(device) => self.find_resonances(&device),
             UiAction::CutResonances(device) => self.cut_resonances(&device),
+            UiAction::LearnDuck(device) => self.learn_duck(&device),
             UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
             UiAction::CycleSamplingInput => self.cycle_sampling_input(),
             UiAction::EditSample {
@@ -1697,6 +1701,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_spectrum_eq();
         self.feed_eq_analysers();
         self.poll_resonances();
+        self.poll_duck_learn();
         self.feed_match_gains();
         self.sync_io_host();
         self.feed_io_meters();
@@ -3797,6 +3802,8 @@ mod eq_live;
 
 #[path = "app_core_blind.rs"]
 mod blind;
+#[path = "app_core_duck_learn.rs"]
+mod duck_learner;
 #[path = "app_core_resonance.rs"]
 mod resonance_finder;
 

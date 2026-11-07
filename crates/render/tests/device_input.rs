@@ -12,7 +12,9 @@ use atomik_model::{
     InsertEffect, Note, RackDoc, SongCommand, WorkflowCommand, new_project_doc,
 };
 use atomik_render::default_registry;
-use atomik_render::device_input::{input_sources, render_device_input};
+use atomik_render::device_input::{
+    input_sources, key_sources, render_device_input, render_device_key,
+};
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::project::{PluginBounce, ProjectOptions};
 
@@ -219,4 +221,48 @@ fn a_device_with_nothing_at_its_input_is_refused() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn the_key_is_what_the_sidechain_hears_and_else_the_input() {
+    let (doc, eq) = project(0.0);
+    let registry = default_registry();
+    let render_key = |doc: &RackDoc| {
+        render_device_key(
+            doc,
+            &registry,
+            (&ProjectOptions::default(), None),
+            &mut PluginBounce::default(),
+            &eq,
+            (0, 48_000),
+            RenderControl::default(),
+        )
+        .expect("render")
+        .expect("not cancelled")
+    };
+    // Nothing in the key sockets: the key is the input.
+    assert_eq!(
+        key_sources(&doc, &registry, &eq),
+        input_sources(&doc, &registry, &eq)
+    );
+    assert_eq!(render_key(&doc), capture(&doc, &eq, (0, 48_000)));
+    // A cable in one key socket feeds both sides of the key.
+    let mut d = Document::new(doc);
+    let lead = atomik_model::SocketRef {
+        device: key("lead"),
+        socket: "out_l".into(),
+    };
+    apply(
+        &mut d,
+        Command::Connect(atomik_model::Cable {
+            from: lead.clone(),
+            to: atomik_model::SocketRef {
+                device: eq.clone(),
+                socket: "sc_in_l".into(),
+            },
+        }),
+    );
+    let sources = key_sources(d.doc(), &registry, &eq).expect("cabled");
+    assert_eq!(sources, [lead.clone(), lead]);
+    assert!(render_key(d.doc()).left.iter().any(|s| s.abs() > 0.01));
 }

@@ -4193,23 +4193,32 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `gr_cv_out` (C
 
 ### Sidechain Tool: `atomik.duck` (Effect)
 
-Pumping and ducking from the song position, from the hits of a key, or from the key's level.
-Source: [duck.rs](../crates/devices/src/duck.rs).
+Pumping and ducking from the song position, from the hits of a key, from the key's level, or along a
+hand-drawn curve. Source: [duck.rs](../crates/devices/src/duck.rs); the curve maths is in
+[duck_curve.rs](../crates/dsp/src/duck_curve.rs), the learning in
+[duck_learn.rs](../crates/dsp/src/duck_learn.rs) and the panel in
+[duck_panel.rs](../crates/ui/src/duck_panel.rs).
 
 Sockets: `in_l`, `in_r`, `sc_in_l`, `sc_in_r` (Audio in), `out_l`, `out_r` (Audio out),
-`duck_cv_out` (CV out).
+`duck_cv_out` (CV out), `notes_in` (Notes in, starts the curve).
 
 | Key | Range | Default | Unit |
 |---|---|---|---|
-| `mode` | 0 to 2: pump, trigger, classic | 0 | choice |
+| `mode` | 0 to 3: pump, trigger, classic, curve | 0 | choice |
 | `rate` | 0 to 3: 1/2, 1/4, 1/8, 1/16 (pump) | 1 | choice |
 | `depth` | 0 to 1 | 0.8 | percent |
 | `attack` | 0.1 to 50 | 2 | ms |
 | `time` | 10 to 2000 | 250 | ms |
 | `curve` | 0.25 to 4 | 1 | none |
-| `threshold` | -60 to 0 (trigger, classic) | -30 | dB |
+| `threshold` | -60 to 0 (trigger, classic, curve) | -30 | dB |
 | `send` | 0 or 1 (audio untouched, only the CV moves) | 0 | toggle |
+| `length` | 0 to 4: 1/16, 1/8, 1/4, 1/2, 1 bar (curve) | 2 | choice |
+| `trigger` | 0 to 2: key, notes, key or notes (curve) | 2 | choice |
+| `band` | 0 or 1 (duck only the low band) | 0 | toggle |
+| `band_freq` | 30 to 600 (band) | 120 | Hz |
 | `bypass` | 0 or 1 | 0 | toggle |
+| `hidden.curve_n` | 0 to 8 points, 0 for the built-in curve | 0 | none |
+| `hidden.curve_pN_x`, `_y`, `_bend` | N = 1 to 8: position 0 to 1, dip 0 to 1, bend -64 to 64 | 0 | none |
 
 - The audio is multiplied by `1 - depth * dip`. The dip falls to 1 over `attack`, then recovers
   over `time`, bent by `curve` (1 is a straight line, above 1 it hangs low).
@@ -4218,8 +4227,39 @@ Sockets: `in_l`, `in_r`, `sc_in_l`, `sc_in_r` (Audio in), `out_l`, `out_r` (Audi
   **trigger** restarts it when the key (the sidechain, else the input) crosses `threshold` (a hit
   during a curve continues from the current dip). **classic** follows the key level, 12 dB over
   the threshold ducking the full depth.
-- `duck_cv_out` is `depth * dip`. The curve is set by `attack`, `time` and `curve`; there is no
-  hand-drawn curve editor yet.
+- **curve** plays a drawn curve of up to eight points over `length` (a note value, or one bar of the
+  meter at that moment, counted in song time, so it follows tempo changes) from every trigger: a hit
+  on the key as in trigger mode, a note-on at `notes_in`, or either, as `trigger` says. With the
+  trigger on notes the key is not read, so the ducked signal never triggers itself. Between two points
+  the line runs `y0 + (y1 - y0) * shape`, with the shape of the first point's `bend` (the bend of an
+  automation segment: 0 is straight, a positive bend eases in, a negative one eases out). Before the
+  first point and after the last the curve holds the end values, so after its end it holds its last
+  value until the next hit. The first and last point sit at the left and right edge and `y` is the
+  dip: 0 is no ducking, 1 the full `depth`. The panel draws the gain, with the top as no ducking.
+- **Retrigger.** A hit during a curve enters the new curve where it first reaches the dip that is
+  playing, so a double kick never lifts the gain: the gain only moves down, or on along the curve. A
+  curve that never gets as high as the dip fades the difference out over the rest of its length.
+- **band** ducks only the part of the signal under `band_freq`: a Linkwitz-Riley split (24 dB per
+  octave), the low band times `1 - depth * dip`, the bands added again. Added back unducked the pair
+  is an allpass, so the level of every frequency is the input's and only the phase turns around the
+  split; with `band` off the output at rest is the input bit for bit. A tone several octaves above
+  the split changes by the leak of the low-pass only (under -80 dB at five octaves). It works in
+  every mode.
+- **Hidden params.** The points are stored in the `hidden.*` params, which belong to the panel's
+  editor: they are saved and undone with the device and its patches, but no knob, macro, automation
+  lane, MIDI mapping or search result offers them (`atomik_model::console::is_hidden_param`). A
+  device with no stored points draws and plays the built-in curve (a fall to full over four percent
+  of the length, then a smooth recovery); the first edit on the panel writes the points out.
+- **Panel.** The curve is drawn across the top of the panel. Drag a point; drag the line between two
+  points to bend that segment so the line follows the pointer; click on empty plot to add a point (up
+  to eight); double-click a point that is not the first or last to remove it. Escape puts a drag
+  back. A running curve shows its position and the dip as a line and a dot. LEARN listens to the
+  range between the locators (at most 30 s) at the key (the sidechain cable, else the input), finds
+  the hits, averages their envelopes over `length` and puts the curve and the curve mode into the
+  device in one undo step. Four factory patches draw curves of their own.
+- `duck_cv_out` is `depth * dip`. In pump, trigger and classic mode the curve is set by `attack`,
+  `time` and `curve`. The meter values are the dip and the position along the curve (1 when idle or
+  in another mode).
 
 ### Envelope Filter: `atomik.env-filter` (Effect)
 

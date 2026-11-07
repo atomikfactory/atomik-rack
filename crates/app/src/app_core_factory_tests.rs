@@ -244,7 +244,7 @@ use super::factory_build::examples::{EXAMPLES, ExampleDef, build_example, projec
 use super::factory_build::kits::{Built as KitBuilt, MAX_SECONDS, RATE, key_of, render_hit};
 use super::factory_build::write_examples;
 use super::factory_build::{
-    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, Def, KITS, KitDef, clip_notes,
+    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, KITS, KitDef, clip_notes,
     clip_path, clip_text, container_path, container_text, item_text, manifest_text, marks,
     patch_path, write_all,
 };
@@ -358,7 +358,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     );
     unique(CONTAINERS.iter().map(|c| c.name).collect());
     unique(CLIPS.iter().map(|c| c.name).collect());
-    assert!((20..=40).contains(&DEFS.len()), "{}", DEFS.len());
+    assert!((20..=48).contains(&DEFS.len()), "{}", DEFS.len());
     assert_eq!(KITS.len(), 4);
     assert_eq!(CLIPS.len(), 12);
     let chains = CONTAINERS.iter().filter(|c| c.chain).count();
@@ -480,6 +480,64 @@ fn every_factory_patch_plays_a_phrase_with_audible_bounded_sound() {
         assert!(s.peak <= 1.0, "{}: peak {} clips", def.name, s.peak);
         assert!(s.rms_db > -45.0, "{}: {} dB RMS", def.name, s.rms_db);
         assert!(s.seconds > 3.0, "{}: {} s", def.name, s.seconds);
+    }
+}
+
+/// The phrase of an item text, rendered like [`render_item`] (an item with no audio of its own).
+fn render_text(text: &str) -> Stats {
+    let registry = default_registry();
+    let snapshot = load_device_item(text, &registry).unwrap();
+    let doc = preview_doc(&snapshot, &registry).unwrap();
+    let rendered = render_doc_in(&doc, &registry, &ProjectOptions::default(), None).unwrap();
+    stats_of(&rendered.channels, rendered.sample_rate)
+}
+
+#[test]
+fn the_duck_patches_pull_the_phrase_down_and_draw_their_own_curve() {
+    let ducks: Vec<&Def> = DEFS.iter().filter(|d| d.device == DUCK).collect();
+    assert_eq!(ducks.len(), 4);
+    for def in ducks {
+        // The same patch with no depth is the phrase untouched.
+        let flat: Vec<(&'static str, f32)> = def
+            .params
+            .iter()
+            .map(|&(k, v)| if k == "depth" { (k, 0.0) } else { (k, v) })
+            .collect();
+        let off = Def {
+            name: def.name,
+            device: def.device,
+            category: def.category,
+            tags: def.tags,
+            sound: def.sound,
+            params: Box::leak(flat.into_boxed_slice()),
+            mods: &[],
+        };
+        let (ducked, plain) = (render_text(&item_text(def)), render_text(&item_text(&off)));
+        if def.params.contains(&("band", 1.0)) {
+            // Only the low band is ducked: a phrase well above it hardly changes.
+            let change = plain.rms_db - ducked.rms_db;
+            assert!((0.0..1.0).contains(&change), "{}: {change} dB", def.name);
+        } else {
+            assert!(
+                ducked.rms_db < plain.rms_db - 0.5,
+                "{}: {} dB against {} dB",
+                def.name,
+                ducked.rms_db,
+                plain.rms_db
+            );
+        }
+        // Every one of them plays the drawn curve with points of its own.
+        let value = |k: &str| def.params.iter().find(|(p, _)| *p == k).map(|(_, v)| *v);
+        assert_eq!(value("mode"), Some(3.0), "{}", def.name);
+        let n = value("hidden.curve_n").unwrap() as usize;
+        assert!((2..=8).contains(&n), "{}: {n} points", def.name);
+        assert_eq!(value("hidden.curve_p1_x"), Some(0.0), "{}", def.name);
+        assert_eq!(
+            value(&format!("hidden.curve_p{n}_x")),
+            Some(1.0),
+            "{}",
+            def.name
+        );
     }
 }
 

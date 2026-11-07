@@ -3650,7 +3650,7 @@ impl ArrangementView {
                         f.descriptor
                             .params
                             .iter()
-                            .filter(|p| !p.key.starts_with("internal."))
+                            .filter(|p| !atomik_model::console::is_hidden_param(p.key))
                             .map(|p| (p.key.to_string(), p.name.to_string()))
                             .collect()
                     })

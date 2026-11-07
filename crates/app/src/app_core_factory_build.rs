@@ -46,6 +46,7 @@ pub(super) const ORGAN: &str = "atomik.organ";
 pub(super) const SEMI: &str = "atomik.semi-modular";
 pub(super) const DYNAMIC_EQ: &str = "atomik.dynamic-eq";
 pub(super) const CLIPPER: &str = "atomik.clipper";
+pub(super) const DUCK: &str = "atomik.duck";
 
 /// The author every factory item carries.
 pub(super) const AUTHOR: &str = "Atomik";
@@ -1285,6 +1286,113 @@ pub(super) const DEFS: &[Def] = &[
             ("env.amp.release", 60.0),
             ("voices", 1.0),
             ("master.level", -1.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Four Floor Pump",
+        device: DUCK,
+        category: "Bass",
+        tags: &["sidechain", "pump", "curve", "kick"],
+        sound: "A drawn curve over a quarter note: the level drops to nothing within a few \
+                milliseconds of every kick and swells back along a long, smooth line, so the \
+                bass and pads breathe with a four on the floor kick. Put the kick on the \
+                sidechain input.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 0.85),
+            ("length", 2.0),
+            ("threshold", -24.0),
+            ("hidden.curve_n", 4.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.03),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p2_bend", -24.0),
+            ("hidden.curve_p3_x", 0.3),
+            ("hidden.curve_p3_y", 0.35),
+            ("hidden.curve_p3_bend", -16.0),
+            ("hidden.curve_p4_x", 1.0),
+            ("hidden.curve_p4_y", 0.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Sub Only Duck",
+        device: DUCK,
+        category: "Bass",
+        tags: &["sidechain", "band", "low end", "kick"],
+        sound: "The same quick drop and slow return, but only the part of the sound under \
+                120 Hz is ducked: the kick keeps the low end to itself while the highs of the \
+                bass line stay at full level.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 1.0),
+            ("length", 2.0),
+            ("threshold", -24.0),
+            ("band", 1.0),
+            ("band_freq", 120.0),
+            ("hidden.curve_n", 4.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.025),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p2_bend", -24.0),
+            ("hidden.curve_p3_x", 0.35),
+            ("hidden.curve_p3_y", 0.4),
+            ("hidden.curve_p3_bend", -12.0),
+            ("hidden.curve_p4_x", 1.0),
+            ("hidden.curve_p4_y", 0.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Half Bar Breath",
+        device: DUCK,
+        category: "Pad",
+        tags: &["sidechain", "pad", "slow", "curve"],
+        sound: "A gentle duck over a half note: the level eases down over a tenth of the curve, \
+                holds a little under full level and rises back slowly, so a pad leaves room for \
+                a kick or a chord stab without an obvious pump.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 0.55),
+            ("length", 3.0),
+            ("threshold", -26.0),
+            ("hidden.curve_n", 4.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.1),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p2_bend", 8.0),
+            ("hidden.curve_p3_x", 0.45),
+            ("hidden.curve_p3_y", 0.6),
+            ("hidden.curve_p3_bend", 12.0),
+            ("hidden.curve_p4_x", 1.0),
+            ("hidden.curve_p4_y", 0.0),
+        ],
+        mods: &[],
+    },
+    Def {
+        name: "Eighth Chop",
+        device: DUCK,
+        category: "Keys",
+        tags: &["sidechain", "chop", "rhythm", "curve"],
+        sound: "A short curve over an eighth note that cuts the level hard on every hit and \
+                lets it climb back in a straight line over the rest of the note: a chopped, \
+                rhythmic movement for keys and stabs that follows the tempo.",
+        params: &[
+            ("mode", 3.0),
+            ("depth", 0.9),
+            ("length", 1.0),
+            ("threshold", -24.0),
+            ("hidden.curve_n", 3.0),
+            ("hidden.curve_p1_x", 0.0),
+            ("hidden.curve_p1_y", 0.0),
+            ("hidden.curve_p2_x", 0.06),
+            ("hidden.curve_p2_y", 1.0),
+            ("hidden.curve_p3_x", 1.0),
+            ("hidden.curve_p3_y", 0.0),
         ],
         mods: &[],
     },

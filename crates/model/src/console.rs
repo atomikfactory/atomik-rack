@@ -83,6 +83,16 @@ pub fn is_internal_param(param: &str) -> bool {
     param.starts_with(INTERNAL_PARAM_PREFIX)
 }
 
+/// Params with this key prefix are stored like any other (undoable, saved with the device and
+/// its patches) but belong to a panel's own editor, such as the points of a drawn curve: no knob,
+/// macro, automation lane, MIDI mapping or search result offers them.
+pub const HIDDEN_PARAM_PREFIX: &str = "hidden.";
+
+/// True for the params no list of targets shows: the `internal.*` ones and the `hidden.*` ones.
+pub fn is_hidden_param(param: &str) -> bool {
+    is_internal_param(param) || param.starts_with(HIDDEN_PARAM_PREFIX)
+}
+
 /// True for the console device types (`atomik.channel`, `atomik.bus`, `atomik.master`).
 pub fn is_console_type(type_id: &str) -> bool {
     type_id == CHANNEL_TYPE || type_id == MASTER_TYPE || type_id == BUS_TYPE

@@ -33,6 +33,8 @@ mod delay;
 mod det_math;
 mod det_trig;
 pub mod dither;
+pub mod duck_curve;
+pub mod duck_learn;
 mod dynamics;
 pub mod echo;
 pub mod energy;

@@ -242,6 +242,10 @@ pub enum UiAction {
     /// The CUT button of a dynamic EQ: the resonances found last go into the free bells of the
     /// device as dynamic cuts, in one undo step.
     CutResonances(DeviceKey),
+    /// The LEARN button of a Sidechain Tool: the app renders a few seconds of what reaches the
+    /// device's key on a worker, learns a duck curve from the hits in it and puts the curve into
+    /// the device in one undo step.
+    LearnDuck(DeviceKey),
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.

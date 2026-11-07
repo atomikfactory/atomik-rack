@@ -360,6 +360,7 @@ pub mod cpu_canvas;
 pub mod cursor;
 pub mod display_list;
 pub mod drum_gen_panel;
+pub mod duck_panel;
 pub mod event;
 pub mod export_panel;
 pub mod file_browser;
