@@ -20,6 +20,11 @@
 //! intact (atomic write). [`AppCore::save`] and [`AppCore::save_as`] run the same steps and wait
 //! (scripts, tests, "Save" in the question about unsaved changes, quitting).
 //!
+//! Every save keeps the project file it replaces as an automatic version beside the project (see
+//! `atomik_audio_file::versions`) and prunes the oldest automatic versions beyond the number the
+//! preference allows; the audio the kept versions use is not deleted as orphaned. A failure of
+//! the version step is logged and never fails the save.
+//!
 //! Things that would touch the project bundle meanwhile wait for the save first: an import or a
 //! recording asks for the bundle ([`AppCore::settle_save`]), and so does opening another
 //! project. A save that starts while audio is being loaded, recorded, converted or frozen is
@@ -28,8 +33,8 @@
 use super::{AppCore, AppError, ProjectBundle, io_error};
 use crate::sink::EngineSink;
 use atomik_audio_file::{
-    Bundle, CollectPlan, CollectProgress, CollectReport, RetireReport, plan_collect_into,
-    retire_old_project, save_text_atomic,
+    Bundle, CollectPlan, CollectProgress, CollectReport, RetireReport, VersionKind, VersionStore,
+    plan_collect_into, retire_old_project, save_text_atomic, scan_assets,
 };
 use atomik_model::RackDoc;
 use std::collections::BTreeSet;
@@ -72,6 +77,35 @@ fn audio_folders(file: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// Keeps the project file `file`, which a save is about to replace with `new_text`, as an
+/// automatic version, prunes the automatic versions beyond `keep`, and returns the audio the
+/// versions use (a save must not delete it). A file that is not there, one that is the new text
+/// and one the newest version already holds add no version. Failures are logged, never fatal.
+fn keep_replaced_file(file: &Path, new_text: &str, keep: usize, now: u64) -> BTreeSet<String> {
+    let mut store = match VersionStore::for_project(file) {
+        Ok(store) => store,
+        Err(e) => {
+            log::warn!("versions: cannot read the version index: {e}");
+            return BTreeSet::new();
+        }
+    };
+    match atomik_model::read_document_text(file) {
+        Ok(old) if old != new_text && !store.latest_is(&old) => {
+            let assets = scan_assets(&old);
+            if let Err(e) = store.add(VersionKind::Automatic, "", &old, &assets, now) {
+                log::warn!("versions: cannot keep the replaced project file: {e}");
+            }
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("versions: cannot read the project file to keep it: {e}"),
+    }
+    if let Err(e) = store.prune(keep) {
+        log::warn!("versions: cannot prune the old versions: {e}");
+    }
+    store.assets()
 }
 
 /// How the destination bundle is made.
@@ -124,6 +158,10 @@ pub(super) struct Job {
     relocate: Option<Relocate>,
     /// Cancels the copying from the UI thread and counts the files.
     progress: Arc<CollectProgress>,
+    /// How many automatic versions the save keeps.
+    keep_versions: usize,
+    /// When the save started, in seconds since 1970 (the time of the version it keeps).
+    now: u64,
 }
 
 /// What a finished save hands back.
@@ -163,6 +201,7 @@ impl Job {
                 });
             }
         }
+        let version_assets = keep_replaced_file(&self.file, &text, self.keep_versions, self.now);
         save_text_atomic(&self.file, &text).map_err(|e| io_error(&self.file, e))?;
         // Move Project: the old place goes only when the new one is proved to hold everything.
         let moved = match &self.relocate {
@@ -181,11 +220,14 @@ impl Job {
         };
         // Only a bundle folder that belongs to this project alone is tidied: where other project
         // files share the `Audio/` folder, what this one does not use may be theirs.
+        // The audio the kept versions use stays too, so that a version can be restored.
         if let Some(bundle) = &mut dest
             && !bundle.shared_with_other_projects(&self.file)
         {
+            let mut wanted = self.keep.clone();
+            wanted.extend(version_assets);
             bundle
-                .remove_orphans(&self.keep)
+                .remove_orphans(&wanted)
                 .map_err(|e| io_error(bundle.root(), e))?;
         }
         Ok(Saved {
@@ -593,6 +635,8 @@ impl<S: EngineSink> AppCore<S> {
             collect,
             relocate: None,
             progress: Arc::new(CollectProgress::new()),
+            keep_versions: self.keep_versions as usize,
+            now: crate::logging::unix_seconds(),
         }
     }
 

@@ -281,6 +281,10 @@
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
 //!   [`UiEvent::Ime`] for the window system's input method and installs the system clipboard with
 //!   [`clipboard::install`] on the UI thread (without one the text stays inside the app).
+//! - **Versions.** [`VersionsView`] is the modal panel of the project's version history: a name
+//!   and SAVE VERSION to keep the song as it is, the versions newest first, RESTORE and
+//!   PROTECT; it emits [`UiAction::Versions`] and the host replaces the rows with
+//!   [`VersionsView::set_items`] after each answer.
 //! - **Modulation matrix.** [`ModMatrixView`] is the modal panel of a device's eight modulation
 //!   slots (source, target and via pickers on a [`context_menu::ContextMenu`], an amount bar); the host feeds it
 //!   [`ModMatrixInfo`] and its edits are ordinary [`UiAction::Command`]s, with
@@ -396,6 +400,7 @@ pub mod track_panel;
 pub mod transport;
 pub mod tree;
 pub mod tuner_panel;
+pub mod versions_panel;
 pub mod viewport;
 pub mod warp_panel;
 pub mod wave_paint;
@@ -475,5 +480,6 @@ pub use transport::{
 };
 pub use vello;
 pub use vello::{kurbo, peniko};
+pub use versions_panel::{VersionItem, VersionsAction, VersionsView};
 pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};

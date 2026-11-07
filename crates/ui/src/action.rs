@@ -651,6 +651,9 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
+    /// restore one, protect one, or close.
+    Versions(crate::versions_panel::VersionsAction),
     /// The colour menu's Custom item: the app opens the colour picker
     /// ([`crate::ColorPickerView`]) for this target, from the colour it has now.
     PickColor(crate::color_picker::ColorTarget),

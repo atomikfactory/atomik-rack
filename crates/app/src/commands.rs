@@ -56,6 +56,10 @@ pub enum AppCommand {
     SongInfo,
     /// File ▸ Start Screen…: the box with a new song, the templates and the recent songs.
     StartScreen,
+    /// File ▸ Save Version…: keeps the song as it is under a name (the versions panel).
+    SaveVersion,
+    /// File ▸ Versions…: the versions of the project, with Restore and Protect.
+    Versions,
     /// File ▸ Export Project Archive…: the project and its audio as one `.atomikz` file.
     ExportArchive,
     /// File ▸ Import Project Archive…: unpack an archive beside itself and open the project.
@@ -698,6 +702,8 @@ impl AppCommand {
             AppCommand::ResetDefaultSong => ("file.default_song_reset", None),
             AppCommand::SongInfo => ("file.song_info", None),
             AppCommand::StartScreen => ("file.start_screen", None),
+            AppCommand::SaveVersion => ("file.save_version", None),
+            AppCommand::Versions => ("file.versions", None),
             AppCommand::ExportArchive => ("file.export_archive", None),
             AppCommand::ImportArchive => ("file.import_archive", None),
             AppCommand::CancelArchive => ("file.cancel_archive", None),
@@ -1011,6 +1017,8 @@ impl AppCommand {
             ("file.default_song_reset", None) => AppCommand::ResetDefaultSong,
             ("file.song_info", None) => AppCommand::SongInfo,
             ("file.start_screen", None) => AppCommand::StartScreen,
+            ("file.save_version", None) => AppCommand::SaveVersion,
+            ("file.versions", None) => AppCommand::Versions,
             ("file.export_archive", None) => AppCommand::ExportArchive,
             ("file.import_archive", None) => AppCommand::ImportArchive,
             ("file.cancel_archive", None) => AppCommand::CancelArchive,
@@ -2163,6 +2171,8 @@ pub fn menus_with_songs(
                 item("Close", AppCommand::Close),
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
+                item("Save Version\u{2026}", AppCommand::SaveVersion),
+                item("Versions\u{2026}", AppCommand::Versions),
                 item("Song Information\u{2026}", AppCommand::SongInfo),
                 item("Start Screen\u{2026}", AppCommand::StartScreen),
                 MenuEntry::Submenu(Submenu {
@@ -3550,6 +3560,8 @@ mod tests {
             AppCommand::ResetDefaultSong,
             AppCommand::SongInfo,
             AppCommand::StartScreen,
+            AppCommand::SaveVersion,
+            AppCommand::Versions,
             AppCommand::ExportArchive,
             AppCommand::ImportArchive,
             AppCommand::CancelArchive,
@@ -4215,6 +4227,8 @@ mod tests {
                 "Close",
                 "Save",
                 "Save As\u{2026}",
+                "Save Version\u{2026}",
+                "Versions\u{2026}",
                 "Song Information\u{2026}",
                 "Start Screen\u{2026}",
                 // New at Sample Rate, then Convert Sample Rate: three rates each.
