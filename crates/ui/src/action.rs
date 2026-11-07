@@ -659,6 +659,9 @@ pub enum UiAction {
     /// The "Will the bass read?" panel ([`crate::BassReadView`]) asks for something: choose the
     /// strip, measure, stop, or close.
     BassRead(crate::bass_read_panel::BassReadAction),
+    /// The Sound Analyst panel ([`crate::SoundAnalystView`]) asks for something: pick a file, stop
+    /// the analysis, make the patch, match it, or close.
+    SoundAnalyst(crate::sound_analyst_panel::SoundAnalystAction),
     /// The wavetable editor ([`crate::WavetableView`]) asks for something: store the edited
     /// table, cut its sample by cycle, play it on oscillator 1, or close.
     Wavetable(crate::wavetable_editor::WavetableAction),
