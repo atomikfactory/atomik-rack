@@ -1,4 +1,6 @@
-//! The mix channel panel: the compact rack panel of a console channel or output bus.
+//! The mix channel panel: the compact rack panel of a console channel or output bus. The master
+//! section panel ([`crate::master_panel`]) shares its top row (fader, meter, the two insert
+//! buttons and the output display) and adds the shared send rows under it.
 //!
 //! One rack unit. The front carries what a strip needs while mixing, and every control drives
 //! the same param or command as the console strip, so both views stay in step:
@@ -44,6 +46,8 @@ use vello::peniko::Color;
 pub const CHANNEL_TYPE: &str = atomik_model::console::CHANNEL_TYPE;
 /// Type id of the output bus.
 pub const BUS_TYPE: &str = atomik_model::console::BUS_TYPE;
+/// Type id of the console master (the master section panel shares the top row).
+pub const MASTER_TYPE: &str = crate::master_panel::MASTER_TYPE;
 /// Height of the panel, in rack units.
 pub const MIX_UNITS: u8 = 1;
 
@@ -76,6 +80,13 @@ const TOP: f64 = MARGIN_TOP + TITLE_H;
 /// Whether `type_id` is drawn as a mix channel panel (a console channel or an output bus).
 pub fn is_mix_type(type_id: &str) -> bool {
     type_id == CHANNEL_TYPE || type_id == BUS_TYPE
+}
+
+/// Whether `type_id` is drawn with the mix panel's top row (fader, meter, BYPASS INSERT FX and
+/// SHOW INSERT FX) and has an insert area under it: a mix channel panel or the master section
+/// panel.
+pub fn has_mix_top(type_id: &str) -> bool {
+    is_mix_type(type_id) || type_id == MASTER_TYPE
 }
 
 /// A button of the panel.

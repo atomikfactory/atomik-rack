@@ -55,6 +55,9 @@ fn jack_drawn(doc: &atomik_model::RackDoc, s: &atomik_model::SocketRef) -> bool 
                     plain.contains(&s.socket.as_str()) || bus.contains(&s.socket.as_str())
                 })
         }
+        Some(d) if d.type_id == atomik_ui::master_panel::MASTER_TYPE => {
+            atomik_ui::master_panel::socket_label(&s.socket).is_some()
+        }
         _ => true,
     }
 }
@@ -103,10 +106,10 @@ fn the_cable_display_cycle_acts_on_the_remaining_cables() {
 #[test]
 fn a_hidden_link_cannot_be_hovered() {
     let reg = registry();
-    let d = two_instruments(&reg);
+    let d = with_bus(&reg);
     let doc = d.doc();
     let mut v = back_view(doc, &reg);
-    let link = cable(("channel", "out_l"), ("master", "bus_l"));
+    let link = cable(("channel", "out_l"), ("bus", "bus_l"));
     assert!(is_link(doc, &link));
     // Mouse down in the middle of the link's curve (unfolded so sockets are reachable).
     let mid = v.cable_midpoint(&link).expect("geometry exists");
@@ -490,4 +493,40 @@ fn rack_bus_preview_png() {
         .join("../../target/preview/rack_bus_preview.png");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, png).unwrap();
+}
+
+#[test]
+fn rack_cables_to_a_summing_input_add_instead_of_replacing() {
+    let reg = registry();
+    let mut d = with_bus(&reg);
+    run(
+        &mut d,
+        &reg,
+        ["channel-2", "bus"].map(|k| atomik_model::Command::SetFolded {
+            key: key(k),
+            folded: false,
+        }),
+    );
+    let doc = d.doc();
+    let mut v = RackView::new(atomik_ui::Theme::dark());
+    let _ = v.handle(
+        &atomik_ui::UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 5000.0)),
+        doc,
+        &reg,
+    );
+    v.sync(doc, &reg);
+    v.set_flip(Flip::Back);
+    let from = v.socket_center(&sref("channel-2", "out_l")).unwrap();
+    let to = v.socket_center(&sref("bus", "bus_l")).unwrap();
+    let _ = v.handle(&down(from), doc, &reg);
+    let _ = v.handle(&mv(to), doc, &reg);
+    let a = v.handle(&up(to), doc, &reg);
+    // The summing input keeps the other cable, and the right pair comes with the left one.
+    assert_eq!(
+        commands(&a),
+        [atomik_model::Command::Batch(vec![
+            atomik_model::Command::Connect(cable(("channel-2", "out_l"), ("bus", "bus_l"))),
+            atomik_model::Command::Connect(cable(("channel-2", "out_r"), ("bus", "bus_r"))),
+        ])]
+    );
 }

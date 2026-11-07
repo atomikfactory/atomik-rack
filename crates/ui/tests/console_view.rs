@@ -10,7 +10,7 @@ use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::widget::KNOB_PIXELS_PER_RANGE;
 use atomik_ui::{
-    ChannelMeters, ColorTarget, ConsoleButton, ConsoleView, DisplayList, Flip, Key, Modifiers,
+    ChannelMeters, ColorTarget, ConsoleButton, ConsoleView, DisplayList, Key, Modifiers,
     PointerButton, RackView, Theme, UiAction, UiEvent,
 };
 use support::console::*;
@@ -676,33 +676,6 @@ fn moving_a_device_past_channel_devices_uses_document_indices() {
                 }
             }
         )]
-    );
-}
-
-#[test]
-fn rack_cables_to_summing_inputs_add_instead_of_replacing() {
-    let (mut doc, reg) = (console_doc(), console_registry());
-    doc.cables = vec![cable(("bass", "out_l"), ("master", "bus_l"))];
-    let mut r = RackView::new(Theme::dark());
-    let _ = r.handle(
-        &UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 5000.0)),
-        &doc,
-        &reg,
-    );
-    r.sync(&doc, &reg);
-    r.set_flip(Flip::Back);
-    let from = r.socket_center(&sref("lead", "out_l")).unwrap();
-    let to = r.socket_center(&sref("master", "bus_l")).unwrap();
-    r.handle(&down(from), &doc, &reg);
-    r.handle(&mv(to), &doc, &reg);
-    let a = r.handle(&up(to), &doc, &reg);
-    // The summing input keeps the other cable, and the right pair comes with the left one.
-    assert_eq!(
-        commands(&a),
-        [Command::Batch(vec![
-            Command::Connect(cable(("lead", "out_l"), ("master", "bus_l"))),
-            Command::Connect(cable(("lead", "out_r"), ("master", "bus_r"))),
-        ])]
     );
 }
 

@@ -89,6 +89,138 @@
       }
     },
     {
+      "id": "container", "type": "atomik.container",
+      "name": "Shimmer Cathedral", "folded": false, "patch": "Shimmer Cathedral",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "shift", "type": "atomik.pitch-shifter",
+            "name": "Pitch Shifter", "folded": false,
+            "params": {
+              "mix": 0.35,
+              "quality": 2,
+              "semitones": 12
+            }
+          },
+          {
+            "id": "hall", "type": "atomik.space-reverb",
+            "name": "Space Reverb", "folded": false,
+            "params": {
+              "algorithm": 1,
+              "decay": 8,
+              "highcut": 9000,
+              "mix": 0.45,
+              "predelay": 30
+            }
+          },
+          {
+            "id": "wide", "type": "atomik.stereo-tool",
+            "name": "Stereo Tool", "folded": false,
+            "params": {
+              "width": 1.3
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "shift:in_l"},
+          {"from": "boundary:in_r", "to": "shift:in_r"},
+          {"from": "hall:out_l", "to": "wide:in_l"},
+          {"from": "hall:out_r", "to": "wide:in_r"},
+          {"from": "shift:out_l", "to": "hall:in_l"},
+          {"from": "shift:out_r", "to": "hall:in_r"},
+          {"from": "wide:out_l", "to": "boundary:out_l"},
+          {"from": "wide:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Shimmer", "targets": [
+            {"device": "shift", "param": "mix", "min": 0, "max": 0.7}
+          ]},
+          {"name": "Decay", "targets": [
+            {"device": "hall", "param": "decay", "min": 2, "max": 14}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
+      "id": "container-2", "type": "atomik.container",
+      "name": "Ping Pong Tide", "folded": false, "patch": "Ping Pong Tide",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5833333
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "echo", "type": "atomik.echo",
+            "name": "Echo", "folded": false,
+            "params": {
+              "color.high": 6000,
+              "feedback": 0.45,
+              "mix": 0.35,
+              "ping_pong": 1,
+              "time.sync": 6,
+              "wobble.depth": 0.2
+            }
+          },
+          {
+            "id": "chorus", "type": "atomik.modulation",
+            "name": "Modulation", "folded": false,
+            "params": {
+              "depth": 0.4,
+              "mix": 0.3,
+              "mode": 0,
+              "rate": 0.4
+            }
+          },
+          {
+            "id": "room", "type": "atomik.reverb",
+            "name": "Reverb", "folded": false,
+            "params": {
+              "algorithm": 0,
+              "decay": 1.2,
+              "mix": 0.15
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "echo:in_l"},
+          {"from": "boundary:in_r", "to": "echo:in_r"},
+          {"from": "chorus:out_l", "to": "room:in_l"},
+          {"from": "chorus:out_r", "to": "room:in_r"},
+          {"from": "echo:out_l", "to": "chorus:in_l"},
+          {"from": "echo:out_r", "to": "chorus:in_r"},
+          {"from": "room:out_l", "to": "boundary:out_l"},
+          {"from": "room:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Feedback", "targets": [
+            {"device": "echo", "param": "feedback", "min": 0.1, "max": 0.8}
+          ]},
+          {"name": "Mix", "targets": [
+            {"device": "echo", "param": "mix", "min": 0, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
       "id": "drums", "type": "atomik.drum-machine",
       "name": "Drums", "folded": false,
       "params": {
@@ -357,138 +489,6 @@
         "send1.on": 1,
         "send2.level": -7,
         "send2.on": 1
-      }
-    },
-    {
-      "id": "container", "type": "atomik.container",
-      "name": "Shimmer Cathedral", "folded": false, "patch": "Shimmer Cathedral",
-      "params": {
-        "macro1": 0.5,
-        "macro2": 0.5
-      },
-      "inner": {
-        "devices": [
-          {
-            "id": "shift", "type": "atomik.pitch-shifter",
-            "name": "Pitch Shifter", "folded": false,
-            "params": {
-              "mix": 0.35,
-              "quality": 2,
-              "semitones": 12
-            }
-          },
-          {
-            "id": "hall", "type": "atomik.space-reverb",
-            "name": "Space Reverb", "folded": false,
-            "params": {
-              "algorithm": 1,
-              "decay": 8,
-              "highcut": 9000,
-              "mix": 0.45,
-              "predelay": 30
-            }
-          },
-          {
-            "id": "wide", "type": "atomik.stereo-tool",
-            "name": "Stereo Tool", "folded": false,
-            "params": {
-              "width": 1.3
-            }
-          }
-        ],
-        "cables": [
-          {"from": "boundary:in_l", "to": "shift:in_l"},
-          {"from": "boundary:in_r", "to": "shift:in_r"},
-          {"from": "hall:out_l", "to": "wide:in_l"},
-          {"from": "hall:out_r", "to": "wide:in_r"},
-          {"from": "shift:out_l", "to": "hall:in_l"},
-          {"from": "shift:out_r", "to": "hall:in_r"},
-          {"from": "wide:out_l", "to": "boundary:out_l"},
-          {"from": "wide:out_r", "to": "boundary:out_r"}
-        ],
-        "macros": [
-          {"name": "Shimmer", "targets": [
-            {"device": "shift", "param": "mix", "min": 0, "max": 0.7}
-          ]},
-          {"name": "Decay", "targets": [
-            {"device": "hall", "param": "decay", "min": 2, "max": 14}
-          ]},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []}
-        ],
-        "splits": []
-      }
-    },
-    {
-      "id": "container-2", "type": "atomik.container",
-      "name": "Ping Pong Tide", "folded": false, "patch": "Ping Pong Tide",
-      "params": {
-        "macro1": 0.5,
-        "macro2": 0.5833333
-      },
-      "inner": {
-        "devices": [
-          {
-            "id": "echo", "type": "atomik.echo",
-            "name": "Echo", "folded": false,
-            "params": {
-              "color.high": 6000,
-              "feedback": 0.45,
-              "mix": 0.35,
-              "ping_pong": 1,
-              "time.sync": 6,
-              "wobble.depth": 0.2
-            }
-          },
-          {
-            "id": "chorus", "type": "atomik.modulation",
-            "name": "Modulation", "folded": false,
-            "params": {
-              "depth": 0.4,
-              "mix": 0.3,
-              "mode": 0,
-              "rate": 0.4
-            }
-          },
-          {
-            "id": "room", "type": "atomik.reverb",
-            "name": "Reverb", "folded": false,
-            "params": {
-              "algorithm": 0,
-              "decay": 1.2,
-              "mix": 0.15
-            }
-          }
-        ],
-        "cables": [
-          {"from": "boundary:in_l", "to": "echo:in_l"},
-          {"from": "boundary:in_r", "to": "echo:in_r"},
-          {"from": "chorus:out_l", "to": "room:in_l"},
-          {"from": "chorus:out_r", "to": "room:in_r"},
-          {"from": "echo:out_l", "to": "chorus:in_l"},
-          {"from": "echo:out_r", "to": "chorus:in_r"},
-          {"from": "room:out_l", "to": "boundary:out_l"},
-          {"from": "room:out_r", "to": "boundary:out_r"}
-        ],
-        "macros": [
-          {"name": "Feedback", "targets": [
-            {"device": "echo", "param": "feedback", "min": 0.1, "max": 0.8}
-          ]},
-          {"name": "Mix", "targets": [
-            {"device": "echo", "param": "mix", "min": 0, "max": 0.6}
-          ]},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []}
-        ],
-        "splits": []
       }
     },
     {

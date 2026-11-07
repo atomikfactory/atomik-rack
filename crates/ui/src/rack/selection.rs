@@ -131,6 +131,7 @@ impl RackView {
     }
 
     fn report_selection(&mut self, out: &mut Vec<UiAction>) {
+        self.area_pick = None;
         out.extend(self.selection_action());
         self.repaint = true;
     }

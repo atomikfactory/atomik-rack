@@ -127,13 +127,13 @@ impl RackView {
             Some(n) => {
                 let after = dp.keys.get(n).and_then(pos).map_or(others.len(), |p| p + 1);
                 // A strip's stacked inserts belong to its block: the slot is after them.
-                let stack = dp
+                let stack: Vec<&DeviceKey> = dp
                     .keys
                     .get(n)
                     .and_then(|k| self.areas.iter().find(|a| a.owner == *k))
-                    .map_or(&[][..], |a| &a.members[..]);
+                    .map_or_else(Vec::new, |a| a.members.iter().chain(&a.tail).collect());
                 let mut end = after;
-                while others.get(end).is_some_and(|o| stack.contains(*o)) {
+                while others.get(end).is_some_and(|o| stack.contains(o)) {
                     end += 1;
                 }
                 end

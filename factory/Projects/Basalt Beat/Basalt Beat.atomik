@@ -89,6 +89,74 @@
       }
     },
     {
+      "id": "container-3", "type": "atomik.container",
+      "name": "Ping Pong Tide", "folded": false, "patch": "Ping Pong Tide",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.5833333
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "echo", "type": "atomik.echo",
+            "name": "Echo", "folded": false,
+            "params": {
+              "color.high": 6000,
+              "feedback": 0.45,
+              "mix": 0.35,
+              "ping_pong": 1,
+              "time.sync": 6,
+              "wobble.depth": 0.2
+            }
+          },
+          {
+            "id": "chorus", "type": "atomik.modulation",
+            "name": "Modulation", "folded": false,
+            "params": {
+              "depth": 0.4,
+              "mix": 0.3,
+              "mode": 0,
+              "rate": 0.4
+            }
+          },
+          {
+            "id": "room", "type": "atomik.reverb",
+            "name": "Reverb", "folded": false,
+            "params": {
+              "algorithm": 0,
+              "decay": 1.2,
+              "mix": 0.15
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "echo:in_l"},
+          {"from": "boundary:in_r", "to": "echo:in_r"},
+          {"from": "chorus:out_l", "to": "room:in_l"},
+          {"from": "chorus:out_r", "to": "room:in_r"},
+          {"from": "echo:out_l", "to": "chorus:in_l"},
+          {"from": "echo:out_r", "to": "chorus:in_r"},
+          {"from": "room:out_l", "to": "boundary:out_l"},
+          {"from": "room:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Feedback", "targets": [
+            {"device": "echo", "param": "feedback", "min": 0.1, "max": 0.8}
+          ]},
+          {"name": "Mix", "targets": [
+            {"device": "echo", "param": "mix", "min": 0, "max": 0.6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
       "id": "drum-machine", "type": "atomik.drum-machine",
       "name": "Drums", "folded": false, "patch": "Basalt Kit",
       "params": {
@@ -383,74 +451,6 @@
         "pan": 0.25,
         "send1.level": -6,
         "send1.on": 1
-      }
-    },
-    {
-      "id": "container-3", "type": "atomik.container",
-      "name": "Ping Pong Tide", "folded": false, "patch": "Ping Pong Tide",
-      "params": {
-        "macro1": 0.5,
-        "macro2": 0.5833333
-      },
-      "inner": {
-        "devices": [
-          {
-            "id": "echo", "type": "atomik.echo",
-            "name": "Echo", "folded": false,
-            "params": {
-              "color.high": 6000,
-              "feedback": 0.45,
-              "mix": 0.35,
-              "ping_pong": 1,
-              "time.sync": 6,
-              "wobble.depth": 0.2
-            }
-          },
-          {
-            "id": "chorus", "type": "atomik.modulation",
-            "name": "Modulation", "folded": false,
-            "params": {
-              "depth": 0.4,
-              "mix": 0.3,
-              "mode": 0,
-              "rate": 0.4
-            }
-          },
-          {
-            "id": "room", "type": "atomik.reverb",
-            "name": "Reverb", "folded": false,
-            "params": {
-              "algorithm": 0,
-              "decay": 1.2,
-              "mix": 0.15
-            }
-          }
-        ],
-        "cables": [
-          {"from": "boundary:in_l", "to": "echo:in_l"},
-          {"from": "boundary:in_r", "to": "echo:in_r"},
-          {"from": "chorus:out_l", "to": "room:in_l"},
-          {"from": "chorus:out_r", "to": "room:in_r"},
-          {"from": "echo:out_l", "to": "chorus:in_l"},
-          {"from": "echo:out_r", "to": "chorus:in_r"},
-          {"from": "room:out_l", "to": "boundary:out_l"},
-          {"from": "room:out_r", "to": "boundary:out_r"}
-        ],
-        "macros": [
-          {"name": "Feedback", "targets": [
-            {"device": "echo", "param": "feedback", "min": 0.1, "max": 0.8}
-          ]},
-          {"name": "Mix", "targets": [
-            {"device": "echo", "param": "mix", "min": 0, "max": 0.6}
-          ]},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []}
-        ],
-        "splits": []
       }
     }
   ],
