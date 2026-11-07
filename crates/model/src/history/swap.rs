@@ -102,6 +102,11 @@ swaps! {
         doc.references.clone_from(new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// The delivery target (see [`crate::Delivery`]).
+    Delivery {}: Option<crate::Delivery> => |doc, new| {
+        doc.delivery.clone_from(new);
+        Ok(vec![SyncOp::ViewChanged])
+    };
     /// The master tune in cents.
     Tune {}: f32 => |doc, new| {
         doc.tune_cents = *new;

@@ -251,6 +251,23 @@ fn meter_item(command: &'static str, arg: &'static str, label: &'static str) -> 
     }
 }
 
+/// The Add Transition submenu of the marker, range and ruler menus: the same choices as the
+/// Track menu, each with its argument.
+fn transition_menu() -> Spec {
+    let mut entries = Vec::new();
+    for choice in crate::commands::TransitionChoice::ALL {
+        if choice.starts_group() {
+            entries.push(Spec::Separator);
+        }
+        entries.push(meter_item(
+            "sequencer.add_transition",
+            choice.arg(),
+            choice.label(),
+        ));
+    }
+    Spec::submenu("Add Transition", entries)
+}
+
 fn item(command: &'static str, on: bool) -> Spec {
     Spec::item(command).enabled(on)
 }
@@ -973,6 +990,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.locator_right_here", true),
                 item("sequencer.marker_end_here", true),
                 Spec::Separator,
+                transition_menu(),
+                Spec::Separator,
                 // The bars between the locators, opened or closed in every track.
                 item("sequencer.insert_bars", true),
                 item("sequencer.remove_bars", true),
@@ -1022,7 +1041,11 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             ]
         }
         ContextTarget::Marker => {
-            let mut v = vec![item("sequencer.marker_rename", true), Spec::Separator];
+            let mut v = vec![
+                item("sequencer.marker_rename", true),
+                transition_menu(),
+                Spec::Separator,
+            ];
             v.extend(marker_colors());
             v.extend([Spec::Separator, item("sequencer.marker_delete", true)]);
             v
@@ -1033,6 +1056,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.marker_select_clips", true),
                 Spec::Separator,
                 item("sequencer.marker_rename", true),
+                transition_menu(),
                 Spec::Separator,
             ];
             v.extend(marker_colors());

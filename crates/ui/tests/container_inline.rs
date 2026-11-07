@@ -19,7 +19,6 @@ const TALL: Size = Size::new(1000.0, 3600.0);
 fn inline_view(doc: &RackDoc) -> RackView {
     let reg = registry();
     let mut v = RackView::new(Theme::dark());
-    v.set_show_console_devices(false);
     let _ = v.handle(&UiEvent::Resize(TALL), doc, &reg);
     v.sync(doc, &reg);
     v
@@ -56,7 +55,10 @@ fn rect(v: &RackView, k: &str) -> atomik_ui::kurbo::Rect {
 fn a_folded_container_is_one_panel() {
     let d = layered();
     let v = inline_view(d.doc());
-    assert_eq!(keys_in_view(&v), ["interface", "lead", "layer"]);
+    assert_eq!(
+        keys_in_view(&v),
+        ["interface", "lead", "layer", "channel", "master"]
+    );
     assert!(!v.is_inline());
     assert!(v.frames().is_empty());
 }
@@ -77,7 +79,9 @@ fn an_unfolded_container_draws_its_devices_under_its_panel() {
             "layer/pad",
             "layer/delay",
             "layer/reverb",
-            "layer/boundary~out"
+            "layer/boundary~out",
+            "channel",
+            "master"
         ]
     );
     // One column: everything stacks, panel after panel, with no gap.
@@ -172,7 +176,10 @@ fn an_inner_container_with_a_folded_parent_stays_hidden() {
     set_open(&mut d, "layer/fx", true);
     let v = inline_view(d.doc());
     assert!(!v.is_inline(), "nothing at the top level is unfolded");
-    assert_eq!(keys_in_view(&v), ["interface", "lead", "layer"]);
+    assert_eq!(
+        keys_in_view(&v),
+        ["interface", "lead", "layer", "channel", "master"]
+    );
 }
 
 #[test]
@@ -189,7 +196,10 @@ fn the_view_follows_a_fold_and_an_unfold_of_the_document() {
     v.sync(d.doc(), &reg);
     assert_eq!(v.content_height(), folded_height);
     assert!(!v.is_inline());
-    assert_eq!(keys_in_view(&v), ["interface", "lead", "layer"]);
+    assert_eq!(
+        keys_in_view(&v),
+        ["interface", "lead", "layer", "channel", "master"]
+    );
 }
 
 #[test]
@@ -457,7 +467,10 @@ fn select_all_on_the_rack_leaves_the_inner_devices_out() {
     let reg = registry();
     let mut v = inline_view(d.doc());
     let _ = v.command("edit.select_all", None, d.doc(), &reg);
-    assert_eq!(v.selection(), vec![key("lead"), key("layer")]);
+    assert_eq!(
+        v.selection(),
+        vec![key("lead"), key("layer"), key("channel"), key("master")]
+    );
 }
 
 #[test]

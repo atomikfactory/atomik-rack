@@ -3,7 +3,7 @@
 //!
 //! | Effect | Visual | Placement | Sections |
 //! |---|---|---|---|
-//! | reverb | decay sketch, output meters | left, 196 wide | SPACE, TONE, BALANCE, OUTPUT |
+//! | reverb | decay sketch, output meters | left, 196 wide | SPACE, TONE, BALANCE, OUTPUT, DUCK, KEY GATE |
 //! | compressor | transfer curve, level/GR meters, SC button | left, 172 wide | DETECTOR, GAIN, SIDECHAIN, OUTPUT |
 //! | EQ | response curve, draggable handles, analyser | across the top, 170 high | LOW CUT, LOW SHELF, PEAK 1, PEAK 2, HIGH SHELF, HIGH CUT, OUTPUT |
 //! | distortion | transfer curve, in/out meters | left, 172 wide | DRIVE, TONE, CUT, BODY, CRUSH, OUTPUT |
@@ -81,6 +81,17 @@ fn sections(kind: FxKind) -> Def {
             ("TONE", &["damping", "lowcut"]),
             ("BALANCE", &["early", "width", "modulation"]),
             ("OUTPUT", &["mix", "mix_cv_trim", "freeze", "output"]),
+            (
+                "DUCK",
+                &[
+                    "duck",
+                    "duck_release",
+                    "duck_mode",
+                    "duck_freq",
+                    "duck_threshold",
+                ],
+            ),
+            ("KEY GATE", &["key_gate", "key_gate_hold"]),
         ],
         FxKind::Compressor => &[
             (

@@ -1,0 +1,103 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Ducked Vocal Reverb", "folded": false, "patch": "Ducked Vocal Reverb",
+      "params": {
+        "macro1": 0.5,
+        "macro2": 0.34615386
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "deess", "type": "atomik.de-esser",
+            "name": "De-esser", "folded": false,
+            "params": {
+              "freq": 6800,
+              "range": 10,
+              "threshold": -32
+            }
+          },
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 300,
+              "band1.on": 1,
+              "band6.freq": 8000,
+              "band6.on": 1,
+              "highcut.slope": 1,
+              "lowcut.slope": 1
+            }
+          },
+          {
+            "id": "hall", "type": "atomik.space-reverb",
+            "name": "Space Reverb", "folded": false,
+            "params": {
+              "algorithm": 1,
+              "decay": 2.6,
+              "duck": 0.5,
+              "duck_release": 380,
+              "duck_threshold": -34,
+              "mix": 1,
+              "output": 4,
+              "predelay": 25
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "deess:in_l"},
+          {"from": "boundary:in_r", "to": "deess:in_r"},
+          {"from": "deess:out_l", "to": "eq:in_l"},
+          {"from": "deess:out_r", "to": "eq:in_r"},
+          {"from": "eq:out_l", "to": "hall:in_l"},
+          {"from": "eq:out_r", "to": "hall:in_r"},
+          {"from": "hall:out_l", "to": "boundary:out_l"},
+          {"from": "hall:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Duck", "targets": [
+            {"device": "hall", "param": "duck", "min": 0, "max": 1}
+          ]},
+          {"name": "Decay", "targets": [
+            {"device": "hall", "param": "decay", "min": 0.8, "max": 6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

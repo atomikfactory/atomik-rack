@@ -33,6 +33,7 @@ pub mod aiff;
 pub mod build;
 pub mod bundle;
 pub mod cli;
+pub mod delivery;
 pub mod device_input;
 pub mod energy;
 pub mod export;

@@ -27,7 +27,6 @@ fn shell() -> Shell<NullBackend> {
     );
     s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));
     // Without the console devices the panel is near the top of the rack, in view.
-    s.core_mut().view_mut().set_show_console_devices(false);
     s
 }
 

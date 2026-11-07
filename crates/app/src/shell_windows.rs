@@ -326,6 +326,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.song_info {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.reverb_send {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.kick_bass {
                     v.set_scale(scale);
                 }
@@ -345,6 +348,9 @@ impl<B: AudioBackend> Shell<B> {
                     v.set_scale(scale);
                 }
                 if let Some(v) = &mut self.bass_read {
+                    v.set_scale(scale);
+                }
+                if let Some(v) = &mut self.delivery {
                     v.set_scale(scale);
                 }
                 if let Some(v) = &mut self.sound_analyst {
@@ -552,6 +558,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.blind.is_some()
             || self.silence.is_some()
             || self.song_info.is_some()
+            || self.reverb_send.is_some()
             || self.kick_bass.is_some()
             || self.zone.is_some()
             || self.versions.is_some()
@@ -559,6 +566,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.mixcheck.is_some()
             || self.repetition.is_some()
             || self.bass_read.is_some()
+            || self.delivery.is_some()
             || self.sound_analyst.is_some()
             || self.wavetable.is_some()
             || self.color_picker.is_some()
