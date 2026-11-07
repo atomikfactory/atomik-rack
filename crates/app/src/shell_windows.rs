@@ -613,6 +613,103 @@ impl<B: AudioBackend> Shell<B> {
             && self.file_drag.as_ref().is_some_and(|d| !d.cancelled)
     }
 
+    // ------------------------------------------------------------------ drags between songs
+
+    /// The pane whose drag of the selection (clips, a track, devices) is in progress: a release
+    /// over a window of another song turns it into a copy there. While it is, the platform looks
+    /// for the other songs' windows under the pointer and calls [`Self::take_song_drag`].
+    pub fn song_drag(&self) -> Option<Pane> {
+        match self.capture {
+            Some((_, Capture::Pane(Pane::Arrangement)))
+                if self.core.arrangement().carries_selection() =>
+            {
+                Some(Pane::Arrangement)
+            }
+            Some((_, Capture::Pane(Pane::Rack))) if self.core.view().carries_devices() => {
+                Some(Pane::Rack)
+            }
+            _ => None,
+        }
+    }
+
+    /// Ends the drag of [`Self::song_drag`] without moving anything and returns what it carried
+    /// (the snapshot Copy would take). `None`, and the drag goes on, when nothing is carried.
+    pub fn take_song_drag(&mut self) -> Option<crate::clipboard::ClipboardData> {
+        let pane = self.song_drag()?;
+        let data = self.core.carried_data(pane)?;
+        self.core.end_carried_drag(pane);
+        self.capture = None;
+        self.capture_over = None;
+        self.repaint = true;
+        Some(data)
+    }
+
+    /// Pastes what a drag in another song carried at `pos` of `window` (logical units): clips
+    /// on the lane and tick under the pointer, devices at the rack slot there, tracks after the
+    /// track there. One undo step; a refusal is shown here.
+    pub fn drop_song_data(
+        &mut self,
+        window: WindowKind,
+        pos: Point,
+        data: crate::clipboard::ClipboardData,
+    ) {
+        self.repaint = true;
+        let pane = match self.hit_in(window, pos) {
+            Some(Ok(pane @ Pane::Rack)) => pane,
+            Some(Ok(Pane::Arrangement | Pane::PianoRoll)) => Pane::Arrangement,
+            _ => return self.notify("Drop on the arrangement or the rack"),
+        };
+        // The rack takes positions of its own view.
+        let at = match pane {
+            Pane::Rack => {
+                let origin = self
+                    .pane_rect(Pane::Rack)
+                    .map_or(Point::ORIGIN, |(_, r)| r.origin());
+                Point::new(pos.x - origin.x, pos.y - origin.y)
+            }
+            _ => pos,
+        };
+        if let Err(message) = self.core.drop_carried(pane, at, data)
+            && !message.is_empty()
+        {
+            self.notify(message);
+        }
+    }
+
+    /// The files of the drag out of the file browser that is in progress (not cancelled).
+    pub fn file_drag_paths(&self) -> Option<Vec<PathBuf>> {
+        self.file_drag
+            .as_ref()
+            .filter(|d| !d.cancelled)
+            .map(|d| d.paths.clone())
+    }
+
+    /// Files dragged out of another song's file browser are over `pos` of `window` here
+    /// (`release`: they were dropped): the same hover and drop as a drag in this song.
+    pub fn foreign_file_drag(
+        &mut self,
+        window: WindowKind,
+        pos: Point,
+        paths: Vec<PathBuf>,
+        release: bool,
+    ) {
+        self.repaint = true;
+        if !release {
+            return self.file_event(window, &UiEvent::FileHover { pos, paths });
+        }
+        if self.file_target_in(window, pos).is_some() {
+            self.file_event(window, &UiEvent::FileDrop { pos, paths });
+        } else {
+            self.file_event(window, &UiEvent::FileHoverCancel);
+        }
+    }
+
+    /// The files of another song's drag left this song's windows: the hover ends.
+    pub fn foreign_file_drag_left(&mut self) {
+        self.repaint = true;
+        self.file_event(WindowKind::Main, &UiEvent::FileHoverCancel);
+    }
+
     // ------------------------------------------------------------------ geometry
 
     /// Where the window of `kind` was last, as saved in `ui-state.json` (kept after the window

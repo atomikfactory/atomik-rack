@@ -1,4 +1,4 @@
-//! Deterministic polyphase halfband oversampler: 1x (bypass), 2x and 4x, for non-linear
+//! Deterministic polyphase halfband oversampler: 1x (bypass), 2x, 4x and 8x, for non-linear
 //! processing (distortion, true-peak detection, limiters). Mono; use one per channel.
 //!
 //! # Design
@@ -13,19 +13,22 @@
 //! |---|---|---|---|
 //! | 1 | base <-> 2x | 59 (31) | flat to 0.4 fs, stopband from 0.6 fs, Kaiser beta 9 |
 //! | 2 | 2x <-> 4x | 23 padded to 25 (13) | flat to 0.4 fs, stopband from 1.6 fs (0.4 of the 4x rate), beta 9 |
+//! | 3 | 4x <-> 8x | 15 padded to 17 (8) | flat to 0.4 fs, stopband from 3.6 fs, beta 9 |
 //!
 //! * **Up:** zero-stuff and filter, gain 2 (so passband gain is exactly 1), computed as two
 //!   polyphase branches (only the nonzero taps).
 //! * **Down:** filter and keep every second sample (only the nonzero taps), picking the even
 //!   phase so the cascade delay is an integer number of base samples.
 //! * **4x** cascades stage 1 then stage 2 going up, and stage 2 then stage 1 coming down.
+//! * **8x** adds stage 3 after stage 2 going up and before it coming down.
 //!
 //! # Latency (base-rate samples, up + down)
 //!
 //! A stage with filter centre delay `c` (high-rate samples) delays a round trip by `c` samples of
 //! its *low* rate. Stage 1 has `c = 29`; stage 2 is a 23-tap filter with 2 extra samples of delay
-//! (`c = 12`, so the delay in base samples is `12 / 2 = 6`, an integer). Total:
-//! [`LATENCY_2X`] = 29 and [`LATENCY_4X`] = 35 base samples; 1x has latency 0. The tests measure
+//! (`c = 12`, so the delay in base samples is `12 / 2 = 6`, an integer); stage 3 has `c = 8` at
+//! the 4x rate, which is 2 base samples. Total: [`LATENCY_2X`] = 29, [`LATENCY_4X`] = 35 and
+//! [`LATENCY_8X`] = 37 base samples; 1x has latency 0. The tests measure
 //! the impulse delay.
 //!
 //! # Usage
@@ -44,6 +47,8 @@
 pub const LATENCY_2X: u32 = 29;
 /// Round-trip latency of the 4x chain in base-rate samples.
 pub const LATENCY_4X: u32 = 35;
+/// Round-trip latency of the 8x chain in base-rate samples.
+pub const LATENCY_8X: u32 = 37;
 
 /// Largest filter centre delay (taps = `2c + 1`).
 const MAX_C: usize = 32;
@@ -60,15 +65,18 @@ pub enum OversampleFactor {
     /// 4x (two cascaded halfband stages).
     #[default]
     X4,
+    /// 8x (three cascaded halfband stages).
+    X8,
 }
 
 impl OversampleFactor {
-    /// The integer ratio (1, 2 or 4).
+    /// The integer ratio (1, 2, 4 or 8).
     pub fn ratio(self) -> usize {
         match self {
             Self::X1 => 1,
             Self::X2 => 2,
             Self::X4 => 4,
+            Self::X8 => 8,
         }
     }
 
@@ -78,6 +86,7 @@ impl OversampleFactor {
             Self::X1 => 0,
             Self::X2 => LATENCY_2X,
             Self::X4 => LATENCY_4X,
+            Self::X8 => LATENCY_8X,
         }
     }
 }
@@ -238,8 +247,10 @@ pub struct Oversampler {
     factor: OversampleFactor,
     up1: HalfbandUp,
     up2: HalfbandUp,
+    up3: HalfbandUp,
     down1: HalfbandDown,
     down2: HalfbandDown,
+    down3: HalfbandDown,
     max_block: usize,
     buf: Vec<f32>,
 }
@@ -251,14 +262,17 @@ impl Oversampler {
         let max_block = max_block.max(1);
         let h1 = halfband_taps(29, 29, 9.0);
         let h2 = halfband_taps(11, 12, 9.0);
+        let h3 = halfband_taps(7, 8, 9.0);
         Self {
             factor: OversampleFactor::X4,
             up1: HalfbandUp::new(&h1, 29),
             up2: HalfbandUp::new(&h2, 12),
+            up3: HalfbandUp::new(&h3, 8),
             down1: HalfbandDown::new(&h1, 29),
             down2: HalfbandDown::new(&h2, 12),
+            down3: HalfbandDown::new(&h3, 8),
             max_block,
-            buf: vec![0.0; max_block * 4],
+            buf: vec![0.0; max_block * 8],
         }
     }
 
@@ -279,8 +293,10 @@ impl Oversampler {
     pub fn reset(&mut self) {
         self.up1.reset();
         self.up2.reset();
+        self.up3.reset();
         self.down1.reset();
         self.down2.reset();
+        self.down3.reset();
         self.buf.fill(0.0);
     }
 
@@ -321,6 +337,19 @@ impl Oversampler {
                 }
                 &mut self.buf[..4 * n]
             }
+            OversampleFactor::X8 => {
+                for (i, &x) in input[..n].iter().enumerate() {
+                    let z = self.up1.process(x);
+                    let a = self.up2.process(z[0]);
+                    let b = self.up2.process(z[1]);
+                    for (j, q) in [a[0], a[1], b[0], b[1]].into_iter().enumerate() {
+                        let w = self.up3.process(q);
+                        self.buf[8 * i + 2 * j] = w[0];
+                        self.buf[8 * i + 2 * j + 1] = w[1];
+                    }
+                }
+                &mut self.buf[..8 * n]
+            }
         }
     }
 
@@ -341,6 +370,18 @@ impl Oversampler {
                     let b = &self.buf[4 * i..4 * i + 4];
                     let a0 = self.down2.process(b[0], b[1]);
                     let a1 = self.down2.process(b[2], b[3]);
+                    *y = self.down1.process(a0, a1);
+                }
+            }
+            OversampleFactor::X8 => {
+                for (i, y) in output[..n].iter_mut().enumerate() {
+                    let b = &self.buf[8 * i..8 * i + 8];
+                    let m0 = self.down3.process(b[0], b[1]);
+                    let m1 = self.down3.process(b[2], b[3]);
+                    let m2 = self.down3.process(b[4], b[5]);
+                    let m3 = self.down3.process(b[6], b[7]);
+                    let a0 = self.down2.process(m0, m1);
+                    let a1 = self.down2.process(m2, m3);
                     *y = self.down1.process(a0, a1);
                 }
             }
@@ -400,6 +441,7 @@ mod tests {
             (OversampleFactor::X1, 0usize),
             (OversampleFactor::X2, LATENCY_2X as usize),
             (OversampleFactor::X4, LATENCY_4X as usize),
+            (OversampleFactor::X8, LATENCY_8X as usize),
         ] {
             let mut os = Oversampler::new(BLOCK);
             os.set_factor(factor);
@@ -438,7 +480,11 @@ mod tests {
 
     #[test]
     fn passband_is_flat_to_point_four_fs() {
-        for factor in [OversampleFactor::X2, OversampleFactor::X4] {
+        for factor in [
+            OversampleFactor::X2,
+            OversampleFactor::X4,
+            OversampleFactor::X8,
+        ] {
             let mut worst = 0.0f64;
             for k in [100, 400, 800, 1200, 1600, 3000, 3270] {
                 // k / N cycles per sample: up to 0.399 fs.
@@ -496,7 +542,11 @@ mod tests {
         // A tone in the passband (0.35 fs and 0.40 fs): every image in the 4x output (31 kHz,
         // 65 kHz, ... at 48 kHz base) must be at least 80 dB down.
         for k in [2867usize, 3277] {
-            for factor in [OversampleFactor::X2, OversampleFactor::X4] {
+            for factor in [
+                OversampleFactor::X2,
+                OversampleFactor::X4,
+                OversampleFactor::X8,
+            ] {
                 let mut os = Oversampler::new(N);
                 os.set_factor(factor);
                 // Prime the filters, then capture one block.
@@ -571,7 +621,11 @@ mod tests {
     #[test]
     fn round_trip_of_a_band_limited_signal() {
         // Two tones at 0.1 and 0.3 fs: output equals the input delayed by the latency.
-        for factor in [OversampleFactor::X2, OversampleFactor::X4] {
+        for factor in [
+            OversampleFactor::X2,
+            OversampleFactor::X4,
+            OversampleFactor::X8,
+        ] {
             let mut os = Oversampler::new(BLOCK);
             os.set_factor(factor);
             let a = sine(410, N, 0.4);
