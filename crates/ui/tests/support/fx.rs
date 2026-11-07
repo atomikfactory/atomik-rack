@@ -80,6 +80,12 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
         FxKind::Tuner => {
             set(&mut d, "ref", 442.0);
         }
+        FxKind::Clipper => {
+            set(&mut d, "gain", 9.0);
+            set(&mut d, "ceiling", -6.0);
+            set(&mut d, "curve", 0.4);
+            set(&mut d, "symmetry", 0.3);
+        }
     }
     doc.devices.push(d);
     doc
@@ -112,6 +118,8 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
             0.5, 0.4, 0.6, 0.45, 0.2, 0.16, -4.4, -3.9, 0.62, -0.1, 0.35, 0.17, 0.09, -18.4, -19.2,
             -20.1,
         ],
+        // driven peak, output peak, clipped share (percent), longest run (ms)
+        FxKind::Clipper => vec![0.9, 0.5, 18.5, 1.4],
         // The audio track publishes no meter values.
         FxKind::AudioTrack | FxKind::Tuner => vec![],
     }

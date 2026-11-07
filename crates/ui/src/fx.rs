@@ -37,11 +37,13 @@ pub enum FxKind {
     AudioTrack,
     /// `atomik.tuner`: the tuner display of an effect (fed by the app from the device's scope tap).
     Tuner,
+    /// `atomik.clipper`: the transfer curve, the clip activity readout and the level meters.
+    Clipper,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 12] = [
+    pub const ALL: [FxKind; 13] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -54,12 +56,13 @@ impl FxKind {
         FxKind::PhaseMeter,
         FxKind::AudioTrack,
         FxKind::Tuner,
+        FxKind::Clipper,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 11] = [
+    pub const EFFECTS: [FxKind; 12] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -71,6 +74,7 @@ impl FxKind {
         FxKind::Spectrum,
         FxKind::PhaseMeter,
         FxKind::Tuner,
+        FxKind::Clipper,
     ];
 
     /// The kind of a device type id.
@@ -93,6 +97,7 @@ impl FxKind {
             FxKind::PhaseMeter => "atomik.phase-meter",
             FxKind::AudioTrack => "atomik.audio-track",
             FxKind::Tuner => "atomik.tuner",
+            FxKind::Clipper => "atomik.clipper",
         }
     }
 
@@ -110,6 +115,7 @@ impl FxKind {
             FxKind::Spectrum => SPECTRUM_METERS,
             FxKind::PhaseMeter => phase::COUNT,
             FxKind::AudioTrack | FxKind::Tuner => 0,
+            FxKind::Clipper => CLIPPER_METERS,
         }
     }
 }
@@ -135,6 +141,11 @@ pub const GR_SCALE_DB: f32 = 24.0;
 pub const CHARACTER_METERS: usize = 4;
 /// The spectrum analyser publishes the recent peaks of its two inputs.
 pub const SPECTRUM_METERS: usize = 2;
+/// The clipper publishes `[driven peak, output peak, clipped share in percent, longest clipped
+/// run in ms]` (`atomik_devices::clipper::meter`; a test pins the two together).
+pub const CLIPPER_METERS: usize = 4;
+/// Longest clipped run (ms) that is below what is usually heard as distortion.
+pub const CLIPPER_RUN_SAFE_MS: f32 = 1.0;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -196,6 +207,9 @@ enum Slot {
     /// A value -1..1 shown as published (the phase meter's correlation and balance, which the
     /// device already averages), no release.
     Signed,
+    /// A value 0..10000 shown as published to a tenth (the clipper's share and run length, which
+    /// the device already holds over a window), no release.
+    Plain,
 }
 
 fn slot(kind: FxKind, i: usize) -> Slot {
@@ -211,6 +225,7 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::PhaseMeter, phase::MOMENTARY..=phase::INTEGRATED) => Slot::Raw,
         (FxKind::PhaseMeter, phase::CORRELATION | phase::BALANCE) => Slot::Signed,
         (FxKind::PhaseMeter, phase::WIDTH) => Slot::Unit,
+        (FxKind::Clipper, 2 | 3) => Slot::Plain,
         _ => Slot::Peak,
     }
 }
@@ -233,7 +248,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
                 Slot::Raw => *v = -120.0,
-                Slot::Unit | Slot::Activity | Slot::Signed => *v = 0.0,
+                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain => *v = 0.0,
                 _ => {}
             }
         }
@@ -251,6 +266,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Unit => (r.clamp(0.0, 1.0), f32::INFINITY, 0.01, 0.0),
             Slot::Activity => (r.clamp(0.0, 1.0), ACTIVITY_FALL, 0.02, 0.0),
             Slot::Signed => (r.clamp(-1.0, 1.0), f32::INFINITY, 0.01, -1.0),
+            Slot::Plain => (r.clamp(0.0, 10_000.0), f32::INFINITY, 0.1, 0.0),
         };
         let old = *cell;
         let v = if new >= old {
@@ -258,7 +274,10 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
         } else {
             (old - fall).max(new)
         };
-        let v = if matches!(slot(kind, i), Slot::Unit | Slot::Activity | Slot::Signed) {
+        let v = if matches!(
+            slot(kind, i),
+            Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain
+        ) {
             let n = (1.0f32 / step).round();
             // `+ 0.0` turns a negative zero into a zero, so a value that hovers around nothing
             // does not read as a change.
@@ -602,6 +621,13 @@ pub fn distortion_transfer(curve: usize, drive_db: f32, bias: f32, bits: f32, x:
         }
         c => shape(c, u) - shape(c, bias),
     }
+}
+
+/// The clipper's transfer curve for an input `x` in units of the ceiling (the output is in the same
+/// units): `curve` 0 hard to 1 soft, `symmetry` -1..1, as `atomik.clipper` shapes the driven
+/// signal.
+pub fn clipper_transfer(curve: f32, symmetry: f32, x: f32) -> f32 {
+    atomik_dsp::clipper::transfer(x, curve, symmetry)
 }
 
 fn shape(curve: usize, u: f32) -> f32 {
