@@ -1360,6 +1360,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.energy.reset();
         self.repetition.reset();
         self.bass_read.reset();
+        self.wavetable.reset();
         self.audio.mixcheck.reset();
         self.audio.notes.reset();
         self.audio.buffers.clear();

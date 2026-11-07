@@ -165,7 +165,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// The RAM buffer of an asset, if its audio is available now. A streamed asset starts a
     /// worker that loads it fully (`None` until it arrives).
-    fn zone_buffer(&mut self, hash: &str) -> Option<Arc<SampleBuffer>> {
+    pub(super) fn zone_buffer(&mut self, hash: &str) -> Option<Arc<SampleBuffer>> {
         if let Some(b) = self.audio.buffers.get(hash) {
             return Some(Arc::clone(b));
         }
