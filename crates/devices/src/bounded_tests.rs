@@ -253,6 +253,16 @@ proptest! {
         check_bounded("atomik.rotary-speaker", &s)?;
     }
 
+    /// The clipper: any params, loud noise, every oversampling and band mode.
+    #[test]
+    fn qa_clipper_any_params_bounded_at_every_sample_rate(s in scene()) {
+        // The delta switch (param 7) plays the excess over the ceiling, which grows with the
+        // input gain and has no bound of its own: it stays off here.
+        let mut s = s;
+        s.norms[7] = 0.0;
+        check_bounded("atomik.clipper", &s)?;
+    }
+
     /// The pitch shifter: any params and loud noise.
     #[test]
     fn qa_pitch_shifter_any_params_bounded_at_every_sample_rate(s in scene()) {
