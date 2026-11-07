@@ -85,6 +85,7 @@ pub mod repetition;
 mod replace_device;
 pub mod reverb_send;
 mod rules;
+pub mod rumble;
 pub mod slice_edit;
 mod slices;
 mod song_cmd;

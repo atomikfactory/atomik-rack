@@ -92,6 +92,17 @@ fn the_most_common_commands_have_their_own_names() {
             "Add Reverb Send",
         ),
         (
+            wf(WorkflowCommand::AddRumble {
+                kick: key("a"),
+                start: 0,
+                length: 1,
+                audio: atomik_model::AudioClipContent::new("a".repeat(64), 0),
+                name: None,
+                options: atomik_model::rumble::RumbleTrackOptions::default(),
+            }),
+            "Add Rumble",
+        ),
+        (
             wf(WorkflowCommand::SetFoldedMany {
                 keys: keys_of(&["a"]),
                 folded: true,

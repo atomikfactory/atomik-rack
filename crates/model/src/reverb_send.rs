@@ -126,8 +126,27 @@ pub fn median_onset_gap(song: &Song, track: &Track) -> Option<f32> {
     if onsets.len() < MIN_ONSETS {
         return None;
     }
+    median_gap(&onsets)
+}
+
+/// The median gap in seconds between the ticks `ticks` (ascending), `None` when there is no gap
+/// above zero.
+pub(crate) fn median_gap_of(song: &Song, ticks: &[i64]) -> Option<f32> {
+    let clock = song.frame_clock(SAMPLE_RATE);
+    let seconds: Vec<f64> = ticks
+        .iter()
+        .map(|&t| clock.at(t) as f64 / f64::from(SAMPLE_RATE))
+        .collect();
+    median_gap(&seconds)
+}
+
+/// The median of the positive gaps between consecutive values of `onsets`.
+fn median_gap(onsets: &[f64]) -> Option<f32> {
     let mut gaps: Vec<f64> = onsets.windows(2).map(|w| w[1] - w[0]).collect();
     gaps.retain(|g| *g > 0.0);
+    if gaps.is_empty() {
+        return None;
+    }
     gaps.sort_by(f64::total_cmp);
     let mid = gaps.len() / 2;
     let median = if gaps.len() % 2 == 1 {
@@ -174,7 +193,12 @@ fn refuse(message: impl Into<String>) -> ModelError {
 }
 
 /// Sets `param` of the top-level device `key` in the plan (clamped; nothing when unchanged).
-fn set(p: &mut Planner<'_>, key: &DeviceKey, param: &str, value: f32) -> Result<(), ModelError> {
+pub(crate) fn set(
+    p: &mut Planner<'_>,
+    key: &DeviceKey,
+    param: &str,
+    value: f32,
+) -> Result<(), ModelError> {
     let registry = p.registry;
     let device = rules::resolve(p.doc(), key)?;
     let desc = rules::descriptor(registry, &device.type_id)?;

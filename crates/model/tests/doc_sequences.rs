@@ -64,6 +64,8 @@ enum WfOp {
     /// The reverb send wizard on a top-level device (the first value picks it), with one of four
     /// option sets: plain, a vocal, no duck and pre-fader, and one with an option out of range.
     ReverbSend(usize, u8),
+    /// A rumble track after a track (the second value: the start in beats and a choice of options).
+    Rumble(usize, u8),
     /// A device takes the patch of another one of its type (the second index; the same device
     /// when none else is of its type), or, for `true`, goes back to a new device's sound.
     ApplyPatch(usize, usize, bool),
@@ -306,6 +308,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
         (0usize..12, 0u8..4).prop_map(|(d, f)| WfOp::SplitSub(d, f)),
         (0usize..12, 0u8..4).prop_map(|(d, o)| WfOp::ReverbSend(d, o)),
+        (0usize..12, 0u8..8).prop_map(|(d, o)| WfOp::Rumble(d, o)),
         (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
         (sel(), 0i64..12, proptest::option::of(0usize..3)).prop_map(|(s, b, t)| WfOp::PasteClips(
             s,
@@ -548,6 +551,33 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             };
             wf(WorkflowCommand::AddReverbSend {
                 track: pick(&top, *i)?,
+                options,
+            })
+        }
+        WfOp::Rumble(i, o) => {
+            let defaults = atomik_model::rumble::RumbleTrackOptions::default();
+            let options = match o % 4 {
+                0 => defaults,
+                1 => atomik_model::rumble::RumbleTrackOptions {
+                    low_pass: 90.0,
+                    depth: 1.0,
+                    ..defaults
+                },
+                2 => atomik_model::rumble::RumbleTrackOptions {
+                    release_ms: 600.0,
+                    ..defaults
+                },
+                _ => atomik_model::rumble::RumbleTrackOptions {
+                    high_pass: 5.0,
+                    ..defaults
+                },
+            };
+            wf(WorkflowCommand::AddRumble {
+                kick: pick(&top, *i)?,
+                start: i64::from(*o) * PPQ,
+                length: BAR,
+                audio: audio(2),
+                name: (o % 2 == 0).then(|| "Rumble".to_owned()),
                 options,
             })
         }
