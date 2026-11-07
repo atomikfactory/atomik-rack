@@ -14,11 +14,15 @@
 //!   the project file (and keeps the file it replaces as a version), and a second restore of the
 //!   version kept first brings the old state back.
 //!
+//! * [`AppCore::compare_version`] summarises what differs between a version and the song as it is
+//!   now, or between two versions, as text lines (see [`atomik_model::compare_docs`]).
+//!
 //! Nothing here saves the project or touches audio files.
 
 use super::{AppCore, AppError};
 use crate::sink::EngineSink;
 use atomik_audio_file::{Version, VersionKind, VersionStore};
+use atomik_model::ModelError;
 use std::path::PathBuf;
 
 /// One line of the versions list.
@@ -34,6 +38,17 @@ pub struct VersionRow {
     pub automatic: bool,
     /// Pruning never removes it (a named version always is).
     pub protected: bool,
+}
+
+/// What differs between two songs, for the versions panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionComparison {
+    /// The older side: a version's time and name, or `The song now`.
+    pub before: String,
+    /// The newer side.
+    pub after: String,
+    /// The summary lines (see [`atomik_model::DocDiff::lines`]).
+    pub lines: Vec<String>,
 }
 
 impl VersionRow {
@@ -123,6 +138,65 @@ impl<S: EngineSink> AppCore<S> {
         let mut store = VersionStore::for_project(&file)?;
         store.set_protected(id, protected)?;
         Ok(())
+    }
+
+    /// A version's name, or its time when it has none, for a heading.
+    fn version_label(v: &Version) -> String {
+        let when = crate::logging::minute_stamp(v.time);
+        if v.name.is_empty() {
+            when
+        } else {
+            format!("{when} {}", v.name)
+        }
+    }
+
+    /// File > Versions > Compare: what differs between the version `id` and `with` (another
+    /// version, or the song as it is now, unsaved changes included, when `None`). Of two
+    /// versions the older is the `before` side. Nothing changes: no version is kept and the song
+    /// is not touched.
+    ///
+    /// # Errors
+    /// [`AppError::NoPath`] without a project file; a version that is missing, cannot be read or
+    /// does not load; the same version twice; I/O errors.
+    pub fn compare_version(
+        &self,
+        id: u32,
+        with: Option<u32>,
+    ) -> Result<VersionComparison, AppError> {
+        let file = self.versions_file().ok_or(AppError::NoPath)?;
+        let store = VersionStore::for_project(&file)?;
+        let load = |id: u32| -> Result<(String, atomik_model::RackDoc), AppError> {
+            let v = store.get(id).ok_or_else(|| {
+                AppError::Model(ModelError::BadScope(format!("there is no version {id}")))
+            })?;
+            let label = Self::version_label(v);
+            let text = store.read(id)?;
+            let (doc, _) = atomik_model::load_project_with_warnings(&text, &self.registry)?;
+            Ok((label, doc))
+        };
+        let (before, after, diff) = match with {
+            None => {
+                let (label, doc) = load(id)?;
+                let diff = atomik_model::compare_docs(&doc, self.doc(), &self.registry);
+                (label, "The song now".to_owned(), diff)
+            }
+            Some(other) if other == id => {
+                return Err(AppError::Model(ModelError::BadScope(
+                    "choose two different versions to compare".to_owned(),
+                )));
+            }
+            Some(other) => {
+                let (old, new) = if id < other { (id, other) } else { (other, id) };
+                let ((l_old, d_old), (l_new, d_new)) = (load(old)?, load(new)?);
+                let diff = atomik_model::compare_docs(&d_old, &d_new, &self.registry);
+                (l_old, l_new, diff)
+            }
+        };
+        Ok(VersionComparison {
+            before,
+            after,
+            lines: diff.lines(),
+        })
     }
 
     /// File > Versions > Restore: opens the version `id` as the current song (module docs). The

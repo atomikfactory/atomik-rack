@@ -7,7 +7,7 @@
 //! 2026-11-06 14:03     Before the mix                                     NAMED
 //! 2026-11-06 13:40                                                    PROTECTED
 //! 2026-11-06 13:12
-//! [ RESTORE ]  [ PROTECT ]   Up and Down choose; Enter restores; double-click restores
+//! [ RESTORE ]  [ PROTECT ]  [ COMPARE ]   Up and Down choose; Enter restores; C compares
 //! ```
 //!
 //! A modal view the app places over the window like the song information panel. The app opens it
@@ -17,6 +17,11 @@
 //! * `RESTORE` (Enter on the list, a double-click on a row) emits [`VersionsAction::Restore`].
 //! * `PROTECT` / `UNPROTECT` emits [`VersionsAction::Protect`] for the chosen automatic version
 //!   (a named version is always kept, so the button is off for it).
+//! * `COMPARE` (the C key) emits [`VersionsAction::Compare`]: the chosen version against the
+//!   version marked with Shift (a Shift-click, or Shift with Up and Down, which marks the row the
+//!   choice leaves), or against the song now when none is marked. The app answers with
+//!   [`VersionsView::show_report`]: the list gives way to a scrollable text of what differs, and
+//!   BACK (or Esc, see [`VersionsView::close_report`]) returns to the list.
 //! * `CLOSE` emits [`VersionsAction::Close`]; the app also closes the panel on Esc.
 //!
 //! One of the name and the list has the keys at a time (click it, or Tab). The app replaces the
@@ -43,6 +48,9 @@ const MARGIN: f64 = 16.0;
 const MAX_WIDTH: f64 = 600.0;
 const BTN_H: f64 = 22.0;
 const LABEL_W: f64 = 50.0;
+const REPORT_LINE_H: f64 = 16.0;
+/// How many lines of a comparison the panel shows.
+pub const REPORT_LINES: usize = 15;
 const SAVE_W: f64 = 110.0;
 const WHEN_W: f64 = 132.0;
 const FONT: f32 = 10.5;
@@ -79,8 +87,25 @@ pub enum VersionsAction {
         /// The new state.
         protected: bool,
     },
+    /// Summarise what differs between the version `id` and `with` (another version), or the
+    /// song as it is now when `with` is `None`.
+    Compare {
+        /// The chosen version.
+        id: u32,
+        /// The marked version, if any.
+        with: Option<u32>,
+    },
     /// Close the panel.
     Close,
+}
+
+/// A comparison the panel shows in place of the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Report {
+    /// The two sides, as `before -> after`.
+    title: String,
+    lines: Vec<String>,
+    scroll: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +122,10 @@ pub struct VersionsView {
     scale: f64,
     items: Vec<VersionItem>,
     selected: Option<usize>,
+    /// The second version of a comparison (Shift), by id.
+    mark: Option<u32>,
+    /// The comparison shown instead of the list, if any.
+    report: Option<Report>,
     /// The first row shown.
     scroll: usize,
     name: TextField,
@@ -123,6 +152,8 @@ impl VersionsView {
             scale: 1.0,
             items,
             selected,
+            mark: None,
+            report: None,
             scroll: 0,
             name: TextField::new("", MAX_NAME_CHARS, false),
             focus: Focus::Name,
@@ -164,6 +195,11 @@ impl VersionsView {
         if clear_name {
             self.name.set_text("");
         }
+        if let Some(m) = self.mark
+            && !self.items.iter().any(|v| v.id == m)
+        {
+            self.mark = None;
+        }
         self.keep_selection_visible();
         self.repaint = true;
     }
@@ -189,6 +225,52 @@ impl VersionsView {
         self.selected
             .and_then(|at| self.items.get(at))
             .map(|v| v.id)
+    }
+
+    /// The version marked as the second side of a comparison.
+    pub fn marked_id(&self) -> Option<u32> {
+        self.mark
+    }
+
+    /// Shows a comparison in place of the list: `before` and `after` name its two sides and
+    /// `lines` is the text (see [`atomik_model::DocDiff::lines`]).
+    pub fn show_report(&mut self, before: &str, after: &str, lines: Vec<String>) {
+        self.report = Some(Report {
+            title: format!("{before}  ->  {after}"),
+            lines,
+            scroll: 0,
+        });
+        self.repaint = true;
+    }
+
+    /// Whether a comparison is shown.
+    pub fn report_open(&self) -> bool {
+        self.report.is_some()
+    }
+
+    /// Leaves the comparison for the list; false when none was shown.
+    pub fn close_report(&mut self) -> bool {
+        let was = self.report.take().is_some();
+        self.repaint |= was;
+        was
+    }
+
+    /// The lines of the comparison shown, if any.
+    pub fn report_lines(&self) -> Option<&[String]> {
+        self.report.as_ref().map(|r| r.lines.as_slice())
+    }
+
+    /// The first line of the comparison that is shown.
+    pub fn report_scroll(&self) -> usize {
+        self.report.as_ref().map_or(0, |r| r.scroll)
+    }
+
+    fn scroll_report(&mut self, to: impl FnOnce(usize, usize) -> usize) {
+        if let Some(r) = &mut self.report {
+            let max = r.lines.len().saturating_sub(REPORT_LINES);
+            r.scroll = to(r.scroll, max).min(max);
+            self.repaint = true;
+        }
     }
 
     /// Gives the list the keys (File > Versions opens the panel this way).
@@ -314,6 +396,17 @@ impl VersionsView {
         Rect::new(r.x1 + 8.0, r.y0, r.x1 + 8.0 + 110.0, r.y1)
     }
 
+    /// The COMPARE button (BACK while a comparison is shown, at the place of RESTORE).
+    pub fn compare_rect(&self) -> Rect {
+        let r = self.protect_rect();
+        Rect::new(r.x1 + 8.0, r.y0, r.x1 + 8.0 + 100.0, r.y1)
+    }
+
+    /// The BACK button of a comparison.
+    pub fn back_rect(&self) -> Rect {
+        self.restore_rect()
+    }
+
     fn row_at(&self, pos: Point) -> Option<usize> {
         if !self.list_rect().contains(pos) {
             return None;
@@ -348,6 +441,12 @@ impl VersionsView {
         if self.close_rect().contains(pos) {
             return help(self.close_rect(), "Close the panel");
         }
+        if self.report.is_some() {
+            if self.back_rect().contains(pos) {
+                return help(self.back_rect(), "Back to the list of versions");
+            }
+            return None;
+        }
         if self.save_rect().contains(pos) {
             return help(
                 self.save_rect(),
@@ -366,6 +465,12 @@ impl VersionsView {
                 "Protect an automatic version so that pruning never removes it",
             );
         }
+        if self.compare_rect().contains(pos) {
+            return help(
+                self.compare_rect(),
+                "What differs from the song now (Shift-click marks a second version to compare with)",
+            );
+        }
         None
     }
 
@@ -380,6 +485,24 @@ impl VersionsView {
             id: v.id,
             protected: !v.protected,
         }))
+    }
+
+    fn compare(&self) -> Option<UiAction> {
+        let id = self.selected_id()?;
+        let with = self.mark.filter(|m| *m != id);
+        Some(UiAction::Versions(VersionsAction::Compare { id, with }))
+    }
+
+    /// Chooses row `at`; with `mark` the row the choice leaves is marked for a comparison first
+    /// (unless it is the one marked already).
+    fn choose_marking(&mut self, at: usize) {
+        if let Some(from) = self.selected_id() {
+            self.mark.get_or_insert(from);
+        }
+        self.choose(at);
+        if self.mark == self.selected_id() {
+            self.mark = None;
+        }
     }
 
     fn save(&self) -> UiAction {
@@ -406,6 +529,16 @@ impl VersionsView {
                 button: PointerButton::Primary,
                 ..
             } => self.dragging_name = false,
+            UiEvent::Wheel { delta, pos, .. } if self.report.is_some() => {
+                if self.list_rect().contains(*pos) && delta.y != 0.0 {
+                    let lines = delta.y.abs().ceil() as usize * 3;
+                    if delta.y > 0.0 {
+                        self.scroll_report(|at, _| at.saturating_sub(lines));
+                    } else {
+                        self.scroll_report(|at, _| at + lines);
+                    }
+                }
+            }
             UiEvent::Wheel { delta, pos, .. } => {
                 if self.list_rect().contains(*pos) && delta.y != 0.0 {
                     let rows = delta.y.abs().ceil() as usize * 2;
@@ -426,26 +559,36 @@ impl VersionsView {
                 self.repaint = true;
                 if self.close_rect().contains(*pos) {
                     out.push(UiAction::Versions(VersionsAction::Close));
+                } else if self.report.is_some() {
+                    if self.back_rect().contains(*pos) {
+                        self.report = None;
+                    }
                 } else if self.save_rect().contains(*pos) {
                     out.push(self.save());
                 } else if self.restore_rect().contains(*pos) {
                     out.extend(self.restore());
                 } else if self.protect_rect().contains(*pos) {
                     out.extend(self.protect());
+                } else if self.compare_rect().contains(*pos) {
+                    out.extend(self.compare());
                 } else if self.name_rect().contains(*pos) {
                     self.focus = Focus::Name;
                     self.dragging_name = true;
                     self.name.press(*pos, *clicks, modifiers.shift);
                 } else if let Some(at) = self.row_at(*pos) {
                     self.focus = Focus::List;
-                    self.choose(at);
-                    if *clicks >= 2 {
+                    if modifiers.shift {
+                        self.choose_marking(at);
+                    } else {
+                        self.choose(at);
+                    }
+                    if *clicks >= 2 && !modifiers.shift {
                         out.extend(self.restore());
                     }
                 }
             }
             UiEvent::Ime(ime) => {
-                if self.focus == Focus::Name && self.name.handle_ime(ime) {
+                if self.report.is_none() && self.focus == Focus::Name && self.name.handle_ime(ime) {
                     self.repaint = true;
                 }
             }
@@ -455,6 +598,19 @@ impl VersionsView {
                 pressed: true,
             } => {
                 self.repaint = true;
+                if self.report.is_some() {
+                    match key {
+                        Key::Up => self.scroll_report(|at, _| at.saturating_sub(1)),
+                        Key::Down => self.scroll_report(|at, _| at + 1),
+                        Key::PageUp => self.scroll_report(|at, _| at.saturating_sub(REPORT_LINES)),
+                        Key::PageDown => self.scroll_report(|at, _| at + REPORT_LINES),
+                        Key::Home => self.scroll_report(|_, _| 0),
+                        Key::End => self.scroll_report(|_, max| max),
+                        Key::Enter | Key::Backspace => self.report = None,
+                        _ => {}
+                    }
+                    return out;
+                }
                 if self.focus == Focus::Name {
                     if self.name.handle_key(key, *modifiers).handled() {
                         return out;
@@ -466,10 +622,18 @@ impl VersionsView {
                     }
                 } else {
                     let at = self.selected.unwrap_or(0);
+                    let last = self.items.len().saturating_sub(1);
                     match key {
+                        Key::Up if modifiers.shift && at > 0 => self.choose_marking(at - 1),
+                        Key::Down if modifiers.shift && at < last => self.choose_marking(at + 1),
                         Key::Up if at == 0 => self.focus = Focus::Name,
                         Key::Up => self.choose(at - 1),
                         Key::Down => self.choose(at + 1),
+                        Key::Char('c' | 'C')
+                            if !modifiers.ctrl && !modifiers.alt && !modifiers.meta =>
+                        {
+                            out.extend(self.compare());
+                        }
                         Key::Home => self.choose(0),
                         Key::End => self.choose(self.items.len().saturating_sub(1)),
                         Key::PageUp => self.choose(at.saturating_sub(VISIBLE_ROWS)),
@@ -490,6 +654,78 @@ impl VersionsView {
     }
 
     // ------------------------------------------------------------------ painting
+
+    /// Paints a comparison in place of the name and the list.
+    fn paint_report(&self, c: &mut dyn Canvas, report: &Report, hovered: impl Fn(Rect) -> bool) {
+        let st = &self.st;
+        let t = &st.base;
+        let p = self.panel();
+        let name = self.name_rect();
+        let head = Rect::new(p.x0 + PAD, name.y0, p.x1 - PAD, name.y1);
+        sp::label(
+            c,
+            &fit_label(&report.title, head.width(), FONT),
+            head.x0,
+            head.y0 + 14.0,
+            FONT,
+            t.text,
+            Align::Start,
+        );
+        let list = self.list_rect();
+        sp::lcd(c, st, list, Some(t.focus));
+        c.push_clip(&list.into());
+        for (slot, line) in report
+            .lines
+            .iter()
+            .skip(report.scroll)
+            .take(REPORT_LINES)
+            .enumerate()
+        {
+            let y = list.y0 + REPORT_LINE_H * (slot as f64 + 1.0) - 4.0;
+            let text = line.trim_start();
+            let color = if text.starts_with('+') {
+                st.loop_on
+            } else if text.starts_with('-') {
+                mix(t.text, t.focus, 0.35)
+            } else if !line.starts_with(' ') && !line.is_empty() {
+                t.text_muted
+            } else {
+                t.text
+            };
+            sp::label(
+                c,
+                &fit_label(line, list.width() - 16.0, FONT),
+                list.x0 + 8.0,
+                y,
+                FONT,
+                color,
+                Align::Start,
+            );
+        }
+        c.pop_clip();
+        let hidden = report.lines.len().saturating_sub(REPORT_LINES);
+        let back = self.back_rect();
+        sp::button(c, st, back, "BACK", Some(st.loop_on), hovered(back));
+        let hint = if hidden > 0 {
+            format!(
+                "Lines {}-{} of {}; the wheel and the arrows scroll",
+                report.scroll + 1,
+                (report.scroll + REPORT_LINES).min(report.lines.len()),
+                report.lines.len()
+            )
+        } else {
+            "Esc or Enter goes back to the list".to_owned()
+        };
+        sp::label(
+            c,
+            &fit_label(&hint, p.x1 - PAD - back.x1 - 12.0, 9.5),
+            back.x1 + 12.0,
+            back.y0 + 15.0,
+            9.5,
+            t.text_muted,
+            Align::Start,
+        );
+    }
 
     /// Paints the panel (scaled by the scale factor).
     pub fn paint(&self, c: &mut dyn Canvas) {
@@ -516,6 +752,12 @@ impl VersionsView {
         );
         let close = self.close_rect();
         sp::button(c, st, close, "CLOSE", None, hovered(close));
+        if let Some(report) = &self.report {
+            self.paint_report(c, report, hovered);
+            c.pop_clip();
+            c.pop_transform();
+            return;
+        }
 
         let name = self.name_rect();
         sp::label(
@@ -547,17 +789,20 @@ impl VersionsView {
             let row = self.row_rect(slot);
             if self.selected == Some(at) {
                 sp::rect(c, row, mix(t.lcd, t.focus, 0.45));
+            } else if self.mark == Some(v.id) {
+                sp::rect(c, row, mix(t.lcd, t.focus, 0.2));
             } else if hovered(row) {
                 sp::rect(c, row, mix(t.lcd, t.text, 0.08));
             }
             let y = row.y0 + 16.0;
             sp::label(c, &v.when, row.x0 + 8.0, y, FONT, t.text, Align::Start);
-            let mark = match (v.automatic, v.protected) {
-                (false, _) => "NAMED",
-                (true, true) => "PROTECTED",
-                (true, false) => "",
+            let mark = match (self.mark == Some(v.id), v.automatic, v.protected) {
+                (true, _, _) => "COMPARE WITH",
+                (_, false, _) => "NAMED",
+                (_, true, true) => "PROTECTED",
+                (_, true, false) => "",
             };
-            let mark_w = if mark.is_empty() { 0.0 } else { 78.0 };
+            let mark_w = if mark.is_empty() { 0.0 } else { 96.0 };
             let (shown, color) = if v.name.is_empty() {
                 ("Saved automatically", t.text_muted)
             } else {
@@ -616,15 +861,17 @@ impl VersionsView {
                 Align::Center,
             );
         }
+        let compare = self.compare_rect();
+        sp::button(c, st, compare, "COMPARE", None, has && hovered(compare));
         sp::label(
             c,
             &fit_label(
-                "Enter saves from the name and restores from the list",
-                p.x1 - PAD - protect.x1 - 12.0,
+                "C compares; Shift marks a second version",
+                p.x1 - PAD - compare.x1 - 12.0,
                 9.5,
             ),
-            protect.x1 + 12.0,
-            protect.y0 + 15.0,
+            compare.x1 + 12.0,
+            compare.y0 + 15.0,
             9.5,
             t.text_muted,
             Align::Start,

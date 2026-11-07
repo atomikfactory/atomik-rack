@@ -568,3 +568,82 @@ fn collect_files_copies_audio_only_and_leaves_the_versions_where_they_are() {
             .all(|e| !e.file_name().to_string_lossy().contains("atomikver"))
     );
 }
+
+fn tune_line(lines: &[String]) -> Option<&str> {
+    lines
+        .iter()
+        .map(|l| l.trim())
+        .find(|l| l.starts_with("~ Master tune"))
+}
+
+#[test]
+fn comparing_a_version_with_the_song_now_includes_unsaved_changes() {
+    let t = Tmp::new("compare-now");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    // Unsaved: the song now holds 5 cents, the version the file held (1 cent).
+    tune(&mut c, 5.0);
+    let id = c.versions().unwrap()[0].id;
+    let cmp = c.compare_version(id, None).unwrap();
+    assert_eq!(cmp.after, "The song now");
+    assert!(!cmp.before.is_empty());
+    assert_eq!(
+        tune_line(&cmp.lines),
+        Some("~ Master tune: +1 cents -> +5 cents")
+    );
+    // Nothing was kept or changed by comparing.
+    assert_eq!(c.versions().unwrap().len(), 1);
+    assert!(c.is_dirty());
+}
+
+#[test]
+fn comparing_two_versions_puts_the_older_first_whatever_the_order_asked() {
+    let t = Tmp::new("compare-two");
+    let mut c = saved_song(&t);
+    for cents in [2.0, 3.0] {
+        tune(&mut c, cents);
+        c.save().unwrap();
+    }
+    let rows = c.versions().unwrap();
+    let (newer, older) = (rows[0].id, rows[1].id);
+    for (a, b) in [(older, newer), (newer, older)] {
+        let cmp = c.compare_version(a, Some(b)).unwrap();
+        assert_eq!(
+            tune_line(&cmp.lines),
+            Some("~ Master tune: +1 cents -> +2 cents"),
+            "asked {a} with {b}"
+        );
+    }
+}
+
+#[test]
+fn comparing_equal_songs_says_so() {
+    let t = Tmp::new("compare-same");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    let id = c.versions().unwrap()[0].id;
+    let named = c.save_version("Same").unwrap();
+    // The named version holds the song as it is now; the automatic one holds 1 cent.
+    let cmp = c.compare_version(named, None).unwrap();
+    assert!(
+        cmp.lines[0].starts_with("No differences"),
+        "{:?}",
+        cmp.lines
+    );
+    assert!(cmp.before.ends_with("Same"));
+    assert!(!c.compare_version(id, None).unwrap().lines[0].starts_with("No differences"));
+}
+
+#[test]
+fn comparing_refuses_a_missing_version_the_same_version_twice_and_a_song_without_a_file() {
+    let t = Tmp::new("compare-refuse");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    let id = c.versions().unwrap()[0].id;
+    assert!(c.compare_version(id + 100, None).is_err());
+    assert!(c.compare_version(id, Some(id)).is_err());
+    assert!(core().compare_version(1, None).is_err());
+}
