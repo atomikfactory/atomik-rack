@@ -532,7 +532,7 @@ impl RackDoc {
         let Some(desc) = registry.get(&d.type_id).map(|f| f.descriptor) else {
             return Some(format!("unknown device type {}", d.type_id));
         };
-        if console::is_internal_param(param) || desc.param_by_key(param).is_none() {
+        if console::is_hidden_param(param) || desc.param_by_key(param).is_none() {
             return Some(format!("{} has no param {param:?}", d.name));
         }
         if param == "solo" && console::is_console_type(&d.type_id) {
