@@ -99,6 +99,7 @@ enum WfOp {
     SongInfo(u8, u8),
     Tune(u8),
     Sort(u8),
+    References(u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -315,6 +316,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
         (0u8..5).prop_map(WfOp::Tune),
         (0u8..3).prop_map(WfOp::Sort),
+        (0u8..4).prop_map(WfOp::References),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0u8..8, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
@@ -784,6 +786,18 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
         WfOp::Tune(step) => {
             Command::SetMasterTune([0.0, -50.0, 12.5, 100.0, -100.0][usize::from(*step)])
         }
+        WfOp::References(step) => Command::SetReferences(match step {
+            0 => Vec::new(),
+            1 => vec![atomik_model::Reference::new("one.wav")],
+            2 => vec![
+                atomik_model::Reference::new("one.wav"),
+                atomik_model::Reference {
+                    path: "two.wav".into(),
+                    cue_ms: Some(1500),
+                },
+            ],
+            _ => vec![atomik_model::Reference::new("three.wav")],
+        }),
         WfOp::Sort(mode) => Command::SetRackSort(
             [RackSort::Free, RackSort::PerTrack, RackSort::AutoGroup][usize::from(*mode)],
         ),

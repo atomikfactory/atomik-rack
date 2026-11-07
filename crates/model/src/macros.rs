@@ -508,6 +508,7 @@ impl RackDoc {
             info: self.info.clone(),
             tune_cents: self.tune_cents,
             sort_mode: self.sort_mode,
+            references: self.references.clone(),
         })
     }
 

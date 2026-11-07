@@ -289,6 +289,9 @@ pub struct AppCore<S: EngineSink> {
     sampling: sampling::Sampling,
     /// The note player preview that runs (see `app_core_preview.rs`).
     player_preview: Option<preview_ops::PlayerPreview>,
+    /// The reference tracks session: selection, listening, level match (see
+    /// `app_core_reference.rs`).
+    reference: reference_ops::ReferenceState,
     /// The library clip preview that plays through a track (see `app_core_clip_preview.rs`).
     clip_preview: Option<clip_preview_ops::LiveClipPreview>,
     /// The library patch preview that renders on a worker (see `app_core_patch_preview.rs`).
@@ -549,6 +552,7 @@ impl<S: EngineSink> AppCore<S> {
             eq_live: eq_live::EqLive::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
+            reference: reference_ops::ReferenceState::new(),
             clip_preview: None,
             patch_preview: None,
             pattern_clip_seen: (None, None),
@@ -1577,6 +1581,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_before_reset();
         self.sink.reset(&config);
         self.plugins_after_reset();
+        self.reference_after_reset();
         // A fresh engine starts in tune; a project that is not has its tune in force at once.
         if self.doc().tune_cents.to_bits() != 0 {
             let result = self.sink.set_master_tune(self.doc().tune_cents, false);
@@ -1665,6 +1670,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
+        self.reference_frame();
         self.browser_frame();
     }
 
@@ -3781,6 +3787,8 @@ mod patch_preview_ops;
 mod player_stack_ops;
 #[path = "app_core_preview.rs"]
 mod preview_ops;
+#[path = "app_core_reference.rs"]
+mod reference_ops;
 #[path = "app_core_takes.rs"]
 mod takes_ops;
 
@@ -4145,3 +4153,7 @@ mod audition_tests;
 #[cfg(test)]
 #[path = "app_core_keys_tests.rs"]
 mod keys_tests;
+
+#[cfg(test)]
+#[path = "app_core_reference_tests.rs"]
+mod reference_tests;

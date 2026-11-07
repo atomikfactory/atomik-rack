@@ -236,7 +236,7 @@ enum Mode {
 }
 
 /// What one output frame of a slot is.
-enum Step {
+pub(crate) enum Step {
     Sample([f32; 2]),
     /// No data yet: silence, position unchanged (an underrun, counted).
     Silence,
@@ -247,7 +247,7 @@ enum Step {
 }
 
 /// One playing stream with its resampler and fade.
-struct Slot {
+pub(crate) struct Slot {
     stream: PreviewStream,
     /// Engine sample rate in Hz.
     engine_rate: f64,
@@ -290,6 +290,23 @@ impl Slot {
         }
     }
 
+    /// A slot at full level with no fade-in: the caller shapes the level itself (the reference
+    /// voice does).
+    pub(crate) fn steady(stream: PreviewStream, engine_rate: f64) -> Self {
+        let mut slot = Self::new(stream, engine_rate, 1.0);
+        slot.mode = Mode::Steady;
+        slot
+    }
+
+    /// Lets go of the slot: marks the stream done when its data ran out, abandoned otherwise,
+    /// and hands it back to be retired.
+    pub(crate) fn into_stream(self) -> PreviewStream {
+        if self.exhausted {
+            self.stream.shared.done.store(true, Ordering::Release);
+        }
+        release(self.stream)
+    }
+
     fn shift_in(&mut self, frame: [f32; 2]) {
         if self.popped == 0 {
             self.hist = [frame; 4];
@@ -310,7 +327,7 @@ impl Slot {
     }
 
     /// Produces the next output frame.
-    fn step(&mut self, fade: u32) -> Step {
+    pub(crate) fn step(&mut self, fade: u32) -> Step {
         if self.mode == Mode::Out && self.pos == 0 {
             return Step::End;
         }
@@ -396,7 +413,7 @@ impl Slot {
         self.mode = Mode::Out;
     }
 
-    fn publish_position(&self) {
+    pub(crate) fn publish_position(&self) {
         let played = self.base.min(self.real);
         self.stream.shared.played.store(played, Ordering::Relaxed);
     }

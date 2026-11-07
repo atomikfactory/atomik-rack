@@ -237,6 +237,22 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Peak Meters", None),
             ("PPM Meters", None),
             ("VU Meters", None),
+            ("Listen to Reference", Some("Ctrl+Alt+R")),
+            ("Add Reference Track\u{2026}", None),
+            ("Reference 1", None),
+            ("Next Reference Track", None),
+            ("Remove Reference Track", None),
+            ("Start at Playhead Position", None),
+            ("Follow Playhead", None),
+            ("Match Reference Level", None),
+            ("Full Range", None),
+            ("Sub", None),
+            ("Low", None),
+            ("Mid", None),
+            ("High", None),
+            ("Left and Right", None),
+            ("Mid", None),
+            ("Side", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Previous track", None),
@@ -1988,4 +2004,56 @@ fn the_mixer_menu_names_each_group_in_add_to_group_and_delete_group() {
             .1,
         ["VCA 1"]
     );
+}
+
+#[test]
+fn the_reference_commands_reach_the_core_and_the_menu_state_follows() {
+    use atomik_engine::{ReferenceBand, ReferenceSolo};
+    let mut s = shell();
+    // The key with no reference says so and changes nothing.
+    s.execute(AppCommand::ToggleReference);
+    assert!(!s.menu_state().reference.listening);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("Add a reference"))
+    );
+    // Add asks for a file; the picked file joins the list.
+    assert_eq!(
+        s.execute(AppCommand::AddReference),
+        vec![ShellRequest::PickReference]
+    );
+    s.add_reference_file(std::path::Path::new("no-such-reference.wav"));
+    assert_eq!(s.menu_state().reference.count, 1);
+    // The same file again is refused with a message.
+    s.add_reference_file(std::path::Path::new("no-such-reference.wav"));
+    assert_eq!(s.menu_state().reference.count, 1);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("not added"))
+    );
+    s.execute(AppCommand::ReferenceBand(ReferenceBand::Low));
+    s.execute(AppCommand::ReferenceSolo(ReferenceSolo::Side));
+    s.execute(AppCommand::ReferenceMatch);
+    s.execute(AppCommand::ReferenceCue(true));
+    let menu = s.menu_state().reference;
+    assert_eq!(menu.band, ReferenceBand::Low);
+    assert_eq!(menu.solo, ReferenceSolo::Side);
+    assert!(!menu.level_match && menu.has_cue);
+    s.execute(AppCommand::ReferenceCue(false));
+    assert!(!s.menu_state().reference.has_cue);
+    s.execute(AppCommand::RemoveReference);
+    assert_eq!(s.menu_state().reference.count, 0);
+    // The ids the keymap and the MCP use round-trip.
+    for command in [
+        AppCommand::ToggleReference,
+        AppCommand::SelectReference(15),
+        AppCommand::ReferenceBand(ReferenceBand::High),
+        AppCommand::ReferenceSolo(ReferenceSolo::Mid),
+        AppCommand::ReferenceCue(true),
+    ] {
+        let (id, arg) = command.command_id().expect("has an id");
+        assert_eq!(AppCommand::from_command(id, arg), Some(command));
+    }
 }
