@@ -136,9 +136,21 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   one-click fix in one undo step (a Gain Tool before the device, a static Dynamic EQ cut on the loudest track in
   the low mids, a Stereo Tool with Mono on) or open a tool: the masking map, a Clipper added to the master for the
   peaks (hard curve, 4x, the ceiling a decibel under the loudest peak) or the Kick and Bass Check with the track
-  of the finding picked. Still to come: a choice of tracks to compare (all channels are analysed, up to 48),
-  buses and returns in the masking comparison, a stereo-aware masking score (the tracks are summed to mono), a
-  re-analysis that shows what a de-mask or a fix changed, and tunable thresholds.
+  of the finding picked. An energy map (View > Energy Lane) puts one row above the track lanes with an energy from
+  0 to 1 for every section (the markers, else every 8 bars), from the master's loudness, brightness and width and
+  the share of the tracks that play, measured on a worker; it guesses each section's role from its name and flags a
+  build stronger than the drop after it, a drop that is not the top of the map and two neighbours of near-equal
+  energy over 16 bars or more. A repetition finder (Edit > Find Repetition) lists the ideas a track plays three
+  times or more unchanged (a note pattern of 1, 2 or 4 bars, identical audio clips) with where they are and three
+  suggested variations (drop the last hit, a low-pass sweep over the last bar, cut the last beat), each a button
+  and one undo step where it is a plain edit and advice otherwise. Still to come: a choice of tracks to compare
+  (all channels are analysed, up to 48), buses and returns in the masking comparison, a stereo-aware masking score
+  (the tracks are summed to mono), a re-analysis that shows what a de-mask or a fix changed, and tunable thresholds.
+  Not done in the energy map: a refresh after every edit (it is on request), a click on a section that moves the
+  playhead, tunable weights, and the track count taken from a render of each track (it comes from the clips).
+  Not done in the repetition finder: automation and CC lanes, patterns of other lengths, a variation that splits a
+  looped clip, a triplet variation, a menu of its own (it is in the Edit menu) and a list that follows edits made
+  while it is open (FIND searches again).
 - **Reference tracks.** Up to 16 reference files per song, kept in the project and collected with it, one key to switch between the mix and the selected reference after the master chain (live only, never in a bounce or export) with a short crossfade, a start at the song position or at a cue of its own, an automatic level match from the short-term loudness of the mix and of the loudest section of the reference with the matched gain slowly following, and a band solo (sub, low, mid, high) and a mid or side solo applied to both. Still to come: a reference that follows seeks while it plays, a manual trim of the matched gain and a loudness match over a section the user chooses.
 
 ## Phase 5: Devices

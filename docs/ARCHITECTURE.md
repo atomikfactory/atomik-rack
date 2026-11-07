@@ -5575,6 +5575,43 @@ by itself.
   new device) at the loudest low-mid band of the track, or a Stereo Tool with Mono on at the end of the chain. The
   panel is `atomik_ui::MixCheckView`.
 
+### Mix analysis: the energy map and the repetition finder
+
+View > Energy Lane draws how much energy each section of the song has, and Edit > Find Repetition lists what a
+track repeats unchanged. Neither changes the song by itself.
+
+- **Sections and roles.** `atomik_model::energy_map::sections` is a pure function of the song: the range markers,
+  else each point marker to the next (or the End) with a leading "Start" section, else `DEFAULT_SECTION_BARS`
+  bars through the meter map. `Role::guess` reads the first word of the name that means a role (a build or
+  pre-chorus, a drop or chorus, a break or bridge, an intro, an outro, a verse); anything else is `Role::Other`.
+- **Measures.** `atomik_render::energy::render_blocks` renders the master as a stem over the whole song and hands
+  it to `atomik_dsp::energy::analyse` at once, which keeps a `Block` per 4096 frames: the summed band power of
+  `atomik_dsp::masking::analyse`, its moment over the bands and the mean squares of mid and side. `Blocks::features`
+  reads a range of frames as loudness (dB), brightness (the power-weighted band position as Hz) and width
+  (`sqrt(S / (M + S))`). The blocks are the same bits at every host block size. The tracks that play in a section
+  are counted from the model (`active_counts`: notes as they play, with tails, or audible audio clips, on tracks
+  that are not muted away).
+- **Energy.** `energy_map::energy` puts each measure on a 0 to 1 scale (loudness between -40 and -10 dB,
+  brightness on a log scale from 250 Hz to 4 kHz, width up to 0.7, the tracks as a share of the tracks the song
+  uses) and adds them with `WEIGHTS` (0.40, 0.25, 0.20, 0.15). `EnergyMap::new` also finds the `Flag`s with the
+  constants `FLAG_MARGIN`, `NEAR_EQUAL` and `FLAT_BARS`; `Flag::message` gives the sentence.
+- **Worker and lane.** `AppCore::start_energy` runs `energy_worker` on a thread of its own (the engine keeps its
+  cores); the result is kept with the document revision it measured, so `AppCore::energy` says when it is out of
+  date, and it is dropped with the project. `energy_frame` hands `ArrangementView::set_energy_map`, the progress
+  and a note to the lane (`arrangement/energy_lane.rs`), a row of `ENERGY_LANE_HEIGHT` under the tempo lane that
+  only paints. The option is `show_energy_lane` of the view state and is off for a file without it.
+- **Repetition.** `atomik_model::repetition::find` reads the notes a track plays (`flatten_track_notes`) as one
+  signature per bar (place in the bar, length, key, velocity) and looks for 1, 2 and 4 bar patterns that play
+  `MIN_REPEATS` times in a row, the shortest period first and each bar claimed once; audio lanes are scanned for
+  touching, identical, equally long clips and for a clip that loops its content that often. `variations` plans
+  the three suggestions against the document: muting is one `SetClipContent` of one unlooped clip that nothing
+  else plays (checked against the flattened notes), the filter is a `Command::Batch` of two automation lanes on
+  the track's channel strip (`lpf.on` with a static value of 0 and a one-bar clip of 1, `lpf.freq` ramping down to
+  `FILTER_TARGET_HZ`), planned only when the filter is off and neither param has a lane. Anything else is advice.
+- **App and panel.** `AppCore::find_repetition`, `apply_repetition` (one undo step, then a new search with the
+  made variations kept for the idea's track and start) and `locate_repetition`; the panel is
+  `atomik_ui::RepetitionView`, which draws and reports through `UiAction::Repetition`.
+
 ## 6l. The library
 
 The Library sections of the file browser (Devices, Patches, Containers, Clips, Projects) list what
