@@ -303,6 +303,8 @@ struct DeviceView {
     sample: Option<crate::granular_panel::SampleInfo>,
     /// Spectrum and phase meter panels: what the app fed from the device's scope tap.
     analyser: crate::analyser::AnalyserData,
+    /// The resonance finder's markers and state (dynamic EQ panels).
+    resonance: crate::resonance_marks::ResonanceView,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Compressor panel: the name of the device cabled to the sidechain input.
@@ -1454,6 +1456,7 @@ impl RackView {
             scope: crate::modsrc_panel::Scope::new(),
             sample: None,
             analyser: Default::default(),
+            resonance: Default::default(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],
@@ -1570,6 +1573,10 @@ impl RackView {
                 .as_mut()
                 .map(|p| std::mem::take(&mut p.analyser))
                 .unwrap_or_default();
+            let resonance = prev
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.resonance))
+                .unwrap_or_default();
             let cv = if fx == Some(FxKind::Character) {
                 cv_cabled_of(&d.key, &doc.cables)
             } else {
@@ -1629,6 +1636,7 @@ impl RackView {
                 scope,
                 sample,
                 analyser,
+                resonance,
                 master,
                 sc,
                 cv,
@@ -1685,6 +1693,7 @@ impl RackView {
                 scope: crate::modsrc_panel::Scope::new(),
                 sample: None,
                 analyser: Default::default(),
+                resonance: Default::default(),
                 master: Default::default(),
                 sc: None,
                 cv: [false; 2],
