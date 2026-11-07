@@ -3899,7 +3899,7 @@ Sockets: `in_l`, `in_r`, `aux_l`, `aux_r` (Audio in), `out_l`, `out_r` (Audio ou
 
 ### Stereo Tool: `atomik.stereo-tool` (Effect)
 
-Polarity, width with a bass bypass, balance, mono and mid/side conversion.
+Polarity, phase rotation, width with a bass bypass, balance, mono and mid/side conversion.
 Source: [stereo_tool.rs](../crates/devices/src/stereo_tool.rs).
 
 Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
@@ -3912,15 +3912,24 @@ Sockets: `in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
 | `low_bypass` | 20 to 500 (20 = off) | 20 | Hz |
 | `balance` | -1 to 1 | 0 | none |
 | `mono` | 0 or 1 | 0 | toggle |
+| `rotate` | 0 to 180 (degrees) | 0 | none |
+| `rotate_hz` | 20 to 1000 | 100 | Hz |
 | `bypass` | 0 or 1 | 0 | toggle |
 
-- **Order:** polarity, width, balance, the mid/side mode, then mono. Encode writes
+- **Order:** polarity, rotation, width, balance, the mid/side mode, then mono. Encode writes
   `(L + R) / 2` to `out_l` and `(L - R) / 2` to `out_r`; decode reads them back as mid and side.
 - **Mono** is the last stage: both outputs become `(L + R) / 2` of what the mode produced (10 ms
   ramp), so the output is mono in every mode, an encoded signal included.
 - **Low bypass.** Above 20 Hz the signal is split by a fourth-order Linkwitz-Riley crossover at
   that frequency; only the band above it is widened, the bass stays as it was.
-- Width 1, balance 0, polarity and mono off, mode stereo: the output is the input bit for bit.
+- **Rotation.** `rotate` turns the phase of both channels by that angle at `rotate_hz` with a first-order
+  all-pass: the level is the same at every frequency, the turn is smaller below `rotate_hz` and larger above
+  it (up to 180 degrees), and 180 is a polarity inversion (`-x` exactly). It reshapes the waveform of a bass
+  or a kick without changing what it sounds like alone, and so changes how it adds to the other one (the
+  Kick and Bass Check in the Mixer menu uses it, and finds an angle for you). At 0 the stage is skipped.
+  The angle and the frequency switch at once, like the mode, so set them with the signal stopped. The
+  params were added after the first release, before `bypass`: a project from before them plays the same bits.
+- Width 1, balance 0, polarity and mono off, rotation 0, mode stereo: the output is the input bit for bit.
 
 ### Gate: `atomik.gate` (Effect)
 

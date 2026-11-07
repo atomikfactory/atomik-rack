@@ -5497,9 +5497,11 @@ Device::process                              AppCore::feed_device_scopes
   uses, on a scratch `Document`, rendered again and checked again; a fix is offered when its score
   (overall delta plus a quarter of the worst hit) is 0.5 dB better. The rotation angle and the bass delay
   are searched on the signals first (`atomik_dsp::PhaseRotator`, `best_bass_delay`) and proven by the
-  render. Applying runs the steps through `AppCore::apply_command` with `join_next`, so the whole fix is
-  one undo step, and a result that belongs to an older revision of the song offers no fix. The strip and
-  the fix rows are drawn from `KickBassInfo`, which the app rebuilds every frame while the panel is open.
+  render. The fix-asymmetry row (`Headroom`) is `atomik_dsp::best_rotation` on the bass alone, also proven
+  by a render, and is offered whether or not anything cancels. Applying runs the steps through
+  `AppCore::apply_command` with `join_next`, so the whole fix is one undo step, and a result that
+  belongs to an older revision of the song offers no fix. The strip and the fix rows are drawn from
+  `KickBassInfo`, which the app rebuilds every frame while the panel is open.
 - **Panels** ([ui/src/analyser.rs](../crates/ui/src/analyser.rs) the data and the maths,
   [analyser_paint.rs](../crates/ui/src/analyser_paint.rs) the drawing; `FxKind::Spectrum` and
   `FxKind::PhaseMeter`): the spectrum plot over 20 Hz to 20 kHz and the device's dB `range`, the
