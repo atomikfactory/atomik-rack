@@ -165,12 +165,12 @@ use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
     ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, MacrosAction, MacrosView,
-    MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
-    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
-    RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView,
-    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem,
-    VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
+    MaskingAction, MaskingView, MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView,
+    Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
+    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
+    UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -536,6 +536,8 @@ pub struct Shell<B: AudioBackend> {
     song_info: Option<SongInfoView>,
     /// The versions panel, while it is open.
     versions: Option<VersionsView>,
+    /// The masking map panel (Mixer > Masking Map), while it is open.
+    masking: Option<MaskingView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -719,6 +721,7 @@ impl<B: AudioBackend> Shell<B> {
             silence: None,
             song_info: None,
             versions: None,
+            masking: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -1236,6 +1239,76 @@ impl<B: AudioBackend> Shell<B> {
                 protected: v.protected,
             })
             .collect()
+    }
+
+    /// Whether the masking map panel is open.
+    pub fn masking_open(&self) -> bool {
+        self.masking.is_some()
+    }
+
+    /// The masking map panel, while it is open.
+    pub fn masking_view(&self) -> Option<&MaskingView> {
+        self.masking.as_ref()
+    }
+
+    /// Mixer > Masking Map: opens the panel (with the last result, if the project has one).
+    fn open_masking(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MaskingView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.masking_data());
+        view.set_progress(self.core.masking_progress());
+        self.masking = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open masking panel in step with the analysis: its progress, its result, and the
+    /// line that says how it ended.
+    fn sync_masking(&mut self) {
+        let Some(view) = &mut self.masking else {
+            return;
+        };
+        let was_busy = view.busy();
+        view.set_progress(self.core.masking_progress());
+        view.set_data(self.core.masking_data());
+        if was_busy && !view.busy() {
+            view.set_note(self.core.last_rejection().unwrap_or(""));
+        }
+        if view.needs_repaint() {
+            self.repaint = true;
+        }
+    }
+
+    /// What the masking panel asked for.
+    fn masking_action(&mut self, action: MaskingAction) {
+        match action {
+            MaskingAction::Close => self.masking = None,
+            MaskingAction::Analyse => {
+                let _ = self.core.start_masking();
+                self.sync_masking();
+                if let Some(v) = &mut self.masking {
+                    v.set_note(
+                        self.core
+                            .last_rejection()
+                            .filter(|_| !self.core.masking_running())
+                            .unwrap_or(""),
+                    );
+                }
+            }
+            MaskingAction::Cancel => self.core.cancel_masking(),
+            MaskingAction::Locate { pair, range } => self.core.locate_masking(pair, range),
+            MaskingAction::Demask { pair, band } => {
+                let note = match self.core.demask(pair, band) {
+                    Ok(_) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                };
+                if let Some(v) = &mut self.masking {
+                    v.set_note(&note);
+                }
+            }
+        }
+        self.repaint = true;
     }
 
     /// File > Save Version and File > Versions: opens the versions panel (the name has the keys;
@@ -2523,6 +2596,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.versions {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.masking {
+            v.set_theme(theme.clone());
+        }
         if let Some((v, _)) = &mut self.color_picker {
             v.set_theme(theme.clone());
         }
@@ -3132,6 +3208,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.versions.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.versions {
+                v.set_bounds(rect);
+            }
+        }
+        if self.masking.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.masking {
                 v.set_bounds(rect);
             }
         }
@@ -4062,6 +4144,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::SongInfo(a) = action {
                     self.song_info_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.masking.is_some() {
+            // The masking panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.masking = None;
+                return Vec::new();
+            }
+            let actions = self
+                .masking
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Masking(a) = action {
+                    self.masking_action(a);
                 }
             }
             return Vec::new();
@@ -5805,6 +5911,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::MaskingMap => {
+                self.open_masking();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::Versions => {
                 self.open_versions(true);
                 self.menubar.as_mut().map(MenuBar::close);
@@ -7086,6 +7197,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_library_ui();
         self.sync_relink();
         self.sync_export();
+        self.sync_masking();
         self.sync_midi_maps();
         self.sync_macros();
         self.sync_mod_matrix();
@@ -7885,6 +7997,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.versions {
             view.paint(canvas);
         }
+        if let Some(view) = &self.masking {
+            view.paint(canvas);
+        }
         if let Some((view, _)) = &self.color_picker {
             view.paint(canvas);
         }
@@ -8243,6 +8358,10 @@ mod templates_tests;
 #[cfg(test)]
 #[path = "shell_versions_tests.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "shell_masking_tests.rs"]
+mod masking_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]
