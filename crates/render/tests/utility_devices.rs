@@ -123,6 +123,10 @@ const EFFECTS: &[(&str, &str)] = &[
         "atomik.de-esser",
         r#"{"freq": 1000, "q": 0.5, "threshold": -60, "ratio": 20, "range": 24, "mode": 1}"#,
     ),
+    (
+        "atomik.dynamic-eq",
+        r#"{"band2.on": 1, "band2.freq": 400, "band2.gain": 6, "band2.range": -9, "band2.threshold": -40}"#,
+    ),
 ];
 
 #[test]

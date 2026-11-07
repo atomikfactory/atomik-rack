@@ -187,7 +187,11 @@ fn every_control_has_a_short_tooltip_of_its_own() {
     let doc = fx_doc(FxKind::GuitarAmp);
     let v = rack_of(&doc);
     let mut seen = std::collections::BTreeSet::new();
-    for p in desc().params.iter().filter(|p| p.key != "bypass") {
+    for p in desc()
+        .params
+        .iter()
+        .filter(|p| p.key != "bypass" && !p.key.starts_with("internal."))
+    {
         let text = fx::amp_help(p.key).unwrap_or_else(|| panic!("{} has no help", p.key));
         assert!(
             (10..=90).contains(&text.len()),

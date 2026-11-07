@@ -80,6 +80,24 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
         FxKind::Tuner => {
             set(&mut d, "ref", 442.0);
         }
+        FxKind::DynamicEq => {
+            set(&mut d, "band1.on", 1.0);
+            set(&mut d, "band1.gain", 2.0);
+            set(&mut d, "band1.range", -4.0);
+            set(&mut d, "band2.on", 1.0);
+            set(&mut d, "band2.freq", 320.0);
+            set(&mut d, "band2.range", -9.0);
+            set(&mut d, "band3.on", 1.0);
+            set(&mut d, "band3.gain", -3.0);
+            set(&mut d, "band3.freq", 1800.0);
+            set(&mut d, "band3.range", 6.0);
+            set(&mut d, "band4.on", 1.0);
+            set(&mut d, "band4.freq", 5200.0);
+            set(&mut d, "band4.q", 3.0);
+            set(&mut d, "band4.source", 1.0);
+            set(&mut d, "band5.gain", 3.0);
+            set(&mut d, "band5.range", 0.0);
+        }
         FxKind::Clipper => {
             set(&mut d, "gain", 9.0);
             set(&mut d, "ceiling", -6.0);
@@ -118,6 +136,14 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
             0.5, 0.4, 0.6, 0.45, 0.2, 0.16, -4.4, -3.9, 0.62, -0.1, 0.35, 0.17, 0.09, -18.4, -19.2,
             -20.1,
         ],
+        // Band gains (dB), 16 input energies, 16 key energies, output peaks, key cabled.
+        FxKind::DynamicEq => {
+            let mut v = vec![-1.5, -4.5, 3.0, -2.0, 3.0];
+            v.extend((0..16).map(|k| 0.4 * 10f32.powf(-(k as f32 - 6.0).abs() * 0.3)));
+            v.extend((0..16).map(|k| 0.3 * 10f32.powf(-(k as f32 - 11.0).abs() * 0.4)));
+            v.extend([0.4, 0.38, 1.0]);
+            v
+        }
         // driven peak, output peak, clipped share (percent), longest run (ms)
         FxKind::Clipper => vec![0.9, 0.5, 18.5, 1.4],
         // The audio track publishes no meter values.

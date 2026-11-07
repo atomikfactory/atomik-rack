@@ -285,6 +285,8 @@ pub struct AppCore<S: EngineSink> {
     tuners: tuner::Tuners,
     /// The EQs whose analyser the engine was told to run.
     eq_live: eq_live::EqLive,
+    /// The blind A/B test and the loudness match readouts.
+    blind: blind::Blind,
     /// The SAMPLE button's recording and input choice.
     sampling: sampling::Sampling,
     /// The note player preview that runs (see `app_core_preview.rs`).
@@ -550,6 +552,7 @@ impl<S: EngineSink> AppCore<S> {
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
+            blind: blind::Blind::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
             reference: reference_ops::ReferenceState::new(),
@@ -1598,6 +1601,7 @@ impl<S: EngineSink> AppCore<S> {
         self.analysers.restart();
         self.tuners.restart();
         self.eq_live.restart();
+        self.blind.restart();
         self.speq.restart();
         self.next_id = 1;
         self.sent_loop = None;
@@ -1671,6 +1675,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_tuners();
         self.feed_spectrum_eq();
         self.feed_eq_analysers();
+        self.feed_match_gains();
         self.sync_io_host();
         self.feed_io_meters();
         self.feed_cpu_loads();
@@ -3766,6 +3771,9 @@ mod spectrum_eq;
 #[path = "app_core_eq_live.rs"]
 mod eq_live;
 
+#[path = "app_core_blind.rs"]
+mod blind;
+
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
@@ -4164,6 +4172,8 @@ mod audition_tests;
 #[path = "app_core_keys_tests.rs"]
 mod keys_tests;
 
+#[path = "app_core_blind_tests.rs"]
+mod blind_tests;
 #[cfg(test)]
 #[path = "app_core_reference_tests.rs"]
 mod reference_tests;

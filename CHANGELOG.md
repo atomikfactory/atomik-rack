@@ -778,6 +778,31 @@ may break APIs and the patch and project formats.
   panel that lists the files by name with the matched gain and loudness shown (the Mixer menu lists them as
   Reference 1 to 16 today and the status line names the file), a reference that follows a seek while it plays, a
   manual trim of the matched gain, and a loudness match over a chosen section. The command count is 478.
+- **Loudness match and a blind A/B test for every built-in effect.** Right-click an effect and choose Match Loudness:
+  the effect's bypass wrapper then measures the K-weighted short-term loudness (the Mastering meter's filters, 100 ms
+  steps over 3 s) of what goes in and of what the effect makes, and applies a gain, smoothed over about a second, to
+  the effect's output so the two read the same. Switching Bypass then compares sound, not level. The gain (never more
+  than 24 dB either way, held over silence) shows in the name strip as `MATCH +x.x dB` while the match is on.
+  Switched off, the effect is bit-identical to before. The match is a listening aid: it is a hidden `internal.match`
+  param that the app sets, so it is not saved in the project, not an undo step, and never part of a bounce or an
+  export. Blind A/B Test (same menu) opens a panel for the selected effect: ten trials, each with two sounds X and Y,
+  one with the effect on and one bypassed in an order drawn anew for every trial and never shown; play either as
+  often as you like, then pick the one you prefer (a pick needs both heard; the panel has its own Match Level
+  switch). The result lines say how often the effect won and the exact two-sided chance of a score that lopsided by
+  guessing, and whether you reliably prefer it. The test sets bypass on the engine only, hands the effect back as
+  the project has it when it ends, and changes nothing in the project. New commands `rack.toggle_match` and
+  `rack.blind_ab` (no default keys); the command count is 471 and the format is still 44.
+- **Dynamic EQ (`atomik.dynamic-eq`).** A new effect next to the EQ (no EQ param moves): five bands, a low shelf,
+  three bells and a high shelf, each with a static gain, frequency and Q and its own dynamics: a threshold, a signed
+  range (below 0 cuts the band while it is loud, above 0 lifts it, 0 keeps it static), a ratio, an attack and a
+  release. A band listens to its own band of the input, or to the key input (`sc_in_l`/`sc_in_r`, a lone side
+  feeding both, band-passed at the band's frequency; with no cable it listens to its input), and works on the
+  stereo signal (the louder side decides), the mid or the side. Idle bands are skipped, so with every band off
+  the signal passes bit for bit; there is no latency. The panel draws the static curve, the live curve with the
+  gain every band has now, the reach of each band's dynamics and the spectrum of the input and, while the key is
+  cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
+  switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
+  format is still 44; not done: the low and high cut, a hold time and a look-ahead.
 - **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
   curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
   slope 1 and settles on the ceiling), with a symmetry control that lowers one half of the wave (it adds even

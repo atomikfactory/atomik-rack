@@ -850,3 +850,81 @@ fn a_device_without_a_matrix_does_not_open_the_panel() {
     s.run_command("rack.mod_matrix", None);
     assert!(s.mod_matrix_view().is_none());
 }
+
+// ---- the Blind A/B panel and the loudness match ---------------------------------------------------
+
+fn add_effect(s: &mut Shell<NullBackend>, k: &str) {
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.gain-tool".into(),
+            key: Some(key(k)),
+        })
+        .unwrap();
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[key(k)], Some(&key(k)));
+}
+
+#[test]
+fn the_blind_panel_runs_a_whole_test_by_clicks_and_escape_ends_it() {
+    let mut s = shell();
+    add_effect(&mut s, "fx");
+    s.run_command("rack.blind_ab", None);
+    assert!(s.blind_view().is_some(), "the command opens the panel");
+    assert!(s.modal_open());
+    let depth = s.core().document().undo_depth();
+    for trial in 1..=10 {
+        let v = s.blind_view().unwrap();
+        assert_eq!(v.info().trial, trial);
+        let (lx, ly, px) = (
+            v.listen_rect(0).center(),
+            v.listen_rect(1).center(),
+            v.pick_rect(0).center(),
+        );
+        mouse(&mut s, px, PointerButton::Primary);
+        assert_eq!(
+            s.blind_view().unwrap().info().trial,
+            trial,
+            "no pick unheard"
+        );
+        mouse(&mut s, lx, PointerButton::Primary);
+        mouse(&mut s, ly, PointerButton::Primary);
+        let px = s.blind_view().unwrap().pick_rect(0).center();
+        mouse(&mut s, px, PointerButton::Primary);
+    }
+    let lines = s.blind_view().unwrap().info().result.clone().unwrap();
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!(
+        s.core().document().undo_depth(),
+        depth,
+        "the test changes nothing"
+    );
+    let again = s.blind_view().unwrap().again_rect().center();
+    mouse(&mut s, again, PointerButton::Primary);
+    assert_eq!(s.blind_view().unwrap().info().trial, 1, "a new test");
+    press(&mut s, Key::Escape, Modifiers::NONE);
+    assert!(s.blind_view().is_none());
+    assert!(!s.core().blind_open());
+}
+
+#[test]
+fn the_blind_command_needs_an_effect_and_the_match_command_toggles() {
+    let mut s = shell();
+    s.run_command("rack.blind_ab", None);
+    assert!(s.blind_view().is_none(), "nothing selected");
+    add_synth(&mut s, "a", "Lead");
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[key("a")], Some(&key("a")));
+    s.run_command("rack.blind_ab", None);
+    assert!(
+        s.blind_view().is_none(),
+        "an instrument has no bypass to compare"
+    );
+    add_effect(&mut s, "fx");
+    s.run_command("rack.toggle_match", None);
+    assert!(s.core().match_on(&key("fx")));
+    s.run_command("rack.toggle_match", None);
+    assert!(!s.core().match_on(&key("fx")));
+}

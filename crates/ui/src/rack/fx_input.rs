@@ -203,13 +203,16 @@ impl RackView {
 
     /// Centre of an EQ band's handle (logical view coordinates), front side only.
     pub fn eq_handle_center(&self, key: &DeviceKey, band: usize) -> Option<Point> {
-        if self.flip != super::Flip::Front || band >= 6 {
+        if self.flip != super::Flip::Front {
             return None;
         }
         let d = &self.devices[self.device_index(key)?];
-        let fx = d.spec.fx.filter(|f| f.kind == FxKind::Eq)?;
-        let bands = fx::eq_bands_of(&d.desc?, d.device.as_ref());
-        let p = fx_layout::eq_handle_pos(fx.plot, &bands[band]);
+        let fx = d
+            .spec
+            .fx
+            .filter(|f| matches!(f.kind, FxKind::Eq | FxKind::DynamicEq))?;
+        let bands = fx::handle_bands(fx.kind, &d.desc?, d.device.as_ref());
+        let p = fx_layout::eq_handle_pos(fx.plot, bands.get(band)?);
         Some(self.rack_to_view(p + d.offset()))
     }
 
@@ -271,13 +274,28 @@ impl RackView {
 
     fn eq_plot(&self, i: usize) -> Option<Rect> {
         let d = self.devices.get(i)?;
-        let fx = d.spec.fx.filter(|f| f.kind == FxKind::Eq)?;
+        let fx = d
+            .spec
+            .fx
+            .filter(|f| matches!(f.kind, FxKind::Eq | FxKind::DynamicEq))?;
         Some(fx.plot + d.offset())
     }
 
-    fn eq_bands(&self, i: usize) -> Option<[fx::EqBand; 6]> {
+    /// The effect kind of the response plot of panel `i` (the EQ unless it is the dynamic EQ).
+    fn plot_kind(&self, i: usize) -> FxKind {
+        match self.devices.get(i).and_then(|d| d.fx) {
+            Some(FxKind::DynamicEq) => FxKind::DynamicEq,
+            _ => FxKind::Eq,
+        }
+    }
+
+    fn eq_bands(&self, i: usize) -> Option<Vec<fx::EqBand>> {
         let d = self.devices.get(i)?;
-        Some(fx::eq_bands_of(&d.desc?, d.device.as_ref()))
+        Some(fx::handle_bands(
+            self.plot_kind(i),
+            &d.desc?,
+            d.device.as_ref(),
+        ))
     }
 
     /// A press on an EQ plot: picks a handle (double-click toggles its band) or selects the
@@ -290,7 +308,7 @@ impl RackView {
             self.select(i, out);
             return;
         };
-        let keys = fx::eq_keys(band);
+        let keys = fx::handle_keys(self.plot_kind(i), band);
         let key = self.devices[i].key.clone();
         if clicks >= 2 {
             let on = if bands[band].on { 0.0 } else { 1.0 };
@@ -322,7 +340,8 @@ impl RackView {
         let Some(plot) = self.eq_plot(e.dev) else {
             return;
         };
-        let cut = fx::EQ_SHAPES[e.band].is_cut();
+        let kind = self.plot_kind(e.dev);
+        let cut = fx::handle_is_cut(kind, e.band);
         if e.axis.is_none() {
             let (dx, dy) = (rp.x - e.origin.x, rp.y - e.origin.y);
             if dx.hypot(dy) < 3.0 {
@@ -336,7 +355,7 @@ impl RackView {
             });
         }
         let target = rp + e.grab;
-        let keys = fx::eq_keys(e.band);
+        let keys = fx::handle_keys(kind, e.band);
         let key = self.devices[e.dev].key.clone();
         match e.axis {
             Some(EqAxis::Freq) => {
@@ -368,7 +387,7 @@ impl RackView {
 
     /// Esc during an EQ drag: restores the start value of the param the drag moved.
     pub(super) fn eq_cancel(&mut self, e: &EqDrag, out: &mut Vec<UiAction>) {
-        let keys = fx::eq_keys(e.band);
+        let keys = fx::handle_keys(self.plot_kind(e.dev), e.band);
         let key = self.devices[e.dev].key.clone();
         match e.axis {
             Some(EqAxis::Freq) if e.freq.to_bits() != e.start_freq.to_bits() => {
@@ -399,7 +418,7 @@ impl RackView {
         let Some(band) = fx_layout::eq_pick(plot, &bands, rp) else {
             return false;
         };
-        let keys = fx::eq_keys(band);
+        let keys = fx::handle_keys(self.plot_kind(i), band);
         if let Some(p) = self.param_of_key(i, &keys.q) {
             let q = bands[band].q as f32;
             let new = widget::wheel_value(p, q, notches, fine);
