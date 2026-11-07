@@ -1017,7 +1017,7 @@ impl FileBrowserView {
             Key::Space => {
                 let target = cur
                     .and_then(|c| self.row_at_pos(c))
-                    .filter(|r| is_audio(r))
+                    .filter(|r| is_audio(r) || r.kind == FileKind::Clip)
                     .map(|r| r.path.clone())
                     .or_else(|| self.selected_files().into_iter().next());
                 if let Some(path) = target {

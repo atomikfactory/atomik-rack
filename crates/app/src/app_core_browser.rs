@@ -440,11 +440,14 @@ impl<S: EngineSink> AppCore<S> {
             }
             BrowseAction::ListChildren(path) => self.submit(BrowseJob::Children(path)),
             BrowseAction::Preview(path) => {
-                // Only audio is previewed: not a device row, not a patch or a clip.
+                // Audio files and note clips are previewed: not a device row, not a patch.
+                let kind = classify(&path, false);
                 let audio = device_type_of(&path).is_none()
-                    && !classify(&path, false).is_some_and(atomik_library::FileKind::is_item);
+                    && !kind.is_some_and(atomik_library::FileKind::is_item);
                 if audio {
                     self.start_preview(path);
+                } else if kind == Some(atomik_library::FileKind::Clip) {
+                    self.preview_library_clip(&path);
                 }
             }
             BrowseAction::StopPreview => self.stop_preview(),
@@ -732,7 +735,7 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn view_preview(&mut self, path: Option<PathBuf>, progress: f32) {
+    pub(super) fn view_preview(&mut self, path: Option<PathBuf>, progress: f32) {
         #[cfg(test)]
         {
             self.browser.last_preview = Some((path.clone(), progress));
@@ -1110,6 +1113,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Starts a preview: the stream reaches the engine now, the decoder thread fills it.
     fn start_preview(&mut self, path: PathBuf) {
+        self.stop_clip_preview();
         let (feed, stream) = preview_channel();
         let monitor = stream.monitor();
         // Gain is fixed at 0 dB.
@@ -1132,7 +1136,20 @@ impl<S: EngineSink> AppCore<S> {
         });
     }
 
+    /// Shows `path` as the file the preview voice plays: a stream the app fed itself (a library
+    /// clip rendered by the built-in voice), `frames` long.
+    pub(super) fn adopt_preview(&mut self, path: PathBuf, monitor: PreviewMonitor, frames: u64) {
+        self.view_preview(Some(path.clone()), 0.0);
+        self.browser.preview = Some(ActivePreview {
+            path,
+            monitor,
+            total: Some(frames),
+            opened: true,
+        });
+    }
+
     pub(super) fn stop_preview(&mut self) {
+        self.stop_clip_preview();
         if self.browser.preview.take().is_some() || self.sink.preview_active() {
             let _ = self.sink.preview_stop();
         }
