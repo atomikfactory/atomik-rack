@@ -31,8 +31,9 @@
 //! menu adds "Open as Project" and, for files below [`FileBrowserView::set_library_folder`],
 //! "Rename..." (also `F2`), which ends in [`BrowseAction::RenameItem`]. Dragging an item (or a
 //! device row) emits [`BrowseAction::DragFiles`] with its path or URI like an audio file.
-//! Space on a clip item emits [`BrowseAction::Preview`] (and [`BrowseAction::StopPreview`] while it
-//! plays), as for an audio file; selecting a clip does not start one.
+//! Space on a clip, patch or container item emits [`BrowseAction::Preview`] (and
+//! [`BrowseAction::StopPreview`] while it plays), as for an audio file; selecting one does not
+//! start a preview.
 //!
 //! # Info requests
 //!
