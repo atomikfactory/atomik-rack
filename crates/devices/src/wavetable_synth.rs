@@ -161,7 +161,9 @@ const P_UNISON_MODE: u32 = 49;
 const P_OSC2_UNISON_VOICES: u32 = 50;
 const P_OSC2_UNISON_DETUNE: u32 = 51;
 const P_OSC2_UNISON_SPREAD: u32 = 52;
-const PARAM_COUNT: usize = 53;
+const P_OSC_PHASE: u32 = 53;
+const P_OSC_PHASE_START: u32 = 54;
+const PARAM_COUNT: usize = 55;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -643,6 +645,24 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Percent,
         false,
     ),
+    param(
+        P_OSC_PHASE,
+        "osc.phase",
+        "Osc phase",
+        (0.0, 1.0, 0.0),
+        Lin,
+        Unit::Choice(&["reset", "free"]),
+        true,
+    ),
+    param(
+        P_OSC_PHASE_START,
+        "osc.phase_start",
+        "Osc start angle (deg)",
+        (0.0, 360.0, 0.0),
+        Lin,
+        Unit::None,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -823,6 +843,11 @@ struct Shared {
     cv_resonance_amount: f32,
     /// Set per batch: the resonance CV socket is cabled.
     cv_resonance_on: bool,
+    /// A new note starts every oscillator at a seeded random angle (`osc.phase` free) instead of
+    /// the start angle.
+    phase_free: bool,
+    /// The start angle of `osc.phase` reset, in cycles (`0..1`).
+    phase_start: f64,
 }
 
 /// The unison copies of one oscillator.
@@ -1038,8 +1063,9 @@ impl Voice {
         1.0 - p.velocity_amount * (1.0 - velocity.clamp(0.0, 1.0))
     }
 
-    /// Starts a note from silence (fresh phases and filters): the first copy of an oscillator
-    /// starts at phase 0, the others at seeded random phases.
+    /// Starts a note from silence (fresh phases and filters). With `osc.phase` at `reset` the
+    /// first copy of an oscillator starts at the start angle (0 by default) and the others at
+    /// seeded random offsets from it; at `free` every copy starts at a seeded random angle.
     fn start(&mut self, key: u8, velocity: f32, p: &Shared) {
         self.key = key;
         self.pending = None;
@@ -1047,14 +1073,17 @@ impl Voice {
         self.fade = [0.0; 2];
         for osc in &mut self.phase {
             for (u, ph) in osc.iter_mut().enumerate() {
-                *ph = if u == 0 {
-                    0.0
-                } else {
+                *ph = if p.phase_free {
                     f64::from(self.phases.next_f32())
+                } else if u == 0 {
+                    p.phase_start
+                } else {
+                    let ph = f64::from(self.phases.next_f32()) + p.phase_start;
+                    if ph >= 1.0 { ph - 1.0 } else { ph }
                 };
             }
         }
-        self.sub_phase = 0.0;
+        self.sub_phase = if p.phase_free { 0.0 } else { p.phase_start };
         for f in &mut self.filter {
             f.reset();
         }
@@ -1330,6 +1359,8 @@ impl WavetableSynth {
                 cv_pitch_amount: CV_PITCH_RANGE,
                 cv_resonance_amount: 1.0,
                 cv_resonance_on: false,
+                phase_free: false,
+                phase_start: 0.0,
             },
             voices: std::array::from_fn(|i| Voice::new(0, i as u64)),
             voice_limit: MAX_VOICES,
@@ -1405,6 +1436,10 @@ impl WavetableSynth {
             P_UNISON_VOICES | P_UNISON_DETUNE | P_UNISON_SPREAD | P_UNISON_MODE
             | P_OSC2_UNISON_VOICES | P_OSC2_UNISON_DETUNE | P_OSC2_UNISON_SPREAD => {
                 self.apply_unison();
+            }
+            P_OSC_PHASE => self.shared.phase_free = v >= 0.5,
+            P_OSC_PHASE_START => {
+                self.shared.phase_start = f64::from(v / 360.0).clamp(0.0, 0.999_999);
             }
             P_FILTER_MODE => self.shared.filter_mode = FilterMode::from_index(choice(v)),
             P_CUTOFF => self.shared.cutoff = v,
@@ -1826,6 +1861,8 @@ mod tests {
                 "osc2.unison_voices",
                 "osc2.unison_detune",
                 "osc2.unison_spread",
+                "osc.phase",
+                "osc.phase_start",
             ],
             &[
                 "notes_in",
@@ -2405,6 +2442,65 @@ mod tests {
         };
         assert!(beating(0.0) < 0.05);
         assert!(beating(20.0) > 0.2);
+    }
+
+    /// The first `n` samples of two notes of one key played one after the other.
+    fn two_notes_first_samples(n: usize, set: &dyn Fn(&mut DeviceHarness)) -> [Vec<f32>; 2] {
+        let (mut h, _) = synth();
+        set(&mut h);
+        let mut notes = Vec::new();
+        for _ in 0..2 {
+            h.push_note("notes_in", on(0, 36, 0.8));
+            let o = h.render(seconds(0.05), &OUT);
+            notes.push(o[0][..n].to_vec());
+            h.push_note("notes_in", off(0, 36));
+            h.render(seconds(0.6), &OUT);
+        }
+        [notes.remove(0), notes.remove(0)]
+    }
+
+    #[test]
+    fn reset_starts_every_note_on_the_same_cycle_and_unison_copies_stay_random() {
+        // One copy and a sub: the first cycle is the same at every start angle.
+        for start in [0.0f32, 120.0] {
+            let [a, b] = two_notes_first_samples(400, &|h| {
+                h.set_param("mix.sub", 0.5);
+                h.set_param("osc.phase", 0.0);
+                h.set_param("osc.phase_start", start);
+            });
+            assert_eq!(a, b, "reset at {start} degrees");
+        }
+        // The unison copies after the first keep their seeded random offsets (they move from note
+        // to note); free moves the first copy too.
+        let unison = |free: f32| {
+            two_notes_first_samples(400, &|h| {
+                h.set_param("unison.voices", 3.0);
+                h.set_param("unison.detune", 0.1);
+                h.set_param("osc.phase", free);
+            })
+        };
+        let [a, b] = unison(0.0);
+        assert_ne!(a, b);
+        let [a, b] = unison(1.0);
+        assert_ne!(a, b);
+        // A different start angle moves the first cycle.
+        let at = |start: f32| {
+            two_notes_first_samples(400, &|h| h.set_param("osc.phase_start", start))[0].clone()
+        };
+        assert_ne!(at(0.0), at(90.0));
+    }
+
+    #[test]
+    fn the_default_phase_params_restart_at_zero_like_before() {
+        let run = |explicit: bool| {
+            two_notes_first_samples(2_000, &|h| {
+                if explicit {
+                    h.set_param("osc.phase", 0.0);
+                    h.set_param("osc.phase_start", 0.0);
+                }
+            })
+        };
+        assert_eq!(run(false), run(true));
     }
 
     #[test]
