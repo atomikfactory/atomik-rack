@@ -195,7 +195,7 @@ impl<S: EngineSink> AppCore<S> {
         Ok(())
     }
 
-    fn capture(&self, pane: Pane) -> Result<ClipboardData, String> {
+    pub(super) fn capture(&self, pane: Pane) -> Result<ClipboardData, String> {
         let doc = self.document.doc();
         let nothing = || "Nothing is selected to copy".to_string();
         let err = |e: atomik_model::ModelError| e.to_string();

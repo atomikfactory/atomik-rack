@@ -333,6 +333,20 @@ list for every release so that a result can be compared with the last one.
 - **Automated:** none
 - **Known bad:** a dark patch in the light theme.
 
+### HW-WIN-05 Dragging between song windows
+- **Applies to:** Windows, macOS (Linux on X11; Wayland gives no window positions)
+- **Preconditions:** two songs open in windows of their own (Window > New Song Window), the second at another
+  sample rate (File > New at 44.1 kHz) when the first is at 48 kHz, an audio clip in the first.
+- **Steps:** drag the audio clip out of the first window and let go over the arrangement of the second; drag a
+  synth by its plate out of the first window and let go over the rack of the second; drag a patch row of the
+  file browser from one window over the other and let go on the rack there; undo in the second song.
+- **Expected:** the first song keeps what it had; the second gets the clip (a moment later, converted to its rate,
+  playing at the right pitch and length), the synth and the patch, each as one undo step; a patch hovering over the
+  other window outlines the device it would load into; nothing moves in the song the drag started in.
+- **Automated:** `crates/app/src/workspace_tests.rs` (the drops, without OS windows)
+- **Known bad:** a clip that sounds an octave off after the drop, a drag that leaves the clip moved in the first
+  song, or a drop that lands in the song the audio does not belong to.
+
 ## Listening
 
 ### HW-LIS-01 Listen to the demo renders

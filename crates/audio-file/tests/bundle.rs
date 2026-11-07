@@ -391,6 +391,35 @@ fn convert_rate_stores_an_aligned_copy_and_keeps_the_original() {
 }
 
 #[test]
+fn convert_rate_from_stores_the_copy_here_and_never_writes_the_source() {
+    let root = tmp_dir("convert_from");
+    let mut other = Bundle::create(&root.join("Other")).unwrap();
+    let tone = AudioData::new(48_000, vec![sine(48_000, 1_000.0, 0.5, 4_800)]).unwrap();
+    let a = other.add_recording(&tone, "tone").unwrap();
+    let mut own = Bundle::create(&root.join("Own")).unwrap();
+    let before = tree(&root.join("Other"));
+    let sources = vec![root.join("No Such Folder"), root.join("Other")];
+
+    let c = own
+        .convert_rate_from(&sources, &a.hash, 44_100, "tone")
+        .unwrap();
+    assert_eq!((c.sample_rate, c.frames), (44_100, 4_410));
+    assert!(own.exists(&c.hash), "the copy is in the target");
+    assert!(!own.exists(&a.hash), "the original is not copied over");
+    assert_eq!(tree(&root.join("Other")), before, "the source is untouched");
+
+    // An asset the target holds is read from it; one nobody holds is missing.
+    let own_asset = own.add_recording(&tone, "tone").unwrap();
+    assert_eq!(own_asset.hash, a.hash);
+    assert!(own.convert_rate_from(&[], &a.hash, 96_000, "tone").is_ok());
+    let ghost = "f".repeat(64);
+    assert!(matches!(
+        own.convert_rate_from(&sources, &ghost, 44_100, "x"),
+        Err(AudioFileError::AssetMissing { .. })
+    ));
+}
+
+#[test]
 fn collect_from_copies_only_the_wanted_assets_and_reports_the_rest() {
     let root = tmp_dir("collect");
     let mut shared = Bundle::create(&root.join("Shared")).unwrap();

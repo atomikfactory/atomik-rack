@@ -115,6 +115,14 @@ pub(crate) enum Msg {
         rate: u32,
         result: Result<Vec<(String, Loaded)>, String>,
     },
+    /// The audio a paste brings from a song at another rate was resampled: `(asset id in the
+    /// snapshot, its copy)` in the order asked, or the first failure. See
+    /// [`crate::AppCore`]'s paste at another rate.
+    PasteConverted {
+        generation: u64,
+        job: u64,
+        result: Result<Vec<(String, Loaded)>, String>,
+    },
     /// A warp buffer was rendered (`None`: the job was cancelled): see [`crate::AppCore`]'s
     /// warp cache.
     Warped {
@@ -606,6 +614,45 @@ pub(crate) fn spawn_convert(
             let _ = tx.send(Msg::Converted {
                 generation,
                 rate,
+                result,
+            });
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker for a paste from a song at another rate: it resamples each of `assets`
+/// (`(id, display name)`) to `rate`, reading the original from `bundle` or else from the bundle
+/// folders `sources` (the other song's, which are never written), stores the copies in `bundle`
+/// and loads them, then sends one [`Msg::PasteConverted`].
+#[allow(clippy::too_many_arguments, reason = "one job, every field is its own")]
+pub(crate) fn spawn_convert_paste(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    mut bundle: Bundle,
+    sources: Vec<PathBuf>,
+    rate: u32,
+    threshold: u64,
+    assets: Vec<(String, String)>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-paste-rate".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let result = assets
+                .into_iter()
+                .map(|(hash, name)| {
+                    let info = bundle
+                        .convert_rate_from(&sources, &hash, rate, &name)
+                        .map_err(|e| format!("{name}: {e}"))?;
+                    let mut loaded = load_asset(&bundle, &info.hash, threshold)?;
+                    loaded.info = Some(info);
+                    Ok((hash, loaded))
+                })
+                .collect();
+            let _ = tx.send(Msg::PasteConverted {
+                generation,
+                job,
                 result,
             });
         })

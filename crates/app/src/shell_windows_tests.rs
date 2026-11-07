@@ -582,6 +582,24 @@ fn file_drag_from_browser_drops_on_detached_rack() {
 }
 
 #[test]
+fn files_dragged_out_of_another_song_hover_and_drop_like_a_drag_of_this_one() {
+    let (mut s, key, at) = sampler_rack();
+    let paths = vec![wav("foreign_C3.wav", 2_400)];
+    s.foreign_file_drag(WindowKind::Rack, at, paths.clone(), false);
+    assert_eq!(s.core().view().drop_hover(), Some(&key));
+    // The drag moved on to another window: the hover ends.
+    s.foreign_file_drag_left();
+    assert!(s.core().view().drop_hover().is_none());
+    s.foreign_file_drag(WindowKind::Rack, at, paths.clone(), false);
+    s.foreign_file_drag(WindowKind::Rack, at, paths, true);
+    s.core_mut().wait_background();
+    assert_eq!(zone_count(&s, &key), 1, "the dropped file became a zone");
+    assert!(s.core().view().drop_hover().is_none());
+    // This song has no drag of its own to report.
+    assert!(s.file_drag_paths().is_none());
+}
+
+#[test]
 fn library_item_drag_inserts_into_detached_rack() {
     let (mut s, key, _) = sampler_rack();
     // Below the sampler, in its column: a slot of the rack.
