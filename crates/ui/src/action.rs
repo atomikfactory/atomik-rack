@@ -652,6 +652,9 @@ pub enum UiAction {
     /// The blind A/B panel ([`crate::BlindView`]) asks for something: play X or Y, pick one,
     /// switch the level match, run again, or close.
     Blind(crate::blind_panel::BlindAction),
+    /// The "Will the bass read?" panel ([`crate::BassReadView`]) asks for something: choose the
+    /// strip, measure, stop, or close.
+    BassRead(crate::bass_read_panel::BassReadAction),
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),
