@@ -5904,6 +5904,24 @@ song to the mix. Commands: `mixer.toggle_reference` (Ctrl+Alt+R), `mixer.add_ref
 `mixer.next_reference`, `mixer.remove_reference`, `mixer.reference_cue`, `mixer.reference_match`,
 `mixer.reference_band` and `mixer.reference_solo`, all in the Mixer menu's Reference submenu.
 
+**The decision zone** ([render/src/zone.rs](../crates/render/src/zone.rs),
+[app/src/app_core_zone.rs](../crates/app/src/app_core_zone.rs),
+[ui/src/zone_panel.rs](../crates/ui/src/zone_panel.rs)). `atomik_render::zone::measure` reads seven numbers from
+the first two channels of a file: gated integrated loudness, the loudest 3 s loudness, punch (sample peak minus
+integrated loudness), brightness (the least-squares slope of the octave-band energies at 125 Hz to 8 kHz, each
+band two band-pass sections in `f64`), the low end (share of the energy under 120 Hz through a Linkwitz-Riley
+low-pass), width (side over mid energy, held to -60..+20 dB) and correlation. It is a pure function of the samples,
+so it reads the same on every platform within the resolution shown. Every attribute but the two loudness ones is a
+ratio, so it does not move when a file is scaled (`Attribute::normalised`); a test scales a file and checks it.
+`zone_row` sets a mix against a list of references: the range is the lowest and highest reading, and the `Verdict`
+is `Inside` (within the attribute's resolution of the range), `Above(distance)` or `Below(distance)`.
+`AppCore::refresh_zone` runs the analysis on the worker `atomik-zone`: each reference is decoded from its file (a
+reading is kept by path while the file stays listed), and the mix is a render of the song with `render_doc_in`, the
+renderer of a bounce, so it never contains the reference voice. A song with third-party plugins is refused. The
+result never touches the document (no command, no undo step); `AppCore::zone_data` turns it into the `ZoneData` that
+`ZoneView` draws, and says when the song changed since the render started (`Document::revision`). The same
+measurement is the `zone` entry of the MCP audio report. The panel opens with `mixer.reference_panel`.
+
 ## 7. The UI crate
 
 `atomik-ui` has no window-system dependency and no time source. The app feeds `UiEvent`s and applies
