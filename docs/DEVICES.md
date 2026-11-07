@@ -240,6 +240,37 @@ was (a test pins a render of a busy patch). They add the following; the same voi
   use takes none of these paths and renders bit for bit as before (a test compares). The slot params are the last
   32 of the table (68 to 99); the dual layer does not expose them and the generated panel does not show them.
 
+### Start phase (appended params)
+
+Two params after the slot block (ids 100 and 101) say where a new note starts its oscillators. A note that
+starts a voice always restarted both oscillators at phase 0; that is now the default, so a project from before
+the params plays the same bits.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `osc.phase` | 0–1: reset, free | 0 (reset) | choice | Linear | yes |
+| `osc.phase_start` | 0 to 360 (degrees; used when the phase is `reset`) | 0 | none | Linear | no |
+
+- **Reset** starts both oscillators at `osc.phase_start` at every note start, so every kick or bass note
+  begins with the same first cycle. A retriggered voice (the same key struck again, or a legato change of
+  key) keeps running and is not restarted. A sine at 0 degrees starts on its zero crossing, which also keeps
+  a sub from clicking at the start of a note.
+- **Free** starts every note at a seeded random angle (one stream per voice, derived from the patch seed, so a
+  bounce is the same every time).
+- The dual layer does not expose the two params; both layers start at 0.
+
+**Clean Up Bass.** Right-click the patch name of a Poly Synth, Mono Bass or Wavetable Synth: the first row of
+the pop-up is Clean Up Bass. It sets, in one undo step and only where they differ: `osc.phase` to reset and
+`osc.phase_start` to 0, `voices` to 1, `env.amp.release` to 12 ms when it is outside 5 to 20 ms, and
+`filter.key_track` to 0.5 when it is under 0.1. The status line names what it changed, or says the device
+already starts every note the same. (Polarity is in the Stereo Tool: `invert_l` and `invert_r`.)
+
+**Start phase of the other instruments.** The Semi-Modular and the FM synth restart the phases of a note at the
+start of a voice (the FM synth spreads its unison copies by a fixed step); the Wavetable Synth starts its first
+unison copy at phase 0 and the others at seeded random phases (now with the two params above); the Organ's
+tonewheels free-run, phase-locked to each other, from phases that follow the device seed; the Grain Sampler has
+no oscillator. No param was added for those.
+
 ---
 
 ## Mono Bass: `atomik.mono-bass` (Instrument)
@@ -608,9 +639,14 @@ at once, without a fade. Not done: a table editor, and the frames of a long samp
 | `osc2.unison_voices` | 1 to 7 (used when the mode is `separate`) | 1 | none | Linear | yes |
 | `osc2.unison_detune` | 0 to 100 (the widest copy, each way) | 20 | cents | Linear | no |
 | `osc2.unison_spread` | 0 to 1 (the widest copy, each way) | 0.5 | percent | Linear | no |
+| `osc.phase` | 0–1: reset, free | 0 (reset) | choice | Linear | yes |
+| `osc.phase_start` | 0 to 360 (degrees; used when the phase is `reset`) | 0 | none | Linear | no |
 
-The last four params were added after the first release; a project that does not have them plays as
-before (the unison mode is `shared`, so both oscillators use `unison.*`).
+The first four of these params were added after the first release; a project that does not have them plays as
+before (the unison mode is `shared`, so both oscillators use `unison.*`). The last two choose the start
+phase: reset at 0 degrees is what the synth always did. With reset, copy 0 of each oscillator and the sub
+start at `osc.phase_start` and the other copies at their seeded random offsets from it; with free, every copy
+starts at a seeded random angle. Clean Up Bass (see the Poly Synth) works on it too.
 
 ### Behaviour (as built)
 
@@ -631,8 +667,8 @@ before (the unison mode is `shared`, so both oscillators use `unison.*`).
   There is one filter per channel, so the unison spread survives it.
 - **Unison.** With *n* copies, copy *i* sits at x = 2i/(n − 1) − 1 (0 for a lone copy): detuned by x
   × `unison.detune` cents and balanced by x × `unison.spread` (unity at the centre, as the pan CV
-  does). Each copy has its own phase: the first starts at phase 0, the others at seeded random
-  phases. The copies are scaled by 1/√n. With `unison.mode` at `shared` both oscillators use the
+  does). Each copy has its own phase: the first starts at phase 0 (or `osc.phase_start`), the others at
+  seeded random phases (offset by the start angle). The copies are scaled by 1/√n. With `unison.mode` at `shared` both oscillators use the
   three `unison.*` settings; at `separate` oscillator 2 uses `osc2.unison_voices`,
   `osc2.unison_detune` and `osc2.unison_spread` and oscillator 1 keeps `unison.*`. The band limit
   follows each oscillator's own widest copy.
