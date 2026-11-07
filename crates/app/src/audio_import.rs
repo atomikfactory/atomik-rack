@@ -136,6 +136,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<crate::export_worker::Done>, String>>,
     },
+    /// The masking analysis finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::masking_worker`].
+    Masked {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<crate::masking_worker::MaskAnalysis>, String>>,
+    },
     /// The notes of an audio clip were extracted (or it failed): see the Audio to Notes
     /// section of [`crate::AppCore`].
     Noted {

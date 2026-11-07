@@ -1126,6 +1126,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Mixer,
     ),
     cmd("mixer.link_faders", "Link Faders", G::Mixer, C::Global).menu(),
+    cmd("mixer.masking_map", "Masking Map...", G::Mixer, C::Global).menu(),
     cmd("mixer.meter_mode", "Meter Mode", G::Mixer, C::Global)
         .arg(METER_MODE_ARGS)
         .menu(),

@@ -42,6 +42,7 @@ pub mod ladder;
 pub mod leveller;
 mod lfo;
 pub mod loudness_history;
+pub mod masking;
 mod mod_delay;
 pub mod mod_source;
 pub mod modal;
