@@ -73,6 +73,7 @@ mod sample_read;
 pub mod shaper;
 mod smoother;
 pub mod smoother2;
+pub mod sound_analysis;
 pub mod spectral;
 pub mod spectrogram;
 pub mod spectrum;
