@@ -80,7 +80,7 @@ fn desc(kind: FxKind) -> &'static atomik_device_sdk::DeviceDescriptor {
 #[test]
 fn heights_in_rack_units_are_pinned() {
     let units = |k| fx_layout(k, desc(k)).height_units;
-    assert_eq!(units(FxKind::Reverb), 2);
+    assert_eq!(units(FxKind::Reverb), 3);
     assert_eq!(units(FxKind::Compressor), 3);
     assert_eq!(units(FxKind::Eq), 6);
     assert_eq!(units(FxKind::Distortion), 3);

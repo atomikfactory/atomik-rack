@@ -7,6 +7,7 @@
 
 use crate::midi_file::MidiResolution;
 use crate::record::InputQuantize;
+pub use crate::transition_choice::TransitionChoice;
 use crate::windows::WindowKind;
 use atomik_engine::{ReferenceBand, ReferenceSolo};
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
@@ -83,6 +84,13 @@ pub enum AppCommand {
     /// File ▸ Import MIDI as Song…: a MIDI file as new tracks from the start, with its tempo map,
     /// meter and markers.
     ImportMidiSong,
+    /// File ▸ Sound Analyst…: the panel that measures an audio file and proposes a starting patch
+    /// to recreate it.
+    SoundAnalyst,
+    /// File ▸ Delivery Targets: the panel of the delivery targets, on its Targets page.
+    DeliveryTargets,
+    /// Edit ▸ Peak Surgeon: the same panel on its Peaks page, for the selected audio clip.
+    PeakSurgeon,
     /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
     /// (a file each, or a folder search). Only enabled while some are missing.
     RelinkAudio,
@@ -200,8 +208,6 @@ pub enum AppCommand {
     ToggleClockIn,
     /// Options ▸ Chase Notes: the selected track's note chase on or off.
     ToggleChase,
-    /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
-    ToggleConsoleDevices,
     /// View > Show Console Links: draw the channel to master cables on the back of
     /// the rack (a channel otherwise shows "Output: Master").
     ToggleConsoleLinks,
@@ -524,6 +530,19 @@ pub enum AppCommand {
     BypassPlayers,
     /// Track > Add Pattern Lane: the lane of the selected device's `pattern` param.
     AddPatternLane,
+    /// Track > Add Reverb Send...: opens the wizard that gives the selected track a send to a new
+    /// FX return with an EQ and a keyed Space Reverb.
+    AddReverbSend,
+    /// Track > Rumble Maker: a rumble layer from the selected kick track on a new track, its tail
+    /// made one of two ways.
+    RumbleMaker(RumbleChoice),
+    /// Track > Reverse Reverb Print: the reverse reverb swell of the selected clips or range on a
+    /// new track, ending where the source starts.
+    ReverseReverbPrint(SwellLength),
+    /// Add Transition: a riser, an impact, a filter down, a silence on beat one or a fill at a
+    /// section boundary (the marker or bar line a menu opened on, else the selected marker, else
+    /// the boundary at or after the playhead).
+    AddTransition(TransitionChoice),
     /// Track > Pattern Lane to Notes: the notes the lane's patterns play, on a new note lane.
     PatternLaneToNotes,
     /// Track > Edit Track Controllers: the piano roll on the pitch bend, aftertouch and CC lanes
@@ -776,6 +795,9 @@ impl AppCommand {
             AppCommand::ImportAudio => ("file.import_audio", None),
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
+            AppCommand::SoundAnalyst => ("file.sound_analyst", None),
+            AppCommand::DeliveryTargets => ("file.delivery_targets", None),
+            AppCommand::PeakSurgeon => ("sequencer.peak_surgeon", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::CollectFiles => ("file.collect_files", None),
             AppCommand::CollectPreview => ("file.collect_preview", None),
@@ -862,7 +884,6 @@ impl AppCommand {
             }
             // A grid the bar picked has no menu entry: it names the command without a value.
             AppCommand::Quantize(_) => ("transport.input_quantize", None),
-            AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleCpuMeters => ("view.toggle_cpu_meters", None),
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
@@ -1025,6 +1046,10 @@ impl AppCommand {
             AppCommand::FoldPlayers => ("sequencer.fold_players", None),
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
+            AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
+            AppCommand::RumbleMaker(c) => ("sequencer.rumble_maker", Some(c.arg())),
+            AppCommand::AddTransition(c) => ("sequencer.add_transition", Some(c.arg())),
+            AppCommand::ReverseReverbPrint(l) => ("sequencer.reverse_reverb_print", Some(l.arg())),
             AppCommand::PatternLaneToNotes => ("sequencer.pattern_lane_to_notes", None),
             AppCommand::EditTrackControllers => ("sequencer.track_controllers", None),
             AppCommand::BounceClipDry => ("sequencer.bounce_clip_dry", None),
@@ -1135,6 +1160,9 @@ impl AppCommand {
             ("file.import_audio", None) => AppCommand::ImportAudio,
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
+            ("file.sound_analyst", None) => AppCommand::SoundAnalyst,
+            ("file.delivery_targets", None) => AppCommand::DeliveryTargets,
+            ("sequencer.peak_surgeon", None) => AppCommand::PeakSurgeon,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.collect_files", None) => AppCommand::CollectFiles,
             ("file.collect_preview", None) => AppCommand::CollectPreview,
@@ -1216,7 +1244,6 @@ impl AppCommand {
             ("transport.input_quantize", Some("sixteenth")) => {
                 AppCommand::Quantize(InputQuantize::SIXTEENTH)
             }
-            ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_cpu_meters", None) => AppCommand::ToggleCpuMeters,
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
@@ -1413,6 +1440,16 @@ impl AppCommand {
             ("sequencer.fold_players", None) => AppCommand::FoldPlayers,
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
+            ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
+            ("sequencer.add_transition", Some(arg)) => {
+                return TransitionChoice::from_arg(arg).map(AppCommand::AddTransition);
+            }
+            ("sequencer.rumble_maker", Some(arg)) => {
+                return RumbleChoice::from_arg(arg).map(AppCommand::RumbleMaker);
+            }
+            ("sequencer.reverse_reverb_print", Some(arg)) => {
+                return SwellLength::from_arg(arg).map(AppCommand::ReverseReverbPrint);
+            }
             ("sequencer.pattern_lane_to_notes", None) => AppCommand::PatternLaneToNotes,
             ("sequencer.track_controllers", None) => AppCommand::EditTrackControllers,
             ("sequencer.bounce_clip_dry", None) => AppCommand::BounceClipDry,
@@ -1633,6 +1670,113 @@ impl NormaliseTarget {
     }
 }
 
+/// How Track > Rumble Maker makes the tail of the rumble.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RumbleChoice {
+    /// A trimmed chunk of the kick's tail, repeated with crossfades.
+    Tail,
+    /// The kick through a long reverb, low-passed to the sub band.
+    Reverb,
+}
+
+impl RumbleChoice {
+    /// Every choice, in menu order.
+    pub const ALL: [RumbleChoice; 2] = [RumbleChoice::Tail, RumbleChoice::Reverb];
+
+    /// The registry argument of `sequencer.rumble_maker`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            RumbleChoice::Tail => "tail",
+            RumbleChoice::Reverb => "reverb",
+        }
+    }
+
+    /// The choice of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            RumbleChoice::Tail => "Tail Repeat",
+            RumbleChoice::Reverb => "Reverb Tail",
+        }
+    }
+
+    /// The way the rumble is made.
+    pub fn mode(self) -> atomik_dsp::rumble::RumbleMode {
+        match self {
+            RumbleChoice::Tail => atomik_dsp::rumble::RumbleMode::TailRepeat,
+            RumbleChoice::Reverb => atomik_dsp::rumble::RumbleMode::Reverb,
+        }
+    }
+}
+
+/// The length of the swell Track > Reverse Reverb Print makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwellLength {
+    /// Half a second.
+    Half,
+    /// One second.
+    One,
+    /// Two seconds.
+    Two,
+    /// Four seconds.
+    Four,
+    /// Eight seconds.
+    Eight,
+}
+
+impl SwellLength {
+    /// Every length, in menu order.
+    pub const ALL: [SwellLength; 5] = [
+        SwellLength::Half,
+        SwellLength::One,
+        SwellLength::Two,
+        SwellLength::Four,
+        SwellLength::Eight,
+    ];
+
+    /// The registry argument of `sequencer.reverse_reverb_print`: the seconds.
+    pub fn arg(self) -> &'static str {
+        match self {
+            SwellLength::Half => "0.5",
+            SwellLength::One => "1",
+            SwellLength::Two => "2",
+            SwellLength::Four => "4",
+            SwellLength::Eight => "8",
+        }
+    }
+
+    /// The length of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            SwellLength::Half => "0.5 s",
+            SwellLength::One => "1 s",
+            SwellLength::Two => "2 s",
+            SwellLength::Four => "4 s",
+            SwellLength::Eight => "8 s",
+        }
+    }
+
+    /// The length in seconds.
+    pub fn seconds(self) -> f32 {
+        match self {
+            SwellLength::Half => 0.5,
+            SwellLength::One => 1.0,
+            SwellLength::Two => 2.0,
+            SwellLength::Four => 4.0,
+            SwellLength::Eight => 8.0,
+        }
+    }
+}
+
 /// The length of the pieces Edit ▸ Chop Clips To cuts the selected clips into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChopStep {
@@ -1796,6 +1940,9 @@ pub struct MenuState {
     pub can_uncombine: bool,
     /// A Mono Bass with a track is selected: Split Sub works.
     pub can_split_sub: bool,
+    /// A track with a console channel is selected and a send/return slot is free: Add Reverb Send
+    /// works.
+    pub can_reverb_send: bool,
     /// The translation lens of the live output.
     pub lens: atomik_engine::LensSettings,
     /// The arrangement area is shown.
@@ -1848,8 +1995,6 @@ pub struct MenuState {
     pub send_follow: bool,
     /// Link faders is on (a level of a strip in a VCA group moves the group's levels).
     pub link_faders: bool,
-    /// Console devices are shown in the rack.
-    pub console_devices: bool,
     /// The console links are drawn as cables.
     pub console_links: bool,
     /// The devices' name plates show their CPU load.
@@ -2397,6 +2542,7 @@ pub fn menus_with_songs(
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
                 item("Import MIDI\u{2026}", AppCommand::ImportMidi),
                 item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
+                item("Sound Analyst\u{2026}", AppCommand::SoundAnalyst),
                 enabled(
                     "Relink Missing Audio\u{2026}",
                     AppCommand::RelinkAudio,
@@ -2473,6 +2619,7 @@ pub fn menus_with_songs(
                     AppCommand::ExportStems,
                     state.export_stems,
                 ),
+                item("Delivery Targets\u{2026}", AppCommand::DeliveryTargets),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
                 item("Stress Song", AppCommand::StressSong),
@@ -2524,6 +2671,11 @@ pub fn menus_with_songs(
                         })
                         .collect(),
                 }),
+                enabled(
+                    "Peak Surgeon\u{2026}",
+                    AppCommand::PeakSurgeon,
+                    state.audio.can_edit,
+                ),
                 enabled(
                     "Strip Silence\u{2026}",
                     AppCommand::AudioStripSilence,
@@ -2706,11 +2858,6 @@ pub fn menus_with_songs(
                     state.slice_editor,
                 ),
                 MenuEntry::Separator,
-                check(
-                    "Show Console Devices in Rack",
-                    AppCommand::ToggleConsoleDevices,
-                    state.console_devices,
-                ),
                 check(
                     "Show Console Links",
                     AppCommand::ToggleConsoleLinks,
@@ -3333,6 +3480,37 @@ pub fn menus_with_songs(
                 item("Add Pattern Lane", AppCommand::AddPatternLane),
                 item("Pattern Lane to Notes", AppCommand::PatternLaneToNotes),
                 item("Edit Track Controllers", AppCommand::EditTrackControllers),
+                enabled(
+                    "Add Reverb Send\u{2026}",
+                    AppCommand::AddReverbSend,
+                    state.can_reverb_send,
+                ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Rumble Maker",
+                    entries: RumbleChoice::ALL
+                        .into_iter()
+                        .map(|c| item(c.label(), AppCommand::RumbleMaker(c)))
+                        .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Reverse Reverb Print",
+                    entries: SwellLength::ALL
+                        .into_iter()
+                        .map(|l| item(l.label(), AppCommand::ReverseReverbPrint(l)))
+                        .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Add Transition",
+                    entries: TransitionChoice::ALL
+                        .into_iter()
+                        .flat_map(|c| {
+                            let separator = c.starts_group().then_some(MenuEntry::Separator);
+                            separator
+                                .into_iter()
+                                .chain([item(c.label(), AppCommand::AddTransition(c))])
+                        })
+                        .collect(),
+                }),
                 MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
@@ -3812,6 +3990,7 @@ mod tests {
             can_combine: false,
             can_uncombine: false,
             can_split_sub: false,
+            can_reverb_send: false,
             lens: Default::default(),
             song_visible: true,
             piano_roll: false,
@@ -3838,7 +4017,6 @@ mod tests {
             align_returns: true,
             send_follow: true,
             link_faders: false,
-            console_devices: false,
             console_links: false,
             cpu_meters: false,
             big_meter: false,
@@ -3908,6 +4086,7 @@ mod tests {
             AppCommand::ImportAudio,
             AppCommand::ImportMidi,
             AppCommand::ImportMidiSong,
+            AppCommand::SoundAnalyst,
             AppCommand::RelinkAudio,
             AppCommand::CollectFiles,
             AppCommand::CollectPreview,
@@ -3921,6 +4100,7 @@ mod tests {
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
+            AppCommand::DeliveryTargets,
             AppCommand::StressRack,
             AppCommand::StressSong,
             AppCommand::Quit,
@@ -3951,7 +4131,6 @@ mod tests {
             AppCommand::ToggleSampleEditor,
             AppCommand::ToggleStepEditor,
             AppCommand::ToggleSliceEditor,
-            AppCommand::ToggleConsoleDevices,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
             AppCommand::ToggleBigMeter,
@@ -4071,6 +4250,7 @@ mod tests {
             AppCommand::AddPatternLane,
             AppCommand::PatternLaneToNotes,
             AppCommand::EditTrackControllers,
+            AppCommand::AddReverbSend,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
@@ -4083,6 +4263,7 @@ mod tests {
             AppCommand::ReverseClips(true),
             AppCommand::ReverseClips(false),
             AppCommand::AudioNormalise,
+            AppCommand::PeakSurgeon,
             AppCommand::AudioStripSilence,
             AppCommand::AudioQuantize,
             AppCommand::AudioWarp,
@@ -4185,6 +4366,15 @@ mod tests {
         }
         for target in NormaliseTarget::ALL {
             v.push(AppCommand::AudioNormaliseTo(target));
+        }
+        for choice in RumbleChoice::ALL {
+            v.push(AppCommand::RumbleMaker(choice));
+        }
+        for length in SwellLength::ALL {
+            v.push(AppCommand::ReverseReverbPrint(length));
+        }
+        for choice in TransitionChoice::ALL {
+            v.push(AppCommand::AddTransition(choice));
         }
         for step in ChopStep::ALL {
             v.push(AppCommand::ChopClips(step));
@@ -4607,6 +4797,7 @@ mod tests {
                 "Import Audio\u{2026}",
                 "Import MIDI\u{2026}",
                 "Import MIDI as Song\u{2026}",
+                "Sound Analyst\u{2026}",
                 "Relink Missing Audio\u{2026}",
                 "Collect Files\u{2026}",
                 "Preview Collect Files",
@@ -4627,6 +4818,7 @@ mod tests {
                 "Export Loop as Audio File\u{2026}",
                 "Export Selection as Audio File\u{2026}",
                 "Export Stems as Audio Files\u{2026}",
+                "Delivery Targets\u{2026}",
                 "Stress Rack",
                 "Stress Song",
                 "Quit"
@@ -4654,6 +4846,7 @@ mod tests {
                 "RMS -18 dBFS",
                 "Loudness -23 LUFS",
                 "Loudness -14 LUFS",
+                "Peak Surgeon\u{2026}",
                 "Strip Silence\u{2026}",
                 "Quantize Audio",
                 "Insert Bars at Locators",
@@ -4722,7 +4915,6 @@ mod tests {
                 "Sample Editor",
                 "Step Editor",
                 "Slice Editor",
-                "Show Console Devices in Rack",
                 "Show Console Links",
                 "CPU Meters",
                 "Big Meter",
@@ -4871,6 +5063,26 @@ mod tests {
                 "Add Pattern Lane",
                 "Pattern Lane to Notes",
                 "Edit Track Controllers",
+                "Add Reverb Send\u{2026}",
+                "Tail Repeat",
+                "Reverb Tail",
+                "0.5 s",
+                "1 s",
+                "2 s",
+                "4 s",
+                "8 s",
+                "Riser, 1 Bar",
+                "Riser, 2 Bars",
+                "Riser, 4 Bars",
+                "Impact",
+                "Filter Down, 1 Bar",
+                "Filter Down, 2 Bars",
+                "Filter Down, 4 Bars",
+                "Group Filter Down, 1 Bar",
+                "Group Filter Down, 2 Bars",
+                "Group Filter Down, 4 Bars",
+                "Silence on Beat One",
+                "Fill",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",
@@ -5226,6 +5438,7 @@ mod tests {
                 can_combine: false,
                 can_uncombine: false,
                 can_split_sub: false,
+                can_reverb_send: false,
                 lens: Default::default(),
                 song_visible: false,
                 piano_roll: true,
@@ -5252,7 +5465,6 @@ mod tests {
                 align_returns: false,
                 send_follow: false,
                 link_faders: false,
-                console_devices: true,
                 console_links: false,
                 cpu_meters: false,
                 big_meter: false,
@@ -5323,7 +5535,6 @@ mod tests {
         assert_eq!(find("Console").checked, Some(true));
         assert_eq!(find("Maximise Console").checked, Some(false));
         assert_eq!(find("Delay Compensation").checked, Some(false));
-        assert_eq!(find("Show Console Devices in Rack").checked, Some(true));
         let front = menus(&state(), &keymap);
         let back = front[2].items().next().unwrap();
         assert_eq!(back.checked, Some(false));

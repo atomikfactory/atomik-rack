@@ -123,9 +123,24 @@ fn descriptor_validates() {
             "freeze",
             "output",
             "mix_cv_trim",
+            "duck",
+            "duck_release",
+            "duck_mode",
+            "duck_freq",
+            "duck_threshold",
+            "key_gate",
+            "key_gate_hold",
             "bypass",
         ],
-        &["in_l", "in_r", "out_l", "out_r", "mix_cv_in"],
+        &[
+            "in_l",
+            "in_r",
+            "out_l",
+            "out_r",
+            "mix_cv_in",
+            "sc_in_l",
+            "sc_in_r",
+        ],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.reverb");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);

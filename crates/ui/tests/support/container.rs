@@ -257,7 +257,6 @@ pub fn scoped_view(doc: &RackDoc, scope: &[&str]) -> RackView {
     let reg = registry();
     // The rack with console devices hidden.
     let mut v = RackView::new(Theme::dark());
-    v.set_show_console_devices(false);
     let _ = v.handle(&UiEvent::Resize(SCOPED), doc, &reg);
     v.sync(doc, &reg);
     v.set_scope(&path(scope));

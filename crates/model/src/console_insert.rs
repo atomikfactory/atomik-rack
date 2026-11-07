@@ -19,9 +19,11 @@
 //! is set) is taken out by its `dyn.bypass` or `eq.bypass` param, which keeps its settings and
 //! its place in the signal path (the compressor look-ahead delay stays).
 
-use crate::console::{INSERT_SLOTS, InsertEffect, is_console_type};
+use crate::console::{FX_SLOTS, INSERT_SLOTS, InsertEffect, is_console_type, sockets};
 use crate::console_cmd::{Planner, at, bad, wire};
-use crate::{Cable, Command, DeviceKey, ModelError, RackDoc, rules};
+use crate::history::Edit;
+use crate::rack_columns::Placement;
+use crate::{Cable, Command, DeviceKey, ModelError, RackDoc, RackSlot, rules};
 use atomik_device_sdk::{DeviceKind, Direction, Registry, SocketKind};
 
 /// Longest chain read back from cables (a guard; edits allow the same).
@@ -35,10 +37,31 @@ const OUT: [&str; 2] = ["out_l", "out_r"];
 /// The effects on `device`'s insert loop in signal order (see the module documentation).
 /// Empty when nothing is cabled from the insert send to a stereo effect.
 pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Vec<DeviceKey> {
+    chain_from(
+        doc,
+        registry,
+        device,
+        SEND.map(str::to_owned),
+        MAX_DERIVED,
+        &[],
+    )
+}
+
+/// The effects cabled in series from the pair of output sockets `first` of `device`: the
+/// stereo effect whose `in_l` and `in_r` are fed by them, then the one fed by its `out_l/r`,
+/// and so on, at most `max` of them. Effects in `skip` end the walk (they belong elsewhere).
+fn chain_from(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    first: [String; 2],
+    max: usize,
+    skip: &[DeviceKey],
+) -> Vec<DeviceKey> {
     let mut chain: Vec<DeviceKey> = Vec::new();
     let mut from = device.clone();
-    let mut sockets = SEND;
-    while chain.len() < MAX_DERIVED {
+    let mut sockets = first;
+    while chain.len() < max {
         let next = doc
             .cables
             .iter()
@@ -48,6 +71,7 @@ pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> V
             .find(|d| {
                 *d != device
                     && !chain.contains(d)
+                    && !skip.contains(d)
                     && is_stereo_effect(doc, registry, d)
                     && doc.cables.iter().any(|c2| {
                         c2.from.device == from
@@ -60,9 +84,118 @@ pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> V
         let Some(next) = next else { break };
         chain.push(next.clone());
         from = next;
-        sockets = OUT;
+        sockets = OUT.map(str::to_owned);
     }
     chain
+}
+
+/// Longest send effect chain read back from cables (a guard).
+const MAX_RETURN_CHAIN: usize = 16;
+
+/// The effects of shared send `slot` (0-based) in signal order: the effects cabled in series
+/// from the master's `fx_send{k}` pair (their last one normally feeds `return{k}`, and is the
+/// console's `returns[slot]`). Empty without a master or without a cabled effect.
+pub fn send_chain(doc: &RackDoc, registry: &Registry, slot: usize) -> Vec<DeviceKey> {
+    let Some(master) = doc.console.master.as_ref() else {
+        return Vec::new();
+    };
+    if slot >= FX_SLOTS {
+        return Vec::new();
+    }
+    let k = slot + 1;
+    let first = ["l", "r"].map(|side| sockets::master_fx_send(k, side));
+    chain_from(doc, registry, master, first, MAX_RETURN_CHAIN, &[])
+}
+
+/// The shared send whose chain holds `effect` (0-based), the send effects the rack groups under
+/// the master section.
+pub fn send_slot_of(doc: &RackDoc, registry: &Registry, effect: &DeviceKey) -> Option<usize> {
+    (0..FX_SLOTS).find(|slot| send_chain(doc, registry, *slot).contains(effect))
+}
+
+/// The master section's stack in the rack, in order: its insert chain, then the effects of the
+/// shared sends 1 to 8 (each send's effects in signal order), the ones that sit in the master's
+/// column. Everything the rack draws under the master section and moves with it.
+pub fn master_stack(doc: &RackDoc, registry: &Registry) -> Vec<DeviceKey> {
+    let Some(master) = doc.console.master.as_ref() else {
+        return Vec::new();
+    };
+    let column = doc.device(master).map(|d| d.column);
+    let mut out = insert_chain(doc, registry, master);
+    for slot in 0..FX_SLOTS {
+        // A send's effects count up to the first one in another column.
+        let chain = send_chain(doc, registry, slot);
+        let here = chain
+            .into_iter()
+            .take_while(|k| doc.device(k).map(|d| d.column) == column);
+        for k in here {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+    }
+    out
+}
+
+/// The console channel, output bus or master whose insert chain holds `effect`: the strip it is
+/// stacked under in the rack.
+pub fn insert_owner(doc: &RackDoc, registry: &Registry, effect: &DeviceKey) -> Option<DeviceKey> {
+    let console = &doc.console;
+    console
+        .channels
+        .iter()
+        .map(|c| &c.channel)
+        .chain(console.buses.iter().map(|b| &b.bus))
+        .chain(console.master.iter())
+        .find(|c| insert_chain(doc, registry, c).contains(effect))
+        .cloned()
+}
+
+/// The top-level order that stacks `strip`'s insert chain right under it, in chain order and in
+/// its column; `None` when it is stacked so already (or has no chain).
+fn stacked_layout(
+    doc: &RackDoc,
+    registry: &Registry,
+    strip: &DeviceKey,
+) -> Option<Vec<(DeviceKey, u16)>> {
+    let chain = if doc.console.master.as_ref() == Some(strip) {
+        // The master section's stack is its inserts and then its shared send effects.
+        master_stack(doc, registry)
+    } else {
+        insert_chain(doc, registry, strip)
+    };
+    if chain.is_empty() {
+        return None;
+    }
+    let old: Vec<(DeviceKey, u16)> = doc
+        .devices
+        .iter()
+        .map(|d| (d.key.clone(), d.column))
+        .collect();
+    let column = old.iter().find(|(k, _)| k == strip)?.1;
+    let mut new: Vec<(DeviceKey, u16)> = old
+        .iter()
+        .filter(|(k, _)| !chain.contains(k))
+        .cloned()
+        .collect();
+    let at = new.iter().position(|(k, _)| k == strip)? + 1;
+    new.splice(at..at, chain.into_iter().map(|k| (k, column)));
+    (new != old).then_some(new)
+}
+
+/// Plans the layout that stacks `strip`'s insert chain right under it, in chain order (nothing
+/// when it is stacked already). Every insert command ends with it, so a plain move of the
+/// strip, which carries its inserts, never leaves them elsewhere.
+pub(crate) fn stack(p: &mut Planner<'_>, strip: &DeviceKey) {
+    if let Some(new) = stacked_layout(p.doc(), p.registry, strip) {
+        let old = p
+            .doc()
+            .devices
+            .iter()
+            .map(|d| (d.key.clone(), d.column))
+            .collect();
+        p.push(Edit::Layout { old, new });
+    }
 }
 
 /// The key of the bypass param of an effect (host-style, on every built-in effect and plugin).
@@ -282,6 +415,37 @@ pub(crate) fn set_insert(
     slot: usize,
     effect: Option<InsertEffect>,
 ) -> Result<(), ModelError> {
+    set_insert_in(p, channel, slot, effect, false)
+}
+
+/// `AddInsert`: like [`set_insert`] with an effect, but the effects from `slot` on shift down.
+/// An existing effect that sits in the chain of another channel or bus leaves that chain (which
+/// closes behind it) and joins this one in the same step.
+pub(crate) fn add_insert(
+    p: &mut Planner<'_>,
+    channel: &DeviceKey,
+    slot: usize,
+    effect: InsertEffect,
+) -> Result<(), ModelError> {
+    check_target(p, channel)?;
+    if let InsertEffect::Existing(e) = &effect
+        && let Some(other) = insert_owner(p.doc(), p.registry, e)
+        && other != *channel
+    {
+        let old = insert_chain(p.doc(), p.registry, &other);
+        let new: Vec<DeviceKey> = old.iter().filter(|k| *k != e).cloned().collect();
+        rewire(p, &other, &old, &new)?;
+    }
+    set_insert_in(p, channel, slot, Some(effect), true)
+}
+
+fn set_insert_in(
+    p: &mut Planner<'_>,
+    channel: &DeviceKey,
+    slot: usize,
+    effect: Option<InsertEffect>,
+    shift: bool,
+) -> Result<(), ModelError> {
     check_target(p, channel)?;
     if slot >= INSERT_SLOTS {
         return Err(bad(format!(
@@ -319,6 +483,11 @@ pub(crate) fn set_insert(
             Some(e.clone())
         }
     };
+    if shift && old.len() >= INSERT_SLOTS {
+        return Err(bad(format!(
+            "the insert chain of {channel} is full ({INSERT_SLOTS} effects)"
+        )));
+    }
     // Take the old chain off the loop first, then place the new member.
     let mut new = old.clone();
     let key = match existing {
@@ -339,12 +508,14 @@ pub(crate) fn set_insert(
             p.insert_device(index, type_id)?
         }
     };
-    if slot < new.len() {
+    if slot < new.len() && !shift {
         new[slot] = key;
     } else {
-        new.push(key);
+        new.insert(slot, key);
     }
-    wire_chain(p, channel, &new)
+    wire_chain(p, channel, &new)?;
+    stack(p, channel);
+    Ok(())
 }
 
 fn validate_existing(
@@ -417,5 +588,67 @@ pub(crate) fn move_insert(
     let mut new = old.clone();
     let e = new.remove(from);
     new.insert(to, e);
-    rewire(p, channel, &old, &new)
+    rewire(p, channel, &old, &new)?;
+    stack(p, channel);
+    Ok(())
+}
+
+/// `ExtractInsert`: the effect at `slot` leaves the chain (which closes behind it) and stays in
+/// the rack uncabled, at `to` when given.
+pub(crate) fn extract_insert(
+    p: &mut Planner<'_>,
+    channel: &DeviceKey,
+    slot: usize,
+    to: Option<RackSlot>,
+) -> Result<(), ModelError> {
+    check_target(p, channel)?;
+    let old = insert_chain(p.doc(), p.registry, channel);
+    if slot >= old.len() {
+        return Err(bad(format!("insert slot {slot} is empty")));
+    }
+    let mut new = old.clone();
+    let effect = new.remove(slot);
+    rewire(p, channel, &old, &new)?;
+    match to {
+        Some(to) => {
+            let moved = crate::rack_columns::plan_move(
+                p.doc(),
+                std::slice::from_ref(&effect),
+                Placement::Slot(to),
+            )?;
+            p.push(moved);
+            stack(p, channel);
+        }
+        // Left in place: right under the stack, which closes up above it.
+        None => {
+            stack(p, channel);
+            let anchor = new.last().unwrap_or(channel).clone();
+            let old_order: Vec<(DeviceKey, u16)> = p
+                .doc()
+                .devices
+                .iter()
+                .map(|d| (d.key.clone(), d.column))
+                .collect();
+            let column = old_order
+                .iter()
+                .find(|(k, _)| *k == anchor)
+                .map(|(_, c)| *c);
+            let mut order: Vec<(DeviceKey, u16)> = old_order
+                .iter()
+                .filter(|(k, _)| *k != effect)
+                .cloned()
+                .collect();
+            if let (Some(column), Some(at)) = (column, order.iter().position(|(k, _)| *k == anchor))
+            {
+                order.insert(at + 1, (effect, column));
+                if order != old_order {
+                    p.push(Edit::Layout {
+                        old: old_order,
+                        new: order,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }

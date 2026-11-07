@@ -501,3 +501,121 @@ fn the_b_of_a_container_slot_toggles_the_bypass_of_the_container() {
         [("fx2".to_string(), "bypass".to_string(), 0.0)]
     );
 }
+
+fn drag(v: &mut ConsoleView, doc: &RackDoc, reg: &Registry, a: Point, b: Point) -> Vec<UiAction> {
+    let mut out = v.handle(&down(a), doc, reg);
+    out.extend(v.handle(&mv(Point::new(a.x, a.y + 3.0)), doc, reg));
+    out.extend(v.handle(&mv(b), doc, reg));
+    out.extend(v.handle(&up(b), doc, reg));
+    out
+}
+
+#[test]
+fn dragging_an_insert_row_reorders_the_chain_in_one_command() {
+    let (doc, reg) = (doc_with(3), console_registry());
+    let mut v = view(&doc, &reg);
+    let ch = key("ch-bass");
+    // The first row is dragged below the last one (the name part of the row, left of the E).
+    let from = v.insert_slot_center(&ch, 0).unwrap() - Vec2::new(14.0, 0.0);
+    let to = v.insert_slot_center(&ch, 2).unwrap() + Vec2::new(0.0, 4.0) - Vec2::new(14.0, 0.0);
+    let a = drag(&mut v, &doc, &reg, from, to);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::MoveInsert {
+            channel: ch.clone(),
+            from: 0,
+            to: 2
+        }]
+    );
+    assert!(
+        !a.iter().any(|x| matches!(x, UiAction::Select(_))),
+        "a drag does not select"
+    );
+    // The last row dragged to the top moves up.
+    let from = v.insert_slot_center(&ch, 2).unwrap() - Vec2::new(14.0, 0.0);
+    let to = v.insert_slot_center(&ch, 0).unwrap() - Vec2::new(14.0, 4.0);
+    let a = drag(&mut v, &doc, &reg, from, to);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::MoveInsert {
+            channel: ch.clone(),
+            from: 2,
+            to: 0
+        }]
+    );
+    // A drag that ends on its own row changes nothing.
+    let at = v.insert_slot_center(&ch, 1).unwrap() - Vec2::new(14.0, 0.0);
+    let a = drag(&mut v, &doc, &reg, at, at + Vec2::new(0.0, 5.0));
+    assert!(console_cmds(&a).is_empty());
+}
+
+#[test]
+fn the_e_of_a_row_asks_the_rack_to_show_its_effect() {
+    let (doc, reg) = (doc_with(2), console_registry());
+    let mut v = view(&doc, &reg);
+    let ch = key("ch-bass");
+    let e = v.insert_edit_center(&ch, 1).unwrap();
+    assert_eq!(
+        click(&mut v, &doc, &reg, e),
+        [UiAction::EditInsert(key("fx2"))]
+    );
+    assert!(
+        v.insert_edit_center(&ch, 2).is_none(),
+        "an empty row has no E"
+    );
+}
+
+/// [`doc_with`]'s effects cabled on the master's insert loop instead (echo, fx2, fx3).
+fn master_doc_with(n: usize) -> RackDoc {
+    let mut doc = doc_with(0);
+    let chain = ["echo", "fx2", "fx3"];
+    let mut from = ("master", ["insert_send_l", "insert_send_r"]);
+    for fx in chain.iter().take(n) {
+        // The echo is the FX return 1 effect in this document; free it first.
+        doc.cables
+            .retain(|c| !(c.from.device.0 == *fx || c.to.device.0 == *fx));
+        for (side, s) in ["in_l", "in_r"].into_iter().enumerate() {
+            doc.cables.push(cable((from.0, from.1[side]), (fx, s)));
+        }
+        from = (fx, ["out_l", "out_r"]);
+    }
+    for (side, s) in ["insert_return_l", "insert_return_r"]
+        .into_iter()
+        .enumerate()
+    {
+        doc.cables
+            .push(cable((from.0, from.1[side]), ("master", s)));
+    }
+    doc.console.returns = Default::default();
+    doc
+}
+
+#[test]
+fn the_master_insert_rows_reorder_like_a_strips() {
+    let (doc, reg) = (master_doc_with(3), console_registry());
+    let mut v = view(&doc, &reg);
+    let m = key("master");
+    let from = v.insert_slot_center(&m, 0).unwrap() - Vec2::new(14.0, 0.0);
+    let to = v.insert_slot_center(&m, 2).unwrap() + Vec2::new(0.0, 4.0) - Vec2::new(14.0, 0.0);
+    let a = drag(&mut v, &doc, &reg, from, to);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::MoveInsert {
+            channel: m.clone(),
+            from: 0,
+            to: 2
+        }]
+    );
+    assert!(!a.iter().any(|x| matches!(x, UiAction::Select(_))));
+}
+
+#[test]
+fn the_e_of_a_master_insert_row_asks_the_rack_to_show_its_effect() {
+    let (doc, reg) = (master_doc_with(2), console_registry());
+    let mut v = view(&doc, &reg);
+    let e = v.insert_edit_center(&key("master"), 1).unwrap();
+    assert_eq!(
+        click(&mut v, &doc, &reg, e),
+        [UiAction::EditInsert(key("fx2"))]
+    );
+}

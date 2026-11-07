@@ -376,10 +376,17 @@ impl<S: EngineSink> AppCore<S> {
             Ok(None) => self.reject(format!("Export of {} cancelled", running.file)),
             Ok(Some(done)) => {
                 let rate = self.doc().sample_rate;
+                // The report says how the export sits against the project's delivery target.
+                let target = self.doc().delivery.clone();
+                let against = |l: &atomik_render::loudness::LoudnessReport| {
+                    target.as_ref().map_or_else(String::new, |t| {
+                        format!("; {}", t.compare(l.integrated_lufs, l.true_peak_dbtp))
+                    })
+                };
                 let message = match done {
                     Done::File(report) => {
                         log::info!("exported {}: {}", running.file, report.loudness.summary());
-                        describe(&report, &running.values, rate)
+                        describe(&report, &running.values, rate) + &against(&report.loudness)
                     }
                     Done::Stems(report) => {
                         for ((path, _), loudness) in report.files.iter().zip(&report.loudness) {
@@ -388,7 +395,14 @@ impl<S: EngineSink> AppCore<S> {
                                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
                             log::info!("exported stem {name}: {}", loudness.summary());
                         }
-                        describe_stems(&report, &running.values, rate)
+                        let master = report
+                            .files
+                            .iter()
+                            .zip(&report.loudness)
+                            .find(|((_, s), _)| s.kind == atomik_model::StemKind::Master)
+                            .map(|(_, l)| against(l))
+                            .unwrap_or_default();
+                        describe_stems(&report, &running.values, rate) + &master
                     }
                 };
                 self.reject(message);
