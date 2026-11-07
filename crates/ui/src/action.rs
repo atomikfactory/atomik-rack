@@ -657,6 +657,9 @@ pub enum UiAction {
     /// The masking map panel ([`crate::MaskingView`]) asks for something: analyse the song, stop
     /// the analysis, locate a clash, de-mask a band, or close.
     Masking(crate::masking_panel::MaskingAction),
+    /// The mix check panel ([`crate::MixCheckView`]) asks for something: run the check, stop it,
+    /// locate a peak, apply a fix, open a tool, or close.
+    MixCheck(crate::mixcheck_panel::MixCheckAction),
     /// The colour menu's Custom item: the app opens the colour picker
     /// ([`crate::ColorPickerView`]) for this target, from the colour it has now.
     PickColor(crate::color_picker::ColorTarget),

@@ -290,6 +290,9 @@
 //!   tracks, the two spectra of the chosen pair with the clash bands shaded, the time ranges that
 //!   locate the playhead and DE-MASK; it emits [`UiAction::Masking`] and the host feeds it a
 //!   [`MaskingData`] and the progress of the analysis.
+//! - **Mix check.** [`MixCheckView`] is the modal panel of the mix check: the findings of the analysis of
+//!   the song with the track, the measured number, a line on why, a one-click fix button and a button that
+//!   opens the tool; it emits [`UiAction::MixCheck`] and the host feeds it a [`MixCheckData`] and the progress.
 //! - **Modulation matrix.** [`ModMatrixView`] is the modal panel of a device's eight modulation
 //!   slots (source, target and via pickers on a [`context_menu::ContextMenu`], an amount bar); the host feeds it
 //!   [`ModMatrixInfo`] and its edits are ordinary [`UiAction::Command`]s, with
@@ -364,6 +367,7 @@ pub mod master_panel;
 pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
+pub mod mixcheck_panel;
 pub mod mod_matrix_panel;
 pub mod modsrc_panel;
 pub mod note_tool_args;
@@ -447,6 +451,7 @@ pub use marker_edit::MarkSel;
 pub use masking_panel::{MaskingAction, MaskingData, MaskingPair, MaskingView};
 pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
+pub use mixcheck_panel::{MixCheckAction, MixCheckData, MixCheckRow, MixCheckView};
 pub use mod_matrix_panel::{ModMatrixAction, ModMatrixInfo, ModMatrixView};
 pub use notes_panel::{
     DrumKit, DrumMap, NotesAction, NotesMode, NotesProgress, NotesRow, NotesValues, NotesView,
