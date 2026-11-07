@@ -34,6 +34,7 @@ mod det_trig;
 pub mod dither;
 mod dynamics;
 pub mod echo;
+pub mod energy;
 mod fader;
 mod fdn;
 pub mod fm;
