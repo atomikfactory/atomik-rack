@@ -56,6 +56,7 @@ use vello::peniko::Color;
 mod audio_edit;
 mod crossfade_drag;
 mod draw_series;
+mod energy_lane;
 mod folder_clips;
 mod folder_fader;
 mod ghost;
@@ -85,6 +86,7 @@ mod tempo;
 mod track_move;
 
 pub use audio_edit::AudioMenu;
+pub use energy_lane::ENERGY_LANE_HEIGHT;
 pub use ghost::TakeGhost;
 pub use heights::{
     COMPACT_BELOW, MAX_ROW_HEIGHT, MAX_TRACK_ZOOM, MIN_ROW_HEIGHT, MIN_TRACK_ZOOM, TRACK_ZOOM_STEP,
@@ -369,6 +371,8 @@ enum Hit {
     TempoPoint(usize),
     /// The tempo lane away from its points.
     TempoLane,
+    /// The energy lane.
+    EnergyLane,
     /// The arm button in the tempo lane's header.
     TempoArm,
     /// The meter tag of change `i` in the ruler.
@@ -954,6 +958,10 @@ pub struct ArrangementView {
     bars: Bars,
     /// Whether the tempo lane is shown between the ruler and the lanes.
     tempo_lane: bool,
+    /// Whether the energy lane is shown under the tempo lane.
+    energy_lane: bool,
+    /// What the energy lane draws.
+    en: energy_lane::EnergyUi,
     /// The selected tempo point and meter change.
     tempo_sel: Option<usize>,
     meter_sel: Option<usize>,
@@ -1084,6 +1092,8 @@ impl ArrangementView {
             tempo: TempoMap::default(),
             bars: Bars::default(),
             tempo_lane: false,
+            energy_lane: false,
+            en: energy_lane::EnergyUi::default(),
             tempo_sel: None,
             meter_sel: None,
             ctx_tick: 0,
@@ -2242,10 +2252,20 @@ impl ArrangementView {
             }
     }
 
-    fn lanes_top(&self) -> f64 {
+    /// The bottom of the tempo lane (the marker strip's bottom when it is hidden).
+    fn tempo_bottom(&self) -> f64 {
         self.markers_bottom()
             + if self.tempo_lane {
                 TEMPO_LANE_HEIGHT
+            } else {
+                0.0
+            }
+    }
+
+    fn lanes_top(&self) -> f64 {
+        self.tempo_bottom()
+            + if self.energy_lane {
+                energy_lane::ENERGY_LANE_HEIGHT
             } else {
                 0.0
             }
@@ -2256,6 +2276,16 @@ impl ArrangementView {
         Rect::new(
             self.axis.x0,
             self.markers_bottom(),
+            self.bounds.x1.max(self.axis.x0),
+            self.tempo_bottom(),
+        )
+    }
+
+    /// The energy lane over the timeline, under the tempo lane (empty height when hidden).
+    fn energy_rect(&self) -> Rect {
+        Rect::new(
+            self.axis.x0,
+            self.tempo_bottom(),
             self.bounds.x1.max(self.axis.x0),
             self.lanes_top(),
         )
@@ -2619,6 +2649,14 @@ impl ArrangementView {
                 return Hit::Empty;
             }
             return self.strip_hit(pos);
+        }
+        if pos.y >= self.tempo_bottom() && pos.y < self.lanes_top() {
+            // The energy lane (only when it is shown): nothing to press.
+            return if pos.x < tl.x0 {
+                Hit::Empty
+            } else {
+                Hit::EnergyLane
+            };
         }
         if pos.y < self.lanes_top() {
             // The tempo lane (only when it is shown).
@@ -6219,6 +6257,7 @@ impl ArrangementView {
         self.paint_lanes(canvas, doc, tl, &mut cache, stamp);
         self.paint_marker_strip(canvas);
         self.paint_tempo_lane(canvas);
+        self.paint_energy_lane(canvas);
         self.paint_ruler(canvas);
         let list = cache.headers(stamp, self.repaint || self.headers_dirty, |l| {
             self.paint_track_list(l, doc);

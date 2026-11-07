@@ -300,6 +300,9 @@
 //! - **Mix check.** [`MixCheckView`] is the modal panel of the mix check: the findings of the analysis of
 //!   the song with the track, the measured number, a line on why, a one-click fix button and a button that
 //!   opens the tool; it emits [`UiAction::MixCheck`] and the host feeds it a [`MixCheckData`] and the progress.
+//! - **Repetition.** [`RepetitionView`] is the modal panel of the repetition finder: the ideas the song plays
+//!   three times or more unchanged, where they are, and three suggested variations per idea, an edit one button
+//!   away or advice; it emits [`UiAction::Repetition`] and the host feeds it a [`RepetitionData`].
 //! - **Modulation matrix.** [`ModMatrixView`] is the modal panel of a device's eight modulation
 //!   slots (source, target and via pickers on a [`context_menu::ContextMenu`], an amount bar); the host feeds it
 //!   [`ModMatrixInfo`] and its edits are ordinary [`UiAction::Command`]s, with
@@ -394,6 +397,7 @@ pub mod plugin_settings;
 pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
+pub mod repetition_panel;
 pub mod resonance_marks;
 pub mod sample_editor;
 pub mod scale_panel;
@@ -486,6 +490,9 @@ pub use rack::{
     LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
+pub use repetition_panel::{
+    RepetitionAction, RepetitionChoice, RepetitionData, RepetitionRow, RepetitionView,
+};
 pub use sample_editor::SampleEditorView;
 pub use scale_panel::{ScaleAction, ScaleView, parse_percent};
 pub use scene_canvas::{SceneCache, SceneCanvas};
