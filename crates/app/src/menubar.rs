@@ -661,6 +661,7 @@ mod tests {
             cpu_meters: false,
             big_meter: false,
             tempo_lane: false,
+            energy_lane: false,
             marker_strip: false,
             inspector: false,
             marker_list: false,

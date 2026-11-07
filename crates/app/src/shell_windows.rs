@@ -341,6 +341,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.mixcheck {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.repetition {
+                    v.set_scale(scale);
+                }
                 if let Some((v, _)) = &mut self.color_picker {
                     v.set_scale(scale);
                 }
@@ -545,6 +548,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.versions.is_some()
             || self.masking.is_some()
             || self.mixcheck.is_some()
+            || self.repetition.is_some()
             || self.color_picker.is_some()
             || self.notes.is_some()
             || self.warp.is_some()

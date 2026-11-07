@@ -296,6 +296,8 @@ pub struct AppCore<S: EngineSink> {
     /// The reference tracks session: selection, listening, level match (see
     /// `app_core_reference.rs`).
     reference: reference_ops::ReferenceState,
+    /// What Find Repetition found (see [`repetition`]).
+    repetition: repetition::RepetitionState,
     /// The decision zone: readings of the mix and the references (see `app_core_zone.rs`).
     zone: zone_ops::ZoneState,
     /// The library clip preview that plays through a track (see `app_core_clip_preview.rs`).
@@ -563,6 +565,7 @@ impl<S: EngineSink> AppCore<S> {
             sampling: sampling::Sampling::default(),
             player_preview: None,
             reference: reference_ops::ReferenceState::new(),
+            repetition: repetition::RepetitionState::default(),
             zone: zone_ops::ZoneState::new(),
             clip_preview: None,
             patch_preview: None,
@@ -1692,6 +1695,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_io_meters();
         self.feed_cpu_loads();
         self.reference_frame();
+        self.energy_frame();
         self.zone_frame();
         self.browser_frame();
     }
@@ -3918,8 +3922,12 @@ pub use templates::{
 mod masking;
 pub use masking::DemaskReport;
 
+#[path = "app_core_energy.rs"]
+mod energy;
 #[path = "app_core_mixcheck.rs"]
 mod mixcheck;
+#[path = "app_core_repetition.rs"]
+mod repetition;
 
 #[path = "app_core_versions.rs"]
 mod versions;
@@ -3989,6 +3997,14 @@ mod masking_tests;
 #[cfg(test)]
 #[path = "app_core_mixcheck_tests.rs"]
 mod mixcheck_tests;
+
+#[cfg(test)]
+#[path = "app_core_energy_tests.rs"]
+mod energy_tests;
+
+#[cfg(test)]
+#[path = "app_core_repetition_tests.rs"]
+mod repetition_tests;
 
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]

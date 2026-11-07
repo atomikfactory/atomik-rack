@@ -169,10 +169,10 @@ use atomik_ui::{
     MidiMapsAction, MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView,
     Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView,
     Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
-    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
-    UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
-    ZoneAction, ZoneView,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, RepetitionAction, RepetitionView,
+    ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView, SongInfoAction,
+    SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem, VersionsAction,
+    VersionsView, WarpAction, WarpValues, WarpView, ZoneAction, ZoneView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -552,6 +552,8 @@ pub struct Shell<B: AudioBackend> {
     masking: Option<MaskingView>,
     /// The mix check panel (Mixer > Check Mix), while it is open.
     mixcheck: Option<MixCheckView>,
+    /// The repetition panel (Edit > Find Repetition), while it is open.
+    repetition: Option<RepetitionView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -740,6 +742,7 @@ impl<B: AudioBackend> Shell<B> {
             versions: None,
             masking: None,
             mixcheck: None,
+            repetition: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -836,6 +839,7 @@ impl<B: AudioBackend> Shell<B> {
         {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
+            arrangement.set_energy_lane(self.ui.show_energy_lane);
             arrangement.set_marker_strip(self.ui.show_marker_strip);
             arrangement.set_inspector(self.ui.show_inspector);
             arrangement.set_marker_list(self.ui.show_marker_list);
@@ -1486,6 +1490,58 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.masking {
                     v.set_note(&note);
                 }
+            }
+        }
+        self.repaint = true;
+    }
+
+    /// Whether the repetition panel is open.
+    pub fn repetition_open(&self) -> bool {
+        self.repetition.is_some()
+    }
+
+    /// The repetition panel, while it is open.
+    pub fn repetition_view(&self) -> Option<&RepetitionView> {
+        self.repetition.as_ref()
+    }
+
+    /// Edit > Find Repetition: searches the song and opens the panel on what it found.
+    fn open_repetition(&mut self) {
+        self.core.find_repetition();
+        let theme = self.core.view().theme().clone();
+        let mut view = RepetitionView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.repetition_data());
+        self.repetition = Some(view);
+        self.repaint = true;
+    }
+
+    /// What the repetition panel asked for.
+    fn repetition_action(&mut self, action: RepetitionAction) {
+        let mut note = None;
+        match action {
+            RepetitionAction::Close => self.repetition = None,
+            RepetitionAction::Find => {
+                let count = self.core.find_repetition();
+                note = Some(match count {
+                    0 => "Nothing repeats three times in a row unchanged".to_owned(),
+                    1 => "1 idea found".to_owned(),
+                    n => format!("{n} ideas found"),
+                });
+            }
+            RepetitionAction::Locate(n) => self.core.locate_repetition(n),
+            RepetitionAction::Apply(n, k) => {
+                note = Some(match self.core.apply_repetition(n, k) {
+                    Ok(()) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                });
+            }
+        }
+        if let Some(v) = &mut self.repetition {
+            v.set_data(self.core.repetition_data());
+            if let Some(note) = note {
+                v.set_note(&note);
             }
         }
         self.repaint = true;
@@ -2889,6 +2945,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.mixcheck {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.repetition {
+            v.set_theme(theme.clone());
+        }
         if let Some((v, _)) = &mut self.color_picker {
             v.set_theme(theme.clone());
         }
@@ -3197,6 +3256,7 @@ impl<B: AudioBackend> Shell<B> {
             cpu_meters: self.core.cpu_meters_on(),
             big_meter: view.big_meter_visible(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
+            energy_lane: self.core.arrangement().energy_lane_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
             inspector: self.core.arrangement().inspector_visible(),
             marker_list: self.core.arrangement().marker_list_visible(),
@@ -3529,6 +3589,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.mixcheck.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.mixcheck {
+                v.set_bounds(rect);
+            }
+        }
+        if self.repetition.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.repetition {
                 v.set_bounds(rect);
             }
         }
@@ -4538,6 +4604,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::MixCheck(a) = action {
                     self.mixcheck_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.repetition.is_some() {
+            // The repetition panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.repetition = None;
+                return Vec::new();
+            }
+            let actions = self
+                .repetition
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Repetition(a) = action {
+                    self.repetition_action(a);
                 }
             }
             return Vec::new();
@@ -6931,6 +7021,30 @@ impl<B: AudioBackend> Shell<B> {
                 self.ui_changed();
                 Vec::new()
             }
+            AppCommand::ToggleEnergyLane => {
+                let show = !self.core.arrangement().energy_lane_visible();
+                self.core.arrangement_mut().set_energy_lane(show);
+                self.ui.show_energy_lane = show;
+                self.ui_changed();
+                // A lane with nothing to show measures the song (the reason is in the status
+                // line when it cannot).
+                if show && self.core.energy().is_none() && !self.core.energy_running() {
+                    let _ = self.core.start_energy();
+                }
+                Vec::new()
+            }
+            AppCommand::RefreshEnergyLane => {
+                if self.core.arrangement().energy_lane_visible() {
+                    let _ = self.core.start_energy();
+                }
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::FindRepetition => {
+                self.open_repetition();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::ToggleMarkerStrip => {
                 let show = !self.core.arrangement().marker_strip_visible();
                 self.core.arrangement_mut().set_marker_strip(show);
@@ -8492,6 +8606,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.mixcheck {
             view.paint(canvas);
         }
+        if let Some(view) = &self.repetition {
+            view.paint(canvas);
+        }
         if let Some((view, _)) = &self.color_picker {
             view.paint(canvas);
         }
@@ -8862,6 +8979,10 @@ mod masking_tests;
 #[cfg(test)]
 #[path = "shell_mixcheck_tests.rs"]
 mod mixcheck_tests;
+
+#[cfg(test)]
+#[path = "shell_energy_tests.rs"]
+mod energy_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]

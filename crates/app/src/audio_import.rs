@@ -151,6 +151,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<crate::masking_worker::MaskAnalysis>, String>>,
     },
+    /// The energy measurement finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::energy_worker`].
+    Energy {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_model::energy_map::EnergyMap>, String>>,
+    },
     /// The mix check finished (`Ok(None)`: it was cancelled), or failed: see
     /// [`crate::mixcheck_worker`].
     Checked {
