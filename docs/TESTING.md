@@ -30,8 +30,13 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
   [coverage-floors.sh](../scripts/coverage-floors.sh) (`sh scripts/coverage-floors.sh --self-test` proves that it
   fails a crate under its floor), and the table of every crate is in the job summary. Raise a floor when a crate
   has risen and stays there.
-- A change to documents only (Markdown, `docs/`) skips the build, clippy and test jobs unless a test of the crates
-  names the document; the documentation checks always run.
+- On a pull request, clippy and the tests run only for the affected packages
+  ([affected.py](../scripts/ci/affected.py)): the packages that own a changed file, every package that depends on
+  them, and the packages whose code reads a changed document or a changed file of `factory/` or `examples/` by
+  path. A change outside the crates (the manifests, the lock file, CI, scripts) runs the whole workspace, and so
+  does every push to `main`. A change to documents that no test reads skips the build, clippy and test jobs; the
+  documentation checks always run. To see what a branch would run:
+  `git diff --name-only origin/main... | python3 scripts/ci/affected.py`.
 - The pull request caches are saved by `main` only; a pull request restores them.
 
 Optional coverage report (needs `cargo install cargo-llvm-cov`):
