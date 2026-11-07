@@ -171,6 +171,18 @@ pub enum WorkflowCommand {
         /// What takes its place.
         source: CreateSource,
     },
+    /// Split Sub on the track of a Mono Bass: the bass goes into a container with a mono sine sub
+    /// layer that plays the same notes below `freq` Hz, and a low cut at `freq` Hz on the bass, so
+    /// its width and unison stay above the sub (see [`crate::split_sub`]). The track, its console
+    /// channel and its note entry follow the bass into the container; the automation lanes of the
+    /// track are dropped. One undo step; a device that is not a top-level Mono Bass with a track,
+    /// a frequency outside 60 to 250 Hz and a frozen track are rejected.
+    SplitSub {
+        /// The Mono Bass that has the track.
+        device: DeviceKey,
+        /// The split frequency in Hz.
+        freq: f32,
+    },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
     /// channel.
@@ -886,6 +898,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::ReplaceDevice { target, source } => {
             plain(crate::replace_device::plan(doc, registry, &target, &source))
+        }
+        WorkflowCommand::SplitSub { device, freq } => {
+            plain(crate::split_sub::plan(doc, registry, &device, freq).map(|planned| planned.edit))
         }
         WorkflowCommand::SetFoldedMany { keys, folded } => {
             let mut edits = Vec::new();

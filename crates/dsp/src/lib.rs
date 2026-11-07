@@ -20,6 +20,7 @@
 mod adsr;
 mod allpass;
 pub mod amp;
+pub mod bass_read;
 mod biquad;
 pub mod bitcrush;
 mod block_smoother;
@@ -42,6 +43,7 @@ pub mod grain;
 pub mod k_weighting;
 pub mod kick_bass;
 pub mod ladder;
+pub mod lens;
 pub mod leveller;
 mod lfo;
 pub mod loudness_history;

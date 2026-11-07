@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Translation lens, "Will the bass read?" and Split Sub.** Mixer > Translation Lens (and five rows in the
+  transport bar's more menu) switches the live master between headphones (as it is), a small speaker (a 12 dB per
+  octave high-pass at 140 Hz and a +3 dB bell at 3 kHz), a club sub system (a 12 dB per octave high-pass at 32 Hz)
+  and mono (`(L + R) / 2` on both sides); choosing the voicing that is on goes back to headphones. It is
+  monitoring only: it sits after the master chain and the reference, before the click, on the live output, is
+  kept in the app like the loudness match, never saved, not an undo step, and never in a bounce or an export; the
+  status line shows `LENS ...` while it is on. Mixer > Will the Bass Read? renders a track or the master on a
+  worker and shows the share of the low note's energy that a small speaker still plays through the 2nd to 5th
+  harmonics of the note (a saw bass at 55 Hz reads about 16 %, a pure sine under 0.1 %) on a meter with the verdict
+  (reads from 8 %, partly from 2 %, lost below) and a line on what to do. Edit > Split Sub (also on the patch name
+  pop-up of a Mono Bass) puts the bass track in a container, in one undo step, with a mono sine sub layer that
+  follows the same notes, a 24 dB low cut at 120 Hz on the bass itself, and a mixer that sums them, so width and
+  unison stay above the sub; with the bass's filter open the level stays within 1 dB. Not done: a choice of split
+  frequency in the menu (the model takes 60 to 250 Hz), a lens that follows the reference only, and a headphone
+  correction. The project format is unchanged (44) and the command count is 494.
 - **Energy map and repetition finder.** View > Energy Lane (off by default, saved with the view) adds one row
   above the track lanes with a bar per section as tall as the section's energy, from 0 to 1, and its name and value.
   The sections are the range markers, else the point markers (each runs to the next, with a "Start" section before

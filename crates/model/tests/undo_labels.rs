@@ -78,6 +78,13 @@ fn the_most_common_commands_have_their_own_names() {
             "Replace Device",
         ),
         (
+            wf(WorkflowCommand::SplitSub {
+                device: key("a"),
+                freq: 120.0,
+            }),
+            "Split Sub",
+        ),
+        (
             wf(WorkflowCommand::SetFoldedMany {
                 keys: keys_of(&["a"]),
                 folded: true,

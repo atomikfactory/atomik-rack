@@ -298,6 +298,10 @@ pub struct AppCore<S: EngineSink> {
     reference: reference_ops::ReferenceState,
     /// What Find Repetition found (see [`repetition`]).
     repetition: repetition::RepetitionState,
+    /// The strip the bass-read panel reads and what it found (see [`bass_read`]).
+    bass_read: bass_read::BassReadState,
+    /// The translation lens of the live output (see [`lens`]).
+    lens: lens::LensState,
     /// The decision zone: readings of the mix and the references (see `app_core_zone.rs`).
     zone: zone_ops::ZoneState,
     /// The library clip preview that plays through a track (see `app_core_clip_preview.rs`).
@@ -566,6 +570,8 @@ impl<S: EngineSink> AppCore<S> {
             player_preview: None,
             reference: reference_ops::ReferenceState::new(),
             repetition: repetition::RepetitionState::default(),
+            bass_read: bass_read::BassReadState::default(),
+            lens: lens::LensState::default(),
             zone: zone_ops::ZoneState::new(),
             clip_preview: None,
             patch_preview: None,
@@ -1603,6 +1609,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.reset(&config);
         self.plugins_after_reset();
         self.reference_after_reset();
+        self.lens_after_reset();
         // A fresh engine starts in tune; a project that is not has its tune in force at once.
         if self.doc().tune_cents.to_bits() != 0 {
             let result = self.sink.set_master_tune(self.doc().tune_cents, false);
@@ -3922,12 +3929,18 @@ pub use templates::{
 mod masking;
 pub use masking::DemaskReport;
 
+#[path = "app_core_bass_read.rs"]
+mod bass_read;
 #[path = "app_core_energy.rs"]
 mod energy;
+#[path = "app_core_lens.rs"]
+mod lens;
 #[path = "app_core_mixcheck.rs"]
 mod mixcheck;
 #[path = "app_core_repetition.rs"]
 mod repetition;
+#[path = "app_core_split_sub.rs"]
+mod split_sub;
 
 #[path = "app_core_versions.rs"]
 mod versions;
@@ -4001,6 +4014,10 @@ mod mixcheck_tests;
 #[cfg(test)]
 #[path = "app_core_energy_tests.rs"]
 mod energy_tests;
+
+#[cfg(test)]
+#[path = "app_core_translation_tests.rs"]
+mod translation_tests;
 
 #[cfg(test)]
 #[path = "app_core_repetition_tests.rs"]

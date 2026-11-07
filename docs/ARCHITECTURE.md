@@ -4721,7 +4721,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (488) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (494) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5611,6 +5611,43 @@ track repeats unchanged. Neither changes the song by itself.
 - **App and panel.** `AppCore::find_repetition`, `apply_repetition` (one undo step, then a new search with the
   made variations kept for the idea's track and start) and `locate_repetition`; the panel is
   `atomik_ui::RepetitionView`, which draws and reports through `UiAction::Repetition`.
+
+### Mix analysis: the translation lens, "Will the bass read?" and Split Sub
+
+Three tools for how the low end carries over to small speakers, club systems and mono.
+
+- **The lens.** `atomik_dsp::lens` holds the filters: a `Voicing` (headphones, small speaker, club sub) and a mono
+  switch make `LensSettings`, and `Lens::process` runs them on `f64` biquads. The small speaker is a second-order
+  Butterworth high-pass at 140 Hz (`SMALL_HIGHPASS_HZ`: -3 dB there, about -7 dB at 100 Hz, -18 dB at 50 Hz) and a
+  presence bell of +3 dB at 3 kHz (Q 0.7); the club sub is a second-order high-pass at 32 Hz; mono sums to
+  `(L + R) / 2` on both sides before the filters. With everything off the lens is the identity, bit for bit.
+  `response_db` reads the magnitude from the same coefficients.
+- **On the live output only.** `atomik_engine::EngineHandle::lens_set` sends the settings in a control message; the
+  engine's lens voice (`crates/engine/src/lens.rs`) runs on interface outputs 1 and 2 after the master chain and the
+  reference and before the click and the preview, and a change ducks 5 ms down, swaps the filters at silence and
+  opens 5 ms. An offline render, a bounce and an export never send it, so they never hear it, and a test scans the
+  render and model sources for the names. The app keeps the setting like the loudness match (`AppCore::lens`,
+  `set_lens_voicing`, `toggle_lens_mono`, `lens_off`): sent when it changes and again to a new engine, never in the
+  project, not an undo step. A voicing that is on goes back to headphones when chosen again. The switches are the
+  Mixer > Translation Lens submenu, five rows in the transport bar's more menu and `mixer.lens_*` commands, and the
+  status line shows `LENS ...` while the lens is on.
+- **The meter.** `atomik_dsp::bass_read::read` cuts the mid signal into Hann windows of 8192 frames (hop 4096) with
+  the in-house transform. In each window with at least -70 dB between 25 and 150 Hz the note is the lowest strong
+  peak of that range; the note's energy is its fundamental plus its 2nd to 5th harmonics, and what survives is the
+  harmonics times the power gain of the small-speaker lens at their frequencies. The reading is survived over total
+  energy over all windows, so loud notes weigh more: about 16 % for a saw bass at 55 Hz, under 0.1 % for a sine. The
+  verdict is `Reads` from 8 %, `Partly` from 2 %, else `Lost`, and `NoBass` without a low note. The strip (the master
+  or a track's channel) is rendered as a stem by `atomik_render::translation::render_reading` on the worker
+  `bass_read_worker`; `AppCore::start_bass_read` keeps the result with the document revision it read, the panel
+  is `atomik_ui::BassReadView` (a list of strips, a meter with two ticks at the thresholds and the verdict).
+- **Split Sub.** `WorkflowCommand::SplitSub` (Edit > Split Sub, and a row on the patch name pop-up of a Mono Bass)
+  plans, on a scratch document, one edit: the Mono Bass track goes into a container (the combine, so the track,
+  the console channel and the note entry follow it), a Poly Synth sub layer joins it (one voice, two sines at the
+  pitches of the bass's oscillators and the level of their fundamentals, phase reset, no detune, a 12 dB low-pass at
+  1.25 times the split), an EQ puts a 24 dB low cut at the split on the bass, and a Line Mixer sums the two with
+  3.0103 dB on each channel to give back the pan law. `split_sub::plan` has the details and the level notes. The
+  split is 120 Hz; the container's devices are ordinary ones to adjust. The automation lanes of the track are
+  dropped by the combine and the status line says so.
 
 ## 6l. The library
 

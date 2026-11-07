@@ -58,6 +58,9 @@ enum WfOp {
     Replace(usize, u8),
     /// Folds (`true`) or unfolds several devices.
     FoldMany(Vec<usize>, bool),
+    /// Split Sub on a Mono Bass of the rack (the first value picks it) at one of four
+    /// frequencies, one of them outside the range.
+    SplitSub(usize, u8),
     /// A device takes the patch of another one of its type (the second index; the same device
     /// when none else is of its type), or, for `true`, goes back to a new device's sound.
     ApplyPatch(usize, usize, bool),
@@ -298,6 +301,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), 0usize..12, any::<bool>()).prop_map(|(s, a, i)| WfOp::PasteDevices(s, a, i)),
         (0usize..12, 0u8..5).prop_map(|(d, t)| WfOp::Replace(d, t)),
         (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
+        (0usize..12, 0u8..4).prop_map(|(d, f)| WfOp::SplitSub(d, f)),
         (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
         (sel(), 0i64..12, proptest::option::of(0usize..3)).prop_map(|(s, b, t)| WfOp::PasteClips(
             s,
@@ -310,7 +314,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..15, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
-        (0usize..8).prop_map(WfOp::AddDevice),
+        (0usize..9).prop_map(WfOp::AddDevice),
         (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
         (0usize..12, 0u8..8, 0u8..40).prop_map(|(d, s, v)| WfOp::ModSlot(d, s, v)),
         (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
@@ -503,6 +507,20 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 source: atomik_model::CreateSource::Type(
                     types[usize::from(*t) % types.len()].into(),
                 ),
+            })
+        }
+        WfOp::SplitSub(i, f) => {
+            let basses: Vec<DeviceKey> = top
+                .iter()
+                .filter(|k| {
+                    doc.device(k)
+                        .is_some_and(|d| d.type_id == "atomik.mono-bass")
+                })
+                .cloned()
+                .collect();
+            wf(WorkflowCommand::SplitSub {
+                device: pick(&basses, *i)?,
+                freq: [30.0, 60.0, 120.0, 250.0][usize::from(*f) % 4],
             })
         }
         WfOp::FoldMany(s, folded) => wf(WorkflowCommand::SetFoldedMany {
@@ -727,6 +745,7 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 "atomik.feedback",
                 "atomik.rotary-speaker",
                 "atomik.organ",
+                "atomik.mono-bass",
             ][*t],
             None,
         ),

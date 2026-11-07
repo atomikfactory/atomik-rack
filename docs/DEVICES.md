@@ -300,6 +300,16 @@ The sockets are the poly synth's. A key played while another is held changes the
 and `delay.*` (see the poly synth's "Expansion") are the bass's effects.
 The modulation matrix is the poly synth's too (the same sources and targets).
 
+**Split Sub.** Edit > Split Sub on a selected Mono Bass track (or the same row on the pop-up of the patch name)
+puts the bass in a container with a mono sine sub layer, in one undo step. The sub layer is a Poly Synth with one
+voice, two sines at the pitches of the bass's oscillators (no detune, the phase reset at every note) balanced like
+their fundamentals, the bass's amp envelope, glide and legato, and a 12 dB low-pass at 1.25 times the split
+frequency (120 Hz). The bass keeps all its params and goes through an EQ with its low cut on at 24 dB per octave
+at the split, so its unison, width and chorus stay above the sub. A Line Mixer sums the two at +3.0103 dB per
+channel (the centred pan takes 3 dB off each). With the bass's filter open the sum is within 1 dB of the level of
+the bass; a strong resonance or drive on the bass moves it by up to about 3 dB, and the sub layer's `master.level`
+is the trim.
+
 ---
 
 ## Dual Layer: `atomik.dual-layer` (Instrument)

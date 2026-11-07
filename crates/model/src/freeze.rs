@@ -623,6 +623,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 WorkflowCommand::ApplyPatch { device, .. }
                 | WorkflowCommand::ResetDevice { device } => device_frozen(device),
                 WorkflowCommand::ReplaceDevice { target, .. } => device_frozen(target),
+                WorkflowCommand::SplitSub { device, .. } => {
+                    device_frozen(device).or_else(|| track_frozen(device))
+                }
                 WorkflowCommand::RemoveDevices { keys }
                 | WorkflowCommand::DeleteDevices { keys } => keys.iter().find_map(|k| {
                     if doc.song.track(k).is_some_and(|t| t.frozen.is_some()) {

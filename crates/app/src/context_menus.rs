@@ -86,6 +86,14 @@ pub struct MenuEnable {
     pub audio: AudioMenu,
     /// Track header and clip: what freezing, unfreezing and bouncing allow.
     pub freeze: FreezeMenu,
+    /// Transport menu: the lens is on a small speaker (the row is checked).
+    pub lens_small: bool,
+    /// Transport menu: the lens is on a club sub system.
+    pub lens_club: bool,
+    /// Transport menu: the lens plays mono.
+    pub lens_mono: bool,
+    /// Transport menu: the lens is off (headphones).
+    pub lens_off: bool,
     /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
     pub tempo_can_ramp: bool,
     /// Tempo point: it ramps to the next point (the item is checked).
@@ -921,6 +929,14 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 enabled: true,
                 checked: None,
             };
+            // The translation lens: a check row for each switch,
+            let lens = |command: &'static str, label: &'static str, on: bool| Spec::Item {
+                command,
+                arg: None,
+                label: Some(label),
+                enabled: true,
+                checked: Some(on),
+            };
             let quantize = |arg: &'static str, label: &'static str| Spec::Item {
                 command: "transport.input_quantize",
                 arg: Some(arg),
@@ -939,6 +955,15 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 quantize("off", "Input Quantize: Off"),
                 quantize("eighth", "Input Quantize: 1/8"),
                 quantize("sixteenth", "Input Quantize: 1/16"),
+                Spec::Separator,
+                lens(
+                    "mixer.lens_small_speaker",
+                    "Lens: Small Speaker",
+                    e.lens_small,
+                ),
+                lens("mixer.lens_club_sub", "Lens: Club Sub", e.lens_club),
+                lens("mixer.lens_mono", "Lens: Mono", e.lens_mono),
+                lens("mixer.lens_headphones", "Lens: Headphones", e.lens_off),
             ]
         }
         ContextTarget::TempoLane => vec![item("sequencer.tempo_add_point", true)],
@@ -1201,24 +1226,29 @@ pub fn midi_out_entries(ports: &[String], current: Option<&str>) -> Vec<Entry> {
 
 /// The rows of the pop-up on a patch name: one check item per patch (the current one checked)
 /// that runs `rack.patch_pick` with the patch file as its argument. For a bass instrument
-/// (`clean_up`) the first row is Clean Up Bass, followed by a separator when patches follow.
+/// (`clean_up`) the first row is Clean Up Bass, and for a Mono Bass with a track (`split_sub`)
+/// Split Sub follows it, then a separator when patches follow.
 pub fn patch_entries(
     items: &[(String, std::path::PathBuf)],
     current: Option<usize>,
     clean_up: bool,
+    split_sub: bool,
 ) -> Vec<Entry> {
-    let head = clean_up.then(|| {
+    let action = |command: &str, label: &str| {
         Entry::Item(MenuItemDef {
-            command: "rack.clean_up_bass".to_string(),
+            command: command.to_string(),
             arg: None,
-            label: "Clean Up Bass".to_string(),
+            label: label.to_string(),
             shortcut: None,
             enabled: true,
             checked: None,
         })
-    });
-    let separator = (clean_up && !items.is_empty()).then_some(Entry::Separator);
+    };
+    let head = clean_up.then(|| action("rack.clean_up_bass", "Clean Up Bass"));
+    let split = split_sub.then(|| action("rack.split_sub", "Split Sub"));
+    let separator = ((clean_up || split_sub) && !items.is_empty()).then_some(Entry::Separator);
     head.into_iter()
+        .chain(split)
         .chain(separator)
         .chain(items.iter().enumerate().map(|(i, (name, path))| {
             Entry::Item(MenuItemDef {

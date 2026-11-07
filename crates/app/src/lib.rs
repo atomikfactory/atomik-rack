@@ -16,6 +16,7 @@ pub mod audio_import;
 pub mod audio_record;
 pub mod audio_relink;
 pub mod audio_writer;
+pub mod bass_read_worker;
 pub mod blind_ab;
 pub mod browser_workers;
 pub mod cli;

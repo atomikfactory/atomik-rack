@@ -300,6 +300,9 @@
 //! - **Mix check.** [`MixCheckView`] is the modal panel of the mix check: the findings of the analysis of
 //!   the song with the track, the measured number, a line on why, a one-click fix button and a button that
 //!   opens the tool; it emits [`UiAction::MixCheck`] and the host feeds it a [`MixCheckData`] and the progress.
+//! - **Bass read.** [`BassReadView`] is the modal panel of "Will the bass read?": a list of the strips (the master
+//!   and the tracks), a meter of how much of the low note a small speaker still plays through its harmonics and the
+//!   verdict; it emits [`UiAction::BassRead`] and the host feeds it a [`BassReadData`].
 //! - **Repetition.** [`RepetitionView`] is the modal panel of the repetition finder: the ideas the song plays
 //!   three times or more unchanged, where they are, and three suggested variations per idea, an edit one button
 //!   away or advice; it emits [`UiAction::Repetition`] and the host feeds it a [`RepetitionData`].
@@ -329,6 +332,7 @@ pub mod arrangement;
 pub mod audio;
 pub mod audio_editor;
 pub mod autolayout;
+pub mod bass_read_panel;
 pub mod big_meter;
 pub mod blind_panel;
 pub mod breadcrumb;
@@ -443,6 +447,7 @@ pub use arrangement::{
     PointField, PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use audio_editor::{AudioEditorView, AudioMode};
+pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView, BassReadingRow};
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
