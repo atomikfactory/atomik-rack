@@ -27,10 +27,13 @@ use std::path::Path;
 
 #[path = "app_core_factory_clips.rs"]
 pub(in crate::app_core) mod clips;
+#[path = "app_core_factory_examples.rs"]
+pub(in crate::app_core) mod examples;
 #[path = "app_core_factory_kits.rs"]
 pub(in crate::app_core) mod kits;
 
 pub(in crate::app_core) use clips::{CLIPS, ClipDef, clip_notes, clip_text};
+pub(in crate::app_core) use examples::{EXAMPLES, write_examples};
 pub(in crate::app_core) use kits::{KITS, KitDef, build_kit, kit_item, write_audio};
 
 pub(super) const POLY: &str = "atomik.poly-synth";
@@ -2184,6 +2187,13 @@ pub(super) fn marks() -> Vec<Mark> {
             tags: c.tags,
         });
     }
+    for e in EXAMPLES {
+        out.push(Mark {
+            path: examples::project_path(e.name),
+            category: examples::CATEGORY,
+            tags: e.tags,
+        });
+    }
     out
 }
 
@@ -2206,8 +2216,9 @@ pub(super) fn manifest_text() -> String {
     text
 }
 
-/// Writes the `Patches`, `Containers` and `Clips` folders and `factory.json` into the folder
-/// `root`: every item the tables describe, and the audio of the drum kits beside theirs.
+/// Writes the `Patches`, `Containers`, `Clips` and `Projects` folders and `factory.json` into the
+/// folder `root`: every item the tables describe, the audio of the drum kits beside theirs and
+/// the example projects.
 ///
 /// # Panics
 /// A file cannot be written.
@@ -2220,10 +2231,12 @@ pub(super) fn write_all(root: &Path) {
     for def in DEFS {
         write(patch_path(def.name), item_text(def));
     }
+    let mut built_kits = Vec::new();
     for kit in KITS {
         let built = build_kit(kit);
         write_audio(&root.join("Patches"), kit, &built);
-        write(patch_path(kit.name), built.text);
+        write(patch_path(kit.name), built.text.clone());
+        built_kits.push((kit.name, built));
     }
     for def in CONTAINERS {
         write(container_path(def.name), container_text(def));
@@ -2231,5 +2244,6 @@ pub(super) fn write_all(root: &Path) {
     for def in CLIPS {
         write(clip_path(def.name), clip_text(def));
     }
+    write_examples(root, &built_kits);
     std::fs::write(root.join("factory.json"), manifest_text()).expect("the manifest");
 }

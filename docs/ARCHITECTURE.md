@@ -468,7 +468,13 @@ is named like the file, else the sibling `<name>/`); the job copies each used as
 its peak cache, from the session bundle and then from the folders near the project file that hold an `Audio/`
 directory (`audio_folders`), writes the project atomically and removes the orphans of the destination only. Save As
 uses the same copy instead of copying the whole `Audio/` tree. Audio that was missing and was found is loaded by the
-load worker, and a toast is the report. Assets are named by their hash, so the project text never changes.
+load worker, and a toast is the report. Files that the text state of a plugin names outside the project
+(`RackDoc::plugin_file_refs`) are gathered by `AppCore::collect_plugin_files` on the UI thread, from `prepare_save`,
+for Collect Files and for any save to a new place: `collect_external_file` (`audio-file`) copies each into the
+`Files/` folder of the bundle folder (never over a file; a size cap of 64 MiB) and `rewrite_paths` points the state
+at the copy through `PluginCommand::SetState`, the later plugins joined to the first undo step. Binary states are
+never read, and nothing is collected into the factory folder. Assets are named by their hash, so the project text
+never changes.
 
 The copy is read in blocks and watches a `CollectProgress` (a cancel flag and a file count) that the UI thread holds in
 the running `Flight`: `AppCore::cancel_collect` (`file.cancel_collect`) makes the worker stop before the next block, no
@@ -480,10 +486,14 @@ status line (`save_progress`) counts the files while it runs. `AppCore::collect_
 written: it checks that the new file reads back as written and that `verify_copy` finds every asset of the old bundle in
 the new one with the same bytes, and only then removes the old project file and the old copies of the assets the project
 uses, then the old folders that are empty (`remove_dir`, never recursive). A place that is the old one, inside it or
-around it, or another project file in the old folder or below it (its `Audio/` may hold audio that project uses),
-makes it remove less: the first two nothing, the last only the old project file. A failed check is an error that
-leaves the old project as it was. The project's versions (below) are copied to the new place and compared byte for
-byte with the same checks before the old ones are removed.
+around it makes it remove nothing. Other project files in the old folder or below it are all read first (with the
+versions kept beside them, `VersionStore::assets`) and the old audio any of them names stays; only the rest of the
+old audio goes, and if any project, version index or folder cannot be read (a link is not followed, and a folder
+more than twelve levels down counts as unreadable) none of the audio goes, only the old project file
+(`RetireReport::unreadable`, `kept_audio`). That loop is the only place old audio is removed. A failed check is an
+error that leaves the old project as it was. `AppCore::move_project` and `AppCore::collect_files` refuse a project in
+the factory folder (`AppCore::in_factory`). The project's versions (below) are copied to the new place and compared
+byte for byte with the same checks before the old ones are removed.
 
 Versions are [`audio-file/src/versions.rs`](../crates/audio-file/src/versions.rs): `VersionStore` reads and writes the
 index (`versions.txt`, tab separated, one line per version: number, automatic or named, protected, time, file, audio,
@@ -5553,8 +5563,8 @@ items are ordinary project texts, plus one small new file type.
   lists the place again.
 - **The factory library** ([factory.rs](../crates/app/src/factory.rs)). A second, read-only root of
   the browser: `Place::Factory(section)` and the Factory tree entries (`PlacesData::factory`, shown only when the
-  folder has sections) list `<factory>/Patches`, `Containers` and `Clips` with the same walk job as the library
-  sections. `factory::locate` finds the folder: `ATOMIK_FACTORY_DIR`, else `factory` beside the executable (zip,
+  folder has sections) list `<factory>/Patches`, `Containers`, `Clips` and `Projects` with the same walk job as the
+  library sections. `factory::locate` finds the folder: `ATOMIK_FACTORY_DIR`, else `factory` beside the executable (zip,
   tarball, installer, `/opt/atomik-rack/factory` in the Debian package), else `../Resources/factory` (macOS bundle),
   else the `factory` folder of the checkout above a `target/<profile>` folder. `Shell::set_factory_folder` hands it
   to the core (`AppCore::set_factory_root`; the platform layer calls it for every song). The folder must be outside
@@ -5576,6 +5586,16 @@ items are ordinary project texts, plus one small new file type.
   writers are the ones Save to Library uses (`save_device_item`), and `app_core_factory_tests.rs` loads, applies and
   renders each item; the exact audio is compared on Windows x86-64 only, where the library is written. A patch
   preview of a drum machine plays a pattern on its pad keys (`DRUM_PHRASE`).
+  The `Projects` folder holds three example songs (`app_core_factory_examples.rs`), each a folder
+  `<name>/<name>.atomik` in the layout Save As writes. `ExampleDef` is a table of `Voice`s (a factory patch, a modular
+  container, a sampled kit, or the pads of a kit as the drum machine's own synthesised modules) whose clips are
+  factory clips or short patterns of its own, placed by `Place` and looped to fill the bars, plus a `mix` function
+  for the returns, buses, groups, master insert and automation. `build_example` runs it on `new_project_doc` with
+  model commands, so every value is checked like an edit, and saves it with `save_project_checked`; a sampled kit's
+  audio goes to `Projects/<name>/Audio/<id>.wav`. `AppCore::open` hands a project inside the factory folder to
+  `open_template`, so it opens as an untitled song and Save asks for a place. The tests build each example from the
+  tables and the shipped kits (so the text is the same on every platform), check its length, devices and samples,
+  and bounce it.
 - **What the library does not write.** Everything outside the library folder and the session bundle
   is read only. Items do not carry project-level state: macro assignments, song tracks (a patch has
   none) and console settings are not saved with a patch, and a pasted instrument gets its console

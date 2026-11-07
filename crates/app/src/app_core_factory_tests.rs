@@ -240,7 +240,9 @@ fn an_unreadable_manifest_still_opens_the_folder_without_marks() {
 
 // ------------------------------------------------------------------------------ the shipped content
 
-use super::factory_build::kits::{MAX_SECONDS, RATE, key_of, render_hit};
+use super::factory_build::examples::{EXAMPLES, ExampleDef, build_example, project_path};
+use super::factory_build::kits::{Built as KitBuilt, MAX_SECONDS, RATE, key_of, render_hit};
+use super::factory_build::write_examples;
 use super::factory_build::{
     AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, Def, KITS, KitDef, clip_notes,
     clip_path, clip_text, container_path, container_text, item_text, manifest_text, marks,
@@ -401,13 +403,14 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
         [
             LibrarySection::Patches,
             LibrarySection::Containers,
-            LibrarySection::Clips
+            LibrarySection::Clips,
+            LibrarySection::Projects
         ]
     );
     let marks = marks();
     assert_eq!(
         marks.len(),
-        DEFS.len() + KITS.len() + CONTAINERS.len() + CLIPS.len()
+        DEFS.len() + KITS.len() + CONTAINERS.len() + CLIPS.len() + EXAMPLES.len()
     );
     for mark in marks {
         let (mut tags, mut categories, mut author) = (Vec::new(), Vec::new(), String::new());
@@ -842,10 +845,14 @@ fn a_clip_file_that_is_not_an_atomik_clip_is_refused_by_the_reader_the_writer_us
 fn the_factory_folder_stays_small() {
     let total: u64 = walk_sizes(&shipped());
     assert!(total < 2 * 1024 * 1024, "{total} bytes");
-    // The audio of the kits is nearly all of it.
+    // The audio of the kits is nearly all of it: beside each kit, and in the example that plays one.
     let audio: u64 = KITS
         .iter()
         .map(|k| walk_sizes(&shipped().join("Patches").join(k.name)))
+        .chain(EXAMPLES.iter().filter_map(|e| {
+            let audio = example_root(e).join("Audio");
+            audio.is_dir().then(|| walk_sizes(&audio))
+        }))
         .sum();
     assert!(audio < total, "{audio} of {total} bytes");
     assert!(
@@ -878,7 +885,7 @@ fn the_factory_items_list_from_the_shipped_folder_with_their_categories() {
     let tmp = Tmp::new("shipped");
     let mut c = core(&tmp);
     c.set_factory_root(Some(shipped()));
-    let sections: [(LibrarySection, Listed, FileKind); 3] = [
+    let sections: [(LibrarySection, Listed, FileKind); 4] = [
         (
             LibrarySection::Patches,
             DEFS.iter()
@@ -905,6 +912,14 @@ fn the_factory_items_list_from_the_shipped_folder_with_their_categories() {
                 .map(|d| (format!("{}.atomikclip", d.name), d.category))
                 .collect(),
             FileKind::Clip,
+        ),
+        (
+            LibrarySection::Projects,
+            EXAMPLES
+                .iter()
+                .map(|d| (format!("{}.atomik", d.name), "Example"))
+                .collect(),
+            FileKind::Project,
         ),
     ];
     for (section, wanted, kind) in sections {
@@ -986,6 +1001,45 @@ fn write_the_factory_library() {
     write_all(&shipped());
 }
 
+/// The kits of the shipped folder as the writer builds them: the item text and the audio beside
+/// it. Reading them (instead of rendering them again) makes an example's text the same on every
+/// platform.
+fn shipped_kits() -> Vec<(&'static str, KitBuilt)> {
+    let registry = default_registry();
+    KITS.iter()
+        .map(|kit| {
+            let text = std::fs::read_to_string(kit_file(kit)).unwrap();
+            let snapshot = load_device_item(&text, &registry).unwrap();
+            let audio = snapshot
+                .assets
+                .keys()
+                .map(|hash| {
+                    let path = shipped()
+                        .join("Patches")
+                        .join(kit.name)
+                        .join("Audio")
+                        .join(format!("{hash}.wav"));
+                    (hash.clone(), read_wav_f32(&path).unwrap())
+                })
+                .collect();
+            (kit.name, KitBuilt { text, audio })
+        })
+        .collect()
+}
+
+/// Rewrites only the example projects of the shipped folder from the tables and the shipped kits
+/// (the quick way to work on an example: `write_the_factory_library` renders the kits again).
+#[test]
+#[ignore = "writes the factory folder: ATOMIK_WRITE_FACTORY=1"]
+fn write_the_example_projects() {
+    assert!(
+        std::env::var_os("ATOMIK_WRITE_FACTORY").is_some(),
+        "set ATOMIK_WRITE_FACTORY=1 to rewrite the factory folder"
+    );
+    write_examples(&shipped(), &shipped_kits());
+    std::fs::write(shipped().join(MANIFEST), manifest_text()).unwrap();
+}
+
 /// Renders the preview phrase of every factory patch, kit and container into
 /// `ATOMIK_FACTORY_RENDER_DIR` as `<name>.wav`, with a `report.txt` of the levels: the way to
 /// listen to the library.
@@ -1016,6 +1070,70 @@ fn render_the_factory_library_to_wav() {
             "{:<20} {:<18} peak {:6.3} rms {:6.1} dB bright {:5.3} {:4.1} s\n",
             name, what, s.peak, s.rms_db, s.brightness, s.seconds
         ));
+    }
+    // The example projects, bounced whole.
+    for def in EXAMPLES {
+        let doc = load_example(def);
+        let rendered = render_doc_in(
+            &doc,
+            &default_registry(),
+            &ProjectOptions::default(),
+            Some(&example_root(def)),
+        )
+        .unwrap();
+        let rate = rendered.sample_rate;
+        let s = stats_of(&rendered.channels, rate);
+        let data = AudioData::new(rate, rendered.channels).unwrap();
+        write_wav_f32(&dir.join(format!("{}.wav", def.name)), &data).unwrap();
+        report.push_str(&format!(
+            "{:<20} {:<18} peak {:6.3} rms {:6.1} dB bright {:5.3} {:4.1} s
+",
+            def.name, "example", s.peak, s.rms_db, s.brightness, s.seconds
+        ));
+    }
+    // Each track of each example heard alone, to balance the mix.
+    for def in EXAMPLES {
+        for voice in def.voices {
+            let mut doc = Document::new(load_example(def));
+            let registry = default_registry();
+            let heard = doc
+                .doc()
+                .devices
+                .iter()
+                .find(|d| d.name == voice.name)
+                .map(|d| d.key.clone())
+                .unwrap();
+            for track in doc.doc().song.tracks.clone() {
+                if track.device != heard && !track.is_automation_only() {
+                    doc.apply(
+                        Command::Song(SongCommand::SetTrackFlags {
+                            device: track.device.clone(),
+                            muted: true,
+                            solo: false,
+                            armed: false,
+                        }),
+                        &registry,
+                    )
+                    .unwrap();
+                }
+            }
+            let rendered = render_doc_in(
+                doc.doc(),
+                &registry,
+                &ProjectOptions::default(),
+                Some(&example_root(def)),
+            )
+            .unwrap();
+            let s = stats_of(&rendered.channels, rendered.sample_rate);
+            report.push_str(&format!(
+                "{:<20} {:<18} peak {:6.3} rms {:6.1} dB bright {:5.3} {:4.1} s
+",
+                def.name, voice.name, s.peak, s.rms_db, s.brightness, s.seconds
+            ));
+            let data = AudioData::new(rendered.sample_rate, rendered.channels).unwrap();
+            let file = format!("{} - {}.wav", def.name, voice.name);
+            write_wav_f32(&dir.join(file), &data).unwrap();
+        }
     }
     // And every sample of every kit, with the same figures.
     for kit in KITS {
@@ -1067,5 +1185,273 @@ fn every_factory_patch_applies_in_place_to_a_device_of_its_type() {
                 def.name
             );
         }
+    }
+}
+
+// ------------------------------------------------------------------------ the example projects
+
+fn example_file(def: &ExampleDef) -> PathBuf {
+    shipped().join(project_path(def.name))
+}
+
+fn example_root(def: &ExampleDef) -> PathBuf {
+    shipped().join("Projects").join(def.name)
+}
+
+fn load_example(def: &ExampleDef) -> atomik_model::RackDoc {
+    let text = std::fs::read_to_string(example_file(def)).unwrap();
+    atomik_model::load_project(&text, &default_registry())
+        .unwrap_or_else(|e| panic!("{}: {e}", def.name))
+}
+
+/// Whether the device or anything inside it is a plugin.
+fn holds_plugin(device: &atomik_model::RackDevice) -> bool {
+    device.plugin.is_some()
+        || device
+            .inner
+            .as_ref()
+            .is_some_and(|i| i.devices.iter().any(holds_plugin))
+}
+
+/// The clips of every lane of a document's song.
+fn all_clips(doc: &atomik_model::RackDoc) -> Vec<atomik_model::Clip> {
+    doc.song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter())
+        .flat_map(|l| l.clips.iter().cloned())
+        .collect()
+}
+
+/// The params the automation lanes of a document drive.
+fn lane_params(doc: &atomik_model::RackDoc) -> Vec<String> {
+    doc.song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter())
+        .filter_map(|l| match &l.kind {
+            atomik_model::LaneKind::Automation(p) => Some(p.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_example_files_are_what_the_tables_build() {
+    assert_eq!(EXAMPLES.len(), 3);
+    let kits = shipped_kits();
+    for def in EXAMPLES {
+        let built = build_example(def, &kits);
+        let on_disk = std::fs::read_to_string(example_file(def)).unwrap();
+        assert_eq!(
+            on_disk, built.text,
+            "{}: run write_the_example_projects",
+            def.name
+        );
+        // The folder holds the project and, when it has samples, exactly their audio.
+        let mut audio: Vec<String> = built
+            .audio
+            .iter()
+            .map(|(hash, _)| format!("{hash}.wav"))
+            .collect();
+        audio.sort();
+        let project = format!("{}.atomik", def.name);
+        if audio.is_empty() {
+            assert_eq!(names_in(&example_root(def)), [project], "{}", def.name);
+        } else {
+            assert_eq!(
+                names_in(&example_root(def)),
+                ["Audio".to_owned(), project],
+                "{}",
+                def.name
+            );
+            assert_eq!(
+                names_in(&example_root(def).join("Audio")),
+                audio,
+                "{}",
+                def.name
+            );
+        }
+    }
+    // The Projects folder holds the examples and nothing else.
+    let mut folders: Vec<String> = EXAMPLES.iter().map(|d| d.name.to_owned()).collect();
+    folders.sort();
+    assert_eq!(names_in(&shipped().join("Projects")), folders);
+}
+
+#[test]
+fn every_example_is_short_and_uses_only_built_in_devices_and_factory_content() {
+    let registry = default_registry();
+    let kit_samples: std::collections::BTreeSet<String> = shipped_kits()
+        .iter()
+        .flat_map(|(_, kit)| kit.audio.iter().map(|(hash, _)| hash.clone()))
+        .collect();
+    for def in EXAMPLES {
+        let doc = load_example(def);
+        let bars = doc.song.end / (4 * PPQ);
+        assert!((16..=32).contains(&bars), "{}: {bars} bars", def.name);
+        assert_eq!(doc.song.end % (4 * PPQ), 0, "{}", def.name);
+        assert!((doc.tempo_bpm - def.bpm).abs() < 1e-9, "{}", def.name);
+        assert_eq!(doc.info.title, def.name);
+        assert_eq!(doc.info.author, AUTHOR);
+        assert!(doc.info.notes.len() > 100, "{}: a description", def.name);
+        assert!(doc.song.tracks.len() >= 4, "{}", def.name);
+        for d in &doc.devices {
+            assert!(!holds_plugin(d), "{}: {} is a plugin", def.name, d.name);
+            assert!(
+                registry.descriptor(&d.type_id).is_some(),
+                "{}: {} is not a built-in device",
+                def.name,
+                d.type_id
+            );
+        }
+        // Every sample is one of a factory kit's, and the folder holds each.
+        for hash in doc.assets.keys() {
+            assert!(kit_samples.contains(hash), "{}: {hash}", def.name);
+            let file = example_root(def).join("Audio").join(format!("{hash}.wav"));
+            assert!(file.is_file(), "{}: {hash}", def.name);
+        }
+        // Nothing plays past the end of the song.
+        for clip in all_clips(&doc) {
+            assert!(clip.start + clip.length <= doc.song.end, "{}", def.name);
+        }
+        for track in &doc.song.tracks {
+            let any = track.lanes.iter().any(|l| !l.clips.is_empty());
+            assert!(any, "{}: {} is empty", def.name, track.device);
+        }
+    }
+}
+
+#[test]
+fn each_example_shows_its_own_side_of_the_program() {
+    let by_name = |name: &str| {
+        let def = EXAMPLES.iter().find(|d| d.name == name).unwrap();
+        load_example(def)
+    };
+    let beat = by_name("Basalt Beat");
+    assert!(
+        beat.devices
+            .iter()
+            .any(|d| d.type_id == "atomik.drum-machine" && !d.zones.is_empty())
+    );
+    assert!(!beat.assets.is_empty(), "a sampled kit");
+    assert!(all_clips(&beat).iter().any(|c| c.loop_length.is_some()));
+    assert!(beat.console.master.is_some());
+
+    let modular = by_name("Moonrise Modular");
+    let containers = modular
+        .devices
+        .iter()
+        .filter(|d| d.type_id == atomik_model::CONTAINER_TYPE)
+        .count();
+    assert!(
+        containers >= 5,
+        "modular instruments and send effects: {containers}"
+    );
+    assert!(
+        modular.console.returns.iter().flatten().count() >= 2,
+        "two send effects"
+    );
+    let lanes = lane_params(&modular);
+    assert!(lanes.iter().any(|p| p.starts_with("macro")), "{lanes:?}");
+
+    let mix = by_name("Bus Room");
+    assert!(mix.console.buses.len() >= 2, "buses");
+    assert!(mix.console.vcas.len() >= 2, "groups");
+    assert!(!mix.song.org.groups.is_empty(), "a track folder");
+    assert!(
+        !mix.console.folder_routes.is_empty(),
+        "a folder that plays into a bus"
+    );
+    let lanes = lane_params(&mix);
+    assert!(lanes.iter().any(|p| p.starts_with("vca.")), "{lanes:?}");
+    assert!(lanes.iter().any(|p| p == "fader"), "{lanes:?}");
+    assert!(lanes.iter().any(|p| p == "filter.cutoff"), "{lanes:?}");
+}
+
+#[test]
+fn every_example_bounces_to_audible_bounded_sound() {
+    let registry = default_registry();
+    for def in EXAMPLES {
+        let doc = load_example(def);
+        let root = example_root(def);
+        let rendered =
+            render_doc_in(&doc, &registry, &ProjectOptions::default(), Some(&root)).unwrap();
+        let rate = rendered.sample_rate;
+        let stats = stats_of(&rendered.channels, rate);
+        let (peak, rms) = (stats.peak, stats.rms_db);
+        eprintln!(
+            "{}: peak {peak:.3} rms {rms:.1} dB {:.1} s",
+            def.name, stats.seconds
+        );
+        assert!(stats.finite, "{}", def.name);
+        assert!(peak > 0.2 && peak <= 1.0, "{}: peak {peak}", def.name);
+        assert!(rms > -30.0, "{}: rms {rms} dB", def.name);
+        // The song's length plus a bounded tail.
+        let song = (def.bars * 4) as f32 * 60.0 / def.bpm as f32;
+        assert!(
+            stats.seconds >= song && stats.seconds < song + 12.0,
+            "{}: {} s for a song of {song} s",
+            def.name,
+            stats.seconds
+        );
+        // The whole song sounds: no four seconds of silence in it.
+        let song_frames = (song * rate as f32) as usize;
+        let left = &rendered.channels[0];
+        for (n, chunk) in left[..song_frames.min(left.len())]
+            .chunks(rate as usize * 4)
+            .enumerate()
+        {
+            let level = chunk.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+            assert!(level > 0.01, "{}: silent from second {}", def.name, n * 4);
+        }
+    }
+}
+
+#[test]
+fn an_example_opens_as_a_new_unsaved_song_and_the_factory_copy_stays() {
+    let tmp = Tmp::new("example-open");
+    for def in EXAMPLES {
+        let mut c = core(&tmp);
+        // A factory path has no `..` in it, as the one the program finds has not.
+        let root = std::fs::canonicalize(shipped()).unwrap();
+        c.set_factory_root(Some(root.clone()));
+        let file = root.join(project_path(def.name));
+        let before = std::fs::read(&file).unwrap();
+        c.open(&file).unwrap();
+        assert_eq!(c.file(), None, "{}", def.name);
+        assert!(!c.is_dirty());
+        assert!(c.title().contains(def.name), "{}", c.title());
+        assert!(c.doc().song.tracks.len() >= 4);
+        says(&c, "new song");
+        // The audio of a sampled kit came along.
+        c.wait_background();
+        assert!(c.missing_assets().is_empty(), "{:?}", c.missing_assets());
+        // Save has no file to write to, and an edit and Save As elsewhere leave the copy alone.
+        assert!(matches!(c.save(), Err(AppError::NoPath)));
+        c.apply_command(Command::SetTempo(100.0)).unwrap();
+        c.save_as(&tmp.path("mine.atomik")).unwrap();
+        c.wait_background();
+        assert_eq!(std::fs::read(&file).unwrap(), before, "{}", def.name);
+        assert!(c.recent().iter().all(|p| p != &file));
+    }
+}
+
+#[test]
+fn the_factory_projects_list_and_a_pick_asks_the_shell_to_open_them() {
+    let tmp = Tmp::new("example-list");
+    let mut c = core(&tmp);
+    c.set_factory_root(Some(shipped()));
+    c.browse(BrowseAction::Show(Place::Factory(LibrarySection::Projects)));
+    wait(&mut c);
+    let listed = rows(&c);
+    assert_eq!(listed.len(), EXAMPLES.len(), "{listed:?}");
+    for def in EXAMPLES {
+        let row = row_named(&listed, &format!("{}.atomik", def.name));
+        assert_eq!(row.kind, FileKind::Project);
+        assert_eq!(row.categories, ["Example"]);
+        assert_eq!(row.author, AUTHOR);
+        c.load_library_item(&row.path, LoadTarget::Default);
+        assert_eq!(c.take_open_request(), Some(row.path.clone()));
     }
 }

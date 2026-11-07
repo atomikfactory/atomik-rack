@@ -20,6 +20,12 @@
 //! intact (atomic write). [`AppCore::save`] and [`AppCore::save_as`] run the same steps and wait
 //! (scripts, tests, "Save" in the question about unsaved changes, quitting).
 //!
+//! Collect Files and a save to a new place (Save As, Move Project) also gather the files that the
+//! plugin states of the project name outside it ([`AppCore::collect_plugin_files`]): they are
+//! copied into the `Files/` folder of the project and the states are pointed at the copies, all
+//! in one undo step. Files that cannot be found are listed in the toast and never stop the save.
+//! The factory folder is never written.
+//!
 //! Every save keeps the project file it replaces as an automatic version beside the project (see
 //! `atomik_audio_file::versions`) and prunes the oldest automatic versions beyond the number the
 //! preference allows; the audio the kept versions use is not deleted as orphaned. A failure of
@@ -33,11 +39,13 @@
 use super::{AppCore, AppError, ProjectBundle, io_error};
 use crate::sink::EngineSink;
 use atomik_audio_file::{
-    Bundle, CollectPlan, CollectProgress, CollectReport, RetireReport, VersionKind, VersionStore,
-    plan_collect_into, retire_old_project, save_text_atomic, scan_assets,
+    Bundle, CollectPlan, CollectProgress, CollectReport, ExternalCopy, RetireReport, VersionKind,
+    VersionStore, collect_external_file, plan_collect_into, retire_old_project, save_text_atomic,
+    scan_assets,
 };
-use atomik_model::RackDoc;
-use std::collections::BTreeSet;
+use atomik_device_sdk::PluginStateBlob;
+use atomik_model::{Command, DeviceKey, PluginCommand, RackDoc, rewrite_paths};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -128,6 +136,70 @@ pub(super) struct Relocate {
     old_file: PathBuf,
     /// The old bundle folder, when the project had audio.
     old_root: Option<PathBuf>,
+}
+
+/// The folder of a project that holds the files its plugin states name.
+const EXTERNAL_FOLDER: &str = "Files";
+
+/// What gathering the files plugin states name did.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct ExternalReport {
+    /// Names of the files copied into the project.
+    copied: Vec<String>,
+    /// Files already in the project (or a copy of the same bytes).
+    present: usize,
+    /// Names of the files that were not found.
+    missing: Vec<String>,
+    /// Names of the files left where they are, with the reason.
+    refused: Vec<(String, &'static str)>,
+}
+
+impl ExternalReport {
+    fn is_empty(&self) -> bool {
+        self.copied.is_empty() && self.missing.is_empty() && self.refused.is_empty()
+    }
+
+    /// What happened, for the end of a toast; empty when there is nothing to say.
+    fn text(&self) -> String {
+        let list = |names: Vec<&str>| {
+            let more = names.len().saturating_sub(3);
+            let shown = names.iter().take(3).copied().collect::<Vec<_>>().join(", ");
+            if more > 0 {
+                format!("{shown} and {more} more")
+            } else {
+                shown
+            }
+        };
+        let mut parts = Vec::new();
+        if !self.copied.is_empty() {
+            parts.push(format!(
+                "{} copied into {EXTERNAL_FOLDER}",
+                self.copied.len()
+            ));
+        }
+        if !self.missing.is_empty() {
+            let names = self.missing.iter().map(String::as_str).collect();
+            parts.push(format!("{} not found: {}", self.missing.len(), list(names)));
+        }
+        if !self.refused.is_empty() {
+            let names = self.refused.iter().map(|(n, _)| n.as_str()).collect();
+            parts.push(format!(
+                "{} left where {}: {}",
+                self.refused.len(),
+                if self.refused.len() == 1 {
+                    "it is"
+                } else {
+                    "they are"
+                },
+                list(names)
+            ));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("plugin files: {}", parts.join(", "))
+        }
+    }
 }
 
 /// What a collection would do, for the preview.
@@ -293,7 +365,7 @@ impl<S: EngineSink> AppCore<S> {
         let snapshot = job.snapshot.clone();
         let saved = job.run()?;
         self.finish_save(file, snapshot, saved.bundle);
-        self.after_collect(collect, &saved.report);
+        self.after_collect(collect, relocate.is_some(), &saved.report);
         if let (Some(old), Some(moved)) = (relocate, &saved.moved) {
             self.after_move(&old.old_file, moved);
         }
@@ -312,16 +384,137 @@ impl<S: EngineSink> AppCore<S> {
             .clone()
             .filter(|p| super::super::is_project_path(p))
             .ok_or(AppError::NoPath)?;
-        if self.document.referenced_assets().is_empty() {
+        let root = collect_root(&file);
+        // The factory folder is read-only: nothing is collected into it.
+        if self.in_factory(&root) || self.in_factory(&file) {
+            self.reject("The factory library is read-only: nothing was collected".to_owned());
+            return Ok(());
+        }
+        if self.document.referenced_assets().is_empty() && self.doc().plugin_file_refs().is_empty()
+        {
             self.reject("The project uses no audio files".to_owned());
             return Ok(());
         }
-        let root = collect_root(&file);
+        let root = (!self.document.referenced_assets().is_empty()).then_some(root);
         if self.audio.background_save {
-            self.save_later(&file, Some(root), false, true, None)
+            self.save_later(&file, root, false, true, None)
         } else {
-            self.save_now_with(&file, Some(root), true, None)
+            self.save_now_with(&file, root, true, None)
         }
+    }
+
+    /// Gathers the files the plugin states of the project name outside it into the `Files/`
+    /// folder of `folder`, and points the states at the copies: one undo step however many
+    /// plugins there are. A file that is not there, or too big, stays as it is and is listed in
+    /// the report; a failure to copy one file never stops the others. Nothing is written into
+    /// the factory folder, and nothing outside `folder` is changed or removed.
+    fn collect_plugin_files(&mut self, folder: &Path) -> ExternalReport {
+        let mut report = ExternalReport::default();
+        let refs = self.doc().plugin_file_refs();
+        if refs.is_empty() || self.in_factory(folder) {
+            return report;
+        }
+        let dest_dir = folder.join(EXTERNAL_FOLDER);
+        // Every distinct file once: where it goes (None: it stays where it is).
+        let mut moved: BTreeMap<String, Option<String>> = BTreeMap::new();
+        for file_ref in &refs {
+            if moved.contains_key(&file_ref.path) {
+                continue;
+            }
+            let src = Path::new(&file_ref.path);
+            let name = src.file_name().map_or_else(
+                || file_ref.path.clone(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let target = match collect_external_file(src, &dest_dir) {
+                Ok(ExternalCopy::Copied { dest, .. }) => {
+                    report.copied.push(name);
+                    Some(dest)
+                }
+                Ok(ExternalCopy::Present { dest }) => {
+                    report.present += 1;
+                    Some(dest)
+                }
+                Ok(ExternalCopy::Missing) => {
+                    report.missing.push(name);
+                    None
+                }
+                Ok(ExternalCopy::Refused(why)) => {
+                    report.refused.push((name, why));
+                    None
+                }
+                Err(e) => {
+                    log::warn!("collect: cannot copy {}: {e}", file_ref.path);
+                    report.refused.push((name, "it could not be copied"));
+                    None
+                }
+            };
+            let target = target
+                .map(|t| t.to_string_lossy().into_owned())
+                .filter(|t| *t != file_ref.path);
+            moved.insert(file_ref.path.clone(), target);
+        }
+        // The new states, device by device.
+        let mut changes: BTreeMap<DeviceKey, Vec<(String, String)>> = BTreeMap::new();
+        for file_ref in &refs {
+            if let Some(Some(new)) = moved.get(&file_ref.path) {
+                changes
+                    .entry(file_ref.device.clone())
+                    .or_default()
+                    .push((file_ref.raw.clone(), new.clone()));
+            }
+        }
+        let mut first = true;
+        for (device, list) in changes {
+            let state = self
+                .doc()
+                .plugin_devices()
+                .into_iter()
+                .find(|(k, _)| *k == device)
+                .and_then(|(_, d)| d.plugin.as_ref()?.state.clone());
+            let Some(state) = state else { continue };
+            let Some(new) = rewrite_paths(&state, &list) else {
+                continue;
+            };
+            self.join_next = !first;
+            let done = self.apply_command(Command::Plugin(PluginCommand::SetState {
+                device,
+                state: PluginStateBlob(new.0),
+                merge: None,
+            }));
+            self.join_next = false;
+            match done {
+                Ok(()) => first = false,
+                Err(e) => log::warn!("collect: cannot point a plugin at its copies: {e}"),
+            }
+        }
+        report
+    }
+
+    /// The files plugin states name that Collect Files would copy, and the ones it cannot find.
+    fn plugin_files_preview(&self, folder: &Path) -> (usize, Vec<String>) {
+        let dest = folder.join(EXTERNAL_FOLDER);
+        let mut seen = BTreeSet::new();
+        let (mut copy, mut missing) = (0, Vec::new());
+        for file_ref in self.doc().plugin_file_refs() {
+            if !seen.insert(file_ref.path.clone()) {
+                continue;
+            }
+            let src = Path::new(&file_ref.path);
+            if !src.is_file() {
+                missing.push(
+                    file_ref
+                        .path
+                        .rsplit(['\\', '/'])
+                        .next()
+                        .unwrap_or("")
+                        .to_owned(),
+                );
+            } else if !src.starts_with(&dest) {
+                copy += 1;
+            }
+        }
+        (copy, missing)
     }
 
     /// The bundle folders the audio a save lacks is looked for in: the bundle the session holds,
@@ -372,8 +565,24 @@ impl<S: EngineSink> AppCore<S> {
     /// The text of the preview of Collect Files.
     pub fn collect_preview_message(&self) -> Result<String, AppError> {
         let preview = self.collect_preview()?;
+        let (plugin_copy, plugin_missing) = self.plugin_files_preview(&preview.folder);
         if self.document.referenced_assets().is_empty() {
-            return Ok("The project uses no audio files".to_owned());
+            if plugin_copy == 0 && plugin_missing.is_empty() {
+                return Ok("The project uses no audio files".to_owned());
+            }
+            return Ok(format!(
+                "Collect Files would copy {plugin_copy} plugin file{}{}",
+                if plugin_copy == 1 { "" } else { "s" },
+                if plugin_missing.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; {} not found: {}",
+                        plugin_missing.len(),
+                        plugin_missing.join(", ")
+                    )
+                }
+            ));
         }
         let folder = preview.folder.file_name().map_or_else(
             || "the project folder".to_owned(),
@@ -420,6 +629,20 @@ impl<S: EngineSink> AppCore<S> {
                 text.push_str(&format!(" and {more} more"));
             }
         }
+        if plugin_copy > 0 {
+            text.push_str(&format!(
+                "; {plugin_copy} plugin file{} to copy",
+                if plugin_copy == 1 { "" } else { "s" }
+            ));
+        }
+        if !plugin_missing.is_empty() {
+            text.push_str(&format!(
+                "; {} plugin file{} not found: {}",
+                plugin_missing.len(),
+                if plugin_missing.len() == 1 { "" } else { "s" },
+                plugin_missing.join(", ")
+            ));
+        }
         Ok(text)
     }
 
@@ -441,6 +664,17 @@ impl<S: EngineSink> AppCore<S> {
         let Some(stem) = old.file_stem() else {
             return Err(AppError::NoPath);
         };
+        // The factory folder is read-only: nothing of it is moved, and nothing in it is removed.
+        let old_root = self
+            .audio
+            .bundle
+            .as_ref()
+            .filter(|b| !b.scratch)
+            .map(|b| b.bundle.root().to_path_buf());
+        if self.in_factory(&old) || old_root.as_deref().is_some_and(|r| self.in_factory(r)) {
+            self.reject("The factory library is read-only: nothing was moved".to_owned());
+            return Ok(());
+        }
         let picked = folder.join(format!(
             "{}.{}",
             stem.to_string_lossy(),
@@ -457,12 +691,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         let relocate = Relocate {
             old_file: old,
-            old_root: self
-                .audio
-                .bundle
-                .as_ref()
-                .filter(|b| !b.scratch)
-                .map(|b| b.bundle.root().to_path_buf()),
+            old_root,
         };
         if self.audio.background_save {
             self.save_later(&file, root, true, false, Some(relocate))
@@ -610,6 +839,12 @@ impl<S: EngineSink> AppCore<S> {
     fn prepare_save(&mut self, file: &Path, root: Option<PathBuf>, collect: bool) -> Job {
         // The plugins' own state goes into the document first.
         self.plugins_capture_all();
+        // A save to a new place and Collect Files bring the files the plugins name along.
+        if collect || self.file.as_deref() != Some(file) {
+            let folder = root.clone().unwrap_or_else(|| collect_root(file));
+            let report = self.collect_plugin_files(&folder);
+            self.audio.externals = (!report.is_empty()).then_some(report);
+        }
         let keep = self.document.referenced_assets();
         let mut snapshot = self.doc().clone();
         snapshot.prune_unreferenced_assets();
@@ -641,7 +876,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// A save that collected: loads the audio it brought back and says what it did.
-    fn after_collect(&mut self, collect: bool, report: &CollectReport) {
+    fn after_collect(&mut self, collect: bool, relocating: bool, report: &CollectReport) {
         let back: Vec<String> = self
             .audio
             .missing
@@ -665,9 +900,22 @@ impl<S: EngineSink> AppCore<S> {
                 Err(e) => self.reject(format!("audio: cannot start the loader: {e}")),
             }
         }
+        let externals = self.audio.externals.take().map(|r| r.text());
         if collect {
-            let message = self.collect_message(report);
+            let mut message = self.collect_message(report);
+            if let Some(text) = externals.filter(|t| !t.is_empty()) {
+                message.push_str(&format!("; {text}"));
+            }
             self.reject(message);
+        } else if let Some(text) = externals.filter(|t| !t.is_empty()) {
+            // Move Project says it in its own toast, which follows this one.
+            if relocating {
+                self.audio.externals_text = Some(text);
+            } else {
+                let mut message = text;
+                message.replace_range(..1, &message[..1].to_uppercase());
+                self.reject(message);
+            }
         }
     }
 
@@ -696,9 +944,18 @@ impl<S: EngineSink> AppCore<S> {
             format!("Saved a copy in {folder}; the old project {name} was left: {why}")
         } else {
             self.forget_recent(old_file);
-            if moved.shared {
+            if let Some(why) = &moved.unreadable {
                 format!(
-                    "Moved to {folder}. The old project file {name} was removed; its audio folder stays because another project is in it"
+                    "Moved to {folder}. The old project file {name} was removed; the old audio stays because a project there cannot be read ({why})"
+                )
+            } else if moved.shared {
+                let gone = moved.removed_files.saturating_sub(1);
+                format!(
+                    "Moved to {folder}. The old project file {name} and {gone} audio file{} no other project uses were removed; {} audio file{} another project uses stay{}",
+                    if gone == 1 { "" } else { "s" },
+                    moved.kept_audio,
+                    if moved.kept_audio == 1 { "" } else { "s" },
+                    if moved.kept_audio == 1 { "s" } else { "" },
                 )
             } else if moved.folder_removed {
                 format!("Moved to {folder}. The old project folder was removed")
@@ -707,6 +964,10 @@ impl<S: EngineSink> AppCore<S> {
                     "Moved to {folder}. The old project {name} and its audio were removed; other files in the old folder stay"
                 )
             }
+        };
+        let message = match self.audio.externals_text.take() {
+            Some(text) => format!("{message}; {text}"),
+            None => message,
         };
         self.reject(message);
     }
@@ -829,7 +1090,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             Ok(Ok(saved)) => {
                 self.finish_save(&flight.file, flight.snapshot, saved.bundle);
-                self.after_collect(flight.collect, &saved.report);
+                self.after_collect(flight.collect, flight.relocate.is_some(), &saved.report);
                 if flight.note_recent {
                     self.note_recent();
                 }

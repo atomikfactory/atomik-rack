@@ -205,6 +205,10 @@ pub(super) struct AudioState {
     saving: Option<save::Flight>,
     /// The window saves on a worker (see [`AppCore::set_background_save`]).
     background_save: bool,
+    /// What the last save did with the files plugin states name, until its toast says so.
+    externals: Option<save::ExternalReport>,
+    /// The same, worded, waiting for the toast of Move Project.
+    externals_text: Option<String>,
 }
 
 /// How long a recording in the shared scratch folder must have been left alone before it is
@@ -257,6 +261,8 @@ impl AudioState {
             recovered_files: Vec::new(),
             saving: None,
             background_save: false,
+            externals: None,
+            externals_text: None,
         }
     }
 
@@ -1414,10 +1420,23 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Opens a project file or bundle folder (the project file inside it). A project's audio is
-    /// loaded in the background; missing files are reported, never fatal. On error nothing
+    /// loaded in the background; missing files are reported, never fatal. A project of the
+    /// factory library opens as a new unsaved song, as a template does. On error nothing
     /// changes.
     pub fn open(&mut self, path: &Path) -> Result<(), AppError> {
         let file = atomik_render::bundle::resolve_project_path(path);
+        // A project of the factory library is read-only: it opens as a new unsaved song.
+        if self.in_factory(&file) {
+            let name = file.file_stem().map_or_else(
+                || "the example".to_owned(),
+                |s| s.to_string_lossy().into_owned(),
+            );
+            self.open_template(&file)?;
+            self.report(format!(
+                "Opened {name} as a new song: Save asks where to keep your copy"
+            ));
+            return Ok(());
+        }
         let text = atomik_model::read_document_text(&file).map_err(|source| AppError::Io {
             path: file.clone(),
             source,

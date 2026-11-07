@@ -35,6 +35,8 @@ $RECYCLE.BIN/
 !examples/projects/*/Audio/*.wav
 # The drum kits of the factory library keep their rendered audio beside the item.
 !factory/Patches/*/Audio/*.wav
+# The example projects of the factory library keep the audio of their kit beside the project.
+!factory/Projects/*/Audio/*.wav
 examples/projects/*/Audio/.peaks/
 
 # Local tool configuration files (not part of the project)

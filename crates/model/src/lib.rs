@@ -69,6 +69,7 @@ mod param_search;
 mod patch;
 mod plugin;
 mod plugin_cmd;
+mod plugin_files;
 mod plugin_io;
 mod project;
 mod rack_columns;
@@ -156,6 +157,7 @@ pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
 };
+pub use plugin_files::{PluginFileRef, rewrite_paths};
 pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
 pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
 pub use rack_groups::{DeviceGroup, RackSort};

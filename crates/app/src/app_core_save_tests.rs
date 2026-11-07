@@ -502,8 +502,12 @@ fn two_projects_sharing_audio(t: &Tmp) -> (AppCore<RecordingSink>, PathBuf, Stri
         )
         .unwrap()
         .hash;
-    // The other project's file names its audio; its text only has to exist for the rule.
-    std::fs::write(shared.join("other.atomik"), "other project").unwrap();
+    // The other project's file names the audio it uses: its own and the one it shares.
+    std::fs::write(
+        shared.join("other.atomik"),
+        format!("{{\"assets\": [\"{mine}\", \"{theirs}\"]}}"),
+    )
+    .unwrap();
     let song = shared.join("song.atomik");
     std::fs::copy(shared.join("proj.atomik"), &song).unwrap();
     let mut c = core();
@@ -791,7 +795,72 @@ fn move_project_never_removes_audio_another_project_in_the_folder_uses() {
     );
     assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
     let message = c.last_rejection().unwrap();
-    assert!(message.contains("another project is in it"), "{message}");
+    assert!(message.contains("another project uses stay"), "{message}");
+}
+
+#[test]
+fn move_project_removes_the_old_audio_no_other_project_uses() {
+    let t = Tmp::new("move-split");
+    let (mut c, shared, mine, theirs) = two_projects_sharing_audio(&t);
+    // The first project file of the folder (a copy of the song) is not wanted any more, and the
+    // other project no longer names the audio of the song: only its own.
+    std::fs::remove_file(shared.join("proj.atomik")).unwrap();
+    std::fs::write(
+        shared.join("other.atomik"),
+        format!("{{\"assets\": [\"{theirs}\"]}}"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert!(!shared.join("song.atomik").exists());
+    assert!(!wav_of(&shared, &mine).exists(), "nobody else uses it");
+    assert!(wav_of(&shared, &theirs).exists(), "their audio stays");
+    assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("no other project uses"), "{message}");
+}
+
+#[test]
+fn move_project_removes_no_audio_when_a_project_in_the_folder_cannot_be_read() {
+    let t = Tmp::new("move-unreadable");
+    let (mut c, shared, mine, theirs) = two_projects_sharing_audio(&t);
+    std::fs::write(shared.join("other.atomik"), [0xff, 0xfe, 0x00, 0x9f]).unwrap();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert!(!shared.join("song.atomik").exists());
+    assert!(wav_of(&shared, &mine).exists());
+    assert!(wav_of(&shared, &theirs).exists());
+    assert!(wav_of(&t.path("new").join("song"), &mine).is_file());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("cannot be read"), "{message}");
+}
+
+#[test]
+fn move_project_never_touches_the_factory_folder() {
+    let t = Tmp::new("move-factory");
+    let (mut c, shared, mine, _) = two_projects_sharing_audio(&t);
+    // The folder the song lives in is the factory folder.
+    c.set_factory_root(Some(shared.clone()));
+    assert!(c.in_factory(&shared.join("song.atomik")));
+    let before: Vec<_> = std::fs::read_dir(&shared)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    std::fs::create_dir_all(t.path("new")).unwrap();
+    c.move_project(&t.path("new")).unwrap();
+    c.wait_background();
+    assert!(shared.join("song.atomik").is_file());
+    assert!(wav_of(&shared, &mine).is_file());
+    assert!(!t.path("new").join("song").exists(), "nothing was written");
+    let after: Vec<_> = std::fs::read_dir(&shared)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(before.len(), after.len());
+    let message = c.last_rejection().unwrap();
+    assert!(message.contains("factory"), "{message}");
 }
 
 #[test]
@@ -871,4 +940,263 @@ fn a_cancelled_move_removes_nothing() {
     let message = c.last_rejection().unwrap();
     assert!(message.starts_with("Move Project cancelled"), "{message}");
     assert!(c.recent().contains(&old_file));
+}
+
+// ---------------------------------------------------------------- files plugin states name
+
+mod plugin_files {
+    use super::*;
+    use atomik_device_sdk::{
+        Channels, PluginFormat, PluginKindHint, PluginLayout, PluginRef, PluginStateBlob,
+        descriptor_for,
+    };
+    use atomik_model::{DeviceKey, PluginCommand};
+
+    fn layout() -> PluginLayout {
+        PluginLayout {
+            name: "Test Fx".into(),
+            vendor: "Atomik Test".into(),
+            version: "1.0.0".into(),
+            kind_hint: PluginKindHint::Effect,
+            main_in: Some(Channels::Stereo),
+            main_out: Some(Channels::Stereo),
+            sidechain: false,
+            notes_in: false,
+            notes_out: false,
+            aux_out: 0,
+            params: Vec::new(),
+        }
+    }
+
+    fn write(path: &Path, bytes: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// A song with one plugin per state (keys `fx0`, `fx1`...), each holding that state.
+    fn song_with_plugins(states: &[String]) -> AppCore<RecordingSink> {
+        let mut c = core();
+        for (i, state) in states.iter().enumerate() {
+            let plugin = PluginRef {
+                format: PluginFormat::Clap,
+                id: format!("test.fx{i}"),
+            };
+            let desc = descriptor_for(&plugin, &layout()).unwrap();
+            c.registry.register_plugin(plugin.type_id(), desc).unwrap();
+            let key = DeviceKey(format!("fx{i}"));
+            c.apply_command(Command::Plugin(PluginCommand::Add {
+                index: usize::MAX,
+                container: None,
+                plugin,
+                layout: layout(),
+                path_hint: None,
+                key: Some(key.clone()),
+                auto_split: false,
+            }))
+            .unwrap();
+            c.apply_command(Command::Plugin(PluginCommand::SetState {
+                device: key,
+                state: PluginStateBlob(state.as_bytes().to_vec()),
+                merge: None,
+            }))
+            .unwrap();
+        }
+        c
+    }
+
+    fn state_of(c: &AppCore<RecordingSink>, i: usize) -> String {
+        let key = DeviceKey(format!("fx{i}"));
+        let (_, d) = c
+            .doc()
+            .plugin_devices()
+            .into_iter()
+            .find(|(k, _)| *k == key)
+            .unwrap();
+        String::from_utf8(d.plugin.as_ref().unwrap().state.as_ref().unwrap().0.clone()).unwrap()
+    }
+
+    fn text(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    /// The song saved as `<tmp>/<place>/song.atomik` while its plugins hold no file names, then
+    /// given `states` (so that nothing was collected by the save itself).
+    fn saved_in(t: &Tmp, place: &str, states: &[String]) -> AppCore<RecordingSink> {
+        let blanks: Vec<String> = states.iter().map(|_| "<none/>".to_owned()).collect();
+        let mut c = song_with_plugins(&blanks);
+        std::fs::create_dir_all(t.path(place)).unwrap();
+        c.save_as(&t.path(place).join("song.atomik")).unwrap();
+        for (i, state) in states.iter().enumerate() {
+            c.apply_command(Command::Plugin(PluginCommand::SetState {
+                device: DeviceKey(format!("fx{i}")),
+                state: PluginStateBlob(state.as_bytes().to_vec()),
+                merge: None,
+            }))
+            .unwrap();
+        }
+        c
+    }
+
+    #[test]
+    fn collect_files_copies_what_plugin_states_name_in_one_undo_step() {
+        let t = Tmp::new("plugin-files");
+        let (hall, pad) = (t.path("outside/hall.wav"), t.path("elsewhere/pad.fxp"));
+        write(&hall, b"impulse");
+        write(&pad, b"preset");
+        let states = [
+            format!("<ir file=\"{}\"/>", text(&hall)),
+            format!("<a>{}</a><b>{}</b>", text(&hall), text(&pad)),
+        ];
+        let mut c = saved_in(&t, "proj", &states);
+
+        c.collect_files().unwrap();
+        c.wait_background();
+
+        let folder = t.path("proj").join("song").join("Files");
+        assert_eq!(std::fs::read(folder.join("hall.wav")).unwrap(), b"impulse");
+        assert_eq!(std::fs::read(folder.join("pad.fxp")).unwrap(), b"preset");
+        assert_eq!(
+            state_of(&c, 0),
+            format!("<ir file=\"{}\"/>", text(&folder.join("hall.wav")))
+        );
+        assert_eq!(
+            state_of(&c, 1),
+            format!(
+                "<a>{}</a><b>{}</b>",
+                text(&folder.join("hall.wav")),
+                text(&folder.join("pad.fxp"))
+            )
+        );
+        // The originals are untouched, and the saved project names no outside file.
+        assert_eq!(std::fs::read(&hall).unwrap(), b"impulse");
+        let message = c.last_rejection().unwrap();
+        assert!(message.contains("plugin files: 2 copied"), "{message}");
+        let saved = std::fs::read_to_string(c.file().unwrap()).unwrap();
+        assert!(!saved.contains("outside") && !saved.contains("elsewhere"));
+        assert!(!c.is_dirty());
+        // One undo step puts both plugins back.
+        assert!(c.undo());
+        assert!(state_of(&c, 0).contains("outside"));
+        assert!(state_of(&c, 1).contains("elsewhere"));
+    }
+
+    #[test]
+    fn files_that_cannot_be_found_are_listed_and_never_block_the_rest() {
+        let t = Tmp::new("plugin-files-missing");
+        let (hall, gone) = (t.path("outside/hall.wav"), t.path("outside/gone.wav"));
+        write(&hall, b"impulse");
+        let states = [format!("<a>{}</a><b>{}</b>", text(&hall), text(&gone))];
+        let mut c = saved_in(&t, "proj", &states);
+
+        c.collect_files().unwrap();
+        c.wait_background();
+
+        let folder = t.path("proj").join("song").join("Files");
+        assert!(folder.join("hall.wav").is_file());
+        assert!(!folder.join("gone.wav").exists());
+        // The missing path stays as it was; the found one points at its copy.
+        let state = state_of(&c, 0);
+        assert!(state.contains(&text(&gone)), "{state}");
+        assert!(state.contains(&text(&folder.join("hall.wav"))), "{state}");
+        let message = c.last_rejection().unwrap();
+        assert!(message.contains("1 not found: gone.wav"), "{message}");
+        assert!(!c.is_dirty());
+    }
+
+    #[test]
+    fn the_preview_says_what_would_be_copied_and_writes_nothing() {
+        let t = Tmp::new("plugin-files-preview");
+        let (hall, gone) = (t.path("outside/hall.wav"), t.path("outside/gone.wav"));
+        write(&hall, b"impulse");
+        let states = [format!("<a>{}</a><b>{}</b>", text(&hall), text(&gone))];
+        let c = saved_in(&t, "proj", &states);
+        let before = state_of(&c, 0);
+        let message = c.collect_preview_message().unwrap();
+        assert!(message.contains("copy 1 plugin file"), "{message}");
+        assert!(message.contains("not found: gone.wav"), "{message}");
+        assert_eq!(state_of(&c, 0), before);
+        assert!(!t.path("proj").join("song").join("Files").exists());
+    }
+
+    #[test]
+    fn save_as_to_a_new_place_brings_the_files_along() {
+        let t = Tmp::new("plugin-files-save-as");
+        let hall = t.path("outside/hall.wav");
+        write(&hall, b"impulse");
+        let states = [format!("<ir file=\"{}\"/>", text(&hall))];
+        let mut c = song_with_plugins(&states);
+        c.save_as(&t.path("first/song.atomik")).unwrap();
+        let first = state_of(&c, 0);
+        assert!(
+            first.contains("first") && !first.contains("outside"),
+            "{first}"
+        );
+        c.save_as(&t.path("second/song.atomik")).unwrap();
+        let second = state_of(&c, 0);
+        assert!(second.contains("second"), "{second}");
+        let copy = second
+            .trim_start_matches("<ir file=\"")
+            .trim_end_matches("\"/>");
+        assert_eq!(std::fs::read(copy).unwrap(), b"impulse");
+        // The old place and the original stay as they were.
+        assert_eq!(std::fs::read(&hall).unwrap(), b"impulse");
+    }
+
+    #[test]
+    fn a_plain_save_leaves_the_files_where_they_are() {
+        let t = Tmp::new("plugin-files-save");
+        let hall = t.path("outside/hall.wav");
+        write(&hall, b"impulse");
+        let states = [format!("<ir file=\"{}\"/>", text(&hall))];
+        let mut c = saved_in(&t, "proj", &states);
+        let before = state_of(&c, 0);
+        c.apply_command(Command::SetMasterTune(3.0)).unwrap();
+        c.save().unwrap();
+        assert_eq!(state_of(&c, 0), before, "Save does not collect");
+    }
+
+    #[test]
+    fn nothing_is_collected_into_the_factory_folder() {
+        let t = Tmp::new("plugin-files-factory");
+        let hall = t.path("outside/hall.wav");
+        write(&hall, b"impulse");
+        let states = [format!("<ir file=\"{}\"/>", text(&hall))];
+        let mut c = saved_in(&t, "proj", &states);
+        c.set_factory_root(Some(t.path("proj")));
+        let before = state_of(&c, 0);
+        let listing = |p: &Path| {
+            let mut v: Vec<_> = std::fs::read_dir(p)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            v.sort();
+            v
+        };
+        let names = listing(&t.path("proj"));
+        c.collect_files().unwrap();
+        c.wait_background();
+        assert_eq!(state_of(&c, 0), before);
+        assert_eq!(listing(&t.path("proj")), names, "nothing was written");
+        let message = c.last_rejection().unwrap();
+        assert!(message.contains("factory"), "{message}");
+    }
+
+    #[test]
+    fn move_project_brings_the_files_to_the_new_place_and_says_so() {
+        let t = Tmp::new("plugin-files-move");
+        let hall = t.path("outside/hall.wav");
+        write(&hall, b"impulse");
+        let states = [format!("<ir file=\"{}\"/>", text(&hall))];
+        let mut c = saved_in(&t, "old", &states);
+        std::fs::create_dir_all(t.path("new")).unwrap();
+        c.move_project(&t.path("new")).unwrap();
+        c.wait_background();
+        let copy = t.path("new").join("song").join("Files").join("hall.wav");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"impulse");
+        assert!(state_of(&c, 0).contains(&text(&copy)));
+        assert!(!t.path("old").join("song.atomik").exists());
+        let message = c.last_rejection().unwrap();
+        assert!(message.starts_with("Moved to "), "{message}");
+        assert!(message.contains("plugin files: 1 copied"), "{message}");
+    }
 }

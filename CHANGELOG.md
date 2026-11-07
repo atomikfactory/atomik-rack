@@ -9,6 +9,32 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Collect plugin files, and Move Project tidies a shared folder.** Collect Files, Save As and Move Project copy the
+  files that the text state of a plugin names outside the project (an impulse response, a preset) into a `Files`
+  folder of the project, under their own names (a second file with the same name and other bytes becomes `name 2`,
+  and a copy that is already there is reused), and point the state at the copies. It is one undo step for all the
+  plugins; a file that cannot be found, or is over 64 MiB, stays where it is and is listed in the toast, and never
+  stops the save; Preview Collect Files counts them. A state that is not text is never read or changed. Where other
+  projects share the old folder, Move Project now reads every project file in it and below (and the versions kept
+  beside each) and removes the old audio that none of them uses, keeping the rest; a project, version list or folder
+  that cannot be read (or a link, or a folder too deep to look into) keeps all of the old audio and the toast says
+  so. Move Project and Collect Files refuse to work on a project inside the factory folder. The format is still 44
+  and the command count 469.
+- **Example projects.** The Factory root of the browser has a Projects section with three short songs made from the
+  factory content and nothing else (built-in devices, the factory patches, containers, kit samples and clips, no
+  plugin): Basalt Beat (16 bars at 96 BPM: a sampled drum kit with looped pattern clips, a walking sub, a clavier and
+  a mallet hook, with effect containers on a channel and the master), Moonrise Modular (16 bars at 84 BPM: the three
+  modular instruments, a drone and a sequenced pulse, a shimmer reverb and a ping-pong echo as send effects, and a
+  container macro opened by automation) and Bus Room (24 bars at 118 BPM: drum pads on channels of their own into a
+  Drums bus, a track folder that plays into a Music bus, two groups, two send effects and a master finish, with the
+  beat ducked for a breakdown by an automated group level, a pad faded in and a lead filter opened). Picking one
+  (double click, a drop, or the command line) opens it as a new unsaved song, as a template does: the factory file is
+  never the song's file, so Save asks where to keep your copy. The folder grows to about 1.6 MB (the Basalt Beat
+  carries the audio of its kit). The writer is the same test code as before (`ATOMIK_WRITE_FACTORY=1 cargo test -p
+  atomik-app --lib write_the_factory_library -- --ignored`, or `write_the_example_projects` for the examples alone);
+  tests check that each example is 16 to 32 bars of built-in devices and factory samples, that its file is what the
+  tables build, that it bounces to audible sound under full scale with no silent stretch, and that opening it leaves
+  the factory file untouched. The command count is unchanged and so is the project format.
 - **More factory content.** The Factory root now holds 31 patches, 13 containers and 12 note clips (about 1.2 MB, most
   of it the audio of the drum kits). The containers are ten effect chains of built-in effects (tape saturation, a
   vocal chain, a ping-pong echo, a shimmer reverb, a lo-fi radio, drum punch, a slow phaser, a rotary speaker, a
