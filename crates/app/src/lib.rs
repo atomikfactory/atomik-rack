@@ -26,6 +26,7 @@ pub mod commands;
 pub mod context_menus;
 pub mod crash;
 pub mod cursor_art;
+pub mod delivery_worker;
 pub mod device_info;
 pub mod diagnostics;
 pub mod drag_cursor;

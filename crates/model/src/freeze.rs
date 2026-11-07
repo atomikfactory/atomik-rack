@@ -701,6 +701,20 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                         .find(|(_, frozen)| *frozen > 0)
                         .map(|(t, _)| frozen_error(doc, &t.device))
                 }
+                ConsoleCommand::AddInsert {
+                    channel,
+                    slot,
+                    effect,
+                } => frozen_channel(channel)
+                    .filter(|(_, frozen)| *slot < *frozen)
+                    .map(|(t, _)| frozen_error(doc, &t.device))
+                    .or_else(|| match effect {
+                        InsertEffect::Existing(key) => device_frozen(key),
+                        InsertEffect::New { .. } => None,
+                    }),
+                ConsoleCommand::ExtractInsert { channel, slot, .. } => frozen_channel(channel)
+                    .filter(|(_, frozen)| *slot < *frozen)
+                    .map(|(t, _)| frozen_error(doc, &t.device)),
                 ConsoleCommand::MoveInsert {
                     channel, from, to, ..
                 } => frozen_channel(channel)

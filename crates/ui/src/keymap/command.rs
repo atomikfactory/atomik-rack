@@ -831,6 +831,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.delivery_targets",
+        "Delivery Targets",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_archive",
         "Export Project Archive",
         G::Global,
@@ -2219,6 +2226,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.peak_surgeon",
+        "Peak Surgeon",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.refreeze_track",
         "Re-render Frozen Track",
         G::Sequencer,
@@ -2800,13 +2815,6 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
-    cmd(
-        "view.toggle_console_devices",
-        "Show Console Devices in Rack",
-        G::View,
-        C::Global,
-    )
-    .menu(),
     cmd(
         "view.toggle_console_links",
         "Show Console Links",

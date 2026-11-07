@@ -367,7 +367,6 @@ fn the_context_menu_item_use_as_send_effect_takes_the_first_free_return() {
             .unwrap();
     }
     // Keep the loose effect inside the pane (the console strips would push it down).
-    s.core_mut().view_mut().set_show_console_devices(false);
     s.core_mut().after_view_change();
     let at = plate(&s, "verb");
     click(&mut s, at, PointerButton::Secondary);

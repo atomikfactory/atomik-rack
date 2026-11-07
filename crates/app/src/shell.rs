@@ -162,7 +162,10 @@ use atomik_ui::keymap::{
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
-use atomik_ui::{BassReadAction, BassReadView, SoundAnalystAction, SoundAnalystView};
+use atomik_ui::{
+    BassReadAction, BassReadView, DeliveryAction, DeliveryPage, DeliveryView, SoundAnalystAction,
+    SoundAnalystView,
+};
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
     ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
@@ -190,9 +193,6 @@ const PORT_RELIST_EVERY: std::time::Duration = std::time::Duration::from_secs(1)
 /// The keymap profile the app starts with: the standard
 /// keys. The `legacy` profile (the keys of earlier versions) stays selectable in Settings > Keyboard.
 pub const APP_DEFAULT_PROFILE: Profile = Profile::Standard;
-
-/// The one-time notice: the console devices show in the rack now.
-pub const CONSOLE_DEVICES_NOTICE: &str = "Console devices are now shown in the rack. View > Show Console Devices in Rack hides them again.";
 
 /// Height of the status bar, logical pixels.
 pub const STATUS_BAR_HEIGHT: f64 = 22.0;
@@ -566,6 +566,7 @@ pub struct Shell<B: AudioBackend> {
     repetition: Option<RepetitionView>,
     /// The bass-read panel (Mixer > Will the Bass Read?), while it is open.
     bass_read: Option<BassReadView>,
+    delivery: Option<DeliveryView>,
     /// The Sound Analyst panel (File > Sound Analyst), while it is open.
     sound_analyst: Option<SoundAnalystView>,
     /// The wavetable editor (a click on a table display of a Wavetable Synth) while it is open,
@@ -656,18 +657,11 @@ impl<B: AudioBackend> Shell<B> {
     /// Wraps a core.
     pub fn new(core: AppCore<LiveSession<B>>, options: ShellOptions) -> Self {
         let banner = PluginBannerView::new(core.view().theme().clone());
-        let (mut ui, ui_note) = options
+        let (ui, ui_note) = options
             .ui_state_path
             .as_deref()
             .map(UiState::load_checked)
             .unwrap_or_default();
-        // The one-time notice that console devices are shown now. Only with
-        // a state file to remember it in, and not for a user who switched them off already.
-        let console_notice = (options.ui_state_path.is_some() && !ui.console_notice_seen)
-            .then_some(ui.show_console_devices);
-        if console_notice.is_some() {
-            ui.console_notice_seen = true;
-        }
         let os = options.os.unwrap_or_else(Os::host);
         let default_profile = options.profile.unwrap_or(APP_DEFAULT_PROFILE);
         let keymap_path = options
@@ -763,6 +757,7 @@ impl<B: AudioBackend> Shell<B> {
             mixcheck: None,
             repetition: None,
             bass_read: None,
+            delivery: None,
             sound_analyst: None,
             wavetable: None,
             start_screen: None,
@@ -812,12 +807,6 @@ impl<B: AudioBackend> Shell<B> {
         shell.restore_windows();
         shell.apply_workflow_to_views();
         shell.apply_ui_state_to_views();
-        if console_notice == Some(true) {
-            shell.notify(CONSOLE_DEVICES_NOTICE);
-        }
-        if console_notice.is_some() {
-            shell.write_ui_state();
-        }
         // The notice of the moved keys: a keymap problem found at start wins the status line.
         if shell.workflow_path.is_some()
             && !shell.workflow.keys_notice_seen
@@ -851,7 +840,6 @@ impl<B: AudioBackend> Shell<B> {
     fn apply_ui_state_to_views(&mut self) {
         {
             let view = self.core.view_mut();
-            view.set_show_console_devices(self.ui.show_console_devices);
             view.set_show_console_links(self.ui.show_console_links);
             view.set_navigator_visible(self.ui.show_rack_navigator);
         }
@@ -1643,6 +1631,69 @@ impl<B: AudioBackend> Shell<B> {
             BassReadAction::Stop => self.core.cancel_bass_read(),
         }
         self.sync_bass_read();
+        self.repaint = true;
+    }
+
+    /// Whether the Delivery panel is open.
+    pub fn delivery_open(&self) -> bool {
+        self.delivery.is_some()
+    }
+
+    /// The Delivery panel, while it is open.
+    pub fn delivery_view(&self) -> Option<&DeliveryView> {
+        self.delivery.as_ref()
+    }
+
+    /// File > Delivery Targets (the Targets page) and Edit > Peak Surgeon (the Peaks page): opens
+    /// the panel.
+    fn open_delivery(&mut self, page: DeliveryPage) {
+        self.core.delivery_open(page);
+        let theme = self.core.view().theme().clone();
+        let mut view = DeliveryView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.delivery_data());
+        self.delivery = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open Delivery panel in step with the measurement and the clip.
+    fn sync_delivery(&mut self) {
+        if self.delivery.is_none() {
+            return;
+        }
+        let data = self.core.delivery_data();
+        if let Some(view) = &mut self.delivery {
+            view.set_data(data);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the Delivery panel asked for.
+    fn delivery_action(&mut self, action: DeliveryAction) {
+        match action {
+            DeliveryAction::Close => {
+                self.core.cancel_delivery();
+                self.delivery = None;
+            }
+            DeliveryAction::Page(page) => self.core.delivery_page(page),
+            DeliveryAction::Choose(n) => self.core.delivery_choose(n),
+            DeliveryAction::Measure => {
+                let _ = self.core.start_delivery();
+            }
+            DeliveryAction::Stop => self.core.cancel_delivery(),
+            DeliveryAction::SetCeiling => self.core.delivery_set_ceiling(),
+            DeliveryAction::PeakChoose(n) => self.core.surgeon_choose(n),
+            DeliveryAction::Threshold(delta) => self.core.surgeon_threshold(delta),
+            DeliveryAction::CycleStep => self.core.surgeon_cycle_step(),
+            DeliveryAction::CycleWidth => self.core.surgeon_cycle_width(),
+            DeliveryAction::Trim => self.core.surgeon_trim(),
+            DeliveryAction::ApplyAll => self.core.surgeon_apply_all(),
+            DeliveryAction::Rescan => self.core.surgeon_scan(),
+        }
+        self.sync_delivery();
         self.repaint = true;
     }
 
@@ -3241,6 +3292,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.bass_read {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.delivery {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.sound_analyst {
             v.set_theme(theme.clone());
         }
@@ -3553,7 +3607,6 @@ impl<B: AudioBackend> Shell<B> {
             align_returns: self.core.doc().console.align_returns,
             send_follow: self.core.doc().console.send_follow,
             link_faders: self.core.console().link_faders(),
-            console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
             cpu_meters: self.core.cpu_meters_on(),
             big_meter: view.big_meter_visible(),
@@ -3909,6 +3962,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.bass_read.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.bass_read {
+                v.set_bounds(rect);
+            }
+        }
+        if self.delivery.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.delivery {
                 v.set_bounds(rect);
             }
         }
@@ -4970,6 +5029,31 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::BassRead(a) = action {
                     self.bass_read_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.delivery.is_some() {
+            // The Delivery panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.core.cancel_delivery();
+                self.delivery = None;
+                return Vec::new();
+            }
+            let actions = self
+                .delivery
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Delivery(a) = action {
+                    self.delivery_action(a);
                 }
             }
             return Vec::new();
@@ -7459,14 +7543,6 @@ impl<B: AudioBackend> Shell<B> {
                 self.ui_changed();
                 Vec::new()
             }
-            AppCommand::ToggleConsoleDevices => {
-                let view = self.core.view_mut();
-                let show = !view.show_console_devices();
-                view.set_show_console_devices(show);
-                self.ui.show_console_devices = show;
-                self.ui_changed();
-                Vec::new()
-            }
             AppCommand::ToggleConsoleLinks => {
                 let view = self.core.view_mut();
                 let show = !view.show_console_links();
@@ -7519,6 +7595,16 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::BassRead => {
                 self.open_bass_read();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::DeliveryTargets => {
+                self.open_delivery(DeliveryPage::Targets);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::PeakSurgeon => {
+                self.open_delivery(DeliveryPage::Peaks);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -8298,6 +8384,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_export();
         self.sync_masking();
         self.sync_bass_read();
+        self.sync_delivery();
         self.sync_sound_analyst();
         self.sync_wavetable();
         self.sync_mixcheck();
@@ -8371,7 +8458,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.midi_received() != heard {
             self.repaint = true;
         }
-        if self.console_visible() {
+        if self.console_visible() || self.core.view().shows_mix_panels() {
             self.core.update_console_meters(now_seconds);
         }
         self.core.feed_rec_input(now_seconds);
@@ -9130,6 +9217,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.bass_read {
             view.paint(canvas);
         }
+        if let Some(view) = &self.delivery {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.sound_analyst {
             view.paint(canvas);
         }
@@ -9526,6 +9616,10 @@ mod energy_tests;
 #[cfg(test)]
 #[path = "shell_translation_tests.rs"]
 mod translation_tests;
+
+#[cfg(test)]
+#[path = "shell_delivery_tests.rs"]
+mod delivery_tests;
 
 #[cfg(test)]
 #[path = "shell_sound_analyst_tests.rs"]

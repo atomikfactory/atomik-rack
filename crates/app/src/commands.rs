@@ -87,6 +87,10 @@ pub enum AppCommand {
     /// File ▸ Sound Analyst…: the panel that measures an audio file and proposes a starting patch
     /// to recreate it.
     SoundAnalyst,
+    /// File ▸ Delivery Targets: the panel of the delivery targets, on its Targets page.
+    DeliveryTargets,
+    /// Edit ▸ Peak Surgeon: the same panel on its Peaks page, for the selected audio clip.
+    PeakSurgeon,
     /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
     /// (a file each, or a folder search). Only enabled while some are missing.
     RelinkAudio,
@@ -204,8 +208,6 @@ pub enum AppCommand {
     ToggleClockIn,
     /// Options ▸ Chase Notes: the selected track's note chase on or off.
     ToggleChase,
-    /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
-    ToggleConsoleDevices,
     /// View > Show Console Links: draw the channel to master cables on the back of
     /// the rack (a channel otherwise shows "Output: Master").
     ToggleConsoleLinks,
@@ -794,6 +796,8 @@ impl AppCommand {
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
             AppCommand::SoundAnalyst => ("file.sound_analyst", None),
+            AppCommand::DeliveryTargets => ("file.delivery_targets", None),
+            AppCommand::PeakSurgeon => ("sequencer.peak_surgeon", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::CollectFiles => ("file.collect_files", None),
             AppCommand::CollectPreview => ("file.collect_preview", None),
@@ -880,7 +884,6 @@ impl AppCommand {
             }
             // A grid the bar picked has no menu entry: it names the command without a value.
             AppCommand::Quantize(_) => ("transport.input_quantize", None),
-            AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleCpuMeters => ("view.toggle_cpu_meters", None),
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
@@ -1158,6 +1161,8 @@ impl AppCommand {
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
             ("file.sound_analyst", None) => AppCommand::SoundAnalyst,
+            ("file.delivery_targets", None) => AppCommand::DeliveryTargets,
+            ("sequencer.peak_surgeon", None) => AppCommand::PeakSurgeon,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.collect_files", None) => AppCommand::CollectFiles,
             ("file.collect_preview", None) => AppCommand::CollectPreview,
@@ -1239,7 +1244,6 @@ impl AppCommand {
             ("transport.input_quantize", Some("sixteenth")) => {
                 AppCommand::Quantize(InputQuantize::SIXTEENTH)
             }
-            ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_cpu_meters", None) => AppCommand::ToggleCpuMeters,
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
@@ -1991,8 +1995,6 @@ pub struct MenuState {
     pub send_follow: bool,
     /// Link faders is on (a level of a strip in a VCA group moves the group's levels).
     pub link_faders: bool,
-    /// Console devices are shown in the rack.
-    pub console_devices: bool,
     /// The console links are drawn as cables.
     pub console_links: bool,
     /// The devices' name plates show their CPU load.
@@ -2617,6 +2619,7 @@ pub fn menus_with_songs(
                     AppCommand::ExportStems,
                     state.export_stems,
                 ),
+                item("Delivery Targets\u{2026}", AppCommand::DeliveryTargets),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
                 item("Stress Song", AppCommand::StressSong),
@@ -2668,6 +2671,11 @@ pub fn menus_with_songs(
                         })
                         .collect(),
                 }),
+                enabled(
+                    "Peak Surgeon\u{2026}",
+                    AppCommand::PeakSurgeon,
+                    state.audio.can_edit,
+                ),
                 enabled(
                     "Strip Silence\u{2026}",
                     AppCommand::AudioStripSilence,
@@ -2850,11 +2858,6 @@ pub fn menus_with_songs(
                     state.slice_editor,
                 ),
                 MenuEntry::Separator,
-                check(
-                    "Show Console Devices in Rack",
-                    AppCommand::ToggleConsoleDevices,
-                    state.console_devices,
-                ),
                 check(
                     "Show Console Links",
                     AppCommand::ToggleConsoleLinks,
@@ -4014,7 +4017,6 @@ mod tests {
             align_returns: true,
             send_follow: true,
             link_faders: false,
-            console_devices: false,
             console_links: false,
             cpu_meters: false,
             big_meter: false,
@@ -4098,6 +4100,7 @@ mod tests {
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
+            AppCommand::DeliveryTargets,
             AppCommand::StressRack,
             AppCommand::StressSong,
             AppCommand::Quit,
@@ -4128,7 +4131,6 @@ mod tests {
             AppCommand::ToggleSampleEditor,
             AppCommand::ToggleStepEditor,
             AppCommand::ToggleSliceEditor,
-            AppCommand::ToggleConsoleDevices,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
             AppCommand::ToggleBigMeter,
@@ -4261,6 +4263,7 @@ mod tests {
             AppCommand::ReverseClips(true),
             AppCommand::ReverseClips(false),
             AppCommand::AudioNormalise,
+            AppCommand::PeakSurgeon,
             AppCommand::AudioStripSilence,
             AppCommand::AudioQuantize,
             AppCommand::AudioWarp,
@@ -4815,6 +4818,7 @@ mod tests {
                 "Export Loop as Audio File\u{2026}",
                 "Export Selection as Audio File\u{2026}",
                 "Export Stems as Audio Files\u{2026}",
+                "Delivery Targets\u{2026}",
                 "Stress Rack",
                 "Stress Song",
                 "Quit"
@@ -4842,6 +4846,7 @@ mod tests {
                 "RMS -18 dBFS",
                 "Loudness -23 LUFS",
                 "Loudness -14 LUFS",
+                "Peak Surgeon\u{2026}",
                 "Strip Silence\u{2026}",
                 "Quantize Audio",
                 "Insert Bars at Locators",
@@ -4910,7 +4915,6 @@ mod tests {
                 "Sample Editor",
                 "Step Editor",
                 "Slice Editor",
-                "Show Console Devices in Rack",
                 "Show Console Links",
                 "CPU Meters",
                 "Big Meter",
@@ -5461,7 +5465,6 @@ mod tests {
                 align_returns: false,
                 send_follow: false,
                 link_faders: false,
-                console_devices: true,
                 console_links: false,
                 cpu_meters: false,
                 big_meter: false,
@@ -5532,7 +5535,6 @@ mod tests {
         assert_eq!(find("Console").checked, Some(true));
         assert_eq!(find("Maximise Console").checked, Some(false));
         assert_eq!(find("Delay Compensation").checked, Some(false));
-        assert_eq!(find("Show Console Devices in Rack").checked, Some(true));
         let front = menus(&state(), &keymap);
         let back = front[2].items().next().unwrap();
         assert_eq!(back.checked, Some(false));
