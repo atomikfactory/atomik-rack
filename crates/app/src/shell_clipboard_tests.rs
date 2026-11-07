@@ -402,6 +402,8 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.patch_next",
             "rack.midi_out_port",
             "rack.mod_matrix",
+            "rack.toggle_match",
+            "rack.blind_ab",
             "rack.preview_player",
         ]
     );

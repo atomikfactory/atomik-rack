@@ -30,7 +30,8 @@
 //! * **Initial state.** The first batch after `prepare` or `reset` snaps to the current target
 //!   instead of fading, so a project that loads bypassed starts bypassed.
 //! * **Loudness match.** The wrapper adds one hidden param after the effect's own, `internal.match`
-//!   (a 0/1 toggle, default 0, see [`matched`]). While it is on the K-weighted short-term loudness
+//!   (a 0/1 toggle, default 0, see [`matched`]; like every `internal.` param it is set by the app
+//!   and never stored, so no project or bounce has it on). While it is on the K-weighted short-term loudness
 //!   of the input and of what the effect produced are measured and a slowly smoothed gain is
 //!   applied to the produced signal so both read the same (see [`matching`]). Off, the wrapper
 //!   is bit-identical to one without the switch. The applied gain is published after the

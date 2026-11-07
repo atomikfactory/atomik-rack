@@ -265,6 +265,7 @@ impl RackView {
             fx_mode: 0,
             fx: None,
             meters: Vec::new(),
+            match_db: None,
             scope: crate::modsrc_panel::Scope::new(),
             sample: None,
             analyser: Default::default(),

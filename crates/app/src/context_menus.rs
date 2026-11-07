@@ -55,6 +55,11 @@ pub struct MenuEnable {
     pub midi_out: bool,
     /// Rack: the primary device has a modulation matrix (Modulation Matrix opens it).
     pub mod_matrix: bool,
+    /// Rack: the primary device is an effect with the loudness match (Match Loudness and Blind
+    /// A/B Test work).
+    pub effect: bool,
+    /// Rack: the primary effect has the loudness match on (the item is checked).
+    pub matching: bool,
     /// Rack: the primary device is a note player (Preview Player works).
     pub player: bool,
     /// A player preview runs (the item reads Stop Preview).
@@ -644,6 +649,14 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 Spec::Separator,
                 item("rack.midi_out_port", e.midi_out),
                 item("rack.mod_matrix", e.mod_matrix),
+                Spec::Item {
+                    command: "rack.toggle_match",
+                    arg: None,
+                    label: None,
+                    enabled: e.effect,
+                    checked: Some(e.matching),
+                },
+                item("rack.blind_ab", e.effect),
                 if e.previewing {
                     item("rack.preview_player", e.player || e.previewing)
                         .labelled("Stop Player Preview")
@@ -1376,6 +1389,8 @@ mod tests {
                 "rack.patch_next",
                 "rack.midi_out_port",
                 "rack.mod_matrix",
+                "rack.toggle_match",
+                "rack.blind_ab",
                 "rack.preview_player",
             ]
         );
