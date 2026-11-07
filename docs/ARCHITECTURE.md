@@ -4727,7 +4727,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (494) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (495) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5654,6 +5654,48 @@ Three tools for how the low end carries over to small speakers, club systems and
   3.0103 dB on each channel to give back the pan law. `split_sub::plan` has the details and the level notes. The
   split is 120 Hz; the container's devices are ordinary ones to adjust. The automation lanes of the track are
   dropped by the combine and the status line says so.
+
+### Sound analysis: the Sound Analyst
+
+"Recreate this sound": File > Sound Analyst measures an audio file and proposes a starting patch on a built-in
+synth. The analysis never changes the song; Make Patch is the one undo step.
+
+- **Measurements.** `atomik_dsp::sound_analysis::analyse` mixes the input to mono (the first `MAX_SECONDS`) and
+  works on a grid of `HOP_S` frames that starts where the sound starts. The level curve is the RMS of a `WINDOW_S`
+  window over the loudest frame; the sound starts at `ONSET_LEVEL` and ends at `END_LEVEL`. `Envelope` has the
+  attack (10 % to 90 % of the peak, crossings found between frames), the decay (to within `GAP_FRACTION` of the way
+  to the sustain), the sustain (the mean of the longest plateau: a run of `MIN_PLATEAU_S` that stays within
+  `PLATEAU_DB`, above `SUSTAIN_FLOOR`), the release (to a tenth of the sustain) and `hold_s`, the length of the
+  note. Without a plateau the sustain is 0 and the note is held to the end. `Brightness` follows the spectral
+  centroid of a Hann window of about 40 ms (start, end, level-weighted mean, the time to travel 90 % of the way).
+  `PitchMotion` comes from `atomik_dsp::notes::track_pitch`, the YIN tracker of Audio to Notes without its
+  segmentation; a sound is pitched when half of its frames above `PITCH_GATE` are voiced. The spectrum of
+  `SPECTRUM_FFT` frames (three windows from the peak) gives the peaks (local maxima `PEAK_PROMINENCE` times the
+  median around them), the noise share (the power not within two bins of a peak) and the `HarmonicKind` (pure, all,
+  odd only, inharmonic, noise) with the thresholds `ALIGNED_MIN`, `PURE_BELOW`, `ODD_ONLY_DB` and `NOISE_FROM`.
+  An inharmonic sound has no pitch motion and measures its partials against the lowest strong one. `compare`
+  gives `Distances` between two profiles (decibels, octaves of centroid, semitones) and `Distances::scores`
+  turns them into 0 to 1 scores with `HALF_MATCH`. The decision path uses only the deterministic maths of the
+  crate, so the same samples give the same profile on every platform.
+- **Proposal and fit.** `atomik_render::sound_analyst::propose` is a table of constants and rules: the poly synth
+  on one oscillator for pure, all-harmonic and odd-only sounds (`TRIANGLE_BELOW_DB` picks a triangle over a
+  square), the FM synth on the twin-stack routing for inharmonic ones, and the poly synth as a noise voice
+  (noise at full level, the oscillator a sine four octaves under the note, a high-pass from
+  `NOISE_HIGHPASS_FROM_HZ` of centroid, else a band-pass) for noise and unpitched sounds. The measured times are
+  converted with the exact shape of the synth's envelope (`decay_share`, `release_share`, `attack_ms` take the
+  blur of the measuring window off), the brightness movement becomes a filter envelope, the pitch offset a mod
+  envelope on the pitch (the poly synth) or `pitch.env_amount` (the FM synth), the noise share the noise level.
+  `fit` renders the proposal as an inline patch on its note (`patch_json`, 48 kHz, one voice) with the offline
+  renderer, measures it with `analyse` and corrects the cutoff, and the opening of the filter envelope, by the
+  octaves the centroid is off, divided by the slope the renders so far show (`REFINE_PASSES`), keeping the best.
+- **App and panel.** `AppCore::analyse_sound_file` decodes, analyses and fits on the worker `sound_worker`
+  (`Msg::Sound`; stop, progress and the generation check as in the other workers). `make_sound_patch` is a
+  `CreateInstrument` with the proposal's synth, then one `Command::Batch` of `SetParam` and an `AddClip` with the
+  one note, joined to the creation, so one undo takes it all. `start_sound_match` renders the made patch with the
+  params the device has now; a match keeps those params, and `sound_data` marks it stale when they changed. The
+  panel is `atomik_ui::SoundAnalystView`, which draws and reports through `UiAction::SoundAnalyst`; the shell
+  routes audio files dropped on the open panel to the analysis (nothing is imported behind it) and
+  `ShellRequest::PickSoundFile` asks the platform for one. The result is dropped with the project.
 
 ## 6l. The library
 

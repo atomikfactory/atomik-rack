@@ -9,6 +9,26 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Sound Analyst.** File > Sound Analyst opens a panel that takes an audio file (dropped on it or picked with
+  OPEN FILE) and measures it on a worker thread: the amplitude envelope (the rise from a tenth to nine tenths of the
+  peak, the decay to the sustain, the sustain level, the release and how long the note is held), the brightness over
+  time (the spectral centroid), the pitch over time (the tracker of Audio to Notes; a pitch offset at the start and
+  the time it takes to settle count as a pitch envelope), the harmonic profile (a pure tone, all harmonics, odd
+  harmonics only, inharmonic, noise) and the share of the sound that is noise. The panel draws the level, brightness
+  and pitch curves and prints the numbers. It also proposes a starting patch by rules that are constants in
+  `atomik_render::sound_analyst`: the Poly Synth on one oscillator (sine, saw, square, or triangle when the third
+  harmonic is under -14 dB) for a harmonic sound, the FM Synth for an inharmonic one (a modulator at the ratio of the
+  strongest partial that is not a harmonic), and the Poly Synth as a noise voice for noise or an unpitched sound (a
+  high-pass filter from 2.5 kHz of centroid, else a band-pass). The amp envelope is converted with the exact shape
+  of the synth's envelope, the brightness movement becomes a filter envelope, the pitch movement a pitch envelope
+  and the noise share the noise level. The proposal is rendered on the note of the sound (the key of its
+  fundamental, held for the measured note length), measured again with the same analysis and corrected on the
+  cutoff up to three times; the match meter shows how far each curve of the render is from the sound (decibels,
+  octaves, semitones) with a score from 0 to 100 %. MAKE PATCH adds the patch on a new track with a one-note clip,
+  in one undo step; MATCH renders the patch as it is now (a patch changed by hand), and a match of a patch that was
+  changed afterwards is shown faded. Analysing never changes the song. The project format is unchanged (44) and the
+  command count is 495. Not done: chords, patches for the sampler or the wavetable synth, several candidate synths
+  side by side, effects recognised in the sound, and an audio clip of the song as the source.
 - **Wavetable editor.** A click on a table display of the Wavetable Synth opens a panel for the device's table:
   a list of up to 16 key frames (add a blend, duplicate, delete, move), a box to draw the selected frame in, a
   bar and a dot for the level and phase of each of its first 64 harmonics (the frame is rebuilt by additive

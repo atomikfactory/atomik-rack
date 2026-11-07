@@ -21,7 +21,7 @@ pub mod pitched;
 
 pub use drums::{DrumClass, DrumKit, DrumMap, DrumParams, extract_drum_notes};
 pub use long::{Analysis, extract_in_segments};
-pub use pitched::{PitchParams, extract_pitched_notes};
+pub use pitched::{PitchParams, PitchTrack, extract_pitched_notes, track_pitch};
 
 use crate::det_math::log2_det;
 

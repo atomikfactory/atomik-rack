@@ -303,6 +303,9 @@
 //! - **Bass read.** [`BassReadView`] is the modal panel of "Will the bass read?": a list of the strips (the master
 //!   and the tracks), a meter of how much of the low note a small speaker still plays through its harmonics and the
 //!   verdict; it emits [`UiAction::BassRead`] and the host feeds it a [`BassReadData`].
+//! - **Sound Analyst.** [`SoundAnalystView`] is the modal panel of "recreate this sound": the measured level, brightness
+//!   and pitch curves of an audio file with the numbers, the proposed patch and the distances between the target and
+//!   the patch's render; it emits [`UiAction::SoundAnalyst`] and the host feeds it a [`SoundAnalystData`].
 //! - **Wavetable editor.** [`WavetableView`] is the modal panel of the Wavetable Synth's table: the key frames, a box
 //!   to draw the selected one in, a bar for each harmonic, whole-frame processes, the phase-safe morph and the cleanup
 //!   of a table made from a sample; it emits [`UiAction::Wavetable`] (one commit per gesture) and the host feeds it a
@@ -420,6 +423,7 @@ pub mod sidechain;
 pub mod silence_panel;
 pub mod slice_editor;
 pub mod song_info_panel;
+pub mod sound_analyst_panel;
 pub mod spectrum_eq;
 pub mod step_drag;
 pub mod step_editor;
@@ -513,6 +517,9 @@ pub use seq_panel::SeqButton;
 pub use silence_panel::{SilenceAction, SilenceRow, SilenceValues, SilenceView};
 pub use slice_editor::SliceEditorView;
 pub use song_info_panel::{InfoField, SongInfoAction, SongInfoView};
+pub use sound_analyst_panel::{
+    Curve, Distance, MatchRow, SoundAnalystAction, SoundAnalystData, SoundAnalystView,
+};
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use text_field::{FieldColors, FieldKey, TextField};

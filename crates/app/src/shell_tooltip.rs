@@ -168,6 +168,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.bass_read {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.sound_analyst {
+            return v.help_at(pos);
+        }
         if let Some((v, _)) = &self.wavetable {
             return v.help_at(pos);
         }

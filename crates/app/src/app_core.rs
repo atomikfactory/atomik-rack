@@ -302,6 +302,9 @@ pub struct AppCore<S: EngineSink> {
     repetition: repetition::RepetitionState,
     /// The strip the bass-read panel reads and what it found (see [`bass_read`]).
     bass_read: bass_read::BassReadState,
+    /// The Sound Analyst: the analysed file, its proposed patch and the patch made (see
+    /// [`sound`]).
+    sound: sound::SoundState,
     /// What the wavetable editor read from the device it edits (see `app_core_wavetable.rs`).
     wavetable: wavetable_edit::WavetableState,
     /// The translation lens of the live output (see [`lens`]).
@@ -576,6 +579,7 @@ impl<S: EngineSink> AppCore<S> {
             reference: reference_ops::ReferenceState::new(),
             repetition: repetition::RepetitionState::default(),
             bass_read: bass_read::BassReadState::default(),
+            sound: sound::SoundState::default(),
             wavetable: wavetable_edit::WavetableState::default(),
             lens: lens::LensState::default(),
             zone: zone_ops::ZoneState::new(),
@@ -3949,6 +3953,8 @@ mod lens;
 mod mixcheck;
 #[path = "app_core_repetition.rs"]
 mod repetition;
+#[path = "app_core_sound.rs"]
+mod sound;
 #[path = "app_core_split_sub.rs"]
 mod split_sub;
 #[path = "app_core_wavetable.rs"]
@@ -4034,6 +4040,10 @@ mod energy_tests;
 #[cfg(test)]
 #[path = "app_core_translation_tests.rs"]
 mod translation_tests;
+
+#[cfg(test)]
+#[path = "app_core_sound_tests.rs"]
+mod sound_tests;
 
 #[cfg(test)]
 #[path = "app_core_repetition_tests.rs"]

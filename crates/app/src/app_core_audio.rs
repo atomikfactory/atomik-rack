@@ -588,6 +588,11 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_bass_read(job, *result),
+                Msg::Sound {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_sound(job, *result),
                 Msg::Noted {
                     generation,
                     job,
@@ -654,6 +659,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Checked { .. }
                 | Msg::Energy { .. }
                 | Msg::BassRead { .. }
+                | Msg::Sound { .. }
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
                 | Msg::Scanned { .. }
@@ -1360,6 +1366,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.energy.reset();
         self.repetition.reset();
         self.bass_read.reset();
+        self.sound.reset();
         self.wavetable.reset();
         self.audio.mixcheck.reset();
         self.audio.notes.reset();

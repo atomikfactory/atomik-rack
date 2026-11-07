@@ -83,6 +83,9 @@ pub enum AppCommand {
     /// File ▸ Import MIDI as Song…: a MIDI file as new tracks from the start, with its tempo map,
     /// meter and markers.
     ImportMidiSong,
+    /// File ▸ Sound Analyst…: the panel that measures an audio file and proposes a starting patch
+    /// to recreate it.
+    SoundAnalyst,
     /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
     /// (a file each, or a folder search). Only enabled while some are missing.
     RelinkAudio,
@@ -776,6 +779,7 @@ impl AppCommand {
             AppCommand::ImportAudio => ("file.import_audio", None),
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
+            AppCommand::SoundAnalyst => ("file.sound_analyst", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::CollectFiles => ("file.collect_files", None),
             AppCommand::CollectPreview => ("file.collect_preview", None),
@@ -1135,6 +1139,7 @@ impl AppCommand {
             ("file.import_audio", None) => AppCommand::ImportAudio,
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
+            ("file.sound_analyst", None) => AppCommand::SoundAnalyst,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.collect_files", None) => AppCommand::CollectFiles,
             ("file.collect_preview", None) => AppCommand::CollectPreview,
@@ -2397,6 +2402,7 @@ pub fn menus_with_songs(
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
                 item("Import MIDI\u{2026}", AppCommand::ImportMidi),
                 item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
+                item("Sound Analyst\u{2026}", AppCommand::SoundAnalyst),
                 enabled(
                     "Relink Missing Audio\u{2026}",
                     AppCommand::RelinkAudio,
@@ -3908,6 +3914,7 @@ mod tests {
             AppCommand::ImportAudio,
             AppCommand::ImportMidi,
             AppCommand::ImportMidiSong,
+            AppCommand::SoundAnalyst,
             AppCommand::RelinkAudio,
             AppCommand::CollectFiles,
             AppCommand::CollectPreview,
@@ -4607,6 +4614,7 @@ mod tests {
                 "Import Audio\u{2026}",
                 "Import MIDI\u{2026}",
                 "Import MIDI as Song\u{2026}",
+                "Sound Analyst\u{2026}",
                 "Relink Missing Audio\u{2026}",
                 "Collect Files\u{2026}",
                 "Preview Collect Files",

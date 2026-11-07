@@ -48,6 +48,7 @@ pub mod plugin_pass;
 pub mod plugins;
 pub mod project;
 pub mod samples;
+pub mod sound_analyst;
 pub mod stems;
 pub mod translation;
 pub mod warp;

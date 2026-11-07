@@ -165,6 +165,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<atomik_dsp::bass_read::Reading>, String>>,
     },
+    /// A Sound Analyst job finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::sound_worker`].
+    Sound {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<crate::sound_worker::Outcome>, String>>,
+    },
     /// The mix check finished (`Ok(None)`: it was cancelled), or failed: see
     /// [`crate::mixcheck_worker`].
     Checked {

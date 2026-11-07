@@ -162,7 +162,7 @@ use atomik_ui::keymap::{
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
-use atomik_ui::{BassReadAction, BassReadView};
+use atomik_ui::{BassReadAction, BassReadView, SoundAnalystAction, SoundAnalystView};
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
     ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
@@ -320,6 +320,9 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a reference track (Mixer > Reference > Add Reference
     /// Track), then call [`Shell::add_reference_file`] with the picked path.
     PickReference,
+    /// Show an open-file dialog for the audio file of the Sound Analyst (its OPEN FILE button),
+    /// then call [`Shell::analyse_sound_file`] with the picked path.
+    PickSoundFile,
     /// Open an address in the default browser (Help > Documentation, Report an Issue and the
     /// link of the About box). Only the project's own addresses are ever asked for.
     OpenUrl(&'static str),
@@ -558,6 +561,8 @@ pub struct Shell<B: AudioBackend> {
     repetition: Option<RepetitionView>,
     /// The bass-read panel (Mixer > Will the Bass Read?), while it is open.
     bass_read: Option<BassReadView>,
+    /// The Sound Analyst panel (File > Sound Analyst), while it is open.
+    sound_analyst: Option<SoundAnalystView>,
     /// The wavetable editor (a click on a table display of a Wavetable Synth) while it is open,
     /// with the device it edits.
     wavetable: Option<(WavetableView, DeviceKey)>,
@@ -751,6 +756,7 @@ impl<B: AudioBackend> Shell<B> {
             mixcheck: None,
             repetition: None,
             bass_read: None,
+            sound_analyst: None,
             wavetable: None,
             start_screen: None,
             color_picker: None,
@@ -1554,6 +1560,72 @@ impl<B: AudioBackend> Shell<B> {
             BassReadAction::Stop => self.core.cancel_bass_read(),
         }
         self.sync_bass_read();
+        self.repaint = true;
+    }
+
+    /// Whether the Sound Analyst panel is open.
+    pub fn sound_analyst_open(&self) -> bool {
+        self.sound_analyst.is_some()
+    }
+
+    /// The Sound Analyst panel, while it is open.
+    pub fn sound_analyst_view(&self) -> Option<&SoundAnalystView> {
+        self.sound_analyst.as_ref()
+    }
+
+    /// File > Sound Analyst: opens the panel on what was analysed last.
+    fn open_sound_analyst(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = SoundAnalystView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.sound_data());
+        self.sound_analyst = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open Sound Analyst panel in step with the analysis: its progress and its result.
+    fn sync_sound_analyst(&mut self) {
+        if self.sound_analyst.is_none() {
+            return;
+        }
+        let data = self.core.sound_data();
+        if let Some(view) = &mut self.sound_analyst {
+            view.set_data(data);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// Starts analysing the audio file `path` (the picked or dropped file) and opens the panel
+    /// when it is not open.
+    pub fn analyse_sound_file(&mut self, path: &Path) {
+        if self.sound_analyst.is_none() {
+            self.open_sound_analyst();
+        }
+        // A refusal is already in the status line.
+        let _ = self.core.analyse_sound_file(path);
+        self.sync_sound_analyst();
+    }
+
+    /// What the Sound Analyst panel asked for.
+    fn sound_analyst_action(&mut self, action: SoundAnalystAction) {
+        match action {
+            SoundAnalystAction::Close => {
+                self.core.cancel_sound();
+                self.sound_analyst = None;
+            }
+            SoundAnalystAction::OpenFile => self.pending.push(ShellRequest::PickSoundFile),
+            SoundAnalystAction::Stop => self.core.cancel_sound(),
+            SoundAnalystAction::MakePatch => {
+                let _ = self.core.make_sound_patch();
+            }
+            SoundAnalystAction::Match => {
+                let _ = self.core.start_sound_match();
+            }
+        }
+        self.sync_sound_analyst();
         self.repaint = true;
     }
 
@@ -3083,6 +3155,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.bass_read {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.sound_analyst {
+            v.set_theme(theme.clone());
+        }
         if let Some((v, _)) = &mut self.wavetable {
             v.set_theme(theme.clone());
         }
@@ -3744,6 +3819,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.sound_analyst.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.sound_analyst {
+                v.set_bounds(rect);
+            }
+        }
         if self.wavetable.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some((v, _)) = &mut self.wavetable {
@@ -3979,6 +4060,20 @@ impl<B: AudioBackend> Shell<B> {
     /// that is not a sampler) imports the files as new tracks at the snapped playhead.
     fn file_event(&mut self, window: WindowKind, event: &UiEvent) {
         self.repaint = true;
+        if self.sound_analyst.is_some() {
+            // The open Sound Analyst takes the files: the first audio file is analysed, nothing
+            // is imported behind it.
+            if let UiEvent::FileDrop { paths, .. } = event {
+                match paths
+                    .iter()
+                    .find(|p| !crate::midi_file::is_midi_path(p) && !is_project_item(p))
+                {
+                    Some(path) => self.analyse_sound_file(path),
+                    None => self.notify("Drop an audio file on the panel to analyse it"),
+                }
+            }
+            return;
+        }
         if self.quantize.is_some() {
             // The open quantize panel takes the files: a MIDI file becomes a groove, nothing
             // else is imported behind it.
@@ -4782,6 +4877,31 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::BassRead(a) = action {
                     self.bass_read_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.sound_analyst.is_some() {
+            // The Sound Analyst panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.core.cancel_sound();
+                self.sound_analyst = None;
+                return Vec::new();
+            }
+            let actions = self
+                .sound_analyst
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::SoundAnalyst(a) = action {
+                    self.sound_analyst_action(a);
                 }
             }
             return Vec::new();
@@ -7253,6 +7373,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::SoundAnalyst => {
+                self.open_sound_analyst();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::BassRead => {
                 self.open_bass_read();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -8034,6 +8159,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_export();
         self.sync_masking();
         self.sync_bass_read();
+        self.sync_sound_analyst();
         self.sync_wavetable();
         self.sync_mixcheck();
         self.sync_midi_maps();
@@ -8862,6 +8988,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.bass_read {
             view.paint(canvas);
         }
+        if let Some(view) = &self.sound_analyst {
+            view.paint(canvas);
+        }
         if let Some((view, _)) = &self.wavetable {
             view.paint(canvas);
         }
@@ -9243,6 +9372,10 @@ mod energy_tests;
 #[cfg(test)]
 #[path = "shell_translation_tests.rs"]
 mod translation_tests;
+
+#[cfg(test)]
+#[path = "shell_sound_analyst_tests.rs"]
+mod sound_analyst_tests;
 
 #[cfg(test)]
 #[path = "shell_wavetable_tests.rs"]
