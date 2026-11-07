@@ -986,6 +986,187 @@ fn audio_pasted_at_the_same_rate_is_not_converted() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+fn pointer_down(p: atomik_ui::kurbo::Point) -> UiEvent {
+    UiEvent::PointerDown {
+        pos: p,
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: atomik_ui::Modifiers::NONE,
+        clicks: 1,
+    }
+}
+
+fn pointer_move(p: atomik_ui::kurbo::Point) -> UiEvent {
+    UiEvent::PointerMove {
+        pos: p,
+        modifiers: atomik_ui::Modifiers::NONE,
+    }
+}
+
+fn over(kind: WindowKind, p: atomik_ui::kurbo::Point) -> WindowHit {
+    WindowHit {
+        kind,
+        logical: (p.x, p.y),
+    }
+}
+
+#[test]
+fn clips_dragged_onto_another_songs_window_are_pasted_there_with_their_audio_at_its_rate() {
+    use atomik_ui::kurbo::{Point, Vec2};
+    let (mut w, dir, hash) = copied_to_a_song_at(44_100, "drag-clips");
+    let (first, second) = (DocId::FIRST, w.ids()[1]);
+    w.song_mut(second)
+        .unwrap()
+        .handle(&UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 700.0)));
+    // Take the copy back out of both clipboards: the drag must not need it.
+    for id in [first, second] {
+        w.song_mut(id).unwrap().core_mut().clipboard_mut().clear();
+    }
+    // Press on the clip in the first song and drag it away.
+    let clip = w.song(first).unwrap().core().doc().song.tracks[0].lanes[0].clips[0].clone();
+    let rect = w
+        .song(first)
+        .unwrap()
+        .core()
+        .arrangement()
+        .clip_rect(clip.id)
+        .unwrap();
+    let from = Point::new(rect.center().x, rect.center().y);
+    {
+        let shell = w.song_mut(first).unwrap();
+        shell.handle(&pointer_down(from));
+        shell.handle(&pointer_move(from + Vec2::new(40.0, 0.0)));
+        shell.handle(&pointer_move(from + Vec2::new(400.0, 0.0)));
+        assert_eq!(shell.song_drag(), Some(crate::app_core::Pane::Arrangement));
+    }
+    // Let go over the arrangement of the second song.
+    let layout_song = w
+        .song(second)
+        .unwrap()
+        .layout()
+        .song
+        .expect("the lower pane shows");
+    let target = Point::new(layout_song.x0 + 500.0, layout_song.y0 + 80.0);
+    assert!(w.drag_to_song(first, second, over(WindowKind::Main, target)));
+    w.song_mut(second).unwrap().core_mut().wait_background();
+    let second_core = w.song(second).unwrap().core();
+    assert!(
+        second_core.last_rejection().is_none(),
+        "{:?}",
+        second_core.last_rejection()
+    );
+
+    // The second song has the clip, converted to its rate; it is one undo step.
+    let pasted: Vec<_> = second_core
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| &l.clips))
+        .filter_map(|c| match &c.content {
+            atomik_model::ClipContent::Audio(a) => Some(a.asset.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pasted.len(), 1, "{pasted:?}");
+    assert_ne!(pasted[0], hash);
+    assert_eq!(second_core.doc().assets[&pasted[0]].sample_rate, 44_100);
+    // The first song still has its clip where it was and nothing changed there but the drag's
+    // own undo-neutral steps; neither clipboard was filled.
+    let first_core = w.song(first).unwrap().core();
+    let after = &first_core.doc().song.tracks[0].lanes[0].clips[0];
+    assert_eq!((after.start, after.length), (clip.start, clip.length));
+    assert!(first_core.clipboard().get().is_none());
+    assert!(w.song(second).unwrap().core().clipboard().get().is_none());
+    assert_eq!(w.song(first).unwrap().song_drag(), None, "the drag ended");
+    w.song_mut(second).unwrap().core_mut().undo();
+    let undone = w.song(second).unwrap().core();
+    assert!(
+        undone
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .all(|t| t.lanes.iter().all(|l| l.clips.is_empty())),
+        "one undo takes the whole drop back"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn devices_dragged_onto_another_songs_rack_are_pasted_there_and_stay_in_the_first() {
+    use atomik_ui::kurbo::{Point, Vec2};
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let first = DocId::FIRST;
+    // A tall window, so the synth at the end of the rack is on the screen.
+    w.song_mut(first)
+        .unwrap()
+        .handle(&UiEvent::Resize(atomik_ui::kurbo::Size::new(
+            1000.0, 2400.0,
+        )));
+    let second = w.new_song();
+    w.song_mut(second)
+        .unwrap()
+        .handle(&UiEvent::Resize(atomik_ui::kurbo::Size::new(
+            1000.0, 2400.0,
+        )));
+    let before = devices(w.song(second).unwrap());
+    // Press on the plate of the synth in the first song and drag it off the window.
+    let origin = |s: &Shell<Counting>| {
+        s.pane_rect(crate::app_core::Pane::Rack)
+            .map_or(Point::ORIGIN, |(_, r)| r.origin())
+    };
+    let plate = {
+        let s = w.song(first).unwrap();
+        let p = s
+            .core()
+            .view()
+            .plate_center(&DeviceKey("lead".into()))
+            .unwrap();
+        p + origin(s).to_vec2()
+    };
+    {
+        let shell = w.song_mut(first).unwrap();
+        shell.handle(&pointer_down(plate));
+        shell.handle(&pointer_move(plate + Vec2::new(20.0, 90.0)));
+        shell.handle(&pointer_move(plate + Vec2::new(-200.0, 200.0)));
+        assert_eq!(shell.song_drag(), Some(crate::app_core::Pane::Rack));
+    }
+    let rack = w
+        .song(second)
+        .unwrap()
+        .pane_rect(crate::app_core::Pane::Rack)
+        .unwrap()
+        .1;
+    let target = Point::new(rack.x0 + 400.0, rack.y0 + 300.0);
+    assert!(w.drag_to_song(first, second, over(WindowKind::Main, target)));
+    assert_eq!(devices(w.song(second).unwrap()), before + 1);
+    assert_eq!(
+        devices(w.song(first).unwrap()),
+        1,
+        "the first song keeps its synth"
+    );
+    // One undo step in the second song.
+    w.song_mut(second).unwrap().core_mut().undo();
+    assert_eq!(devices(w.song(second).unwrap()), before);
+}
+
+#[test]
+fn a_drag_that_carries_nothing_or_stays_in_one_song_is_not_taken() {
+    use atomik_ui::kurbo::Point;
+    let (mut w, _backend) = workspace();
+    let second = w.new_song();
+    let at = over(WindowKind::Main, Point::new(500.0, 300.0));
+    // No drag is in progress.
+    assert!(!w.drag_to_song(DocId::FIRST, second, at));
+    assert!(w.song_mut(DocId::FIRST).unwrap().take_song_drag().is_none());
+    // The same song is no other song; an unknown one is none.
+    assert!(!w.drag_to_song(DocId::FIRST, DocId::FIRST, at));
+    assert!(!w.drag_to_song(DocId::FIRST, DocId(77), at));
+    assert!(!w.files_to_song(DocId::FIRST, second, at, false));
+    assert!(w.file_drag_paths(DocId::FIRST).is_none());
+}
+
 #[test]
 fn a_song_saved_in_one_window_shows_in_the_recent_list_of_every_song() {
     let (mut w, _backend) = workspace();

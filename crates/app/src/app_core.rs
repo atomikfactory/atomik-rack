@@ -3713,6 +3713,9 @@ mod rate;
 #[path = "app_core_rate_paste.rs"]
 mod rate_paste;
 
+#[path = "app_core_song_drag.rs"]
+mod song_drag;
+
 #[path = "app_core_autorec.rs"]
 mod autorec;
 
