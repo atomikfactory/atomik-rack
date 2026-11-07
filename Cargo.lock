@@ -358,6 +358,7 @@ dependencies = [
  "atomik-core",
  "atomik-device-sdk",
  "atomik-devices",
+ "atomik-dsp",
  "atomik-testkit",
  "proptest",
  "rtrb",
