@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 28, "{ids:?}");
+    assert_eq!(ids.len(), 29, "{ids:?}");
     ids
 }
 

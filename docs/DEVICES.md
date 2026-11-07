@@ -3985,8 +3985,9 @@ to 4 are bells, band 5 is a high shelf. The param ids run band by band (`band1.o
 | `channel` | 0 to 2: stereo, mid, side | 0 | choice |
 
 Shared: `output` (-24 to 24 dB, default 0, id 55), `delta` (0 or 1, default 0, id 56: listen to what the
-bands take out), `bypass` (0 or 1, id 57, see [Effect bypass](#effect-bypass)) and the never-stored
-`internal.analyser_live` (0 or 1, id 58) that the rack view sets for the panels on screen. Frequencies, Q, ratio,
+bands take out), `bypass` (0 or 1, id 57, see [Effect bypass](#effect-bypass)), the never-stored
+`internal.analyser_live` (0 or 1, id 58) that the rack view sets for the panels on screen, and the hidden
+never-stored `internal.match` (id 59) of the loudness match. Frequencies, Q, ratio,
 attack and release use the exponential taper.
 
 ### Behaviour (as built)
