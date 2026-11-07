@@ -150,6 +150,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.masking {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.mixcheck {
+            return v.help_at(pos);
+        }
         if let Some((v, _)) = &self.color_picker {
             return v.help_at(pos);
         }
