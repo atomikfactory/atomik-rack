@@ -3179,24 +3179,9 @@ impl RackView {
                         return out;
                     }
                     if let Some(path) = library_drop::rack_item(paths)
-                        && self.rack_area().contains(*pos)
+                        && let Some((container, slot)) =
+                            self.drop_slot_at(self.patch_insert_point(paths, *pos), doc)
                     {
-                        let none = vec![false; self.devices.len()];
-                        let at = self.patch_insert_point(paths, *pos);
-                        let dp = self.drop_point(self.view_to_rack(at), &none);
-                        let index = self.slot_index(doc, &dp, &[]);
-                        // Inside a container there is one column: the index counts its devices.
-                        let column = if self.scope.is_empty() { dp.column } else { 0 };
-                        // Dropped in the frame of an unfolded container it lands inside it.
-                        let rp = self.view_to_rack(at);
-                        let frame = self.frame_at(rp, &[]).map(|f| f.container.clone());
-                        let (container, slot) = match frame {
-                            Some(c) => {
-                                let (index, _, _) = self.inside_drop(&c, rp, &none);
-                                (Some(c), RackSlot { column: 0, index })
-                            }
-                            None => (self.scope_path(), RackSlot { column, index }),
-                        };
                         out.push(UiAction::InsertLibrary {
                             path: path.clone(),
                             container,
@@ -3221,6 +3206,44 @@ impl RackView {
             }
         }
         out
+    }
+
+    /// Where devices dropped at the view position `pos` would go: the container they land in
+    /// (`None`: the scope the rack shows) and the slot there. `None` outside the rack area.
+    pub fn drop_slot_at(&self, pos: Point, doc: &RackDoc) -> Option<(Option<DeviceKey>, RackSlot)> {
+        if !self.rack_area().contains(pos) {
+            return None;
+        }
+        let none = vec![false; self.devices.len()];
+        let rp = self.view_to_rack(pos);
+        let dp = self.drop_point(rp, &none);
+        let index = self.slot_index(doc, &dp, &[]);
+        // Inside a container there is one column: the index counts its devices.
+        let column = if self.scope.is_empty() { dp.column } else { 0 };
+        // Dropped in the frame of an unfolded container it lands inside it.
+        let frame = self.frame_at(rp, &[]).map(|f| f.container.clone());
+        Some(match frame {
+            Some(c) => {
+                let (index, _, _) = self.inside_drop(&c, rp, &none);
+                (Some(c), RackSlot { column: 0, index })
+            }
+            None => (self.scope_path(), RackSlot { column, index }),
+        })
+    }
+
+    /// True while devices are being dragged to another place of the rack: the gesture a
+    /// release over another song's window turns into a copy there (the press has travelled
+    /// or not; the pointer is still down).
+    pub fn carries_devices(&self) -> bool {
+        matches!(self.drag, Drag::Move { .. })
+    }
+
+    /// Ends the drag of devices without moving them (the pointer is released elsewhere).
+    pub fn drop_carried(&mut self) {
+        if self.carries_devices() {
+            self.drag = Drag::None;
+            self.repaint = true;
+        }
     }
 
     /// The sampler panel (a front-side, unfolded device that takes samples) at a view
