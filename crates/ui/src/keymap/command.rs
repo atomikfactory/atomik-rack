@@ -1125,6 +1125,13 @@ const COMMANDS: &[CommandDef] = &[
         G::Mixer,
         C::Mixer,
     ),
+    cmd(
+        "mixer.kick_bass_check",
+        "Kick and Bass Check",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
     cmd("mixer.link_faders", "Link Faders", G::Mixer, C::Global).menu(),
     cmd("mixer.meter_mode", "Meter Mode", G::Mixer, C::Global)
         .arg(METER_MODE_ARGS)

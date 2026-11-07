@@ -316,6 +316,9 @@ pub enum AppCommand {
     /// Mixer > Stop Routing Group: the group `id` (`mixer.unroute_vca` with the id as its
     /// argument), or the groups the selected strips are in, stop playing into their bus.
     UnrouteVca(Option<u32>),
+    /// Mixer > Kick and Bass Check: opens the panel that checks how a kick track and a bass
+    /// track add up in the sub range and offers fixes.
+    KickBassCheck,
     /// Mixer > Store Snapshot: the mix as a new snapshot (named `A`, `B`, `1`, ...).
     StoreSnapshot,
     /// Mixer > Update Snapshot: overwrites a snapshot with the mix (`mixer.update_snapshot`, the
@@ -837,6 +840,7 @@ impl AppCommand {
             | AppCommand::RouteVca(Some(_))
             | AppCommand::UnrouteVca(Some(_)) => return None,
             AppCommand::RemoveFromVca => ("mixer.remove_from_vca", None),
+            AppCommand::KickBassCheck => ("mixer.kick_bass_check", None),
             AppCommand::StoreSnapshot => ("mixer.store_snapshot", None),
             AppCommand::UpdateSnapshot(None) => ("mixer.update_snapshot", None),
             AppCommand::RecallSnapshot(None) => ("mixer.recall_snapshot", None),
@@ -1149,6 +1153,7 @@ impl AppCommand {
                 return id.parse().ok().map(|id| AppCommand::AddToVca(Some(id)));
             }
             ("mixer.remove_from_vca", None) => AppCommand::RemoveFromVca,
+            ("mixer.kick_bass_check", None) => AppCommand::KickBassCheck,
             ("mixer.store_snapshot", None) => AppCommand::StoreSnapshot,
             ("mixer.update_snapshot", None) => AppCommand::UpdateSnapshot(None),
             ("mixer.recall_snapshot", None) => AppCommand::RecallSnapshot(None),
@@ -2829,6 +2834,12 @@ pub fn menus_with_songs(
                 MenuEntry::Separator,
                 enabled("Macros\u{2026}", AppCommand::MacroPanel, true),
                 enabled("New Macro Bank", AppCommand::NewMacroBank, true),
+                MenuEntry::Separator,
+                enabled(
+                    "Kick and Bass Check\u{2026}",
+                    AppCommand::KickBassCheck,
+                    true,
+                ),
             ],
         },
         Menu {
@@ -3676,6 +3687,7 @@ mod tests {
             AppCommand::ClearMidiMaps,
             AppCommand::MacroPanel,
             AppCommand::NewMacroBank,
+            AppCommand::KickBassCheck,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
             AppCommand::CreatePlayer,
@@ -4426,7 +4438,8 @@ mod tests {
                 "Import MIDI Mapping Preset\u{2026}",
                 "Clear MIDI Mappings",
                 "Macros\u{2026}",
-                "New Macro Bank"
+                "New Macro Bank",
+                "Kick and Bass Check\u{2026}"
             ]
         );
         assert_eq!(

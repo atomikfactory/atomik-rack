@@ -251,6 +251,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Clear MIDI Mappings", None),
             ("Macros\u{2026}", None),
             ("New Macro Bank", None),
+            ("Kick and Bass Check\u{2026}", None),
         ]
     );
     assert!(model[4].entries.contains(&MenuEntry::Separator));

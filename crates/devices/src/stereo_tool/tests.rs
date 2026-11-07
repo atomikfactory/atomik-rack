@@ -56,6 +56,8 @@ fn descriptor_validates() {
             "low_bypass",
             "balance",
             "mono",
+            "rotate",
+            "rotate_hz",
             "bypass",
         ],
         &["in_l", "in_r", "out_l", "out_r"],
@@ -200,4 +202,58 @@ fn non_finite_input_is_treated_as_silence() {
     h.set_param("width", 1.5);
     let (l, r) = run(&mut h, |_| f32::NAN, |_| f32::INFINITY, 4);
     assert!(l.iter().chain(&r).all(|x| *x == 0.0));
+}
+
+fn tone(hz: f32) -> impl Fn(usize) -> f32 {
+    move |i| 0.5 * (2.0 * std::f32::consts::PI * hz * i as f32 / SR as f32).sin()
+}
+
+#[test]
+fn rotation_at_zero_is_the_input_bit_for_bit() {
+    let mut h = tool();
+    h.set_param("rotate", 0.0);
+    h.set_param("rotate_hz", 60.0);
+    let (l, r) = run(&mut h, tone(55.0), |i| noise(i, 3), 40);
+    let want_l: Vec<f32> = (0..l.len()).map(tone(55.0)).collect();
+    let want_r: Vec<f32> = (0..r.len()).map(|i| noise(i, 3)).collect();
+    assert_eq!((l, r), (want_l, want_r));
+}
+
+#[test]
+fn rotation_at_180_is_a_polarity_inversion_of_both_channels() {
+    let mut h = tool();
+    h.set_param("rotate", 180.0);
+    let (l, r) = run(&mut h, tone(55.0), tone(80.0), 20);
+    for i in 0..l.len() {
+        assert_eq!(l[i], -tone(55.0)(i));
+        assert_eq!(r[i], -tone(80.0)(i));
+    }
+}
+
+#[test]
+fn rotation_turns_the_phase_and_keeps_the_level() {
+    let mut h = tool();
+    h.set_param("rotate", 90.0);
+    h.set_param("rotate_hz", 100.0);
+    let (l, _) = run(&mut h, tone(100.0), tone(100.0), 400);
+    let n = l.len();
+    // A sine turned by 90 degrees at its own frequency is a cosine of the same size.
+    let want = |i: usize| -0.5 * (2.0 * std::f32::consts::PI * 100.0 * i as f32 / SR as f32).cos();
+    let err = (n - 4_000..n)
+        .map(|i| (l[i] - want(i)).abs())
+        .fold(0.0f32, f32::max);
+    assert!(err < 0.01, "{err}");
+}
+
+#[test]
+fn rotation_agrees_with_the_analysis_rotator() {
+    let mut h = tool();
+    h.set_param("rotate", 70.0);
+    h.set_param("rotate_hz", 150.0);
+    let (l, _) = run(&mut h, |i| noise(i, 9), |i| noise(i, 9), 30);
+    let mut r = atomik_dsp::PhaseRotator::new();
+    r.set(70.0, 150.0, SR as f32);
+    for (i, got) in l.iter().enumerate() {
+        assert_eq!(*got, r.process(noise(i, 9)));
+    }
 }

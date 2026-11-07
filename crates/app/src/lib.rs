@@ -36,6 +36,7 @@ pub(crate) mod instrument_import;
 pub mod interface_tab;
 pub mod keyboard_tab;
 pub mod keymap_store;
+pub mod kick_bass;
 pub mod library_store;
 pub mod logging;
 pub mod master_keyboard;

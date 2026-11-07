@@ -651,6 +651,9 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The kick and bass check panel ([`crate::KickBassView`]) asks for something: pick a track,
+    /// run or stop the check, apply a fix, or close.
+    KickBass(crate::kick_bass_panel::KickBassAction),
     /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
     /// restore one, protect one, or close.
     Versions(crate::versions_panel::VersionsAction),
