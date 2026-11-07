@@ -182,6 +182,8 @@ enum Hit {
     DuckPlot(usize),
     /// The LEARN button of a Sidechain Tool panel.
     DuckLearn(usize),
+    /// A table display of a wavetable synth panel: a click opens the table editor.
+    TableEdit(usize),
     /// The TUNER button of an audio track panel.
     TunerButton(usize),
     /// A button of the Character preset matrix (device index, preset 0..16).
@@ -256,6 +258,7 @@ impl Hit {
             | Hit::Resonance(i, _)
             | Hit::DuckPlot(i)
             | Hit::DuckLearn(i)
+            | Hit::TableEdit(i)
             | Hit::TunerButton(i)
             | Hit::Preset(i, _)
             | Hit::PresetGrid(i)
@@ -1976,6 +1979,11 @@ impl RackView {
                             let hit = Hit::Player(i, PlayerBtn::FromClip);
                             tree.add(dn, kc.from_clip + off, hit, false);
                         }
+                        if let Some(w) = d.spec.wavetable {
+                            for r in w.displays {
+                                tree.add(dn, r + off, Hit::TableEdit(i), false);
+                            }
+                        }
                         if let Some(fx) = d.spec.fx {
                             if matches!(fx.kind, FxKind::Eq | FxKind::DynamicEq) {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
@@ -2240,6 +2248,20 @@ impl RackView {
             self.rack_to_view(Point::new(r.x1, r.y1)),
         );
         Some(Rect::new(a.x, a.y, b.x, b.y))
+    }
+
+    /// Centre of the table display of oscillator `osc` (0 or 1) of a wavetable synth panel
+    /// (logical view coordinates), front side only: a click there opens the table editor.
+    pub fn table_display_center(&self, key: &DeviceKey, osc: usize) -> Option<Point> {
+        if self.flip != Flip::Front {
+            return None;
+        }
+        let d = &self.devices[self.device_index(key)?];
+        if d.folded {
+            return None;
+        }
+        let r = d.spec.wavetable?.displays.get(osc).copied()?;
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// Centre of the FROM CLIP button of a Key & Chord panel (logical view coordinates), when it
@@ -3856,6 +3878,10 @@ impl RackView {
             (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
             (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
             (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
+            (Hit::TableEdit(i), PointerButton::Primary) => {
+                self.select(i, out);
+                out.push(UiAction::EditWavetable(self.devices[i].key.clone()));
+            }
             (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
             (h @ (Hit::IoClip(..) | Hit::IoHeader(_)), PointerButton::Primary) => self.io_down(h),
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
@@ -3895,6 +3921,7 @@ impl RackView {
                 | Hit::Resonance(i, _)
                 | Hit::DuckPlot(i)
                 | Hit::DuckLearn(i)
+                | Hit::TableEdit(i)
                 | Hit::Preview(i)
                 | Hit::TunerButton(i),
                 _,

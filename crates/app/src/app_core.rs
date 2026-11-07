@@ -302,6 +302,8 @@ pub struct AppCore<S: EngineSink> {
     repetition: repetition::RepetitionState,
     /// The strip the bass-read panel reads and what it found (see [`bass_read`]).
     bass_read: bass_read::BassReadState,
+    /// What the wavetable editor read from the device it edits (see `app_core_wavetable.rs`).
+    wavetable: wavetable_edit::WavetableState,
     /// The translation lens of the live output (see [`lens`]).
     lens: lens::LensState,
     /// The decision zone: readings of the mix and the references (see `app_core_zone.rs`).
@@ -574,6 +576,7 @@ impl<S: EngineSink> AppCore<S> {
             reference: reference_ops::ReferenceState::new(),
             repetition: repetition::RepetitionState::default(),
             bass_read: bass_read::BassReadState::default(),
+            wavetable: wavetable_edit::WavetableState::default(),
             lens: lens::LensState::default(),
             zone: zone_ops::ZoneState::new(),
             clip_preview: None,
@@ -3948,6 +3951,8 @@ mod mixcheck;
 mod repetition;
 #[path = "app_core_split_sub.rs"]
 mod split_sub;
+#[path = "app_core_wavetable.rs"]
+mod wavetable_edit;
 
 #[path = "app_core_versions.rs"]
 mod versions;
@@ -3989,6 +3994,10 @@ mod sample_edit_tests;
 #[cfg(test)]
 #[path = "app_core_sampling_tests.rs"]
 mod sampling_tests;
+
+#[cfg(test)]
+#[path = "app_core_wavetable_tests.rs"]
+mod wavetable_tests;
 
 #[cfg(test)]
 #[path = "app_core_takes_tests.rs"]

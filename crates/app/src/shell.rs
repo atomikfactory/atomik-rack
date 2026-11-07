@@ -175,6 +175,7 @@ use atomik_ui::{
     SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem, VersionsAction,
     VersionsView, WarpAction, WarpValues, WarpView, ZoneAction, ZoneView,
 };
+use atomik_ui::{WavetableAction, WavetableView};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -557,6 +558,9 @@ pub struct Shell<B: AudioBackend> {
     repetition: Option<RepetitionView>,
     /// The bass-read panel (Mixer > Will the Bass Read?), while it is open.
     bass_read: Option<BassReadView>,
+    /// The wavetable editor (a click on a table display of a Wavetable Synth) while it is open,
+    /// with the device it edits.
+    wavetable: Option<(WavetableView, DeviceKey)>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -747,6 +751,7 @@ impl<B: AudioBackend> Shell<B> {
             mixcheck: None,
             repetition: None,
             bass_read: None,
+            wavetable: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -1549,6 +1554,76 @@ impl<B: AudioBackend> Shell<B> {
             BassReadAction::Stop => self.core.cancel_bass_read(),
         }
         self.sync_bass_read();
+        self.repaint = true;
+    }
+
+    /// Whether the wavetable editor is open.
+    pub fn wavetable_open(&self) -> bool {
+        self.wavetable.is_some()
+    }
+
+    /// The wavetable editor, while it is open.
+    pub fn wavetable_view(&self) -> Option<&WavetableView> {
+        self.wavetable.as_ref().map(|(v, _)| v)
+    }
+
+    /// A click on a table display: opens the editor on that Wavetable Synth.
+    fn open_wavetable_editor(&mut self, device: DeviceKey) {
+        let Some(data) = self.core.wavetable_data(&device) else {
+            return;
+        };
+        let theme = self.core.view().theme().clone();
+        let mut view = WavetableView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(data);
+        self.wavetable = Some((view, device));
+        self.repaint = true;
+    }
+
+    /// Keeps the open wavetable editor in step with the document (undo, redo, a new sample).
+    fn sync_wavetable(&mut self) {
+        let Some((_, device)) = &self.wavetable else {
+            return;
+        };
+        let device = device.clone();
+        match self.core.wavetable_data(&device) {
+            Some(data) => {
+                if let Some((view, _)) = &mut self.wavetable {
+                    view.set_data(data);
+                    if view.needs_repaint() {
+                        self.repaint = true;
+                    }
+                }
+            }
+            // The device was removed.
+            None => self.close_wavetable_editor(),
+        }
+    }
+
+    fn close_wavetable_editor(&mut self) {
+        self.wavetable = None;
+        self.core.release_wavetable();
+        self.repaint = true;
+    }
+
+    /// What the wavetable editor asked for.
+    fn wavetable_action(&mut self, action: WavetableAction) {
+        let Some((_, device)) = &self.wavetable else {
+            return;
+        };
+        let device = device.clone();
+        match action {
+            WavetableAction::Close => self.close_wavetable_editor(),
+            WavetableAction::Commit { keys, phase_safe } => {
+                if let Err(e) = self.core.commit_wavetable(&device, &keys, phase_safe) {
+                    self.core.report_wavetable(format!("table: {e}"));
+                }
+            }
+            WavetableAction::CutCycles => self.core.cut_wavetable_cycles(&device),
+            WavetableAction::UseOnOsc1 => self.core.wavetable_use_on_osc1(&device),
+        }
+        self.sync_wavetable();
         self.repaint = true;
     }
 
@@ -3008,6 +3083,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.bass_read {
             v.set_theme(theme.clone());
         }
+        if let Some((v, _)) = &mut self.wavetable {
+            v.set_theme(theme.clone());
+        }
         if let Some((v, _)) = &mut self.color_picker {
             v.set_theme(theme.clone());
         }
@@ -3663,6 +3741,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.bass_read.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.bass_read {
+                v.set_bounds(rect);
+            }
+        }
+        if self.wavetable.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some((v, _)) = &mut self.wavetable {
                 v.set_bounds(rect);
             }
         }
@@ -4773,6 +4857,32 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::Versions(a) = action {
                     self.versions_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.wavetable.is_some() {
+            // The wavetable editor takes every event; Esc cancels a stroke, else closes it.
+            self.repaint = true;
+            let dragging = self.wavetable.as_ref().is_some_and(|(v, _)| v.dragging());
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+                && !dragging
+            {
+                self.close_wavetable_editor();
+                return Vec::new();
+            }
+            let actions = self
+                .wavetable
+                .as_mut()
+                .map(|(v, _)| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Wavetable(a) = action {
+                    self.wavetable_action(a);
                 }
             }
             return Vec::new();
@@ -6165,6 +6275,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.ui_changed();
                 }
                 UiAction::PickColor(target) => self.open_color_picker(target.clone()),
+                UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {
@@ -7923,6 +8034,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_export();
         self.sync_masking();
         self.sync_bass_read();
+        self.sync_wavetable();
         self.sync_mixcheck();
         self.sync_midi_maps();
         self.sync_macros();
@@ -8750,6 +8862,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.bass_read {
             view.paint(canvas);
         }
+        if let Some((view, _)) = &self.wavetable {
+            view.paint(canvas);
+        }
         if let Some((view, _)) = &self.color_picker {
             view.paint(canvas);
         }
@@ -9128,6 +9243,10 @@ mod energy_tests;
 #[cfg(test)]
 #[path = "shell_translation_tests.rs"]
 mod translation_tests;
+
+#[cfg(test)]
+#[path = "shell_wavetable_tests.rs"]
+mod wavetable_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]

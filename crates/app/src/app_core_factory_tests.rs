@@ -242,11 +242,12 @@ fn an_unreadable_manifest_still_opens_the_folder_without_marks() {
 
 use super::factory_build::examples::{EXAMPLES, ExampleDef, build_example, project_path};
 use super::factory_build::kits::{Built as KitBuilt, MAX_SECONDS, RATE, key_of, render_hit};
+use super::factory_build::tables::{TableDef, table_audio, table_keys};
 use super::factory_build::write_examples;
 use super::factory_build::{
-    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, KITS, KitDef, clip_notes,
-    clip_path, clip_text, container_path, container_text, item_text, manifest_text, marks,
-    patch_path, write_all,
+    AUTHOR, CLIPS, CONTAINERS, ClipDef, ContainerDef, DEFS, DUCK, Def, KITS, KitDef, TABLES,
+    clip_notes, clip_path, clip_text, container_path, container_text, item_text, manifest_text,
+    marks, patch_path, write_all,
 };
 use super::patch_preview_ops::preview_doc;
 use atomik_audio_file::{AudioData, content_hash, read_wav_f32, write_wav_f32};
@@ -269,6 +270,10 @@ fn patch_file(def: &Def) -> PathBuf {
 
 fn kit_file(kit: &KitDef) -> PathBuf {
     shipped().join(patch_path(kit.name))
+}
+
+fn table_file(def: &TableDef) -> PathBuf {
+    shipped().join(patch_path(def.name))
 }
 
 fn container_file(def: &ContainerDef) -> PathBuf {
@@ -354,6 +359,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
         DEFS.iter()
             .map(|d| d.name)
             .chain(KITS.iter().map(|k| k.name))
+            .chain(TABLES.iter().map(|t| t.name))
             .collect(),
     );
     unique(CONTAINERS.iter().map(|c| c.name).collect());
@@ -370,6 +376,8 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
         .map(|d| format!("{}.atomikpatch", d.name))
         .chain(KITS.iter().map(|k| format!("{}.atomikpatch", k.name)))
         .chain(KITS.iter().map(|k| k.name.to_owned()))
+        .chain(TABLES.iter().map(|t| format!("{}.atomikpatch", t.name)))
+        .chain(TABLES.iter().map(|t| t.name.to_owned()))
         .collect();
     patches.sort();
     assert_eq!(names_in(&shipped().join("Patches")), patches);
@@ -381,6 +389,15 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
         let mut wanted: Vec<String> = snapshot.assets.keys().map(|h| format!("{h}.wav")).collect();
         wanted.sort();
         assert_eq!(names_in(&folder.join("Audio")), wanted, "{}", kit.name);
+    }
+    for def in TABLES {
+        let folder = shipped().join("Patches").join(def.name);
+        assert_eq!(names_in(&folder), ["Audio"], "{}", def.name);
+        let text = std::fs::read_to_string(table_file(def)).unwrap();
+        let snapshot = load_device_item(&text, &default_registry()).unwrap();
+        let mut wanted: Vec<String> = snapshot.assets.keys().map(|h| format!("{h}.wav")).collect();
+        wanted.sort();
+        assert_eq!(names_in(&folder.join("Audio")), wanted, "{}", def.name);
     }
     let mut containers: Vec<String> = CONTAINERS
         .iter()
@@ -410,7 +427,7 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     let marks = marks();
     assert_eq!(
         marks.len(),
-        DEFS.len() + KITS.len() + CONTAINERS.len() + CLIPS.len() + EXAMPLES.len()
+        DEFS.len() + KITS.len() + TABLES.len() + CONTAINERS.len() + CLIPS.len() + EXAMPLES.len()
     );
     for mark in marks {
         let (mut tags, mut categories, mut author) = (Vec::new(), Vec::new(), String::new());
@@ -429,6 +446,9 @@ fn every_table_row_has_its_file_and_a_manifest_entry_and_the_folders_hold_nothin
     }
     for kit in KITS {
         assert!(!kit.sound.is_empty());
+    }
+    for def in TABLES {
+        assert!(!def.sound.is_empty());
     }
     for def in CONTAINERS {
         assert!(!def.sound.is_empty());
@@ -897,6 +917,140 @@ fn a_clip_file_that_is_not_an_atomik_clip_is_refused_by_the_reader_the_writer_us
     assert!(result.is_err());
 }
 
+// --------------------------------------------------------------------------------- drawn tables
+
+#[test]
+fn every_drawn_table_is_a_wavetable_patch_with_its_baked_table_beside_it() {
+    let registry = default_registry();
+    assert_eq!(TABLES.len(), 3);
+    for def in TABLES {
+        let text = std::fs::read_to_string(table_file(def)).unwrap();
+        let snapshot = load_device_item(&text, &registry).unwrap();
+        assert_eq!(ItemKind::of(&snapshot), ItemKind::Patch, "{}", def.name);
+        let device = snapshot.single_device().unwrap();
+        assert_eq!(device.type_id, "atomik.wavetable-synth", "{}", def.name);
+        assert_eq!(device.patch_name, def.name);
+        assert_eq!(device.zones.len(), 1, "{}: the one table", def.name);
+        assert_eq!(snapshot.assets.len(), 1, "{}", def.name);
+        for &(param, value) in def.params {
+            assert_eq!(
+                device.params.get(param).copied(),
+                Some(value),
+                "{}: {param}",
+                def.name
+            );
+        }
+        assert_eq!(
+            device.params.get("osc1.table").copied(),
+            Some(12.0),
+            "{}: oscillator 1 plays the drawn table",
+            def.name
+        );
+        let zone = &device.zones[0];
+        let meta = &snapshot.assets[&zone.asset];
+        let aligned = if def.phase_safe { "aligned" } else { "plain" };
+        assert_eq!(
+            meta.original_name,
+            format!("Table frames {} {aligned}", def.keys.len()),
+            "{}: the name the editor reads the key frames back by",
+            def.name
+        );
+        assert_eq!((meta.channels, meta.sample_rate), (1, RATE), "{}", def.name);
+        assert_eq!(meta.frames, 16 * 2048, "{}: sixteen frames", def.name);
+        assert_eq!((zone.start, zone.end), (0, meta.frames), "{}", def.name);
+        let audio = shipped().join("Patches").join(def.name).join("Audio");
+        let data = read_wav_f32(&audio.join(format!("{}.wav", zone.asset))).unwrap();
+        assert_eq!(
+            content_hash(&data),
+            zone.asset,
+            "{}: the id is the content",
+            def.name
+        );
+        assert!(
+            data.channels[0].iter().all(|s| s.is_finite()),
+            "{}",
+            def.name
+        );
+        // The file is the table the recipes bake to (exact bytes on the reference platform).
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        assert_eq!(
+            data,
+            table_audio(def),
+            "{}: run write_the_factory_library",
+            def.name
+        );
+        let again = table_audio(def);
+        assert_eq!(again.frames(), data.frames());
+    }
+}
+
+#[test]
+fn opening_the_editor_on_a_drawn_table_shows_its_key_frames() {
+    let tmp = Tmp::new("table-load");
+    let mut c = core(&tmp);
+    for def in TABLES {
+        c.load_library_item(&table_file(def), LoadTarget::Default);
+        c.wait_background();
+        assert!(c.missing_assets().is_empty(), "{:?}", c.missing_assets());
+        let device = c
+            .doc()
+            .devices
+            .iter()
+            .rev()
+            .find(|d| d.type_id == "atomik.wavetable-synth" && d.patch_name == def.name)
+            .unwrap_or_else(|| panic!("{} was added", def.name))
+            .key
+            .clone();
+        let data = c
+            .wavetable_data(&device)
+            .expect("the editor reads the device");
+        assert!(data.stored && !data.imported, "{}", def.name);
+        assert_eq!(data.keys.len(), def.keys.len(), "{}", def.name);
+        assert_eq!(data.phase_safe, def.phase_safe, "{}", def.name);
+        assert!(data.plays, "{}: oscillator 1 plays the table", def.name);
+        // The frames are the recipes' (aligned when the table is).
+        for (got, want) in data.keys.iter().zip(table_keys(def)) {
+            let want = if def.phase_safe {
+                atomik_dsp::wavetable::edit::align_fundamental(&want)
+            } else {
+                want
+            };
+            for n in (0..2048).step_by(41) {
+                assert!(
+                    (got[n] - want[n]).abs() < 2.0e-3,
+                    "{}: sample {n}",
+                    def.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_drawn_table_plays_a_phrase_with_audible_bounded_sound() {
+    for def in TABLES {
+        let (_, _, s) = render_item(&table_file(def));
+        assert!(s.finite, "{}: not a number somewhere", def.name);
+        assert!(s.peak > 0.05, "{}: peak {} is too quiet", def.name, s.peak);
+        assert!(s.peak <= 1.0, "{}: peak {} clips", def.name, s.peak);
+        assert!(s.rms_db > -45.0, "{}: {} dB RMS", def.name, s.rms_db);
+        assert!(s.seconds > 3.0, "{}: {} s", def.name, s.seconds);
+    }
+}
+
+#[test]
+fn a_drawn_table_morph_keeps_its_level_where_the_plain_morph_would_dip() {
+    // The pad's second frame starts its fundamental half a cycle after the first: the plain
+    // morph cancels the fundamental half way, the aligned one does not.
+    let pad = TABLES.iter().find(|t| t.name == "Aligned Saw Pad").unwrap();
+    let keys = table_keys(pad);
+    let plain = atomik_dsp::wavetable::edit::morph_dip_db(&keys[0], &keys[1], false, 16);
+    let safe = atomik_dsp::wavetable::edit::morph_dip_db(&keys[0], &keys[1], true, 16);
+    assert!(plain > 3.0, "the plain morph dips {plain} dB");
+    assert!(safe < 1.0, "the phase-safe morph dips {safe} dB");
+    assert!(pad.phase_safe);
+}
+
 // ------------------------------------------------------------------------------------- the folder
 
 #[test]
@@ -907,6 +1061,11 @@ fn the_factory_folder_stays_small() {
     let audio: u64 = KITS
         .iter()
         .map(|k| walk_sizes(&shipped().join("Patches").join(k.name)))
+        .chain(
+            TABLES
+                .iter()
+                .map(|t| walk_sizes(&shipped().join("Patches").join(t.name))),
+        )
         .chain(EXAMPLES.iter().filter_map(|e| {
             let audio = example_root(e).join("Audio");
             audio.is_dir().then(|| walk_sizes(&audio))
@@ -951,6 +1110,11 @@ fn the_factory_items_list_from_the_shipped_folder_with_their_categories() {
                 .chain(
                     KITS.iter()
                         .map(|k| (format!("{}.atomikpatch", k.name), k.category)),
+                )
+                .chain(
+                    TABLES
+                        .iter()
+                        .map(|d| (format!("{}.atomikpatch", d.name), d.category)),
                 )
                 .collect(),
             FileKind::Patch,

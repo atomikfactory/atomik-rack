@@ -659,6 +659,11 @@ pub enum UiAction {
     /// The "Will the bass read?" panel ([`crate::BassReadView`]) asks for something: choose the
     /// strip, measure, stop, or close.
     BassRead(crate::bass_read_panel::BassReadAction),
+    /// The wavetable editor ([`crate::WavetableView`]) asks for something: store the edited
+    /// table, cut its sample by cycle, play it on oscillator 1, or close.
+    Wavetable(crate::wavetable_editor::WavetableAction),
+    /// Open the wavetable editor on this Wavetable Synth (a click on a table display).
+    EditWavetable(DeviceKey),
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),

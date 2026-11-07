@@ -575,7 +575,56 @@ analysed, scaled to a peak of 1 and stored once per octave of bandwidth like the
 an imported table does not alias either. The table is built where the sample map is built (off
 the audio thread, a few hundred small FFTs), live and in a bounce alike. While the device has no
 sample, the imported table is silent and its display asks for one. A new sample replaces the table
-at once, without a fade. Not done: a table editor, and the frames of a long sample beyond 16.
+at once, without a fade. Not done: the frames of a long sample beyond 16.
+
+### Table editor
+
+A click on a table display of the panel opens the editor (a panel over the window; Escape closes it).
+It edits the device's one table as up to 16 **key frames**. Every finished gesture stores the table
+as the device's sample in one undo step, so an edit saves with the project, reloads, undoes and
+redoes like a dropped sample; while the panel is open it follows undo and redo.
+
+- **Stored form.** The key frames are baked into the 16 frames of 2048 samples that the synth cuts a
+  sample into: key frame `i` of `n` sits at frame `round(i * 15 / (n - 1))` and the frames between two
+  keys are their linear blend (the blend the synth plays between stored frames), so a table of four
+  key frames morphs over the whole position range. The result is one mono asset of 32768 samples,
+  named `Table frames N aligned` (or `plain`) so that reopening the editor shows the `N` key frames
+  again and not their 16 blends. Each frame still plays at full level, as for every imported table.
+  A device with no sample starts the editor from four frames of the table oscillator 1 shows; the
+  first edit stores them.
+- **Draw.** A press and a drag in the box set the samples under the pointer along straight lines;
+  Escape during a stroke puts the frame back.
+- **Harmonics.** One bar per harmonic 1 to 64 sets its level (0 to 1.5) and a dot under it its phase
+  (in cycles of that harmonic). A drag across several bars sets each. Only the harmonic you touch
+  changes; the others, also those above 64, stay as they were. A frame can be rebuilt from harmonics
+  alone with the additive code the bars use (`rebuild`).
+- **Frame list and processes.** ADD puts the blend of the selected frame and the next after it, DUP a
+  copy, DEL removes a frame (one stays), UP and DOWN move it. NORM scales the frame to peak 1, DC takes
+  the offset out, INV flips the polarity, REV plays the cycle backwards, SMOOTH rounds it off; the
+  ALL toggle applies them to every frame.
+- **Phase-safe morph.** Two frames whose fundamentals are out of phase cancel it half way through a
+  blend. With PHASE-SAFE on, every frame is shifted in time when the table is stored until its
+  fundamental has phase 0 (harmonic `h` turns by `h` times as much, so the shape is the same and so
+  is the sound of the frame alone). The line under the controls names the pairs of frames whose
+  fundamental cancels by more than 3 dB without it, names a frame with no fundamental (which cannot
+  be aligned), and otherwise shows the worst level dip of the morph between neighbouring frames (the
+  RMS of the blend against the straight line between the RMS of the two ends). The alignment is
+  plain arithmetic on the harmonics, so the stored table is the same on every platform. The drawn
+  shape of a frame is shifted when the table is stored with PHASE-SAFE on.
+- **Cleanup of a dropped sample.** For a table made from a sample the panel shows the length of one
+  cycle (the first strong peak of the normalised autocorrelation of the middle of the sample, 16 to
+  4096 samples) and its pitch. CUT cuts the sample again with one cycle per frame (each cycle
+  stretched to a frame with a four-point Hermite read, at most 16 evenly spaced) and drops silent and
+  near-identical frames (a difference under 5 % of the louder frame's RMS, after both are aligned),
+  one undo step. DEDUPE does the same drop on the frames the panel holds. EDGE makes the end of each
+  cycle meet its start: the chosen number of samples (32 to 512, the number beside the button cycles
+  it) are blended into the start, and the shorter cycle is stretched back to a frame. USE OSC 1 sets
+  the table choice of oscillator 1 to `imported`.
+
+The maths is in [crates/dsp/src/wavetable/edit.rs](../crates/dsp/src/wavetable/edit.rs), the panel in
+[crates/ui/src/wavetable_editor.rs](../crates/ui/src/wavetable_editor.rs) and the storing in
+[crates/app/src/app_core_wavetable.rs](../crates/app/src/app_core_wavetable.rs). Three factory
+patches use a drawn table: Drawn Bell Morph, Aligned Saw Pad and Table Sub Morph.
 
 ### Sockets
 

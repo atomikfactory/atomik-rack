@@ -52,7 +52,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance |
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
-| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display), model | none | Platform-independent views, widgets, display lists, theme |
+| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
 | `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
@@ -5730,7 +5730,9 @@ items are ordinary project texts, plus one small new file type.
   (`Def`; the semi-modular ones fill modulation slots by key), 14 containers (`ContainerDef`: eleven effect chains wired
   in series, three modular instruments with explicit cables, macros whose position is set from the first target's
   value so the container sounds as designed), 12 note clips (`app_core_factory_clips.rs`, step and chord patterns
-  written with `save_clip_file`) and 4 drum kits (`app_core_factory_kits.rs`). A kit sample is rendered by
+  written with `save_clip_file`), 4 drum kits (`app_core_factory_kits.rs`) and 3 drawn-table patches
+  (`app_core_factory_tables.rs`: key frames as harmonic recipes, baked like the editor bakes them, the table audio in
+  `<name>/Audio/<id>.wav` beside the item). A kit sample is rendered by
   `render_hit`: a hidden project with one drum machine, a pad on a synthesised module, offline through
   `render_doc_in`, mixed to mono, trimmed, faded and levelled; the kit item is the drum machine with a zone per pad
   and the audio in `<kit>/Audio/<id>.wav` beside it (the layout of any library item with samples). The item
@@ -6153,6 +6155,23 @@ with its sections put in an order that packs into seven rack units
 (`autolayout::auto_layout_with_order`), and a strip at the left whose two displays draw one cycle of
 each oscillator's current frame with `wavetable::display_frame` (the UI crate depends on the DSP
 crate for this; it holds no table data) at the published position while a voice sounds.
+
+The table editor stores a table the way a drop does, so nothing new is saved and the project format
+is unchanged. [dsp/src/wavetable/edit.rs](../crates/dsp/src/wavetable/edit.rs) is pure maths on
+frames of 2048 samples: the harmonic read and additive rebuild (`analyse`, `rebuild`,
+`set_harmonic`), `paint_line` and the whole-frame processes, `align_fundamental` (a shift in time
+through the harmonics, arithmetic only, so it is bit-identical on every platform), `bake` (key frames
+to the 16 stored frames, the frames between keys by linear blend), `morph_warnings` and
+`morph_dip_db`, and the import cleanup (`detect_cycle`, `cut_cycles`, `drop_near_duplicates`,
+`crossfade_edges`, `source_frames`). The panel
+([ui/src/wavetable_editor.rs](../crates/ui/src/wavetable_editor.rs), a modal wired in `shell.rs` like
+the bass-read panel, opened by `UiAction::EditWavetable` from a click on a table display) keeps a
+working copy of the key frames and emits one `WavetableAction::Commit` per finished gesture;
+[app_core_wavetable.rs](../crates/app/src/app_core_wavetable.rs) bakes it and hands the mono asset to
+`store_sample`, which registers it and replaces the zone in one `SetZones` step. The asset name
+records the key frame count and whether the frames were aligned, which is how
+`AppCore::wavetable_data` shows the key frames of a stored table again; a sample with any other name
+is shown as it is cut, with its cycle length, and can be cut by cycle (`cut_wavetable_cycles`).
 
 The FM synth `atomik.fm-synth` is plain arithmetic: [dsp/src/fm.rs](../crates/dsp/src/fm.rs) holds
 the twelve operator routings (the panel draws its diagram from the same table), the ratio and
