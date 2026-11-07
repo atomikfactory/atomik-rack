@@ -1232,7 +1232,9 @@ fn analyze_audio_def() -> Value {
         "analyze_audio",
         "Measures a WAV file: peak and RMS in dBFS per channel, DC offset, clipped and \
 non-finite samples, silent stretches, RMS per window (the loudness fingerprint), and a coarse \
-spectrum (eight bands and the dominant frequency). dB values are floored at -240.",
+spectrum (eight bands and the dominant frequency), and the decision-zone attributes (`zone`: \
+loudness, loudest part, punch, brightness tilt, low end, width, correlation). dB values are \
+floored at -240.",
         &[
             ("path", "string", "WAV file (32-bit float or 24-bit PCM)."),
             (

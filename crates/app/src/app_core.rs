@@ -292,6 +292,8 @@ pub struct AppCore<S: EngineSink> {
     /// The reference tracks session: selection, listening, level match (see
     /// `app_core_reference.rs`).
     reference: reference_ops::ReferenceState,
+    /// The decision zone: readings of the mix and the references (see `app_core_zone.rs`).
+    zone: zone_ops::ZoneState,
     /// The library clip preview that plays through a track (see `app_core_clip_preview.rs`).
     clip_preview: Option<clip_preview_ops::LiveClipPreview>,
     /// The library patch preview that renders on a worker (see `app_core_patch_preview.rs`).
@@ -553,6 +555,7 @@ impl<S: EngineSink> AppCore<S> {
             sampling: sampling::Sampling::default(),
             player_preview: None,
             reference: reference_ops::ReferenceState::new(),
+            zone: zone_ops::ZoneState::new(),
             clip_preview: None,
             patch_preview: None,
             pattern_clip_seen: (None, None),
@@ -1671,6 +1674,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_io_meters();
         self.feed_cpu_loads();
         self.reference_frame();
+        self.zone_frame();
         self.browser_frame();
     }
 
@@ -3791,6 +3795,8 @@ mod preview_ops;
 mod reference_ops;
 #[path = "app_core_takes.rs"]
 mod takes_ops;
+#[path = "app_core_zone.rs"]
+mod zone_ops;
 
 #[path = "app_core_mix.rs"]
 mod mix_ops;
@@ -4157,3 +4163,7 @@ mod keys_tests;
 #[cfg(test)]
 #[path = "app_core_reference_tests.rs"]
 mod reference_tests;
+
+#[cfg(test)]
+#[path = "app_core_zone_tests.rs"]
+mod zone_tests;

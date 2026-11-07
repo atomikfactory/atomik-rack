@@ -329,7 +329,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// True while an import or an asset load runs, or the file browser has work in flight.
     pub fn is_busy(&self) -> bool {
-        self.audio.pending > 0 || self.saving() || self.browser_busy()
+        self.audio.pending > 0 || self.saving() || self.browser_busy() || self.zone_busy()
     }
 
     /// A status-bar text while audio is being imported or loaded.

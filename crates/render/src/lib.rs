@@ -16,6 +16,8 @@
 //! - [`samples`]: sampler sample maps from document zones (shared with the app).
 //! - [`warp`]: the buffers of warped audio clips (time-stretch and pitch-shift) for a bounce.
 //! - [`wav`]: interleaved WAV writing (32-bit float or 24-bit PCM) and reading.
+//! - [`zone`]: the decision-zone attributes of a mix or a reference (loudness, punch, brightness,
+//!   low end, width) and where a mix stands among references.
 //! - [`cli`]: the `atomik-render` command line (the binary is a thin wrapper around it).
 //!
 //! ```no_run
@@ -45,6 +47,7 @@ pub mod samples;
 pub mod stems;
 pub mod warp;
 pub mod wav;
+pub mod zone;
 
 use atomik_device_sdk::Registry;
 use build::{BuildError, Built};
