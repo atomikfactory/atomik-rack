@@ -28,6 +28,7 @@ pub mod cursor_art;
 pub mod device_info;
 pub mod diagnostics;
 pub mod drag_cursor;
+pub mod energy_worker;
 pub mod export_prefs;
 pub mod export_worker;
 pub mod factory;

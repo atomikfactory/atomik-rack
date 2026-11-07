@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Energy map and repetition finder.** View > Energy Lane (off by default, saved with the view) adds one row
+  above the track lanes with a bar per section as tall as the section's energy, from 0 to 1, and its name and value.
+  The sections are the range markers, else the point markers (each runs to the next, with a "Start" section before
+  the first), else every 8 bars; a name is read as a role (intro, verse, build or pre-chorus, drop or chorus, break,
+  outro). The master is rendered on a worker (`atomik-energy`, never the audio or UI thread) and each section gets
+  its loudness, brightness (the centroid of the band levels) and stereo width from the same deterministic band
+  analysis as the masking map, plus the share of the tracks that play in it; four documented weights (0.40, 0.25,
+  0.20, 0.15) combine them. The lane flags a build with more energy than the drop after it, the strongest drop when
+  another kind of section has more energy, and two neighbours of near-equal energy over 16 bars or more; the status
+  line says it when the measurement ends. An out-of-date lane is drawn faded; View > Refresh Energy Lane measures
+  again, and turning the lane on measures when there is no result. Edit > Find Repetition lists what a track plays
+  three times or more in a row unchanged (a pattern of 1, 2 or 4 bars seen through loops, copies and grooves, or
+  identical touching audio clips or one looping audio clip), where it is, and three suggestions each: drop the last
+  hit of the last bar, a low-pass sweep over the last bar, cut the last beat. A suggestion that is a plain edit (mute
+  the notes in one unlooped clip; add a sweep of the channel's low-pass on two new automation lanes when the filter
+  is off and not automated) is one button and one undo step and says what it did; any other is advice in text.
+  The project format is unchanged (44) and the command count is 488.
 - **Dragging between song windows, and audio at another sample rate.** Clips, a track header or devices dragged
   out of one song's window and let go over a window of another open song are pasted there at the point of the
   drop: clips on the lane and snapped tick under the pointer (on a lane that fits them, else each on its own kind

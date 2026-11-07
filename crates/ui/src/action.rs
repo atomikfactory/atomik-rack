@@ -676,6 +676,9 @@ pub enum UiAction {
     /// The mix check panel ([`crate::MixCheckView`]) asks for something: run the check, stop it,
     /// locate a peak, apply a fix, open a tool, or close.
     MixCheck(crate::mixcheck_panel::MixCheckAction),
+    /// The repetition panel ([`crate::RepetitionView`]) asks for something: search again, locate
+    /// an idea, make a variation, or close.
+    Repetition(crate::repetition_panel::RepetitionAction),
     /// The colour menu's Custom item: the app opens the colour picker
     /// ([`crate::ColorPickerView`]) for this target, from the colour it has now.
     PickColor(crate::color_picker::ColorTarget),

@@ -34,6 +34,7 @@ pub mod build;
 pub mod bundle;
 pub mod cli;
 pub mod device_input;
+pub mod energy;
 pub mod export;
 pub mod flac;
 pub mod flat;

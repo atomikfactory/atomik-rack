@@ -1866,6 +1866,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "sequencer.find_repetition",
+        "Find Repetition...",
+        G::Sequencer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",
         G::Sequencer,
@@ -2706,6 +2713,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.rack_sort", "Rack Sorting", G::View, C::Global)
         .arg(RACK_SORT_ARGS)
         .menu(),
+    cmd(
+        "view.refresh_energy_lane",
+        "Refresh Energy Lane",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.sequencer_only", "Sequencer Only", G::View, C::Global).menu(),
     cmd(
         "view.show_param_lane",
@@ -2736,6 +2750,7 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("view.toggle_cpu_meters", "CPU Meters", G::View, C::Global).menu(),
     cmd("view.toggle_editor", "Clip Editor", G::View, C::Global).menu(),
+    cmd("view.toggle_energy_lane", "Energy Lane", G::View, C::Global).menu(),
     cmd(
         "view.toggle_file_browser",
         "File Browser",

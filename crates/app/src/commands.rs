@@ -215,6 +215,16 @@ pub enum AppCommand {
     /// View > Tempo Lane: the tempo curve lane between the ruler and the track lanes in the
     /// arrangement (saved with the view state).
     ToggleTempoLane,
+    /// View > Energy Lane: the row above the arrangement's track lanes with the energy of every
+    /// section and the flags of the energy map (saved with the view state). Turning it on measures
+    /// the song when it has no result yet.
+    ToggleEnergyLane,
+    /// View > Refresh Energy Lane: measures the master again (the lane shows an out-of-date
+    /// result faded).
+    RefreshEnergyLane,
+    /// Edit > Find Repetition: opens the panel that lists what the song plays three times or more
+    /// unchanged, with a suggested variation for each.
+    FindRepetition,
     /// View > Marker Strip: the strip of markers and ranges under the arrangement's ruler
     /// (saved with the view state).
     ToggleMarkerStrip,
@@ -841,6 +851,9 @@ impl AppCommand {
             AppCommand::ToggleCpuMeters => ("view.toggle_cpu_meters", None),
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
+            AppCommand::ToggleEnergyLane => ("view.toggle_energy_lane", None),
+            AppCommand::RefreshEnergyLane => ("view.refresh_energy_lane", None),
+            AppCommand::FindRepetition => ("sequencer.find_repetition", None),
             AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
             AppCommand::ToggleInspector => ("view.toggle_inspector", None),
             AppCommand::ToggleMarkerList => ("view.toggle_marker_list", None),
@@ -1186,6 +1199,9 @@ impl AppCommand {
             ("view.toggle_cpu_meters", None) => AppCommand::ToggleCpuMeters,
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
+            ("view.toggle_energy_lane", None) => AppCommand::ToggleEnergyLane,
+            ("view.refresh_energy_lane", None) => AppCommand::RefreshEnergyLane,
+            ("sequencer.find_repetition", None) => AppCommand::FindRepetition,
             ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
             ("view.toggle_inspector", None) => AppCommand::ToggleInspector,
             ("view.toggle_marker_list", None) => AppCommand::ToggleMarkerList,
@@ -1810,6 +1826,8 @@ pub struct MenuState {
     pub big_meter: bool,
     /// The arrangement shows the tempo lane.
     pub tempo_lane: bool,
+    /// The arrangement shows the energy lane.
+    pub energy_lane: bool,
     /// The arrangement shows the marker strip.
     pub marker_strip: bool,
     /// The arrangement shows the inspector strip.
@@ -2515,6 +2533,8 @@ pub fn menus_with_songs(
                     AppCommand::AutomationIntoClip,
                 ),
                 item("Clear Clip Parameter Lanes", AppCommand::ClearParamLanes),
+                MenuEntry::Separator,
+                item("Find Repetition\u{2026}", AppCommand::FindRepetition),
             ],
         },
         Menu {
@@ -2667,6 +2687,16 @@ pub fn menus_with_songs(
                 check("Big Meter", AppCommand::ToggleBigMeter, state.big_meter),
                 MenuEntry::Separator,
                 check("Tempo Lane", AppCommand::ToggleTempoLane, state.tempo_lane),
+                check(
+                    "Energy Lane",
+                    AppCommand::ToggleEnergyLane,
+                    state.energy_lane,
+                ),
+                enabled(
+                    "Refresh Energy Lane",
+                    AppCommand::RefreshEnergyLane,
+                    state.energy_lane,
+                ),
                 check(
                     "Marker Strip",
                     AppCommand::ToggleMarkerStrip,
@@ -3756,6 +3786,7 @@ mod tests {
             cpu_meters: false,
             big_meter: false,
             tempo_lane: false,
+            energy_lane: false,
             marker_strip: false,
             inspector: false,
             marker_list: false,
@@ -3867,6 +3898,8 @@ mod tests {
             AppCommand::ToggleCpuMeters,
             AppCommand::ToggleBigMeter,
             AppCommand::ToggleTempoLane,
+            AppCommand::ToggleEnergyLane,
+            AppCommand::RefreshEnergyLane,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
             AppCommand::ToggleMarkerList,
@@ -3982,6 +4015,7 @@ mod tests {
             AppCommand::RemoveBars,
             AppCommand::AutomationIntoClip,
             AppCommand::ClearParamLanes,
+            AppCommand::FindRepetition,
             AppCommand::ReverseClipsDefault,
             AppCommand::ReverseClips(true),
             AppCommand::ReverseClips(false),
@@ -4577,7 +4611,8 @@ mod tests {
                 "Heavy",
                 "Maximum",
                 "Move Automation into Note Clip",
-                "Clear Clip Parameter Lanes"
+                "Clear Clip Parameter Lanes",
+                "Find Repetition\u{2026}"
             ]
         );
         assert_eq!(
@@ -4628,6 +4663,8 @@ mod tests {
                 "CPU Meters",
                 "Big Meter",
                 "Tempo Lane",
+                "Energy Lane",
+                "Refresh Energy Lane",
                 "Marker Strip",
                 "Marker List",
                 "Inspector",
@@ -5149,6 +5186,7 @@ mod tests {
                 cpu_meters: false,
                 big_meter: false,
                 tempo_lane: false,
+                energy_lane: false,
                 marker_strip: false,
                 inspector: false,
                 marker_list: false,
