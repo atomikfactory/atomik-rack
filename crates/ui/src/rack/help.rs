@@ -109,6 +109,9 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::DuckLearn(_) => s(
             "Listen to the range between the locators at the key and draw the duck curve from its hits",
         ),
+        Hit::TableEdit(_) => {
+            s("Open the table editor: draw frames, set harmonics, morph, clean up a sample")
+        }
         Hit::DuckPlot(_) => s(
             "Drag a point or the line between two; click to add a point, double-click a point to remove it",
         ),
@@ -233,6 +236,9 @@ impl RackView {
                 )),
                 _ => None,
             };
+        }
+        if let Hit::Mix(i, b) = hit {
+            return Some(Help::new(rect, self.mix_button_help(i, b)));
         }
         Some(Help::new(rect, text(hit)?))
     }

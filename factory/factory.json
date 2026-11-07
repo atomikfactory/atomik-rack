@@ -168,6 +168,19 @@
         "pad"
       ]
     },
+    "Containers/Clean Low Hall.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "duck",
+        "low end",
+        "send"
+      ]
+    },
     "Containers/Double Clip.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -192,6 +205,19 @@
         "tight"
       ]
     },
+    "Containers/Ducked Vocal Reverb.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "vocal",
+        "duck",
+        "send"
+      ]
+    },
     "Containers/Envelope Sweep Pad.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -202,6 +228,19 @@
         "pad",
         "sweep",
         "evolving"
+      ]
+    },
+    "Containers/Gated Plate.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "gated",
+        "drums",
+        "send"
       ]
     },
     "Containers/Ping Pong Tide.atomikcontainer": {
@@ -324,6 +363,18 @@
         "lift"
       ]
     },
+    "Patches/Aligned Saw Pad.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "phase-safe",
+        "wide"
+      ]
+    },
     "Patches/Aurora Stack.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -430,6 +481,18 @@
         "drums",
         "boxy",
         "room"
+      ]
+    },
+    "Patches/Drawn Bell Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pluck"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "bell",
+        "bright"
       ]
     },
     "Patches/Drum Bus De-harsh.atomikpatch": {
@@ -802,6 +865,18 @@
         "sharp",
         "bright",
         "sync"
+      ]
+    },
+    "Patches/Table Sub Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "sub",
+        "mono"
       ]
     },
     "Patches/Tidewater Strings.atomikpatch": {

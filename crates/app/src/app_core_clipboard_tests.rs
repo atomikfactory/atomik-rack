@@ -21,10 +21,17 @@ fn key(k: &str) -> DeviceKey {
 }
 
 fn core() -> AppCore<RecordingSink> {
-    let mut c = AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None);
-    // The rack as it looked with the console devices hidden.
-    c.view_mut().set_show_console_devices(false);
-    c
+    AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None)
+}
+
+/// A core whose rack has no console devices: an instrument brings no channel.
+fn rack_core() -> AppCore<RecordingSink> {
+    AppCore::with_registry(
+        RecordingSink::new(),
+        without_console(&default_registry()),
+        empty_doc(),
+        None,
+    )
 }
 
 fn add(c: &mut AppCore<RecordingSink>, type_id: &str, k: &str) {
@@ -200,7 +207,7 @@ fn cut_removes_the_selection_in_one_undo_step_and_paste_brings_it_back() {
 
 #[test]
 fn duplicate_copies_devices_after_the_selection_and_selects_the_copies() {
-    let mut c = core();
+    let mut c = rack_core();
     add(&mut c, SYNTH, "a");
     add(&mut c, DELAY, "d");
     select_devices(&mut c, &["a"]);
