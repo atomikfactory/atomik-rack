@@ -88,6 +88,7 @@ pub mod slice_edit;
 mod slices;
 mod song_cmd;
 mod song_info;
+mod split_sub;
 pub mod stems;
 mod step_tools;
 mod steps;
@@ -182,6 +183,7 @@ pub use song_info::{
     MAX_INFO_AUTHOR_CHARS, MAX_INFO_EMAIL_CHARS, MAX_INFO_NOTES_CHARS, MAX_INFO_TITLE_CHARS,
     MAX_INFO_URL_CHARS, SongInfo,
 };
+pub use split_sub::{BASS_TYPE as SPLIT_SUB_TYPE, DEFAULT_SPLIT_HZ, MAX_SPLIT_HZ, MIN_SPLIT_HZ};
 pub use stems::{StemKind, StemSource, safe_file_name, stem_file_names, stem_sources};
 pub use step_tools::{StepTool, apply_step_tool, pads_in_use};
 pub use steps::{

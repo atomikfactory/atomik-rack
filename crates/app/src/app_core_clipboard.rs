@@ -885,6 +885,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::SetModSlot { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::ReplaceDevice { .. }
+            | WorkflowCommand::SplitSub { .. }
             | WorkflowCommand::SetFoldedMany { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}
         }
