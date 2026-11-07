@@ -16,10 +16,22 @@ may break APIs and the patch and project formats.
   console strip, so the rack and the mixer stay in step; BYPASS INSERT FX bypasses every insert effect (and the
   dynamics and EQ sections in use) in one undo step, as the B-all button of the strip does. The plate shows the name of
   the source instrument and a rename changes it. SHOW INSERT FX is view state for now (it starts on and is not saved
-  with the project): the insert devices are not stacked under the panel yet. The back carries four pairs of jacks and
+  with the project); it folds the insert stack under the panel (see below). The back carries four pairs of jacks and
   nothing else: INPUT, INSERT FX TO DEVICE, INSERT FX FROM DEVICE and OUTPUT. The sends, the parallel output, the key,
   the CV inputs and the gain reduction output have no jack in the rack; they keep working and their cables stay.
   The meters of the panels are fed while the rack shows them, with or without the console.
+- **Insert stack in the rack.** The insert effects of a channel or an output bus are stacked right under its panel, in
+  chain order, inside a frame in the strip's colour that ends with a drop row ("drop or create an effect here"). With
+  SHOW INSERT FX off the frame shrinks to one header line that names the effects; a click on it shows them again.
+  Creating an effect with an insert selected puts it after that insert, and with the strip selected at the end of the
+  chain; dropping a device or a browser row in the frame adds it at the place under the pointer; dragging an insert up
+  or down moves it in the chain; dragging it out to the plain rack takes it out of the chain, which closes behind it,
+  and leaves the effect uncabled in the rack; deleting an insert reconnects its neighbours. Each gesture is one undo
+  step, and a refusal (a device that is no stereo effect, a full chain) says why in the status line. Moving a
+  channel or a bus moves its inserts along, and a move never lands between the effects of another strip. In the
+  mixer the insert rows of a strip reorder by drag and each has an E that shows the effect in the rack, with the
+  insert area unfolded and the effect selected. New commands `AddInsert` and `ExtractInsert`. The fold state is view
+  state for now and is not saved with the project.
 - **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
   renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
   true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,

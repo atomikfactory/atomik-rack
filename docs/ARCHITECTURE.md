@@ -3076,6 +3076,32 @@ planned on a scratch copy.
   saved with the project and is pruned with the devices). A channel's panel goes right under its source
   instrument (`AddChannel`, `AddChannelFor` and the create chain insert it after the source); a channel with no
   source goes after the last channel, and its insert effects sit right under it.
+- **Insert stack** ([rack/insert_area.rs](../crates/ui/src/rack/insert_area.rs)). The effects of a channel's or
+  bus's insert chain (`insert_chain`, derived from cables) are drawn stacked right under its panel, in chain order, in
+  its column, inside a frame in the strip's accent colour (an indented frame like the inside of an unfolded
+  container). The frame ends with a drop row ("drop or create an effect here"); with SHOW INSERT FX off the stack
+  is left out of the layout and the frame is one header line that names the effects. `RackView::shown` lists the
+  stack after its strip whatever the document order is (`stacks`: the chain up to the first effect in another column),
+  `rebuild` adds the room of the header line or the drop row (`area_gaps`) and `compute_areas` records the frames
+  (`RackView::insert_areas`, `InsertAreaInfo`). `sync` lays the rack out again when a stack changes, also one that is
+  hidden (`areas_current`). The model keeps the stack in the document as well: every insert command ends with
+  `console_insert::stack`, one `Edit::Layout` that puts the chain right under the strip in chain order, and a
+  move of a channel or bus (`rack_groups::expand_moves`) takes its inserts along in every sort mode and never lands
+  between the members of another strip's stack (a routed single effect may, which is how it joins a chain there).
+  New commands: `ConsoleCommand::AddInsert { channel, slot, effect }` inserts at a position and shifts the later
+  effects down (an existing effect of another chain moves over in the same step), and
+  `ConsoleCommand::ExtractInsert { channel, slot, to }` takes an effect out, closes the chain behind it and leaves
+  the effect uncabled in the rack (at the rack slot `to` when given). `CreateEffect` with an insert selected, and
+  `CreateEffectAt` at a slot under a strip or one of its inserts, put the new effect in the chain at that position
+  (`stacked_position`); a plain create with the strip selected still appends. Gestures, each one undo step: a rack
+  device dragged into the frame is `AddInsert` at the place under the pointer (`MoveInsert` when it already is an
+  insert of that strip), a browser row dropped there is `CreateEffectAt`, an insert dragged out of the frame is
+  `ExtractInsert`, Delete on an insert is `DeleteDevices` (its neighbours are bridged), a drag of the strip moves it
+  with its stack, a click on the header line shows the stack and one on the drop row selects the strip (so that
+  creating appends). The console's insert rows reorder by drag (`MoveInsert`) and carry an E that emits
+  `UiAction::EditInsert`, which `AppCore` answers with `RackView::reveal_insert` (the area unfolds, the effect is
+  selected and the rack scrolls to it). The fold state stays view state (see above): it is not saved with the
+  project, so a project opens with every insert area shown.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band

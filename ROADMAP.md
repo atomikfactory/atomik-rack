@@ -125,11 +125,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 4: Mixing and control
 
 - **Mixer groups follow-ups.** Groups of groups (a group is a flat list of strips, so a group cannot hold another one yet), and a group solo lane that silences the other strips: the lane switches the solo of the group's own members, while the strips outside the group are silenced from the stored solo state only, as for a strip's own solo lane.
-- **Mixer in the rack.** Done: the mix channel panel of a channel or a bus (see above). Still to come: the insert
-  effects of a channel stacked under its panel inside a frame that the SHOW INSERT FX switch folds (the switch is view
-  state today and the effects stay in their own panels), moving a channel with its inserts, a compact master panel with
-  the master fader, the meter, the bypass and fold switches and the eight send effects with their return levels, and
-  keeping the fold state of the insert areas with the project.
+- **Mixer in the rack.** Done: the mix channel panel of a channel or a bus (see above), and the insert effects of a
+  channel or a bus stacked under its panel inside a frame that the SHOW INSERT FX switch folds to one header line:
+  create, drop, reorder, drag out and delete are one undo step each, a channel moves with its inserts, and the
+  mixer's insert rows reorder by drag and have an E that shows the effect in the rack. Still to come: a compact
+  master panel with the master fader, the meter, the bypass and fold switches and the eight send effects with their
+  return levels (the master's own inserts stacked the same way), and keeping the fold state of the insert areas with
+  the project (it is view state today).
 - **Console editing follow-ups.** A remote-control base for the strip surface, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), a pre-insert tap that stays aligned when the inserts add latency (today it is aligned only without insert latency), a bypassed container that keeps the latency of its inside, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Still to come: a bounce that recalls at markers and lane points, snapshots that add or remove the effects of a chain (today a recall moves cables between the devices the rack has), a snapshot lane for ids past 64, and a lane value that shows the snapshot's colour.
