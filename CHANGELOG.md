@@ -757,6 +757,15 @@ may break APIs and the patch and project formats.
   cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
   switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
   format is still 44; not done: the low and high cut, a hold time and a look-ahead.
+- **Masking map.** Mixer > Masking Map renders every channel of the song (or the selected time range) as a stem on
+  a worker, measures each in 27 one-third-octave bands from 40 Hz to 18 kHz and ranks the pairs of tracks by how
+  much the louder one covers the other in a band at the same time (the score is the percentage of the time, so a
+  clash that lasts is worth more than a blip). The panel lists the worst pairs, draws the two spectra of the chosen
+  pair with the clash bands shaded, and a time range moves the playhead to where it starts. DE-MASK on a band adds
+  a Dynamic EQ to the covered channel (or uses one that has a free bell band and no other key), cables its key from
+  the covering channel's insert send and switches a bell band on at the clash band, cutting half the lead (2 to
+  6 dB) while the covering track is loud there; it is one undo step and the status line says what it did. The
+  analysis never changes the song. The format is still 44 and the command count 470.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

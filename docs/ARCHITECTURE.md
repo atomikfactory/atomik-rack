@@ -5504,6 +5504,31 @@ Device::process                              AppCore::feed_device_scopes
   kind (the console's own peak and RMS meters stay); the reference curve is a stored one, not a
   second device (see the roadmap).
 
+### Mix analysis: the masking map
+
+Mixer > Masking Map answers "which tracks cover each other, where and when" without changing the song.
+
+- **Band maps.** `atomik_render::masking::render_maps` renders every console channel as a stem
+  (`render_stems`, one deterministic pass, the strips as they sound in the mix) over the song or the time
+  selection and hands each stem to `atomik_dsp::masking::analyse` at once, so only a band map per track is kept:
+  the level of 27 one-third-octave bands from 40 Hz to 18 kHz for every block of 4096 frames (windows of 8192,
+  Hann, the channels summed to mono; 0 dB is a full-scale sine). The FFT, the window and the dB are the
+  deterministic ones, so the maps are the same bits on every platform and at every host block size.
+- **Score.** `rank_pairs` compares every pair. A cell (one band of one block) clashes when both tracks have
+  content in it (above -60 dB and within 40 dB of the track's loudest cell) and one leads by 3 dB or more; it
+  scores the lead over 18 dB (at most 1) times a weight that fades out under -20 dB. A band's score is the
+  percentage of the analysed time it is covered; the pair takes the direction with the larger total, is ranked by
+  its worst band and keeps the time ranges in which that band clashes and the mean spectra of both tracks there.
+  The exact numbers are in the module documentation of `atomik_dsp::masking`.
+- **Worker and state.** `AppCore::start_masking` runs `masking_worker` on a thread of its own (the engine keeps
+  its cores); the result, `AppCore::masking`, is dropped with the project and never touches the song.
+  `locate_masking` moves the playhead to the start of a clash.
+- **De-mask.** `AppCore::demask` is one undo step: a new Dynamic EQ at the end of the covered channel's insert
+  chain (or one already there with a free bell band and no other key), its key cabled from the covering channel's
+  insert send, and a bell band on at the clash band, listening to the key, cutting half the lead (2 to 6 dB) from
+  6 dB under the covering track's average level. The panel is `atomik_ui::MaskingView`; it draws and reports, the
+  shell does the rest.
+
 ## 6l. The library
 
 The Library sections of the file browser (Devices, Patches, Containers, Clips, Projects) list what
