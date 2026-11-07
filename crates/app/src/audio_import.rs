@@ -158,6 +158,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<atomik_model::energy_map::EnergyMap>, String>>,
     },
+    /// The bass reading finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::bass_read_worker`].
+    BassRead {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_dsp::bass_read::Reading>, String>>,
+    },
     /// The mix check finished (`Ok(None)`: it was cancelled), or failed: see
     /// [`crate::mixcheck_worker`].
     Checked {

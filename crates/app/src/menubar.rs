@@ -631,6 +631,8 @@ mod tests {
             can_paste: false,
             can_combine: false,
             can_uncombine: false,
+            can_split_sub: false,
+            lens: Default::default(),
             song_visible: true,
             piano_roll: false,
             sample_editor: false,

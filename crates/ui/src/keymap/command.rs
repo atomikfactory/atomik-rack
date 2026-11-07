@@ -1061,6 +1061,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("mixer.add_to_vca", "Add to VCA", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.bass_read",
+        "Will the Bass Read?...",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.bypass_all_inserts",
         "Bypass All Inserts",
         G::Mixer,
@@ -1146,6 +1153,16 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.kick_bass_check",
         "Kick and Bass Check",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd("mixer.lens_club_sub", "Club Sub", G::Mixer, C::Global).menu(),
+    cmd("mixer.lens_headphones", "Headphones", G::Mixer, C::Global).menu(),
+    cmd("mixer.lens_mono", "Mono", G::Mixer, C::Global).menu(),
+    cmd(
+        "mixer.lens_small_speaker",
+        "Small Speaker",
         G::Mixer,
         C::Global,
     )
@@ -1512,6 +1529,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Rack,
     )
     .rep(),
+    cmd("rack.split_sub", "Split Sub", G::Rack, C::Rack).menu(),
     cmd("rack.toggle_match", "Match Loudness", G::Rack, C::Rack),
     cmd("rack.uncombine", "Uncombine", G::Rack, C::Rack).menu(),
     cmd(

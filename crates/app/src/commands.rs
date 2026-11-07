@@ -269,6 +269,22 @@ pub enum AppCommand {
     /// Mixer > Check Mix: opens the panel that analyses the song (levels, bass, low mids, peaks and
     /// mono) and lists what the mix needs, each finding with a one-click fix or a tool.
     CheckMix,
+    /// Mixer > Translation Lens > Headphones: the master as it is (every lens switch off).
+    LensHeadphones,
+    /// Mixer > Translation Lens > Small Speaker: the master through a phone speaker's high-pass and
+    /// presence (monitoring only; again to go back to headphones).
+    LensSmallSpeaker,
+    /// Mixer > Translation Lens > Club Sub: the master through a club system's high-pass at 32 Hz
+    /// (monitoring only; again to go back to headphones).
+    LensClubSub,
+    /// Mixer > Translation Lens > Mono: the master summed to mono (monitoring only; a switch).
+    LensMono,
+    /// Mixer > Will the Bass Read?: opens the panel that renders a track or the master and reads
+    /// how much of its bass a small speaker still plays through the harmonics.
+    BassRead,
+    /// Edit > Split Sub: the selected Mono Bass goes into a container with a mono sine sub layer and
+    /// a low cut on the bass (one undo step).
+    SplitSub,
     /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
@@ -874,6 +890,12 @@ impl AppCommand {
             AppCommand::LinkFaders => ("mixer.link_faders", None),
             AppCommand::MaskingMap => ("mixer.masking_map", None),
             AppCommand::CheckMix => ("mixer.check_mix", None),
+            AppCommand::LensHeadphones => ("mixer.lens_headphones", None),
+            AppCommand::LensSmallSpeaker => ("mixer.lens_small_speaker", None),
+            AppCommand::LensClubSub => ("mixer.lens_club_sub", None),
+            AppCommand::LensMono => ("mixer.lens_mono", None),
+            AppCommand::BassRead => ("mixer.bass_read", None),
+            AppCommand::SplitSub => ("rack.split_sub", None),
             AppCommand::MeterMode(m) => ("mixer.meter_mode", Some(m.word())),
             AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
             AppCommand::RouteFolder(None) => ("mixer.route_folder", None),
@@ -1222,6 +1244,12 @@ impl AppCommand {
             ("mixer.link_faders", None) => AppCommand::LinkFaders,
             ("mixer.masking_map", None) => AppCommand::MaskingMap,
             ("mixer.check_mix", None) => AppCommand::CheckMix,
+            ("mixer.lens_headphones", None) => AppCommand::LensHeadphones,
+            ("mixer.lens_small_speaker", None) => AppCommand::LensSmallSpeaker,
+            ("mixer.lens_club_sub", None) => AppCommand::LensClubSub,
+            ("mixer.lens_mono", None) => AppCommand::LensMono,
+            ("mixer.bass_read", None) => AppCommand::BassRead,
+            ("rack.split_sub", None) => AppCommand::SplitSub,
             ("mixer.meter_mode", Some(a)) => AppCommand::MeterMode(MeterMode::from_word(a)?),
             ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
             ("mixer.route_folder", None) => AppCommand::RouteFolder(None),
@@ -1766,6 +1794,10 @@ pub struct MenuState {
     pub can_combine: bool,
     /// The rack's selection holds a container that can be uncombined.
     pub can_uncombine: bool,
+    /// A Mono Bass with a track is selected: Split Sub works.
+    pub can_split_sub: bool,
+    /// The translation lens of the live output.
+    pub lens: atomik_engine::LensSettings,
     /// The arrangement area is shown.
     pub song_visible: bool,
     /// The piano roll is open.
@@ -2464,6 +2496,7 @@ pub fn menus_with_songs(
                 MenuEntry::Separator,
                 enabled("Combine", AppCommand::Combine, state.can_combine),
                 enabled("Uncombine", AppCommand::Uncombine, state.can_uncombine),
+                enabled("Split Sub", AppCommand::SplitSub, state.can_split_sub),
                 MenuEntry::Separator,
                 enabled("Quantize", AppCommand::QuantizeApply, state.can_edit),
                 item("Quantize Options\u{2026}", AppCommand::QuantizeOptions),
@@ -3059,6 +3092,28 @@ pub fn menus_with_songs(
                         enabled("Reference Panel\u{2026}", AppCommand::ReferencePanel, true),
                     ],
                 }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Translation Lens",
+                    entries: vec![
+                        check(
+                            "Headphones",
+                            AppCommand::LensHeadphones,
+                            state.lens.is_neutral(),
+                        ),
+                        check(
+                            "Small Speaker",
+                            AppCommand::LensSmallSpeaker,
+                            state.lens.voicing == atomik_engine::LensVoicing::SmallSpeaker,
+                        ),
+                        check(
+                            "Club Sub",
+                            AppCommand::LensClubSub,
+                            state.lens.voicing == atomik_engine::LensVoicing::ClubSub,
+                        ),
+                        check("Mono", AppCommand::LensMono, state.lens.mono),
+                    ],
+                }),
+                enabled("Will the Bass Read?\u{2026}", AppCommand::BassRead, true),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
@@ -3756,6 +3811,8 @@ mod tests {
             can_paste: false,
             can_combine: false,
             can_uncombine: false,
+            can_split_sub: false,
+            lens: Default::default(),
             song_visible: true,
             piano_roll: false,
             sample_editor: false,
@@ -3877,6 +3934,7 @@ mod tests {
             AppCommand::SelectAll,
             AppCommand::Combine,
             AppCommand::Uncombine,
+            AppCommand::SplitSub,
             AppCommand::QuantizeApply,
             AppCommand::QuantizeOptions,
             AppCommand::ToggleFlip,
@@ -3947,6 +4005,11 @@ mod tests {
             AppCommand::LinkFaders,
             AppCommand::MaskingMap,
             AppCommand::CheckMix,
+            AppCommand::LensHeadphones,
+            AppCommand::LensSmallSpeaker,
+            AppCommand::LensClubSub,
+            AppCommand::LensMono,
+            AppCommand::BassRead,
             AppCommand::CreateVcaForFolder,
             AppCommand::RouteFolder(None),
             AppCommand::UnrouteFolder,
@@ -4582,6 +4645,7 @@ mod tests {
                 "Select All",
                 "Combine",
                 "Uncombine",
+                "Split Sub",
                 "Quantize",
                 "Quantize Options\u{2026}",
                 "Reverse Audio",
@@ -4738,6 +4802,11 @@ mod tests {
                 "Mid",
                 "Side",
                 "Reference Panel\u{2026}",
+                "Headphones",
+                "Small Speaker",
+                "Club Sub",
+                "Mono",
+                "Will the Bass Read?\u{2026}",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Previous track",
@@ -5156,6 +5225,8 @@ mod tests {
                 can_paste: false,
                 can_combine: false,
                 can_uncombine: false,
+                can_split_sub: false,
+                lens: Default::default(),
                 song_visible: false,
                 piano_roll: true,
                 sample_editor: false,

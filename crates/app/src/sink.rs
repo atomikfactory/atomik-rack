@@ -239,6 +239,10 @@ pub trait EngineSink {
     fn reference_level(&self) -> Option<f32> {
         None
     }
+    /// [`atomik_engine::EngineHandle::lens_set`]: the translation lens of the live output.
+    fn lens_set(&mut self, _settings: atomik_engine::LensSettings) -> Result<(), EngineError> {
+        Ok(())
+    }
 }
 
 /// One call recorded by [`RecordingSink`].
@@ -337,6 +341,8 @@ pub enum SinkCall {
     ReferenceStart(ReferenceSettings),
     /// [`EngineSink::reference_set`].
     ReferenceSet(ReferenceSettings),
+    /// [`EngineSink::lens_set`].
+    LensSet(atomik_engine::LensSettings),
 }
 
 /// A preview stream held by [`RecordingSink`] so its feed is not abandoned while a test runs.
@@ -673,6 +679,10 @@ impl EngineSink for RecordingSink {
 
     fn reference_level(&self) -> Option<f32> {
         self.mix_lufs
+    }
+
+    fn lens_set(&mut self, settings: atomik_engine::LensSettings) -> Result<(), EngineError> {
+        self.record(SinkCall::LensSet(settings))
     }
 }
 

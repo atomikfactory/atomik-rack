@@ -162,6 +162,7 @@ use atomik_ui::keymap::{
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
+use atomik_ui::{BassReadAction, BassReadView};
 use atomik_ui::{
     BlindAction, BlindView, BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView,
     ColorTarget, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key,
@@ -554,6 +555,8 @@ pub struct Shell<B: AudioBackend> {
     mixcheck: Option<MixCheckView>,
     /// The repetition panel (Edit > Find Repetition), while it is open.
     repetition: Option<RepetitionView>,
+    /// The bass-read panel (Mixer > Will the Bass Read?), while it is open.
+    bass_read: Option<BassReadView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -743,6 +746,7 @@ impl<B: AudioBackend> Shell<B> {
             masking: None,
             mixcheck: None,
             repetition: None,
+            bass_read: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -1492,6 +1496,59 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
         }
+        self.repaint = true;
+    }
+
+    /// Whether the bass-read panel is open.
+    pub fn bass_read_open(&self) -> bool {
+        self.bass_read.is_some()
+    }
+
+    /// The bass-read panel, while it is open.
+    pub fn bass_read_view(&self) -> Option<&BassReadView> {
+        self.bass_read.as_ref()
+    }
+
+    /// Mixer > Will the Bass Read?: opens the panel on the selected track, else the master.
+    fn open_bass_read(&mut self) {
+        self.core.bass_read_preselect();
+        let theme = self.core.view().theme().clone();
+        let mut view = BassReadView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.bass_read_data());
+        self.bass_read = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open bass-read panel in step with the reading: its progress and its result.
+    fn sync_bass_read(&mut self) {
+        if self.bass_read.is_none() {
+            return;
+        }
+        let data = self.core.bass_read_data();
+        if let Some(view) = &mut self.bass_read {
+            view.set_data(data);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the bass-read panel asked for.
+    fn bass_read_action(&mut self, action: BassReadAction) {
+        match action {
+            BassReadAction::Close => {
+                self.core.cancel_bass_read();
+                self.bass_read = None;
+            }
+            BassReadAction::Choose(n) => self.core.bass_read_choose(n),
+            BassReadAction::Measure => {
+                let _ = self.core.start_bass_read();
+            }
+            BassReadAction::Stop => self.core.cancel_bass_read(),
+        }
+        self.sync_bass_read();
         self.repaint = true;
     }
 
@@ -2948,6 +3005,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.repetition {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.bass_read {
+            v.set_theme(theme.clone());
+        }
         if let Some((v, _)) = &mut self.color_picker {
             v.set_theme(theme.clone());
         }
@@ -3226,6 +3286,8 @@ impl<B: AudioBackend> Shell<B> {
             can_paste: self.core.can_paste(self.live_pane(self.focus)),
             can_combine,
             can_uncombine,
+            can_split_sub: self.core.split_sub_menu(),
+            lens: self.core.lens(),
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_open(),
             sample_editor: self.core.sample_editor_device().is_some(),
@@ -3595,6 +3657,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.repetition.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.repetition {
+                v.set_bounds(rect);
+            }
+        }
+        if self.bass_read.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.bass_read {
                 v.set_bounds(rect);
             }
         }
@@ -4136,7 +4204,8 @@ impl<B: AudioBackend> Shell<B> {
     fn open_patch_siblings(&mut self, device: &DeviceKey) {
         let (items, current) = self.core.patch_siblings(device);
         let can_clean = self.core.can_clean_up_bass(device);
-        if items.is_empty() && !can_clean {
+        let can_split = self.core.can_split_sub(device);
+        if items.is_empty() && !can_clean && !can_split {
             self.core
                 .report("There are no patches for this device type in the folder");
             return;
@@ -4149,7 +4218,7 @@ impl<B: AudioBackend> Shell<B> {
             return;
         };
         let at = self.rack_window_point(at);
-        let entries = context_menus::patch_entries(&items, current, can_clean);
+        let entries = context_menus::patch_entries(&items, current, can_clean, can_split);
         self.patch_menu = Some(device.clone());
         let (window, size) = self.menu_window(Pane::Rack);
         let menu = ContextMenu::from_entries(entries, at, size);
@@ -4604,6 +4673,31 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::MixCheck(a) = action {
                     self.mixcheck_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.bass_read.is_some() {
+            // The bass-read panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.core.cancel_bass_read();
+                self.bass_read = None;
+                return Vec::new();
+            }
+            let actions = self
+                .bass_read
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::BassRead(a) = action {
+                    self.bass_read_action(a);
                 }
             }
             return Vec::new();
@@ -5192,6 +5286,10 @@ impl<B: AudioBackend> Shell<B> {
             ("rack.clean_up_bass", None) => {
                 self.patch_menu = None;
                 self.core.clean_up_bass();
+            }
+            ("rack.split_sub", None) => {
+                self.patch_menu = None;
+                self.core.split_sub();
             }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
             ("rack.combine", None) => {
@@ -5815,6 +5913,10 @@ impl<B: AudioBackend> Shell<B> {
             org: core.arrangement().org_menu(),
             audio: core.arrangement().audio_menu(),
             freeze: core.freeze_menu(),
+            lens_small: core.lens().voicing == atomik_engine::LensVoicing::SmallSpeaker,
+            lens_club: core.lens().voicing == atomik_engine::LensVoicing::ClubSub,
+            lens_mono: core.lens().mono,
+            lens_off: core.lens().is_neutral(),
             tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
@@ -7040,6 +7142,38 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::BassRead => {
+                self.open_bass_read();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensHeadphones => {
+                self.core.lens_off();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensSmallSpeaker => {
+                self.core
+                    .set_lens_voicing(atomik_engine::LensVoicing::SmallSpeaker);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensClubSub => {
+                self.core
+                    .set_lens_voicing(atomik_engine::LensVoicing::ClubSub);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::LensMono => {
+                self.core.toggle_lens_mono();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::SplitSub => {
+                self.core.split_sub();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::FindRepetition => {
                 self.open_repetition();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -7788,6 +7922,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_relink();
         self.sync_export();
         self.sync_masking();
+        self.sync_bass_read();
         self.sync_mixcheck();
         self.sync_midi_maps();
         self.sync_macros();
@@ -8342,6 +8477,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(learn) = self.core.midi_status() {
             text = format!("{learn} \u{b7} {text}");
         }
+        if let Some(lens) = self.core.lens_status() {
+            text = format!("{lens} \u{b7} {text}");
+        }
         let changed = text != self.status;
         if changed {
             self.status = text;
@@ -8607,6 +8745,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.repetition {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.bass_read {
             view.paint(canvas);
         }
         if let Some((view, _)) = &self.color_picker {
@@ -8983,6 +9124,10 @@ mod mixcheck_tests;
 #[cfg(test)]
 #[path = "shell_energy_tests.rs"]
 mod energy_tests;
+
+#[cfg(test)]
+#[path = "shell_translation_tests.rs"]
+mod translation_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]
