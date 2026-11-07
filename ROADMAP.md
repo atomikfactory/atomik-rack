@@ -143,11 +143,21 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   energy over 16 bars or more. A repetition finder (Edit > Find Repetition) lists the ideas a track plays three
   times or more unchanged (a note pattern of 1, 2 or 4 bars, identical audio clips) with where they are and three
   suggested variations (drop the last hit, a low-pass sweep over the last bar, cut the last beat), each a button
-  and one undo step where it is a plain edit and advice otherwise. Still to come: a choice of tracks to compare
+  and one undo step where it is a plain edit and advice otherwise. A translation lens (Mixer > Translation Lens and
+  the transport bar's more menu) switches the live master to a small speaker (a high-pass at 140 Hz and a gentle
+  presence bell), a club sub system (a high-pass at 32 Hz) or mono, for listening only (never in a bounce or an
+  export, never saved), and a "Will the bass read?" meter (Mixer > Will the Bass Read?) renders a track or the
+  master and shows how much of the low note's energy a small speaker still plays through its 2nd to 5th harmonics,
+  with a verdict. Split Sub (Edit menu, or the patch name pop-up of a Mono Bass) puts the bass in a container with
+  a mono sine sub layer and a low cut on the bass at 120 Hz, in one undo step. Still to come: a choice of tracks to compare
   (all channels are analysed, up to 48), buses and returns in the masking comparison, a stereo-aware masking score
   (the tracks are summed to mono), a re-analysis that shows what a de-mask or a fix changed, and tunable thresholds.
   Not done in the energy map: a refresh after every edit (it is on request), a click on a section that moves the
   playhead, tunable weights, and the track count taken from a render of each track (it comes from the clips).
+  Not done in the translation lens: a split frequency chosen in the menu (120 Hz today), a meter that reads the
+  master per section, a lens that follows only the reference, and headphone correction. Not done in Split Sub: the
+  other instruments (it works on a Mono Bass), an exact level match for a bass with strong resonance or drive (the
+  sub layer's level is its trim), and keeping the automation lanes of the track.
   Not done in the repetition finder: automation and CC lanes, patterns of other lengths, a variation that splits a
   looped clip, a triplet variation, a menu of its own (it is in the Edit menu) and a list that follows edits made
   while it is open (FIND searches again).
