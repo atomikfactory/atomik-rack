@@ -218,18 +218,13 @@ fn rows_carry_the_fix_label_and_only_the_tools_that_exist() {
     assert_eq!(rows[0].fix.as_deref(), Some("TRIM +12.5 dB"));
     assert_eq!(rows[1].fix.as_deref(), Some("CUT 252 Hz"));
     assert_eq!(rows[1].tool.as_deref(), Some("MASKING MAP"));
-    assert_eq!(rows[2].tool, None, "the clipper hook has no button yet");
+    assert_eq!(rows[2].tool.as_deref(), Some("CLIPPER"));
     assert_eq!(rows[3].fix.as_deref(), Some("MAKE MONO"));
     // The peak is at the song position of the range start plus its own time.
     assert_eq!(rows[2].at, Some(3.0));
     assert_eq!(c.mixcheck_tool(1), Some(Tool::MaskingMap));
-    assert_eq!(c.mixcheck_tool(2), None);
-    assert!(
-        c.last_rejection()
-            .is_some_and(|m| m.contains("no clipper tool")),
-        "{:?}",
-        c.last_rejection()
-    );
+    assert_eq!(c.mixcheck_tool(2), Some(Tool::Clipper));
+    assert_eq!(c.mixcheck_tool(3), None, "a finding with no tool");
 }
 
 #[test]
@@ -405,4 +400,99 @@ fn locating_a_finding_moves_the_playhead_to_its_time() {
     c.locate_mixcheck(1);
     c.locate_mixcheck(7);
     assert_eq!(c.position(), want);
+}
+
+#[test]
+fn the_peaks_tool_adds_a_clipper_to_the_master_in_one_undo_step() {
+    let mut c = core();
+    let master = c.doc().console.master.clone().expect("a master");
+    let mut peaks = finding(Kind::Peaks, None, Some(Tool::Clipper), Some(1.0));
+    peaks.value = -3.0;
+    install(&mut c, vec![peaks]);
+    let before = c.doc().clone();
+    c.mixcheck_clipper(0).expect("added");
+    let clippers = devices_of(&c, "atomik.clipper");
+    assert_eq!(clippers.len(), 1);
+    assert_eq!(chain(&c, &master).last(), Some(&clippers[0]));
+    // A decibel under the loudest peak, a hard curve, 4x.
+    assert!((value(&c, &clippers[0], "ceiling") + 4.0).abs() < 1e-6);
+    assert_eq!(value(&c, &clippers[0], "curve"), 0.0);
+    assert_eq!(value(&c, &clippers[0], "oversample"), 2.0);
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("Clipper") && m.contains("-4.0 dB")),
+        "{:?}",
+        c.last_rejection()
+    );
+    // The master has one now: a second press adds nothing and says so.
+    let added = c.doc().clone();
+    c.mixcheck_clipper(0).expect("said");
+    assert_eq!(*c.doc(), added);
+    assert!(c.last_rejection().is_some_and(|m| m.contains("already")));
+    // One undo takes the whole thing back.
+    assert!(c.undo());
+    assert_eq!(*c.doc(), before);
+}
+
+#[test]
+fn the_clipper_ceiling_stays_inside_what_the_device_takes() {
+    let mut c = core();
+    let mut peaks = finding(Kind::Peaks, None, Some(Tool::Clipper), None);
+    peaks.value = 6.0;
+    install(&mut c, vec![peaks]);
+    c.mixcheck_clipper(0).expect("added");
+    let clipper = devices_of(&c, "atomik.clipper")[0].clone();
+    assert!(value(&c, &clipper, "ceiling") <= -0.1 + 1e-6);
+    // No such finding: nothing changes.
+    let doc = c.doc().clone();
+    assert!(c.mixcheck_clipper(5).is_err());
+    assert_eq!(*c.doc(), doc);
+}
+
+#[test]
+fn the_kick_and_bass_tool_picks_the_track_of_the_finding() {
+    let mut c = core();
+    c.apply_command(Command::Rename {
+        key: key("pad"),
+        name: "Kick".into(),
+    })
+    .unwrap();
+    let bass = channel(&c, "bass");
+    let pad = channel(&c, "pad");
+    let mut root = finding(Kind::BassRoot, None, Some(Tool::KickBassCheck), None);
+    root.channel = Some(bass);
+    let mut weak = finding(Kind::WeakFundamental, None, Some(Tool::KickBassCheck), None);
+    weak.channel = Some(pad);
+    install(&mut c, vec![root, weak]);
+    let picked = |c: &AppCore<RecordingSink>| {
+        let info = c.kick_bass_info();
+        (
+            info.kick.map(|i| info.tracks[i].clone()),
+            info.bass.map(|i| info.tracks[i].clone()),
+        )
+    };
+    // A bass root picks the bass track; the kick is left to the guess from the names.
+    c.mixcheck_kick_bass(0);
+    c.kick_bass_open();
+    assert_eq!(picked(&c), (Some("Kick".into()), Some("Bass".into())));
+    // A weak fundamental on a track called Kick picks the kick.
+    c.mixcheck_kick_bass(1);
+    assert_eq!(picked(&c).0.as_deref(), Some("Kick"));
+    // A finding with no channel, or none at all, changes nothing.
+    c.mixcheck_kick_bass(9);
+    assert_eq!(picked(&c).0.as_deref(), Some("Kick"));
+}
+
+#[test]
+fn picking_a_track_for_one_role_frees_it_from_the_other() {
+    let mut c = core();
+    let bass = key("bass");
+    c.kick_bass_preselect(false, bass.clone());
+    c.kick_bass_preselect(true, bass.clone());
+    let info = c.kick_bass_info();
+    assert_eq!(info.kick, None);
+    assert_eq!(info.bass.map(|i| info.tracks[i].as_str()), Some("Bass"));
+    // A device that is not a track with a channel is ignored.
+    c.kick_bass_preselect(false, key("nothing"));
+    assert_eq!(c.kick_bass_info().kick, None);
 }

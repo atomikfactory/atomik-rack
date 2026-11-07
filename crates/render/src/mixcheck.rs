@@ -306,23 +306,23 @@ pub enum Fix {
     },
 }
 
-/// The tool that works on a finding. Only [`Tool::MaskingMap`] exists in the application today;
-/// the others are the places where tools that are built separately are wired in: until then the
-/// finding gives its number and its reason and offers no button ([`Tool::available`]).
+/// The tool that works on a finding: the masking map, a clipper on the master for the peaks and
+/// the kick and bass check. [`Tool::available`] says which of them the application can open;
+/// a finding whose tool is not available gives its number and its reason and offers no button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     /// The masking map (Mixer > Masking Map).
     MaskingMap,
     /// A clipper or limiter on the master or the track that drives the peaks.
     Clipper,
-    /// A check of the kick and the bass against each other.
+    /// A check of the kick and the bass against each other (Mixer > Kick and Bass Check).
     KickBassCheck,
 }
 
 impl Tool {
     /// Whether the application can open the tool now.
     pub fn available(self) -> bool {
-        matches!(self, Self::MaskingMap)
+        matches!(self, Self::MaskingMap | Self::Clipper | Self::KickBassCheck)
     }
 
     /// The label of the button that opens the tool.

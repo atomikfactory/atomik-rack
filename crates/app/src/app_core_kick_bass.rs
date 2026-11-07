@@ -198,6 +198,27 @@ impl<S: EngineSink> AppCore<S> {
         self.kick_bass.failure = None;
     }
 
+    /// Picks `source` as the bass (or the kick), when it is a track with a mixer channel. The
+    /// other pick is cleared when it is the same track. Any earlier result is dropped.
+    pub fn kick_bass_preselect(&mut self, bass: bool, source: DeviceKey) {
+        if self.kick_bass.job.is_some()
+            || !self.kick_bass_tracks().iter().any(|(t, _)| *t == source)
+        {
+            return;
+        }
+        let (mine, other) = if bass {
+            (&mut self.kick_bass.bass, &mut self.kick_bass.kick)
+        } else {
+            (&mut self.kick_bass.kick, &mut self.kick_bass.bass)
+        };
+        if other.as_ref() == Some(&source) {
+            *other = None;
+        }
+        *mine = Some(source);
+        self.kick_bass.result = None;
+        self.kick_bass.failure = None;
+    }
+
     /// Starts the check of the picked tracks on a worker.
     pub fn kick_bass_run(&mut self) {
         self.kick_bass.failure = None;

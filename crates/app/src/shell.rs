@@ -1560,7 +1560,16 @@ impl<B: AudioBackend> Shell<B> {
                     self.open_masking();
                     self.masking_action(MaskingAction::Analyse);
                 }
-                Some(_) | None => {
+                Some(atomik_render::mixcheck::Tool::KickBassCheck) => {
+                    self.core.mixcheck_kick_bass(n);
+                    self.mixcheck = None;
+                    self.open_kick_bass();
+                }
+                Some(atomik_render::mixcheck::Tool::Clipper) => {
+                    let _ = self.core.mixcheck_clipper(n);
+                    note = Some(self.core.last_rejection().unwrap_or("").to_owned());
+                }
+                None => {
                     note = Some(self.core.last_rejection().unwrap_or("").to_owned());
                 }
             },

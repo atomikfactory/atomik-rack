@@ -440,7 +440,7 @@ fn the_peaks_of_the_master_name_the_tracks_that_are_loudest_there() {
     let at = top.at.expect("a time");
     assert!((at - 20.0 * PEAK_WINDOW as f64 / f64::from(RATE)).abs() < 1e-9);
     assert_eq!(top.tool, Some(Tool::Clipper));
-    assert!(!top.tool.expect("tool").available());
+    assert!(top.tool.expect("tool").available());
     // A master with headroom has no peak finding.
     let calm = Rendered {
         rate: RATE,

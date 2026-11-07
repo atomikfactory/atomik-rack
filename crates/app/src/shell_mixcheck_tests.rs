@@ -252,15 +252,82 @@ fn the_tool_button_opens_the_masking_map_and_starts_its_analysis() {
         ],
     });
     s.execute(AppCommand::CheckMix);
-    // The clipper has no button yet: only the masking map row shows one.
+    // The clipper row has its button too.
     let rows = s.mixcheck_view().unwrap().data().unwrap().rows.clone();
-    assert!(rows[0].tool.is_some() && rows[1].tool.is_none());
+    assert!(rows[0].tool.is_some() && rows[1].tool.is_some());
     let tool = s.mixcheck_view().unwrap().tool_rect(0).center();
     click(&mut s, tool);
     assert!(!s.mixcheck_open());
     assert!(s.masking_open());
     assert!(s.core().masking_running());
     s.core_mut().wait_background();
+}
+
+#[test]
+fn the_clipper_button_adds_a_clipper_to_the_master_in_one_undo_step() {
+    let mut s = shell();
+    with_two_synths(&mut s);
+    let mut peaks = finding(Kind::Peaks, None, Some(Tool::Clipper));
+    peaks.value = -2.0;
+    s.core_mut().set_mixcheck_for_test(CheckAnalysis {
+        from_frame: 0,
+        rate: 48_000,
+        strips: 3,
+        findings: vec![peaks],
+    });
+    let before = s.core().doc().clone();
+    s.execute(AppCommand::CheckMix);
+    let tool = s.mixcheck_view().unwrap().tool_rect(0).center();
+    click(&mut s, tool);
+    assert!(s.mixcheck_open(), "the panel stays");
+    let clippers = s
+        .core()
+        .doc()
+        .devices
+        .iter()
+        .filter(|d| d.type_id == "atomik.clipper")
+        .count();
+    assert_eq!(clippers, 1);
+    assert!(
+        s.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("Clipper"))
+    );
+    assert!(s.core_mut().undo());
+    assert_eq!(*s.core().doc(), before);
+}
+
+#[test]
+fn the_kick_and_bass_button_opens_the_check_with_the_bass_picked() {
+    let mut s = shell();
+    with_two_synths(&mut s);
+    let bass = s
+        .core()
+        .doc()
+        .console
+        .channel_of(&key("bass"))
+        .unwrap()
+        .channel
+        .clone();
+    let mut root = finding(Kind::BassRoot, None, Some(Tool::KickBassCheck));
+    root.channel = Some(bass);
+    s.core_mut().set_mixcheck_for_test(CheckAnalysis {
+        from_frame: 0,
+        rate: 48_000,
+        strips: 3,
+        findings: vec![root],
+    });
+    s.execute(AppCommand::CheckMix);
+    let tool = s.mixcheck_view().unwrap().tool_rect(0).center();
+    click(&mut s, tool);
+    assert!(!s.mixcheck_open());
+    assert!(s.kick_bass_open());
+    let info = s.core().kick_bass_info();
+    assert_eq!(
+        info.bass.map(|i| info.tracks[i].as_str()),
+        Some("Bass"),
+        "{info:?}"
+    );
 }
 
 #[test]

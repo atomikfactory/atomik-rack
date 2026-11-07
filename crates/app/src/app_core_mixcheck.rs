@@ -26,9 +26,9 @@
 //! # Tools
 //!
 //! A finding may name the tool that works on it ([`atomik_render::mixcheck::Tool`]).
-//! [`AppCore::mixcheck_tool`] answers with the tools the application has today (the masking map);
-//! the others are the places where separately built tools are wired in, and until then the panel
-//! shows no button for them.
+//! [`AppCore::mixcheck_tool`] answers with the tool a button opens: the masking map, the kick and
+//! bass check (with the tracks of the finding picked, see [`AppCore::mixcheck_kick_bass`]) or a
+//! Clipper on the master ([`AppCore::mixcheck_clipper`], one undo step).
 
 use super::*;
 use crate::freeze_worker::PluginEnv;
@@ -47,6 +47,14 @@ use super::masking::{BELLS, DYNAMIC_EQ};
 const GAIN_TOOL: &str = "atomik.gain-tool";
 /// The Stereo Tool's type id.
 const STEREO_TOOL: &str = "atomik.stereo-tool";
+/// The Clipper's type id.
+const CLIPPER: &str = "atomik.clipper";
+/// How far under the loudest master peak the Clipper's ceiling is set (dB).
+const CLIPPER_TRIM_DB: f32 = 1.0;
+/// The lowest ceiling the Clipper offers (dB).
+const CLIPPER_MIN_CEILING: f32 = -24.0;
+/// The highest ceiling the Clipper is set to (dB), so it always takes something off.
+const CLIPPER_MAX_CEILING: f32 = -0.1;
 
 /// The check that runs.
 struct Running {
@@ -274,6 +282,89 @@ impl<S: EngineSink> AppCore<S> {
             return None;
         }
         Some(tool)
+    }
+
+    /// Picks the tracks of finding `n` for the kick and bass check: the track of the finding's
+    /// channel becomes the bass (a bass root, or a name that is not a kick) or the kick. The other
+    /// pick is left to the check's own guess from the names.
+    pub fn mixcheck_kick_bass(&mut self, n: usize) {
+        let Some(finding) = self.finding(n) else {
+            return;
+        };
+        let (kind, channel) = (finding.kind, finding.channel.clone());
+        let Some(channel) = channel else {
+            return;
+        };
+        let Some(source) = self
+            .doc()
+            .console
+            .channels
+            .iter()
+            .find(|c| c.channel == channel)
+            .and_then(|c| c.source.clone())
+        else {
+            return;
+        };
+        let name = self.strip_label(&channel).to_lowercase();
+        let kick = kind != Kind::BassRoot
+            && name
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|w| w.starts_with("kick") || w == "bd");
+        self.kick_bass_preselect(!kick, source);
+    }
+
+    /// Adds a Clipper to the end of the master's inserts for the peaks finding `n`, in one undo
+    /// step, and says what it did in the status line. The ceiling is set a decibel under the
+    /// loudest peak the check found (hard curve, 4x oversampling), so it takes the tallest spots
+    /// off. A master that has a Clipper already is left as it is and the status line says so.
+    ///
+    /// # Errors
+    /// There is no such finding, the master is gone or its chain is full; the song is left as it
+    /// was.
+    pub fn mixcheck_clipper(&mut self, n: usize) -> Result<(), String> {
+        let result = self.clipper_inner(n);
+        match &result {
+            Ok(message) => self.reject(message.clone()),
+            Err(why) => self.reject(why.clone()),
+        }
+        result.map(|_| ())
+    }
+
+    fn clipper_inner(&mut self, n: usize) -> Result<String, String> {
+        let peak = self.finding(n).ok_or("Run the mix check first")?.value;
+        let master = self
+            .doc()
+            .console
+            .master
+            .clone()
+            .ok_or("The song has no master: run the check again")?;
+        let chain = insert_chain(self.doc(), &self.registry, &master);
+        if chain
+            .iter()
+            .any(|k| self.doc().device(k).is_some_and(|d| d.type_id == CLIPPER))
+        {
+            return Ok("The master has a Clipper already: set its ceiling there".to_owned());
+        }
+        let ceiling = (peak - CLIPPER_TRIM_DB).clamp(CLIPPER_MIN_CEILING, CLIPPER_MAX_CEILING);
+        let depth = self.document.undo_depth();
+        let clipper = self.add_insert(&master, CLIPPER)?;
+        let set = |param: &str, value: f32| Command::SetParam {
+            key: clipper.clone(),
+            param: param.to_owned(),
+            value,
+            merge: None,
+        };
+        self.finish_fix(
+            depth,
+            vec![
+                set("ceiling", ceiling),
+                set("curve", 0.0),
+                set("oversample", 2.0),
+            ],
+        )?;
+        Ok(format!(
+            "Added a Clipper to the master: ceiling {ceiling:.1} dB, hard curve, 4x oversampling"
+        ))
     }
 
     /// Installs a result as if a check had found it (tests).
