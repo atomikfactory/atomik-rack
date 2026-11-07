@@ -328,6 +328,9 @@ pub(crate) fn expand_moves(doc: &RackDoc, registry: &Registry, command: &mut cra
     for k in keys.iter() {
         if doc.console.channel_index(k).is_some() || doc.console.bus_index(k).is_some() {
             all.extend(crate::insert_chain(doc, registry, k));
+        } else if doc.console.master.as_ref() == Some(k) {
+            // The master section takes its inserts and its send effects along.
+            all.extend(crate::master_stack(doc, registry));
         }
     }
     if doc.sort_mode != RackSort::Free {
@@ -390,7 +393,11 @@ fn past_stack(doc: &RackDoc, registry: &Registry, rest: &[&DeviceKey], at: usize
     else {
         return at;
     };
-    let chain = crate::insert_chain(doc, registry, &strip);
+    let chain = if doc.console.master.as_ref() == Some(&strip) {
+        crate::master_stack(doc, registry)
+    } else {
+        crate::insert_chain(doc, registry, &strip)
+    };
     if !chain.contains(next) {
         return at;
     }
@@ -401,12 +408,21 @@ fn past_stack(doc: &RackDoc, registry: &Registry, rest: &[&DeviceKey], at: usize
     end
 }
 
-/// The channel or bus whose stack `key` belongs to: the strip itself or one of its inserts.
+/// The channel, bus or master whose stack `key` belongs to: the strip itself, one of its
+/// inserts, or (for the master) one of the effects of a shared send.
 fn stack_of(doc: &RackDoc, registry: &Registry, key: &DeviceKey) -> Option<DeviceKey> {
-    if doc.console.channel_index(key).is_some() || doc.console.bus_index(key).is_some() {
+    if doc.console.channel_index(key).is_some()
+        || doc.console.bus_index(key).is_some()
+        || doc.console.master.as_ref() == Some(key)
+    {
         return Some(key.clone());
     }
-    crate::insert_owner(doc, registry, key)
+    crate::insert_owner(doc, registry, key).or_else(|| {
+        let master = doc.console.master.as_ref()?;
+        crate::master_stack(doc, registry)
+            .contains(key)
+            .then(|| master.clone())
+    })
 }
 
 /// Writes `"rack_sort"` (with its trailing comma and newline); nothing for Free.
