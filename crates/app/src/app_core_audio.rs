@@ -164,6 +164,9 @@ pub(super) struct AudioState {
     pub(super) ram_pending: BTreeSet<String>,
     /// The sample rate a conversion worker is resampling the project's audio to.
     pub(super) converting: Option<u32>,
+    /// Pastes waiting for the audio they bring from a song at another rate
+    /// ([`super::rate_paste`]).
+    pub(super) rate_paste: super::rate_paste::RatePaste,
     pub(super) missing: Vec<MissingAsset>,
     /// Assets that were missing and have been relinked away: they are missing again when an
     /// undo makes the document use them (see `AppCore::refresh_missing`).
@@ -235,6 +238,7 @@ impl AudioState {
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
             converting: None,
+            rate_paste: super::rate_paste::RatePaste::default(),
             missing: Vec::new(),
             relinked: Vec::new(),
             generation: 0,
@@ -576,6 +580,13 @@ impl<S: EngineSink> AppCore<S> {
                 } if generation == current => {
                     self.apply_converted(rate, result);
                 }
+                Msg::PasteConverted {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => {
+                    self.apply_paste_converted(job, result);
+                }
                 Msg::Loaded {
                     generation,
                     hash,
@@ -610,6 +621,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Onsets { .. }
                 | Msg::Scanned { .. }
                 | Msg::Edited { .. }
+                | Msg::PasteConverted { .. }
                 | Msg::Converted { .. } => {}
             }
         }
@@ -1312,6 +1324,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.ram_pending.clear();
         self.audio.missing.clear();
         self.audio.relinked.clear();
+        self.audio.rate_paste.reset();
         if self.audio.bundle.as_ref().is_some_and(|b| b.scratch) && self.audio.pending == 0 {
             self.audio.remove_scratch();
         }

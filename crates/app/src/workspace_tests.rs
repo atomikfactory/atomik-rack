@@ -836,6 +836,156 @@ fn a_paste_whose_source_song_lost_the_file_lists_it_as_missing() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Song 1 holds one audio clip (a 48 kHz ramp) that is selected and copied; song 2 is made at
+/// `rate` and has the keys. Returns the workspace, the ramp's folder and the original asset.
+fn copied_to_a_song_at(rate: u32, tag: &str) -> (Workspace<Counting>, PathBuf, String) {
+    use crate::app_core::Pane;
+    use atomik_ui::ImportTarget;
+    let (mut w, _backend) = workspace();
+    let (dir, file) = ramp_file(tag);
+    w.core_mut()
+        .import_audio(vec![file], ImportTarget::NewTracks, 0);
+    w.core_mut().wait_background();
+    let clip = w.core().doc().song.tracks[0].lanes[0].clips[0].id;
+    let hash = w.core().doc().assets.keys().next().cloned().unwrap();
+    w.core_mut().arrangement_mut().set_selected_clips(&[clip]);
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.copy", None);
+    let _second = w.new_song();
+    w.core_mut().new_document_at(rate);
+    (w, dir, hash)
+}
+
+fn pasted_audio(w: &Workspace<Counting>) -> Vec<(i64, String, u64)> {
+    use atomik_model::ClipContent;
+    w.core()
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| &l.clips))
+        .filter_map(|c| match &c.content {
+            ClipContent::Audio(a) => Some((c.start, a.asset.clone(), a.source_offset)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn audio_pasted_from_a_song_at_another_rate_is_converted_on_a_worker_in_one_undo_step() {
+    use crate::app_core::Pane;
+    let (mut w, dir, hash) = copied_to_a_song_at(44_100, "paste-rate");
+    let first_root = w
+        .song(DocId::FIRST)
+        .unwrap()
+        .core()
+        .bundle_root()
+        .unwrap()
+        .to_path_buf();
+    let original = first_root.join("Audio").join(format!("{hash}.wav"));
+    let before = std::fs::read(&original).unwrap();
+    let steps = w.core().doc().song.tracks.len();
+
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    // The paste waits for the worker: nothing is in the song yet.
+    assert_eq!(w.core().pastes_converting(), 1);
+    assert!(pasted_audio(&w).is_empty());
+    w.core_mut().wait_background();
+    assert!(
+        w.core().last_rejection().is_none(),
+        "{:?}",
+        w.core().last_rejection()
+    );
+    assert_eq!(w.core().pastes_converting(), 0);
+
+    let pasted = pasted_audio(&w);
+    assert_eq!(pasted.len(), 1, "{pasted:?}");
+    let (_, asset, _) = &pasted[0];
+    assert_ne!(asset, &hash, "the clip plays the converted copy");
+    let meta = &w.core().doc().assets[asset];
+    assert_eq!((meta.sample_rate, meta.frames), (44_100, 4_410));
+    assert!(
+        !w.core().doc().assets.contains_key(&hash),
+        "the original is not registered"
+    );
+    // The copy is in the song's own bundle; the original file is untouched and not copied over.
+    let root = w.core().bundle_root().expect("a bundle").to_path_buf();
+    assert!(root.join("Audio").join(format!("{asset}.wav")).is_file());
+    assert!(!root.join("Audio").join(format!("{hash}.wav")).exists());
+    assert_eq!(std::fs::read(&original).unwrap(), before);
+    assert!(w.core().missing_assets().is_empty());
+    // One undo step takes the whole paste back, and redo brings it again.
+    assert!(w.core_mut().undo());
+    assert!(pasted_audio(&w).is_empty());
+    assert_eq!(w.core().doc().song.tracks.len(), steps);
+    assert!(w.core_mut().redo());
+    assert_eq!(pasted_audio(&w).len(), 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_second_paste_of_converted_audio_needs_no_worker() {
+    use crate::app_core::Pane;
+    let (mut w, dir, _hash) = copied_to_a_song_at(96_000, "paste-rate-twice");
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    w.core_mut().wait_background();
+    let first = pasted_audio(&w);
+    assert_eq!(first.len(), 1);
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    assert_eq!(w.core().pastes_converting(), 0, "the copy is known");
+    let both = pasted_audio(&w);
+    assert_eq!(both.len(), 2, "{both:?}");
+    assert_eq!(both[0].1, both[1].1, "both clips share the one copy");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_paste_at_another_rate_whose_source_lost_the_file_changes_nothing() {
+    use crate::app_core::Pane;
+    let (mut w, dir, hash) = copied_to_a_song_at(44_100, "paste-rate-gone");
+    let first_root = w
+        .song(DocId::FIRST)
+        .unwrap()
+        .core()
+        .bundle_root()
+        .unwrap()
+        .to_path_buf();
+    std::fs::remove_file(first_root.join("Audio").join(format!("{hash}.wav"))).unwrap();
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    w.core_mut().wait_background();
+    assert!(pasted_audio(&w).is_empty());
+    assert!(
+        w.core()
+            .last_rejection()
+            .is_some_and(|m| m.contains("paste"))
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn audio_pasted_at_the_same_rate_is_not_converted() {
+    use crate::app_core::Pane;
+    let (mut w, dir, hash) = copied_to_a_song_at(48_000, "paste-rate-same");
+    let _ = w
+        .core_mut()
+        .pane_command(Pane::Arrangement, "edit.paste", None);
+    assert_eq!(w.core().pastes_converting(), 0);
+    w.core_mut().wait_background();
+    let pasted = pasted_audio(&w);
+    assert_eq!(pasted.len(), 1);
+    assert_eq!(pasted[0].1, hash, "the same file, as before");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn a_song_saved_in_one_window_shows_in_the_recent_list_of_every_song() {
     let (mut w, _backend) = workspace();

@@ -823,6 +823,10 @@ impl<S: EngineSink> AppCore<S> {
         let Some(command) = self.render_clip_joins(command) else {
             return Ok(());
         };
+        // A paste with audio from a song at another rate is a conversion, then the paste.
+        let Some(command) = self.convert_pasted_audio(command) else {
+            return Ok(());
+        };
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
         // Muting an automation lane holds the value it gave.
@@ -3705,6 +3709,9 @@ mod rec;
 
 #[path = "app_core_rate.rs"]
 mod rate;
+
+#[path = "app_core_rate_paste.rs"]
+mod rate_paste;
 
 #[path = "app_core_autorec.rs"]
 mod autorec;
