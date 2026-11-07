@@ -31,9 +31,9 @@
 //!
 //! # Levels
 //!
-//! `level_db` is the level of the band `frequency / Q` wide around the peak in the scale of a dynamic
-//! band's detector (a sine of peak 1.0 is 0 dB), `trend_db` the level the trend has in the same
-//! band. `prominence_db` is measured on the single bin, so it is larger than `level_db -
+//! `level_db` is the level of the band `frequency / min(Q, 8)` wide around the peak (the widest
+//! Q a dynamic band's detector uses) in the scale of that detector (a sine of peak 1.0 is 0 dB),
+//! `trend_db` the level the trend has in the same band. `prominence_db` is measured on the single bin, so it is larger than `level_db -
 //! trend_db` for a narrow peak.
 
 use crate::spectrum::{Analyser, ChannelMode, WindowKind};
@@ -47,6 +47,8 @@ pub const DEFAULT_HIGH_HZ: f32 = 16_000.0;
 pub const MIN_Q: f32 = 0.7;
 /// The largest Q the finder reports.
 pub const MAX_Q: f32 = 18.0;
+/// The largest Q the band detector of the dynamic EQ listens with.
+pub const DETECTOR_MAX_Q: f32 = 8.0;
 /// Windows with a mean square below this are skipped.
 const SILENT_MEAN_SQUARE: f32 = 1.0e-10;
 /// The fewest bins half a trend window spans.
@@ -284,7 +286,7 @@ pub fn find_resonances(
         let drop = 3.0f32.min(0.5 * prominence);
         let width = f64::from(width_bins(&db, k, drop)).max(1.0) * df;
         let q = ((freq / width) as f32).clamp(MIN_Q, MAX_Q);
-        let half = 0.5 / f64::from(q);
+        let half = 0.5 / f64::from(q.min(DETECTOR_MAX_Q));
         let (band_lo, band_hi) = (freq * (1.0 - half), freq * (1.0 + half));
         let peak_sum = band_sum(bins, df, band_lo, band_hi, |i| avg[i]);
         let trend_sum = band_sum(bins, df, band_lo, band_hi, |i| {
