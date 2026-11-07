@@ -4048,6 +4048,10 @@ mod translation_tests;
 mod reverb_send_tests;
 
 #[cfg(test)]
+#[path = "app_core_rumble_tests.rs"]
+mod rumble_tests;
+
+#[cfg(test)]
 #[path = "app_core_sound_tests.rs"]
 mod sound_tests;
 
