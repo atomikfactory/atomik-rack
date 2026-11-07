@@ -1,0 +1,63 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.semi-modular",
+      "name": "Semi-Modular", "folded": false, "patch": "Comb Pluck",
+      "params": {
+        "env.amp.attack": 0.5,
+        "env.amp.decay": 900,
+        "env.amp.release": 300,
+        "env.amp.sustain": 0,
+        "filter.routing": 0,
+        "filter1.cutoff": 262,
+        "filter1.env": 0,
+        "filter1.mode": 6,
+        "filter1.resonance": 0.82,
+        "filter1.track": 1,
+        "filter2.cutoff": 5000,
+        "filter2.env": 0,
+        "filter2.mode": 1,
+        "filter2.resonance": 0.1,
+        "filter2.track": 0.5,
+        "master.level": 6,
+        "mod1_amount": 0.3,
+        "osc1.level": 1,
+        "osc1.type": 7,
+        "osc2.level": 0,
+        "shaper.drive": 14,
+        "shaper.mix": 1,
+        "shaper.type": 1
+      },
+      "mods": [
+        { "slot": 0, "source": 5, "target": 1 }
+      ]
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

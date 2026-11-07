@@ -1,0 +1,95 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "kit", "type": "atomik.drum-machine",
+      "name": "Drum machine", "folded": false, "patch": "Static Kit",
+      "params": {
+        "master.level": -1,
+        "pad1.choke": 0,
+        "pad1.decay": 10000,
+        "pad1.level": 0,
+        "pad1.pan": 0,
+        "pad10.choke": 0,
+        "pad10.decay": 10000,
+        "pad10.level": 0,
+        "pad10.pan": 0.3,
+        "pad11.choke": 1,
+        "pad11.decay": 10000,
+        "pad11.level": -7,
+        "pad11.pan": 0.25,
+        "pad2.choke": 0,
+        "pad2.decay": 10000,
+        "pad2.level": -4,
+        "pad2.pan": 0,
+        "pad3.choke": 0,
+        "pad3.decay": 10000,
+        "pad3.level": 0,
+        "pad3.pan": 0,
+        "pad4.choke": 0,
+        "pad4.decay": 10000,
+        "pad4.level": -2,
+        "pad4.pan": 0,
+        "pad6.choke": 0,
+        "pad6.decay": 10000,
+        "pad6.level": 0,
+        "pad6.pan": -0.3,
+        "pad7.choke": 1,
+        "pad7.decay": 10000,
+        "pad7.level": -6,
+        "pad7.pan": 0.25,
+        "pad8.choke": 0,
+        "pad8.decay": 10000,
+        "pad8.level": -4,
+        "pad8.pan": -0.25
+      },
+      "zones": [
+        {"asset": "e9649fc5b28e542c6b54662bea67a478bdda33d9f5fb6361c9734650f007d2e1", "key_lo": 36, "key_hi": 36, "vel_lo": 1, "vel_hi": 127, "root_key": 36, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 8931, "loop_mode": "off", "loop_start": 0, "loop_end": 8931, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "05e89aaf60604bf26f102863e6e4b8b4d26b75191555553371907742daae70e8", "key_lo": 37, "key_hi": 37, "vel_lo": 1, "vel_hi": 127, "root_key": 37, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 1913, "loop_mode": "off", "loop_start": 0, "loop_end": 1913, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "aa2676c93839beb59aa09b603c4fcae6b9b9846fe10dc5948533bd9b3f0f235e", "key_lo": 38, "key_hi": 38, "vel_lo": 1, "vel_hi": 127, "root_key": 38, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 6196, "loop_mode": "off", "loop_start": 0, "loop_end": 6196, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "7fa2086932d809205239629f2dace03b8ea5b9b53db9520d02e6ef279d26e38a", "key_lo": 39, "key_hi": 39, "vel_lo": 1, "vel_hi": 127, "root_key": 39, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 5589, "loop_mode": "off", "loop_start": 0, "loop_end": 5589, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "ed7a26d457eac76e579e9dc530f1581a11354d42817d080e669a9ada47f88561", "key_lo": 41, "key_hi": 41, "vel_lo": 1, "vel_hi": 127, "root_key": 41, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 7519, "loop_mode": "off", "loop_start": 0, "loop_end": 7519, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "d23f74945234fecc7bd2498a02a73492e1c178dfb69365405a9c531349b36a60", "key_lo": 42, "key_hi": 42, "vel_lo": 1, "vel_hi": 127, "root_key": 42, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 1295, "loop_mode": "off", "loop_start": 0, "loop_end": 1295, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "969acd2df3b3c52f81ceff37ec814cd7c8efb80dbb2c1050100f96d5c509dcd0", "key_lo": 43, "key_hi": 43, "vel_lo": 1, "vel_hi": 127, "root_key": 43, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 3839, "loop_mode": "off", "loop_start": 0, "loop_end": 3839, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "d17d1f787b3f409ab85265121c39577c675b3953889c638da55f61265ace2778", "key_lo": 45, "key_hi": 45, "vel_lo": 1, "vel_hi": 127, "root_key": 45, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 6669, "loop_mode": "off", "loop_start": 0, "loop_end": 6669, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "5ea7e5f2e6f5f95d98484f28e2286325f1106bc4091a83a7d19cca2d36e87082", "key_lo": 46, "key_hi": 46, "vel_lo": 1, "vel_hi": 127, "root_key": 46, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 7432, "loop_mode": "off", "loop_start": 0, "loop_end": 7432, "crossfade": 0, "trigger": "gate", "reverse": false}
+      ]
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "05e89aaf60604bf26f102863e6e4b8b4d26b75191555553371907742daae70e8": {"channels": 1, "sample_rate": 48000, "frames": 1913, "name": "Static Rim"},
+    "5ea7e5f2e6f5f95d98484f28e2286325f1106bc4091a83a7d19cca2d36e87082": {"channels": 1, "sample_rate": 48000, "frames": 7432, "name": "Static Open Hat"},
+    "7fa2086932d809205239629f2dace03b8ea5b9b53db9520d02e6ef279d26e38a": {"channels": 1, "sample_rate": 48000, "frames": 5589, "name": "Static Clap"},
+    "969acd2df3b3c52f81ceff37ec814cd7c8efb80dbb2c1050100f96d5c509dcd0": {"channels": 1, "sample_rate": 48000, "frames": 3839, "name": "Static Clave"},
+    "aa2676c93839beb59aa09b603c4fcae6b9b9846fe10dc5948533bd9b3f0f235e": {"channels": 1, "sample_rate": 48000, "frames": 6196, "name": "Static Snare"},
+    "d17d1f787b3f409ab85265121c39577c675b3953889c638da55f61265ace2778": {"channels": 1, "sample_rate": 48000, "frames": 6669, "name": "Static Mid Tom"},
+    "d23f74945234fecc7bd2498a02a73492e1c178dfb69365405a9c531349b36a60": {"channels": 1, "sample_rate": 48000, "frames": 1295, "name": "Static Closed Hat"},
+    "e9649fc5b28e542c6b54662bea67a478bdda33d9f5fb6361c9734650f007d2e1": {"channels": 1, "sample_rate": 48000, "frames": 8931, "name": "Static Kick"},
+    "ed7a26d457eac76e579e9dc530f1581a11354d42817d080e669a9ada47f88561": {"channels": 1, "sample_rate": 48000, "frames": 7519, "name": "Static Low Tom"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

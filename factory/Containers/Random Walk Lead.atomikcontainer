@@ -1,0 +1,113 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Random Walk Lead", "folded": false, "patch": "Random Walk Lead",
+      "params": {
+        "macro1": 0.45454544,
+        "macro2": 0.21428572
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "lfo", "type": "atomik.mod-source",
+            "name": "Mod Source", "folded": false,
+            "params": {
+              "lfo1_rate": 7.3,
+              "lfo1_shape": 2
+            }
+          },
+          {
+            "id": "hold", "type": "atomik.sample-hold",
+            "name": "Sample and Hold", "folded": false,
+            "params": {
+              "clock": 1,
+              "level": 0.3,
+              "rate": 4
+            }
+          },
+          {
+            "id": "scale", "type": "atomik.cv-quantizer",
+            "name": "CV Quantizer", "folded": false,
+            "params": {
+              "root": 9,
+              "scale": 11
+            }
+          },
+          {
+            "id": "lead", "type": "atomik.poly-synth",
+            "name": "Poly Synth", "folded": false,
+            "params": {
+              "delay.feedback": 0.35,
+              "delay.mix": 0.2,
+              "delay.time": 375,
+              "env.amp.attack": 4,
+              "env.amp.decay": 300,
+              "env.amp.release": 200,
+              "env.amp.sustain": 0.7,
+              "filter.cutoff": 1600,
+              "filter.env_amount": 0.4,
+              "filter.resonance": 0.25,
+              "master.level": -7.5,
+              "osc.mix": 0.4,
+              "osc1.wave": 0,
+              "osc2.fine": 6,
+              "osc2.wave": 1
+            }
+          }
+        ],
+        "cables": [
+          {"from": "hold:cv_out", "to": "scale:pitch_cv_in"},
+          {"from": "lead:out_l", "to": "boundary:out_l"},
+          {"from": "lead:out_r", "to": "boundary:out_r"},
+          {"from": "lfo:lfo1_cv_out", "to": "hold:cv_in"},
+          {"from": "scale:pitch_cv_out", "to": "lead:pitch_cv_in"}
+        ],
+        "macros": [
+          {"name": "Range", "targets": [
+            {"device": "hold", "param": "level", "min": 0.05, "max": 0.6}
+          ]},
+          {"name": "Cutoff", "targets": [
+            {"device": "lead", "param": "filter.cutoff", "min": 400, "max": 6000}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "lead", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}
