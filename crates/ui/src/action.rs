@@ -659,6 +659,9 @@ pub enum UiAction {
     /// The "Will the bass read?" panel ([`crate::BassReadView`]) asks for something: choose the
     /// strip, measure, stop, or close.
     BassRead(crate::bass_read_panel::BassReadAction),
+    /// The Delivery panel ([`crate::DeliveryView`]) asks for something: a page, a target, a
+    /// measurement, the ceiling, or a trim of the Peak Surgeon.
+    Delivery(crate::delivery_panel::DeliveryAction),
     /// The Sound Analyst panel ([`crate::SoundAnalystView`]) asks for something: pick a file, stop
     /// the analysis, make the patch, match it, or close.
     SoundAnalyst(crate::sound_analyst_panel::SoundAnalystAction),

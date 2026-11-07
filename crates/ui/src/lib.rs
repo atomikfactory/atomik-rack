@@ -307,6 +307,10 @@
 //! - **Bass read.** [`BassReadView`] is the modal panel of "Will the bass read?": a list of the strips (the master
 //!   and the tracks), a meter of how much of the low note a small speaker still plays through its harmonics and the
 //!   verdict; it emits [`UiAction::BassRead`] and the host feeds it a [`BassReadData`].
+//! - **Delivery.** [`DeliveryView`] is the modal panel of the delivery targets and the Peak Surgeon: what common
+//!   loudness targets would do to the measured master with a warning for a quiet master that would be turned up into
+//!   a limiter, and the highest peaks of an audio clip ranked with a threshold, a step and a width; it emits
+//!   [`UiAction::Delivery`] and the host feeds it a [`DeliveryData`].
 //! - **Sound Analyst.** [`SoundAnalystView`] is the modal panel of "recreate this sound": the measured level, brightness
 //!   and pitch curves of an audio file with the numbers, the proposed patch and the distances between the target and
 //!   the patch's render; it emits [`UiAction::SoundAnalyst`] and the host feeds it a [`SoundAnalystData`].
@@ -369,6 +373,7 @@ pub mod controller_lane;
 #[cfg(feature = "cpu-canvas")]
 pub mod cpu_canvas;
 pub mod cursor;
+pub mod delivery_panel;
 pub mod display_list;
 pub mod drum_gen_panel;
 pub mod duck_panel;
@@ -472,6 +477,10 @@ pub use console_meter::ChannelMeters;
 pub use console_vca::VcaPart;
 pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use cursor::CursorHint;
+pub use delivery_panel::{
+    DeliveryAction, DeliveryData, DeliveryPage, DeliveryView, PeakRow, PeaksData, TargetMark,
+    TargetRow, TargetsData,
+};
 pub use display_list::{DisplayList, Op};
 pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
