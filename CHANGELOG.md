@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Wavetable editor.** A click on a table display of the Wavetable Synth opens a panel for the device's table:
+  a list of up to 16 key frames (add a blend, duplicate, delete, move), a box to draw the selected frame in, a
+  bar and a dot for the level and phase of each of its first 64 harmonics (the frame is rebuilt by additive
+  synthesis and every other harmonic stays as it was), and whole-frame processes (normalise, remove offset,
+  invert, reverse, smooth; on one frame or on all). The key frames are baked into the 16 frames the synth plays,
+  with the frames between two keys filled by the same linear blend, and stored as the device's one sample in the
+  project's audio, so a table saves, reloads and undoes like a dropped sample, one undo step per gesture (a
+  stroke, a bar drag, a button). PHASE-SAFE shifts every frame in time until its fundamental starts at phase 0
+  (the waveform keeps its shape), so a morph no longer loses level where two frames' fundamentals were out of
+  phase; the panel names the pairs whose fundamental would cancel and shows the level dip of the morph. For a
+  table made from a dropped sample the panel shows the length of one cycle found in it and offers CUT (cut the
+  sample again with one cycle per frame), DEDUPE (drop silent and near-identical frames) and EDGE (cross-fade
+  the end of each cycle into its start); USE OSC 1 makes oscillator 1 play the table. The project format is
+  unchanged (44). Three factory patches use drawn tables. Not done: brushes for a region of a frame, a
+  mirrored-half drawing mode, and import from an image or from FFT chunks.
 - **Drawn duck curve, learn from kick and band mode in the Sidechain Tool.** A new curve mode (`curve`) ducks
   along a hand-drawn gain curve of up to eight points with bends over one sixteenth, eighth, quarter or half
   note or one bar (in song time, so it follows tempo changes), started by every hit on the key, every note at
