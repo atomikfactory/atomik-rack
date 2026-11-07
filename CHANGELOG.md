@@ -9,6 +9,28 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
+  renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
+  true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,
+  Streaming -14 / -1, Streaming quiet -16 / -1, Podcast -16 / -1, Broadcast -23 / -1, Broadcast -24 / -2, Club -9 /
+  -0.5 and Film mix -27 / -2) with the gain a normalising chain would apply to the measured master: turned down (no
+  loss), left alone, turned up with its peaks still under the ceiling, or turned up into a limiter, which is the
+  warning: a quiet master with peaks near 0 dBFS that the extra gain would push past the target's ceiling, so the
+  chain's own limiter would act on it. Set Ceiling sets the ceiling of the Mastering device on the master's insert
+  chain (else the master's Clipper) to the chosen target's, and the project's delivery target, in one undo step; with
+  neither device it sets the target only. The target is the optional root field `delivery` of the project
+  (`Command::SetDelivery`, ignorable at format 44, written only when set, also accepted in a `Command::Batch`), and
+  the toast of every export, and of a stems export for the master, says how the export sits against it: the loudness
+  over or under the target and the true peak against the ceiling. Edit > Peak Surgeon... (`sequencer.peak_surgeon`)
+  opens the same panel on its Peaks page for the selected audio clip: the highest peaks of the clip as it plays (its
+  gain, fades and envelope included, forwards or reversed) with their times and the headroom won by trimming down to
+  each, a threshold in 0.1 dB steps, a dip step of 0.2, 0.3 or 0.4 dB and a half-width of 4 to 32 frames. TRIM dips
+  the chosen peak by one step; APPLY ALL dips every peak above the threshold, each in steps at the peak's own frame,
+  down to the threshold, never more than 3 dB deep. A dip is three breakpoints of the clip's gain envelope (a triangle
+  of linear gain), so nothing is rendered, the file and the clip gain are untouched, and the whole trim is one
+  `SetAudioClip` and one undo step; the clip is read again afterwards and the status line says how far the highest
+  peak went down. A warped or looped clip, a missing file and an asset at another sample rate are refused with a
+  reason. The format is unchanged (44, one new ignorable field) and the command count is 501.
 - **Transition kit.** Add Transition puts a transition at a section boundary: the Track menu, and the right-click
   menus of a marker, a range and a bar line in the ruler (`sequencer.add_transition`, with the choice as its
   argument). A boundary is the start of a section: the marker or range the menu opened on, the bar line nearest to
