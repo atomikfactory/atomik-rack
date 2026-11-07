@@ -7106,6 +7106,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::AddTransition(choice) => {
+                self.core.add_transition(choice);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::AudioToNotes => {
                 self.open_notes();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -9370,6 +9375,10 @@ mod reverb_send_tests;
 #[cfg(test)]
 #[path = "shell_rumble_tests.rs"]
 mod rumble_tests;
+
+#[cfg(test)]
+#[path = "shell_transition_tests.rs"]
+mod transition_tests;
 
 #[cfg(test)]
 #[path = "shell_key_chord_tests.rs"]

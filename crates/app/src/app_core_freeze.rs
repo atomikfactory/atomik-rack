@@ -122,6 +122,12 @@ enum Kind {
     /// Print the reverse reverb swell of the render (dry) on a new track so that it ends at the
     /// tick `anchor` (see [`rumble`]).
     ReverseReverb { seconds: f32, anchor: i64 },
+    /// Print a riser: the reverse reverb swell of the render (the first hit of a section, dry),
+    /// `seconds` long, on a new track that ends at the boundary `anchor` (see [`transition`]).
+    Riser { seconds: f32, anchor: i64, bars: u8 },
+    /// Print an impact: the render (the first hit of a section, dry) saturated, with a reverb of
+    /// `decay` seconds, on a new track that starts at the boundary `at` (see [`transition`]).
+    Impact { decay: f32, at: i64 },
 }
 
 /// A render waiting for its turn.
@@ -253,6 +259,8 @@ impl<S: EngineSink> AppCore<S> {
             Kind::Refreeze => "Re-rendering",
             Kind::Rumble { .. } => "Building a rumble from",
             Kind::ReverseReverb { .. } => "Printing a reverse reverb of",
+            Kind::Riser { .. } => "Printing a riser from",
+            Kind::Impact { .. } => "Printing an impact from",
         };
         let waiting = self.audio.freeze.queue.len();
         let more = if waiting > 0 {
@@ -880,16 +888,22 @@ impl<S: EngineSink> AppCore<S> {
                 Kind::Refreeze => "frozen",
                 Kind::Rumble { .. } => "rumble",
                 Kind::ReverseReverb { .. } => "reverse reverb",
+                Kind::Riser { .. } => "riser",
+                Kind::Impact { .. } => "impact",
             };
             let post = match &job.kind {
                 Kind::Rumble { params, hits, .. } => Some(Post::Rumble {
                     hits: hits.clone(),
                     params: params.clone(),
                 }),
-                Kind::ReverseReverb { seconds, anchor } => Some(Post::ReverseReverb {
+                Kind::ReverseReverb { seconds, anchor }
+                | Kind::Riser {
+                    seconds, anchor, ..
+                } => Some(Post::ReverseReverb {
                     seconds: *seconds,
                     anchor: *anchor,
                 }),
+                Kind::Impact { decay, .. } => Some(Post::Impact { decay: *decay }),
                 _ => None,
             };
             let work = Work {
@@ -1101,6 +1115,61 @@ impl<S: EngineSink> AppCore<S> {
                     ));
                 }
             }
+            Kind::Riser {
+                seconds,
+                anchor,
+                bars,
+            } => {
+                let applied = self.apply_command(Command::Song(SongCommand::AddRenderedTrack {
+                    name: Some(format!("{} (riser)", job.name)),
+                    after: Some(device),
+                    start: done.start,
+                    length: done.length,
+                    audio,
+                    mute: Vec::new(),
+                }));
+                if applied.is_ok() {
+                    if let Some(id) = self.document.last_clip_id() {
+                        self.arrangement.set_selected_clips(&[id]);
+                    }
+                    self.transition_done(
+                        anchor,
+                        atomik_model::transition::TransitionKind::Riser,
+                        &format!(
+                            "Printed a riser from {} ({bars} {}, {seconds:.1} s) on a new track, \
+                             rising into bar {}",
+                            job.name,
+                            if bars == 1 { "bar" } else { "bars" },
+                            self.transition_bar(anchor),
+                        ),
+                    );
+                }
+            }
+            Kind::Impact { decay, at } => {
+                let applied = self.apply_command(Command::Song(SongCommand::AddRenderedTrack {
+                    name: Some(format!("{} (impact)", job.name)),
+                    after: Some(device),
+                    start: done.start,
+                    length: done.length,
+                    audio,
+                    mute: Vec::new(),
+                }));
+                if applied.is_ok() {
+                    if let Some(id) = self.document.last_clip_id() {
+                        self.arrangement.set_selected_clips(&[id]);
+                    }
+                    self.transition_done(
+                        at,
+                        atomik_model::transition::TransitionKind::Impact,
+                        &format!(
+                            "Printed an impact from {} (saturated, {decay:.0} s reverb) on a new \
+                             track, landing on bar {}",
+                            job.name,
+                            self.transition_bar(at),
+                        ),
+                    );
+                }
+            }
             Kind::Bounce { mute, dry } => {
                 let applied = self.apply_command(Command::Song(SongCommand::AddRenderedTrack {
                     name: Some(format!(
@@ -1134,3 +1203,6 @@ impl<S: EngineSink> AppCore<S> {
 
 #[path = "app_core_rumble.rs"]
 mod rumble;
+
+#[path = "app_core_transition.rs"]
+mod transition;

@@ -82,6 +82,7 @@ pub mod stereo_meter;
 pub mod stretch;
 pub mod strip_eq;
 mod svf;
+pub mod transition;
 pub mod tuner;
 pub mod wavetable;
 pub mod wobble;

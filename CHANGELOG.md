@@ -9,6 +9,23 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Transition kit.** Add Transition puts a transition at a section boundary: the Track menu, and the right-click
+  menus of a marker, a range and a bar line in the ruler (`sequencer.add_transition`, with the choice as its
+  argument). A boundary is the start of a section: the marker or range the menu opened on, the bar line nearest to
+  the pointer in the ruler, else the selected marker, else the first section line at or after the playhead. A
+  riser (1, 2 or 4 bars) is the reverse reverb of the next section's first beat, from the track that plays the
+  first hit (a drum machine first on a tie), printed on a new track that ends exactly where the section starts; it
+  reuses the print of Reverse Reverb Print on the freeze worker. An impact is that hit through a saturator
+  (`atomik_dsp::transition::impact`) and a three second reverb, printed from the downbeat. Filter Down (1, 2 or 4
+  bars) puts an Auto-Filter low-pass as the last insert of the master, or with Group Filter Down of the group bus the
+  selected track plays into, and closes its cutoff over the last bars in nine steps that fall by the same share per
+  octave, open again at the boundary; a second one reuses the filter and its lane. Silence on Beat One takes the
+  master fader to zero for one beat from the boundary. Fill plays the last beat of a note track (the selected one,
+  else the first that plays through it, a drum machine first) twice at double rate, each note moved to half its
+  distance from the beat and half as long. The filter, the silence and the fill are one `AddTransition` command
+  each, so every transition is one undo step, and the status line says what it did. When one kind is on more than
+  half of the boundaries, and on at least three, the status line says so. The project format is unchanged (44) and
+  the command count is 499.
 - **Rumble Maker and Reverse Reverb Print.** Track > Rumble Maker (`sequencer.rumble_maker`) turns the selected
   kick track into a rumble layer: the kick (the selected clips of the track, else all of them; the kick pad of a
   drum machine; an audio kick by its onsets) is rendered offline through its insert effects, and one piece per

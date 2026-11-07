@@ -357,6 +357,13 @@ pub const AUDIO_NORMALISE_ARGS: &[&str] = &["peak-1", "rms-18", "lufs-23", "lufs
 /// The values of `sequencer.rumble_maker`: how the tail of the rumble is made, by repeating a
 /// trimmed chunk of the kick's tail or through a long reverb low-passed to the sub band.
 pub const RUMBLE_MAKER_ARGS: &[&str] = &["tail", "reverb"];
+/// The values of `sequencer.add_transition`: a riser or a filter down of 1, 2 or 4 bars (the
+/// filter on the master, or `group` on the group bus of the selected track), an impact, a silence
+/// on beat one and a fill.
+pub const ADD_TRANSITION_ARGS: &[&str] = &[
+    "riser-1", "riser-2", "riser-4", "impact", "filter-1", "filter-2", "filter-4", "group-1",
+    "group-2", "group-4", "silence", "fill",
+];
 /// The values of `sequencer.reverse_reverb_print`: the length of the swell in seconds.
 pub const REVERSE_REVERB_ARGS: &[&str] = &["0.5", "1", "2", "4", "8"];
 /// The values of `sequencer.audio_gain`.
@@ -1560,6 +1567,15 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.add_transition",
+        "Add Transition",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(ADD_TRANSITION_ARGS)
     .menu()
     .decline(),
     cmd(

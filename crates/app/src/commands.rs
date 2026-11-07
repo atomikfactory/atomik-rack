@@ -7,6 +7,7 @@
 
 use crate::midi_file::MidiResolution;
 use crate::record::InputQuantize;
+pub use crate::transition_choice::TransitionChoice;
 use crate::windows::WindowKind;
 use atomik_engine::{ReferenceBand, ReferenceSolo};
 use atomik_model::{FadeCurve, ThinLevel, WarpMode};
@@ -536,6 +537,10 @@ pub enum AppCommand {
     /// Track > Reverse Reverb Print: the reverse reverb swell of the selected clips or range on a
     /// new track, ending where the source starts.
     ReverseReverbPrint(SwellLength),
+    /// Add Transition: a riser, an impact, a filter down, a silence on beat one or a fill at a
+    /// section boundary (the marker or bar line a menu opened on, else the selected marker, else
+    /// the boundary at or after the playhead).
+    AddTransition(TransitionChoice),
     /// Track > Pattern Lane to Notes: the notes the lane's patterns play, on a new note lane.
     PatternLaneToNotes,
     /// Track > Edit Track Controllers: the piano roll on the pitch bend, aftertouch and CC lanes
@@ -1040,6 +1045,7 @@ impl AppCommand {
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
             AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
             AppCommand::RumbleMaker(c) => ("sequencer.rumble_maker", Some(c.arg())),
+            AppCommand::AddTransition(c) => ("sequencer.add_transition", Some(c.arg())),
             AppCommand::ReverseReverbPrint(l) => ("sequencer.reverse_reverb_print", Some(l.arg())),
             AppCommand::PatternLaneToNotes => ("sequencer.pattern_lane_to_notes", None),
             AppCommand::EditTrackControllers => ("sequencer.track_controllers", None),
@@ -1431,6 +1437,9 @@ impl AppCommand {
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
             ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
+            ("sequencer.add_transition", Some(arg)) => {
+                return TransitionChoice::from_arg(arg).map(AppCommand::AddTransition);
+            }
             ("sequencer.rumble_maker", Some(arg)) => {
                 return RumbleChoice::from_arg(arg).map(AppCommand::RumbleMaker);
             }
@@ -3487,6 +3496,18 @@ pub fn menus_with_songs(
                         .map(|l| item(l.label(), AppCommand::ReverseReverbPrint(l)))
                         .collect(),
                 }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Add Transition",
+                    entries: TransitionChoice::ALL
+                        .into_iter()
+                        .flat_map(|c| {
+                            let separator = c.starts_group().then_some(MenuEntry::Separator);
+                            separator
+                                .into_iter()
+                                .chain([item(c.label(), AppCommand::AddTransition(c))])
+                        })
+                        .collect(),
+                }),
                 MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
@@ -4349,6 +4370,9 @@ mod tests {
         for length in SwellLength::ALL {
             v.push(AppCommand::ReverseReverbPrint(length));
         }
+        for choice in TransitionChoice::ALL {
+            v.push(AppCommand::AddTransition(choice));
+        }
         for step in ChopStep::ALL {
             v.push(AppCommand::ChopClips(step));
         }
@@ -5043,6 +5067,18 @@ mod tests {
                 "2 s",
                 "4 s",
                 "8 s",
+                "Riser, 1 Bar",
+                "Riser, 2 Bars",
+                "Riser, 4 Bars",
+                "Impact",
+                "Filter Down, 1 Bar",
+                "Filter Down, 2 Bars",
+                "Filter Down, 4 Bars",
+                "Group Filter Down, 1 Bar",
+                "Group Filter Down, 2 Bars",
+                "Group Filter Down, 4 Bars",
+                "Silence on Beat One",
+                "Fill",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",

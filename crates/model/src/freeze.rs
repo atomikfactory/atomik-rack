@@ -630,6 +630,10 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 | WorkflowCommand::AddRumble { kick: track, .. } => {
                     device_frozen(track).or_else(|| track_frozen(track))
                 }
+                WorkflowCommand::AddTransition {
+                    edit: crate::transition::TransitionEdit::Fill { track },
+                    ..
+                } => device_frozen(track).or_else(|| track_frozen(track)),
                 WorkflowCommand::RemoveDevices { keys }
                 | WorkflowCommand::DeleteDevices { keys } => keys.iter().find_map(|k| {
                     if doc.song.track(k).is_some_and(|t| t.frozen.is_some()) {
