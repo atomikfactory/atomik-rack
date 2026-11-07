@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Dragging between song windows, and audio at another sample rate.** Clips, a track header or devices dragged
+  out of one song's window and let go over a window of another open song are pasted there at the point of the
+  drop: clips on the lane and snapped tick under the pointer (on a lane that fits them, else each on its own kind
+  of lane), devices at the rack slot there, a track after the track there. It is Copy in the first song and Paste
+  in the second, without touching either clipboard: the first song ends the drag with everything where it was, and
+  the second takes one undo step, with the audio fetched from the first song's folder as for a paste. Files
+  dragged out of the file browser (a patch, a container, a device row of the shared library) hover over and drop on
+  another song's window the same way, with the same outline where they would load. Audio that is not at the sample
+  rate of the song it lands in, whether pasted or dragged, is converted first: a worker (`atomik-paste-rate`, never
+  the audio or UI thread) resamples it into the folder of the receiving song, reading the original from the song it
+  came from and leaving it untouched, and the paste then points clips, takes, frozen renders and sampler zones at
+  the copies with every position that counts source frames scaled, as one undo step; a second paste of the same
+  audio reuses the copy, and a source that no longer has the file refuses the paste and says so. Clips pasted
+  at the song's own rate behave as before. Not done: separate Input Focus and Play Focus buttons (the song with the
+  stream still has the MIDI inputs), a drop marker while clips or devices are dragged over another song, and a
+  session of the MCP server with several songs. The project format is unchanged (44) and the command count is 469.
 - **Collect plugin files, and Move Project tidies a shared folder.** Collect Files, Save As and Move Project copy the
   files that the text state of a plugin names outside the project (an impulse response, a preset) into a `Files`
   folder of the project, under their own names (a second file with the same name and other bytes becomes `name 2`,

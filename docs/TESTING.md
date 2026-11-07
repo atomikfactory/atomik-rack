@@ -490,8 +490,13 @@ the selection tests in `workflow_piano_roll.rs` drive the views with pointer eve
 drag, the context-menu requests). `crates/app/src/app_core_clipboard_tests.rs` runs the clipboard in
 the app core with the recording sink (every paste is one undo step and compared as saved text; the
 clipboard survives New and Open; a cross-song paste registers its assets). `crates/app/src/workspace_tests.rs`
-pastes audio clips into another open song (the file is copied into its bundle and loads, or is listed missing),
-keeps the recent list and the library the same in every song, and recovers a crashed song's snapshot.
+pastes audio clips into another open song (the file is copied into its bundle and loads, or is listed missing,
+or, from a song at another sample rate, is converted on a worker into the bundle of the receiving song while the
+original file stays byte for byte as it was), drags clips and devices from one song's window onto another's
+(the first song keeps everything, the second gets one undo step, neither clipboard is touched), keeps the recent
+list and the library the same in every song, and recovers a crashed song's snapshot.
+`crates/model/tests/snapshot_rate.rs` rewrites clip, take and device snapshots for another rate (copies,
+scaled frames, refusals) and `crates/ui/tests/song_drag.rs` covers what the views say about a drag they carry.
 `crates/app/src/shell_clipboard_tests.rs` presses the clipboard chords and right-clicks in a
 headless `Shell` on Windows and macOS, checks the menu items, their enabling and the derived
 shortcut text, runs a seeded random gesture script (no refused command, undo returns the empty rack)

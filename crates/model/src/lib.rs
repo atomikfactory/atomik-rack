@@ -161,6 +161,7 @@ pub use plugin_files::{PluginFileRef, rewrite_paths};
 pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
 pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
 pub use rack_groups::{DeviceGroup, RackSort};
+pub use rate_convert::{RateCopy, assets_off_rate};
 pub use read_limit::{
     MAX_DOCUMENT_BYTES, MAX_DOCUMENT_ENV, document_size_limit, read_document_text,
     read_text_limited,
