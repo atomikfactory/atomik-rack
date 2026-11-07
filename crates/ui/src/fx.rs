@@ -39,11 +39,14 @@ pub enum FxKind {
     Tuner,
     /// `atomik.clipper`: the transfer curve, the clip activity readout and the level meters.
     Clipper,
+    /// `atomik.dynamic-eq`: the static and live response curves over the spectrum of the input
+    /// and of the key, with a draggable handle per band.
+    DynamicEq,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 13] = [
+    pub const ALL: [FxKind; 14] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -57,12 +60,13 @@ impl FxKind {
         FxKind::AudioTrack,
         FxKind::Tuner,
         FxKind::Clipper,
+        FxKind::DynamicEq,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 12] = [
+    pub const EFFECTS: [FxKind; 13] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -75,6 +79,7 @@ impl FxKind {
         FxKind::PhaseMeter,
         FxKind::Tuner,
         FxKind::Clipper,
+        FxKind::DynamicEq,
     ];
 
     /// The kind of a device type id.
@@ -98,6 +103,7 @@ impl FxKind {
             FxKind::AudioTrack => "atomik.audio-track",
             FxKind::Tuner => "atomik.tuner",
             FxKind::Clipper => "atomik.clipper",
+            FxKind::DynamicEq => "atomik.dynamic-eq",
         }
     }
 
@@ -116,6 +122,7 @@ impl FxKind {
             FxKind::PhaseMeter => phase::COUNT,
             FxKind::AudioTrack | FxKind::Tuner => 0,
             FxKind::Clipper => CLIPPER_METERS,
+            FxKind::DynamicEq => DYNEQ_METERS,
         }
     }
 }
@@ -146,6 +153,22 @@ pub const SPECTRUM_METERS: usize = 2;
 pub const CLIPPER_METERS: usize = 4;
 /// Longest clipped run (ms) that is below what is usually heard as distortion.
 pub const CLIPPER_RUN_SAFE_MS: f32 = 1.0;
+/// The dynamic EQ's published values (`atomik_devices::dynamic_eq::METER_COUNT`; a test pins the
+/// two together): five band gains in dB, 16 input energies, 16 key energies, two output peaks and
+/// the key-cabled flag.
+pub const DYNEQ_METERS: usize = 40;
+/// Where the dynamic EQ's band gains start in its values (five of them).
+pub const DYNEQ_GAINS: usize = 0;
+/// Where the dynamic EQ's input analyser starts (16 bands).
+pub const DYNEQ_INPUT: usize = 5;
+/// Where the dynamic EQ's key analyser starts (16 bands).
+pub const DYNEQ_KEY: usize = 21;
+/// The dynamic EQ's output peaks (left, then right).
+pub const DYNEQ_PEAKS: usize = 37;
+/// 1 while a cable is in the dynamic EQ's key sockets.
+pub const DYNEQ_KEY_CABLED: usize = 39;
+/// Number of bands of the dynamic EQ.
+pub const DYNEQ_BANDS: usize = 5;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -210,12 +233,17 @@ enum Slot {
     /// A value 0..10000 shown as published to a tenth (the clipper's share and run length, which
     /// the device already holds over a window), no release.
     Plain,
+    /// A gain in dB (negative or positive) shown as published: the device already smooths it.
+    Gain,
 }
 
 fn slot(kind: FxKind, i: usize) -> Slot {
     match (kind, i) {
         (FxKind::Compressor, 2) => Slot::Gr,
         (FxKind::Eq, i) if i < EQ_BANDS_ANALYSER => Slot::Power,
+        (FxKind::DynamicEq, i) if i < DYNEQ_INPUT => Slot::Gain,
+        (FxKind::DynamicEq, i) if i < DYNEQ_PEAKS => Slot::Power,
+        (FxKind::DynamicEq, DYNEQ_KEY_CABLED) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,
@@ -248,7 +276,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
                 Slot::Raw => *v = -120.0,
-                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain => *v = 0.0,
+                Slot::Unit | Slot::Activity | Slot::Signed | Slot::Plain | Slot::Gain => *v = 0.0,
                 _ => {}
             }
         }
@@ -267,6 +295,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             Slot::Activity => (r.clamp(0.0, 1.0), ACTIVITY_FALL, 0.02, 0.0),
             Slot::Signed => (r.clamp(-1.0, 1.0), f32::INFINITY, 0.01, -1.0),
             Slot::Plain => (r.clamp(0.0, 10_000.0), f32::INFINITY, 0.1, 0.0),
+            Slot::Gain => (r.clamp(-48.0, 48.0), f32::INFINITY, 0.1, -48.0),
         };
         let old = *cell;
         let v = if new >= old {
@@ -458,6 +487,86 @@ pub fn eq_bands_of(desc: &DeviceDescriptor, device: Option<&RackDevice>) -> [EqB
     bands
 }
 
+/// The shapes of the dynamic EQ's five bands: a low shelf, three bells and a high shelf.
+pub const DYNEQ_SHAPES: [EqShape; DYNEQ_BANDS] = [
+    EqShape::LowShelf,
+    EqShape::Peak,
+    EqShape::Peak,
+    EqShape::Peak,
+    EqShape::HighShelf,
+];
+
+/// The param keys of dynamic EQ band `i` (0-based): `bandN.on`, `.freq`, `.gain` and `.q`.
+pub fn dyneq_keys(i: usize) -> EqKeys {
+    let n = i + 1;
+    EqKeys {
+        on: format!("band{n}.on"),
+        freq: format!("band{n}.freq"),
+        gain: Some(format!("band{n}.gain")),
+        q: format!("band{n}.q"),
+        slope: None,
+    }
+}
+
+/// The five bands of a dynamic EQ with their STATIC gain (descriptor defaults for unstored
+/// params, which includes every band off).
+pub fn dyneq_bands_of(
+    desc: &DeviceDescriptor,
+    device: Option<&RackDevice>,
+) -> [EqBand; DYNEQ_BANDS] {
+    let get = |key: &str| -> f64 {
+        desc.params.iter().find(|p| p.key == key).map_or(0.0, |p| {
+            f64::from(device.map_or(p.default, |d| current_value(d, p)))
+        })
+    };
+    std::array::from_fn(|i| {
+        let k = dyneq_keys(i);
+        EqBand {
+            shape: DYNEQ_SHAPES[i],
+            on: get(&k.on) >= 0.5,
+            freq: get(&k.freq),
+            gain: get(k.gain.as_deref().unwrap_or("")),
+            q: get(&k.q),
+            slope: 0,
+        }
+    })
+}
+
+/// How far dynamic EQ band `i` can move from its static gain: the signed `range` in dB.
+pub fn dyneq_range_of(desc: &DeviceDescriptor, device: Option<&RackDevice>, i: usize) -> f64 {
+    let key = format!("band{}.range", i + 1);
+    desc.params.iter().find(|p| p.key == key).map_or(0.0, |p| {
+        f64::from(device.map_or(p.default, |d| current_value(d, p)))
+    })
+}
+
+/// The handle keys of band `i` of an effect with a response plot (the EQ or the dynamic EQ).
+pub fn handle_keys(kind: FxKind, i: usize) -> EqKeys {
+    if kind == FxKind::DynamicEq {
+        dyneq_keys(i)
+    } else {
+        eq_keys(i)
+    }
+}
+
+/// Whether band `i` of the plot's effect is a cut (a handle that only moves along the 0 dB line).
+pub fn handle_is_cut(kind: FxKind, i: usize) -> bool {
+    kind == FxKind::Eq && EQ_SHAPES.get(i).is_some_and(|s| s.is_cut())
+}
+
+/// The bands whose handles a response plot draws, in band order.
+pub fn handle_bands(
+    kind: FxKind,
+    desc: &DeviceDescriptor,
+    device: Option<&RackDevice>,
+) -> Vec<EqBand> {
+    if kind == FxKind::DynamicEq {
+        dyneq_bands_of(desc, device).to_vec()
+    } else {
+        eq_bands_of(desc, device).to_vec()
+    }
+}
+
 const BUTTER_Q: [&[f64]; 3] = [
     &[FRAC_1_SQRT_2],
     &[0.541_196_1, 1.306_563],
@@ -575,7 +684,7 @@ pub fn eq_band_response_db(b: &EqBand, f: f64, sr: f64) -> f64 {
 }
 
 /// Total response (dB) of the enabled bands (output gain excluded).
-pub fn eq_response_db(bands: &[EqBand; 6], f: f64, sr: f64) -> f64 {
+pub fn eq_response_db(bands: &[EqBand], f: f64, sr: f64) -> f64 {
     bands
         .iter()
         .filter(|b| b.on && (b.shape.is_cut() || b.gain != 0.0))
@@ -888,6 +997,27 @@ pub fn amp_mic_offset(mic: f32) -> f64 {
         mic.clamp(0.0, 1.0)
     } else {
         0.0
+    })
+}
+
+/// The tooltip of a dynamic EQ control: what the knob or button does, one short line. `None` for
+/// a key the device does not have (and for `bypass`, which has the effect strip's own tooltip).
+pub fn dyneq_help(key: &str) -> Option<&'static str> {
+    let last = key.rsplit('.').next().unwrap_or(key);
+    Some(match last {
+        "on" => "Switch this band on: it filters and listens only while it is on",
+        "freq" => "Centre or corner frequency of the band, and where it listens",
+        "q" => "Width of the band and of the detector that listens to it",
+        "gain" => "Static gain of the band, before the dynamics move it",
+        "threshold" => "Level in the band above which the dynamics move the band",
+        "range" => "How far the band moves: below 0 cuts, above 0 lifts, 0 keeps it static",
+        "ratio" => "How much of the level above the threshold moves the band",
+        "attack" => "How fast the band follows a rising level",
+        "release" => "How fast the band lets go after the level falls",
+        "source" => "What the band listens to: its own input, or the key input",
+        "channel" => "Which part of the stereo image the band filters and listens to",
+        "output" => "Gain after the last band",
+        _ => return None,
     })
 }
 

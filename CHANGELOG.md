@@ -803,6 +803,17 @@ may break APIs and the patch and project formats.
   the oversampling filters. The oversampler gains an 8x stage (37 samples of latency; images at least 84 dB
   down). The project format stays 44 and no command is added. Not done: a lookahead limiter stage after the
   clipper, a user-drawn curve, and a per-band ceiling.
+- **Dynamic EQ (`atomik.dynamic-eq`).** A new effect next to the EQ (no EQ param moves): five bands, a low shelf,
+  three bells and a high shelf, each with a static gain, frequency and Q and its own dynamics: a threshold, a signed
+  range (below 0 cuts the band while it is loud, above 0 lifts it, 0 keeps it static), a ratio, an attack and a
+  release. A band listens to its own band of the input, or to the key input (`sc_in_l`/`sc_in_r`, a lone side
+  feeding both, band-passed at the band's frequency; with no cable it listens to its input), and works on the
+  stereo signal (the louder side decides), the mid or the side. Idle bands are skipped, so with every band off
+  the signal passes bit for bit; there is no latency. The panel draws the static curve, the live curve with the
+  gain every band has now, the reach of each band's dynamics and the spectrum of the input and, while the key is
+  cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
+  switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
+  format is still 44; not done: the low and high cut, a hold time and a look-ahead.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
