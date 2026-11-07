@@ -236,6 +236,23 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// What the Reference submenu of the Mixer menu shows.
+    pub fn reference_menu(&self) -> crate::commands::ReferenceMenu {
+        let info = self.reference_info();
+        crate::commands::ReferenceMenu {
+            count: info.items.len() as u8,
+            selected: info.selected as u8,
+            listening: info.listening,
+            level_match: info.level_match,
+            has_cue: info
+                .items
+                .get(info.selected)
+                .is_some_and(|r| r.cue_ms.is_some()),
+            band: info.band,
+            solo: info.solo,
+        }
+    }
+
     /// True while the reference is what is heard.
     pub fn reference_listening(&self) -> bool {
         self.reference.listening

@@ -108,6 +108,11 @@ pub enum ReferenceSolo {
     Side,
 }
 
+impl ReferenceSolo {
+    /// Every choice, in the order of a list.
+    pub const ALL: [Self; 3] = [Self::Off, Self::Mid, Self::Side];
+}
+
 /// What the voice is told to do (copied into the engine by one control message).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReferenceSettings {
