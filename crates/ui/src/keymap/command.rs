@@ -354,6 +354,18 @@ pub const SCALE_TEMPO_ARGS: &[&str] = &["double", "halve", "150", "125", "75", "
 /// The values of `sequencer.audio_normalise_to`: peak -1 dBFS, RMS -18 dBFS, integrated loudness
 /// -23 or -14 LUFS.
 pub const AUDIO_NORMALISE_ARGS: &[&str] = &["peak-1", "rms-18", "lufs-23", "lufs-14"];
+/// The values of `sequencer.rumble_maker`: how the tail of the rumble is made, by repeating a
+/// trimmed chunk of the kick's tail or through a long reverb low-passed to the sub band.
+pub const RUMBLE_MAKER_ARGS: &[&str] = &["tail", "reverb"];
+/// The values of `sequencer.add_transition`: a riser or a filter down of 1, 2 or 4 bars (the
+/// filter on the master, or `group` on the group bus of the selected track), an impact, a silence
+/// on beat one and a fill.
+pub const ADD_TRANSITION_ARGS: &[&str] = &[
+    "riser-1", "riser-2", "riser-4", "impact", "filter-1", "filter-2", "filter-4", "group-1",
+    "group-2", "group-4", "silence", "fill",
+];
+/// The values of `sequencer.reverse_reverb_print`: the length of the swell in seconds.
+pub const REVERSE_REVERB_ARGS: &[&str] = &["0.5", "1", "2", "4", "8"];
 /// The values of `sequencer.audio_gain`.
 pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
 /// The values of `sequencer.audio_transpose`.
@@ -819,6 +831,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.delivery_targets",
+        "Delivery Targets",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_archive",
         "Export Project Archive",
         G::Global,
@@ -949,6 +968,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("file.song_info", "Song Information", G::Global, C::Global).menu(),
+    cmd("file.sound_analyst", "Sound Analyst", G::Global, C::Global).menu(),
     cmd("file.start_screen", "Start Screen", G::Global, C::Global).menu(),
     cmd("file.stress_rack", "Stress Rack", G::Global, C::Global).menu(),
     cmd("file.stress_song", "Stress Song", G::Global, C::Global).menu(),
@@ -1061,6 +1081,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("mixer.add_to_vca", "Add to VCA", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.bass_read",
+        "Will the Bass Read?...",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.bypass_all_inserts",
         "Bypass All Inserts",
         G::Mixer,
@@ -1146,6 +1173,16 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.kick_bass_check",
         "Kick and Bass Check",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd("mixer.lens_club_sub", "Club Sub", G::Mixer, C::Global).menu(),
+    cmd("mixer.lens_headphones", "Headphones", G::Mixer, C::Global).menu(),
+    cmd("mixer.lens_mono", "Mono", G::Mixer, C::Global).menu(),
+    cmd(
+        "mixer.lens_small_speaker",
+        "Small Speaker",
         G::Mixer,
         C::Global,
     )
@@ -1512,6 +1549,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Rack,
     )
     .rep(),
+    cmd("rack.split_sub", "Split Sub", G::Rack, C::Rack).menu(),
     cmd("rack.toggle_match", "Match Loudness", G::Rack, C::Rack),
     cmd("rack.uncombine", "Uncombine", G::Rack, C::Rack).menu(),
     cmd(
@@ -1528,6 +1566,23 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.add_reverb_send",
+        "Add Reverb Send...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.add_transition",
+        "Add Transition",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(ADD_TRANSITION_ARGS)
     .menu()
     .decline(),
     cmd(
@@ -2171,6 +2226,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.peak_surgeon",
+        "Peak Surgeon",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.refreeze_track",
         "Re-render Frozen Track",
         G::Sequencer,
@@ -2224,6 +2287,24 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .arg(REVERSE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.reverse_reverb_print",
+        "Reverse Reverb Print",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(REVERSE_REVERB_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.rumble_maker",
+        "Rumble Maker",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(RUMBLE_MAKER_ARGS)
     .menu()
     .decline(),
     cmd(
@@ -2734,13 +2815,6 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_big_meter", "Big Meter", G::View, C::Global).menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
-    cmd(
-        "view.toggle_console_devices",
-        "Show Console Devices in Rack",
-        G::View,
-        C::Global,
-    )
-    .menu(),
     cmd(
         "view.toggle_console_links",
         "Show Console Links",

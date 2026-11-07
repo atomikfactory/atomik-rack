@@ -31,10 +31,6 @@
       "name": "Console Channel", "folded": false
     },
     {
-      "id": "master", "type": "atomik.master",
-      "name": "Console Master", "folded": false
-    },
-    {
       "id": "echo", "type": "clap.atomik.test.gain",
       "name": "Echo", "folded": false,
       "params": {
@@ -56,6 +52,10 @@
         "pinned": [],
         "run_on_audio_thread": false, "powered": true
       }
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
     },
     {
       "id": "bass", "type": "atomik.poly-synth",

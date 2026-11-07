@@ -1,5 +1,5 @@
-//! Rack view code of the master panel: the control-room source pick
-//! list and the EDIT button of each return.
+//! Rack view code of the master section panel: the pick list of a long choice param and the
+//! EDIT button of each send row.
 
 use super::{Flip, Hit, RackView, UiAction, param_cmd};
 use crate::canvas::{Align, Canvas, TextRun, pt};
@@ -193,8 +193,7 @@ impl RackView {
             return None;
         }
         let d = &self.devices[self.device_index(key)?];
-        let desc = d.desc?;
-        let r = master_panel::edit_rects(&d.spec, &desc)
+        let r = master_panel::edit_rects()
             .into_iter()
             .find(|(s, _)| *s == slot)?
             .1;

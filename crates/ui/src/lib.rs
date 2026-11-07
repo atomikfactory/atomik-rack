@@ -123,8 +123,8 @@
 //! Tell the view the pane state with [`ConsoleView::set_maximised`] (lights the MAX button).
 //! Each frame the app passes `set_meters` (engine readings, linear amplitude) then
 //! `set_frame_time` (monotonic seconds); after a routing change, `set_latency_readouts` and
-//! `set_pdc_warning`. Console edits arrive as `Command::Console(..)`. The rack shows console
-//! devices unless [`RackView::set_show_console_devices`] is off (on by default), draws
+//! `set_pdc_warning`. Console edits arrive as `Command::Console(..)`. The rack always shows the
+//! console devices (a channel or bus as a compact mix channel panel, see [`mix_panel`]), draws
 //! the channel to master links only while [`RackView::set_show_console_links`] is on (a channel
 //! then reads "Output: Master", see [`RackView::output_display`]) and locks the Master Section
 //! while it is the first device ([`RackView::is_locked`]).
@@ -279,6 +279,10 @@
 //! - **Kick and bass check.** [`KickBassView`] is the modal panel of the check of a kick and a
 //!   bass track (the strip of cancellation and build-up, the fixes); it emits
 //!   [`UiAction::KickBass`].
+//! - **Reverb send wizard.** [`ReverbSendView`] is the modal panel of Track > Add Reverb Send: the
+//!   de-esser, the duck, the send position, the decay, the high-pass, the low-pass and the send
+//!   level; it emits [`UiAction::ReverbSend`] (`ADD`, `CLOSE`) and the app feeds it with
+//!   [`ReverbSendView::set_target`].
 //! - **Song information.** [`SongInfoView`] is the modal panel of the title, author, e-mail, web
 //!   address and notes; it emits [`UiAction::SongInfo`] (`APPLY`, `CLOSE`). Its texts are
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
@@ -300,6 +304,20 @@
 //! - **Mix check.** [`MixCheckView`] is the modal panel of the mix check: the findings of the analysis of
 //!   the song with the track, the measured number, a line on why, a one-click fix button and a button that
 //!   opens the tool; it emits [`UiAction::MixCheck`] and the host feeds it a [`MixCheckData`] and the progress.
+//! - **Bass read.** [`BassReadView`] is the modal panel of "Will the bass read?": a list of the strips (the master
+//!   and the tracks), a meter of how much of the low note a small speaker still plays through its harmonics and the
+//!   verdict; it emits [`UiAction::BassRead`] and the host feeds it a [`BassReadData`].
+//! - **Delivery.** [`DeliveryView`] is the modal panel of the delivery targets and the Peak Surgeon: what common
+//!   loudness targets would do to the measured master with a warning for a quiet master that would be turned up into
+//!   a limiter, and the highest peaks of an audio clip ranked with a threshold, a step and a width; it emits
+//!   [`UiAction::Delivery`] and the host feeds it a [`DeliveryData`].
+//! - **Sound Analyst.** [`SoundAnalystView`] is the modal panel of "recreate this sound": the measured level, brightness
+//!   and pitch curves of an audio file with the numbers, the proposed patch and the distances between the target and
+//!   the patch's render; it emits [`UiAction::SoundAnalyst`] and the host feeds it a [`SoundAnalystData`].
+//! - **Wavetable editor.** [`WavetableView`] is the modal panel of the Wavetable Synth's table: the key frames, a box
+//!   to draw the selected one in, a bar for each harmonic, whole-frame processes, the phase-safe morph and the cleanup
+//!   of a table made from a sample; it emits [`UiAction::Wavetable`] (one commit per gesture) and the host feeds it a
+//!   [`WavetableData`].
 //! - **Repetition.** [`RepetitionView`] is the modal panel of the repetition finder: the ideas the song plays
 //!   three times or more unchanged, where they are, and three suggested variations per idea, an edit one button
 //!   away or advice; it emits [`UiAction::Repetition`] and the host feeds it a [`RepetitionData`].
@@ -329,6 +347,7 @@ pub mod arrangement;
 pub mod audio;
 pub mod audio_editor;
 pub mod autolayout;
+pub mod bass_read_panel;
 pub mod big_meter;
 pub mod blind_panel;
 pub mod breadcrumb;
@@ -354,8 +373,10 @@ pub mod controller_lane;
 #[cfg(feature = "cpu-canvas")]
 pub mod cpu_canvas;
 pub mod cursor;
+pub mod delivery_panel;
 pub mod display_list;
 pub mod drum_gen_panel;
+pub mod duck_panel;
 pub mod event;
 pub mod export_panel;
 pub mod file_browser;
@@ -379,6 +400,7 @@ pub mod master_panel;
 pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
+pub mod mix_panel;
 pub mod mixcheck_panel;
 pub mod mod_matrix_panel;
 pub mod modsrc_panel;
@@ -399,6 +421,7 @@ pub mod rack;
 pub mod relink_panel;
 pub mod repetition_panel;
 pub mod resonance_marks;
+pub mod reverb_send_panel;
 pub mod sample_editor;
 pub mod scale_panel;
 pub mod scene_canvas;
@@ -411,6 +434,7 @@ pub mod sidechain;
 pub mod silence_panel;
 pub mod slice_editor;
 pub mod song_info_panel;
+pub mod sound_analyst_panel;
 pub mod spectrum_eq;
 pub mod step_drag;
 pub mod step_editor;
@@ -428,6 +452,7 @@ pub mod versions_panel;
 pub mod viewport;
 pub mod warp_panel;
 pub mod wave_paint;
+pub mod wavetable_editor;
 pub mod wavetable_panel;
 pub mod widget;
 pub mod zone_edit;
@@ -443,6 +468,7 @@ pub use arrangement::{
     PointField, PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use audio_editor::{AudioEditorView, AudioMode};
+pub use bass_read_panel::{BassLevel, BassReadAction, BassReadData, BassReadView, BassReadingRow};
 pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
@@ -452,6 +478,10 @@ pub use console_meter::ChannelMeters;
 pub use console_vca::VcaPart;
 pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use cursor::CursorHint;
+pub use delivery_panel::{
+    DeliveryAction, DeliveryData, DeliveryPage, DeliveryView, PeakRow, PeaksData, TargetMark,
+    TargetRow, TargetsData,
+};
 pub use display_list::{DisplayList, Op};
 pub use event::{ImeEvent, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use export_panel::{
@@ -486,13 +516,14 @@ pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
-    COLUMN_GAP, CableVisibility, Flip, JackChoice, JackGroup, JackMenu, JackOp, JackPeer,
-    LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
+    COLUMN_GAP, CableVisibility, Flip, InsertAreaInfo, JackChoice, JackGroup, JackMenu, JackOp,
+    JackPeer, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use repetition_panel::{
     RepetitionAction, RepetitionChoice, RepetitionData, RepetitionRow, RepetitionView,
 };
+pub use reverb_send_panel::{ReverbSendAction, ReverbSendRow, ReverbSendValues, ReverbSendView};
 pub use sample_editor::SampleEditorView;
 pub use scale_panel::{ScaleAction, ScaleView, parse_percent};
 pub use scene_canvas::{SceneCache, SceneCanvas};
@@ -502,6 +533,9 @@ pub use seq_panel::SeqButton;
 pub use silence_panel::{SilenceAction, SilenceRow, SilenceValues, SilenceView};
 pub use slice_editor::SliceEditorView;
 pub use song_info_panel::{InfoField, SongInfoAction, SongInfoView};
+pub use sound_analyst_panel::{
+    Curve, Distance, MatchRow, SoundAnalystAction, SoundAnalystData, SoundAnalystView,
+};
 pub use step_editor::{StepEditorView, ToolButton, ToolKind, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use text_field::{FieldColors, FieldKey, TextField};
@@ -517,4 +551,5 @@ pub use vello::{kurbo, peniko};
 pub use versions_panel::{REPORT_LINES, VersionItem, VersionsAction, VersionsView};
 pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};
+pub use wavetable_editor::{WavetableAction, WavetableData, WavetableView};
 pub use zone_panel::{Standing, ZoneAction, ZoneData, ZoneReference, ZoneRowData, ZoneView};

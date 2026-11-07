@@ -342,4 +342,8 @@ impl EngineSink for OfflineSink {
             .as_ref()
             .and_then(|h| h.reference_shared().short_term_lufs())
     }
+
+    fn lens_set(&mut self, settings: atomik_engine::LensSettings) -> Result<(), EngineError> {
+        handle!(self).lens_set(settings)
+    }
 }

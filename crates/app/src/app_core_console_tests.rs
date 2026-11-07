@@ -1120,3 +1120,27 @@ fn route_vca_plays_the_group_into_a_new_bus_and_stop_routing_ends_it() {
     assert!(c.route_vca(Pane::Rack, Some(1)));
     assert_eq!(c.doc().console.buses.len(), 2);
 }
+
+#[test]
+fn edit_on_an_insert_row_shows_the_effect_in_the_rack() {
+    let mut c = two_channels();
+    let channel = channel_of(&c, "a");
+    c.apply_command(Command::Console(ConsoleCommand::SetInsert {
+        channel: channel.clone(),
+        slot: 0,
+        effect: Some(atomik_model::InsertEffect::New {
+            type_id: "atomik.reverb".into(),
+        }),
+    }))
+    .expect("an insert");
+    let fx = atomik_model::insert_chain(c.doc(), c.registry(), &channel)[0].clone();
+    // The insert area is folded: the effect is not drawn.
+    c.after_view_change();
+    c.view_mut().set_inserts_shown(&channel, false);
+    c.after_view_change();
+    assert!(c.view().device_rect(&fx).is_none());
+    c.handle_action(UiAction::EditInsert(fx.clone()));
+    assert!(c.view().inserts_shown(&channel), "the area unfolds");
+    assert_eq!(c.view().selected(), Some(&fx), "the effect is selected");
+    assert!(c.view().device_rect(&fx).is_some(), "and drawn in the rack");
+}

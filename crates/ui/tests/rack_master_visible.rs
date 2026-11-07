@@ -1,4 +1,4 @@
-//! The rack shows the console devices by default and the Master Section is visibly locked
+//! The rack always shows the console devices and the Master Section is visibly locked
 //! (UI half). Display-list goldens regenerate with
 //! `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-ui --test rack_master_visible`.
 
@@ -22,12 +22,11 @@ fn fresh(doc: &atomik_model::RackDoc, reg: &atomik_device_sdk::Registry) -> Rack
 }
 
 #[test]
-fn console_devices_are_shown_by_default_and_hidden_with_the_toggle() {
+fn console_devices_are_always_shown() {
     let reg = registry();
     let d = two_instruments(&reg);
     let doc = d.doc();
     let mut v = fresh(doc, &reg);
-    assert!(v.show_console_devices(), "shown by default");
     assert_eq!(
         shown(&v),
         [
@@ -39,12 +38,8 @@ fn console_devices_are_shown_by_default_and_hidden_with_the_toggle() {
             "channel-2"
         ]
     );
-    v.set_show_console_devices(false);
     v.sync(doc, &reg);
-    assert_eq!(shown(&v), ["interface", "synth", "bass"]);
-    v.set_show_console_devices(true);
-    v.sync(doc, &reg);
-    assert_eq!(shown(&v).len(), 6);
+    assert_eq!(shown(&v).len(), 6, "a second sync keeps them all");
 }
 
 #[test]

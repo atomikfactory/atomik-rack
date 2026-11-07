@@ -78,6 +78,55 @@ fn the_most_common_commands_have_their_own_names() {
             "Replace Device",
         ),
         (
+            wf(WorkflowCommand::SplitSub {
+                device: key("a"),
+                freq: 120.0,
+            }),
+            "Split Sub",
+        ),
+        (
+            wf(WorkflowCommand::AddReverbSend {
+                track: key("a"),
+                options: atomik_model::reverb_send::ReverbSendOptions::default(),
+            }),
+            "Add Reverb Send",
+        ),
+        (
+            wf(WorkflowCommand::AddRumble {
+                kick: key("a"),
+                start: 0,
+                length: 1,
+                audio: atomik_model::AudioClipContent::new("a".repeat(64), 0),
+                name: None,
+                options: atomik_model::rumble::RumbleTrackOptions::default(),
+            }),
+            "Add Rumble",
+        ),
+        (
+            wf(WorkflowCommand::AddTransition {
+                at: BAR,
+                edit: atomik_model::transition::TransitionEdit::Silence,
+            }),
+            "Add Silence Transition",
+        ),
+        (
+            wf(WorkflowCommand::AddTransition {
+                at: BAR,
+                edit: atomik_model::transition::TransitionEdit::Fill { track: key("a") },
+            }),
+            "Add Fill Transition",
+        ),
+        (
+            wf(WorkflowCommand::AddTransition {
+                at: BAR,
+                edit: atomik_model::transition::TransitionEdit::FilterDown {
+                    target: key("a"),
+                    bars: 1,
+                },
+            }),
+            "Add Filter Down Transition",
+        ),
+        (
             wf(WorkflowCommand::SetFoldedMany {
                 keys: keys_of(&["a"]),
                 folded: true,

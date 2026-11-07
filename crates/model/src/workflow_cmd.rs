@@ -171,6 +171,63 @@ pub enum WorkflowCommand {
         /// What takes its place.
         source: CreateSource,
     },
+    /// Split Sub on the track of a Mono Bass: the bass goes into a container with a mono sine sub
+    /// layer that plays the same notes below `freq` Hz, and a low cut at `freq` Hz on the bass, so
+    /// its width and unison stay above the sub (see [`crate::split_sub`]). The track, its console
+    /// channel and its note entry follow the bass into the container; the automation lanes of the
+    /// track are dropped. One undo step; a device that is not a top-level Mono Bass with a track,
+    /// a frequency outside 60 to 250 Hz and a frozen track are rejected.
+    SplitSub {
+        /// The Mono Bass that has the track.
+        device: DeviceKey,
+        /// The split frequency in Hz.
+        freq: f32,
+    },
+    /// The reverb send wizard (see [`crate::reverb_send`]): the console channel of the track
+    /// gets a send, post-fader unless the options say otherwise, to a new FX return that holds,
+    /// in series, an optional de-esser, an EQ with a high-pass and a low-pass and a Space Reverb
+    /// at 100 % wet; with the duck option the channel's output is cabled to the reverb's key
+    /// and the duck is on. The decay is the option or one suggested from the track's note
+    /// spacing. One undo step; a device that is not a top-level track with a console channel,
+    /// a frozen track, an option out of its range and a console with all eight send/return
+    /// slots in use are rejected.
+    AddReverbSend {
+        /// The device that has the track.
+        track: DeviceKey,
+        /// The choices of the wizard.
+        options: crate::reverb_send::ReverbSendOptions,
+    },
+    /// The track of a printed rumble layer (see [`crate::rumble`]): a new audio track right after
+    /// the kick's, with one clip of the rendered rumble (already in the pool), a Sidechain Tool
+    /// keyed by the kick's channel and an EQ with a high-pass and a low-pass on its channel, in
+    /// one undo step. A kick that is not a top-level track with a console channel, a frozen
+    /// track and an option out of its range are rejected.
+    AddRumble {
+        /// The device that has the kick track.
+        kick: DeviceKey,
+        /// Song tick where the clip starts.
+        start: i64,
+        /// Clip length in ticks.
+        length: i64,
+        /// The rendered rumble (a plain clip: no reverse, no warp).
+        audio: AudioClipContent,
+        /// The name of the new track, or `None` for "<kick> Rumble".
+        name: Option<String>,
+        /// The choices of the track's inserts.
+        options: crate::rumble::RumbleTrackOptions,
+    },
+    /// A transition at the section boundary `at` that is an edit (see [`crate::transition`]): a
+    /// filter that closes on the master or a group over the last bars, the master fader at zero
+    /// for one beat, or the last beat of a note track played twice at double rate. All of it is
+    /// one undo step. A boundary at the start of the song, a frozen track, a strip that is not the
+    /// master or a group bus, a fill with no note in the last beat and a clip that overlaps
+    /// another on its lane are rejected.
+    AddTransition {
+        /// The boundary: the song tick where the next section starts.
+        at: i64,
+        /// Which transition and its choices.
+        edit: crate::transition::TransitionEdit,
+    },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
     /// channel.
@@ -887,6 +944,24 @@ pub(crate) fn plan(
         WorkflowCommand::ReplaceDevice { target, source } => {
             plain(crate::replace_device::plan(doc, registry, &target, &source))
         }
+        WorkflowCommand::SplitSub { device, freq } => {
+            plain(crate::split_sub::plan(doc, registry, &device, freq).map(|planned| planned.edit))
+        }
+        WorkflowCommand::AddReverbSend { track, options } => {
+            plain(crate::reverb_send::plan(doc, registry, &track, &options))
+        }
+        WorkflowCommand::AddTransition { at, edit } => {
+            plain(crate::transition::plan(doc, registry, at, &edit))
+        }
+        WorkflowCommand::AddRumble {
+            kick,
+            start,
+            length,
+            audio,
+            name,
+            options,
+        } => crate::rumble::plan(doc, registry, &kick, (start, length, audio), name, &options)
+            .map(|(edit, id)| (edit, Some(id))),
         WorkflowCommand::SetFoldedMany { keys, folded } => {
             let mut edits = Vec::new();
             for key in keys {
@@ -1234,6 +1309,10 @@ fn rerouted_move(
         .devices
         .iter()
         .filter(|d| keys.contains(&d.key) && workflow_create::reroutable(doc, registry, &d.key))
+        // The inserts of a channel that moves with them stay in its chain.
+        .filter(|d| {
+            !crate::insert_owner(doc, registry, &d.key).is_some_and(|strip| keys.contains(&strip))
+        })
         .map(|d| d.key.clone())
         .collect();
     if movers.is_empty() {

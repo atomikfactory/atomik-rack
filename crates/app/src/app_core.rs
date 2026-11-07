@@ -186,6 +186,10 @@ pub struct AppCore<S: EngineSink> {
     clipboard: Clipboard,
     /// The channel settings the last Copy Channel Settings took.
     settings_clip: Option<atomik_model::ChannelSettingsClip>,
+    /// The transitions made in this session: the boundary, the kind and the undo depth after the
+    /// step (an undo takes the ones it undid off), for the warning about a kind on most
+    /// boundaries.
+    transitions: Vec<(i64, atomik_model::transition::TransitionKind, usize)>,
     /// The strips a Delete Channel asked to confirm (their tracks hold clips): the same call
     /// again on the same strips deletes them.
     strip_delete_ask: Option<Vec<DeviceKey>>,
@@ -287,6 +291,8 @@ pub struct AppCore<S: EngineSink> {
     eq_live: eq_live::EqLive,
     /// The resonance finder of the dynamic EQ (see `app_core_resonance.rs`).
     resonance: resonance_finder::Finder,
+    /// Learn from kick of the Sidechain Tool (see `app_core_duck_learn.rs`).
+    duck_learn: duck_learner::Learner,
     /// The blind A/B test and the loudness match readouts.
     blind: blind::Blind,
     /// The SAMPLE button's recording and input choice.
@@ -298,6 +304,19 @@ pub struct AppCore<S: EngineSink> {
     reference: reference_ops::ReferenceState,
     /// What Find Repetition found (see [`repetition`]).
     repetition: repetition::RepetitionState,
+    /// The strip the bass-read panel reads and what it found (see [`bass_read`]).
+    bass_read: bass_read::BassReadState,
+    /// The master measurement of the Delivery panel (see [`delivery`]).
+    delivery: delivery::DeliveryState,
+    /// The Peak Surgeon: the scanned clip and its peaks (see [`surgeon`]).
+    surgeon: surgeon::SurgeonState,
+    /// The Sound Analyst: the analysed file, its proposed patch and the patch made (see
+    /// [`sound`]).
+    sound: sound::SoundState,
+    /// What the wavetable editor read from the device it edits (see `app_core_wavetable.rs`).
+    wavetable: wavetable_edit::WavetableState,
+    /// The translation lens of the live output (see [`lens`]).
+    lens: lens::LensState,
     /// The decision zone: readings of the mix and the references (see `app_core_zone.rs`).
     zone: zone_ops::ZoneState,
     /// The library clip preview that plays through a track (see `app_core_clip_preview.rs`).
@@ -506,6 +525,7 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             settings_clip: None,
+            transitions: Vec::new(),
             strip_delete_ask: None,
             auto_armed: Vec::new(),
             manual_rec: false,
@@ -561,11 +581,18 @@ impl<S: EngineSink> AppCore<S> {
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
             resonance: resonance_finder::Finder::default(),
+            duck_learn: duck_learner::Learner::default(),
             blind: blind::Blind::default(),
             sampling: sampling::Sampling::default(),
             player_preview: None,
             reference: reference_ops::ReferenceState::new(),
             repetition: repetition::RepetitionState::default(),
+            bass_read: bass_read::BassReadState::default(),
+            delivery: delivery::DeliveryState::default(),
+            surgeon: surgeon::SurgeonState::default(),
+            sound: sound::SoundState::default(),
+            wavetable: wavetable_edit::WavetableState::default(),
+            lens: lens::LensState::default(),
             zone: zone_ops::ZoneState::new(),
             clip_preview: None,
             patch_preview: None,
@@ -1022,6 +1049,12 @@ impl<S: EngineSink> AppCore<S> {
             }
             // A device picked in the console (an insert slot) is selected in the rack too.
             UiAction::Select(key) => self.view.set_selected(Some(key)),
+            // EDIT on an insert row of the console: the rack scrolls to the strip with its
+            // insert area unfolded and the effect selected.
+            UiAction::EditInsert(key) => {
+                self.view
+                    .reveal_insert(self.document.doc(), &self.registry, &key);
+            }
             UiAction::OpenBrowser => {}
             // A note clip of a drum machine opens in the step editor (View > Piano Roll
             // still opens it in the piano roll).
@@ -1038,6 +1071,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::PreviewPlayer(device) => self.toggle_player_preview(&device),
             UiAction::FindResonances(device) => self.find_resonances(&device),
             UiAction::CutResonances(device) => self.cut_resonances(&device),
+            UiAction::LearnDuck(device) => self.learn_duck(&device),
             UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
             UiAction::CycleSamplingInput => self.cycle_sampling_input(),
             UiAction::EditSample {
@@ -1265,7 +1299,11 @@ impl<S: EngineSink> AppCore<S> {
         self.commit_patch_browse();
         self.plugins_flush_dirty(true);
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo()));
-        self.after_history_step(done, "undo")
+        let undone = self.after_history_step(done, "undo");
+        // A transition that was undone no longer counts.
+        let depth = self.document.undo_depth();
+        self.transitions.retain(|t| t.2 <= depth);
+        undone
     }
 
     /// Redoes the last undone step; false when there is nothing to redo.
@@ -1603,6 +1641,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.reset(&config);
         self.plugins_after_reset();
         self.reference_after_reset();
+        self.lens_after_reset();
         // A fresh engine starts in tune; a project that is not has its tune in force at once.
         if self.doc().tune_cents.to_bits() != 0 {
             let result = self.sink.set_master_tune(self.doc().tune_cents, false);
@@ -1690,6 +1729,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_spectrum_eq();
         self.feed_eq_analysers();
         self.poll_resonances();
+        self.poll_duck_learn();
         self.feed_match_gains();
         self.sync_io_host();
         self.feed_io_meters();
@@ -2349,7 +2389,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Feeds the console view this frame's meters, then the monotonic time in seconds (call
-    /// once per frame while the console shows). The readings are kept for
+    /// once per frame while the console shows, or the rack shows a mix channel panel); the rack's
+    /// mix channel panels get the same peaks. The readings are kept for
     /// [`Self::feed_rec_input`], which feeds the track headers from the same read.
     pub fn update_console_meters(&mut self, now_seconds: f64) {
         // The endpoints read earlier this frame (a read resets the peak); the cache stays for
@@ -2359,6 +2400,13 @@ impl<S: EngineSink> AppCore<S> {
         self.io_meters.shared = shared;
         self.console.set_meters(&readings);
         self.console.set_frame_time(now_seconds);
+        // The mix channel panels of the rack show the same peaks as the console strips.
+        for (key, _) in &readings {
+            if let Some(m) = self.console.meter(key) {
+                let peaks = [m.peak[0].level_db, m.peak[1].level_db];
+                self.view.set_mix_meters(key, peaks);
+            }
+        }
         self.frame_readings = readings;
         self.readings_fresh = true;
     }
@@ -3790,6 +3838,8 @@ mod eq_live;
 
 #[path = "app_core_blind.rs"]
 mod blind;
+#[path = "app_core_duck_learn.rs"]
+mod duck_learner;
 #[path = "app_core_resonance.rs"]
 mod resonance_finder;
 
@@ -3922,12 +3972,28 @@ pub use templates::{
 mod masking;
 pub use masking::DemaskReport;
 
+#[path = "app_core_bass_read.rs"]
+mod bass_read;
+#[path = "app_core_delivery.rs"]
+mod delivery;
 #[path = "app_core_energy.rs"]
 mod energy;
+#[path = "app_core_lens.rs"]
+mod lens;
 #[path = "app_core_mixcheck.rs"]
 mod mixcheck;
 #[path = "app_core_repetition.rs"]
 mod repetition;
+#[path = "app_core_reverb_send.rs"]
+mod reverb_send;
+#[path = "app_core_sound.rs"]
+mod sound;
+#[path = "app_core_split_sub.rs"]
+mod split_sub;
+#[path = "app_core_surgeon.rs"]
+mod surgeon;
+#[path = "app_core_wavetable.rs"]
+mod wavetable_edit;
 
 #[path = "app_core_versions.rs"]
 mod versions;
@@ -3971,6 +4037,10 @@ mod sample_edit_tests;
 mod sampling_tests;
 
 #[cfg(test)]
+#[path = "app_core_wavetable_tests.rs"]
+mod wavetable_tests;
+
+#[cfg(test)]
 #[path = "app_core_takes_tests.rs"]
 mod takes_tests;
 
@@ -3999,8 +4069,32 @@ mod masking_tests;
 mod mixcheck_tests;
 
 #[cfg(test)]
+#[path = "app_core_delivery_tests.rs"]
+mod delivery_tests;
+
+#[cfg(test)]
 #[path = "app_core_energy_tests.rs"]
 mod energy_tests;
+
+#[cfg(test)]
+#[path = "app_core_translation_tests.rs"]
+mod translation_tests;
+
+#[cfg(test)]
+#[path = "app_core_reverb_send_tests.rs"]
+mod reverb_send_tests;
+
+#[cfg(test)]
+#[path = "app_core_rumble_tests.rs"]
+mod rumble_tests;
+
+#[cfg(test)]
+#[path = "app_core_transition_tests.rs"]
+mod transition_tests;
+
+#[cfg(test)]
+#[path = "app_core_sound_tests.rs"]
+mod sound_tests;
 
 #[cfg(test)]
 #[path = "app_core_repetition_tests.rs"]

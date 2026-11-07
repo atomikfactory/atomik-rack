@@ -32,12 +32,13 @@ pub struct DeviceInput {
     pub right: Vec<f32>,
 }
 
-/// The outputs that feed `device`'s `in_l` and `in_r` in the flat rack of `doc`. A side with no
-/// cable repeats the other; `None` when neither is cabled.
-pub fn input_sources(
+/// The outputs that feed the two sockets named `left` and `right` of `device` in the flat rack
+/// of `doc`. A side with no cable repeats the other; `None` when neither is cabled.
+fn sources_of(
     doc: &RackDoc,
     registry: &Registry,
     device: &DeviceKey,
+    (left, right): (&str, &str),
 ) -> Option<[SocketRef; 2]> {
     let flat = doc.expand(registry);
     let from = |socket: &str| {
@@ -46,12 +47,34 @@ pub fn input_sources(
             .find(|c| &c.to.device == device && c.to.socket == socket)
             .map(|c| c.from.clone())
     };
-    match (from("in_l"), from("in_r")) {
+    match (from(left), from(right)) {
         (Some(l), Some(r)) => Some([l, r]),
         (Some(l), None) => Some([l.clone(), l]),
         (None, Some(r)) => Some([r.clone(), r]),
         (None, None) => None,
     }
+}
+
+/// The outputs that feed `device`'s `in_l` and `in_r` in the flat rack of `doc`. A side with no
+/// cable repeats the other; `None` when neither is cabled.
+pub fn input_sources(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+) -> Option<[SocketRef; 2]> {
+    sources_of(doc, registry, device, ("in_l", "in_r"))
+}
+
+/// The outputs that feed the key of `device`: its `sc_in_l` and `sc_in_r` when either has a cable,
+/// else its `in_l` and `in_r` (a device with a key input listens to its input without one).
+/// `None` when nothing is cabled to any of them.
+pub fn key_sources(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+) -> Option<[SocketRef; 2]> {
+    sources_of(doc, registry, device, ("sc_in_l", "sc_in_r"))
+        .or_else(|| input_sources(doc, registry, device))
 }
 
 /// Renders `doc` up to `to_frame` and returns the frames `from_frame..to_frame` of the audio at
@@ -64,9 +87,58 @@ pub fn input_sources(
 pub fn render_device_input(
     doc: &RackDoc,
     registry: &Registry,
-    (options, bundle_root): (&ProjectOptions, Option<&Path>),
+    settings: (&ProjectOptions, Option<&Path>),
     plugins: &mut PluginBounce<'_>,
     device: &DeviceKey,
+    span: (u64, u64),
+    control: RenderControl<'_>,
+) -> Result<Option<DeviceInput>, RenderError> {
+    let tap = input_sources(doc, registry, device);
+    render_tap(
+        doc,
+        registry,
+        settings,
+        plugins,
+        (device, tap),
+        span,
+        control,
+    )
+}
+
+/// Renders `doc` up to `to_frame` and returns the frames `from_frame..to_frame` of the audio at
+/// the key of `device` ([`key_sources`]): what a key-driven device such as the Sidechain Tool
+/// reacts to. The render is the one of [`render_device_input`].
+///
+/// # Errors
+/// Nothing is cabled to the key or the input of the device, the span is empty, or the bounce of
+/// the document fails.
+pub fn render_device_key(
+    doc: &RackDoc,
+    registry: &Registry,
+    settings: (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    device: &DeviceKey,
+    span: (u64, u64),
+    control: RenderControl<'_>,
+) -> Result<Option<DeviceInput>, RenderError> {
+    let tap = key_sources(doc, registry, device);
+    render_tap(
+        doc,
+        registry,
+        settings,
+        plugins,
+        (device, tap),
+        span,
+        control,
+    )
+}
+
+fn render_tap(
+    doc: &RackDoc,
+    registry: &Registry,
+    (options, bundle_root): (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    (device, tap): (&DeviceKey, Option<[SocketRef; 2]>),
     (from_frame, to_frame): (u64, u64),
     control: RenderControl<'_>,
 ) -> Result<Option<DeviceInput>, RenderError> {
@@ -76,7 +148,7 @@ pub fn render_device_input(
             "there is nothing to render in an empty span".to_owned(),
         ));
     }
-    let Some(tap) = input_sources(doc, registry, device) else {
+    let Some(tap) = tap else {
         return Err(fail(format!("nothing is cabled to the input of {device}")));
     };
     let extra = Extra {

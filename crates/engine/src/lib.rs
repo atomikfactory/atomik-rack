@@ -12,6 +12,7 @@ mod engine;
 mod fault;
 mod graph;
 mod interface;
+mod lens;
 mod live;
 mod offline;
 mod phase_lock;
@@ -29,6 +30,7 @@ mod tune;
 mod workers;
 
 pub use arena::{RoutingPlan, Topology};
+pub use atomik_dsp::lens::{LensSettings, Voicing as LensVoicing};
 pub use audio::{
     AssetId, Knot, SongAsset, SongAudioRegion, SongAudioTrack, SongFadeCurve, StreamSource,
     sin_quarter,

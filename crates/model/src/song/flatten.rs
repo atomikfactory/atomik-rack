@@ -614,17 +614,12 @@ impl AudioRegion {
     /// own `curve`. A curve is [`FadeCurve::eval`]. This is the reference definition; the engine evaluates the same
     /// curves with platform-independent arithmetic.
     pub fn fade_gain(&self, i: u64) -> f32 {
-        let n = self.clip_pos + i;
-        let mut g = 1.0f64;
-        if n < self.fade_in {
-            g *= self.fade_curve.eval(n as f64 / self.fade_in as f64);
-        }
-        if n + self.fade_out >= self.clip_frames && self.fade_out > 0 {
-            g *= self
-                .fade_out_curve
-                .eval((self.clip_frames - n) as f64 / self.fade_out as f64);
-        }
-        g as f32
+        fade_gain_of(
+            self.clip_pos + i,
+            self.clip_frames,
+            (self.fade_in, self.fade_out),
+            (self.fade_curve, self.fade_out_curve),
+        )
     }
 
     /// The crossfade gain at region frame `i`: `curve(i / x_in)` while `i < x_in`,
@@ -654,6 +649,25 @@ impl AudioRegion {
         }
         g
     }
+}
+
+/// The fade gain (in `0.0..=1.0`, without the clip gain) at frame `n` of a clip of `clip_frames`
+/// frames with `fades` `(in, out)` in frames and their `curves` `(in, out)`: the rule of
+/// [`AudioRegion::fade_gain`].
+pub(crate) fn fade_gain_of(
+    n: u64,
+    clip_frames: u64,
+    (fade_in, fade_out): (u64, u64),
+    (curve_in, curve_out): (FadeCurve, FadeCurve),
+) -> f32 {
+    let mut g = 1.0f64;
+    if n < fade_in {
+        g *= curve_in.eval(n as f64 / fade_in as f64);
+    }
+    if n + fade_out >= clip_frames && fade_out > 0 {
+        g *= curve_out.eval(clip_frames.saturating_sub(n) as f64 / fade_out as f64);
+    }
+    g as f32
 }
 
 /// A crossfade between two audio clips of a lane, in ticks.

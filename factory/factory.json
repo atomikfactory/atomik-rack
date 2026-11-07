@@ -168,6 +168,19 @@
         "pad"
       ]
     },
+    "Containers/Clean Low Hall.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "duck",
+        "low end",
+        "send"
+      ]
+    },
     "Containers/Double Clip.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -192,6 +205,19 @@
         "tight"
       ]
     },
+    "Containers/Ducked Vocal Reverb.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "vocal",
+        "duck",
+        "send"
+      ]
+    },
     "Containers/Envelope Sweep Pad.atomikcontainer": {
       "author": "Atomik",
       "categories": [
@@ -202,6 +228,19 @@
         "pad",
         "sweep",
         "evolving"
+      ]
+    },
+    "Containers/Gated Plate.atomikcontainer": {
+      "author": "Atomik",
+      "categories": [
+        "Reverb"
+      ],
+      "tags": [
+        "chain",
+        "reverb",
+        "gated",
+        "drums",
+        "send"
       ]
     },
     "Containers/Ping Pong Tide.atomikcontainer": {
@@ -324,6 +363,18 @@
         "lift"
       ]
     },
+    "Patches/Aligned Saw Pad.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "phase-safe",
+        "wide"
+      ]
+    },
     "Patches/Aurora Stack.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -432,6 +483,18 @@
         "room"
       ]
     },
+    "Patches/Drawn Bell Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pluck"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "bell",
+        "bright"
+      ]
+    },
     "Patches/Drum Bus De-harsh.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -480,6 +543,18 @@
         "dusty"
       ]
     },
+    "Patches/Eighth Chop.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Keys"
+      ],
+      "tags": [
+        "sidechain",
+        "chop",
+        "rhythm",
+        "curve"
+      ]
+    },
     "Patches/Fold Drone.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -490,6 +565,18 @@
         "drone",
         "fold",
         "evolving"
+      ]
+    },
+    "Patches/Four Floor Pump.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "sidechain",
+        "pump",
+        "curve",
+        "kick"
       ]
     },
     "Patches/Glass Choir.atomikpatch": {
@@ -526,6 +613,18 @@
         "mono",
         "gritty",
         "heavy"
+      ]
+    },
+    "Patches/Half Bar Breath.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Pad"
+      ],
+      "tags": [
+        "sidechain",
+        "pad",
+        "slow",
+        "curve"
       ]
     },
     "Patches/Harmonic Sunrise.atomikpatch": {
@@ -744,6 +843,18 @@
         "electronic"
       ]
     },
+    "Patches/Sub Only Duck.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "sidechain",
+        "band",
+        "low end",
+        "kick"
+      ]
+    },
     "Patches/Sync Razor.atomikpatch": {
       "author": "Atomik",
       "categories": [
@@ -754,6 +865,18 @@
         "sharp",
         "bright",
         "sync"
+      ]
+    },
+    "Patches/Table Sub Morph.atomikpatch": {
+      "author": "Atomik",
+      "categories": [
+        "Bass"
+      ],
+      "tags": [
+        "wavetable",
+        "drawn",
+        "sub",
+        "mono"
       ]
     },
     "Patches/Tidewater Strings.atomikpatch": {

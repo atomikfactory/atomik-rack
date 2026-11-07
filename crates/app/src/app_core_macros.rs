@@ -547,7 +547,7 @@ impl<S: EngineSink> AppCore<S> {
         let desc = self.registry.get(&d.type_id)?.descriptor;
         (desc.type_id != atomik_model::song::AUDIO_TRACK_TYPE
             && atomik_model::lane_param(desc, &host.1).is_some()
-            && !host.1.starts_with("internal."))
+            && !atomik_model::console::is_hidden_param(&host.1))
         .then_some(host)
     }
 

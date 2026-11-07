@@ -15,9 +15,23 @@ const DELAY: &str = "atomik.stereo-delay";
 const BAR: i64 = 4 * 15_360;
 
 fn shell_for(os: Os) -> Shell<NullBackend> {
+    shell_with(os, crate::app_core::default_registry())
+}
+
+/// A shell whose rack has no console devices (a core whose registry has no channel, bus or
+/// master): the instruments and effects of a test are all there is, as in a rack-only project.
+fn rack_only_shell_for(os: Os) -> Shell<NullBackend> {
+    shell_with(
+        os,
+        atomik_model::stress::without_console(&crate::app_core::default_registry()),
+    )
+}
+
+fn shell_with(os: Os, registry: atomik_device_sdk::Registry) -> Shell<NullBackend> {
     let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
+    let core = AppCore::with_registry(session, registry, atomik_model::empty_doc(), None);
     let mut s = Shell::new(
-        AppCore::new(session),
+        core,
         ShellOptions {
             os: Some(os),
             profile: None,
@@ -30,10 +44,7 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
     s.handle(&UiEvent::Resize(Size::new(1100.0, 2400.0)));
-    // These tests are about the instruments and effects: the rack as it looked before
-    // With the console devices hidden.
-    s.core_mut().view_mut().set_show_console_devices(false);
-    // And without the rack navigator, whose strip would take the right edge of the rack area.
+    // Without the rack navigator, whose strip would take the right edge of the rack area.
     s.core_mut().view_mut().set_navigator_visible(false);
     s
 }
@@ -68,6 +79,17 @@ fn cable(s: &mut Shell<NullBackend>, from: (&str, &str), to: (&str, &str)) {
 
 /// Three instruments `a`, `b`, `c` (a feeds nothing; b and c are effects) in the rack.
 fn rack3() -> Shell<NullBackend> {
+    let mut s = rack_only_shell_for(Os::Windows);
+    add(&mut s, SYNTH, "a");
+    add(&mut s, DELAY, "b");
+    add(&mut s, DELAY, "c");
+    s.core_mut().after_view_change();
+    s.set_focus(Pane::Rack);
+    s
+}
+
+/// [`rack3`] with its console: `a` brings its channel and the master.
+fn rack3_with_console() -> Shell<NullBackend> {
     let mut s = shell_for(Os::Windows);
     add(&mut s, SYNTH, "a");
     add(&mut s, DELAY, "b");
@@ -585,8 +607,7 @@ fn save_to_library_from_the_device_menu_writes_the_selected_device_as_a_patch() 
 
 #[test]
 fn save_to_library_is_off_for_the_master_section_alone() {
-    let mut s = rack3();
-    s.core_mut().view_mut().set_show_console_devices(true);
+    let mut s = rack3_with_console();
     s.core_mut().after_view_change();
     let master = s.core().doc().console.master.clone().unwrap();
     s.core_mut()

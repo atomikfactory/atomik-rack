@@ -80,6 +80,9 @@ pub enum UiAction {
     Redo,
     /// The selected device changed (the selection is that one device).
     Select(DeviceKey),
+    /// EDIT on an insert row of the console: the rack shows the strip with its insert area
+    /// unfolded and the effect selected.
+    EditInsert(DeviceKey),
     /// The rack selection holds several devices: `primary` is the device
     /// the editors and the live keyboard follow (the last clicked), `keys` the whole selection
     /// in rack order (path keys inside a container). View state, not an undo step.
@@ -242,6 +245,10 @@ pub enum UiAction {
     /// The CUT button of a dynamic EQ: the resonances found last go into the free bells of the
     /// device as dynamic cuts, in one undo step.
     CutResonances(DeviceKey),
+    /// The LEARN button of a Sidechain Tool: the app renders a few seconds of what reaches the
+    /// device's key on a worker, learns a duck curve from the hits in it and puts the curve into
+    /// the device in one undo step.
+    LearnDuck(DeviceKey),
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.
@@ -652,9 +659,26 @@ pub enum UiAction {
     /// The blind A/B panel ([`crate::BlindView`]) asks for something: play X or Y, pick one,
     /// switch the level match, run again, or close.
     Blind(crate::blind_panel::BlindAction),
+    /// The "Will the bass read?" panel ([`crate::BassReadView`]) asks for something: choose the
+    /// strip, measure, stop, or close.
+    BassRead(crate::bass_read_panel::BassReadAction),
+    /// The Delivery panel ([`crate::DeliveryView`]) asks for something: a page, a target, a
+    /// measurement, the ceiling, or a trim of the Peak Surgeon.
+    Delivery(crate::delivery_panel::DeliveryAction),
+    /// The Sound Analyst panel ([`crate::SoundAnalystView`]) asks for something: pick a file, stop
+    /// the analysis, make the patch, match it, or close.
+    SoundAnalyst(crate::sound_analyst_panel::SoundAnalystAction),
+    /// The wavetable editor ([`crate::WavetableView`]) asks for something: store the edited
+    /// table, cut its sample by cycle, play it on oscillator 1, or close.
+    Wavetable(crate::wavetable_editor::WavetableAction),
+    /// Open the wavetable editor on this Wavetable Synth (a click on a table display).
+    EditWavetable(DeviceKey),
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),
+    /// The reverb send wizard ([`crate::ReverbSendView`]) asks for something: add the send of the
+    /// target track with its choices, or close.
+    ReverbSend(crate::reverb_send_panel::ReverbSendAction),
     /// The Scale Tempo panel ([`crate::ScaleView`]) asks for something: preview the selected
     /// clips scaled by its percentage, make that their new tempo, or close.
     ScaleTempo(crate::scale_panel::ScaleAction),

@@ -1,0 +1,89 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "c", "type": "atomik.container",
+      "name": "Gated Plate", "folded": false, "patch": "Gated Plate",
+      "params": {
+        "macro1": 0.2631579,
+        "macro2": 0.5
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 250,
+              "band1.on": 1,
+              "band6.freq": 9000,
+              "band6.on": 1
+            }
+          },
+          {
+            "id": "plate", "type": "atomik.reverb",
+            "name": "Reverb", "folded": false,
+            "params": {
+              "algorithm": 2,
+              "decay": 3.5,
+              "duck_threshold": -38,
+              "key_gate": 1,
+              "key_gate_hold": 120,
+              "mix": 1,
+              "predelay": 8
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "eq:in_l"},
+          {"from": "boundary:in_r", "to": "eq:in_r"},
+          {"from": "eq:out_l", "to": "plate:in_l"},
+          {"from": "eq:out_r", "to": "plate:in_r"},
+          {"from": "plate:out_l", "to": "boundary:out_l"},
+          {"from": "plate:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "Hold", "targets": [
+            {"device": "plate", "param": "key_gate_hold", "min": 20, "max": 400}
+          ]},
+          {"name": "Decay", "targets": [
+            {"device": "plate", "param": "decay", "min": 1, "max": 6}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

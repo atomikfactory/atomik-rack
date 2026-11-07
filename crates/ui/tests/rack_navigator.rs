@@ -28,7 +28,6 @@ fn three_columns() -> (RackDoc, Registry) {
 
 fn nav_view(doc: &RackDoc, reg: &Registry, window: Size) -> RackView {
     let mut v = RackView::new(atomik_ui::Theme::dark());
-    v.set_show_console_devices(false);
     v.set_navigator_visible(true);
     let _ = v.handle(&UiEvent::Resize(window), doc, reg);
     v.sync(doc, reg);

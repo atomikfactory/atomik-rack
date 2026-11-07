@@ -430,8 +430,9 @@ fn front_groups(
         if strip_bypass && p.key == BYPASS_KEY {
             continue;
         }
-        // `internal.*` params are set by the app (solo silence, the VCA feed), never by hand.
-        if atomik_model::console::is_internal_param(p.key) {
+        // `internal.*` params are set by the app (solo silence, the VCA feed), never by hand,
+        // and `hidden.*` ones belong to a panel's own editor.
+        if atomik_model::console::is_hidden_param(p.key) {
             continue;
         }
         // The modulation slots are one matrix, not eight rows of loose knobs.
@@ -1207,6 +1208,7 @@ mod tests {
                 params,
                 (0..d.params.len())
                     .filter(|i| !atomik_device_sdk::is_mod_slot_key(d.params[*i].key))
+                    .filter(|i| !atomik_model::console::is_hidden_param(d.params[*i].key))
                     .collect::<Vec<_>>(),
                 "{}",
                 d.type_id

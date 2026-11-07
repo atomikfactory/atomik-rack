@@ -18,10 +18,14 @@
 //!   last exceeded the level and opens again within 1 ms, the cut-off tail of a gated
 //!   reverb.
 //!
+//! * **Key.** The same keyed duck and gate of the wet path as the classic reverb (`sc_in_l/r`,
+//!   see [`crate::reverb::keyed`]), applied after the high cut and the gate.
+//!
 //! Latency is 0 and `mix == 0` copies the input bit-exactly, like the classic reverb. Meter
 //! values are the same three (output peaks and tail RMS).
 
 use crate::bypass::{Bypassable, bypass_param};
+use crate::reverb::keyed;
 use crate::reverb::{P_GATE, P_GATE_LEVEL, P_HIGHCUT, Reverb};
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -52,7 +56,7 @@ const fn param(
 }
 
 // The ids 0..=12 are those of `atomik.reverb`; the shared engine reads them by number.
-static PARAMS: [ParamDescriptor; 17] = [
+static PARAMS: [ParamDescriptor; 24] = [
     param(
         0,
         "algorithm",
@@ -197,7 +201,14 @@ static PARAMS: [ParamDescriptor; 17] = [
         Taper::Linear,
         Unit::Db,
     ),
-    bypass_param(16),
+    keyed::param(0, 16),
+    keyed::param(1, 17),
+    keyed::param(2, 18),
+    keyed::param(3, 19),
+    keyed::param(4, 20),
+    keyed::param(5, 21),
+    keyed::param(6, 22),
+    bypass_param(23),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -205,6 +216,8 @@ const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
 const MIX_CV: SocketId = SocketId(4);
+const SC_IN_L: SocketId = SocketId(5);
+const SC_IN_R: SocketId = SocketId(6);
 
 const fn socket(
     id: SocketId,
@@ -222,7 +235,7 @@ const fn socket(
     }
 }
 
-static SOCKETS: [SocketDescriptor; 5] = [
+static SOCKETS: [SocketDescriptor; 7] = [
     socket(IN_L, "in_l", "In L", SocketKind::Audio, Direction::Input),
     socket(IN_R, "in_r", "In R", SocketKind::Audio, Direction::Input),
     socket(
@@ -244,6 +257,20 @@ static SOCKETS: [SocketDescriptor; 5] = [
         "mix_cv_in",
         "Mix CV",
         SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        SC_IN_L,
+        "sc_in_l",
+        "Key L",
+        SocketKind::Audio,
+        Direction::Input,
+    ),
+    socket(
+        SC_IN_R,
+        "sc_in_r",
+        "Key R",
+        SocketKind::Audio,
         Direction::Input,
     ),
 ];
