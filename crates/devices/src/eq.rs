@@ -373,7 +373,7 @@ pub fn analyser_centres(sample_rate: f64) -> [f64; ANALYSER_BANDS] {
 }
 
 /// RBJ band-pass with constant 0 dB peak gain.
-fn bandpass(freq: f64, q: f64, sample_rate: f64) -> BiquadCoeffs {
+pub(crate) fn bandpass(freq: f64, q: f64, sample_rate: f64) -> BiquadCoeffs {
     let w0 = std::f64::consts::TAU * freq / sample_rate;
     let (sn, cs) = w0.sin_cos();
     let alpha = sn / (2.0 * q);

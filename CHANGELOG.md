@@ -776,6 +776,17 @@ may break APIs and the patch and project formats.
   guessing, and whether you reliably prefer it. The test sets bypass on the engine only, hands the effect back as
   the project has it when it ends, and changes nothing in the project. New commands `rack.toggle_match` and
   `rack.blind_ab` (no default keys); the command count is 471 and the format is still 44.
+- **Dynamic EQ (`atomik.dynamic-eq`).** A new effect next to the EQ (no EQ param moves): five bands, a low shelf,
+  three bells and a high shelf, each with a static gain, frequency and Q and its own dynamics: a threshold, a signed
+  range (below 0 cuts the band while it is loud, above 0 lifts it, 0 keeps it static), a ratio, an attack and a
+  release. A band listens to its own band of the input, or to the key input (`sc_in_l`/`sc_in_r`, a lone side
+  feeding both, band-passed at the band's frequency; with no cable it listens to its input), and works on the
+  stereo signal (the louder side decides), the mid or the side. Idle bands are skipped, so with every band off
+  the signal passes bit for bit; there is no latency. The panel draws the static curve, the live curve with the
+  gain every band has now, the reach of each band's dynamics and the spectrum of the input and, while the key is
+  cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
+  switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
+  format is still 44; not done: the low and high cut, a hold time and a look-ahead.
 - **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
   curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
   slope 1 and settles on the ceiling), with a symmetry control that lowers one half of the wave (it adds even

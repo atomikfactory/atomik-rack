@@ -178,6 +178,11 @@ impl RackView {
             {
                 return Some(Help::new(rect, text));
             }
+            if self.devices[i].fx == Some(crate::fx::FxKind::DynamicEq)
+                && let Some(text) = crate::fx::dyneq_help(p.key)
+            {
+                return Some(Help::new(rect, text));
+            }
             if self.devices[i]
                 .desc
                 .is_some_and(|d| d.type_id == crate::fm_panel::FM_TYPE)
