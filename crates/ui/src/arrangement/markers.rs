@@ -119,6 +119,9 @@ pub(super) struct MarkerUi {
     pub ctx_tick: i64,
     /// The snapped tick of the last ruler menu for the loop's locators (zero is allowed).
     pub ctx_loop_tick: i64,
+    /// The section boundary the last context menu opened on: a marker's tick, a range's start or
+    /// the bar line nearest to the pointer in the ruler (what Add Transition works at).
+    pub ctx_boundary: Option<i64>,
     /// The list's scroll offset in pixels.
     pub scroll: f64,
     pub drag: Option<MarkDrag>,
@@ -735,6 +738,7 @@ impl ArrangementView {
         match button {
             PointerButton::Secondary => {
                 self.mk.ctx = Some(MarkSel::Marker(id));
+                self.mk.ctx_boundary = Some(m.tick);
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::Marker,
                     at: pos,
@@ -787,6 +791,7 @@ impl ArrangementView {
         match button {
             PointerButton::Secondary => {
                 self.mk.ctx = Some(MarkSel::Range(id));
+                self.mk.ctx_boundary = Some(r.start);
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::MarkerRange,
                     at: pos,
@@ -981,6 +986,7 @@ impl ArrangementView {
         if button == PointerButton::Secondary {
             if let Some(sel) = row {
                 self.mk.ctx = Some(sel);
+                self.mk.ctx_boundary = self.mark_start(sel);
                 out.push(UiAction::ContextMenu {
                     target: match sel {
                         MarkSel::Marker(_) => ContextTarget::Marker,
@@ -1087,6 +1093,35 @@ impl ArrangementView {
             range,
             enabled: self.song.loop_enabled,
         })])
+    }
+
+    /// The tick the marker or range `sel` starts at.
+    fn mark_start(&self, sel: MarkSel) -> Option<i64> {
+        match sel {
+            MarkSel::Marker(id) => self
+                .song
+                .markers
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| m.tick),
+            MarkSel::Range(id) => self
+                .song
+                .ranges
+                .iter()
+                .find(|r| r.id == id)
+                .map(|r| r.start),
+        }
+    }
+
+    /// The section boundary Add Transition works at: the one the last context menu opened on
+    /// (taken: a later command from a menu bar does not reuse it), else the start of the selected
+    /// marker or range. `None` when there is neither.
+    pub fn take_transition_boundary(&mut self) -> Option<i64> {
+        self.mk
+            .ctx_boundary
+            .take()
+            .or_else(|| self.mk.sel.and_then(|sel| self.mark_start(sel)))
+            .filter(|&t| t > 0)
     }
 
     /// The marker commands: add, go to the previous and next marker, the items of the context

@@ -32,11 +32,9 @@ fn rig() -> (Document, RackView) {
     add(&mut document, "atomik.poly-synth", "bass");
     add(&mut document, "atomik.compressor", "comp");
     let mut v = RackView::new(Theme::dark());
-    // The rack with console devices hidden (they would push the
-    // compressor below the view).
-    v.set_show_console_devices(false);
+    // Tall: the console devices push the compressor down the rack.
     let _ = v.handle(
-        &UiEvent::Resize(Size::new(900.0, 1800.0)),
+        &UiEvent::Resize(Size::new(900.0, 3600.0)),
         document.doc(),
         &registry(),
     );

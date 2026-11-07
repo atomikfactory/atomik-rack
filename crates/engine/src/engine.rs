@@ -316,6 +316,8 @@ enum ControlOp {
     ReferenceSet(crate::ReferenceSettings),
     /// Drop the reference stream, if any.
     ReferenceClear,
+    /// Change the translation lens on the live output.
+    LensSet(atomik_dsp::lens::LensSettings),
     /// Start (`on`) or stop the preview clock of note player `id`.
     PreviewPlayer { id: DeviceInstanceId, on: bool },
     /// Put a tap on the notes device `id` receives (or, with `None`, take it off); the tap it
@@ -458,6 +460,8 @@ pub struct Engine {
     preview_active: Arc<AtomicBool>,
     /// The reference voice (after the master chain, outside the graph).
     reference: crate::reference::ReferenceVoice,
+    /// The translation lens (after the reference, before the click).
+    lens: crate::lens::LensVoice,
 }
 
 /// The non-RT half: submits plans, routings, devices, params and notes, and drops whatever the
@@ -621,6 +625,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
             cfg.sample_rate.hz(),
             Arc::clone(&reference),
         ),
+        lens: crate::lens::LensVoice::new(cfg.sample_rate.hz()),
     };
     let handle = EngineHandle {
         config: cfg,
@@ -920,6 +925,18 @@ impl EngineHandle {
     /// [`EngineError::QueueFull`].
     pub fn reference_clear(&mut self) -> Result<(), EngineError> {
         self.push(0, ControlOp::ReferenceClear)
+    }
+
+    /// Sets the translation lens of the live output: a small speaker, a club system or mono (see
+    /// the `lens` module). A listening aid for the live engine only: a render never sets it.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn lens_set(
+        &mut self,
+        settings: atomik_dsp::lens::LensSettings,
+    ) -> Result<(), EngineError> {
+        self.push(0, ControlOp::LensSet(settings))
     }
 
     /// What the reference voice publishes: the short-term loudness of the mix and whether a
@@ -1524,6 +1541,8 @@ impl Engine {
         }
         // The reference replaces the mix after the master chain, before the click.
         self.reference.process(&mut self.out_fifo);
+        // The lens colours what the mix sounds like, so it comes before the click and the preview.
+        self.lens.process(&mut self.out_fifo);
         let click_delay = self.routing.as_mut().and_then(|r| r.click_delay_mut());
         self.player.mix_metronome(&mut self.out_fifo, click_delay);
         self.preview.mix(&mut self.out_fifo);
@@ -1726,6 +1745,7 @@ impl Engine {
                 self.reference.set(settings);
             }
             ControlOp::ReferenceSet(settings) => self.reference.set(settings),
+            ControlOp::LensSet(settings) => self.lens.set(settings),
             ControlOp::ReferenceClear => {
                 if let Some(cut) = self.reference.clear() {
                     self.retire(Garbage::Retired(Retired::Preview(cut)));

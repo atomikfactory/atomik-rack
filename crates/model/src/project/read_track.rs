@@ -125,7 +125,7 @@ pub(super) fn load_track(
             let param = string(&lane["param"], &param_path)?;
             let dead = crate::plugin::is_dead_plugin_param(desc, param);
             if (crate::console_vca::lane_param(desc, param).is_none() && !dead)
-                || crate::console::is_internal_param(param)
+                || crate::console::is_hidden_param(param)
             {
                 return Err(param_path.error(format!("{} has no param {param:?}", desc.type_id)));
             }

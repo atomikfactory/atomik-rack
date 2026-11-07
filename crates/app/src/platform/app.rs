@@ -1295,6 +1295,17 @@ impl App {
                         self.shell.add_reference_file(&path);
                     }
                 }
+                ShellRequest::PickSoundFile => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Analyse a sound")
+                        .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.analyse_sound_file(&path);
+                    }
+                }
                 ShellRequest::PickRelinkFile => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Locate the audio file")

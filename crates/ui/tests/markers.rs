@@ -1081,3 +1081,75 @@ fn marker_lines_are_not_grabbed_while_the_strip_is_hidden() {
     let a = handle(&mut v, &doc, &[down(Point::new(x, y)), mv(to), up(to)]);
     assert!(marker_lists(&a).is_empty());
 }
+
+// ---------------------------------------------------------------- the boundary of a transition
+
+#[test]
+fn a_menu_that_opens_on_a_marker_or_a_range_names_its_start_as_the_boundary() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    // A marker: its tick, once.
+    let p = marker_point(&v, 2);
+    handle(&mut v, &doc, &[right_down(p), right_up(p)]);
+    assert_eq!(v.take_transition_boundary(), Some(4 * BAR));
+    assert_eq!(
+        v.take_transition_boundary(),
+        Some(4 * BAR),
+        "the marker stays selected"
+    );
+    // A range: its start (the first range starts at the beginning of the song: no boundary).
+    let p = range_point(&v, 2);
+    handle(&mut v, &doc, &[right_down(p), right_up(p)]);
+    assert_eq!(v.take_transition_boundary(), Some(4 * BAR));
+    let p = range_point(&v, 1);
+    handle(&mut v, &doc, &[right_down(p), right_up(p)]);
+    assert_eq!(
+        v.take_transition_boundary(),
+        None,
+        "the song's first tick is no boundary"
+    );
+}
+
+#[test]
+fn a_menu_that_opens_in_the_ruler_names_the_nearest_bar_line() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    let reg = registry();
+    // A bit right of bar 4 and a bit left of bar 5: both are nearest to their own line.
+    for (tick, bar) in [(3 * BAR + PPQ / 4, 3 * BAR), (4 * BAR - PPQ / 4, 4 * BAR)] {
+        let p = Point::new(v.tick_to_x(tick), v.ruler_label_y());
+        let a = run(|e| v.handle(e, &doc, &reg), &[right_down(p), right_up(p)]);
+        assert!(a.iter().any(|a| matches!(
+            a,
+            UiAction::ContextMenu {
+                target: ContextTarget::RulerMeter,
+                ..
+            }
+        )));
+        assert_eq!(v.take_transition_boundary(), Some(bar), "tick {tick}");
+    }
+}
+
+#[test]
+fn a_boundary_a_menu_opened_on_is_forgotten_when_the_pointer_goes_elsewhere() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    let p = Point::new(v.tick_to_x(2 * BAR), v.ruler_label_y());
+    handle(&mut v, &doc, &[right_down(p), right_up(p)]);
+    // The menu is dismissed; a press in a lane goes somewhere else.
+    let lane = v.lane_rect(&key("lead"), 0).unwrap().center();
+    handle(&mut v, &doc, &[down(lane), up(lane)]);
+    v.set_selected_marker(None);
+    assert_eq!(v.take_transition_boundary(), None);
+}
+
+#[test]
+fn without_a_menu_the_selected_marker_or_range_is_the_boundary() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    assert_eq!(v.take_transition_boundary(), None);
+    v.set_selected_marker(Some(MarkSel::Marker(1)));
+    assert_eq!(v.take_transition_boundary(), Some(BAR));
+    v.set_selected_marker(Some(MarkSel::Range(2)));
+    assert_eq!(v.take_transition_boundary(), Some(4 * BAR));
+}

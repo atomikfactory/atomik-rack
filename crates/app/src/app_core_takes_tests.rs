@@ -47,9 +47,7 @@ fn key(k: &str) -> DeviceKey {
 }
 
 fn core() -> AppCore<RecordingSink> {
-    let mut c = AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None);
-    c.view_mut().set_show_console_devices(false);
-    c
+    AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None)
 }
 
 fn add_track(c: &mut AppCore<RecordingSink>, k: &str) {

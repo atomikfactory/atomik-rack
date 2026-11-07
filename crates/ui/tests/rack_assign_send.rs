@@ -53,7 +53,10 @@ fn the_new_commands_are_in_the_registry() {
         .expect("view.toggle_console_links");
     assert_eq!(c.label, "Show Console Links");
     assert!(c.menu);
-    assert!(r.get("view.toggle_console_devices").unwrap().menu);
+    assert!(
+        r.get("view.toggle_console_devices").is_none(),
+        "the console devices are always in the rack: no switch"
+    );
 }
 
 #[test]

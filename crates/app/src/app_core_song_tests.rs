@@ -125,6 +125,7 @@ fn kinds(calls: &[SinkCall]) -> Vec<&'static str> {
             SinkCall::PreviewStop => "preview-stop",
             SinkCall::ReferenceStart(_) => "reference-start",
             SinkCall::ReferenceSet(_) => "reference-set",
+            SinkCall::LensSet(_) => "lens-set",
         })
         .collect()
 }

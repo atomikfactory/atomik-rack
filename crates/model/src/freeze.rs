@@ -623,6 +623,17 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 WorkflowCommand::ApplyPatch { device, .. }
                 | WorkflowCommand::ResetDevice { device } => device_frozen(device),
                 WorkflowCommand::ReplaceDevice { target, .. } => device_frozen(target),
+                WorkflowCommand::SplitSub { device, .. } => {
+                    device_frozen(device).or_else(|| track_frozen(device))
+                }
+                WorkflowCommand::AddReverbSend { track, .. }
+                | WorkflowCommand::AddRumble { kick: track, .. } => {
+                    device_frozen(track).or_else(|| track_frozen(track))
+                }
+                WorkflowCommand::AddTransition {
+                    edit: crate::transition::TransitionEdit::Fill { track },
+                    ..
+                } => device_frozen(track).or_else(|| track_frozen(track)),
                 WorkflowCommand::RemoveDevices { keys }
                 | WorkflowCommand::DeleteDevices { keys } => keys.iter().find_map(|k| {
                     if doc.song.track(k).is_some_and(|t| t.frozen.is_some()) {
@@ -690,6 +701,20 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                         .find(|(_, frozen)| *frozen > 0)
                         .map(|(t, _)| frozen_error(doc, &t.device))
                 }
+                ConsoleCommand::AddInsert {
+                    channel,
+                    slot,
+                    effect,
+                } => frozen_channel(channel)
+                    .filter(|(_, frozen)| *slot < *frozen)
+                    .map(|(t, _)| frozen_error(doc, &t.device))
+                    .or_else(|| match effect {
+                        InsertEffect::Existing(key) => device_frozen(key),
+                        InsertEffect::New { .. } => None,
+                    }),
+                ConsoleCommand::ExtractInsert { channel, slot, .. } => frozen_channel(channel)
+                    .filter(|(_, frozen)| *slot < *frozen)
+                    .map(|(t, _)| frozen_error(doc, &t.device)),
                 ConsoleCommand::MoveInsert {
                     channel, from, to, ..
                 } => frozen_channel(channel)

@@ -151,6 +151,34 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<crate::masking_worker::MaskAnalysis>, String>>,
     },
+    /// The energy measurement finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::energy_worker`].
+    Energy {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_model::energy_map::EnergyMap>, String>>,
+    },
+    /// The master measurement of the Delivery panel finished (`Ok(None)`: it was cancelled), or
+    /// failed: see [`crate::delivery_worker`].
+    Delivery {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_render::loudness::LoudnessReport>, String>>,
+    },
+    /// The bass reading finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::bass_read_worker`].
+    BassRead {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_dsp::bass_read::Reading>, String>>,
+    },
+    /// A Sound Analyst job finished (`Ok(None)`: it was cancelled), or failed: see
+    /// [`crate::sound_worker`].
+    Sound {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<crate::sound_worker::Outcome>, String>>,
+    },
     /// The mix check finished (`Ok(None)`: it was cancelled), or failed: see
     /// [`crate::mixcheck_worker`].
     Checked {
