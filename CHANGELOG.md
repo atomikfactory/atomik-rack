@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Reverb send wizard and ducking reverbs.** The Reverb and the Space Reverb take a key on `sc_in_l/r` (the main
+  input when neither is cabled, as in the compressor) and seven new params: `duck` (how much of the wet
+  signal the key takes out), `duck_release`, `duck_mode` (broadband, the part under `duck_freq`, or a band of Q 2
+  around it) and `duck_threshold`, and `key_gate` with `key_gate_hold`, a gate that closes the tail (a 12 ms fade)
+  that long after the key last exceeded the threshold. The duck and the gate act on the wet path only: the dry
+  signal is never touched, bit for bit. The reverb panel has two new sections, DUCK and KEY GATE, and is three
+  units tall. Track > Add Reverb Send... (`sequencer.add_reverb_send`) opens a small wizard (a de-esser for a
+  vocal, the duck from the track, post- or pre-fader, the decay, the high-pass, the low-pass and the send level) and
+  adds, in one undo step, a send of the track's channel to a new FX return that holds an optional de-esser, an EQ
+  (a 24 dB high-pass at 300 Hz and a 24 dB low-pass at 8 kHz by default) and an all-wet Space Reverb, cables the
+  channel's output to the reverb's key and turns the duck on. The decay is suggested from the track: twice the
+  median gap between the onsets of its notes, between 0.4 and 4 s (3 s for a vocal), and 2 s for a track without a
+  rhythm to read; the duck release follows the same gap. Three factory containers (Ducked Vocal Reverb, Gated
+  Plate, Clean Low Hall) are the same chains for an FX return. The project format is unchanged (44) and the
+  command count is 496.
 - **Sound Analyst.** File > Sound Analyst opens a panel that takes an audio file (dropped on it or picked with
   OPEN FILE) and measures it on a worker thread: the amplitude envelope (the rise from a tenth to nine tenths of the
   peak, the decay to the sustain, the sustain level, the release and how long the note is held), the brightness over

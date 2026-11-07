@@ -83,6 +83,7 @@ mod references;
 mod relink;
 pub mod repetition;
 mod replace_device;
+pub mod reverb_send;
 mod rules;
 pub mod slice_edit;
 mod slices;

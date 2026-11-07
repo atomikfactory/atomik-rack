@@ -626,6 +626,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 WorkflowCommand::SplitSub { device, .. } => {
                     device_frozen(device).or_else(|| track_frozen(device))
                 }
+                WorkflowCommand::AddReverbSend { track, .. } => {
+                    device_frozen(track).or_else(|| track_frozen(track))
+                }
                 WorkflowCommand::RemoveDevices { keys }
                 | WorkflowCommand::DeleteDevices { keys } => keys.iter().find_map(|k| {
                     if doc.song.track(k).is_some_and(|t| t.frozen.is_some()) {

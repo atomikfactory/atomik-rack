@@ -1550,6 +1550,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.add_reverb_send",
+        "Add Reverb Send...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.audio_crossfade",
         "Audio Crossfade",
         G::Sequencer,

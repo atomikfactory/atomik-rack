@@ -632,6 +632,7 @@ mod tests {
             can_combine: false,
             can_uncombine: false,
             can_split_sub: false,
+            can_reverb_send: false,
             lens: Default::default(),
             song_visible: true,
             piano_roll: false,

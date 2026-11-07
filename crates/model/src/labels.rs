@@ -189,6 +189,7 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::CreatePlayer { .. } => "Create Player",
         WorkflowCommand::ReplaceDevice { .. } => "Replace Device",
         WorkflowCommand::SplitSub { .. } => "Split Sub",
+        WorkflowCommand::AddReverbSend { .. } => "Add Reverb Send",
         WorkflowCommand::SetFoldedMany { .. } => "Fold Devices",
         WorkflowCommand::SetModSlot { value, .. } => match value {
             Some(_) => "Set Modulation",
