@@ -8,8 +8,8 @@ a hardware synth or a virtual port), the effects (reverb, space reverb, convolut
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
-sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter, rotary speaker,
-the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
+sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter,
+rotary speaker, the CV utilities (CV math, CV quantizer, sample and hold, slew limiter, gate processor and
 envelope follower) and the two spiders), the note players (step sequencer, arpeggiator,
 note filter, key &
 chord, note repeater and note delay), the container and its internal note split, and the console
@@ -3885,6 +3885,13 @@ Frequencies, Q, ratio, attack and release use the exponential taper.
   the KEY (0 without a cable), `[37]`, `[38]` the output peaks, `[39]` 1 when a cable is in the key
   sockets. The two analyser banks run only while `internal.analyser_live` is 1; the audio is the same
   either way.
+- **Panel.** A plot across the top draws the spectrum of the input (and, while a cable is in the key
+  sockets, of the key in another colour), the static curve (every band at its own gain, thin), the
+  live curve (every band at the gain it has now, from the meter values, thick and filled), a bar from
+  each handle over the reach of its range, and a numbered handle per band with a white dot where the
+  band's live gain is. A handle drags its frequency (sideways) and static gain (up and down), the wheel
+  over it steps the Q, a double click switches the band; every control has a tooltip. The panel is nine
+  rack units tall.
 - **Not built:** the EQ's low and high cut, a hold time and a look-ahead.
 
 ---
