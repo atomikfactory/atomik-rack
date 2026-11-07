@@ -888,6 +888,17 @@ may break APIs and the patch and project formats.
   when the song changed since the mix was measured. The same seven readings are in the `zone` entry of the MCP
   `analyze_audio` and bounce reports. The command count is 479.
 
+- **Check Mix opens the clipper and the kick and bass check.** A finding that names a tool now has its button. The
+  peaks finding adds a Clipper to the end of the master's inserts in one undo step, with a hard curve, 4x
+  oversampling and the ceiling a decibel under the loudest peak the check found (never above -0.1 dB); a master
+  that has a Clipper already is left as it is and the status line says so. A bass root or weak fundamental
+  finding opens the Kick and Bass Check with the track of the finding picked as the bass (or as the kick when
+  its name says kick) and the other one guessed from the names. The check itself still changes nothing.
+- **More factory patches.** Four Dynamic EQ patches (Vocal Resonance Tamer, De-boxer, Air Lift, Drum Bus
+  De-harsh), four Clipper patches (Master Peak Trim, Drum Bus Soft Clip, Bass Warm Clip, Kick Click Tamer), three
+  synths that start every note at the same angle (Clean Kick Sub on the Poly Synth, Mono Sub Bass, Reset Pluck
+  Bass on the Wavetable Synth) and a Double Clip container (a soft clipper then a hard one, with Drive and
+  Softness macros). The Factory root now lists 42 patches and 14 containers.
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.

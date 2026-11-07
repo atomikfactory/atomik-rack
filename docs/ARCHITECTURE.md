@@ -5566,8 +5566,9 @@ by itself.
   bass root (the key at the middle of the held time of the bass track's notes), weak fundamental (bass and
   kick, against the 2nd to 4th harmonic in the mean band map), low-mid share with the tracks that fill it,
   peaks (the highest windows of the master and the tracks loudest there), mono loss and device feeds. A
-  finding may carry a `Fix` and a `Tool`; only the masking map exists as a tool today, the clipper and the
-  kick and bass check are hooks (`Tool::available` is false) that the panel shows no button for.
+  finding may carry a `Fix` and a `Tool` (the masking map, a Clipper on the master and the kick and bass check;
+  `Tool::available` is true for all three). `mixcheck_clipper` adds the Clipper in one undo step and
+  `mixcheck_kick_bass` picks the finding's track before the shell opens the check.
 - **Worker, state and fixes.** `AppCore::start_mixcheck` runs `mixcheck_worker` on its own thread;
   `AppCore::mixcheck` is dropped with the project. `fix_mixcheck` is one undo step: a Gain Tool inserted before
   the device with the trim to -18 dBFS RMS, a static band of a Dynamic EQ (a free bell of one on the chain, or a
@@ -5645,8 +5646,8 @@ items are ordinary project texts, plus one small new file type.
   path inside the factory folder first, so a factory item is never changed whatever the library folder is, and
   `stepping_folder` follows a shown factory section for patch stepping. Packaging copies `factory/` into every
   artifact (`scripts/release/package-*.sh`, the `.iss` file) and the smoke test checks `factory.json`. Every item
-  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 27 device patches
-  (`Def`; the semi-modular ones fill modulation slots by key), 13 containers (`ContainerDef`: ten effect chains wired
+  is written from the tables in `app_core_factory_build.rs` (test code, the sound design): 38 device patches
+  (`Def`; the semi-modular ones fill modulation slots by key), 14 containers (`ContainerDef`: eleven effect chains wired
   in series, three modular instruments with explicit cables, macros whose position is set from the first target's
   value so the container sounds as designed), 12 note clips (`app_core_factory_clips.rs`, step and chord patterns
   written with `save_clip_file`) and 4 drum kits (`app_core_factory_kits.rs`). A kit sample is rendered by
