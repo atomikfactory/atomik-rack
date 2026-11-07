@@ -284,6 +284,10 @@
 //!   [`TextField`]s (caret, selection, clipboard, input-method composition): the host sends
 //!   [`UiEvent::Ime`] for the window system's input method and installs the system clipboard with
 //!   [`clipboard::install`] on the UI thread (without one the text stays inside the app).
+//! - **References and decision zone.** [`ZoneView`] is the modal panel that lists the song's
+//!   reference tracks and draws, for each attribute of the mix, the range the references span with
+//!   the mix as a marker; the app feeds it a [`ZoneData`] and handles [`UiAction::Zone`]
+//!   (`Select`, `Refresh`, `Listen`, `Close`).
 //! - **Versions.** [`VersionsView`] is the modal panel of the project's version history: a name
 //!   and SAVE VERSION to keep the song as it is, the versions newest first, RESTORE and
 //!   PROTECT and COMPARE; it emits [`UiAction::Versions`] and the host replaces the rows with
@@ -423,6 +427,7 @@ pub mod wave_paint;
 pub mod wavetable_panel;
 pub mod widget;
 pub mod zone_edit;
+pub mod zone_panel;
 
 pub use action::{
     BrowseAction, ContextTarget, ImportTarget, PatchOp, Place, SampleOp, SliceMode,
@@ -505,3 +510,4 @@ pub use vello::{kurbo, peniko};
 pub use versions_panel::{REPORT_LINES, VersionItem, VersionsAction, VersionsView};
 pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};
+pub use zone_panel::{Standing, ZoneAction, ZoneData, ZoneReference, ZoneRowData, ZoneView};

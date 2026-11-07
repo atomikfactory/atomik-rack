@@ -872,10 +872,21 @@ may break APIs and the patch and project formats.
   once for its loudest 3 s section, and the reference plays at the difference, updated slowly (at most 0.5 dB a
   quarter of a second, the first reading at once, silence never moves it); Match Reference Level switches it off.
   Reference Band (sub below 80 Hz, low to 300 Hz, mid to 4 kHz, high above) and Reference Stereo Solo (mid or side
-  on both sides) limit the mix and the reference alike, with a 5 ms duck around a change. Not done yet: a Reference
-  panel that lists the files by name with the matched gain and loudness shown (the Mixer menu lists them as
-  Reference 1 to 16 today and the status line names the file), a reference that follows a seek while it plays, a
-  manual trim of the matched gain, and a loudness match over a chosen section. The command count is 478.
+  on both sides) limit the mix and the reference alike, with a 5 ms duck around a change. Not done yet: a reference
+  that follows a seek while it plays, a manual trim of the matched gain, and a loudness match over a chosen
+  section. The command count is 478.
+- **Reference panel and decision zone.** Mixer > Reference > Reference Panel opens a panel that lists the song's
+  reference files by name, with the loudest section of each and the matched gain of the selected one (click or Up and
+  Down selects, LISTEN is the reference key, Esc closes). Below the list, the decision zone sets the mix against the
+  references on seven readings: loudness, the loudest part, punch (sample peak over loudness), brightness (the slope
+  of the octave-band energy from 125 Hz to 8 kHz in dB per octave), low end (share of the energy under 120 Hz),
+  width (side against mid, dB) and correlation. Each row draws the range the references span as a band and the mix
+  as a marker, and says inside, above or below with the distance. All but the two loudness rows read the same at
+  every level, so they are compared without matching levels first; the panel marks them. REFRESH renders the mix
+  again; the references are read once and kept while they stay listed. The analysis runs on a worker, uses the
+  renderer a bounce uses (a song with third-party plugins is refused), never changes the song, and the panel says
+  when the song changed since the mix was measured. The same seven readings are in the `zone` entry of the MCP
+  `analyze_audio` and bounce reports. The command count is 479.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

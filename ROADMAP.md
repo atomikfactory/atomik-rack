@@ -80,7 +80,10 @@ of their render, made on a worker in one undo step),
 and synth follow-ups (a unison stage on the FM synth with up to seven detuned, panned copies of every voice, a slope
 stage after each operator's decay, and a 4x oversampling setting; and, on the grain sampler, a sample dropped with the
 copy modifier held that adds a zone instead of replacing the sample, a spray band dragged by its edges on the
-waveform, and pick lists for the play mode and the zone mode),
+waveform, and pick lists for the play mode and the zone mode), a references and decision zone panel (the song's
+reference files by name with the matched gain and the loudest section of each, and for the mix and the references
+the loudness, the loudest part, punch, brightness, low end, width and correlation, drawn as the range the references
+span with the mix as a marker and worded as inside, above or below with the distance),
 and drags between songs (clips, devices and tracks dragged from one song window and let go over a window of another
 open song are pasted there at the point of the drop in one undo step, and so are patches, containers and devices
 dragged from the shared library; and audio pasted or dragged from a song at another sample rate is converted on a
@@ -136,7 +139,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   (the tracks are summed to mono), a re-analysis that shows what a de-mask or a fix changed, a check of the kick
   against the bass (timing, phase and tuning), buttons that open a clipper for the peaks and a kick and bass tool
   from their findings (the findings give the number and the reason today), and tunable thresholds.
-- **Reference tracks.** Up to 16 reference files per song, kept in the project and collected with it, one key to switch between the mix and the selected reference after the master chain (live only, never in a bounce or export) with a short crossfade, a start at the song position or at a cue of its own, an automatic level match from the short-term loudness of the mix and of the loudest section of the reference with the matched gain slowly following, and a band solo (sub, low, mid, high) and a mid or side solo applied to both. Still to come: a Reference panel that lists the files by name and shows the matched gain and loudness (the Mixer menu lists them by number today), a reference that follows seeks while it plays, a manual trim of the matched gain and a loudness match over a section the user chooses.
+- **Reference tracks.** Up to 16 reference files per song, kept in the project and collected with it, one key to switch between the mix and the selected reference after the master chain (live only, never in a bounce or export) with a short crossfade, a start at the song position or at a cue of its own, an automatic level match from the short-term loudness of the mix and of the loudest section of the reference with the matched gain slowly following, and a band solo (sub, low, mid, high) and a mid or side solo applied to both. Still to come: a reference that follows seeks while it plays, a manual trim of the matched gain and a loudness match over a section the user chooses.
 
 ## Phase 5: Devices
 

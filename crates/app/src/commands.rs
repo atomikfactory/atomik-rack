@@ -369,6 +369,9 @@ pub enum AppCommand {
     /// Mixer > Reference > Stereo Solo: limits the mix and the reference to the mid or the side
     /// (`mixer.reference_solo`).
     ReferenceSolo(ReferenceSolo),
+    /// Mixer > Reference > Reference Panel: the references and the decision zone
+    /// (`mixer.reference_panel`).
+    ReferencePanel,
     /// Mixer > Meter Mode: the ballistics of the console strip meters (`mixer.meter_mode`).
     MeterMode(MeterMode),
     /// Mixer > Snapshot Includes Effects: the current snapshot holds the effect parameters too.
@@ -897,6 +900,7 @@ impl AppCommand {
                 Some(REFERENCE_CUE_ARGS[usize::from(!*on)]),
             ),
             AppCommand::ReferenceMatch => ("mixer.reference_match", None),
+            AppCommand::ReferencePanel => ("mixer.reference_panel", None),
             AppCommand::ReferenceBand(b) => (
                 "mixer.reference_band",
                 Some(
@@ -1247,6 +1251,7 @@ impl AppCommand {
                 AppCommand::ReferenceCue(REFERENCE_CUE_ARGS.iter().position(|x| *x == a)? == 0)
             }
             ("mixer.reference_match", None) => AppCommand::ReferenceMatch,
+            ("mixer.reference_panel", None) => AppCommand::ReferencePanel,
             ("mixer.reference_band", Some(a)) => AppCommand::ReferenceBand(
                 *REFERENCE_BAND_ARGS
                     .iter()
@@ -3020,6 +3025,8 @@ pub fn menus_with_songs(
                             })
                             .collect(),
                         }),
+                        MenuEntry::Separator,
+                        enabled("Reference Panel\u{2026}", AppCommand::ReferencePanel, true),
                     ],
                 }),
                 MenuEntry::Separator,
@@ -4049,6 +4056,7 @@ mod tests {
         v.push(AppCommand::NextReference);
         v.push(AppCommand::RemoveReference);
         v.push(AppCommand::ReferenceMatch);
+        v.push(AppCommand::ReferencePanel);
         for n in 0..16 {
             v.push(AppCommand::SelectReference(n));
         }
@@ -4692,6 +4700,7 @@ mod tests {
                 "Left and Right",
                 "Mid",
                 "Side",
+                "Reference Panel\u{2026}",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Previous track",

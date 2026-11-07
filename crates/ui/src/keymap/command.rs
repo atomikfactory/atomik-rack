@@ -1231,6 +1231,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "mixer.reference_panel",
+        "Reference Panel...",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.reference_solo",
         "Reference Stereo Solo",
         G::Mixer,

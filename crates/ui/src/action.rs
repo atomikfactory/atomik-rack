@@ -664,6 +664,9 @@ pub enum UiAction {
     /// The kick and bass check panel ([`crate::KickBassView`]) asks for something: pick a track,
     /// run or stop the check, apply a fix, or close.
     KickBass(crate::kick_bass_panel::KickBassAction),
+    /// The references and decision zone panel ([`crate::ZoneView`]) asks for something: select a
+    /// reference, measure the mix again, switch the listening, or close.
+    Zone(crate::zone_panel::ZoneAction),
     /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
     /// restore one, protect one, or close.
     Versions(crate::versions_panel::VersionsAction),
