@@ -3046,12 +3046,85 @@ planned on a scratch copy.
   not empty, else the rack's selection (a channel or bus device is itself, an instrument is its
   channel), and `route_selection_to_new_bus` applies one `RouteToNewBus` named `Bus n`, then selects
   the new bus in the console. With nothing selected it says so instead.
-- **Rack.** A bus is a console device like a channel: it is shown or hidden with "Show Console
-  Devices in Rack", its cables are console links hidden unless "Show Console Links" is on, and its
-  panel is the generic panel of its descriptor (the channel's controls, `bus_l/bus_r` as the summing
-  input). The output display on the plate reads `Output: Master`, `Output: Bus <name>` or
+- **Rack.** A bus is a console device like a channel: it is always in the rack, its cables are
+  console links hidden unless "Show Console Links" is on, and its panel is the mix channel panel
+  (the channel's panel, with `bus_l/bus_r` as the summing input, see **Mix channel panel**). The
+  output display on the plate reads `Output: Master`, `Output: Bus <name>` or
   `Output: Audio I/O 3+4`; only a hand-cabled output that is none of these (`Direct`, `Mixed`) keeps
   the warning colour and the "Leaves the master" tooltip.
+- **Mix channel panel** ([ui/src/mix_panel.rs](../crates/ui/src/mix_panel.rs),
+  [rack/mix_input.rs](../crates/ui/src/rack/mix_input.rs)). Channels, buses and the master are always in the
+  rack (the switch "Show Console Devices in Rack" and its command are gone; an older `ui-state.json` that still holds
+  the key loads and the key is ignored). A channel or a bus draws as a hand-made panel, one rack unit
+  (`mix_layout`), instead of the generated layout of its descriptor. Front: MUTE and SOLO (the `mute` and `solo`
+  params), a horizontal fader (the `fader` param: a drag along the track, a double-click resets it, the readout is
+  the gain in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the AUDIO OUTPUT display
+  (`Master Section`, `Bus <name>` or `Audio I/O 3+4`, the words of the plate's output label from `displays_of`; a
+  folded strip keeps the label on its plate). The controls are ordinary `Hit::Control`s, so a press sets the very
+  `SetParam` the console strip sets and both views follow each other through the document. BYPASS INSERT FX is the
+  console strip's B-all: one `Command::Batch` from `bypass_inserts_commands` (one undo step), or the strip's own
+  `insert.bypass` while there is no chain. The plate shows the name of the source instrument, as the console strip
+  does, and a rename changes that instrument (a bus or a source-less channel shows and renames its own name). The
+  meters are fed once per frame by `AppCore::update_console_meters` (also while the console is hidden, as long as a
+  strip panel is open: `RackView::shows_mix_panels`) through `RackView::set_mix_meters`, in steps of half a dB, so a
+  quiet strip stops repainting. Back: only four pairs, INPUT (`in_l`/`in_r`, or `bus_l`/`bus_r` on a bus), INSERT FX
+  TO DEVICE (`insert_send_l/r`), INSERT FX FROM DEVICE (`insert_return_l/r`) and OUTPUT (`out_l`/`out_r`), with short
+  labels (`socket_label`). Every other socket (the eight sends, the parallel output, the key, the CV inputs, the gain
+  reduction and follow sockets) has no jack in the rack: they stay in the model, keep their cables (the sends stay
+  wired to the master) and stay editable in the console. SHOW INSERT FX is view state: `RackView::inserts_shown`
+  and `set_inserts_shown` keep a set of the devices whose switch is off (every device starts shown; the set is not
+  saved with the project and is pruned with the devices). A channel's panel goes right under its source
+  instrument (`AddChannel`, `AddChannelFor` and the create chain insert it after the source); a channel with no
+  source goes after the last channel, and its insert effects sit right under it.
+- **Insert stack** ([rack/insert_area.rs](../crates/ui/src/rack/insert_area.rs)). The effects of a channel's or
+  bus's insert chain (`insert_chain`, derived from cables) are drawn stacked right under its panel, in chain order, in
+  its column, inside a frame in the strip's accent colour (an indented frame like the inside of an unfolded
+  container). The frame ends with a drop row ("drop or create an effect here"); with SHOW INSERT FX off the stack
+  is left out of the layout and the frame is one header line that names the effects. `RackView::shown` lists the
+  stack after its strip whatever the document order is (`stacks`: the chain up to the first effect in another column),
+  `rebuild` adds the room of the header line or the drop row (`area_gaps`) and `compute_areas` records the frames
+  (`RackView::insert_areas`, `InsertAreaInfo`). `sync` lays the rack out again when a stack changes, also one that is
+  hidden (`areas_current`). The model keeps the stack in the document as well: every insert command ends with
+  `console_insert::stack`, one `Edit::Layout` that puts the chain right under the strip in chain order, and a
+  move of a channel or bus (`rack_groups::expand_moves`) takes its inserts along in every sort mode and never lands
+  between the members of another strip's stack (a routed single effect may, which is how it joins a chain there).
+  New commands: `ConsoleCommand::AddInsert { channel, slot, effect }` inserts at a position and shifts the later
+  effects down (an existing effect of another chain moves over in the same step), and
+  `ConsoleCommand::ExtractInsert { channel, slot, to }` takes an effect out, closes the chain behind it and leaves
+  the effect uncabled in the rack (at the rack slot `to` when given). `CreateEffect` with an insert selected, and
+  `CreateEffectAt` at a slot under a strip or one of its inserts, put the new effect in the chain at that position
+  (`stacked_position`); a plain create with the strip selected still appends. Gestures, each one undo step: a rack
+  device dragged into the frame is `AddInsert` at the place under the pointer (`MoveInsert` when it already is an
+  insert of that strip), a browser row dropped there is `CreateEffectAt`, an insert dragged out of the frame is
+  `ExtractInsert`, Delete on an insert is `DeleteDevices` (its neighbours are bridged), a drag of the strip moves it
+  with its stack, a click on the header line shows the stack and one on the drop row selects the strip (so that
+  creating appends). The console's insert rows reorder by drag (`MoveInsert`) and carry an E that emits
+  `UiAction::EditInsert`, which `AppCore` answers with `RackView::reveal_insert` (the area unfolds, the effect is
+  selected and the rack scrolls to it). The fold state stays view state (see above): it is not saved with the
+  project, so a project opens with every insert area shown.
+- **Master section panel** ([ui/src/master_panel.rs](../crates/ui/src/master_panel.rs),
+  [rack/master_input.rs](../crates/ui/src/rack/master_input.rs)). The master draws as a hand-made four-unit panel
+  (`master_layout`) that shares the top row of the mix channel panel (`mix_panel::has_mix_top`: the horizontal
+  `fader`, the meter fed by `set_mix_meters`, BYPASS INSERT FX, SHOW INSERT FX and the output display) and adds eight
+  send rows (`return_row`): the number, the name of the effect on the return slot (`master_data`, from
+  `Console::returns`), the `return{k}.level` param as a horizontal slider (`mix_travel` gives the track of the
+  fader being dragged) and an EDIT button (`edit_rects`, `Hit::ReturnEdit`). The back draws `fx_send{k}_l/r`,
+  `return{k}_l/r`, the insert loop, `main_l/r` and `monitor_l/r` (`socket_label`); the other sockets have no
+  jack. The bus compressor, the control room source and the key input are console view only. The master has the
+  insert area of a channel (`has_mix_top` in `insert_area.rs`), with the master as the owner of `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert`; `insert_owner` includes it, so the console's E button and
+  `reveal_insert` work for it. The shared send effects are grouped by `console_insert::send_chain` (the effects
+  cabled in series from `fx_send{k}`) and `master_stack` (the master's inserts, then the effects of sends 1 to 8 that
+  sit in the master's column): `RackView::send_stacks` lists each send's effects after the master's stack,
+  `area_gaps` adds a header line above each group and `compute_areas` records the groups
+  (`RackView::send_groups`, `SendGroupInfo`), drawn as a frame labelled "Send N". The groups have no drop row. In the
+  model `console_insert::stack` on the master gathers its inserts and then the send effects right after it, a
+  move of the master takes `master_stack` along and a move never lands inside it (`rack_groups`), a new send goes
+  after the stack (`send_effect_index`) and `AssignSend` moves the effect there. `CreateTarget::Selected(master)`
+  keeps the send rule (a ninth effect is added unrouted with the "All 8 send and return slots are in use" note);
+  `CreateTarget::MasterInserts` (what `RackView::effect_create_target` answers after a click on the master's drop
+  row, cleared by any selection change), `CreateEffect` after an insert of the master and `CreateEffectAt` right
+  under the master panel make a master insert. The fold state is view state, as for the channels.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band
@@ -4727,7 +4800,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (498) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (500) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5283,9 +5356,9 @@ change (version 9), no change to the routing plan, summing order, PDC or stages.
   2.8 s) and PEAK (falls 20 dB per second), a hold marker that lasts 5 s or until reset (a click on
   a bar) and a clip lamp per channel that latches above full scale until it is clicked. It never
   touches the engine. Not saved: it starts hidden.
-- **First start.** `ui-state.json` gains `console_notice_seen`; the first start with a state file
-  says once that console devices are shown now and where the toggle is (not for a user who switched
-  them off).
+- **First start.** An older `ui-state.json` may still carry `console_notice_seen` and
+  `show_console_devices`: both are ignored now (the console devices are always in the rack, there
+  is no switch and no notice).
 - **Example.** `examples/projects/master-demo` (starter, Lead and Bass, a reverb on send and return
   1, a master send level), generated by `render/tests/master_demo.rs`.
 - **Tests.** `render/tests/old_projects_4m.rs` pins that every committed example project is still
@@ -5755,6 +5828,72 @@ bundle, so the print is saved, collected and undone like any other audio, and no
   frame of the source's first tick (the longest that fits before it, so a source near the start gets a shorter
   swell and one at tick 0 is refused). The result is checked against the document as for a freeze and applied as
   one undo step; the new clip is selected and the status line says what was made.
+
+### Transition kit
+
+Add Transition (`sequencer.add_transition`, the choice as its argument) puts a transition at a section boundary.
+The edits are one model command, the prints reuse the freeze worker of the section above, and nothing runs on the
+audio thread.
+
+- **The boundary** ([model/src/transition.rs](../crates/model/src/transition.rs)). `boundaries` lists the starts of the
+  sections after the first (markers, range starts, else the section lines of the energy map) and `nearest_boundary`
+  picks the first at or after a tick. The view keeps the boundary a context menu opened on
+  (`ArrangementView::take_transition_boundary`: a marker's tick, a range's start, or the bar line nearest to the
+  pointer in the ruler); the app falls back to the selected marker or range, then the playhead.
+- **The edits.** `WorkflowCommand::AddTransition { at, edit }` plans one edit on a scratch document with
+  `TransitionEdit::FilterDown`, `Silence` or `Fill`. A filter down adds an Auto-Filter as the last insert of the
+  master or a group bus (reusing the one a former filter down made) and a `cutoff` clip of nine linear points that
+  follow an exponential curve from 20 kHz to 300 Hz over the last bars; the lane's static value holds the open
+  cutoff outside the clip. A silence is a one-point step clip of the master's `fader` lane over one beat, its static
+  value the fader as it was. A fill rewrites the plain, unmuted, unlooped note clips of a track that cover the beat
+  before the boundary (`SetClipContent`, content ticks through the clip's offset). A clip that would overlap another
+  on its lane is refused.
+- **The prints.** `first_hit` names the track whose first note or audio clip start in the first beat after the
+  boundary is earliest (a drum machine first, then track order) and `hit_span` its span. The app queues
+  `Kind::Riser` (`Post::ReverseReverb`, ending at the boundary through `swell_place`, as in the section above) or
+  `Kind::Impact` (`Post::Impact`, which pads the render with the reverb's seconds and runs
+  `atomik_dsp::transition::impact`: a tanh saturator driven to four times the peak and scaled back to it, the large
+  `Room` at three seconds added at 0.9 of the dry peak, a 30 ms fade out). Both land with `AddRenderedTrack`.
+- **The count.** `overuse` says when a kind is on more than half of the boundaries and on at least three of them.
+  The app keeps `(boundary, kind, undo depth)` for the session; an undo takes the entries above the new depth off,
+  a new or opened project clears it, and the warning is added to the status line message.
+
+### Delivery targets and the Peak Surgeon
+
+File > Delivery Targets (`file.delivery_targets`) and Edit > Peak Surgeon (`sequencer.peak_surgeon`) open one modal
+panel, `DeliveryView` ([ui/src/delivery_panel.rs](../crates/ui/src/delivery_panel.rs)), on its Targets or its Peaks
+page. The panel only draws a `DeliveryData` and emits `UiAction::Delivery`; the app core holds the state and nothing
+runs on the audio thread.
+
+- **The targets** ([model/src/delivery.rs](../crates/model/src/delivery.rs)). `TARGETS` is the table of eight
+  generic targets (an integrated loudness and a true-peak ceiling each, no service named). `assess` applies one to a
+  measured master: the gain is the target minus the loudness, and the verdict is `Unchanged`, `TurnedDown`,
+  `TurnedUp` (the peak after the gain stays under the ceiling) or `IntoLimiter` (it does not: a quiet master with hot
+  peaks that a normalising chain would turn up into its own limiter).
+- **The measurement.** `atomik_render::delivery::measure_master` renders the master section as a stem over the song
+  with no tail (as `energy::render_blocks` does) and measures it with `loudness::measure`, the report the export
+  writes. The app runs it on the worker of [delivery_worker.rs](../crates/app/src/delivery_worker.rs) (`Msg::Delivery`,
+  progress and cancel as atomics), keeps the last report with the document revision it measured and shows it faded
+  once the song changed.
+- **The project's target.** `RackDoc::delivery` is `Option<Delivery>` (a name, a loudness and a ceiling), saved as the
+  root field `delivery` only when set (format 44, `.ignorable()`), edited with `Command::SetDelivery`, one `Swap`
+  that reports `ViewChanged`, and accepted by `Command::Batch`. Set Ceiling is a batch of that command and a
+  `SetParam` of `ceiling` on the Mastering device of the master's insert chain, else its Clipper
+  (`AppCore::delivery_set_ceiling`), so it is one undo step; `Delivery::compare` words the export toast against it.
+- **The scan** ([model/src/peak_surgeon.rs](../crates/model/src/peak_surgeon.rs)). `Scanner` takes the levels a clip
+  plays (the highest absolute sample of any channel times `AudioClipContent::played_gain`: clip gain, fades and
+  envelope) in chunks, so a clip of any length is read from the engine's assets in 64k-frame blocks, forwards or, for
+  a reversed clip, block by block from the end. A peak is the first frame of a flat top at least as high as every frame
+  within `width` frames, and the scanner keeps the `KEEP` highest.
+- **The plan and the edit.** `plan` takes the peaks from the highest down and dips each by `step_db` (0.2 to 0.4)
+  until it is under the threshold; a second step on the same frame deepens that dip, a dip never takes more than
+  `MAX_DIP_DB`, and the number of dips is bound by the room left in the envelope (`dips_that_fit`: three points
+  each). `apply_dips` writes each dip as three breakpoints of the clip's gain envelope (a triangle in linear gain,
+  the value at a breakpoint being the existing envelope's times the dips'), replacing the existing points inside the
+  dip's span, so the edit is one `SetAudioClip` and the file and the clip gain stay as they were. The app
+  ([app_core_surgeon.rs](../crates/app/src/app_core_surgeon.rs)) reads the clip again after every edit and reports the
+  drop of the highest peak from that second scan, not from the plan. A warped or looped clip, a missing file and an
+  asset at another rate are refused.
 
 ## 6l. The library
 

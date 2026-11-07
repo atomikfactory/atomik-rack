@@ -54,7 +54,6 @@ fn key(k: &str) -> DeviceKey {
 /// A core whose library folder is `<tmp>/Library` (not created: the first save makes it).
 fn core(lib: &Tmp) -> AppCore<RecordingSink> {
     let mut c = AppCore::with_registry(RecordingSink::new(), default_registry(), empty_doc(), None);
-    c.view_mut().set_show_console_devices(false);
     c.set_library_root(Some(lib.path("Library")));
     c
 }
@@ -289,7 +288,6 @@ fn save_selection_to_library_without_a_folder_nothing_selected_or_the_master_rep
     c.save_selection_to_library();
     assert!(c.last_rejection().unwrap().contains("Nothing is selected"));
     let master = c.doc().console.master.clone().unwrap();
-    c.view_mut().set_show_console_devices(true);
     c.after_view_change();
     c.view_mut()
         .set_selection(std::slice::from_ref(&master), None);

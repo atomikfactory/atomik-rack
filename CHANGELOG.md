@@ -9,6 +9,84 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mix channel panel.** A console channel or output bus is a compact one-unit panel in the rack, in place of the
+  generated panel of its descriptor. Its front carries MUTE and SOLO, a horizontal fader (a drag along the track, a
+  double-click resets it, a readout in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the
+  AUDIO OUTPUT display (Master Section, the bus name or the Audio I/O pair). The controls drive the same params as the
+  console strip, so the rack and the mixer stay in step; BYPASS INSERT FX bypasses every insert effect (and the
+  dynamics and EQ sections in use) in one undo step, as the B-all button of the strip does. The plate shows the name of
+  the source instrument and a rename changes it. SHOW INSERT FX is view state for now (it starts on and is not saved
+  with the project); it folds the insert stack under the panel (see below). The back carries four pairs of jacks and
+  nothing else: INPUT, INSERT FX TO DEVICE, INSERT FX FROM DEVICE and OUTPUT. The sends, the parallel output, the key,
+  the CV inputs and the gain reduction output have no jack in the rack; they keep working and their cables stay.
+  The meters of the panels are fed while the rack shows them, with or without the console.
+- **Insert stack in the rack.** The insert effects of a channel or an output bus are stacked right under its panel, in
+  chain order, inside a frame in the strip's colour that ends with a drop row ("drop or create an effect here"). With
+  SHOW INSERT FX off the frame shrinks to one header line that names the effects; a click on it shows them again.
+  Creating an effect with an insert selected puts it after that insert, and with the strip selected at the end of the
+  chain; dropping a device or a browser row in the frame adds it at the place under the pointer; dragging an insert up
+  or down moves it in the chain; dragging it out to the plain rack takes it out of the chain, which closes behind it,
+  and leaves the effect uncabled in the rack; deleting an insert reconnects its neighbours. Each gesture is one undo
+  step, and a refusal (a device that is no stereo effect, a full chain) says why in the status line. Moving a
+  channel or a bus moves its inserts along, and a move never lands between the effects of another strip. In the
+  mixer the insert rows of a strip reorder by drag and each has an E that shows the effect in the rack, with the
+  insert area unfolded and the effect selected. New commands `AddInsert` and `ExtractInsert`. The fold state is view
+  state for now and is not saved with the project.
+- **Master section panel.** The console master is a compact four-unit panel in the rack. The front carries the master
+  fader (the same horizontal fader, readout and meter as a mix channel panel), BYPASS INSERT FX, SHOW INSERT FX, the
+  AUDIO OUTPUT display and eight send rows: the number, the name of the effect on the send (or "free"), its return
+  level as a slider (a drag, a double-click resets it) and an EDIT button that selects that effect and scrolls the rack
+  to it. The back carries FX SEND 1-8 and FX RETURN 1-8 (left and right jacks), INSERT FX TO DEVICE and FROM
+  DEVICE, MASTER OUT and CONTROL ROOM OUT; the summing inputs, the key and the CV sockets keep working but have no
+  jack in the rack, and the bus compressor and the control room stay on the mixer. The master has the same insert
+  area as a channel (still after its compressor): effects stacked under it, the same gestures, one undo step each, `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert` with the master as the strip, and in the mixer its insert rows
+  reorder by drag and have an E. The effects of the 8 shared sends sit under the master's insert area, each send in
+  a framed group labelled "Send N" (a send with several effects in series shows them all), and they move with the
+  master; they stay ordinary devices shared by all channels. Creating an effect with the master selected still makes
+  the next free send (with all 8 in use the effect is added unrouted and the status line says that all 8 send and
+  return slots are in use), creating one after a click on the master's insert area, with one of its inserts selected
+  or by dropping it right under the panel makes a master insert, and "Use as Send Effect" brings the effect under the
+  master. SHOW INSERT FX stays view state (not saved with the project, no format change).
+- **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
+  renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
+  true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,
+  Streaming -14 / -1, Streaming quiet -16 / -1, Podcast -16 / -1, Broadcast -23 / -1, Broadcast -24 / -2, Club -9 /
+  -0.5 and Film mix -27 / -2) with the gain a normalising chain would apply to the measured master: turned down (no
+  loss), left alone, turned up with its peaks still under the ceiling, or turned up into a limiter, which is the
+  warning: a quiet master with peaks near 0 dBFS that the extra gain would push past the target's ceiling, so the
+  chain's own limiter would act on it. Set Ceiling sets the ceiling of the Mastering device on the master's insert
+  chain (else the master's Clipper) to the chosen target's, and the project's delivery target, in one undo step; with
+  neither device it sets the target only. The target is the optional root field `delivery` of the project
+  (`Command::SetDelivery`, ignorable at format 44, written only when set, also accepted in a `Command::Batch`), and
+  the toast of every export, and of a stems export for the master, says how the export sits against it: the loudness
+  over or under the target and the true peak against the ceiling. Edit > Peak Surgeon... (`sequencer.peak_surgeon`)
+  opens the same panel on its Peaks page for the selected audio clip: the highest peaks of the clip as it plays (its
+  gain, fades and envelope included, forwards or reversed) with their times and the headroom won by trimming down to
+  each, a threshold in 0.1 dB steps, a dip step of 0.2, 0.3 or 0.4 dB and a half-width of 4 to 32 frames. TRIM dips
+  the chosen peak by one step; APPLY ALL dips every peak above the threshold, each in steps at the peak's own frame,
+  down to the threshold, never more than 3 dB deep. A dip is three breakpoints of the clip's gain envelope (a triangle
+  of linear gain), so nothing is rendered, the file and the clip gain are untouched, and the whole trim is one
+  `SetAudioClip` and one undo step; the clip is read again afterwards and the status line says how far the highest
+  peak went down. A warped or looped clip, a missing file and an asset at another sample rate are refused with a
+  reason. The format is unchanged (44, one new ignorable field) and the command count is 501.
+- **Transition kit.** Add Transition puts a transition at a section boundary: the Track menu, and the right-click
+  menus of a marker, a range and a bar line in the ruler (`sequencer.add_transition`, with the choice as its
+  argument). A boundary is the start of a section: the marker or range the menu opened on, the bar line nearest to
+  the pointer in the ruler, else the selected marker, else the first section line at or after the playhead. A
+  riser (1, 2 or 4 bars) is the reverse reverb of the next section's first beat, from the track that plays the
+  first hit (a drum machine first on a tie), printed on a new track that ends exactly where the section starts; it
+  reuses the print of Reverse Reverb Print on the freeze worker. An impact is that hit through a saturator
+  (`atomik_dsp::transition::impact`) and a three second reverb, printed from the downbeat. Filter Down (1, 2 or 4
+  bars) puts an Auto-Filter low-pass as the last insert of the master, or with Group Filter Down of the group bus the
+  selected track plays into, and closes its cutoff over the last bars in nine steps that fall by the same share per
+  octave, open again at the boundary; a second one reuses the filter and its lane. Silence on Beat One takes the
+  master fader to zero for one beat from the boundary. Fill plays the last beat of a note track (the selected one,
+  else the first that plays through it, a drum machine first) twice at double rate, each note moved to half its
+  distance from the beat and half as long. The filter, the silence and the fill are one `AddTransition` command
+  each, so every transition is one undo step, and the status line says what it did. When one kind is on more than
+  half of the boundaries, and on at least three, the status line says so. The project format is unchanged (44) and
+  the command count is 499.
 - **Rumble Maker and Reverse Reverb Print.** Track > Rumble Maker (`sequencer.rumble_maker`) turns the selected
   kick track into a rumble layer: the kick (the selected clips of the track, else all of them; the kick pad of a
   drum machine; an audio kick by its onsets) is rendered offline through its insert effects, and one piece per
@@ -1010,6 +1088,13 @@ may break APIs and the patch and project formats.
   synths that start every note at the same angle (Clean Kick Sub on the Poly Synth, Mono Sub Bass, Reset Pluck
   Bass on the Wavetable Synth) and a Double Clip container (a soft clipper then a hard one, with Drive and
   Softness macros). The Factory root now lists 42 patches and 14 containers.
+
+### Changed
+- **Channels, buses and the master are always in the rack.** View > Show Console Devices in Rack and its command
+  (`view.toggle_console_devices`) are gone, with the one-time notice about it; the registry lists 500 commands. An
+  older `ui-state.json` that still has `show_console_devices` or `console_notice_seen` loads as before and both keys
+  are ignored.
+
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.

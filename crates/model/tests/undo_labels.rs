@@ -103,6 +103,30 @@ fn the_most_common_commands_have_their_own_names() {
             "Add Rumble",
         ),
         (
+            wf(WorkflowCommand::AddTransition {
+                at: BAR,
+                edit: atomik_model::transition::TransitionEdit::Silence,
+            }),
+            "Add Silence Transition",
+        ),
+        (
+            wf(WorkflowCommand::AddTransition {
+                at: BAR,
+                edit: atomik_model::transition::TransitionEdit::Fill { track: key("a") },
+            }),
+            "Add Fill Transition",
+        ),
+        (
+            wf(WorkflowCommand::AddTransition {
+                at: BAR,
+                edit: atomik_model::transition::TransitionEdit::FilterDown {
+                    target: key("a"),
+                    bars: 1,
+                },
+            }),
+            "Add Filter Down Transition",
+        ),
+        (
             wf(WorkflowCommand::SetFoldedMany {
                 keys: keys_of(&["a"]),
                 folded: true,

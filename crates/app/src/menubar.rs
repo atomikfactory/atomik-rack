@@ -659,7 +659,6 @@ mod tests {
             align_returns: true,
             send_follow: true,
             link_faders: false,
-            console_devices: false,
             console_links: false,
             cpu_meters: false,
             big_meter: false,

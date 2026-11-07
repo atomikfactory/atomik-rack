@@ -277,7 +277,8 @@ pub(crate) fn plan(
         ));
     }
     let slot = first_free_send_slot(doc).ok_or_else(|| refuse(SEND_SLOTS_FULL))?;
-    let first = send_effect_index(doc, &master).ok_or_else(|| refuse("the master is missing"))?;
+    let first =
+        send_effect_index(doc, registry, &master).ok_or_else(|| refuse("the master is missing"))?;
 
     let mut p = Planner::new(doc, registry);
     let mut types = Vec::new();

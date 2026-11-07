@@ -588,6 +588,11 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_bass_read(job, *result),
+                Msg::Delivery {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_delivery(job, *result),
                 Msg::Sound {
                     generation,
                     job,
@@ -659,6 +664,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Checked { .. }
                 | Msg::Energy { .. }
                 | Msg::BassRead { .. }
+                | Msg::Delivery { .. }
                 | Msg::Sound { .. }
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
@@ -1361,11 +1367,14 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.warps.clear();
         self.audio.warp_work.reset();
         self.audio.freeze.reset();
+        self.transitions.clear();
         self.audio.export.reset();
         self.audio.masking.reset();
         self.audio.energy.reset();
         self.repetition.reset();
         self.bass_read.reset();
+        self.delivery.reset();
+        self.surgeon.reset();
         self.sound.reset();
         self.wavetable.reset();
         self.audio.mixcheck.reset();

@@ -9,13 +9,12 @@
 //! ```json
 //! { "rack_split": 0.5, "show_song": true, "input_quantize": "1/16",
 //!   "show_console": false, "console_maximised": false,
-//!   "show_console_devices": true, "show_console_links": false, "show_tempo_lane": false,
+//!   "show_console_links": false, "show_tempo_lane": false,
 //!   "show_marker_strip": true, "show_inspector": false, "show_marker_list": false,
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
 //!   "audio_editor_mode": "overview", "fade_unit": "ms",
-//!   "console_notice_seen": false,
 //!   "plugin_windows": { "clap.vendor.synth": { "x": 120, "y": 80, "w": 900, "h": 600 } },
 //!   "windows": { "rack": { "detached": true, "geom": { "x": 40, "y": 60, "width": 1200.0,
 //!                "height": 700.0, "maximised": false, "monitor": "DISPLAY1" } } } }
@@ -93,9 +92,6 @@ pub struct UiState {
     pub show_console: bool,
     /// The console is maximised over the rack.
     pub console_maximised: bool,
-    /// The channel and master devices show in the rack. An absent key in
-    /// the file means shown.
-    pub show_console_devices: bool,
     /// The channel to master links are drawn as cables in the rack.
     pub show_console_links: bool,
     /// The arrangement shows the tempo lane.
@@ -153,8 +149,6 @@ pub struct UiState {
     /// How long a snapshot morph takes, in seconds (1 to 8; Mixer > Morph Time). An absent key
     /// means 2.
     pub morph_seconds: u8,
-    /// The one-time notice that the console devices are shown now was given.
-    pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
     pub file_browser_visible: bool,
     /// The width the user gave the file browser column.
@@ -187,7 +181,6 @@ impl Default for UiState {
             input_quantize: InputQuantize::OFF,
             show_console: false,
             console_maximised: false,
-            show_console_devices: true,
             show_console_links: false,
             show_tempo_lane: false,
             show_energy_lane: false,
@@ -210,7 +203,6 @@ impl Default for UiState {
             link_faders: false,
             meter_mode: MeterMode::Peak,
             morph_seconds: 2,
-            console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,
             file_browser_tree_fraction: DEFAULT_TREE_FRACTION,
@@ -337,7 +329,6 @@ mod tests {
             input_quantize: InputQuantize::EIGHTH,
             show_console: true,
             console_maximised: true,
-            show_console_devices: false,
             show_console_links: true,
             show_tempo_lane: true,
             show_energy_lane: true,
@@ -345,7 +336,6 @@ mod tests {
             show_inspector: true,
             show_marker_list: true,
             show_rack_navigator: false,
-            console_notice_seen: true,
             track_zoom: 1.75,
             piano_roll_key_height: 30.0,
             piano_roll_snap_scale: true,
@@ -361,11 +351,11 @@ mod tests {
         assert_eq!(UiState::load(&path), UiState::default());
         std::fs::write(&path, r#"{"rack_split": 7}"#).unwrap();
         assert!((UiState::load(&path).rack_split - 0.95).abs() < 1e-12);
-        // The console keys: absent means shown (devices) and off (links); a file from an older version
-        // keeps its other values.
+        // The console links key: absent means off; a file from an older version keeps its other
+        // values.
         std::fs::write(&path, r#"{"rack_split": 0.4, "show_song": false}"#).unwrap();
         let old = UiState::load(&path);
-        assert!(old.show_console_devices && !old.show_console_links);
+        assert!(!old.show_console_links);
         assert!(!old.show_tempo_lane, "an older file has no tempo lane");
         assert!(!old.show_energy_lane, "an older file has no energy lane");
         assert!(
@@ -408,8 +398,14 @@ mod tests {
             UiState::default(),
             "unusable values: the defaults"
         );
-        std::fs::write(&path, r#"{"show_console_devices": false}"#).unwrap();
-        assert!(!UiState::load(&path).show_console_devices);
+        // The retired switch of the console devices is ignored: the file still loads whole.
+        std::fs::write(
+            &path,
+            r#"{"show_console_devices": false, "console_notice_seen": true, "show_song": false}"#,
+        )
+        .unwrap();
+        let retired = UiState::load(&path);
+        assert!(!retired.show_song, "the other keys of that file still load");
         std::fs::write(&path, r#"{"show_rack_navigator": false}"#).unwrap();
         assert!(!UiState::load(&path).show_rack_navigator);
         assert_eq!(
