@@ -991,6 +991,7 @@ pub fn dyneq_help(key: &str) -> Option<&'static str> {
         "source" => "What the band listens to: its own input, or the key input",
         "channel" => "Which part of the stereo image the band filters and listens to",
         "output" => "Gain after the last band",
+        "delta" => "Listen to what the bands take out (the input minus the output), not the sound",
         _ => return None,
     })
 }

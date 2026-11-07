@@ -380,6 +380,8 @@ pub struct PanelInfo<'a> {
     /// Character panel: the animation phase of the screen, in cycles (it advances while the
     /// published meter values move, see `RackView::set_device_meter_values`).
     pub fx_phase: f32,
+    /// Dynamic EQ panel: the resonance finder's markers and state.
+    pub resonance: &'a crate::resonance_marks::ResonanceView,
     /// Player panels: the edited pattern, the published meter values and the name
     /// being edited.
     pub player: crate::seq_panel::PlayerInfo<'a>,

@@ -175,6 +175,8 @@ enum Hit {
     EqPlot(usize),
     /// The "SC from" button of a compressor panel.
     ScButton(usize),
+    /// The FIND or CUT button of a dynamic EQ plot.
+    Resonance(usize, crate::resonance_marks::ResonanceBtn),
     /// The TUNER button of an audio track panel.
     TunerButton(usize),
     /// A button of the Character preset matrix (device index, preset 0..16).
@@ -246,6 +248,7 @@ impl Hit {
             | Hit::Wave(i)
             | Hit::EqPlot(i)
             | Hit::ScButton(i)
+            | Hit::Resonance(i, _)
             | Hit::TunerButton(i)
             | Hit::Preset(i, _)
             | Hit::PresetGrid(i)
@@ -1937,6 +1940,11 @@ impl RackView {
                         if let Some(fx) = d.spec.fx {
                             if matches!(fx.kind, FxKind::Eq | FxKind::DynamicEq) {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
+                            }
+                            if fx.kind == FxKind::DynamicEq {
+                                for (btn, r) in crate::resonance_marks::buttons(fx.plot) {
+                                    tree.add(dn, r + off, Hit::Resonance(i, btn), false);
+                                }
                             }
                             if let Some(b) = fx.button {
                                 tree.add(dn, b + off, Hit::ScButton(i), false);
@@ -3776,6 +3784,7 @@ impl RackView {
             (Hit::Wave(i), PointerButton::Primary) => self.wave_down(i, rp, out),
             (Hit::Preset(i, n), PointerButton::Primary) => self.preset_down(i, n, out),
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
+            (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
             (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
             (h @ (Hit::IoClip(..) | Hit::IoHeader(_)), PointerButton::Primary) => self.io_down(h),
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
@@ -3812,6 +3821,7 @@ impl RackView {
                 | Hit::MacroName(i, _)
                 | Hit::Plugin(i, _)
                 | Hit::ScButton(i)
+                | Hit::Resonance(i, _)
                 | Hit::Preview(i)
                 | Hit::TunerButton(i),
                 _,
@@ -4664,6 +4674,7 @@ impl RackView {
             sc_source: d.sc.as_deref(),
             fx_cv: d.cv,
             fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
+            resonance: &d.resonance,
             player: PlayerInfo {
                 edit: d.edit,
                 meters: &d.meters,

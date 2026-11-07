@@ -106,6 +106,21 @@ impl RackView {
         }
     }
 
+    /// A press on FIND or CUT of the dynamic EQ panel `i`: selects the device and asks the app.
+    pub(super) fn resonance_down(
+        &mut self,
+        i: usize,
+        btn: crate::resonance_marks::ResonanceBtn,
+        out: &mut Vec<UiAction>,
+    ) {
+        self.select(i, out);
+        let device = self.devices[i].key.clone();
+        out.push(match btn {
+            crate::resonance_marks::ResonanceBtn::Find => UiAction::FindResonances(device),
+            crate::resonance_marks::ResonanceBtn::Cut => UiAction::CutResonances(device),
+        });
+    }
+
     /// Sets what the dynamic EQ `key` shows of the resonance finder: the markers of the last
     /// search (strongest first) and whether a search runs. Anything but a dynamic EQ is ignored.
     /// The panel is re-recorded and a repaint requested only when something changed and the panel
@@ -253,6 +268,23 @@ impl RackView {
         let bands = fx::handle_bands(fx.kind, &d.desc?, d.device.as_ref());
         let p = fx_layout::eq_handle_pos(fx.plot, bands.get(band)?);
         Some(self.rack_to_view(p + d.offset()))
+    }
+
+    /// Centre of the FIND or CUT button of a dynamic EQ panel (logical view coordinates).
+    pub fn resonance_button_center(
+        &self,
+        key: &DeviceKey,
+        btn: crate::resonance_marks::ResonanceBtn,
+    ) -> Option<Point> {
+        if self.flip != super::Flip::Front {
+            return None;
+        }
+        let d = &self.devices[self.device_index(key)?];
+        let fx = d.spec.fx.filter(|f| f.kind == FxKind::DynamicEq)?;
+        let (_, b) = crate::resonance_marks::buttons(fx.plot)
+            .into_iter()
+            .find(|(k, _)| *k == btn)?;
+        (!d.folded).then(|| self.rack_to_view(b.center() + d.offset()))
     }
 
     /// Centre of the "SC from" button of a compressor panel (logical view coordinates).
