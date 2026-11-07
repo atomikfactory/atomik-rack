@@ -149,6 +149,26 @@ pub fn suggested_decay(song: &Song, track: &Track, vocal: bool) -> f32 {
     }
 }
 
+/// The Space Reverb at the end of the chain on return `slot` (the one the wizard made), found by
+/// following the return's cables from its first effect. `None` when the slot is empty or its
+/// chain holds no Space Reverb.
+pub fn reverb_of_return(doc: &RackDoc, slot: usize) -> Option<DeviceKey> {
+    let mut at = doc.console.returns.get(slot)?.clone()?;
+    // A return holds a handful of effects; the bound keeps a hand-made loop from spinning.
+    for _ in 0..16 {
+        if doc.device(&at)?.type_id == REVERB_TYPE {
+            return Some(at);
+        }
+        at = doc
+            .cables
+            .iter()
+            .find(|c| c.from.device == at && c.from.socket == "out_l")
+            .map(|c| c.to.device.clone())
+            .filter(|next| Some(next) != doc.console.master.as_ref())?;
+    }
+    None
+}
+
 fn refuse(message: impl Into<String>) -> ModelError {
     ModelError::BadScope(message.into())
 }

@@ -3953,6 +3953,8 @@ mod lens;
 mod mixcheck;
 #[path = "app_core_repetition.rs"]
 mod repetition;
+#[path = "app_core_reverb_send.rs"]
+mod reverb_send;
 #[path = "app_core_sound.rs"]
 mod sound;
 #[path = "app_core_split_sub.rs"]
@@ -4040,6 +4042,10 @@ mod energy_tests;
 #[cfg(test)]
 #[path = "app_core_translation_tests.rs"]
 mod translation_tests;
+
+#[cfg(test)]
+#[path = "app_core_reverb_send_tests.rs"]
+mod reverb_send_tests;
 
 #[cfg(test)]
 #[path = "app_core_sound_tests.rs"]
