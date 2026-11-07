@@ -254,6 +254,9 @@ pub enum AppCommand {
     /// Mixer > Masking Map: opens the panel that analyses the channels for tracks that cover each
     /// other and de-masks a clash with a keyed Dynamic EQ band.
     MaskingMap,
+    /// Mixer > Check Mix: opens the panel that analyses the song (levels, bass, low mids, peaks and
+    /// mono) and lists what the mix needs, each finding with a one-click fix or a tool.
+    CheckMix,
     /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
@@ -829,6 +832,7 @@ impl AppCommand {
             AppCommand::ToggleSendFollow => ("mixer.toggle_send_follow", None),
             AppCommand::LinkFaders => ("mixer.link_faders", None),
             AppCommand::MaskingMap => ("mixer.masking_map", None),
+            AppCommand::CheckMix => ("mixer.check_mix", None),
             AppCommand::MeterMode(m) => ("mixer.meter_mode", Some(m.word())),
             AppCommand::CreateVcaForFolder => ("mixer.create_vca_for_folder", None),
             AppCommand::RouteFolder(None) => ("mixer.route_folder", None),
@@ -1141,6 +1145,7 @@ impl AppCommand {
             ("mixer.toggle_send_follow", None) => AppCommand::ToggleSendFollow,
             ("mixer.link_faders", None) => AppCommand::LinkFaders,
             ("mixer.masking_map", None) => AppCommand::MaskingMap,
+            ("mixer.check_mix", None) => AppCommand::CheckMix,
             ("mixer.meter_mode", Some(a)) => AppCommand::MeterMode(MeterMode::from_word(a)?),
             ("mixer.create_vca_for_folder", None) => AppCommand::CreateVcaForFolder,
             ("mixer.route_folder", None) => AppCommand::RouteFolder(None),
@@ -2798,6 +2803,7 @@ pub fn menus_with_songs(
                     .collect(),
                 }),
                 enabled("Masking Map\u{2026}", AppCommand::MaskingMap, true),
+                enabled("Check Mix\u{2026}", AppCommand::CheckMix, true),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
@@ -3681,6 +3687,7 @@ mod tests {
             AppCommand::ToggleSendFollow,
             AppCommand::LinkFaders,
             AppCommand::MaskingMap,
+            AppCommand::CheckMix,
             AppCommand::CreateVcaForFolder,
             AppCommand::RouteFolder(None),
             AppCommand::UnrouteFolder,
@@ -4433,6 +4440,7 @@ mod tests {
                 "PPM Meters",
                 "VU Meters",
                 "Masking Map\u{2026}",
+                "Check Mix\u{2026}",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Previous track",

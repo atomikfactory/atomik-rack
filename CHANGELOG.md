@@ -834,6 +834,19 @@ may break APIs and the patch and project formats.
   6 dB) while the covering track is loud there; it is one undo step and the status line says what it did. The
   analysis never changes the song. The format is still 44 and the command is `mixer.masking_map`.
 
+- **Mix check.** Mixer > Check Mix renders the channels, the FX returns and the master of the song (or the
+  selected time range) on a worker and lists what the mix needs. Each finding names the track, the measured number
+  and a line on why: a bass root outside about 40 to 60 Hz (from the bass track's notes), a bass or kick whose
+  fundamental is more than 6 dB under its harmonics, a low-mid build-up (the share of the master's power between
+  150 and 500 Hz over 40%) broken down by track with the reverb returns, the master's highest peaks with the
+  tracks that drive them, a low end under 120 Hz that loses 3 dB or more when the master is summed to mono, and a
+  compressor, distortion, Character, amp or mastering device fed more than 9 dB from -18 dBFS RMS. A finding can
+  carry a one-click fix, one undo step with a status-line message: a Gain Tool before the device that trims the
+  feed to the reference level, a static cut on a Dynamic EQ band of the track that fills the low mids most, or a
+  Stereo Tool with Mono on. A peak finding moves the playhead to it and a low-mid finding opens the masking map.
+  The thresholds are constants with their reasons in one place. The check never changes the song, the format is
+  still 44 and the command count 471.
+
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.

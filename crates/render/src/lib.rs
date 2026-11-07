@@ -38,6 +38,7 @@ pub mod flat;
 pub mod freeze;
 pub mod loudness;
 pub mod masking;
+pub mod mixcheck;
 pub mod patch;
 pub mod players;
 pub mod plugin_pass;

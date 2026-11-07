@@ -166,12 +166,12 @@ use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
     ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, KickBassAction,
     KickBassView, MacrosAction, MacrosView, MaskingAction, MaskingView, MidiMapsAction,
-    MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction, NotesValues, NotesView,
-    NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView,
-    PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry,
-    RelinkView, ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView, SongInfoAction,
-    SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem, VersionsAction,
-    VersionsView, WarpAction, WarpValues, WarpView,
+    MidiMapsView, MixCheckAction, MixCheckView, ModMatrixAction, ModMatrixView, Modifiers,
+    NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place,
+    PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction,
+    SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction,
+    UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -541,6 +541,8 @@ pub struct Shell<B: AudioBackend> {
     versions: Option<VersionsView>,
     /// The masking map panel (Mixer > Masking Map), while it is open.
     masking: Option<MaskingView>,
+    /// The mix check panel (Mixer > Check Mix), while it is open.
+    mixcheck: Option<MixCheckView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
     color_picker: Option<(ColorPickerView, ColorTarget)>,
     /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
@@ -726,6 +728,7 @@ impl<B: AudioBackend> Shell<B> {
             kick_bass: None,
             versions: None,
             masking: None,
+            mixcheck: None,
             start_screen: None,
             color_picker: None,
             notes: None,
@@ -1366,6 +1369,86 @@ impl<B: AudioBackend> Shell<B> {
                     v.set_note(&note);
                 }
             }
+        }
+        self.repaint = true;
+    }
+
+    /// Whether the mix check panel is open.
+    pub fn mixcheck_open(&self) -> bool {
+        self.mixcheck.is_some()
+    }
+
+    /// The mix check panel, while it is open.
+    pub fn mixcheck_view(&self) -> Option<&MixCheckView> {
+        self.mixcheck.as_ref()
+    }
+
+    /// Mixer > Check Mix: opens the panel (with the last result, if the project has one).
+    fn open_mixcheck(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MixCheckView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_data(self.core.mixcheck_data());
+        view.set_progress(self.core.mixcheck_progress());
+        self.mixcheck = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the open mix check panel in step with the check: its progress, its result, and the
+    /// line that says how it ended.
+    fn sync_mixcheck(&mut self) {
+        let Some(view) = &mut self.mixcheck else {
+            return;
+        };
+        let was_busy = view.busy();
+        view.set_progress(self.core.mixcheck_progress());
+        view.set_data(self.core.mixcheck_data());
+        if was_busy && !view.busy() {
+            view.set_note(self.core.last_rejection().unwrap_or(""));
+        }
+        if view.needs_repaint() {
+            self.repaint = true;
+        }
+    }
+
+    /// What the mix check panel asked for.
+    fn mixcheck_action(&mut self, action: MixCheckAction) {
+        let mut note = None;
+        match action {
+            MixCheckAction::Close => self.mixcheck = None,
+            MixCheckAction::Run => {
+                let _ = self.core.start_mixcheck();
+                self.sync_mixcheck();
+                note = Some(
+                    self.core
+                        .last_rejection()
+                        .filter(|_| !self.core.mixcheck_running())
+                        .unwrap_or("")
+                        .to_owned(),
+                );
+            }
+            MixCheckAction::Cancel => self.core.cancel_mixcheck(),
+            MixCheckAction::Locate(n) => self.core.locate_mixcheck(n),
+            MixCheckAction::Fix(n) => {
+                note = Some(match self.core.fix_mixcheck(n) {
+                    Ok(()) => self.core.last_rejection().unwrap_or("").to_owned(),
+                    Err(why) => why,
+                });
+            }
+            MixCheckAction::Open(n) => match self.core.mixcheck_tool(n) {
+                Some(atomik_render::mixcheck::Tool::MaskingMap) => {
+                    self.mixcheck = None;
+                    self.open_masking();
+                    self.masking_action(MaskingAction::Analyse);
+                }
+                Some(_) | None => {
+                    note = Some(self.core.last_rejection().unwrap_or("").to_owned());
+                }
+            },
+        }
+        if let (Some(v), Some(note)) = (&mut self.mixcheck, note) {
+            v.set_note(&note);
         }
         self.repaint = true;
     }
@@ -2661,6 +2744,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.masking {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.mixcheck {
+            v.set_theme(theme.clone());
+        }
         if let Some((v, _)) = &mut self.color_picker {
             v.set_theme(theme.clone());
         }
@@ -3282,6 +3368,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.masking.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.masking {
+                v.set_bounds(rect);
+            }
+        }
+        if self.mixcheck.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.mixcheck {
                 v.set_bounds(rect);
             }
         }
@@ -4261,6 +4353,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::Masking(a) = action {
                     self.masking_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.mixcheck.is_some() {
+            // The mix check panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.mixcheck = None;
+                return Vec::new();
+            }
+            let actions = self
+                .mixcheck
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::MixCheck(a) = action {
+                    self.mixcheck_action(a);
                 }
             }
             return Vec::new();
@@ -6017,6 +6133,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::CheckMix => {
+                self.open_mixcheck();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::Versions => {
                 self.open_versions(true);
                 self.menubar.as_mut().map(MenuBar::close);
@@ -7299,6 +7420,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_relink();
         self.sync_export();
         self.sync_masking();
+        self.sync_mixcheck();
         self.sync_midi_maps();
         self.sync_macros();
         self.sync_mod_matrix();
@@ -8105,6 +8227,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.masking {
             view.paint(canvas);
         }
+        if let Some(view) = &self.mixcheck {
+            view.paint(canvas);
+        }
         if let Some((view, _)) = &self.color_picker {
             view.paint(canvas);
         }
@@ -8471,6 +8596,10 @@ mod versions_tests;
 #[cfg(test)]
 #[path = "shell_masking_tests.rs"]
 mod masking_tests;
+
+#[cfg(test)]
+#[path = "shell_mixcheck_tests.rs"]
+mod mixcheck_tests;
 
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]

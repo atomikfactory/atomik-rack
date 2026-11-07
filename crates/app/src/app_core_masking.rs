@@ -38,9 +38,9 @@ use atomik_ui::{MaskingData, MaskingPair};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The Dynamic EQ's type id.
-const DYNAMIC_EQ: &str = "atomik.dynamic-eq";
+pub(super) const DYNAMIC_EQ: &str = "atomik.dynamic-eq";
 /// The first and last band of the Dynamic EQ a de-mask may use (the bells).
-const BELLS: std::ops::RangeInclusive<usize> = 2..=4;
+pub(super) const BELLS: std::ops::RangeInclusive<usize> = 2..=4;
 /// The width of the band, as a Q (a third of an octave is about 4.3; a little wider is gentler).
 const CUT_Q: f32 = 3.0;
 /// The shallowest and the deepest cut a de-mask asks for, dB.

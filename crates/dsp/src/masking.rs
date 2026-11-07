@@ -167,7 +167,8 @@ impl BandMap {
     }
 }
 
-fn db_to_power(db: f32) -> f64 {
+/// The power of a level in dB (0 for [`SILENT_DB`] and below).
+pub fn db_to_power(db: f32) -> f64 {
     if db <= SILENT_DB {
         0.0
     } else {
@@ -175,7 +176,8 @@ fn db_to_power(db: f32) -> f64 {
     }
 }
 
-fn power_to_db(p: f64) -> f32 {
+/// The level in dB of a power (floored at [`SILENT_DB`]).
+pub fn power_to_db(p: f64) -> f32 {
     if p <= 0.0 {
         SILENT_DB
     } else {

@@ -3897,6 +3897,9 @@ pub use templates::{
 mod masking;
 pub use masking::DemaskReport;
 
+#[path = "app_core_mixcheck.rs"]
+mod mixcheck;
+
 #[path = "app_core_versions.rs"]
 mod versions;
 pub use versions::{VersionComparison, VersionRow};
@@ -3961,6 +3964,10 @@ mod export_tests;
 #[cfg(test)]
 #[path = "app_core_masking_tests.rs"]
 mod masking_tests;
+
+#[cfg(test)]
+#[path = "app_core_mixcheck_tests.rs"]
+mod mixcheck_tests;
 
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]
