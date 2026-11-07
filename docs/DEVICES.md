@@ -4800,6 +4800,28 @@ modules know nothing about it.
   the effects of the chain, so the delay compensation holds (see Channel strip upgrades in
   [ARCHITECTURE.md](ARCHITECTURE.md)). A channel's own `insert.bypass` is a separate switch that is
   not delay compensated.
+- **Loudness match.** The wrapper also carries a hidden last param, `internal.match` (0 or 1, default 0, "Match
+  loudness"), added to every built-in effect's descriptor. Like the other `internal.` params the app sets it from
+  a per-device setting (Match Loudness in the device's context menu): it is never stored in a project or patch,
+  not an undo step, and offline renders and exports, which use the document, never have it on. While it is on the
+  wrapper measures the K-weighted short-term loudness of the main inputs and of the effect's own output (before the
+  gain) with the Mastering filters, in 100 ms blocks over a 3 s window that starts zero-filled on both sides. Every
+  block it sets the target to `loudness(in) - loudness(out)` in dB, limited to +-24 dB; a window under about -70 LUFS
+  on either side holds the last target. The applied gain follows the target with a 0.7 s time constant, one step per
+  batch, ramped linearly per sample inside the batch, and multiplies the effect's `out_l` / `out_r` before the bypass
+  crossfade, so the bypassed signal is the plain delayed input. Switching it off ramps the gain back to 1; a gain of
+  exactly 1 is not applied, so with the match off the output is bit-identical to a wrapper without it. The measuring
+  uses fixed arrays only and nothing allocates. The applied gain is published at the end of the effect's meter
+  values (the gain in dB, then the marker 4242), only while the match is on or still ramping; the rack strip shows
+  it as `MATCH +x.x dB`. A +6 dB gain stage reads within 0.5 dB of its input once settled (a test checks it).
+- **Blind A/B test.** Right-click an effect, Blind A/B Test (`rack.blind_ab`), opens a panel for it. Each of the
+  ten trials has two sounds, X and Y, one with the effect on and one bypassed, in an order drawn for every trial from
+  a seeded generator and never shown. LISTEN X and LISTEN Y set the effect's `bypass` on the engine; PREFER X and
+  PREFER Y (allowed once both were heard) judge the trial. The panel's MATCH LEVEL switch sets the match for the
+  test only. After the last trial the panel shows how often the effect won and the exact two-sided binomial
+  probability (success chance one half) of a split at least that lopsided; under 5 % it says the preference is
+  reliable, either way. The test never changes the project (no undo step); on its end, on Close and when the
+  device is removed the effect gets its saved `bypass` and the match setting back.
 
 ## CV inputs: the trim convention
 
