@@ -516,8 +516,8 @@ pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
-    COLUMN_GAP, CableVisibility, Flip, JackChoice, JackGroup, JackMenu, JackOp, JackPeer,
-    LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
+    COLUMN_GAP, CableVisibility, Flip, InsertAreaInfo, JackChoice, JackGroup, JackMenu, JackOp,
+    JackPeer, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use repetition_panel::{

@@ -3076,6 +3076,55 @@ planned on a scratch copy.
   saved with the project and is pruned with the devices). A channel's panel goes right under its source
   instrument (`AddChannel`, `AddChannelFor` and the create chain insert it after the source); a channel with no
   source goes after the last channel, and its insert effects sit right under it.
+- **Insert stack** ([rack/insert_area.rs](../crates/ui/src/rack/insert_area.rs)). The effects of a channel's or
+  bus's insert chain (`insert_chain`, derived from cables) are drawn stacked right under its panel, in chain order, in
+  its column, inside a frame in the strip's accent colour (an indented frame like the inside of an unfolded
+  container). The frame ends with a drop row ("drop or create an effect here"); with SHOW INSERT FX off the stack
+  is left out of the layout and the frame is one header line that names the effects. `RackView::shown` lists the
+  stack after its strip whatever the document order is (`stacks`: the chain up to the first effect in another column),
+  `rebuild` adds the room of the header line or the drop row (`area_gaps`) and `compute_areas` records the frames
+  (`RackView::insert_areas`, `InsertAreaInfo`). `sync` lays the rack out again when a stack changes, also one that is
+  hidden (`areas_current`). The model keeps the stack in the document as well: every insert command ends with
+  `console_insert::stack`, one `Edit::Layout` that puts the chain right under the strip in chain order, and a
+  move of a channel or bus (`rack_groups::expand_moves`) takes its inserts along in every sort mode and never lands
+  between the members of another strip's stack (a routed single effect may, which is how it joins a chain there).
+  New commands: `ConsoleCommand::AddInsert { channel, slot, effect }` inserts at a position and shifts the later
+  effects down (an existing effect of another chain moves over in the same step), and
+  `ConsoleCommand::ExtractInsert { channel, slot, to }` takes an effect out, closes the chain behind it and leaves
+  the effect uncabled in the rack (at the rack slot `to` when given). `CreateEffect` with an insert selected, and
+  `CreateEffectAt` at a slot under a strip or one of its inserts, put the new effect in the chain at that position
+  (`stacked_position`); a plain create with the strip selected still appends. Gestures, each one undo step: a rack
+  device dragged into the frame is `AddInsert` at the place under the pointer (`MoveInsert` when it already is an
+  insert of that strip), a browser row dropped there is `CreateEffectAt`, an insert dragged out of the frame is
+  `ExtractInsert`, Delete on an insert is `DeleteDevices` (its neighbours are bridged), a drag of the strip moves it
+  with its stack, a click on the header line shows the stack and one on the drop row selects the strip (so that
+  creating appends). The console's insert rows reorder by drag (`MoveInsert`) and carry an E that emits
+  `UiAction::EditInsert`, which `AppCore` answers with `RackView::reveal_insert` (the area unfolds, the effect is
+  selected and the rack scrolls to it). The fold state stays view state (see above): it is not saved with the
+  project, so a project opens with every insert area shown.
+- **Master section panel** ([ui/src/master_panel.rs](../crates/ui/src/master_panel.rs),
+  [rack/master_input.rs](../crates/ui/src/rack/master_input.rs)). The master draws as a hand-made four-unit panel
+  (`master_layout`) that shares the top row of the mix channel panel (`mix_panel::has_mix_top`: the horizontal
+  `fader`, the meter fed by `set_mix_meters`, BYPASS INSERT FX, SHOW INSERT FX and the output display) and adds eight
+  send rows (`return_row`): the number, the name of the effect on the return slot (`master_data`, from
+  `Console::returns`), the `return{k}.level` param as a horizontal slider (`mix_travel` gives the track of the
+  fader being dragged) and an EDIT button (`edit_rects`, `Hit::ReturnEdit`). The back draws `fx_send{k}_l/r`,
+  `return{k}_l/r`, the insert loop, `main_l/r` and `monitor_l/r` (`socket_label`); the other sockets have no
+  jack. The bus compressor, the control room source and the key input are console view only. The master has the
+  insert area of a channel (`has_mix_top` in `insert_area.rs`), with the master as the owner of `SetInsert`,
+  `AddInsert`, `MoveInsert` and `ExtractInsert`; `insert_owner` includes it, so the console's E button and
+  `reveal_insert` work for it. The shared send effects are grouped by `console_insert::send_chain` (the effects
+  cabled in series from `fx_send{k}`) and `master_stack` (the master's inserts, then the effects of sends 1 to 8 that
+  sit in the master's column): `RackView::send_stacks` lists each send's effects after the master's stack,
+  `area_gaps` adds a header line above each group and `compute_areas` records the groups
+  (`RackView::send_groups`, `SendGroupInfo`), drawn as a frame labelled "Send N". The groups have no drop row. In the
+  model `console_insert::stack` on the master gathers its inserts and then the send effects right after it, a
+  move of the master takes `master_stack` along and a move never lands inside it (`rack_groups`), a new send goes
+  after the stack (`send_effect_index`) and `AssignSend` moves the effect there. `CreateTarget::Selected(master)`
+  keeps the send rule (a ninth effect is added unrouted with the "All 8 send and return slots are in use" note);
+  `CreateTarget::MasterInserts` (what `RackView::effect_create_target` answers after a click on the master's drop
+  row, cleared by any selection change), `CreateEffect` after an insert of the master and `CreateEffectAt` right
+  under the master panel make a master insert. The fold state is view state, as for the channels.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band

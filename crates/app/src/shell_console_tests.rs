@@ -486,8 +486,12 @@ fn frames_feed_the_meters_only_while_the_console_or_a_mix_panel_shows() {
     let mut s = shell();
     add_synth(&mut s, "a");
     let ch = s.core().doc().console.channels[0].channel.clone();
-    // A folded strip draws no panel and the console is hidden: nothing reads the meters.
+    // Folded strips and a folded master draw no panel and the console is hidden: nothing reads
+    // the meters.
+    let master = s.core().doc().console.master.clone().unwrap();
     fold(&mut s, &ch, true);
+    fold(&mut s, &master, true);
+    assert!(!s.core().view().shows_mix_panels());
     s.frame_at(0.0);
     assert!(s.core().console().meter(&ch).is_none(), "hidden: not fed");
     // The console shows.
