@@ -44,6 +44,30 @@ fn links_are_hidden_by_default_and_every_other_cable_is_drawn() {
     }
 }
 
+/// Whether the rack has a jack for socket `s`: a mix channel panel has none for its sends and
+/// the other sockets it leaves out.
+fn jack_drawn(doc: &atomik_model::RackDoc, s: &atomik_model::SocketRef) -> bool {
+    match doc.device(&s.device) {
+        Some(d) if atomik_ui::mix_panel::is_mix_type(&d.type_id) => {
+            atomik_ui::mix_panel::BACK_PAIRS
+                .iter()
+                .any(|(_, plain, bus)| {
+                    plain.contains(&s.socket.as_str()) || bus.contains(&s.socket.as_str())
+                })
+        }
+        _ => true,
+    }
+}
+
+/// The cables whose two jacks the rack draws: the cable of a send has no jack to join.
+fn drawn(_v: &RackView, doc: &atomik_model::RackDoc) -> Vec<atomik_model::Cable> {
+    doc.cables
+        .iter()
+        .filter(|c| jack_drawn(doc, &c.from) && jack_drawn(doc, &c.to))
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn the_show_links_mode_draws_everything_and_hides_again() {
     let reg = registry();
@@ -53,7 +77,7 @@ fn the_show_links_mode_draws_everything_and_hides_again() {
     v.set_show_console_links(true);
     assert!(v.show_console_links());
     let mut shown = v.visible_cables(doc);
-    let mut all = doc.cables.clone();
+    let mut all = drawn(&v, doc);
     shown.sort();
     all.sort();
     assert_eq!(shown, all);
@@ -73,7 +97,7 @@ fn the_cable_display_cycle_acts_on_the_remaining_cables() {
     v.set_show_console_links(true);
     assert!(v.visible_cables(doc).is_empty(), "Hide hides links too");
     v.set_cable_visibility(CableVisibility::Show);
-    assert_eq!(v.visible_cables(doc).len(), doc.cables.len());
+    assert_eq!(v.visible_cables(doc).len(), drawn(&v, doc).len());
 }
 
 #[test]
@@ -410,7 +434,7 @@ fn bus_cables_are_console_links_hidden_by_default() {
     }
     let mut v = back_view(doc, &reg);
     v.set_show_console_links(true);
-    assert_eq!(v.visible_cables(doc).len(), doc.cables.len());
+    assert_eq!(v.visible_cables(doc).len(), drawn(&v, doc).len());
 }
 
 #[test]
@@ -421,12 +445,11 @@ fn a_bus_device_is_a_console_device_in_the_rack() {
     let mut v = view(doc, &reg);
     let names: Vec<String> = v.panel_revisions().into_iter().map(|(k, _)| k.0).collect();
     assert!(names.contains(&"bus".to_string()), "{names:?}");
-    v.set_show_console_devices(false);
     v.sync(doc, &reg);
     let names: Vec<String> = v.panel_revisions().into_iter().map(|(k, _)| k.0).collect();
     assert!(
-        !names.contains(&"bus".to_string()),
-        "hidden with the console devices: {names:?}"
+        names.contains(&"bus".to_string()),
+        "still there after a second sync: {names:?}"
     );
     assert!(
         atomik_ui::is_console_device(doc, &reg, doc.device(&key("bus")).unwrap()),

@@ -596,10 +596,9 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let (doc, reg) = (reference_doc(), registry());
     let mut v = view(&doc, &reg);
     v.set_browser_visible(true);
-    // Two more with the console devices shown (the default).
+    // The console devices are always offered.
     assert_eq!(v.browser_rows(&reg).len(), 64);
-    v.set_show_console_devices(false);
-    assert_eq!(v.browser_rows(&reg).len(), 62); // arpeggiator, line mixer, poly synth, mono bass, dual layer, semi-modular, organ, wavetable synth, FM synth, sampler, grain sampler, drum machine, loop slicer, delay, echo, reverb, space reverb, convolution reverb, vocoder, compressor, eq, distortion, clipper, guitar amp, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank, midi out, gain tool, stereo tool, gate, gate + compressor, sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter, rotary speaker, CV math, CV quantizer, sample and hold, slew limiter, gate processor, envelope follower, feedback route, spider audio, spider CV
+    // arpeggiator, line mixer, poly synth, mono bass, dual layer, semi-modular, organ, wavetable synth, FM synth, sampler, grain sampler, drum machine, loop slicer, delay, echo, reverb, space reverb, convolution reverb, vocoder, compressor, eq, distortion, clipper, guitar amp, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank, midi out, gain tool, stereo tool, gate, gate + compressor, sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter, rotary speaker, CV math, CV quantizer, sample and hold, slew limiter, gate processor, envelope follower, feedback route, spider audio, spider CV
     for ch in "dela".chars() {
         let _ = v.handle(&key_event(Key::Char(ch), Modifiers::NONE), &doc, &reg);
     }

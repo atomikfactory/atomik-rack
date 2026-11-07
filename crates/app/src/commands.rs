@@ -208,8 +208,6 @@ pub enum AppCommand {
     ToggleClockIn,
     /// Options ▸ Chase Notes: the selected track's note chase on or off.
     ToggleChase,
-    /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
-    ToggleConsoleDevices,
     /// View > Show Console Links: draw the channel to master cables on the back of
     /// the rack (a channel otherwise shows "Output: Master").
     ToggleConsoleLinks,
@@ -886,7 +884,6 @@ impl AppCommand {
             }
             // A grid the bar picked has no menu entry: it names the command without a value.
             AppCommand::Quantize(_) => ("transport.input_quantize", None),
-            AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleCpuMeters => ("view.toggle_cpu_meters", None),
             AppCommand::ToggleBigMeter => ("view.toggle_big_meter", None),
@@ -1247,7 +1244,6 @@ impl AppCommand {
             ("transport.input_quantize", Some("sixteenth")) => {
                 AppCommand::Quantize(InputQuantize::SIXTEENTH)
             }
-            ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_cpu_meters", None) => AppCommand::ToggleCpuMeters,
             ("view.toggle_big_meter", None) => AppCommand::ToggleBigMeter,
@@ -1999,8 +1995,6 @@ pub struct MenuState {
     pub send_follow: bool,
     /// Link faders is on (a level of a strip in a VCA group moves the group's levels).
     pub link_faders: bool,
-    /// Console devices are shown in the rack.
-    pub console_devices: bool,
     /// The console links are drawn as cables.
     pub console_links: bool,
     /// The devices' name plates show their CPU load.
@@ -2864,11 +2858,6 @@ pub fn menus_with_songs(
                     state.slice_editor,
                 ),
                 MenuEntry::Separator,
-                check(
-                    "Show Console Devices in Rack",
-                    AppCommand::ToggleConsoleDevices,
-                    state.console_devices,
-                ),
                 check(
                     "Show Console Links",
                     AppCommand::ToggleConsoleLinks,
@@ -4028,7 +4017,6 @@ mod tests {
             align_returns: true,
             send_follow: true,
             link_faders: false,
-            console_devices: false,
             console_links: false,
             cpu_meters: false,
             big_meter: false,
@@ -4143,7 +4131,6 @@ mod tests {
             AppCommand::ToggleSampleEditor,
             AppCommand::ToggleStepEditor,
             AppCommand::ToggleSliceEditor,
-            AppCommand::ToggleConsoleDevices,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleCpuMeters,
             AppCommand::ToggleBigMeter,
@@ -4928,7 +4915,6 @@ mod tests {
                 "Sample Editor",
                 "Step Editor",
                 "Slice Editor",
-                "Show Console Devices in Rack",
                 "Show Console Links",
                 "CPU Meters",
                 "Big Meter",
@@ -5479,7 +5465,6 @@ mod tests {
                 align_returns: false,
                 send_follow: false,
                 link_faders: false,
-                console_devices: true,
                 console_links: false,
                 cpu_meters: false,
                 big_meter: false,
@@ -5550,7 +5535,6 @@ mod tests {
         assert_eq!(find("Console").checked, Some(true));
         assert_eq!(find("Maximise Console").checked, Some(false));
         assert_eq!(find("Delay Compensation").checked, Some(false));
-        assert_eq!(find("Show Console Devices in Rack").checked, Some(true));
         let front = menus(&state(), &keymap);
         let back = front[2].items().next().unwrap();
         assert_eq!(back.checked, Some(false));

@@ -1513,7 +1513,7 @@
 {"fill":{"rrect":[20.00,4.00,23.00,34.00,1.50]},"brush":"#d85ab4ff"},
 {"fill":{"circle":[29.00,19.00,7.00]},"brush":"#27292cff"},
 {"stroke":{"path":"M27.50 15.50 L31.00 19.00 L27.50 22.50 "},"width":1.60,"cap":"round","join":"round","brush":"#8f96a0ff"},
-{"text":"Console Channel","at":[43.00,23.00],"size":12.00,"weight":700,"align":"start","color":"#ece8e1ff"},
+{"text":"Poly Synth","at":[43.00,23.00],"size":12.00,"weight":700,"align":"start","color":"#ece8e1ff"},
 {"text":"CONSOLE CHANNEL","at":[252.00,22.00],"size":7.00,"weight":400,"align":"end","color":"#8f96a0ff","spacing":0.80},
 {"pop_transform":true},
 {"transform":[1.00,0.00,0.00,1.00,0.00,1026.00]},

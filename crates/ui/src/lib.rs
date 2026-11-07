@@ -123,8 +123,8 @@
 //! Tell the view the pane state with [`ConsoleView::set_maximised`] (lights the MAX button).
 //! Each frame the app passes `set_meters` (engine readings, linear amplitude) then
 //! `set_frame_time` (monotonic seconds); after a routing change, `set_latency_readouts` and
-//! `set_pdc_warning`. Console edits arrive as `Command::Console(..)`. The rack shows console
-//! devices unless [`RackView::set_show_console_devices`] is off (on by default), draws
+//! `set_pdc_warning`. Console edits arrive as `Command::Console(..)`. The rack always shows the
+//! console devices (a channel or bus as a compact mix channel panel, see [`mix_panel`]), draws
 //! the channel to master links only while [`RackView::set_show_console_links`] is on (a channel
 //! then reads "Output: Master", see [`RackView::output_display`]) and locks the Master Section
 //! while it is the first device ([`RackView::is_locked`]).
@@ -400,6 +400,7 @@ pub mod master_panel;
 pub mod midi_lane;
 pub mod midi_maps_panel;
 pub mod midi_marks;
+pub mod mix_panel;
 pub mod mixcheck_panel;
 pub mod mod_matrix_panel;
 pub mod modsrc_panel;

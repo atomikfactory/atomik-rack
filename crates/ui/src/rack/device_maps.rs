@@ -39,6 +39,7 @@ impl RackView {
         self.edits.retain(|k, _| known.contains(k));
         self.pages.retain(|k, _| known.contains(k));
         self.fx_modes.retain(|k, _| known.contains(k));
+        self.inserts_hidden.retain(|k| known.contains(k));
         // The interface and boundary panels are not devices of the document: keep their ids.
         self.cache_ids.retain(|k, _| {
             let last = k.0.rsplit('/').next().unwrap_or("");
@@ -53,6 +54,7 @@ impl RackView {
             + self.edits.len()
             + self.pages.len()
             + self.fx_modes.len()
+            + self.inserts_hidden.len()
             + self.cache_ids.len()
     }
 }

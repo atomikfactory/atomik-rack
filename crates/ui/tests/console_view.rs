@@ -628,32 +628,23 @@ fn meters_take_readings_and_ballistics_from_the_frame_time() {
 // ---------------------------------------------------------------- rack view
 
 #[test]
-fn the_rack_shows_console_devices_unless_hidden() {
+fn the_rack_always_shows_the_console_devices() {
     let (doc, reg) = (console_doc(), console_registry());
     let mut r = RackView::new(Theme::dark());
     let _ = r.handle(&UiEvent::Resize(VIEW), &doc, &reg);
     r.sync(&doc, &reg);
-    // Shown by default.
-    assert!(r.show_console_devices());
     assert_eq!(r.panel_revisions().len(), doc.devices.len() + 1);
     assert!(r.device_rect(&key("master")).is_some());
-    r.set_show_console_devices(false);
-    r.sync(&doc, &reg);
-    let shown: Vec<String> = r.panel_revisions().into_iter().map(|(k, _)| k.0).collect();
-    assert_eq!(
-        shown,
-        ["interface", "bass", "lead", "keys", "pad", "delay", "echo"]
-    );
-    assert!(r.device_rect(&key("ch-bass")).is_none());
-    r.set_show_console_devices(true);
+    assert!(r.device_rect(&key("ch-bass")).is_some());
+    // Syncing again changes nothing: the channels, the buses and the master stay.
     r.sync(&doc, &reg);
     assert_eq!(r.panel_revisions().len(), doc.devices.len() + 1);
 }
 
 #[test]
-fn moving_a_device_past_hidden_ones_uses_document_indices() {
+fn moving_a_device_past_channel_devices_uses_document_indices() {
     let (mut doc, reg) = (console_doc(), console_registry());
-    // Hidden channel devices sit between the visible ones: bass, ch-bass, lead, ch-lead, ...
+    // Channel devices sit between the instruments: bass, ch-bass, lead, ch-lead, ...
     doc.devices = vec![
         doc.devices[0].clone(),
         doc.devices[6].clone(),
@@ -698,7 +689,6 @@ fn rack_cables_to_summing_inputs_add_instead_of_replacing() {
         &doc,
         &reg,
     );
-    r.set_show_console_devices(true);
     r.sync(&doc, &reg);
     r.set_flip(Flip::Back);
     let from = r.socket_center(&sref("lead", "out_l")).unwrap();

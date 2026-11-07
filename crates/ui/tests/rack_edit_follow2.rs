@@ -17,7 +17,6 @@ const TALL: Size = Size::new(1000.0, 3600.0);
 fn tall_view(doc: &RackDoc) -> RackView {
     let reg = registry();
     let mut v = RackView::new(Theme::dark());
-    v.set_show_console_devices(false);
     let _ = v.handle(&UiEvent::Resize(TALL), doc, &reg);
     v.sync(doc, &reg);
     v

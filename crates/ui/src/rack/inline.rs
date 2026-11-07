@@ -273,6 +273,7 @@ impl RackView {
             analyser: Default::default(),
             resonance: Default::default(),
             master: Default::default(),
+            mix: Default::default(),
             sc: None,
             cv: [false; 2],
             anim: 0,
