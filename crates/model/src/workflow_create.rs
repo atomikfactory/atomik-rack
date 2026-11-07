@@ -32,7 +32,7 @@
 
 use crate::console::{FX_SLOTS, INSERT_SLOTS, InsertEffect, is_console_type, sockets};
 use crate::console_cmd::{Planner, add_channel, console_available, source_outputs};
-use crate::console_insert::{insert_chain, set_insert, stereo_effect_type};
+use crate::console_insert::{add_insert, insert_chain, set_insert, stereo_effect_type};
 use crate::container::split_path;
 use crate::history::{Edit, Swap};
 use crate::plugin::{PluginCommand, key_base_of_name};
@@ -386,12 +386,37 @@ pub(crate) fn create_effect(
         Dest::Return(effect, slot) => {
             route_on_return(doc, registry, Some(source), &key, &effect, slot)
         }
-        Dest::Device(device) => route_after_device(doc, registry, Some(source), &key, &device),
+        // An effect of an insert chain selected: the new one follows it in the chain.
+        Dest::Device(device) => match stacked_position(doc, registry, &device) {
+            Some((strip, slot)) => {
+                route_to_insert_at(doc, registry, Some(source), &key, &strip, slot)
+            }
+            None => route_after_device(doc, registry, Some(source), &key, &device),
+        },
     };
     match routed {
         Some(edit) => Ok(edit),
         None => plain(fallback),
     }
+}
+
+/// Where a device put right after `above` joins an insert chain: the strip (a channel or bus)
+/// and the chain position. `above` is the strip itself (position 0, the top of its stack) or
+/// one of its inserts (the position after it); `None` for any other device.
+fn stacked_position(
+    doc: &RackDoc,
+    registry: &Registry,
+    above: &DeviceKey,
+) -> Option<(DeviceKey, usize)> {
+    let console = &doc.console;
+    if console.channel_index(above).is_some() || console.bus_index(above).is_some() {
+        return Some((above.clone(), 0));
+    }
+    let strip = crate::console_insert::insert_owner(doc, registry, above)?;
+    let at = insert_chain(doc, registry, &strip)
+        .iter()
+        .position(|k| k == above)?;
+    Some((strip, at + 1))
 }
 
 /// Adds the new device `key` of `source` on `p` at `index`; without a source the device exists
@@ -510,6 +535,11 @@ pub(crate) fn route_effect_in_place(
     }
     let at = doc.column_range(slot.column).start + slot.index;
     let above = doc.devices.get(at.checked_sub(1)?)?.key.clone();
+    // Right under a channel or bus, or right under one of its inserts, the effect takes that
+    // place in the stack.
+    if let Some((strip, slot)) = stacked_position(doc, registry, &above) {
+        return route_to_insert_at(doc, registry, None, key, &strip, slot);
+    }
     match classify(doc, &CreateTarget::Selected(above)) {
         Dest::Master => route_to_send(doc, registry, None, key),
         Dest::Nothing => None,
@@ -559,6 +589,20 @@ pub(crate) fn create_effect_at(
     let at = doc.resolve_slot(slot)?;
     let above = (!at.adds_column && at.index > doc.column_range(at.column).start)
         .then(|| doc.devices[at.index - 1].key.clone());
+    // Right under a channel or bus, or one of its inserts, the effect joins the stack there,
+    // and sits where the chain puts it (no other place is asked for).
+    if options.route
+        && let Some((strip, position)) = above
+            .as_ref()
+            .and_then(|k| stacked_position(doc, registry, k))
+        && let Ok((desc, key)) = prepare(doc, registry, source, key.clone())
+        && desc.kind != DeviceKind::Instrument
+        && !is_console_type(desc.type_id)
+        && stereo_effect_type(desc)
+        && let Some(edit) = route_to_insert_at(doc, registry, Some(source), &key, &strip, position)
+    {
+        return Ok(edit);
+    }
     let edit = match above {
         Some(k) => create_effect(
             doc,
@@ -687,21 +731,29 @@ fn route_to_insert(
     key: &DeviceKey,
     channel: &DeviceKey,
 ) -> Option<Edit> {
+    let at = insert_chain(doc, registry, channel).len();
+    route_to_insert_at(doc, registry, source, key, channel, at)
+}
+
+/// The new effect `key` at chain position `slot` of `channel` (the effects from there on shift
+/// down), placed in the rack right after the effect before it, so the chain stays stacked.
+fn route_to_insert_at(
+    doc: &RackDoc,
+    registry: &Registry,
+    source: Option<&CreateSource>,
+    key: &DeviceKey,
+    channel: &DeviceKey,
+    slot: usize,
+) -> Option<Edit> {
     let chain = insert_chain(doc, registry, channel);
-    if chain.len() >= INSERT_SLOTS {
+    if chain.len() >= INSERT_SLOTS || slot > chain.len() {
         return None;
     }
-    let after = chain.last().unwrap_or(channel);
+    let after = slot.checked_sub(1).map_or(channel, |i| &chain[i]);
     let index = rules::index_of(doc, after).ok()? + 1;
     let mut p = Planner::new(doc, registry);
     add_new(&mut p, source, index, key)?;
-    set_insert(
-        &mut p,
-        channel,
-        chain.len(),
-        Some(InsertEffect::Existing(key.clone())),
-    )
-    .ok()?;
+    add_insert(&mut p, channel, slot, InsertEffect::Existing(key.clone())).ok()?;
     Some(p.finish())
 }
 

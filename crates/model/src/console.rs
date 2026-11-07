@@ -543,6 +543,32 @@ pub enum ConsoleCommand {
         /// The effect, or `None` to remove the slot.
         effect: Option<InsertEffect>,
     },
+    /// Insert an effect at position `slot` of the insert chain of `channel` (a console channel
+    /// or bus), shifting the effects from there on one place down: where [`Self::SetInsert`]
+    /// replaces the effect at `slot`, this adds one. `slot == chain length` appends. The device
+    /// (the new one, or the existing one) is placed in the rack right after the effect before it
+    /// (or the channel), so the chain stays stacked under its channel. Rejected like
+    /// `SetInsert`, and for a full chain (16 effects).
+    AddInsert {
+        /// Console channel or bus device key.
+        channel: DeviceKey,
+        /// Position 0..=chain length.
+        slot: usize,
+        /// The effect.
+        effect: InsertEffect,
+    },
+    /// Take the effect at `slot` out of the insert chain of `channel` (a console channel or
+    /// bus) and close the chain behind it: its neighbours are cabled to each other. The effect
+    /// stays in the rack, uncabled, where it is, or at the rack slot `to` when given (the same
+    /// undo step). Rejected for an empty slot.
+    ExtractInsert {
+        /// Console channel or bus device key.
+        channel: DeviceKey,
+        /// The effect's position in the chain.
+        slot: usize,
+        /// Where the effect goes in the rack; `None` leaves it in place.
+        to: Option<crate::RackSlot>,
+    },
     /// Move insert `from` to position `to` of `channel`'s chain and re-cable it in order.
     MoveInsert {
         /// Console channel or master device key.

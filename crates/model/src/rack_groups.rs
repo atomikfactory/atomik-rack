@@ -307,36 +307,106 @@ pub(crate) fn plan_set(
     })
 }
 
-/// A move of devices in a sorted rack takes their whole groups along: the keys of `command`
-/// grow to every member of every group one of them is in. Other commands are left alone.
+/// A move of devices takes what belongs to them along and never lands inside a stack: a
+/// channel or bus takes the insert effects stacked under it (in every sort mode), and in a
+/// sorted rack the whole groups of the moved devices go along: the keys of `command` grow to
+/// every member of every group one of them is in. A move that would land between the members of
+/// another strip's stack goes after the stack instead (an effect that joins the chain there, as
+/// a routed move does, stays). Other commands are left alone.
 pub(crate) fn expand_moves(doc: &RackDoc, registry: &Registry, command: &mut crate::Command) {
-    if doc.sort_mode == RackSort::Free {
-        return;
-    }
-    let keys = match command {
+    let (keys, route) = match command {
         crate::Command::Workflow(
-            WorkflowCommand::MoveDevices { keys, .. }
-            | WorkflowCommand::MoveDevicesToSlot { keys, .. },
-        ) => keys,
+            WorkflowCommand::MoveDevices { keys, route, .. }
+            | WorkflowCommand::MoveDevicesToSlot { keys, route, .. },
+        ) => (keys, *route),
         _ => return,
     };
     if keys.iter().any(|k| doc.device(k).is_none()) {
         return;
     }
-    let groups = doc.device_groups(registry);
     let mut all: BTreeSet<DeviceKey> = keys.iter().cloned().collect();
-    for g in &groups {
-        if g.members.iter().any(|m| keys.contains(m)) {
-            all.extend(g.members.iter().cloned());
+    for k in keys.iter() {
+        if doc.console.channel_index(k).is_some() || doc.console.bus_index(k).is_some() {
+            all.extend(crate::insert_chain(doc, registry, k));
         }
     }
-    let grown: Vec<DeviceKey> = doc
-        .devices
-        .iter()
-        .map(|d| d.key.clone())
-        .filter(|k| all.contains(k))
-        .collect();
-    *keys = grown;
+    if doc.sort_mode != RackSort::Free {
+        for g in &doc.device_groups(registry) {
+            if g.members.iter().any(|m| keys.contains(m)) {
+                all.extend(g.members.iter().cloned());
+            }
+        }
+    }
+    if all.len() > keys.len() {
+        *keys = doc
+            .devices
+            .iter()
+            .map(|d| d.key.clone())
+            .filter(|k| all.contains(k))
+            .collect();
+    }
+    // A routed single effect may join a chain by landing inside its stack.
+    let joins =
+        route && keys.len() == 1 && crate::workflow_create::reroutable(doc, registry, &keys[0]);
+    if joins {
+        return;
+    }
+    let moving = keys.clone();
+    match command {
+        crate::Command::Workflow(WorkflowCommand::MoveDevices { to, .. }) => {
+            let rest: Vec<&DeviceKey> = doc
+                .devices
+                .iter()
+                .map(|d| &d.key)
+                .filter(|k| !moving.contains(k))
+                .collect();
+            *to = past_stack(doc, registry, &rest, (*to).min(rest.len()));
+        }
+        crate::Command::Workflow(WorkflowCommand::MoveDevicesToSlot { slot, .. })
+            if slot.column < doc.columns =>
+        {
+            let range = doc.column_range(slot.column);
+            let rest: Vec<&DeviceKey> = doc.devices[range]
+                .iter()
+                .map(|d| &d.key)
+                .filter(|k| !moving.contains(k))
+                .collect();
+            slot.index = past_stack(doc, registry, &rest, slot.index.min(rest.len()));
+        }
+        _ => {}
+    }
+}
+
+/// `at` (an index into `rest`, the devices that stay) moved past the insert stack it falls in:
+/// a place between a channel or bus and its inserts, or between two of them, becomes the place
+/// after the last one.
+fn past_stack(doc: &RackDoc, registry: &Registry, rest: &[&DeviceKey], at: usize) -> usize {
+    let Some(next) = rest.get(at) else {
+        return at;
+    };
+    let Some(strip) = at
+        .checked_sub(1)
+        .and_then(|i| stack_of(doc, registry, rest[i]))
+    else {
+        return at;
+    };
+    let chain = crate::insert_chain(doc, registry, &strip);
+    if !chain.contains(next) {
+        return at;
+    }
+    let mut end = at;
+    while rest.get(end).is_some_and(|k| chain.contains(k)) {
+        end += 1;
+    }
+    end
+}
+
+/// The channel or bus whose stack `key` belongs to: the strip itself or one of its inserts.
+fn stack_of(doc: &RackDoc, registry: &Registry, key: &DeviceKey) -> Option<DeviceKey> {
+    if doc.console.channel_index(key).is_some() || doc.console.bus_index(key).is_some() {
+        return Some(key.clone());
+    }
+    crate::insert_owner(doc, registry, key)
 }
 
 /// Writes `"rack_sort"` (with its trailing comma and newline); nothing for Free.

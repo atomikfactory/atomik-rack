@@ -12,6 +12,83 @@
       "name": "Master", "folded": false
     },
     {
+      "id": "container-5", "type": "atomik.container",
+      "name": "Bus Glue", "folded": false, "patch": "Bus Glue",
+      "params": {
+        "macro1": 0.36363637,
+        "macro2": 0.5555556
+      },
+      "inner": {
+        "devices": [
+          {
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
+            "params": {
+              "band1.freq": 25,
+              "band1.on": 1,
+              "band5.freq": 10000,
+              "band5.gain": 1.5
+            }
+          },
+          {
+            "id": "comp", "type": "atomik.compressor",
+            "name": "Compressor", "folded": false,
+            "params": {
+              "attack": 30,
+              "auto_makeup": 1,
+              "auto_release": 1,
+              "knee": 8,
+              "ratio": 2,
+              "threshold": -12
+            }
+          },
+          {
+            "id": "wide", "type": "atomik.stereo-tool",
+            "name": "Stereo Tool", "folded": false,
+            "params": {
+              "width": 1.1
+            }
+          },
+          {
+            "id": "limit", "type": "atomik.mastering",
+            "name": "Mastering", "folded": false,
+            "params": {
+              "ceiling": -1,
+              "multiband.on": 0,
+              "softclip": 0.2
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "eq:in_l"},
+          {"from": "boundary:in_r", "to": "eq:in_r"},
+          {"from": "comp:out_l", "to": "wide:in_l"},
+          {"from": "comp:out_r", "to": "wide:in_r"},
+          {"from": "eq:out_l", "to": "comp:in_l"},
+          {"from": "eq:out_r", "to": "comp:in_r"},
+          {"from": "limit:out_l", "to": "boundary:out_l"},
+          {"from": "limit:out_r", "to": "boundary:out_r"},
+          {"from": "wide:out_l", "to": "limit:in_l"},
+          {"from": "wide:out_r", "to": "limit:in_r"}
+        ],
+        "macros": [
+          {"name": "Glue", "targets": [
+            {"device": "comp", "param": "threshold", "min": -4, "max": -26}
+          ]},
+          {"name": "Width", "targets": [
+            {"device": "wide", "param": "width", "min": 0.6, "max": 1.5}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    },
+    {
       "id": "drums", "type": "atomik.drum-machine",
       "name": "Drums", "folded": false,
       "params": {
@@ -423,73 +500,6 @@
       "name": "Music", "folded": true
     },
     {
-      "id": "container-3", "type": "atomik.container",
-      "name": "Drum Punch", "folded": false, "patch": "Drum Punch",
-      "params": {
-        "macro1": 0.6923078,
-        "macro2": 0.4615385
-      },
-      "inner": {
-        "devices": [
-          {
-            "id": "shape", "type": "atomik.transient-shaper",
-            "name": "Transient Shaper", "folded": false,
-            "params": {
-              "attack": 0.6,
-              "output": -4.5,
-              "sustain": -0.2
-            }
-          },
-          {
-            "id": "comp", "type": "atomik.compressor",
-            "name": "Compressor", "folded": false,
-            "params": {
-              "attack": 15,
-              "auto_makeup": 1,
-              "ratio": 5,
-              "release": 90,
-              "threshold": -16
-            }
-          },
-          {
-            "id": "eq", "type": "atomik.eq",
-            "name": "EQ", "folded": false,
-            "params": {
-              "band2.freq": 90,
-              "band2.gain": 2,
-              "band5.freq": 9000,
-              "band5.gain": 2.5
-            }
-          }
-        ],
-        "cables": [
-          {"from": "boundary:in_l", "to": "shape:in_l"},
-          {"from": "boundary:in_r", "to": "shape:in_r"},
-          {"from": "comp:out_l", "to": "eq:in_l"},
-          {"from": "comp:out_r", "to": "eq:in_r"},
-          {"from": "eq:out_l", "to": "boundary:out_l"},
-          {"from": "eq:out_r", "to": "boundary:out_r"},
-          {"from": "shape:out_l", "to": "comp:in_l"},
-          {"from": "shape:out_r", "to": "comp:in_r"}
-        ],
-        "macros": [
-          {"name": "Punch", "targets": [
-            {"device": "shape", "param": "attack", "min": -0.3, "max": 1}
-          ]},
-          {"name": "Length", "targets": [
-            {"device": "shape", "param": "sustain", "min": -0.8, "max": 0.5}
-          ]},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []},
-          {"name": "", "targets": []}
-        ],
-        "splits": []
-      }
-    },
-    {
       "id": "container-4", "type": "atomik.container",
       "name": "Tape Warmth", "folded": false, "patch": "Tape Warmth",
       "params": {
@@ -559,71 +569,61 @@
       }
     },
     {
-      "id": "container-5", "type": "atomik.container",
-      "name": "Bus Glue", "folded": false, "patch": "Bus Glue",
+      "id": "container-3", "type": "atomik.container",
+      "name": "Drum Punch", "folded": false, "patch": "Drum Punch",
       "params": {
-        "macro1": 0.36363637,
-        "macro2": 0.5555556
+        "macro1": 0.6923078,
+        "macro2": 0.4615385
       },
       "inner": {
         "devices": [
           {
-            "id": "eq", "type": "atomik.eq",
-            "name": "EQ", "folded": false,
+            "id": "shape", "type": "atomik.transient-shaper",
+            "name": "Transient Shaper", "folded": false,
             "params": {
-              "band1.freq": 25,
-              "band1.on": 1,
-              "band5.freq": 10000,
-              "band5.gain": 1.5
+              "attack": 0.6,
+              "output": -4.5,
+              "sustain": -0.2
             }
           },
           {
             "id": "comp", "type": "atomik.compressor",
             "name": "Compressor", "folded": false,
             "params": {
-              "attack": 30,
+              "attack": 15,
               "auto_makeup": 1,
-              "auto_release": 1,
-              "knee": 8,
-              "ratio": 2,
-              "threshold": -12
+              "ratio": 5,
+              "release": 90,
+              "threshold": -16
             }
           },
           {
-            "id": "wide", "type": "atomik.stereo-tool",
-            "name": "Stereo Tool", "folded": false,
+            "id": "eq", "type": "atomik.eq",
+            "name": "EQ", "folded": false,
             "params": {
-              "width": 1.1
-            }
-          },
-          {
-            "id": "limit", "type": "atomik.mastering",
-            "name": "Mastering", "folded": false,
-            "params": {
-              "ceiling": -1,
-              "multiband.on": 0,
-              "softclip": 0.2
+              "band2.freq": 90,
+              "band2.gain": 2,
+              "band5.freq": 9000,
+              "band5.gain": 2.5
             }
           }
         ],
         "cables": [
-          {"from": "boundary:in_l", "to": "eq:in_l"},
-          {"from": "boundary:in_r", "to": "eq:in_r"},
-          {"from": "comp:out_l", "to": "wide:in_l"},
-          {"from": "comp:out_r", "to": "wide:in_r"},
-          {"from": "eq:out_l", "to": "comp:in_l"},
-          {"from": "eq:out_r", "to": "comp:in_r"},
-          {"from": "limit:out_l", "to": "boundary:out_l"},
-          {"from": "limit:out_r", "to": "boundary:out_r"},
-          {"from": "wide:out_l", "to": "limit:in_l"},
-          {"from": "wide:out_r", "to": "limit:in_r"}
+          {"from": "boundary:in_l", "to": "shape:in_l"},
+          {"from": "boundary:in_r", "to": "shape:in_r"},
+          {"from": "comp:out_l", "to": "eq:in_l"},
+          {"from": "comp:out_r", "to": "eq:in_r"},
+          {"from": "eq:out_l", "to": "boundary:out_l"},
+          {"from": "eq:out_r", "to": "boundary:out_r"},
+          {"from": "shape:out_l", "to": "comp:in_l"},
+          {"from": "shape:out_r", "to": "comp:in_r"}
         ],
         "macros": [
-          {"name": "Glue", "targets": [
-            {"device": "comp", "param": "threshold", "min": -4, "max": -26}
+          {"name": "Punch", "targets": [
+            {"device": "shape", "param": "attack", "min": -0.3, "max": 1}
           ]},
-          {"name": "Width", "targets": [
-            {"device": "wide", "param": "width", "min": 0.6, "max": 1.5}
+          {"name": "Length", "targets": [
+            {"device": "shape", "param": "sustain", "min": -0.8, "max": 0.5}
           ]},
           {"name": "", "targets": []},
           {"name": "", "targets": []},
