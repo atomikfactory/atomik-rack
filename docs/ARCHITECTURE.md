@@ -3046,12 +3046,36 @@ planned on a scratch copy.
   not empty, else the rack's selection (a channel or bus device is itself, an instrument is its
   channel), and `route_selection_to_new_bus` applies one `RouteToNewBus` named `Bus n`, then selects
   the new bus in the console. With nothing selected it says so instead.
-- **Rack.** A bus is a console device like a channel: it is shown or hidden with "Show Console
-  Devices in Rack", its cables are console links hidden unless "Show Console Links" is on, and its
-  panel is the generic panel of its descriptor (the channel's controls, `bus_l/bus_r` as the summing
-  input). The output display on the plate reads `Output: Master`, `Output: Bus <name>` or
+- **Rack.** A bus is a console device like a channel: it is always in the rack, its cables are
+  console links hidden unless "Show Console Links" is on, and its panel is the mix channel panel
+  (the channel's panel, with `bus_l/bus_r` as the summing input, see **Mix channel panel**). The
+  output display on the plate reads `Output: Master`, `Output: Bus <name>` or
   `Output: Audio I/O 3+4`; only a hand-cabled output that is none of these (`Direct`, `Mixed`) keeps
   the warning colour and the "Leaves the master" tooltip.
+- **Mix channel panel** ([ui/src/mix_panel.rs](../crates/ui/src/mix_panel.rs),
+  [rack/mix_input.rs](../crates/ui/src/rack/mix_input.rs)). Channels, buses and the master are always in the
+  rack (the switch "Show Console Devices in Rack" and its command are gone; an older `ui-state.json` that still holds
+  the key loads and the key is ignored). A channel or a bus draws as a hand-made panel, one rack unit
+  (`mix_layout`), instead of the generated layout of its descriptor. Front: MUTE and SOLO (the `mute` and `solo`
+  params), a horizontal fader (the `fader` param: a drag along the track, a double-click resets it, the readout is
+  the gain in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the AUDIO OUTPUT display
+  (`Master Section`, `Bus <name>` or `Audio I/O 3+4`, the words of the plate's output label from `displays_of`; a
+  folded strip keeps the label on its plate). The controls are ordinary `Hit::Control`s, so a press sets the very
+  `SetParam` the console strip sets and both views follow each other through the document. BYPASS INSERT FX is the
+  console strip's B-all: one `Command::Batch` from `bypass_inserts_commands` (one undo step), or the strip's own
+  `insert.bypass` while there is no chain. The plate shows the name of the source instrument, as the console strip
+  does, and a rename changes that instrument (a bus or a source-less channel shows and renames its own name). The
+  meters are fed once per frame by `AppCore::update_console_meters` (also while the console is hidden, as long as a
+  strip panel is open: `RackView::shows_mix_panels`) through `RackView::set_mix_meters`, in steps of half a dB, so a
+  quiet strip stops repainting. Back: only four pairs, INPUT (`in_l`/`in_r`, or `bus_l`/`bus_r` on a bus), INSERT FX
+  TO DEVICE (`insert_send_l/r`), INSERT FX FROM DEVICE (`insert_return_l/r`) and OUTPUT (`out_l`/`out_r`), with short
+  labels (`socket_label`). Every other socket (the eight sends, the parallel output, the key, the CV inputs, the gain
+  reduction and follow sockets) has no jack in the rack: they stay in the model, keep their cables (the sends stay
+  wired to the master) and stay editable in the console. SHOW INSERT FX is view state: `RackView::inserts_shown`
+  and `set_inserts_shown` keep a set of the devices whose switch is off (every device starts shown; the set is not
+  saved with the project and is pruned with the devices). A channel's panel goes right under its source
+  instrument (`AddChannel`, `AddChannelFor` and the create chain insert it after the source); a channel with no
+  source goes after the last channel, and its insert effects sit right under it.
 - **Meters.** The topology meters the `out_l`, `out_r` and `gr_cv_out` of every bus like a channel's
   (`CHANNEL_METER_SOCKETS`), so the console draws bus meters, gain reduction and latency readouts.
 - **Colours.** A bus strip takes the colour of its device when it has one (a click on the colour band
@@ -4727,7 +4751,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (501) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (500) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5283,9 +5307,9 @@ change (version 9), no change to the routing plan, summing order, PDC or stages.
   2.8 s) and PEAK (falls 20 dB per second), a hold marker that lasts 5 s or until reset (a click on
   a bar) and a clip lamp per channel that latches above full scale until it is clicked. It never
   touches the engine. Not saved: it starts hidden.
-- **First start.** `ui-state.json` gains `console_notice_seen`; the first start with a state file
-  says once that console devices are shown now and where the toggle is (not for a user who switched
-  them off).
+- **First start.** An older `ui-state.json` may still carry `console_notice_seen` and
+  `show_console_devices`: both are ignored now (the console devices are always in the rack, there
+  is no switch and no notice).
 - **Example.** `examples/projects/master-demo` (starter, Lead and Bass, a reverb on send and return
   1, a master send level), generated by `render/tests/master_demo.rs`.
 - **Tests.** `render/tests/old_projects_4m.rs` pins that every committed example project is still

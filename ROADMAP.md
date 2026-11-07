@@ -91,7 +91,11 @@ worker into the folder of the song it lands in, scaled to its rate, with the ori
 and delivery targets (File > Delivery Targets measures the master and says what eight common loudness and true-peak
 targets would do to it, warning where a quiet master with hot peaks would be turned up into a limiter, and sets the
 ceiling of the master's limiter and the export report's target in one undo step) with a Peak Surgeon (the shortest
-peaks of an audio clip dipped over a few samples in its gain envelope, in one undo step).
+peaks of an audio clip dipped over a few samples in its gain envelope, in one undo step),
+and the first part of the mixer in the rack (channels, buses and the master always shown, with a compact one-unit mix
+channel panel for a channel or a bus: mute, solo, a horizontal fader, pan, a meter, a bypass for the whole insert
+chain, a switch for the insert area and the output display, and a back with only the input, the insert send and
+return and the output).
 See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
@@ -121,6 +125,11 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
 ## Phase 4: Mixing and control
 
 - **Mixer groups follow-ups.** Groups of groups (a group is a flat list of strips, so a group cannot hold another one yet), and a group solo lane that silences the other strips: the lane switches the solo of the group's own members, while the strips outside the group are silenced from the stored solo state only, as for a strip's own solo lane.
+- **Mixer in the rack.** Done: the mix channel panel of a channel or a bus (see above). Still to come: the insert
+  effects of a channel stacked under its panel inside a frame that the SHOW INSERT FX switch folds (the switch is view
+  state today and the effects stay in their own panels), moving a channel with its inserts, a compact master panel with
+  the master fader, the meter, the bypass and fold switches and the eight send effects with their return levels, and
+  keeping the fold state of the insert areas with the project.
 - **Console editing follow-ups.** A remote-control base for the strip surface, and sorting the selected device groups.
 - **Channel strip upgrades follow-ups.** A delay-compensated `insert.bypass` on the strip itself (the console now bypasses the effects instead; the strip would need to be told the latency of its insert return), a pre-insert tap that stays aligned when the inserts add latency (today it is aligned only without insert latency), a bypassed container that keeps the latency of its inside, and an EQ or saturation on the parallel path.
 - **Snapshots follow-ups.** Still to come: a bounce that recalls at markers and lane points, snapshots that add or remove the effects of a chain (today a recall moves cables between the devices the rack has), a snapshot lane for ids past 64, and a lane value that shows the snapshot's colour.

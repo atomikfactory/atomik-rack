@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mix channel panel.** A console channel or output bus is a compact one-unit panel in the rack, in place of the
+  generated panel of its descriptor. Its front carries MUTE and SOLO, a horizontal fader (a drag along the track, a
+  double-click resets it, a readout in dB), a PAN knob, an L and R peak meter, BYPASS INSERT FX, SHOW INSERT FX and the
+  AUDIO OUTPUT display (Master Section, the bus name or the Audio I/O pair). The controls drive the same params as the
+  console strip, so the rack and the mixer stay in step; BYPASS INSERT FX bypasses every insert effect (and the
+  dynamics and EQ sections in use) in one undo step, as the B-all button of the strip does. The plate shows the name of
+  the source instrument and a rename changes it. SHOW INSERT FX is view state for now (it starts on and is not saved
+  with the project): the insert devices are not stacked under the panel yet. The back carries four pairs of jacks and
+  nothing else: INPUT, INSERT FX TO DEVICE, INSERT FX FROM DEVICE and OUTPUT. The sends, the parallel output, the key,
+  the CV inputs and the gain reduction output have no jack in the rack; they keep working and their cables stay.
+  The meters of the panels are fed while the rack shows them, with or without the console.
 - **Delivery targets and Peak Surgeon.** File > Delivery Targets... (`file.delivery_targets`) opens a panel that
   renders the master on a worker, as the export would write it, and measures its integrated loudness, loudness range,
   true peak and sample peak. It lists eight common targets under generic names (Streaming loud -11 LUFS / -1 dBTP,
@@ -1049,6 +1060,13 @@ may break APIs and the patch and project formats.
   synths that start every note at the same angle (Clean Kick Sub on the Poly Synth, Mono Sub Bass, Reset Pluck
   Bass on the Wavetable Synth) and a Double Clip container (a soft clipper then a hard one, with Drive and
   Softness macros). The Factory root now lists 42 patches and 14 containers.
+
+### Changed
+- **Channels, buses and the master are always in the rack.** View > Show Console Devices in Rack and its command
+  (`view.toggle_console_devices`) are gone, with the one-time notice about it; the registry lists 500 commands. An
+  older `ui-state.json` that still has `show_console_devices` or `console_notice_seen` loads as before and both keys
+  are ignored.
+
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
   tick 0 that the document refuses; the drag measures from what the document holds.
