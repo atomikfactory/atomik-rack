@@ -140,7 +140,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 /// Factory registering [`Dynamics`].
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
-        descriptor: &DESCRIPTOR,
+        descriptor: crate::bypass::matched(&DESCRIPTOR),
         create: || Box::new(Bypassable::new(Dynamics::new())),
     }
 }

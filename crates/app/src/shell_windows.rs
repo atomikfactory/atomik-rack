@@ -317,6 +317,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.scale {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.blind {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.silence {
                     v.set_scale(scale);
                 }
@@ -522,6 +525,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.param_search.is_some()
             || self.quantize.is_some()
             || self.scale.is_some()
+            || self.blind.is_some()
             || self.silence.is_some()
             || self.song_info.is_some()
             || self.versions.is_some()

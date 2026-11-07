@@ -313,6 +313,7 @@ pub mod audio;
 pub mod audio_editor;
 pub mod autolayout;
 pub mod big_meter;
+pub mod blind_panel;
 pub mod breadcrumb;
 pub mod browser;
 pub mod cables;
@@ -419,6 +420,7 @@ pub use arrangement::{
     PointField, PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use audio_editor::{AudioEditorView, AudioMode};
+pub use blind_panel::{BlindAction, BlindInfo, BlindView};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use color_picker::{ColorPickerAction, ColorPickerView, ColorTarget};
