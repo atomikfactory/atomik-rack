@@ -365,7 +365,23 @@ mod tests {
     const SYNTH: &str = "atomik.poly-synth";
     const BAR: i64 = 4 * PPQ;
 
-    fn tmp(tag: &str) -> PathBuf {
+    /// A scratch folder that is removed when it goes out of scope.
+    struct Tmp(PathBuf);
+
+    impl std::ops::Deref for Tmp {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tmp(tag: &str) -> Tmp {
         static N: AtomicU64 = AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
@@ -374,7 +390,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        Tmp(dir)
     }
 
     fn clip_with(notes: Vec<Note>) -> Clip {

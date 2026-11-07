@@ -9,6 +9,21 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Factory library.** The file browser has a Factory root under Library with the sections the application ships
+  items for (Patches today), next to the user's own library: items there list, search, filter by tag and category,
+  take favourites and user tags, drag and load, preview with Space and step with the patch strip like library items,
+  and they are read-only (delete and rename refuse them, and Save to Library always writes to the user library).
+  The folder is `factory` beside the program (the zip, the tarball, the installer and the Debian package's
+  `/opt/atomik-rack`), `Contents/Resources/factory` in the macOS app, `ATOMIK_FACTORY_DIR` when set, or the
+  `factory` folder of the source checkout in a development build. It must lie outside the user library folder. A
+  `factory.json` in it gives each item its categories, tags and author, which a patch file does not hold. The first
+  content is 24 original patches (about 37 KB) for the poly synth, mono bass, dual layer, FM synth, grain sampler,
+  wavetable synth and organ: pads, strings, plucks, keys, leads, bells, basses, textures and organs. The sound
+  tables and the writer are test code (`ATOMIK_WRITE_FACTORY=1 cargo test -p atomik-app --lib
+  write_the_factory_library -- --ignored`), and `ATOMIK_FACTORY_RENDER_DIR=<folder>` with
+  `render_the_factory_library_to_wav` renders every patch to a WAV with a level report. Tests load every patch,
+  apply it in place and render its preview phrase, which must be audible and stay under full scale. Containers,
+  clips and patches with samples are not part of the first content. The command count is unchanged.
 - **Project versions.** Every save keeps the project file it replaces as an automatic version in a versions folder
   next to the project (`Versions/` inside its bundle folder, else `<name> Versions/` beside the file), and the
   oldest automatic versions beyond a number are pruned (Settings > Interface > "Versions kept": 5 to 200, default

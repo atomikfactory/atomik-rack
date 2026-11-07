@@ -348,11 +348,16 @@ impl<S: EngineSink> AppCore<S> {
     /// The folder the previous and next of `device` walk: the one the file browser shows while
     /// the device is the browse target (it lists what the user sees), else [`Self::patch_folder`].
     fn stepping_folder(&self, device: &DeviceKey) -> Option<PathBuf> {
-        if self.browsing(device)
-            && let Some(atomik_ui::Place::Folder(dir)) = self.file_browser.location()
-            && dir.is_dir()
-        {
-            return Some(dir.clone());
+        if self.browsing(device) {
+            match self.file_browser.location() {
+                Some(atomik_ui::Place::Folder(dir)) if dir.is_dir() => return Some(dir.clone()),
+                Some(atomik_ui::Place::Factory(section)) => {
+                    if let Some(dir) = self.factory_folder(*section).filter(|d| d.is_dir()) {
+                        return Some(dir);
+                    }
+                }
+                _ => {}
+            }
         }
         self.patch_folder(device)
     }

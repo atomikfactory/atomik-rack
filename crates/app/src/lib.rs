@@ -29,6 +29,7 @@ pub mod diagnostics;
 pub mod drag_cursor;
 pub mod export_prefs;
 pub mod export_worker;
+pub mod factory;
 pub mod freeze_worker;
 pub mod import_warp;
 pub(crate) mod instrument_import;

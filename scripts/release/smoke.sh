@@ -111,6 +111,11 @@ smoke_archive() {
   for f in LICENSE README.md CHANGELOG.md; do
     test -f "$dir/$f" || { echo "error: $f missing" >&2; exit 1; }
   done
+  factory="$dir/factory"
+  case "$(uname -s)" in
+    Darwin) factory="$dir/Atomik Rack.app/Contents/Resources/factory" ;;
+  esac
+  test -f "$factory/factory.json" || { echo "error: the factory library is missing" >&2; exit 1; }
   check_programs "$bindir" "$ext"
 
   case "$(uname -s)" in
@@ -165,6 +170,7 @@ smoke_deb() {
     echo "error: missing libraries" >&2
     exit 1
   fi
+  test -f /opt/atomik-rack/factory/factory.json || { echo "error: no factory library installed" >&2; exit 1; }
   test -f /usr/share/applications/atomik-rack.desktop || { echo "error: no desktop entry" >&2; exit 1; }
   grep -q "^Icon=atomik-rack$" /usr/share/applications/atomik-rack.desktop || { echo "error: the desktop entry has no icon" >&2; exit 1; }
   test -f /usr/share/icons/hicolor/256x256/apps/atomik-rack.png || { echo "error: no icon installed" >&2; exit 1; }
@@ -195,7 +201,7 @@ smoke_setup() {
   done
   ls -l "$work/app"
   test -f "$work/app/unins000.exe" || { echo "error: no uninstaller was installed" >&2; exit 1; }
-  for f in LICENSE README.md CHANGELOG.md; do
+  for f in LICENSE README.md CHANGELOG.md factory/factory.json; do
     test -f "$work/app/$f" || { echo "error: $f missing" >&2; exit 1; }
   done
   start_menu="$(cygpath -u "$APPDATA")/Microsoft/Windows/Start Menu/Programs/Atomik Rack.lnk"

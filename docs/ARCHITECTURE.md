@@ -5551,6 +5551,22 @@ items are ordinary project texts, plus one small new file type.
   taken name (a file or folder of that name counts), renames the sibling audio folder with the file
   (and puts the file back if that fails), moves the favourite flag and tags to the new path and
   lists the place again.
+- **The factory library** ([factory.rs](../crates/app/src/factory.rs)). A second, read-only root of
+  the browser: `Place::Factory(section)` and the Factory tree entries (`PlacesData::factory`, shown only when the
+  folder has sections) list `<factory>/Patches`, `Containers` and `Clips` with the same walk job as the library
+  sections. `factory::locate` finds the folder: `ATOMIK_FACTORY_DIR`, else `factory` beside the executable (zip,
+  tarball, installer, `/opt/atomik-rack/factory` in the Debian package), else `../Resources/factory` (macOS bundle),
+  else the `factory` folder of the checkout above a `target/<profile>` folder. `Shell::set_factory_folder` hands it
+  to the core (`AppCore::set_factory_root`; the platform layer calls it for every song). The folder must be outside
+  the user library folder. `factory.json` (`{"version": 1, "items": {"Patches/Name.atomikpatch": {"author",
+  "categories", "tags"}}}`) is read once into a `Factory` and its marks are merged into the rows
+  (`Factory::decorate`) and into the mark updates after a favourite or tag change, under the user's own marks in
+  `library.json`, which still key favourites and tags by the item's path. `delete_item` and `rename_item` refuse a
+  path inside the factory folder first, so a factory item is never changed whatever the library folder is, and
+  `stepping_folder` follows a shown factory section for patch stepping. Packaging copies `factory/` into every
+  artifact (`scripts/release/package-*.sh`, the `.iss` file) and the smoke test checks `factory.json`. The 24
+  patches are written from the tables in `app_core_factory_build.rs` (test code, the sound design) as
+  `save_device_item` writes any patch, and `app_core_factory_tests.rs` loads, applies and renders each one.
 - **What the library does not write.** Everything outside the library folder and the session bundle
   is read only. Items do not carry project-level state: macro assignments, song tracks (a patch has
   none) and console settings are not saved with a patch, and a pasted instrument gets its console

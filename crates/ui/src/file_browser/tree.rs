@@ -14,6 +14,8 @@ const MAX_DEPTH: u8 = 32;
 pub(super) enum Heading {
     /// The library sections.
     Library,
+    /// The factory library sections.
+    Factory,
     /// Bookmarked folders.
     Bookmarks,
     /// Drives and the home folder.
@@ -27,6 +29,8 @@ pub(super) enum Key {
     Heading(Heading),
     /// One library section.
     Library(LibrarySection),
+    /// One section of the factory library.
+    Factory(LibrarySection),
     /// The Favourites entry.
     Favorites,
     /// One named favourite list.
@@ -49,6 +53,7 @@ impl Key {
     pub fn place(&self) -> Option<Place> {
         match self {
             Key::Library(section) => Some(Place::Library(*section)),
+            Key::Factory(section) => Some(Place::Factory(*section)),
             Key::Favorites => Some(Place::Favorites),
             Key::List(name) => Some(Place::List(name.clone())),
             Key::Tag(t) => Some(Place::Tag(t.clone())),
@@ -154,6 +159,28 @@ pub(super) fn build(src: &Source<'_>) -> Vec<Item> {
             loading: false,
         });
     }
+    if !places.factory.is_empty() {
+        out.push(Item {
+            key: Key::Heading(Heading::Factory),
+            depth: 0,
+            label: "Factory".into(),
+            count: None,
+            expandable: false,
+            expanded: false,
+            loading: false,
+        });
+        for section in &places.factory {
+            out.push(Item {
+                key: Key::Factory(*section),
+                depth: 0,
+                label: section.title().into(),
+                count: None,
+                expandable: false,
+                expanded: false,
+                loading: false,
+            });
+        }
+    }
     out.push(Item {
         key: Key::Favorites,
         depth: 0,
@@ -228,6 +255,7 @@ mod tests {
             favorites: 3,
             tags: vec![("808".into(), 4), ("snare".into(), 2)],
             lists: Vec::new(),
+            factory: Vec::new(),
             bookmarks: vec![PathBuf::from("/music/drums")],
             roots: vec![PathBuf::from("/"), PathBuf::from("/home/me")],
         }
@@ -346,6 +374,39 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn the_factory_entries_sit_between_the_library_and_favourites_and_only_when_there_are_any() {
+        let none = flat(&places(), &BTreeMap::new(), &BTreeSet::new(), false);
+        assert!(none.iter().all(|i| !matches!(i.key, Key::Factory(_))));
+        assert!(none.iter().all(|i| i.key != Key::Heading(Heading::Factory)));
+        let p = PlacesData {
+            factory: vec![LibrarySection::Patches, LibrarySection::Containers],
+            ..places()
+        };
+        let items = flat(&p, &BTreeMap::new(), &BTreeSet::new(), false);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(
+            labels[..10],
+            [
+                "Library",
+                "Devices",
+                "Patches",
+                "Containers",
+                "Clips",
+                "Projects",
+                "Factory",
+                "Patches",
+                "Containers",
+                "Favourites"
+            ]
+        );
+        assert!(!items[6].key.selectable());
+        assert_eq!(
+            items[7].key.place(),
+            Some(Place::Factory(LibrarySection::Patches))
+        );
     }
 
     #[test]

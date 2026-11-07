@@ -294,7 +294,7 @@ impl FileBrowserView {
                 );
             }
             tree::Key::Folder { .. } => folder_glyph(c, ix, cy, t.text_muted),
-            tree::Key::Heading(_) | tree::Key::Library(_) => {}
+            tree::Key::Heading(_) | tree::Key::Library(_) | tree::Key::Factory(_) => {}
         }
         let lx = ix + 11.0;
         let count = item.count.map(|n| n.to_string());
@@ -432,6 +432,11 @@ impl FileBrowserView {
                 Some(Place::Library(section)) => {
                     self.paint_place_title(c, lay.path_text, section.title())
                 }
+                Some(Place::Factory(section)) => self.paint_place_title(
+                    c,
+                    lay.path_text,
+                    &format!("Factory {}", section.title()),
+                ),
                 None => self.paint_place_title(c, lay.path_text, "No folder"),
             }
         }
