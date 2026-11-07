@@ -85,6 +85,13 @@ fn the_most_common_commands_have_their_own_names() {
             "Split Sub",
         ),
         (
+            wf(WorkflowCommand::AddReverbSend {
+                track: key("a"),
+                options: atomik_model::reverb_send::ReverbSendOptions::default(),
+            }),
+            "Add Reverb Send",
+        ),
+        (
             wf(WorkflowCommand::SetFoldedMany {
                 keys: keys_of(&["a"]),
                 folded: true,

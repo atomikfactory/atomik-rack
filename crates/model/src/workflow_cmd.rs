@@ -183,6 +183,20 @@ pub enum WorkflowCommand {
         /// The split frequency in Hz.
         freq: f32,
     },
+    /// The reverb send wizard (see [`crate::reverb_send`]): the console channel of the track
+    /// gets a send, post-fader unless the options say otherwise, to a new FX return that holds,
+    /// in series, an optional de-esser, an EQ with a high-pass and a low-pass and a Space Reverb
+    /// at 100 % wet; with the duck option the channel's output is cabled to the reverb's key
+    /// and the duck is on. The decay is the option or one suggested from the track's note
+    /// spacing. One undo step; a device that is not a top-level track with a console channel,
+    /// a frozen track, an option out of its range and a console with all eight send/return
+    /// slots in use are rejected.
+    AddReverbSend {
+        /// The device that has the track.
+        track: DeviceKey,
+        /// The choices of the wizard.
+        options: crate::reverb_send::ReverbSendOptions,
+    },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
     /// channel.
@@ -901,6 +915,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::SplitSub { device, freq } => {
             plain(crate::split_sub::plan(doc, registry, &device, freq).map(|planned| planned.edit))
+        }
+        WorkflowCommand::AddReverbSend { track, options } => {
+            plain(crate::reverb_send::plan(doc, registry, &track, &options))
         }
         WorkflowCommand::SetFoldedMany { keys, folded } => {
             let mut edits = Vec::new();

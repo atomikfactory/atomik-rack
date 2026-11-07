@@ -581,7 +581,7 @@ pub(crate) fn create_effect_at(
 
 /// The rack index a new send effect goes to: right after the last effect on a return, or after
 /// the master when no return is used.
-fn send_effect_index(doc: &RackDoc, master: &DeviceKey) -> Option<usize> {
+pub(crate) fn send_effect_index(doc: &RackDoc, master: &DeviceKey) -> Option<usize> {
     let after = doc
         .console
         .returns
@@ -715,13 +715,26 @@ fn route_on_return(
     slot: usize,
 ) -> Option<Edit> {
     let master = doc.console.master.clone()?;
-    let k = slot + 1;
     let index = rules::index_of(doc, effect).ok()? + 1;
     let mut p = Planner::new(doc, registry);
     add_new(&mut p, source, index, key)?;
+    series_after(&mut p, &master, slot, effect, key)?;
+    Some(p.finish())
+}
+
+/// Puts `key`, a device already on `p`, in series right after `effect` on return `slot`:
+/// `effect -> key -> return`. `None` when `effect` does not feed the return or a cable is refused.
+pub(crate) fn series_after(
+    p: &mut Planner<'_>,
+    master: &DeviceKey,
+    slot: usize,
+    effect: &DeviceKey,
+    key: &DeviceKey,
+) -> Option<()> {
+    let k = slot + 1;
     for side in ["l", "r"] {
         let out = console_cmd::at(effect, format!("out_{side}"));
-        let ret = console_cmd::at(&master, sockets::master_return(k, side));
+        let ret = console_cmd::at(master, sockets::master_return(k, side));
         let old = console_cmd::wire(out.clone(), ret.clone());
         if !p.doc().cables.contains(&old) {
             return None;
@@ -738,7 +751,7 @@ fn route_on_return(
         ))
         .ok()?;
     }
-    Some(p.finish())
+    Some(())
 }
 
 /// True if any cable leaves `socket` of `device`.
