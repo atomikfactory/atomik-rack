@@ -44,7 +44,7 @@
 //! in the rack) and [`MidiTarget::Command`] runs a [`RemoteCommand`] (select the previous or next
 //! track, undo, redo, step through the presets of the selected device) when a button is pressed.
 
-use crate::console::{CHANNEL_TYPE, is_internal_param};
+use crate::console::{CHANNEL_TYPE, is_hidden_param};
 use crate::history::Edit;
 use crate::midi_param::{
     MAX_PARAM_NUMBER, PARAM_BUTTON_THRESHOLD, ParamBank, ParamChange, ParamEvent, ParamSpace,
@@ -1068,7 +1068,7 @@ impl RackDoc {
                 let Some(d) = self.resolve(device) else {
                     return Some(format!("no device `{device}`"));
                 };
-                if is_internal_param(param) {
+                if is_hidden_param(param) {
                     return Some(format!("`{param}` is not a parameter you can map"));
                 }
                 let desc = registry.get(&d.type_id).map(|f| f.descriptor)?;
@@ -1092,11 +1092,11 @@ impl RackDoc {
                 .is_none()
                 .then(|| format!("no VCA group {id}")),
             MidiTarget::Tempo | MidiTarget::Transport(_) | MidiTarget::Command(_) => None,
-            MidiTarget::Focused { param } => (param.is_empty() || is_internal_param(param))
+            MidiTarget::Focused { param } => (param.is_empty() || is_hidden_param(param))
                 .then(|| format!("`{param}` is not a parameter you can map")),
             MidiTarget::SelectedStrip { param } => {
                 let desc = registry.get(CHANNEL_TYPE).map(|f| f.descriptor)?;
-                (desc.param_by_key(param).is_none() || is_internal_param(param))
+                (desc.param_by_key(param).is_none() || is_hidden_param(param))
                     .then(|| format!("a channel strip has no param `{param}`"))
             }
         }

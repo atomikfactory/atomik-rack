@@ -4,3 +4,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 0210508fdeee0e6a8816823346924c9a6a1572848cfb84ba06e19daca75df293 # shrinks to gestures = [Key(0), Drag((216.47, 325.68), (0.0, 526.72))]
+cc 44e1d3810c74ce5ec8094f55a5c396f4f41cf4a97b76ae02bff717aa7a542378 # shrinks to gestures = [Click((0.0, 356.76244573316194), 2, 0), Drag((884.4755430487323, 38.20874542528333), (0.0, 0.0)), Key(2), Drag((100.89875186094886, 436.63780117904554), (928.0258089304815, 0.0)), Drag((323.5230597514615, 444.65136495381836), (491.38041501744, 746.9119390142635))]

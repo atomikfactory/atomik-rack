@@ -14,8 +14,9 @@
 //! a message that says so.
 
 use crate::audio_import::{Loaded, Msg, load_asset};
-use atomik_audio_file::Bundle;
+use atomik_audio_file::{AudioData, Bundle};
 use atomik_device_sdk::RunMode;
+use atomik_dsp::rumble::{RumbleParams, reverse_swell, rumble_layer};
 use atomik_model::RackDoc;
 use atomik_plugin_host::{PluginCache, PluginSettings};
 use atomik_render::freeze::{FreezeRequest, render_freeze};
@@ -37,6 +38,25 @@ pub(crate) struct PluginEnv {
     pub isolation: Option<PluginIsolation>,
 }
 
+/// What the worker makes of the render before it is stored: the render is the source of a
+/// rumble layer or of a reverse reverb swell instead of the result itself.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Post {
+    /// A rumble layer built from the render (a kick, see `atomik_dsp::rumble`). `hits` are the
+    /// frames of the kick hits from the start of the render; `None` finds them in the audio
+    /// (an audio kick has no notes).
+    Rumble {
+        hits: Option<Vec<u64>>,
+        params: RumbleParams,
+    },
+    /// The reverse reverb swell of the render, `seconds` long, that ends where the render starts:
+    /// the result is put before the tick `anchor`, on whole ticks (see [`swell_place`]).
+    ReverseReverb { seconds: f32, anchor: i64 },
+    /// The impact of the render (a hit): saturated, with a reverb of `decay` seconds that goes on
+    /// after the render ends, so the result is `decay` seconds longer ([`atomik_dsp::transition`]).
+    Impact { decay: f32 },
+}
+
 /// One render.
 pub(crate) struct Work {
     /// The document as it was when the render was asked for.
@@ -52,6 +72,8 @@ pub(crate) struct Work {
     pub name: String,
     /// The plugin machinery.
     pub plugins: PluginEnv,
+    /// What to make of the render before it is stored.
+    pub post: Option<Post>,
 }
 
 /// A finished render, stored and loaded.
@@ -91,6 +113,93 @@ pub(crate) fn plugin_host(
     Ok(Some(host))
 }
 
+/// The rumble layer of the rendered kick `kick`: one piece per hit (`hits` as frames, else the
+/// onsets found in the audio, with the start counted when the render begins loud).
+pub(crate) fn rumble_of(
+    kick: &AudioData,
+    hits: Option<&[u64]>,
+    params: &RumbleParams,
+) -> Result<AudioData, String> {
+    let rate = kick.sample_rate;
+    let found: Vec<usize> = match hits {
+        Some(frames) => frames.iter().map(|&f| f as usize).collect(),
+        None => {
+            let sides: Vec<&[f32]> = kick.channels.iter().map(Vec::as_slice).collect();
+            let mut onsets: Vec<usize> = atomik_dsp::detect_onsets(&sides, rate, 0.5)
+                .into_iter()
+                .map(|f| f as usize)
+                .collect();
+            // The detector does not count what already sounds at the start.
+            onsets.insert(0, 0);
+            onsets
+        }
+    };
+    if found.is_empty() {
+        return Err("there is no kick hit to build a rumble from".to_owned());
+    }
+    let layer = rumble_layer(&kick.channels, rate, &found, params);
+    if layer.iter().flatten().all(|s| s.abs() < 1.0e-6) {
+        return Err("the kick is silent there: nothing to build a rumble from".to_owned());
+    }
+    AudioData::new(rate, layer).map_err(|e| format!("cannot make the rumble: {e}"))
+}
+
+/// The impact of the rendered hit `hit`: the hit and `decay` seconds of silence after it through
+/// the saturation and the reverb ([`atomik_dsp::transition::impact`]).
+pub(crate) fn impact_of(hit: &AudioData, decay: f32) -> Result<AudioData, String> {
+    let rate = hit.sample_rate;
+    let tail = (f64::from(decay.max(0.0)) * f64::from(rate)).round() as usize;
+    let padded: Vec<Vec<f32>> = hit
+        .channels
+        .iter()
+        .map(|c| {
+            let mut c = c.clone();
+            c.resize(c.len() + tail, 0.0);
+            c
+        })
+        .collect();
+    let out = atomik_dsp::transition::impact(&padded, rate, decay);
+    if out.iter().flatten().all(|s| s.abs() < 1.0e-6) {
+        return Err("the first hit is silent there: nothing to make an impact from".to_owned());
+    }
+    AudioData::new(rate, out).map_err(|e| format!("cannot make the impact: {e}"))
+}
+
+/// Where a swell of `want` frames that ends at tick `anchor` goes: the start tick, the length in
+/// ticks and the frames of the longest whole number of ticks that fits in `want` before the
+/// anchor, so the swell ends exactly at the frame of the anchor (the audio is the last `frames`
+/// frames of the swell).
+///
+/// # Errors
+/// There is no room for a tick before the anchor (it is at the start of the song).
+pub(crate) fn swell_place(
+    doc: &RackDoc,
+    want: u64,
+    anchor: i64,
+) -> Result<(i64, i64, usize), String> {
+    let clock = doc.song.frame_clock(doc.sample_rate);
+    let end = clock.at(anchor);
+    let frames_of = |ticks: i64| end - clock.at(anchor - ticks);
+    // The frames of `ticks` never decrease with the ticks: the largest that fits.
+    let (mut lo, mut hi) = (0_i64, anchor.max(0));
+    if frames_of(hi) <= want {
+        lo = hi;
+    }
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if frames_of(mid) <= want {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo == 0 {
+        return Err("there is no room before the start of the song for the swell:                     move the source later"
+            .to_owned());
+    }
+    Ok((anchor - lo, lo, frames_of(lo) as usize))
+}
+
 /// Renders `work`. `None`: the control stopped it.
 fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
     let Work {
@@ -100,6 +209,7 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         threshold,
         name,
         plugins,
+        post,
     } = work;
     let mut registry = atomik_render::default_registry();
     let mut host = plugin_host(&doc, plugins, &mut registry, "a freeze")?;
@@ -123,9 +233,36 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         control,
     )
     .map_err(|e| e.to_string())?;
-    let Some(render) = rendered else {
+    let Some(mut render) = rendered else {
         return Ok(None);
     };
+    match post {
+        None => {}
+        Some(Post::Rumble { hits, params }) => {
+            render.audio = rumble_of(&render.audio, hits.as_deref(), &params)?;
+        }
+        Some(Post::ReverseReverb { seconds, anchor }) => {
+            let swell = reverse_swell(&render.audio.channels, render.audio.sample_rate, seconds);
+            let (start, length, frames) = swell_place(&doc, swell[0].len() as u64, anchor)?;
+            let from = swell[0].len() - frames;
+            let trimmed = swell.into_iter().map(|c| c[from..].to_vec()).collect();
+            render.audio = AudioData::new(render.audio.sample_rate, trimmed)
+                .map_err(|e| format!("cannot make the swell: {e}"))?;
+            (render.start, render.length, render.tail_frames) = (start, length, 0);
+        }
+        Some(Post::Impact { decay }) => {
+            render.audio = impact_of(&render.audio, decay)?;
+            let frames = render.audio.channels.first().map_or(1, Vec::len) as u64;
+            render.length = atomik_model::ticks_for_frames(
+                &doc.song,
+                render.start,
+                frames,
+                render.audio.sample_rate,
+            );
+            render.tail_frames =
+                (f64::from(decay.max(0.0)) * f64::from(render.audio.sample_rate)).round() as u64;
+        }
+    }
     let info = bundle
         .add_recording(&render.audio, &name)
         .map_err(|e| format!("cannot store the render: {e}"))?;

@@ -1384,7 +1384,7 @@ pub(crate) fn plan(
         SongCommand::AddAutomationLane { device, param } => {
             let desc = device_descriptor(doc, registry, &device)?;
             if crate::console_vca::lane_param(desc, &param).is_none()
-                || crate::console::is_internal_param(&param)
+                || crate::console::is_hidden_param(&param)
             {
                 return Err(ModelError::UnknownKey(param));
             }

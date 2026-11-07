@@ -1,0 +1,57 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "table", "type": "atomik.wavetable-synth",
+      "name": "Wavetable Synth", "folded": false, "patch": "Table Sub Morph",
+      "params": {
+        "env.amp.attack": 3,
+        "env.amp.release": 120,
+        "env.amp.sustain": 0.9,
+        "env.mod.attack": 1,
+        "env.mod.decay": 260,
+        "env.mod.sustain": 0.2,
+        "env.mod.to_pos1": 0.5,
+        "filter.cutoff": 2400,
+        "master.level": 4,
+        "osc1.level": 0.9,
+        "osc1.octave": -1,
+        "osc1.position": 0,
+        "osc1.table": 12,
+        "osc2.level": 0,
+        "voices": 1
+      },
+      "zones": [
+        {"asset": "5ecd49079084e37c7ceaf38998642c631ae81c2771fbd6da25b14ded9a95f6fa", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "root_key": 60, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 32768, "loop_mode": "off", "loop_start": 0, "loop_end": 32768, "crossfade": 0, "trigger": "gate", "reverse": false}
+      ]
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "5ecd49079084e37c7ceaf38998642c631ae81c2771fbd6da25b14ded9a95f6fa": {"channels": 1, "sample_rate": 48000, "frames": 32768, "name": "Table frames 4 aligned"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

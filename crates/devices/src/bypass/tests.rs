@@ -352,11 +352,12 @@ fn every_effect_descriptor_ends_with_the_host_style_bypass_param() {
     let r = registry();
     for id in effect_ids() {
         let d = r.descriptor(id).unwrap();
-        // Trailing `internal.` params (display switches the app sets) may follow it.
+        // Trailing `internal.` params (display switches the app sets) and `hidden.` ones (data
+        // of a panel's editor) may follow it.
         let at = d
             .params
             .iter()
-            .rposition(|q| !q.key.starts_with("internal."))
+            .rposition(|q| !q.key.starts_with("internal.") && !q.key.starts_with("hidden."))
             .unwrap();
         let p = &d.params[at];
         assert_eq!(p.key, "bypass", "{id}");

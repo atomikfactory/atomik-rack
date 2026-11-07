@@ -268,6 +268,17 @@ impl AudioClipContent {
         envelope_gain(&self.envelope_linear(), n)
     }
 
+    /// The gain the clip plays frame by frame: see [`PlayedGain`].
+    pub fn played_gain(&self, clip_frames: u64) -> PlayedGain {
+        PlayedGain {
+            gain: atomik_core::db_to_gain(self.gain_db),
+            fades: (self.fade_in, self.fade_out),
+            curves: (self.fade_curve, self.out_curve()),
+            envelope: self.envelope_linear(),
+            clip_frames,
+        }
+    }
+
     /// The envelope as `(frame, linear gain)` pairs.
     pub fn envelope_linear(&self) -> Vec<(u64, f32)> {
         self.envelope
@@ -291,6 +302,28 @@ pub fn envelope_gain(points: &[(u64, f32)], n: u64) -> Option<f32> {
     };
     let t = (n - a.0) as f64 / (b.0 - a.0) as f64;
     Some((f64::from(a.1) + (f64::from(b.1) - f64::from(a.1)) * t) as f32)
+}
+
+/// The linear gain an audio clip plays at each frame of its own time: the clip gain times the
+/// fades times the envelope (the crossfade with a neighbour is not part of it). Built once with
+/// [`AudioClipContent::played_gain`] so a pass over many frames does not rebuild the envelope.
+/// This is what a peak of the source reaches at the output.
+#[derive(Debug, Clone)]
+pub struct PlayedGain {
+    gain: f32,
+    fades: (u64, u64),
+    curves: (FadeCurve, FadeCurve),
+    envelope: Vec<(u64, f32)>,
+    clip_frames: u64,
+}
+
+impl PlayedGain {
+    /// The linear gain at clip frame `n`.
+    pub fn at(&self, n: u64) -> f32 {
+        let fade = flatten::fade_gain_of(n, self.clip_frames, self.fades, self.curves);
+        let gain = self.gain * fade;
+        envelope_gain(&self.envelope, n).map_or(gain, |e| gain * e)
+    }
 }
 
 /// The notes of a note clip, shared between copies of the clip: cloning a `NoteList` (and so a

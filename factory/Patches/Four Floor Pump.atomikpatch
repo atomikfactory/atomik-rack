@@ -1,0 +1,52 @@
+{
+  "format": "atomik-project",
+  "version": 44,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.duck",
+      "name": "Sidechain Tool", "folded": false, "patch": "Four Floor Pump",
+      "params": {
+        "depth": 0.85,
+        "hidden.curve_n": 4,
+        "hidden.curve_p1_x": 0,
+        "hidden.curve_p1_y": 0,
+        "hidden.curve_p2_bend": -24,
+        "hidden.curve_p2_x": 0.03,
+        "hidden.curve_p2_y": 1,
+        "hidden.curve_p3_bend": -16,
+        "hidden.curve_p3_x": 0.3,
+        "hidden.curve_p3_y": 0.35,
+        "hidden.curve_p4_x": 1,
+        "hidden.curve_p4_y": 0,
+        "length": 2,
+        "mode": 3,
+        "threshold": -24
+      }
+    }
+  ],
+  "cables": [],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 1,
+    "tracks": []
+  }
+}

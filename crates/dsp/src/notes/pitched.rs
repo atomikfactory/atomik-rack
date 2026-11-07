@@ -403,6 +403,60 @@ pub fn extract_pitched_notes(
     notes
 }
 
+/// The pitch of every frame of a take, as the tracker of [`extract_pitched_notes`] hears it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PitchTrack {
+    /// Source frames between two entries of [`Self::keys`]; entry `k` is centred on source frame
+    /// `k * step`.
+    pub step: u64,
+    /// Per frame: the pitch as a fractional MIDI key, `None` where the frame is unvoiced.
+    pub keys: Vec<Option<f32>>,
+}
+
+/// The pitch of every 5 ms frame of the audio `channels` (planar) at `sample_rate`, found with
+/// the tracker and the median smoothing of [`extract_pitched_notes`] (steps 1 to 5 of the module
+/// docs) between the keys `key_lo` and `key_hi`, without cutting it into notes. `sensitivity` is
+/// as in [`PitchParams`]. Silence, noise and input shorter than a few tens of milliseconds
+/// give no voiced frame.
+pub fn track_pitch(
+    channels: &[&[f32]],
+    sample_rate: u32,
+    (key_lo, key_hi): (u8, u8),
+    sensitivity: f32,
+) -> PitchTrack {
+    let empty = PitchTrack {
+        step: 1,
+        keys: Vec::new(),
+    };
+    if sample_rate < 8000 {
+        return empty;
+    }
+    let mono = mono_mix(channels);
+    let peak = mono.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let (mut lo, mut hi) = (key_lo.min(127), key_hi.min(127));
+    if lo > hi {
+        std::mem::swap(&mut lo, &mut hi);
+    }
+    let f_lo = key_hz(f32::from(lo) - 0.5).max(20.0);
+    let f_hi = key_hz(f32::from(hi) + 0.5).min(f64::from(sample_rate) / 6.0);
+    if peak < MIN_PEAK || f_hi <= f_lo {
+        return empty;
+    }
+    let tracker = Tracker::new(sample_rate, f_lo, f_hi);
+    if mono.len() < tracker.span() * tracker.d {
+        return empty;
+    }
+    let frames = tracker.track(
+        &mono,
+        clamp_sensitivity(sensitivity),
+        (f32::from(lo), f32::from(hi)),
+    );
+    PitchTrack {
+        step: tracker.step(),
+        keys: frames.iter().map(|f| f.voiced.then_some(f.pitch)).collect(),
+    }
+}
+
 /// The pitch of the voiced frames between `start` and `end` as semitones from `key`, thinned
 /// (module docs, step 8).
 fn contour(frames: &[Frame], ctx: &Ctx, (start, end): (u64, u64), key: u8) -> Vec<BendPoint> {

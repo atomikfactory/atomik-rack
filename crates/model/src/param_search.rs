@@ -166,7 +166,7 @@ impl ParamIndex {
                 if let Some(desc) = registry.get(&d.type_id).map(|f| f.descriptor) {
                     let t = track(&path, d);
                     for p in desc.params {
-                        if console::is_internal_param(p.key) {
+                        if console::is_hidden_param(p.key) {
                             continue;
                         }
                         out.push(ParamEntry::new(

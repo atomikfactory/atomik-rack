@@ -258,7 +258,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Stores `data` in the project bundle, registers it and gives it to `device` in one
     /// `SetZones` step. Returns the note of the import (a drum machine with no empty pad).
-    fn store_sample(
+    pub(super) fn store_sample(
         &mut self,
         data: atomik_audio_file::AudioData,
         name: &str,
