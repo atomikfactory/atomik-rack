@@ -4720,7 +4720,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (470) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (471) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5483,6 +5483,25 @@ Device::process                              AppCore::feed_device_scopes
   correlation, balance, width, mid and side, sample and true peak, momentary, short-term and
   integrated LUFS from the mastering device's BS.1770 meter) are computed in `process`, because they
   are cheap and exact there, and published as 16 meter values.
+- **Kick and bass check** ([app/src/kick_bass.rs](../crates/app/src/kick_bass.rs) the analysis and the
+  fixes, [app_core_kick_bass.rs](../crates/app/src/app_core_kick_bass.rs) the worker and the picks,
+  [kick_bass_panel.rs](../crates/ui/src/kick_bass_panel.rs) the panel, `Mixer > Kick and Bass Check`).
+  `analyse` runs on the worker `atomik-kick-bass` on a copy of the song: it renders the two channel strips
+  of the picked tracks in one `render_stems` pass (the first 20 seconds, plugins as stand-ins), mixes each
+  to mono and hands them to `atomik_dsp::kick_bass::check`, which low-passes both at 120 Hz (the sum of the
+  subs is the sub of the sum), takes the kick onsets of `detect_onsets` as the hits, and compares in the
+  window of each hit the mean power of the sum with the power sum of the two (a delta below -1.5 dB cancels,
+  above +1.5 dB builds up). The fundamentals are the median spacing of rising zero crossings in the
+  sounding tail of each hit; two within two semitones and not the same pitch are said to beat. When the
+  check finds a problem, every fix that fits (`Fix`) is built by the same `apply_fix` that the real apply
+  uses, on a scratch `Document`, rendered again and checked again; a fix is offered when its score
+  (overall delta plus a quarter of the worst hit) is 0.5 dB better. The rotation angle and the bass delay
+  are searched on the signals first (`atomik_dsp::PhaseRotator`, `best_bass_delay`) and proven by the
+  render. The fix-asymmetry row (`Headroom`) is `atomik_dsp::best_rotation` on the bass alone, also proven
+  by a render, and is offered whether or not anything cancels. Applying runs the steps through
+  `AppCore::apply_command` with `join_next`, so the whole fix is one undo step, and a result that
+  belongs to an older revision of the song offers no fix. The strip and the fix rows are drawn from
+  `KickBassInfo`, which the app rebuilds every frame while the panel is open.
 - **Panels** ([ui/src/analyser.rs](../crates/ui/src/analyser.rs) the data and the maths,
   [analyser_paint.rs](../crates/ui/src/analyser_paint.rs) the drawing; `FxKind::Spectrum` and
   `FxKind::PhaseMeter`): the spectrum plot over 20 Hz to 20 kHz and the device's dB `range`, the

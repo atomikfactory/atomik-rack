@@ -293,6 +293,8 @@ pub struct AppCore<S: EngineSink> {
     clip_preview: Option<clip_preview_ops::LiveClipPreview>,
     /// The library patch preview that renders on a worker (see `app_core_patch_preview.rs`).
     patch_preview: Option<patch_preview_ops::PatchPreview>,
+    /// The kick and bass check: the picked tracks and the worker (see `app_core_kick_bass.rs`).
+    kick_bass: kick_bass_ops::KickBass,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: (
         Option<atomik_model::PatternDoc>,
@@ -551,6 +553,7 @@ impl<S: EngineSink> AppCore<S> {
             player_preview: None,
             clip_preview: None,
             patch_preview: None,
+            kick_bass: kick_bass_ops::KickBass::default(),
             pattern_clip_seen: (None, None),
             drum_draws: clock_entropy(),
             transport_bar: TransportBar::new(theme.clone()),
@@ -3775,6 +3778,8 @@ mod setups;
 mod clip_preview_ops;
 #[path = "app_core_dub.rs"]
 mod dub_ops;
+#[path = "app_core_kick_bass.rs"]
+mod kick_bass_ops;
 #[path = "app_core_patch_preview.rs"]
 mod patch_preview_ops;
 #[path = "app_core_player_stack.rs"]
@@ -4105,6 +4110,10 @@ mod factory_tests;
 #[cfg(test)]
 #[path = "app_core_patches_tests.rs"]
 mod patches_tests;
+
+#[cfg(test)]
+#[path = "app_core_kick_bass_tests.rs"]
+mod kick_bass_tests;
 
 #[cfg(test)]
 #[path = "app_core_midi_out_tests.rs"]

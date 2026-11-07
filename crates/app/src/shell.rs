@@ -164,13 +164,14 @@ use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ColorPickerAction, ColorPickerView, ColorTarget,
-    ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, MacrosAction, MacrosView,
-    MidiMapsAction, MidiMapsView, ModMatrixAction, ModMatrixView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
-    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
-    RelinkEntry, RelinkView, ScaleAction, ScaleView, SilenceAction, SilenceValues, SilenceView,
-    SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH, TextRun, UiAction, UiEvent, VersionItem,
-    VersionsAction, VersionsView, WarpAction, WarpValues, WarpView,
+    ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip, Key, KickBassAction,
+    KickBassView, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, ModMatrixAction,
+    ModMatrixView, Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, ParamSearchAction,
+    ParamSearchView, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
+    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, ScaleAction, ScaleView,
+    SilenceAction, SilenceValues, SilenceView, SongInfoAction, SongInfoView, TRACK_PANEL_WIDTH,
+    TextRun, UiAction, UiEvent, VersionItem, VersionsAction, VersionsView, WarpAction, WarpValues,
+    WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -534,6 +535,8 @@ pub struct Shell<B: AudioBackend> {
     silence: Option<SilenceView>,
     /// The song information panel (File > Song Information) while it is open.
     song_info: Option<SongInfoView>,
+    /// The kick and bass check panel (Mixer > Kick and Bass Check) while it is open.
+    kick_bass: Option<KickBassView>,
     /// The versions panel, while it is open.
     versions: Option<VersionsView>,
     /// The colour picker (the colour menu's Custom item) while it is open, with what it colours.
@@ -718,6 +721,7 @@ impl<B: AudioBackend> Shell<B> {
             scale_percent: 150.0,
             silence: None,
             song_info: None,
+            kick_bass: None,
             versions: None,
             start_screen: None,
             color_picker: None,
@@ -1209,6 +1213,61 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.song_info = None;
+        self.repaint = true;
+    }
+
+    /// Whether the kick and bass check panel is open.
+    pub fn kick_bass_open(&self) -> bool {
+        self.kick_bass.is_some()
+    }
+
+    /// The kick and bass check panel, while it is open.
+    pub fn kick_bass_view(&self) -> Option<&KickBassView> {
+        self.kick_bass.as_ref()
+    }
+
+    /// Opens the kick and bass check panel (the picks are guessed from the track names).
+    fn open_kick_bass(&mut self) {
+        self.core.kick_bass_open();
+        let theme = self.core.view().theme().clone();
+        let mut view = KickBassView::new(theme);
+        view.set_scale(self.scale());
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_info(self.core.kick_bass_info());
+        self.kick_bass = Some(view);
+        self.repaint = true;
+    }
+
+    /// Hands the open kick and bass panel what the app knows now (the worker's progress and
+    /// result included).
+    fn sync_kick_bass(&mut self) {
+        if self.kick_bass.is_none() {
+            return;
+        }
+        let info = self.core.kick_bass_info();
+        if let Some(v) = &mut self.kick_bass {
+            v.set_info(info);
+            if v.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the kick and bass panel asked for.
+    fn kick_bass_action(&mut self, action: KickBassAction) {
+        match action {
+            KickBassAction::Close => {
+                self.kick_bass = None;
+                self.repaint = true;
+                return;
+            }
+            KickBassAction::Kick(d) => self.core.kick_bass_pick(false, d),
+            KickBassAction::Bass(d) => self.core.kick_bass_pick(true, d),
+            KickBassAction::Run => self.core.kick_bass_run(),
+            KickBassAction::Cancel => self.core.kick_bass_cancel(),
+            KickBassAction::Apply(n) => self.core.kick_bass_apply(n),
+        }
+        self.sync_kick_bass();
         self.repaint = true;
     }
 
@@ -2520,6 +2579,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &mut self.song_info {
             v.set_theme(theme.clone());
         }
+        if let Some(v) = &mut self.kick_bass {
+            v.set_theme(theme.clone());
+        }
         if let Some(v) = &mut self.versions {
             v.set_theme(theme.clone());
         }
@@ -3126,6 +3188,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.song_info.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.song_info {
+                v.set_bounds(rect);
+            }
+        }
+        if self.kick_bass.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.kick_bass {
                 v.set_bounds(rect);
             }
         }
@@ -4063,6 +4131,30 @@ impl<B: AudioBackend> Shell<B> {
             for action in actions {
                 if let UiAction::SongInfo(a) = action {
                     self.song_info_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.kick_bass.is_some() {
+            // The kick and bass panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.kick_bass = None;
+                return Vec::new();
+            }
+            let actions = self
+                .kick_bass
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::KickBass(a) = action {
+                    self.kick_bass_action(a);
                 }
             }
             return Vec::new();
@@ -5801,6 +5893,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_song_info();
                 Vec::new()
             }
+            AppCommand::KickBassCheck => {
+                self.open_kick_bass();
+                Vec::new()
+            }
             AppCommand::StartScreen => {
                 self.open_start_screen();
                 Vec::new()
@@ -7096,6 +7192,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_mod_matrix();
         self.sync_param_search();
         self.sync_quantize();
+        self.sync_kick_bass();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -7887,6 +7984,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.song_info {
             view.paint(canvas);
         }
+        if let Some(view) = &self.kick_bass {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.versions {
             view.paint(canvas);
         }
@@ -8117,6 +8217,10 @@ mod midimap_tests;
 #[cfg(test)]
 #[path = "shell_macros_tests.rs"]
 mod macros_tests;
+
+#[cfg(test)]
+#[path = "shell_kick_bass_tests.rs"]
+mod kick_bass_tests;
 
 #[cfg(test)]
 #[path = "shell_key_chord_tests.rs"]

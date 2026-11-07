@@ -756,6 +756,23 @@ may break APIs and the patch and project formats.
   amp release when the release is outside 5 to 20 ms and the filter key tracking on, only where they differ,
   in one undo step, and the status line names what changed. The command is `rack.clean_up_bass`
   (470 commands). The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
+- **Kick and Bass Check, and phase rotation.** Mixer > Kick and Bass Check opens a panel where you pick a kick
+  track and a bass track. The check renders the two channel strips in one pass on a worker (the first 20
+  seconds, deterministic), compares the sub range below 120 Hz of their sum with the power sum of the two for
+  every kick hit and draws a strip with one bar per hit (down: they cancel, up: they build up). It also reads
+  the two fundamentals and warns when they are within two semitones, where they beat. When something cancels or
+  beats it tries the fixes that fit, each one on a copy of the song that is rendered and checked again, so the
+  strip next to a fix is what it really gives: start the oscillator of a built-in bass synth at a fixed angle,
+  invert the polarity of the bass, rotate its phase, delay it by a few samples, or nudge the fine tune of the
+  kick pad of a drum machine. A last row, "fix asymmetry", looks at the bass alone: when it swings further one
+  way than the other, it finds the rotation that evens the positive and negative peaks and shows the headroom
+  gained (and, since a rotation that is silent alone can change how the bass adds to the kick, the strip the
+  song then gives). Apply is one undo step and the status line says what changed; the check never changes the
+  song itself. The Stereo Tool has two new params, `rotate` (0 to 180 degrees) and `rotate_hz`,
+  an all-pass that turns the phase at unit gain (0 is the input bit for bit, 180 is a polarity inversion); the
+  fix for an uneven waveform in `atomik_dsp::best_rotation` finds the angle that evens the positive and negative
+  peaks and reports the headroom gained. The command is `mixer.kick_bass_check` (471 commands); the project
+  format is unchanged.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
