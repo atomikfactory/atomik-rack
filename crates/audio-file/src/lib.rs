@@ -10,6 +10,7 @@ mod data;
 mod decode;
 mod edit;
 mod error;
+mod external;
 mod hash;
 mod instrument;
 mod meta;
@@ -38,6 +39,7 @@ pub use decode::{
 };
 pub use edit::{FadeShape, crop, fade_in, fade_out, normalise, range_peak, reverse};
 pub use error::{AudioFileError, Result};
+pub use external::{ExternalCopy, MAX_EXTERNAL_BYTES, collect_external_file};
 pub use hash::content_hash;
 pub use instrument::{
     Instrument, InstrumentKind, InstrumentLimits, InstrumentRegion, InstrumentSample,

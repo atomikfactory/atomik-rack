@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use atomik_audio_file::{
-    AudioData, AudioFileError, Bundle, CollectProgress, VersionKind, VersionStore,
+    AudioData, AudioFileError, Bundle, CollectProgress, RetireReport, VersionKind, VersionStore,
     retire_old_project, verify_copy,
 };
 use common::*;
@@ -301,7 +301,9 @@ fn another_project_in_the_old_folder_keeps_its_audio() {
         .unwrap()
         .hash;
     let other = old.root.join("Other.atomik");
-    std::fs::write(&other, "other project").unwrap();
+    // It uses both of the audio files of the old project, and its own.
+    let used = project_text(&[&old.hashes[0], &old.hashes[1], &theirs]);
+    std::fs::write(&other, used).unwrap();
     let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
 
     let report = retire_old_project(
@@ -315,6 +317,7 @@ fn another_project_in_the_old_folder_keeps_its_audio() {
     .unwrap();
     assert!(report.shared && !report.folder_removed);
     assert_eq!(report.removed_files, 1, "only the old project file");
+    assert_eq!(report.kept_audio, 2);
     assert!(!old.file.exists());
     assert!(other.is_file());
     let b = Bundle::open(&old.root).unwrap();
@@ -324,13 +327,135 @@ fn another_project_in_the_old_folder_keeps_its_audio() {
     }
 }
 
+/// A project text that names the audio `hashes`.
+fn project_text(hashes: &[&str]) -> String {
+    let list: Vec<String> = hashes.iter().map(|h| format!("\"{h}\"")).collect();
+    format!("{{\"assets\": [{}]}}", list.join(", "))
+}
+
+/// Retires `old` with the copy `new_file` and the audio `old` holds as the audio in use.
+fn retire(old: &Old, new_file: &Path, new_root: &Path) -> Result<RetireReport, AudioFileError> {
+    retire_old_project(
+        &old.file,
+        Some(&old.root),
+        new_file,
+        "new text",
+        Some(new_root),
+        &wanted(old),
+    )
+}
+
+#[test]
+fn audio_that_no_other_project_uses_is_removed_and_the_rest_stays() {
+    let dir = tmp_dir("reloc-shared-split");
+    let old = old_project(&dir, "Old", &[0.1, 0.2, 0.3]);
+    let other = old.root.join("Other.atomik");
+    // Only the second file is shared.
+    std::fs::write(&other, project_text(&[&old.hashes[1]])).unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
+    let report = retire(&old, &new_file, &new_root).unwrap();
+    assert!(report.shared && report.unreadable.is_none());
+    assert_eq!(report.kept_audio, 1);
+    assert_eq!(
+        report.removed_files, 3,
+        "the project file and two audio files"
+    );
+    let b = Bundle::open(&old.root).unwrap();
+    assert!(!b.exists(&old.hashes[0]) && !b.exists(&old.hashes[2]));
+    assert!(!b.peaks_path(&old.hashes[0]).exists(), "its cache goes too");
+    assert!(b.exists(&old.hashes[1]) && other.is_file());
+    // The new place holds all of it.
+    let n = Bundle::open(&new_root).unwrap();
+    assert!(old.hashes.iter().all(|h| n.exists(h)));
+}
+
+#[test]
+fn audio_a_kept_version_of_another_project_uses_stays() {
+    let dir = tmp_dir("reloc-shared-version");
+    let old = old_project(&dir, "Old", &[0.1, 0.2]);
+    let other = old.root.join("Other.atomik");
+    std::fs::write(&other, project_text(&[])).unwrap();
+    // An older version of the other project used the first file.
+    let mut store = VersionStore::for_project(&other).unwrap();
+    let assets: BTreeSet<String> = [old.hashes[0].clone()].into();
+    store
+        .add(
+            VersionKind::Named,
+            "older",
+            &project_text(&[&old.hashes[0]]),
+            &assets,
+            1,
+        )
+        .unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
+    let report = retire(&old, &new_file, &new_root).unwrap();
+    assert_eq!(report.kept_audio, 1);
+    let b = Bundle::open(&old.root).unwrap();
+    assert!(
+        b.exists(&old.hashes[0]),
+        "a version of the other project uses it"
+    );
+    assert!(!b.exists(&old.hashes[1]));
+}
+
+#[test]
+fn a_project_that_cannot_be_read_keeps_all_of_the_old_audio() {
+    let dir = tmp_dir("reloc-shared-unreadable");
+    let old = old_project(&dir, "Old", &[0.1, 0.2]);
+    // Not text: reading it fails.
+    let other = old.root.join("Sub").join("Broken.atomik");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::write(&other, [0xff, 0xfe, 0x00, 0x9f]).unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
+    let report = retire(&old, &new_file, &new_root).unwrap();
+    let why = report.unreadable.expect("it says what it could not read");
+    assert!(why.contains("Broken.atomik"), "{why}");
+    assert_eq!(report.kept_audio, 2);
+    assert_eq!(report.removed_files, 1, "only the old project file");
+    let b = Bundle::open(&old.root).unwrap();
+    assert!(old.hashes.iter().all(|h| b.exists(h)));
+}
+
+#[test]
+fn a_folder_too_deep_to_be_looked_into_keeps_all_of_the_old_audio() {
+    let dir = tmp_dir("reloc-shared-deep");
+    let old = old_project(&dir, "Old", &[0.1]);
+    let mut deep = old.root.clone();
+    for i in 0..14 {
+        deep = deep.join(format!("d{i}"));
+    }
+    std::fs::create_dir_all(&deep).unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
+    let report = retire(&old, &new_file, &new_root).unwrap();
+    assert!(report.unreadable.is_some());
+    assert!(Bundle::open(&old.root).unwrap().exists(&old.hashes[0]));
+}
+
+#[test]
+fn a_failed_check_removes_no_audio_even_when_others_share_the_folder() {
+    let dir = tmp_dir("reloc-shared-unverified");
+    let old = old_project(&dir, "Old", &[0.1]);
+    std::fs::write(old.root.join("Other.atomik"), project_text(&[])).unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
+    // The copy differs from the original.
+    std::fs::write(
+        Bundle::open(&new_root).unwrap().asset_path(&old.hashes[0]),
+        b"damaged",
+    )
+    .unwrap();
+    let before = snapshot(&old.root);
+    let err = retire(&old, &new_file, &new_root);
+    assert!(matches!(err, Err(AudioFileError::Unverified(_))));
+    assert_eq!(snapshot(&old.root), before);
+}
+
 #[test]
 fn another_project_in_a_subfolder_also_counts() {
     let dir = tmp_dir("reloc-nested-other");
     let old = old_project(&dir, "Old", &[0.1]);
     std::fs::create_dir_all(old.root.join("Sub").join("Deeper")).unwrap();
     let other = old.root.join("Sub").join("Deeper").join("Other.atomik");
-    std::fs::write(&other, "other project").unwrap();
+    std::fs::write(&other, project_text(&[&old.hashes[0]])).unwrap();
     let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
     let report = retire_old_project(
         &old.file,
@@ -487,6 +612,40 @@ impl Drop for Cleanup {
 }
 
 /// Makes `count` automatic versions and one named version of the project `file`.
+#[test]
+fn audio_a_version_file_left_out_of_its_index_uses_stays() {
+    let dir = tmp_dir("reloc-shared-stray-version");
+    let _cleanup = Cleanup(dir.clone());
+    let old = old_project(&dir, "Old", &[0.1, 0.2]);
+    // The old project's own versions name all of its audio: they go with it and keep nothing.
+    let own = old.hashes.iter().cloned().collect::<BTreeSet<String>>();
+    VersionStore::for_project(&old.file)
+        .unwrap()
+        .add(
+            VersionKind::Named,
+            "mine",
+            &project_text(&[&old.hashes[0], &old.hashes[1]]),
+            &own,
+            1,
+        )
+        .unwrap();
+    // Another project of the folder, with a version file its index does not list.
+    let other = old.root.join("Other.atomik");
+    std::fs::write(&other, project_text(&[])).unwrap();
+    let stray = old.root.join("Versions").join("Other v0007.atomikver");
+    std::fs::write(&stray, project_text(&[&old.hashes[1]])).unwrap();
+    let (new_file, new_root) = copy_to(&old, &dir.join("Elsewhere"), "New", "new text");
+    let report = retire(&old, &new_file, &new_root).unwrap();
+    assert_eq!(report.kept_audio, 1);
+    let b = Bundle::open(&old.root).unwrap();
+    assert!(!b.exists(&old.hashes[0]), "nothing else uses it");
+    assert!(
+        b.exists(&old.hashes[1]),
+        "the unlisted version still names it"
+    );
+    assert!(stray.is_file());
+}
+
 fn keep_versions(file: &Path, count: usize) -> VersionStore {
     let mut store = VersionStore::for_project(file).unwrap();
     let none = BTreeSet::new();

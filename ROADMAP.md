@@ -47,7 +47,7 @@ and start screen and collect follow-ups (a card for the template under the point
 pinned songs that stay at the top of the recent list and survive Clear Menu, a Show the start screen row in
 Settings, Workflow, Preview Collect Files, Cancel Collect or Move for a very large collection, and Move Project, which
 removes the old project only after the copy has been checked byte for byte and never audio that another project in
-the old folder may use),
+the old folder may use, and the old audio no other project uses goes when others share the folder),
 and several songs follow-ups (a paste in one open song brings the audio of the clips, devices, tracks, strips or
 patch with it, a favourite, tag or recent song in one song shows in the others at once, a start after a crash
 brings back the songs that were open next to the first one in windows of their own, and a Save no longer deletes the
@@ -140,10 +140,14 @@ New original devices built from the existing DSP blocks, grouped by the gap they
   run on the save worker with a count in the status line and Cancel Collect or Move; and File > Move Project puts the
   project and the audio it uses in a folder of its own name inside the folder you pick, then removes the old project,
   but only after the new project file reads back as written and every audio file of the old bundle is in the new one
-  byte for byte, and never audio that another project in the old folder may use (then only the old project file
-  goes), and a folder that holds anything else stays. Still to come: collecting plugin preset and impulse files that
-  live outside the project, and removing the audio of the old folder that no other project uses when other projects
-  share it.
+  byte for byte, and never audio that another project in the old folder may use: where other projects share the folder
+  every project file in it and below is read, with the versions kept beside it, and only the old audio none of them
+  names is removed (a project that cannot be read keeps all of it, and the toast says so), and a folder that holds
+  anything else stays. Collect Files, Save As and Move Project also copy the files that the text state of a plugin
+  names outside the project (an impulse, a preset) into its Files folder and point the state at the copy, in one undo
+  step; a file that cannot be found is listed and never stops the save. Still to come: files named inside a binary
+  plugin state (it is never searched, since a path in it cannot be replaced safely), putting those files in a project
+  archive, and removing the Files folder of the old place when a project moves.
 - **Song information follow-ups.** The title, author and notes of a song are done (File > Song Information), and so is the version history, with a comparison of two songs. Still to come: deleting a version and renaming one.
 - **Several songs follow-ups.** Songs open in windows of their own, one of them with the audio and the MIDI keyboard. Copy and paste moves clips, takes, devices, tracks, strips and patches between them, audio included; the library and the recent list are shared live; and the songs a crash cut off come back at the next start. Still to come: separate Input Focus and Play Focus buttons on the interface panel (the song with the stream also has the MIDI inputs today), converting the sample rate of audio pasted from a song with another rate, dragging between song windows, and a session of the MCP server with more than one song.
 

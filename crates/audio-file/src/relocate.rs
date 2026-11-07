@@ -11,22 +11,30 @@
 //!
 //! What is removed is only what the project owned and a copy now replaces: the old project file
 //! and the audio files it used (with their peak caches), then the folders that are empty after
-//! that. A folder that also holds anything else stays, with what is in it. Where another project
-//! file lives in the old folder (or below it) its `Audio/` store may hold audio that project
-//! uses, so the audio is left alone and only the old project file goes. The versions of the
-//! project (see [`crate::versions`]) are copied to the new place, compared byte for byte, and
-//! only then removed from the old one.
+//! that. A folder that also holds anything else stays, with what is in it.
+//!
+//! Where other project files live in the old folder (or below it) the old audio they use stays:
+//! every such file is read, and so are the versions kept beside it ([`crate::versions`]), and
+//! only audio that none of them names is removed. If any of them cannot be read (or a folder
+//! cannot be listed, or is too deep, or is a link), nothing of the audio is removed and the
+//! report says so; only the old project file goes. The versions of the project are copied to the
+//! new place, compared byte for byte, and only then removed from the old one.
 
 use crate::bundle::Bundle;
 use crate::error::{AudioFileError, Result};
-use crate::versions::{carry_versions, retire_versions};
+use crate::versions::{
+    VERSION_EXTENSION, VersionStore, carry_versions, retire_versions, scan_assets, versions_dir,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// How deep below the old folder another project file is looked for.
-const SCAN_DEPTH: usize = 4;
+/// How deep below the old folder other project files are looked for; a deeper folder counts as
+/// one that could not be read.
+const SCAN_DEPTH: usize = 12;
+/// The largest project file read to see what audio it uses (the model's own limit).
+const MAX_PROJECT_BYTES: u64 = 256 << 20;
 
 /// What [`retire_old_project`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,8 +43,13 @@ pub struct RetireReport {
     pub removed_files: usize,
     /// The old project folder is gone.
     pub folder_removed: bool,
-    /// Another project lives in the old folder: its audio was left alone.
+    /// Another project lives in the old folder: the audio it uses was left alone.
     pub shared: bool,
+    /// Audio files of the old folder that another project uses and that therefore stay.
+    pub kept_audio: usize,
+    /// A project file (or folder) of the old folder that could not be read: no old audio was
+    /// removed. Names what failed.
+    pub unreadable: Option<String>,
     /// Versions of the project (see [`crate::versions`]) carried to the new place and removed
     /// from the old one.
     pub versions_moved: usize,
@@ -45,7 +58,7 @@ pub struct RetireReport {
 }
 
 /// Whether the files `a` and `b` hold the same bytes.
-fn same_bytes(a: &Path, b: &Path) -> Result<bool> {
+pub(crate) fn same_bytes(a: &Path, b: &Path) -> Result<bool> {
     let (ma, mb) = (fs::metadata(a)?, fs::metadata(b)?);
     if ma.len() != mb.len() {
         return Ok(false);
@@ -98,18 +111,89 @@ fn within(inner: &Path, outer: &Path) -> bool {
     real(inner).starts_with(real(outer))
 }
 
-/// Whether a project file other than `file` lives in `dir` or up to [`SCAN_DEPTH`] levels
-/// below it.
-fn has_other_project(dir: &Path, file: &Path, depth: usize) -> bool {
+/// The other project files of the old folder and what they use.
+#[derive(Debug, Default)]
+struct OtherProjects {
+    /// Project files other than the one being moved.
+    files: usize,
+    /// Audio any of them (or any version kept beside them) names.
+    used: BTreeSet<String>,
+    /// What could not be read, if anything.
+    unreadable: Option<String>,
+}
+
+impl OtherProjects {
+    fn fail(&mut self, what: &Path, why: &str) {
+        if self.unreadable.is_none() {
+            self.unreadable = Some(format!("{}: {why}", what.display()));
+        }
+    }
+
+    /// Reads the project file `path`: the audio it names and the audio its versions name.
+    fn read_project(&mut self, path: &Path) {
+        self.files += 1;
+        self.read_text(path);
+        match VersionStore::for_project(path) {
+            Ok(store) => self.used.extend(store.assets()),
+            Err(e) => self.fail(path, &format!("its versions: {e}")),
+        }
+    }
+
+    /// Reads the project or version file `path` and adds the audio it names.
+    fn read_text(&mut self, path: &Path) {
+        let text = fs::metadata(path).map_err(|e| e.to_string()).and_then(|m| {
+            if m.len() > MAX_PROJECT_BYTES {
+                Err("too big to read".to_owned())
+            } else {
+                fs::read_to_string(path).map_err(|e| e.to_string())
+            }
+        });
+        match text {
+            Ok(text) => self.used.extend(scan_assets(&text)),
+            Err(why) => self.fail(path, &why),
+        }
+    }
+}
+
+/// Reads every project file other than `file` in `dir` and below it, and every version file
+/// outside `file`'s own versions folder (a version file the index of its store does not list
+/// still names audio a restore would need).
+fn scan_other_projects(dir: &Path, file: &Path, depth: usize, out: &mut OtherProjects) {
     let own = fs::canonicalize(file).ok();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
+    // The moved project's own version files are carried and retired with it.
+    let own_versions = versions_dir(file);
+    let own_prefix = file
+        .file_stem()
+        .map(|s| format!("{} v", s.to_string_lossy()));
+    let is_own_version = |path: &Path| {
+        path.parent() == Some(own_versions.as_path())
+            && own_prefix.as_ref().is_some_and(|prefix| {
+                path.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(prefix.as_str()))
+            })
     };
-    for entry in entries.flatten() {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => return out.fail(dir, &e.to_string()),
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            out.fail(dir, "a folder entry cannot be read");
+            continue;
+        };
         let path = entry.path();
-        if path.is_dir() {
-            if depth > 0 && has_other_project(&path, file, depth - 1) {
-                return true;
+        let Ok(kind) = entry.file_type() else {
+            out.fail(&path, "its type cannot be read");
+            continue;
+        };
+        if kind.is_symlink() {
+            // A link may lead anywhere (or around): it is not followed, so it is not known.
+            out.fail(&path, "a link is not followed");
+        } else if kind.is_dir() {
+            if depth == 0 {
+                out.fail(&path, "too deep to look into");
+            } else {
+                scan_other_projects(&path, file, depth - 1, out);
             }
         } else if path
             .extension()
@@ -117,10 +201,15 @@ fn has_other_project(dir: &Path, file: &Path, depth: usize) -> bool {
             && path != file
             && fs::canonicalize(&path).ok() != own
         {
-            return true;
+            out.read_project(&path);
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case(VERSION_EXTENSION))
+            && !is_own_version(&path)
+        {
+            out.read_text(&path);
         }
     }
-    false
 }
 
 fn remove_file_if_present(path: &Path) -> Result<bool> {
@@ -189,13 +278,20 @@ pub fn retire_old_project(
     // The versions go with the project: copied and compared before the old ones are removed.
     let carried = carry_versions(old_file, new_file)?;
 
-    let shared = old_root.is_some_and(|root| has_other_project(root, old_file, SCAN_DEPTH));
-    report.shared = shared;
-    // Opened before anything is removed: an old folder that cannot be read fails the move whole.
+    // Every other project of the old folder is read before anything is removed: an old folder
+    // that cannot be read fails the move whole, and a project that cannot be read keeps all of
+    // the old audio.
+    let mut others = OtherProjects::default();
     let old = match old_root {
-        Some(root) if !shared => Some(Bundle::open(root)?),
-        _ => None,
+        Some(root) => {
+            let old = Bundle::open(root)?;
+            scan_other_projects(root, old_file, SCAN_DEPTH, &mut others);
+            Some(old)
+        }
+        None => None,
     };
+    report.shared = others.files > 0;
+    report.unreadable = others.unreadable.clone();
     if remove_file_if_present(old_file)? {
         report.removed_files += 1;
     }
@@ -205,11 +301,18 @@ pub fn retire_old_project(
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(old) = &old {
         for hash in keep {
-            if old.exists(hash) {
-                report.removed_files += usize::from(remove_file_if_present(&old.asset_path(hash))?);
-                // A cache: a failure to remove it only leaves a stale file.
-                let _ = remove_file_if_present(&old.peaks_path(hash));
+            if !old.exists(hash) {
+                continue;
             }
+            // The only place old audio is removed: never what another project uses, and
+            // nothing at all when a project could not be read.
+            if others.unreadable.is_some() || others.used.contains(hash) {
+                report.kept_audio += 1;
+                continue;
+            }
+            report.removed_files += usize::from(remove_file_if_present(&old.asset_path(hash))?);
+            // A cache: a failure to remove it only leaves a stale file.
+            let _ = remove_file_if_present(&old.peaks_path(hash));
         }
         dirs.extend([old.peaks_dir(), old.audio_dir(), old.root().to_path_buf()]);
     }
