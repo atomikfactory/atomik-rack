@@ -564,3 +564,58 @@ fn the_e_of_a_row_asks_the_rack_to_show_its_effect() {
         "an empty row has no E"
     );
 }
+
+/// [`doc_with`]'s effects cabled on the master's insert loop instead (echo, fx2, fx3).
+fn master_doc_with(n: usize) -> RackDoc {
+    let mut doc = doc_with(0);
+    let chain = ["echo", "fx2", "fx3"];
+    let mut from = ("master", ["insert_send_l", "insert_send_r"]);
+    for fx in chain.iter().take(n) {
+        // The echo is the FX return 1 effect in this document; free it first.
+        doc.cables
+            .retain(|c| !(c.from.device.0 == *fx || c.to.device.0 == *fx));
+        for (side, s) in ["in_l", "in_r"].into_iter().enumerate() {
+            doc.cables.push(cable((from.0, from.1[side]), (fx, s)));
+        }
+        from = (fx, ["out_l", "out_r"]);
+    }
+    for (side, s) in ["insert_return_l", "insert_return_r"]
+        .into_iter()
+        .enumerate()
+    {
+        doc.cables
+            .push(cable((from.0, from.1[side]), ("master", s)));
+    }
+    doc.console.returns = Default::default();
+    doc
+}
+
+#[test]
+fn the_master_insert_rows_reorder_like_a_strips() {
+    let (doc, reg) = (master_doc_with(3), console_registry());
+    let mut v = view(&doc, &reg);
+    let m = key("master");
+    let from = v.insert_slot_center(&m, 0).unwrap() - Vec2::new(14.0, 0.0);
+    let to = v.insert_slot_center(&m, 2).unwrap() + Vec2::new(0.0, 4.0) - Vec2::new(14.0, 0.0);
+    let a = drag(&mut v, &doc, &reg, from, to);
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::MoveInsert {
+            channel: m.clone(),
+            from: 0,
+            to: 2
+        }]
+    );
+    assert!(!a.iter().any(|x| matches!(x, UiAction::Select(_))));
+}
+
+#[test]
+fn the_e_of_a_master_insert_row_asks_the_rack_to_show_its_effect() {
+    let (doc, reg) = (master_doc_with(2), console_registry());
+    let mut v = view(&doc, &reg);
+    let e = v.insert_edit_center(&key("master"), 1).unwrap();
+    assert_eq!(
+        click(&mut v, &doc, &reg, e),
+        [UiAction::EditInsert(key("fx2"))]
+    );
+}

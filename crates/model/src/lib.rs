@@ -235,7 +235,7 @@ pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_folder::{FolderRoute, MAX_FOLDER_ROUTES};
 pub use console_insert::{
     bypass_inserts_commands, insert_bypass_states, insert_chain, insert_owner, inserts_bypassed,
-    section_bypass_states,
+    master_stack, section_bypass_states, send_chain, send_slot_of,
 };
 pub use console_settings::{ChannelSettingsClip, InsertClip};
 pub use console_snapshot::{

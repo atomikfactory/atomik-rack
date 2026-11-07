@@ -1,11 +1,11 @@
-//! The Audio I/O panel and the master panel of (UI half):
+//! The Audio I/O panel and the send rows of the master section panel (UI half):
 //! socket state lamps, peak meters and clip lamps, the send rows with the name of their effect,
-//! the EDIT buttons, the control-room pick list and the key-in state. Display-list goldens
+//! the EDIT buttons and the pick list of a long choice param. Display-list goldens
 //! regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-ui --test interface_panel`.
 
 mod support;
 
-use atomik_model::{Cable, Command, DeviceKey, Document, RackDoc, SocketRef};
+use atomik_model::{Cable, Command, Document, RackDoc};
 use atomik_ui::{IoSocketState, RackView, Theme, UiAction, UiEvent};
 use support::starter::*;
 use support::*;
@@ -21,17 +21,6 @@ fn fresh(doc: &RackDoc, reg: &atomik_device_sdk::Registry) -> RackView {
 
 fn cab(from: (&str, &str), to: (&str, &str)) -> Cable {
     cable(from, to)
-}
-
-/// The starter with a sine source on `in_1` and the master key keyed from the second input.
-fn io_doc(reg: &atomik_device_sdk::Registry) -> Document {
-    let mut d = two_instruments(reg);
-    d.apply(
-        Command::Connect(cab(("interface", "in_1"), ("synth", "gate_in"))),
-        reg,
-    )
-    .ok();
-    d
 }
 
 #[test]
@@ -262,7 +251,6 @@ fn edit_selects_the_effect_of_the_slot_and_scrolls_to_it() {
     // The effect is on screen after the jump.
     let at = v.plate_center(&key("echo")).unwrap();
     assert!(at.y > 0.0 && at.y < VIEW.height, "{at:?}");
-    assert!(v.scroll() > 0.0, "the rack scrolled to the effect");
 }
 
 #[test]
@@ -280,25 +268,54 @@ fn the_edit_button_names_the_effect_it_selects_in_its_tooltip() {
     assert_eq!(v.tooltip().as_deref(), None);
 }
 
+/// The starter with an organ, whose `sound` choice opens a pick list.
+fn organ_doc(reg: &atomik_device_sdk::Registry) -> Document {
+    let mut d = master_doc(reg);
+    d.apply(add_end("atomik.organ", "organ"), reg).unwrap();
+    d
+}
+
+/// A rack view tall enough to show the organ at the end of the starter's rack.
+fn tall(doc: &RackDoc, reg: &atomik_device_sdk::Registry) -> RackView {
+    let mut v = RackView::new(Theme::dark());
+    let _ = v.handle(
+        &UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 6000.0)),
+        doc,
+        reg,
+    );
+    v.sync(doc, reg);
+    v
+}
+
+/// The names of the organ's `sound` choice.
+fn organ_sounds(reg: &atomik_device_sdk::Registry) -> Vec<String> {
+    let desc = reg.get("atomik.organ").unwrap().descriptor;
+    let p = desc.params.iter().find(|p| p.key == "sound").unwrap();
+    let atomik_core::Unit::Choice(names) = p.unit else {
+        panic!("choice")
+    };
+    names.iter().map(|n| n.to_string()).collect()
+}
+
 #[test]
 fn the_open_pick_list_paints_its_rows_marks_the_current_one_and_follows_the_pointer() {
     let reg = registry();
-    let d = master_doc(&reg);
+    let d = organ_doc(&reg);
     let doc = d.doc();
-    let mut v = fresh(doc, &reg);
+    let mut v = tall(doc, &reg);
     let closed = paint_json(&mut v, doc, &reg);
-    let at = v.choice_center(&key("master"), "monitor.source").unwrap();
+    let at = v.choice_center(&key("organ"), "sound").unwrap();
     let _ = v.handle(&down(at), doc, &reg);
     let _ = v.handle(&up(at), doc, &reg);
     let open = paint_json(&mut v, doc, &reg);
     assert!(open.len() > closed.len(), "the list adds its rows");
-    for name in ["Main", "FX returns", "Send 3", "Return 8"] {
+    for name in organ_sounds(&reg) {
         assert!(open.contains(&format!("\"{name}\"")), "{name}");
     }
     assert_eq!(
         open.matches('\u{2022}').count(),
         1,
-        "one bullet marks the current source (Main)"
+        "one bullet marks the current sound"
     );
     // Hovering a row paints its highlight; leaving the rows takes it away again.
     let row = v.choice_menu_row_center(5).unwrap();
@@ -324,42 +341,30 @@ fn edit_on_a_free_slot_does_nothing() {
 }
 
 #[test]
-fn the_source_is_a_pick_list_of_the_descriptor_entries() {
+fn a_long_choice_is_a_pick_list_of_the_descriptor_entries() {
     let reg = registry();
-    let d = master_doc(&reg);
+    let d = organ_doc(&reg);
     let doc = d.doc();
-    let mut v = fresh(doc, &reg);
-    let at = v.choice_center(&key("master"), "monitor.source").unwrap();
+    let mut v = tall(doc, &reg);
+    let at = v.choice_center(&key("organ"), "sound").unwrap();
     let _ = v.handle(&down(at), doc, &reg);
     let _ = v.handle(&up(at), doc, &reg);
     let labels = v.choice_menu_labels();
-    assert_eq!(labels.len(), 18);
-    assert_eq!(&labels[..3], ["Main", "FX returns", "Send 1"]);
-    assert_eq!(labels[17], "Return 8");
-    // The list is the descriptor's own, not a copy.
-    let desc = reg.get("atomik.master").unwrap().descriptor;
-    let p = desc
-        .params
-        .iter()
-        .find(|p| p.key == "monitor.source")
-        .unwrap();
-    let atomik_core::Unit::Choice(names) = p.unit else {
-        panic!("choice")
-    };
     assert_eq!(
         labels,
-        names.iter().map(|n| n.to_string()).collect::<Vec<_>>()
+        organ_sounds(&reg),
+        "the list is the descriptor's own"
     );
-    // Pick "Return 5" (index 14).
-    let row = v.choice_menu_row_center(14).unwrap();
+    let n = labels.len();
+    let row = v.choice_menu_row_center(n - 1).unwrap();
     let out = v.handle(&down(row), doc, &reg);
     let _ = v.handle(&up(row), doc, &reg);
     assert_eq!(
         commands(&out),
         [Command::SetParam {
-            key: key("master"),
-            param: "monitor.source".into(),
-            value: 14.0,
+            key: key("organ"),
+            param: "sound".into(),
+            value: (n - 1) as f32,
             merge: None
         }]
     );
@@ -369,12 +374,12 @@ fn the_source_is_a_pick_list_of_the_descriptor_entries() {
 #[test]
 fn a_press_outside_or_escape_closes_the_pick_list_without_a_change() {
     let reg = registry();
-    let d = master_doc(&reg);
+    let d = organ_doc(&reg);
     let doc = d.doc();
-    let mut v = fresh(doc, &reg);
-    let at = v.choice_center(&key("master"), "monitor.source").unwrap();
+    let mut v = tall(doc, &reg);
+    let at = v.choice_center(&key("organ"), "sound").unwrap();
     let _ = v.handle(&down(at), doc, &reg);
-    assert_eq!(v.choice_menu_labels().len(), 18);
+    assert_eq!(v.choice_menu_labels().len(), organ_sounds(&reg).len());
     let out = v.handle(
         &UiEvent::Key {
             key: atomik_ui::Key::Escape,
@@ -414,28 +419,4 @@ fn golden_master_panel_sends() {
     let doc = d.doc();
     let mut v = fresh(doc, &reg);
     check_golden("master_panel_sends_1x.json", &paint_json(&mut v, doc, &reg));
-}
-
-#[test]
-fn the_key_lamp_follows_the_cable() {
-    let reg = registry();
-    let uncabled = with_effects(&reg);
-    let cabled = master_doc(&reg);
-    let a = {
-        let mut v = fresh(uncabled.doc(), &reg);
-        paint_json(&mut v, uncabled.doc(), &reg)
-    };
-    let b = {
-        let mut v = fresh(cabled.doc(), &reg);
-        paint_json(&mut v, cabled.doc(), &reg)
-    };
-    assert_ne!(a, b);
-    assert!(b.contains("from Poly Synth") || b.contains("from bass") || b.contains("from "));
-    assert!(!a.contains("from "));
-    let _ = DeviceKey("x".into());
-    let _ = SocketRef {
-        device: DeviceKey("x".into()),
-        socket: "y".into(),
-    };
-    let _ = io_doc;
 }

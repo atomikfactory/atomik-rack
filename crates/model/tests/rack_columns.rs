@@ -702,15 +702,19 @@ fn create_effect_at_the_top_of_a_column_is_only_added_and_not_routed() {
 }
 
 #[test]
-fn create_effect_at_below_the_master_uses_the_send_return_rule() {
+fn create_effect_at_below_the_master_is_an_insert_of_the_master_section() {
     let r = plugin_console_registry();
     let mut d = Document::new(new_project_doc());
     d.apply(effect_at(slot(0, 1), "fx"), &r).unwrap();
     assert_eq!(d.doc().slot_of(&key("fx")), Some(slot(0, 1)));
-    assert!(
-        d.doc().console.return_slot(&key("fx")).is_some(),
-        "the master was the device above"
+    // Right under the master panel is its insert area: the effect joins the master's chain
+    // (a send is made by creating with the master selected).
+    let master = d.doc().console.master.clone().unwrap();
+    assert_eq!(
+        atomik_model::insert_chain(d.doc(), &r, &master),
+        vec![key("fx")]
     );
+    assert!(d.doc().console.return_slot(&key("fx")).is_none());
 }
 
 #[test]

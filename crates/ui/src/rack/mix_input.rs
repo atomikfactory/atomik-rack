@@ -143,16 +143,28 @@ impl RackView {
     pub fn mix_panel_keys(&self) -> Vec<DeviceKey> {
         self.devices
             .iter()
-            .filter(|d| d.is_mix())
+            .filter(|d| d.is_mix() && !d.is_master())
             .map(|d| d.key.clone())
             .collect()
     }
 
     // ------------------------------------------------------------------ buttons
 
-    /// Whether param `key` of device `dev` is the horizontal fader of a mix channel panel.
+    /// Whether param `key` of device `dev` is a horizontal fader of a mix channel or master
+    /// panel: the strip's own fader, or a return level of the master's send rows.
     pub(super) fn is_mix_fader(&self, dev: usize, key: &str) -> bool {
-        key == "fader" && self.devices[dev].is_mix()
+        self.devices[dev].is_mix()
+            && (key == "fader" || crate::master_panel::return_level_slot(key).is_some())
+    }
+
+    /// The track of the horizontal fader `key` of panel `dev`: left end, right end, y.
+    pub(super) fn mix_travel(&self, dev: usize, key: &str) -> (f64, f64, f64) {
+        crate::master_panel::return_level_slot(key)
+            .filter(|_| self.devices[dev].is_mix())
+            .map_or_else(
+                || mix_panel::geometry().travel,
+                |slot| crate::master_panel::return_row(slot).travel,
+            )
     }
 
     /// A press on BYPASS INSERT FX or SHOW INSERT FX of panel `i`.

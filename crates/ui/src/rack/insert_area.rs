@@ -28,18 +28,24 @@
 //!   strip, so that creating an effect appends it to the chain.
 //!
 //! Moving a strip moves its stack along: the drag moves the strip together with its inserts.
+//!
+//! The master section has the same insert area, and under it the effects of the shared sends:
+//! each send (`Console::returns`, the chain cabled from `fx_send{k}`) is its own group under the
+//! master's area, framed and labelled "Send N" ([`SendGroup`]), in send order. The send effects
+//! are ordinary devices; the groups have no drop row (a send effect is made from the master
+//! panel's selection or by "Use as Send Effect") and move with the master.
 
 use super::columns::column_left;
 use super::inline::is_inner;
 use super::{Hit, RackView, UiAction};
 use crate::browser::BrowserRow;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
-use crate::mix_panel::is_mix_type;
+use crate::mix_panel::has_mix_top;
 use crate::paint::fit_label;
 use atomik_device_sdk::{RACK_WIDTH, Registry};
 use atomik_model::{
-    Command, ConsoleCommand, CreateOptions, DeviceKey, InsertEffect, RackDevice, RackDoc, RackSlot,
-    WorkflowCommand, insert_chain,
+    Command, ConsoleCommand, CreateOptions, CreateTarget, DeviceKey, FX_SLOTS, InsertEffect,
+    RackDevice, RackDoc, RackSlot, WorkflowCommand, insert_chain, send_chain,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use vello::kurbo::{Line, Point, Rect, RoundedRect, Stroke};
@@ -51,6 +57,8 @@ pub(super) const HEADER_H: f64 = 18.0;
 pub(super) const DROP_H: f64 = 24.0;
 /// How far the frame sits outside the column.
 const GROW: f64 = 10.0;
+/// Height of the header line of a send group.
+pub(super) const SEND_HEADER_H: f64 = 20.0;
 
 /// The insert area of one strip, as laid out.
 #[derive(Debug, Clone)]
@@ -59,6 +67,8 @@ pub(super) struct InsertArea {
     pub owner: DeviceKey,
     /// The stacked inserts in chain order (drawn while the area is shown).
     pub members: Vec<DeviceKey>,
+    /// For the master: the effects of its send groups, which follow the area and move with it.
+    pub tail: Vec<DeviceKey>,
     /// Their names, for the header line.
     pub names: Vec<String>,
     /// Whether the stack is shown (SHOW INSERT FX).
@@ -69,6 +79,43 @@ pub(super) struct InsertArea {
     pub row: Rect,
     /// The strip's accent colour.
     pub accent: Color,
+}
+
+/// The effects of one shared send, grouped under the master section.
+#[derive(Debug, Clone)]
+pub(super) struct SendGroup {
+    /// The send, 0-based.
+    pub slot: usize,
+    /// The effects of the send, in signal order.
+    pub members: Vec<DeviceKey>,
+    /// Their names, for the header.
+    pub names: Vec<String>,
+    /// The header line ("Send N" and the names), above the first effect.
+    pub header: Rect,
+    /// The whole group: header and effects, one panel wide.
+    pub rect: Rect,
+    /// The colour of the frame.
+    pub accent: Color,
+}
+
+impl SendGroup {
+    /// The frame drawn around the group.
+    pub fn outline(&self) -> Rect {
+        self.rect.inflate(GROW, 0.0).inflate(0.0, 2.0)
+    }
+}
+
+/// What a test (or a host) can read of a send group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SendGroupInfo {
+    /// The send, 0-based.
+    pub slot: usize,
+    /// The effects of the send, in signal order.
+    pub members: Vec<DeviceKey>,
+    /// The header line, rack coordinates.
+    pub header: Rect,
+    /// The frame around the group, rack coordinates.
+    pub frame: Rect,
 }
 
 impl InsertArea {
@@ -119,7 +166,7 @@ impl RackView {
         for d in doc
             .devices
             .iter()
-            .filter(|d| is_mix_type(&d.type_id) && sending.contains(&d.key))
+            .filter(|d| has_mix_top(&d.type_id) && sending.contains(&d.key))
         {
             let members: Vec<DeviceKey> = insert_chain(doc, registry, &d.key)
                 .into_iter()
@@ -137,18 +184,63 @@ impl RackView {
         out
     }
 
+    /// The send groups of the document: for every shared send with an effect, its effects up to
+    /// the first one that sits in another column than the master (or is a member of a stack
+    /// already), in send order. Empty inside a container and without a master.
+    pub(super) fn send_stacks(
+        &self,
+        doc: &RackDoc,
+        registry: &Registry,
+        stacks: &BTreeMap<DeviceKey, Vec<DeviceKey>>,
+    ) -> Vec<(usize, Vec<DeviceKey>)> {
+        let Some(master) = doc
+            .console
+            .master
+            .as_ref()
+            .filter(|_| self.scope.is_empty())
+        else {
+            return Vec::new();
+        };
+        let Some(column) = doc.device(master).map(|d| d.column) else {
+            return Vec::new();
+        };
+        let mut taken: BTreeSet<DeviceKey> = stacks.values().flatten().cloned().collect();
+        let mut out = Vec::new();
+        for slot in 0..FX_SLOTS {
+            let members: Vec<DeviceKey> = send_chain(doc, registry, slot)
+                .into_iter()
+                .take_while(|k| {
+                    !is_inner(k)
+                        && !taken.contains(k)
+                        && doc.device(k).is_some_and(|m| m.column == column)
+                })
+                .collect();
+            if !members.is_empty() {
+                taken.extend(members.iter().cloned());
+                out.push((slot, members));
+            }
+        }
+        out
+    }
+
     /// The devices the rack draws, in rack order: the document order with every stack right
-    /// under its strip (a folded strip leaves its stack out).
+    /// under its strip (a folded strip leaves its stack out) and the send groups right under the
+    /// master's stack.
     pub(super) fn displayed<'a>(
         &self,
         doc: &'a RackDoc,
         registry: &Registry,
     ) -> Vec<&'a RackDevice> {
         let stacks = self.stacks(doc, registry);
-        if stacks.is_empty() {
+        let sends = self.send_stacks(doc, registry, &stacks);
+        if stacks.is_empty() && sends.is_empty() {
             return doc.devices.iter().collect();
         }
-        let members: BTreeSet<&DeviceKey> = stacks.values().flatten().collect();
+        let members: BTreeSet<&DeviceKey> = stacks
+            .values()
+            .flatten()
+            .chain(sends.iter().flat_map(|(_, m)| m))
+            .collect();
         let mut out = Vec::with_capacity(doc.devices.len());
         for d in &doc.devices {
             if members.contains(&d.key) {
@@ -159,6 +251,11 @@ impl RackView {
                 && self.inserts_shown(&d.key)
             {
                 out.extend(stack.iter().filter_map(|k| doc.device(k)));
+            }
+            if doc.console.master.as_ref() == Some(&d.key) {
+                for (_, group) in &sends {
+                    out.extend(group.iter().filter_map(|k| doc.device(k)));
+                }
             }
         }
         out
@@ -172,22 +269,37 @@ impl RackView {
         &self,
         doc: &RackDoc,
         stacks: &BTreeMap<DeviceKey, Vec<DeviceKey>>,
+        sends: &[(usize, Vec<DeviceKey>)],
     ) -> BTreeMap<DeviceKey, f64> {
         let mut gaps = BTreeMap::new();
-        for d in doc.devices.iter().filter(|d| is_mix_type(&d.type_id)) {
+        // The device right above the first send group: the end of the master's area.
+        let mut above = None;
+        for d in doc.devices.iter().filter(|d| has_mix_top(&d.type_id)) {
             if !self.has_area(doc, &d.key) {
                 continue;
             }
-            if self.inserts_shown(&d.key) {
+            let end = if self.inserts_shown(&d.key) {
                 let last = stacks
                     .get(&d.key)
                     .and_then(|s| s.last())
                     .unwrap_or(&d.key)
                     .clone();
-                gaps.insert(last, DROP_H);
+                gaps.insert(last.clone(), DROP_H);
+                last
             } else {
                 gaps.insert(d.key.clone(), HEADER_H);
+                d.key.clone()
+            };
+            if doc.console.master.as_ref() == Some(&d.key) {
+                above = Some(end);
             }
+        }
+        // Each send group has a header line above its first effect.
+        for (_, members) in sends {
+            if let Some(prev) = above.take() {
+                *gaps.entry(prev).or_insert(0.0) += SEND_HEADER_H;
+            }
+            above = members.last().cloned();
         }
         gaps
     }
@@ -197,7 +309,7 @@ impl RackView {
     fn has_area(&self, doc: &RackDoc, key: &DeviceKey) -> bool {
         self.scope.is_empty()
             && !is_inner(key)
-            && doc.device(key).is_some_and(|d| is_mix_type(&d.type_id))
+            && doc.device(key).is_some_and(|d| has_mix_top(&d.type_id))
     }
 
     /// Works out the areas from the laid-out views (see [`InsertArea`]).
@@ -205,10 +317,17 @@ impl RackView {
         &mut self,
         doc: &RackDoc,
         stacks: &BTreeMap<DeviceKey, Vec<DeviceKey>>,
+        sends: &[(usize, Vec<DeviceKey>)],
     ) {
         self.areas.clear();
-        self.stacked = stacks.values().flatten().cloned().collect();
-        for d in doc.devices.iter().filter(|d| is_mix_type(&d.type_id)) {
+        self.stacked = stacks
+            .values()
+            .flatten()
+            .chain(sends.iter().flat_map(|(_, m)| m))
+            .cloned()
+            .collect();
+        self.compute_sends(doc, sends);
+        for d in doc.devices.iter().filter(|d| has_mix_top(&d.type_id)) {
             if !self.has_area(doc, &d.key) {
                 continue;
             }
@@ -238,9 +357,15 @@ impl RackView {
             } else {
                 Rect::new(head.x, top, head.x + width, top + HEADER_H)
             };
+            let tail = if doc.console.master.as_ref() == Some(&d.key) {
+                sends.iter().flat_map(|(_, m)| m.iter().cloned()).collect()
+            } else {
+                Vec::new()
+            };
             self.areas.push(InsertArea {
                 owner: d.key.clone(),
                 members,
+                tail,
                 names,
                 shown,
                 rect,
@@ -250,17 +375,81 @@ impl RackView {
         }
     }
 
+    /// Works out the send groups from the laid-out views (see [`SendGroup`]).
+    fn compute_sends(&mut self, doc: &RackDoc, sends: &[(usize, Vec<DeviceKey>)]) {
+        self.sends.clear();
+        let width = f64::from(RACK_WIDTH);
+        for (slot, members) in sends {
+            let view = |k: &DeviceKey| self.devices.iter().find(|v| v.key == *k);
+            let (Some(first), Some(last)) = (
+                members.first().and_then(view),
+                members.last().and_then(view),
+            ) else {
+                continue;
+            };
+            let header = Rect::new(first.x, first.y - SEND_HEADER_H, first.x + width, first.y);
+            let rect = Rect::new(first.x, header.y0, first.x + width, last.y + last.height);
+            let names = members
+                .iter()
+                .filter_map(|k| doc.device(k).map(|m| m.name.clone()))
+                .collect();
+            self.sends.push(SendGroup {
+                slot: *slot,
+                members: members.clone(),
+                names,
+                header,
+                rect,
+                accent: first.accent,
+            });
+        }
+    }
+
+    /// The send groups under the master section, in send order (frames and headers in rack
+    /// coordinates).
+    pub fn send_groups(&self) -> Vec<SendGroupInfo> {
+        self.sends
+            .iter()
+            .map(|g| SendGroupInfo {
+                slot: g.slot,
+                members: g.members.clone(),
+                header: g.header,
+                frame: g.outline(),
+            })
+            .collect()
+    }
+
+    /// What creating an effect with `selected` selected does: the master selected after a click
+    /// on its insert area makes an insert effect, every other selection is the model's call.
+    pub(super) fn effect_target(&self, selected: DeviceKey) -> CreateTarget {
+        let master_area = self.area_pick.as_ref() == Some(&selected);
+        if master_area {
+            CreateTarget::MasterInserts
+        } else {
+            CreateTarget::Selected(selected)
+        }
+    }
+
     /// Whether the laid-out areas still say what the document does: the same strips with the
     /// same stacked effects under the same names (a hidden stack changes no device row, so the
     /// layout check alone would miss it).
     pub(super) fn areas_current(&self, doc: &RackDoc, registry: &Registry) -> bool {
         let stacks = self.stacks(doc, registry);
+        let sends = self.send_stacks(doc, registry, &stacks);
         let owners: Vec<&RackDevice> = doc
             .devices
             .iter()
             .filter(|d| self.has_area(doc, &d.key))
             .collect();
-        owners.len() == self.areas.len()
+        sends.len() == self.sends.len()
+            && sends.iter().zip(&self.sends).all(|((slot, members), g)| {
+                g.slot == *slot
+                    && g.members == *members
+                    && members
+                        .iter()
+                        .zip(&g.names)
+                        .all(|(m, n)| doc.device(m).is_some_and(|x| x.name == *n))
+            })
+            && owners.len() == self.areas.len()
             && owners.iter().zip(&self.areas).all(|(d, a)| {
                 let members = stacks.get(&d.key).map_or(&[][..], |m| &m[..]);
                 a.owner == d.key
@@ -331,6 +520,8 @@ impl RackView {
         if !self.inserts_shown(&key) {
             self.set_inserts_shown(&key, true);
         }
+        // The master is a send when selected; its insert area says "insert".
+        self.area_pick = self.devices[i].is_master().then_some(key);
     }
 
     /// The tooltip of an area row.
@@ -386,7 +577,7 @@ impl RackView {
             .areas
             .iter()
             .filter(|a| keys.contains(&a.owner))
-            .flat_map(|a| a.members.iter().cloned())
+            .flat_map(|a| a.members.iter().chain(&a.tail).cloned())
             .filter(|m| !keys.contains(m))
             .collect();
         keys.extend(extra);
@@ -605,6 +796,36 @@ impl RackView {
                     theme.text_muted,
                 ));
             }
+        }
+        for g in &self.sends {
+            let frame = g.outline();
+            if frame.y1 < top || frame.y0 > bottom {
+                continue;
+            }
+            let shape = RoundedRect::from_rect(frame, 5.0);
+            c.fill_with(shape, g.accent.with_alpha(0.07));
+            c.stroke(
+                &shape.into(),
+                &Stroke::new(2.0),
+                &g.accent.with_alpha(0.55).into(),
+            );
+            let size = theme.label_size + 1.0;
+            let y = g.header.center().y + 3.5;
+            c.text(
+                &TextRun::new(
+                    format!("Send {}", g.slot + 1),
+                    pt(g.header.x0 + 6.0, y),
+                    size,
+                    g.accent,
+                )
+                .weight(600),
+            );
+            c.text(&TextRun::new(
+                fit_label(&g.names.join("  /  "), g.header.width() - 100.0, size),
+                pt(g.header.x0 + 70.0, y),
+                size,
+                theme.text_muted,
+            ));
         }
     }
 

@@ -73,7 +73,7 @@ pub use crate::paint::Side as Flip;
 pub use columns::COLUMN_GAP;
 pub use console_links::OutputDisplay;
 pub use cpu_readout::load_under;
-pub use insert_area::InsertAreaInfo;
+pub use insert_area::{InsertAreaInfo, SendGroupInfo};
 
 /// Time constant of the fall of a CV activity indicator, seconds.
 pub const CV_DECAY_SECONDS: f32 = 0.18;
@@ -419,7 +419,15 @@ impl DeviceView {
             && self
                 .desc
                 .as_ref()
-                .is_some_and(|d| crate::mix_panel::is_mix_type(d.type_id))
+                .is_some_and(|d| crate::mix_panel::has_mix_top(d.type_id))
+    }
+    /// The panel is the master section panel.
+    fn is_master(&self) -> bool {
+        self.device.is_some()
+            && self
+                .desc
+                .as_ref()
+                .is_some_and(|d| d.type_id == crate::master_panel::MASTER_TYPE)
     }
     /// The panel has the BYPASS switch of the name strip (see
     /// [`autolayout::has_strip_bypass`]).
@@ -773,8 +781,14 @@ pub struct RackView {
     frames: Vec<inline::Frame>,
     /// The insert areas under the channels and buses (see [`insert_area`]).
     areas: Vec<insert_area::InsertArea>,
-    /// The effects drawn stacked under a channel or bus (shown or hidden).
+    /// The effects drawn stacked under a channel or bus (shown or hidden) and the send effects
+    /// grouped under the master.
     stacked: BTreeSet<DeviceKey>,
+    /// The send groups under the master section (see [`insert_area`]).
+    sends: Vec<insert_area::SendGroup>,
+    /// The master's insert area was clicked while the master was selected: an effect created
+    /// now becomes a master insert instead of a send (cleared by any selection change).
+    area_pick: Option<DeviceKey>,
 }
 
 /// What a [`Rename`] types.
@@ -1031,6 +1045,8 @@ impl RackView {
             frames: Vec::new(),
             areas: Vec::new(),
             stacked: BTreeSet::new(),
+            sends: Vec::new(),
+            area_pick: None,
         }
     }
 
@@ -1402,6 +1418,9 @@ impl RackView {
             (Some(d), _) if crate::mix_panel::is_mix_type(type_id) => {
                 crate::mix_panel::mix_layout(d)
             }
+            (Some(d), _) if type_id == crate::master_panel::MASTER_TYPE => {
+                crate::master_panel::master_layout(d)
+            }
             (Some(d), _) if type_id == crate::modsrc_panel::MODSRC_TYPE => {
                 crate::modsrc_panel::modsrc_layout(d)
             }
@@ -1553,7 +1572,8 @@ impl RackView {
         ys[0] = height;
         // The insert area of a channel or bus takes room under its panel and under its stack.
         let stacks = self.stacks(doc, registry);
-        let gaps = self.area_gaps(doc, &stacks);
+        let send_stacks = self.send_stacks(doc, registry, &stacks);
+        let gaps = self.area_gaps(doc, &stacks, &send_stacks);
 
         for d in self.shown(doc, registry) {
             let column = d.column.min(columns - 1);
@@ -1799,7 +1819,7 @@ impl RackView {
         self.columns = columns;
         self.content_height = ys.iter().copied().fold(0.0, f64::max);
         self.compute_frames(doc);
-        self.compute_areas(doc, &stacks);
+        self.compute_areas(doc, &stacks, &send_stacks);
         self.cables.clone_from(&doc.cables);
         self.refresh_console(doc, registry, true);
         self.refresh_mix(doc, registry);
@@ -2049,7 +2069,7 @@ impl RackView {
                             }
                         }
                         if desc.type_id == crate::master_panel::MASTER_TYPE && d.device.is_some() {
-                            for (slot, r) in crate::master_panel::edit_rects(&d.spec, &desc) {
+                            for (slot, r) in crate::master_panel::edit_rects() {
                                 tree.add(dn, r + off, Hit::ReturnEdit(i, slot), false);
                             }
                         }
@@ -2707,6 +2727,7 @@ impl RackView {
 
     /// Selects a device (no action emitted).
     pub fn set_selected(&mut self, key: Option<DeviceKey>) {
+        self.area_pick = None;
         self.selected = key.map(|k| self.local_key(&k));
         self.selection = self.selected.iter().cloned().collect();
         self.anchor.clone_from(&self.selected);
@@ -4099,7 +4120,7 @@ impl RackView {
                     // The mix channel's fader runs along its track: its length is the range.
                     let horizontal = self.is_mix_fader(i, p.key);
                     let ppr = if horizontal {
-                        let (x0, x1, _) = crate::mix_panel::geometry().travel;
+                        let (x0, x1, _) = self.mix_travel(i, p.key);
                         (x1 - x0) * self.zoom
                     } else if kind == ControlKind::Fader {
                         widget::FADER_PIXELS_PER_RANGE
@@ -4437,14 +4458,19 @@ impl RackView {
             },
             CreateKind::Effect => WorkflowCommand::CreateEffect {
                 source,
-                target: self
-                    .selected
-                    .clone()
-                    .map_or(CreateTarget::Nothing, CreateTarget::Selected),
+                target: self.effect_create_target(),
                 key: None,
                 options,
             },
         }))
+    }
+
+    /// What an effect created now is routed from: the selected device, or the master's insert
+    /// area right after a click on it.
+    pub fn effect_create_target(&self) -> CreateTarget {
+        self.selected
+            .clone()
+            .map_or(CreateTarget::Nothing, |k| self.effect_target(k))
     }
 
     /// The creation command of a note player: the stack of the selected device, route = the

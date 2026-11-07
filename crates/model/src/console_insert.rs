@@ -19,7 +19,7 @@
 //! is set) is taken out by its `dyn.bypass` or `eq.bypass` param, which keeps its settings and
 //! its place in the signal path (the compressor look-ahead delay stays).
 
-use crate::console::{INSERT_SLOTS, InsertEffect, is_console_type};
+use crate::console::{FX_SLOTS, INSERT_SLOTS, InsertEffect, is_console_type, sockets};
 use crate::console_cmd::{Planner, at, bad, wire};
 use crate::history::Edit;
 use crate::rack_columns::Placement;
@@ -37,10 +37,31 @@ const OUT: [&str; 2] = ["out_l", "out_r"];
 /// The effects on `device`'s insert loop in signal order (see the module documentation).
 /// Empty when nothing is cabled from the insert send to a stereo effect.
 pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Vec<DeviceKey> {
+    chain_from(
+        doc,
+        registry,
+        device,
+        SEND.map(str::to_owned),
+        MAX_DERIVED,
+        &[],
+    )
+}
+
+/// The effects cabled in series from the pair of output sockets `first` of `device`: the
+/// stereo effect whose `in_l` and `in_r` are fed by them, then the one fed by its `out_l/r`,
+/// and so on, at most `max` of them. Effects in `skip` end the walk (they belong elsewhere).
+fn chain_from(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    first: [String; 2],
+    max: usize,
+    skip: &[DeviceKey],
+) -> Vec<DeviceKey> {
     let mut chain: Vec<DeviceKey> = Vec::new();
     let mut from = device.clone();
-    let mut sockets = SEND;
-    while chain.len() < MAX_DERIVED {
+    let mut sockets = first;
+    while chain.len() < max {
         let next = doc
             .cables
             .iter()
@@ -50,6 +71,7 @@ pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> V
             .find(|d| {
                 *d != device
                     && !chain.contains(d)
+                    && !skip.contains(d)
                     && is_stereo_effect(doc, registry, d)
                     && doc.cables.iter().any(|c2| {
                         c2.from.device == from
@@ -62,13 +84,61 @@ pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> V
         let Some(next) = next else { break };
         chain.push(next.clone());
         from = next;
-        sockets = OUT;
+        sockets = OUT.map(str::to_owned);
     }
     chain
 }
 
-/// The console channel or output bus whose insert chain holds `effect`: the strip it is stacked
-/// under in the rack. The master is not one (its inserts are not stacked).
+/// Longest send effect chain read back from cables (a guard).
+const MAX_RETURN_CHAIN: usize = 16;
+
+/// The effects of shared send `slot` (0-based) in signal order: the effects cabled in series
+/// from the master's `fx_send{k}` pair (their last one normally feeds `return{k}`, and is the
+/// console's `returns[slot]`). Empty without a master or without a cabled effect.
+pub fn send_chain(doc: &RackDoc, registry: &Registry, slot: usize) -> Vec<DeviceKey> {
+    let Some(master) = doc.console.master.as_ref() else {
+        return Vec::new();
+    };
+    if slot >= FX_SLOTS {
+        return Vec::new();
+    }
+    let k = slot + 1;
+    let first = ["l", "r"].map(|side| sockets::master_fx_send(k, side));
+    chain_from(doc, registry, master, first, MAX_RETURN_CHAIN, &[])
+}
+
+/// The shared send whose chain holds `effect` (0-based), the send effects the rack groups under
+/// the master section.
+pub fn send_slot_of(doc: &RackDoc, registry: &Registry, effect: &DeviceKey) -> Option<usize> {
+    (0..FX_SLOTS).find(|slot| send_chain(doc, registry, *slot).contains(effect))
+}
+
+/// The master section's stack in the rack, in order: its insert chain, then the effects of the
+/// shared sends 1 to 8 (each send's effects in signal order), the ones that sit in the master's
+/// column. Everything the rack draws under the master section and moves with it.
+pub fn master_stack(doc: &RackDoc, registry: &Registry) -> Vec<DeviceKey> {
+    let Some(master) = doc.console.master.as_ref() else {
+        return Vec::new();
+    };
+    let column = doc.device(master).map(|d| d.column);
+    let mut out = insert_chain(doc, registry, master);
+    for slot in 0..FX_SLOTS {
+        // A send's effects count up to the first one in another column.
+        let chain = send_chain(doc, registry, slot);
+        let here = chain
+            .into_iter()
+            .take_while(|k| doc.device(k).map(|d| d.column) == column);
+        for k in here {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+    }
+    out
+}
+
+/// The console channel, output bus or master whose insert chain holds `effect`: the strip it is
+/// stacked under in the rack.
 pub fn insert_owner(doc: &RackDoc, registry: &Registry, effect: &DeviceKey) -> Option<DeviceKey> {
     let console = &doc.console;
     console
@@ -76,6 +146,7 @@ pub fn insert_owner(doc: &RackDoc, registry: &Registry, effect: &DeviceKey) -> O
         .iter()
         .map(|c| &c.channel)
         .chain(console.buses.iter().map(|b| &b.bus))
+        .chain(console.master.iter())
         .find(|c| insert_chain(doc, registry, c).contains(effect))
         .cloned()
 }
@@ -87,7 +158,12 @@ fn stacked_layout(
     registry: &Registry,
     strip: &DeviceKey,
 ) -> Option<Vec<(DeviceKey, u16)>> {
-    let chain = insert_chain(doc, registry, strip);
+    let chain = if doc.console.master.as_ref() == Some(strip) {
+        // The master section's stack is its inserts and then its shared send effects.
+        master_stack(doc, registry)
+    } else {
+        insert_chain(doc, registry, strip)
+    };
     if chain.is_empty() {
         return None;
     }
