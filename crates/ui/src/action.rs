@@ -651,6 +651,9 @@ pub enum UiAction {
     /// The song information panel ([`crate::SongInfoView`]) asks for something: make its texts the
     /// song information, or close.
     SongInfo(crate::song_info_panel::SongInfoAction),
+    /// The references and decision zone panel ([`crate::ZoneView`]) asks for something: select a
+    /// reference, measure the mix again, switch the listening, or close.
+    Zone(crate::zone_panel::ZoneAction),
     /// The versions panel ([`crate::VersionsView`]) asks for something: keep a named version,
     /// restore one, protect one, or close.
     Versions(crate::versions_panel::VersionsAction),
