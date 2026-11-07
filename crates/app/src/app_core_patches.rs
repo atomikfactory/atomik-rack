@@ -20,6 +20,11 @@
 //!   device's snapshot: pasting applies it to the primary selected device when its type is the
 //!   same.
 //! * **Reset** is [`WorkflowCommand::ResetDevice`] on the primary selected device.
+//! * **Clean Up Bass** ([`AppCore::clean_up_bass`], in the pop-up of the patch name of a poly
+//!   synth, mono bass or wavetable synth) makes a patch play the same bass note every time: the
+//!   oscillators restart at 0 degrees at every note, one voice, an amp release of 5 to 20 ms
+//!   and the filter's key tracking on. Only what differs is set, in one undo step, and the
+//!   status line names it ([`bass_cleanup_plan`]).
 //!
 //! # Browse focus
 //!
@@ -188,6 +193,50 @@ impl<S: EngineSink> AppCore<S> {
                 let _ = self.apply_workflow(WorkflowCommand::ResetDevice { device });
             }
             Err(message) => self.report(message),
+        }
+    }
+
+    /// Whether `device` is an instrument [`Self::clean_up_bass`] knows (a poly synth, mono bass
+    /// or wavetable synth).
+    pub fn can_clean_up_bass(&self, device: &DeviceKey) -> bool {
+        self.doc()
+            .resolve(device)
+            .is_some_and(|d| BASS_TYPES.contains(&d.type_id.as_str()))
+    }
+
+    /// The Clean Up Bass command on the primary selected device: sets what is needed for every
+    /// note to start the same (see [`bass_cleanup_plan`]) as one undo step, and says in the
+    /// status line what changed. A device that is already clean is left alone.
+    pub fn clean_up_bass(&mut self) {
+        let device = match self.primary_device() {
+            Ok(d) => d,
+            Err(message) => return self.report(message),
+        };
+        if !self.can_clean_up_bass(&device) {
+            return self.report(
+                "Clean Up Bass works on a Poly Synth, a Mono Bass or a Wavetable Synth: select one",
+            );
+        }
+        let registry = &self.registry;
+        let doc = self.doc();
+        let value = |param: &str| doc.param_value(&device, param, registry);
+        let plan = bass_cleanup_plan(&value);
+        if plan.is_empty() {
+            return self.report("Clean Up Bass: this device already starts every note the same");
+        }
+        let text: Vec<&str> = plan.iter().map(|c| c.what).collect();
+        let commands = plan
+            .iter()
+            .map(|c| Command::SetParam {
+                key: device.clone(),
+                param: c.param.to_string(),
+                value: c.value,
+                merge: None,
+            })
+            .collect();
+        let message = format!("Clean Up Bass: {}", text.join(", "));
+        if self.apply_batch(commands) {
+            self.report(message);
         }
     }
 
@@ -664,4 +713,68 @@ impl<S: EngineSink> AppCore<S> {
                 .insert(b.type_id.clone(), folder.to_path_buf());
         }
     }
+}
+
+/// The instruments Clean Up Bass works on.
+const BASS_TYPES: [&str; 3] = [
+    "atomik.poly-synth",
+    "atomik.mono-bass",
+    "atomik.wavetable-synth",
+];
+
+/// One param Clean Up Bass sets, and what the status line says about it.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct BassStep {
+    pub param: &'static str,
+    pub value: f32,
+    pub what: &'static str,
+}
+
+/// What a bass patch needs so that every note starts the same, given a reader of the device's
+/// current values (`None` for a param the device does not have). Only the differences are
+/// returned, in a fixed order:
+///
+/// * `osc.phase` at `reset` and `osc.phase_start` at 0 degrees (a sine at 0 degrees starts on
+///   its zero crossing, which also keeps a sub from clicking at the note start);
+/// * `voices` at 1;
+/// * the amp release at 12 ms when it is outside 5 to 20 ms (shorter clicks, longer smears the
+///   note ends);
+/// * the filter's key tracking at 50 % when it is under 10 %.
+pub(super) fn bass_cleanup_plan(value: &dyn Fn(&str) -> Option<f32>) -> Vec<BassStep> {
+    let mut plan = Vec::new();
+    let mut want = |param: &'static str, differs: &dyn Fn(f32) -> bool, to: f32, what| {
+        if value(param).is_some_and(differs) {
+            plan.push(BassStep {
+                param,
+                value: to,
+                what,
+            });
+        }
+    };
+    want(
+        "osc.phase",
+        &|v| v >= 0.5,
+        0.0,
+        "oscillator phase set to reset",
+    );
+    want(
+        "osc.phase_start",
+        &|v| v.abs() > 0.001,
+        0.0,
+        "start angle set to 0 degrees",
+    );
+    want("voices", &|v| (v - 1.0).abs() > 0.001, 1.0, "one voice");
+    want(
+        "env.amp.release",
+        &|v| !(5.0..=20.0).contains(&v),
+        12.0,
+        "amp release set to 12 ms",
+    );
+    want(
+        "filter.key_track",
+        &|v| v < 0.1,
+        0.5,
+        "filter key tracking set to 50 %",
+    );
+    plan
 }

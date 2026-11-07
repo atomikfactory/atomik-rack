@@ -4,6 +4,7 @@
 //! temporary library folder.
 
 use super::*;
+use crate::app_core::patches::bass_cleanup_plan;
 use crate::sink::RecordingSink;
 use atomik_audio_file::{AudioData, write_wav_f32};
 use atomik_library::device_uri;
@@ -729,4 +730,93 @@ fn the_display_settings_of_the_analysers_are_saved_and_applied_as_user_presets()
         .unwrap();
         assert_ne!(param(&c, &twin, settings[0].0), Some(settings[0].1));
     }
+}
+
+#[test]
+fn clean_up_bass_sets_what_differs_in_one_undo_step_and_says_so() {
+    let lib = Tmp::new("bass");
+    let mut c = core(&lib);
+    add(&mut c, SYNTH, "bass");
+    set(&mut c, "bass", "osc.phase", 1.0);
+    set(&mut c, "bass", "osc.phase_start", 90.0);
+    set(&mut c, "bass", "voices", 8.0);
+    set(&mut c, "bass", "env.amp.release", 400.0);
+    set(&mut c, "bass", "filter.key_track", 0.0);
+    select(&mut c, "bass");
+    let before = save_project(c.doc());
+    c.clean_up_bass();
+    let said = c.last_rejection().unwrap().to_string();
+    for part in ["reset", "0 degrees", "one voice", "12 ms", "key tracking"] {
+        assert!(said.contains(part), "{said}");
+    }
+    let read = |c: &AppCore<RecordingSink>, p: &str| {
+        c.doc().param_value(&key("bass"), p, c.registry()).unwrap()
+    };
+    assert_eq!(read(&c, "osc.phase"), 0.0);
+    assert_eq!(read(&c, "osc.phase_start"), 0.0);
+    assert_eq!(read(&c, "voices"), 1.0);
+    assert_eq!(read(&c, "env.amp.release"), 12.0);
+    assert_eq!(read(&c, "filter.key_track"), 0.5);
+    // One undo step puts all five back.
+    assert!(c.undo());
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn clean_up_bass_leaves_a_clean_device_alone_and_keeps_good_values() {
+    let lib = Tmp::new("bass-clean");
+    let mut c = core(&lib);
+    add(&mut c, "atomik.mono-bass", "bass");
+    // The Mono Bass defaults are one voice, a 90 ms release and a key tracking of 35 %.
+    set(&mut c, "bass", "env.amp.release", 10.0);
+    select(&mut c, "bass");
+    let before = save_project(c.doc());
+    c.clean_up_bass();
+    assert!(c.last_rejection().unwrap().contains("already"));
+    assert_eq!(save_project(c.doc()), before);
+    // A release inside 5 to 20 ms is kept when something else changes.
+    set(&mut c, "bass", "osc.phase", 1.0);
+    c.clean_up_bass();
+    let release = c
+        .doc()
+        .param_value(&key("bass"), "env.amp.release", c.registry());
+    assert_eq!(release, Some(10.0));
+}
+
+#[test]
+fn clean_up_bass_works_on_the_wavetable_synth_and_refuses_other_devices() {
+    let lib = Tmp::new("bass-other");
+    let mut c = core(&lib);
+    add(&mut c, "atomik.wavetable-synth", "wt");
+    add(&mut c, DELAY, "fx");
+    set(&mut c, "wt", "osc.phase_start", 45.0);
+    select(&mut c, "wt");
+    assert!(c.can_clean_up_bass(&key("wt")));
+    c.clean_up_bass();
+    assert_eq!(param(&c, "wt", "osc.phase_start"), Some(0.0));
+    select(&mut c, "fx");
+    assert!(!c.can_clean_up_bass(&key("fx")));
+    let before = save_project(c.doc());
+    c.clean_up_bass();
+    assert!(
+        c.last_rejection()
+            .unwrap()
+            .contains("Clean Up Bass works on")
+    );
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn the_bass_plan_lists_only_the_differences_in_a_fixed_order() {
+    let value = |p: &str| match p {
+        "osc.phase" => Some(1.0),
+        "osc.phase_start" => Some(0.0),
+        "voices" => Some(1.0),
+        "env.amp.release" => Some(3.0),
+        // A device without key tracking has nothing to set.
+        _ => None,
+    };
+    let plan = bass_cleanup_plan(&value);
+    let params: Vec<&str> = plan.iter().map(|s| s.param).collect();
+    assert_eq!(params, ["osc.phase", "env.amp.release"]);
 }

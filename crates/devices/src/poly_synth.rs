@@ -176,7 +176,13 @@ pub(crate) const P_DELAY_FEEDBACK: u32 = 67;
 pub(crate) const SYNTH_PARAM_COUNT: usize = 68;
 /// The first param of the modulation slot block ([`MOD_TABLES`]).
 pub(crate) const P_MOD_FIRST: u32 = SYNTH_PARAM_COUNT as u32;
-pub(crate) const PARAM_COUNT: usize = SYNTH_PARAM_COUNT + MOD_SLOT_PARAMS;
+/// Params up to and including the modulation slot block.
+const SLOTTED_PARAM_COUNT: usize = SYNTH_PARAM_COUNT + MOD_SLOT_PARAMS;
+/// `osc.phase`: how a new note starts its oscillators (appended after the slot block).
+pub(crate) const P_OSC_PHASE: u32 = SLOTTED_PARAM_COUNT as u32;
+/// `osc.phase_start`: the start angle in degrees when `osc.phase` is `reset`.
+pub(crate) const P_OSC_PHASE_START: u32 = P_OSC_PHASE + 1;
+pub(crate) const PARAM_COUNT: usize = SLOTTED_PARAM_COUNT + 2;
 
 /// `osc.table` choices: the PolyBLEP wave, then the additive bank.
 const WAVE_CHOICES: Unit = Unit::Choice(&[
@@ -226,12 +232,41 @@ const MENV_DESTS: Unit = Unit::Choice(&[
     "filter 2 cutoff",
 ]);
 const OFF_ON: Unit = Unit::Choice(&["off", "on"]);
+/// `osc.phase` choices: restart at a fixed angle, or a seeded random angle per note.
+const PHASE_MODES: Unit = Unit::Choice(&["reset", "free"]);
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
 /// The poly synth's own params, then the modulation slot block.
-pub(crate) const BASE_PARAMS: [ParamDescriptor; PARAM_COUNT] =
-    join_params(SYNTH_PARAMS, mod_slot_params(P_MOD_FIRST));
+pub(crate) const BASE_PARAMS: [ParamDescriptor; PARAM_COUNT] = join_params(
+    join_params::<SYNTH_PARAM_COUNT, MOD_SLOT_PARAMS, SLOTTED_PARAM_COUNT>(
+        SYNTH_PARAMS,
+        mod_slot_params(P_MOD_FIRST),
+    ),
+    PHASE_PARAMS,
+);
+
+/// The start-phase params, appended after the slot block so no id moves.
+const PHASE_PARAMS: [ParamDescriptor; 2] = [
+    param(
+        P_OSC_PHASE,
+        "osc.phase",
+        "Osc phase",
+        (0.0, 1.0, 0.0),
+        Lin,
+        PHASE_MODES,
+        true,
+    ),
+    param(
+        P_OSC_PHASE_START,
+        "osc.phase_start",
+        "Osc start angle (deg)",
+        (0.0, 360.0, 0.0),
+        Lin,
+        Unit::None,
+        false,
+    ),
+];
 
 const SYNTH_PARAMS: [ParamDescriptor; SYNTH_PARAM_COUNT] = [
     param(
@@ -1170,6 +1205,10 @@ struct Shared {
     /// towards the target per step.
     drift_hold: u32,
     drift_coef: f32,
+    /// A new note starts at a seeded random angle (`osc.phase` free) instead of `phase_start`.
+    phase_free: bool,
+    /// The start angle of `osc.phase` reset, in cycles (`0..1`).
+    phase_start: f64,
     /// The modulation slots of the device ([`MOD_TABLES`]).
     mods: ModBus,
 }
@@ -1244,6 +1283,8 @@ struct Voice {
     drift_target: f32,
     drift_ticks: u32,
     drift_rng: Rng,
+    /// Random start angles of a free-phase note.
+    phase_rng: Rng,
     /// Output gains of the left and right channel (the key spread).
     gl: f32,
     gr: f32,
@@ -1294,6 +1335,7 @@ impl Voice {
             drift_target: 0.0,
             drift_ticks: 0,
             drift_rng: Rng::new(derive_seed(seed, 1_000)),
+            phase_rng: Rng::new(derive_seed(seed, 3_000)),
             gl: 1.0,
             gr: 1.0,
             vel: 0.0,
@@ -1338,8 +1380,13 @@ impl Voice {
             _ => self.target,
         };
         self.pending = None;
+        let start = if p.phase_free {
+            f64::from(self.phase_rng.next_f32())
+        } else {
+            p.phase_start
+        };
         for o in &mut self.osc {
-            o.set_phase(0.0);
+            o.set_phase(start);
         }
         self.wrapped = false;
         self.filter.reset();
@@ -1862,6 +1909,8 @@ impl PolySynth {
                 legato: false,
                 spread: 0.0,
                 drift: 0.0,
+                phase_free: false,
+                phase_start: 0.0,
                 drift_hold: drift_timing(48_000.0).0,
                 drift_coef: drift_timing(48_000.0).1,
                 mods: ModBus::new(P_MOD_FIRST),
@@ -2046,6 +2095,10 @@ impl PolySynth {
                         }
                     }
                 }
+            }
+            P_OSC_PHASE => self.shared.phase_free = v >= 0.5,
+            P_OSC_PHASE_START => {
+                self.shared.phase_start = f64::from(v / 360.0).clamp(0.0, 0.999_999)
             }
             P_SPREAD => self.shared.spread = v,
             P_DRIFT => self.shared.drift = v,
@@ -2417,6 +2470,7 @@ impl Device for PolySynth {
             v.pending = None;
             v.noise = Rng::new(derive_seed(self.seed, i as u64 + 1));
             v.drift_rng = Rng::new(derive_seed(self.seed, i as u64 + 1_001));
+            v.phase_rng = Rng::new(derive_seed(self.seed, i as u64 + 3_001));
             v.drift = 0.0;
             v.drift_target = 0.0;
             v.drift_ticks = 0;
@@ -2621,6 +2675,7 @@ mod tests {
             "delay.feedback",
         ];
         params.extend(mod_slot_params(P_MOD_FIRST).iter().map(|p| p.key));
+        params.extend(["osc.phase", "osc.phase_start"]);
         assert_keys(
             &DESCRIPTOR,
             &params,
@@ -4062,6 +4117,102 @@ mod tests {
                 .unwrap()
                 .default
         );
+    }
+
+    /// The first `n` samples of two notes of one key played one after the other (the first one
+    /// released and gone before the second), with `set` applied to the device first.
+    fn two_notes_first_samples(
+        mut h: DeviceHarness,
+        key: u8,
+        n: usize,
+        set: &dyn Fn(&mut DeviceHarness),
+    ) -> [Vec<f32>; 2] {
+        set(&mut h);
+        let mut notes = Vec::new();
+        for _ in 0..2 {
+            h.push_note("notes_in", on(0, key, 0.8));
+            let o = h.render(seconds(0.05), &OUT);
+            notes.push(o[0][..n].to_vec());
+            h.push_note("notes_in", off(0, key));
+            h.render(seconds(0.6), &OUT);
+        }
+        [notes.remove(0), notes.remove(0)]
+    }
+
+    #[test]
+    fn reset_starts_every_note_on_the_same_cycle_and_free_does_not() {
+        // A saw with a second saw an octave down: the sum looks different at every start angle.
+        let rich = |h: &mut DeviceHarness| {
+            h.set_param("osc1.wave", 0.0);
+            h.set_param("osc2.wave", 0.0);
+            h.set_param("osc2.octave", -1.0);
+            h.set_param("osc.mix", 0.5);
+            h.set_param("filter.cutoff", 20_000.0);
+            h.set_param("filter.env_amount", 0.0);
+            h.set_param("filter.key_track", 0.0);
+            h.set_param("voices", 4.0);
+        };
+        let n = 400;
+        for start in [0.0f32, 90.0, 237.0] {
+            let [a, b] =
+                two_notes_first_samples(harness(Box::new(PolySynth::new())), 36, n, &|h| {
+                    rich(h);
+                    h.set_param("osc.phase", 0.0);
+                    h.set_param("osc.phase_start", start);
+                });
+            assert_eq!(a, b, "reset at {start} degrees");
+        }
+        let [a, b] = two_notes_first_samples(harness(Box::new(PolySynth::new())), 36, n, &|h| {
+            rich(h);
+            h.set_param("osc.phase", 1.0);
+        });
+        assert_ne!(a, b, "free starts every note at its own angle");
+        // Free is seeded: the same patch seed gives the same two notes again.
+        let again = two_notes_first_samples(harness(Box::new(PolySynth::new())), 36, n, &|h| {
+            rich(h);
+            h.set_param("osc.phase", 1.0);
+        });
+        assert_eq!([a, b], again);
+    }
+
+    #[test]
+    fn the_start_angle_sets_where_the_first_cycle_begins() {
+        let first = |start: f32| {
+            let [a, _] =
+                two_notes_first_samples(harness(Box::new(PolySynth::new())), 45, 64, &|h| {
+                    pure_sine(h);
+                    h.set_param("env.amp.attack", 0.5);
+                    h.set_param("osc.phase_start", start);
+                });
+            a
+        };
+        let zero = first(0.0);
+        let quarter = first(90.0);
+        // A sine at 0 degrees starts at its zero crossing, at 90 degrees at its peak.
+        assert!(
+            quarter[0].abs() > 10.0 * zero[0].abs(),
+            "{} against {}",
+            quarter[0],
+            zero[0]
+        );
+    }
+
+    #[test]
+    fn the_default_phase_params_restart_at_zero_like_before() {
+        // The two new params at their defaults leave a note exactly as an explicit reset at 0.
+        let run = |explicit: bool| {
+            let [a, _] =
+                two_notes_first_samples(harness(Box::new(PolySynth::new())), 40, 2_000, &|h| {
+                    if explicit {
+                        h.set_param("osc.phase", 0.0);
+                        h.set_param("osc.phase_start", 0.0);
+                    }
+                });
+            a
+        };
+        assert_eq!(run(false), run(true));
+        let d = DESCRIPTOR.param_by_key("osc.phase").unwrap();
+        assert_eq!((d.default, d.id.0 as usize), (0.0, PARAM_COUNT - 2));
     }
 
     #[test]

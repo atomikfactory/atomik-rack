@@ -746,6 +746,16 @@ may break APIs and the patch and project formats.
   43: a program change with a bank is saved as `[tick, program, bank MSB, bank LSB]`, the usual one as before,
   and a clip's data is changed by the new `SetClipMidi` command. Not done yet: per-note expression (MPE), a
   groove taken from a MIDI file, and typing the bytes of a SysEx message.
+- **Oscillator start phase and Clean Up Bass.** The Poly Synth, Mono Bass and Wavetable Synth have two new
+  params, `osc.phase` (reset or free) and `osc.phase_start` (0 to 360 degrees). Reset starts the oscillators at
+  the angle at every note start, so every kick or bass note begins with the same first cycle; free starts each
+  note at a seeded random angle. The default, reset at 0 degrees, is what these synths always did, so old
+  projects sound the same bit for bit and no format change was needed (the params are appended, after the
+  modulation slots on the poly synth and Mono Bass). Right-clicking the patch name of one of these synths now
+  opens a pop-up that starts with Clean Up Bass: it sets the phase to reset at 0 degrees, one voice, a 12 ms
+  amp release when the release is outside 5 to 20 ms and the filter key tracking on, only where they differ,
+  in one undo step, and the status line names what changed. The command is `rack.clean_up_bass`
+  (470 commands). The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
