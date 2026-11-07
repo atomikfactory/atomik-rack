@@ -303,6 +303,10 @@
 //! - **Bass read.** [`BassReadView`] is the modal panel of "Will the bass read?": a list of the strips (the master
 //!   and the tracks), a meter of how much of the low note a small speaker still plays through its harmonics and the
 //!   verdict; it emits [`UiAction::BassRead`] and the host feeds it a [`BassReadData`].
+//! - **Wavetable editor.** [`WavetableView`] is the modal panel of the Wavetable Synth's table: the key frames, a box
+//!   to draw the selected one in, a bar for each harmonic, whole-frame processes, the phase-safe morph and the cleanup
+//!   of a table made from a sample; it emits [`UiAction::Wavetable`] (one commit per gesture) and the host feeds it a
+//!   [`WavetableData`].
 //! - **Repetition.** [`RepetitionView`] is the modal panel of the repetition finder: the ideas the song plays
 //!   three times or more unchanged, where they are, and three suggested variations per idea, an edit one button
 //!   away or advice; it emits [`UiAction::Repetition`] and the host feeds it a [`RepetitionData`].
@@ -433,6 +437,7 @@ pub mod versions_panel;
 pub mod viewport;
 pub mod warp_panel;
 pub mod wave_paint;
+pub mod wavetable_editor;
 pub mod wavetable_panel;
 pub mod widget;
 pub mod zone_edit;
@@ -523,4 +528,5 @@ pub use vello::{kurbo, peniko};
 pub use versions_panel::{REPORT_LINES, VersionItem, VersionsAction, VersionsView};
 pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};
+pub use wavetable_editor::{WavetableAction, WavetableData, WavetableView};
 pub use zone_panel::{Standing, ZoneAction, ZoneData, ZoneReference, ZoneRowData, ZoneView};
