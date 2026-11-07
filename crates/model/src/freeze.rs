@@ -626,7 +626,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 WorkflowCommand::SplitSub { device, .. } => {
                     device_frozen(device).or_else(|| track_frozen(device))
                 }
-                WorkflowCommand::AddReverbSend { track, .. } => {
+                WorkflowCommand::AddReverbSend { track, .. }
+                | WorkflowCommand::AddRumble { kick: track, .. } => {
                     device_frozen(track).or_else(|| track_frozen(track))
                 }
                 WorkflowCommand::RemoveDevices { keys }

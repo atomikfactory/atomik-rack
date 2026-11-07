@@ -69,6 +69,7 @@ pub mod resonance;
 pub mod ringmod;
 pub mod rng;
 pub mod room;
+pub mod rumble;
 mod sample_read;
 pub mod shaper;
 mod smoother;

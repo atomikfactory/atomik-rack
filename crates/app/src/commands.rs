@@ -530,6 +530,12 @@ pub enum AppCommand {
     /// Track > Add Reverb Send...: opens the wizard that gives the selected track a send to a new
     /// FX return with an EQ and a keyed Space Reverb.
     AddReverbSend,
+    /// Track > Rumble Maker: a rumble layer from the selected kick track on a new track, its tail
+    /// made one of two ways.
+    RumbleMaker(RumbleChoice),
+    /// Track > Reverse Reverb Print: the reverse reverb swell of the selected clips or range on a
+    /// new track, ending where the source starts.
+    ReverseReverbPrint(SwellLength),
     /// Track > Pattern Lane to Notes: the notes the lane's patterns play, on a new note lane.
     PatternLaneToNotes,
     /// Track > Edit Track Controllers: the piano roll on the pitch bend, aftertouch and CC lanes
@@ -1033,6 +1039,8 @@ impl AppCommand {
             AppCommand::BypassPlayers => ("sequencer.bypass_players", None),
             AppCommand::AddPatternLane => ("sequencer.add_pattern_lane", None),
             AppCommand::AddReverbSend => ("sequencer.add_reverb_send", None),
+            AppCommand::RumbleMaker(c) => ("sequencer.rumble_maker", Some(c.arg())),
+            AppCommand::ReverseReverbPrint(l) => ("sequencer.reverse_reverb_print", Some(l.arg())),
             AppCommand::PatternLaneToNotes => ("sequencer.pattern_lane_to_notes", None),
             AppCommand::EditTrackControllers => ("sequencer.track_controllers", None),
             AppCommand::BounceClipDry => ("sequencer.bounce_clip_dry", None),
@@ -1423,6 +1431,12 @@ impl AppCommand {
             ("sequencer.bypass_players", None) => AppCommand::BypassPlayers,
             ("sequencer.add_pattern_lane", None) => AppCommand::AddPatternLane,
             ("sequencer.add_reverb_send", None) => AppCommand::AddReverbSend,
+            ("sequencer.rumble_maker", Some(arg)) => {
+                return RumbleChoice::from_arg(arg).map(AppCommand::RumbleMaker);
+            }
+            ("sequencer.reverse_reverb_print", Some(arg)) => {
+                return SwellLength::from_arg(arg).map(AppCommand::ReverseReverbPrint);
+            }
             ("sequencer.pattern_lane_to_notes", None) => AppCommand::PatternLaneToNotes,
             ("sequencer.track_controllers", None) => AppCommand::EditTrackControllers,
             ("sequencer.bounce_clip_dry", None) => AppCommand::BounceClipDry,
@@ -1640,6 +1654,113 @@ impl NormaliseTarget {
             NormaliseTarget::Streaming => (NormaliseMode::Loudness, -14.0),
         };
         NormaliseParams { target_db, mode }
+    }
+}
+
+/// How Track > Rumble Maker makes the tail of the rumble.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RumbleChoice {
+    /// A trimmed chunk of the kick's tail, repeated with crossfades.
+    Tail,
+    /// The kick through a long reverb, low-passed to the sub band.
+    Reverb,
+}
+
+impl RumbleChoice {
+    /// Every choice, in menu order.
+    pub const ALL: [RumbleChoice; 2] = [RumbleChoice::Tail, RumbleChoice::Reverb];
+
+    /// The registry argument of `sequencer.rumble_maker`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            RumbleChoice::Tail => "tail",
+            RumbleChoice::Reverb => "reverb",
+        }
+    }
+
+    /// The choice of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            RumbleChoice::Tail => "Tail Repeat",
+            RumbleChoice::Reverb => "Reverb Tail",
+        }
+    }
+
+    /// The way the rumble is made.
+    pub fn mode(self) -> atomik_dsp::rumble::RumbleMode {
+        match self {
+            RumbleChoice::Tail => atomik_dsp::rumble::RumbleMode::TailRepeat,
+            RumbleChoice::Reverb => atomik_dsp::rumble::RumbleMode::Reverb,
+        }
+    }
+}
+
+/// The length of the swell Track > Reverse Reverb Print makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwellLength {
+    /// Half a second.
+    Half,
+    /// One second.
+    One,
+    /// Two seconds.
+    Two,
+    /// Four seconds.
+    Four,
+    /// Eight seconds.
+    Eight,
+}
+
+impl SwellLength {
+    /// Every length, in menu order.
+    pub const ALL: [SwellLength; 5] = [
+        SwellLength::Half,
+        SwellLength::One,
+        SwellLength::Two,
+        SwellLength::Four,
+        SwellLength::Eight,
+    ];
+
+    /// The registry argument of `sequencer.reverse_reverb_print`: the seconds.
+    pub fn arg(self) -> &'static str {
+        match self {
+            SwellLength::Half => "0.5",
+            SwellLength::One => "1",
+            SwellLength::Two => "2",
+            SwellLength::Four => "4",
+            SwellLength::Eight => "8",
+        }
+    }
+
+    /// The length of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            SwellLength::Half => "0.5 s",
+            SwellLength::One => "1 s",
+            SwellLength::Two => "2 s",
+            SwellLength::Four => "4 s",
+            SwellLength::Eight => "8 s",
+        }
+    }
+
+    /// The length in seconds.
+    pub fn seconds(self) -> f32 {
+        match self {
+            SwellLength::Half => 0.5,
+            SwellLength::One => 1.0,
+            SwellLength::Two => 2.0,
+            SwellLength::Four => 4.0,
+            SwellLength::Eight => 8.0,
+        }
     }
 }
 
@@ -3352,6 +3473,20 @@ pub fn menus_with_songs(
                     AppCommand::AddReverbSend,
                     state.can_reverb_send,
                 ),
+                MenuEntry::Submenu(Submenu {
+                    label: "Rumble Maker",
+                    entries: RumbleChoice::ALL
+                        .into_iter()
+                        .map(|c| item(c.label(), AppCommand::RumbleMaker(c)))
+                        .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Reverse Reverb Print",
+                    entries: SwellLength::ALL
+                        .into_iter()
+                        .map(|l| item(l.label(), AppCommand::ReverseReverbPrint(l)))
+                        .collect(),
+                }),
                 MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
@@ -4208,6 +4343,12 @@ mod tests {
         for target in NormaliseTarget::ALL {
             v.push(AppCommand::AudioNormaliseTo(target));
         }
+        for choice in RumbleChoice::ALL {
+            v.push(AppCommand::RumbleMaker(choice));
+        }
+        for length in SwellLength::ALL {
+            v.push(AppCommand::ReverseReverbPrint(length));
+        }
         for step in ChopStep::ALL {
             v.push(AppCommand::ChopClips(step));
         }
@@ -4895,6 +5036,13 @@ mod tests {
                 "Pattern Lane to Notes",
                 "Edit Track Controllers",
                 "Add Reverb Send\u{2026}",
+                "Tail Repeat",
+                "Reverb Tail",
+                "0.5 s",
+                "1 s",
+                "2 s",
+                "4 s",
+                "8 s",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",

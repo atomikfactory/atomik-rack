@@ -7096,6 +7096,16 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::RumbleMaker(choice) => {
+                self.core.rumble_maker(choice.mode());
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::ReverseReverbPrint(length) => {
+                self.core.reverse_reverb_print(length.seconds());
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::AudioToNotes => {
                 self.open_notes();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -9356,6 +9366,10 @@ mod kick_bass_tests;
 #[cfg(test)]
 #[path = "shell_reverb_send_tests.rs"]
 mod reverb_send_tests;
+
+#[cfg(test)]
+#[path = "shell_rumble_tests.rs"]
+mod rumble_tests;
 
 #[cfg(test)]
 #[path = "shell_key_chord_tests.rs"]

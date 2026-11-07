@@ -197,6 +197,25 @@ pub enum WorkflowCommand {
         /// The choices of the wizard.
         options: crate::reverb_send::ReverbSendOptions,
     },
+    /// The track of a printed rumble layer (see [`crate::rumble`]): a new audio track right after
+    /// the kick's, with one clip of the rendered rumble (already in the pool), a Sidechain Tool
+    /// keyed by the kick's channel and an EQ with a high-pass and a low-pass on its channel, in
+    /// one undo step. A kick that is not a top-level track with a console channel, a frozen
+    /// track and an option out of its range are rejected.
+    AddRumble {
+        /// The device that has the kick track.
+        kick: DeviceKey,
+        /// Song tick where the clip starts.
+        start: i64,
+        /// Clip length in ticks.
+        length: i64,
+        /// The rendered rumble (a plain clip: no reverse, no warp).
+        audio: AudioClipContent,
+        /// The name of the new track, or `None` for "<kick> Rumble".
+        name: Option<String>,
+        /// The choices of the track's inserts.
+        options: crate::rumble::RumbleTrackOptions,
+    },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
     /// channel.
@@ -919,6 +938,15 @@ pub(crate) fn plan(
         WorkflowCommand::AddReverbSend { track, options } => {
             plain(crate::reverb_send::plan(doc, registry, &track, &options))
         }
+        WorkflowCommand::AddRumble {
+            kick,
+            start,
+            length,
+            audio,
+            name,
+            options,
+        } => crate::rumble::plan(doc, registry, &kick, (start, length, audio), name, &options)
+            .map(|(edit, id)| (edit, Some(id))),
         WorkflowCommand::SetFoldedMany { keys, folded } => {
             let mut edits = Vec::new();
             for key in keys {

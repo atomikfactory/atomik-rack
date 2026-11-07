@@ -887,6 +887,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ReplaceDevice { .. }
             | WorkflowCommand::SplitSub { .. }
             | WorkflowCommand::AddReverbSend { .. }
+            | WorkflowCommand::AddRumble { .. }
             | WorkflowCommand::SetFoldedMany { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}
         }

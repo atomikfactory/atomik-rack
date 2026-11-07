@@ -4727,7 +4727,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (496) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (498) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5721,6 +5721,40 @@ by the track.
   the command, selects the new reverb and says what was built; `reverb_of_return` finds it. The wizard is
   `atomik_ui::ReverbSendView` (steppers, like the strip silence panel), reporting through `UiAction::ReverbSend`;
   the shell keeps its choices between openings and feeds it the track and the suggested decay.
+
+### Rumble Maker and Reverse Reverb Print
+
+Two Track-menu commands turn a render into new audio on a new track. Both reuse the freeze machinery of 2.19:
+a job on the freeze queue renders the source on the `atomik-freeze` worker, and the worker makes something of the
+render (`Post` in [freeze_worker.rs](../crates/app/src/freeze_worker.rs)) before it is stored in the project's
+bundle, so the print is saved, collected and undone like any other audio, and nothing runs on the audio thread.
+
+- **The DSP** ([dsp/src/rumble.rs](../crates/dsp/src/rumble.rs)). `rumble_layer` builds one piece per kick hit,
+  from the hit to the next hit: the hit's sub band (a fourth order Butterworth run forward and backward, so it has
+  no phase shift and the piece starts in phase with the kick), then either a chunk of the tail repeated with
+  equal-power crossfades (the tail starts where the 5 ms envelope has fallen to half of its peak, the chunk is a
+  third of what is left between 30 and 250 ms, cut at zero crossings, each repeat 0.85 times the one before) or
+  the sub band through the large `Room` (damped, low-passed again, set to 0.7 of the sub band's peak and added to
+  it). A piece fades in over 1.5 ms and out over 15 ms, and the whole layer is scaled down when it would be louder
+  than the kick's sub band. `reverse_swell` reverses the source into the room, keeps the tail that rings after it
+  and reverses that again: a swell that rises to its loudest where the source starts, set to 0.7 of the source's
+  peak.
+- **The command** ([model/src/rumble.rs](../crates/model/src/rumble.rs)). `WorkflowCommand::AddRumble` plans one
+  edit on a scratch document: the audio track of the rendered clip (`plan_rendered_track`, right after the kick),
+  a Sidechain Tool in trigger mode whose key sockets are cabled from the kick's channel output, an Auto-Filter
+  with no sweep as a 24 dB low-pass (the EQ's low-pass starts at 1 kHz) and the EQ's low cut. `kick_key` says
+  which notes are the kick (the first pad that plays a synthesised kick on a drum machine, else its first pad; every
+  note elsewhere), `kick_hits` lists their start ticks, `suggested_release` (a third of the median gap) and
+  `suggested_decay` (twice the gap) read the rhythm. A swell is a plain `AddRenderedTrack`.
+- **App** ([app_core_rumble.rs](../crates/app/src/app_core_rumble.rs)). `rumble_maker` (`sequencer.rumble_maker`,
+  argument `tail` or `reverb`) renders the selected clips of the track, or all of them, through the insert chain
+  with a 2 s tail; the notes that are not on the kick pad are taken out of the copy of the document the worker
+  renders. The hits are the frames of the kick notes (`rumble_of` finds them in an audio kick). `reverse_reverb_print`
+  (`sequencer.reverse_reverb_print`, the length in seconds) renders the selected clips of each track, else the
+  range of the selected lane or the locators, dry, and `swell_place` puts the swell on whole ticks that end at the
+  frame of the source's first tick (the longest that fits before it, so a source near the start gets a shorter
+  swell and one at tick 0 is refused). The result is checked against the document as for a freeze and applied as
+  one undo step; the new clip is selected and the status line says what was made.
 
 ## 6l. The library
 

@@ -354,6 +354,11 @@ pub const SCALE_TEMPO_ARGS: &[&str] = &["double", "halve", "150", "125", "75", "
 /// The values of `sequencer.audio_normalise_to`: peak -1 dBFS, RMS -18 dBFS, integrated loudness
 /// -23 or -14 LUFS.
 pub const AUDIO_NORMALISE_ARGS: &[&str] = &["peak-1", "rms-18", "lufs-23", "lufs-14"];
+/// The values of `sequencer.rumble_maker`: how the tail of the rumble is made, by repeating a
+/// trimmed chunk of the kick's tail or through a long reverb low-passed to the sub band.
+pub const RUMBLE_MAKER_ARGS: &[&str] = &["tail", "reverb"];
+/// The values of `sequencer.reverse_reverb_print`: the length of the swell in seconds.
+pub const REVERSE_REVERB_ARGS: &[&str] = &["0.5", "1", "2", "4", "8"];
 /// The values of `sequencer.audio_gain`.
 pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
 /// The values of `sequencer.audio_transpose`.
@@ -2251,6 +2256,24 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .arg(REVERSE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.reverse_reverb_print",
+        "Reverse Reverb Print",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(REVERSE_REVERB_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.rumble_maker",
+        "Rumble Maker",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(RUMBLE_MAKER_ARGS)
     .menu()
     .decline(),
     cmd(

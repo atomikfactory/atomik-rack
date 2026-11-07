@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rumble Maker and Reverse Reverb Print.** Track > Rumble Maker (`sequencer.rumble_maker`) turns the selected
+  kick track into a rumble layer: the kick (the selected clips of the track, else all of them; the kick pad of a
+  drum machine; an audio kick by its onsets) is rendered offline through its insert effects, and one piece per
+  hit is built from its own sub band, which starts in phase with the kick, then goes on as a tail until the next
+  hit, either by repeating a trimmed chunk of the kick's tail with crossfades (Tail Repeat) or through a long dark
+  reverb low-passed to the sub band (Reverb Tail, its decay twice the gap between the hits). The layer is printed
+  into the project's audio as one file on a new track after the kick's, with a Sidechain Tool keyed by the kick, a
+  24 dB low-pass at 160 Hz and a low cut at 28 Hz, in one undo step. Track > Reverse Reverb Print
+  (`sequencer.reverse_reverb_print`, 0.5 to 8 seconds) reverses the selected clips, or the range of a lane or the
+  locators, into the reverb, keeps the tail and reverses it again: a swell that rises to its loudest where the source
+  starts. It is printed on a new track on whole ticks and ends exactly at the first frame of the source; a source
+  near the start of the song gets the swell that fits, one at the start is refused. Both render on the freeze
+  worker, never on the audio thread, and the prints are saved, collected and undone like other audio. The project
+  format is unchanged (44) and the command count is 498.
 - **Reverb send wizard and ducking reverbs.** The Reverb and the Space Reverb take a key on `sc_in_l/r` (the main
   input when neither is cabled, as in the compressor) and seven new params: `duck` (how much of the wet
   signal the key takes out), `duck_release`, `duck_mode` (broadband, the part under `duck_freq`, or a band of Q 2
