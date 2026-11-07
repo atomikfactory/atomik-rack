@@ -193,6 +193,7 @@ pub(super) fn flatten(doc: &RackDoc) -> Option<RackDoc> {
         tune_cents: doc.tune_cents,
         sort_mode: doc.sort_mode,
         references: Vec::new(),
+        delivery: None,
     })
 }
 

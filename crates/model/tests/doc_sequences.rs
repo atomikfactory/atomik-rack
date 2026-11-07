@@ -111,6 +111,8 @@ enum WfOp {
     Tune(u8),
     Sort(u8),
     References(u8),
+    /// The delivery target: none or one of the table's entries.
+    Delivery(u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -332,6 +334,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..5).prop_map(WfOp::Tune),
         (0u8..3).prop_map(WfOp::Sort),
         (0u8..4).prop_map(WfOp::References),
+        (0u8..5).prop_map(WfOp::Delivery),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0u8..8, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
@@ -895,6 +898,11 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             ],
             _ => vec![atomik_model::Reference::new("three.wav")],
         }),
+        WfOp::Delivery(step) => Command::SetDelivery(
+            atomik_model::TARGETS
+                .get(usize::from(*step))
+                .map(atomik_model::Delivery::of),
+        ),
         WfOp::Sort(mode) => Command::SetRackSort(
             [RackSort::Free, RackSort::PerTrack, RackSort::AutoGroup][usize::from(*mode)],
         ),

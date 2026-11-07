@@ -47,6 +47,7 @@ impl Command {
             Command::SetMasterTune(_) => "Change Master Tune",
             Command::SetRackSort(_) => "Sort Rack",
             Command::SetReferences(_) => "Edit Reference Tracks",
+            Command::SetDelivery(_) => "Set Delivery Target",
             Command::ConvertSampleRate { .. } => "Convert Sample Rate",
             Command::Console(c) => console_label(c),
             Command::Container(c) => container_label(c),

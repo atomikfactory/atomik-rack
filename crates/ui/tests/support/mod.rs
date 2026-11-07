@@ -103,6 +103,7 @@ pub fn reference_doc() -> RackDoc {
         tune_cents: 0.0,
         sort_mode: atomik_model::RackSort::Free,
         references: Vec::new(),
+        delivery: None,
     }
 }
 

@@ -240,6 +240,7 @@ impl RackView {
             tune_cents: doc.tune_cents,
             sort_mode: doc.sort_mode,
             references: Vec::new(),
+            delivery: None,
         })
     }
 
