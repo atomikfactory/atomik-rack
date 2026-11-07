@@ -52,6 +52,9 @@ pub(crate) enum Post {
     /// The reverse reverb swell of the render, `seconds` long, that ends where the render starts:
     /// the result is put before the tick `anchor`, on whole ticks (see [`swell_place`]).
     ReverseReverb { seconds: f32, anchor: i64 },
+    /// The impact of the render (a hit): saturated, with a reverb of `decay` seconds that goes on
+    /// after the render ends, so the result is `decay` seconds longer ([`atomik_dsp::transition`]).
+    Impact { decay: f32 },
 }
 
 /// One render.
@@ -141,6 +144,27 @@ pub(crate) fn rumble_of(
     AudioData::new(rate, layer).map_err(|e| format!("cannot make the rumble: {e}"))
 }
 
+/// The impact of the rendered hit `hit`: the hit and `decay` seconds of silence after it through
+/// the saturation and the reverb ([`atomik_dsp::transition::impact`]).
+pub(crate) fn impact_of(hit: &AudioData, decay: f32) -> Result<AudioData, String> {
+    let rate = hit.sample_rate;
+    let tail = (f64::from(decay.max(0.0)) * f64::from(rate)).round() as usize;
+    let padded: Vec<Vec<f32>> = hit
+        .channels
+        .iter()
+        .map(|c| {
+            let mut c = c.clone();
+            c.resize(c.len() + tail, 0.0);
+            c
+        })
+        .collect();
+    let out = atomik_dsp::transition::impact(&padded, rate, decay);
+    if out.iter().flatten().all(|s| s.abs() < 1.0e-6) {
+        return Err("the first hit is silent there: nothing to make an impact from".to_owned());
+    }
+    AudioData::new(rate, out).map_err(|e| format!("cannot make the impact: {e}"))
+}
+
 /// Where a swell of `want` frames that ends at tick `anchor` goes: the start tick, the length in
 /// ticks and the frames of the longest whole number of ticks that fits in `want` before the
 /// anchor, so the swell ends exactly at the frame of the anchor (the audio is the last `frames`
@@ -225,6 +249,18 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
             render.audio = AudioData::new(render.audio.sample_rate, trimmed)
                 .map_err(|e| format!("cannot make the swell: {e}"))?;
             (render.start, render.length, render.tail_frames) = (start, length, 0);
+        }
+        Some(Post::Impact { decay }) => {
+            render.audio = impact_of(&render.audio, decay)?;
+            let frames = render.audio.channels.first().map_or(1, Vec::len) as u64;
+            render.length = atomik_model::ticks_for_frames(
+                &doc.song,
+                render.start,
+                frames,
+                render.audio.sample_rate,
+            );
+            render.tail_frames =
+                (f64::from(decay.max(0.0)) * f64::from(render.audio.sample_rate)).round() as u64;
         }
     }
     let info = bundle

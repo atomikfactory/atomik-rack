@@ -3059,6 +3059,8 @@ impl ArrangementView {
         if !matches!(self.drag, Drag::None) {
             return;
         }
+        // A menu that opened on a boundary is over once the pointer goes somewhere else.
+        self.mk.ctx_boundary = None;
         if button == PointerButton::Middle {
             self.drag = Drag::Pan { last: pos };
             return;
@@ -3259,6 +3261,7 @@ impl ArrangementView {
                 self.ctx_bar =
                     u32::try_from(self.bars.bar_of(self.axis.x_to_tick(pos.x)).max(1)).unwrap_or(1);
                 self.ctx_meter = None;
+                self.mk.ctx_boundary = Some(self.song.nearest_bar_line(self.axis.x_to_tick(pos.x)));
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::RulerMeter,
                     at: pos,

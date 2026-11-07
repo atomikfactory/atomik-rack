@@ -1361,6 +1361,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.warps.clear();
         self.audio.warp_work.reset();
         self.audio.freeze.reset();
+        self.transitions.clear();
         self.audio.export.reset();
         self.audio.masking.reset();
         self.audio.energy.reset();

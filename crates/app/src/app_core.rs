@@ -186,6 +186,10 @@ pub struct AppCore<S: EngineSink> {
     clipboard: Clipboard,
     /// The channel settings the last Copy Channel Settings took.
     settings_clip: Option<atomik_model::ChannelSettingsClip>,
+    /// The transitions made in this session: the boundary, the kind and the undo depth after the
+    /// step (an undo takes the ones it undid off), for the warning about a kind on most
+    /// boundaries.
+    transitions: Vec<(i64, atomik_model::transition::TransitionKind, usize)>,
     /// The strips a Delete Channel asked to confirm (their tracks hold clips): the same call
     /// again on the same strips deletes them.
     strip_delete_ask: Option<Vec<DeviceKey>>,
@@ -517,6 +521,7 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             settings_clip: None,
+            transitions: Vec::new(),
             strip_delete_ask: None,
             auto_armed: Vec::new(),
             manual_rec: false,
@@ -1282,7 +1287,11 @@ impl<S: EngineSink> AppCore<S> {
         self.commit_patch_browse();
         self.plugins_flush_dirty(true);
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo()));
-        self.after_history_step(done, "undo")
+        let undone = self.after_history_step(done, "undo");
+        // A transition that was undone no longer counts.
+        let depth = self.document.undo_depth();
+        self.transitions.retain(|t| t.2 <= depth);
+        undone
     }
 
     /// Redoes the last undone step; false when there is nothing to redo.
@@ -4050,6 +4059,10 @@ mod reverb_send_tests;
 #[cfg(test)]
 #[path = "app_core_rumble_tests.rs"]
 mod rumble_tests;
+
+#[cfg(test)]
+#[path = "app_core_transition_tests.rs"]
+mod transition_tests;
 
 #[cfg(test)]
 #[path = "app_core_sound_tests.rs"]
