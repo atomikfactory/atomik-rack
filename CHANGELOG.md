@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Dragging between song windows, and audio at another sample rate.** Clips, a track header or devices dragged
+  out of one song's window and let go over a window of another open song are pasted there at the point of the
+  drop: clips on the lane and snapped tick under the pointer (on a lane that fits them, else each on its own kind
+  of lane), devices at the rack slot there, a track after the track there. It is Copy in the first song and Paste
+  in the second, without touching either clipboard: the first song ends the drag with everything where it was, and
+  the second takes one undo step, with the audio fetched from the first song's folder as for a paste. Files
+  dragged out of the file browser (a patch, a container, a device row of the shared library) hover over and drop on
+  another song's window the same way, with the same outline where they would load. Audio that is not at the sample
+  rate of the song it lands in, whether pasted or dragged, is converted first: a worker (`atomik-paste-rate`, never
+  the audio or UI thread) resamples it into the folder of the receiving song, reading the original from the song it
+  came from and leaving it untouched, and the paste then points clips, takes, frozen renders and sampler zones at
+  the copies with every position that counts source frames scaled, as one undo step; a second paste of the same
+  audio reuses the copy, and a source that no longer has the file refuses the paste and says so. Clips pasted
+  at the song's own rate behave as before. Not done: separate Input Focus and Play Focus buttons (the song with the
+  stream still has the MIDI inputs), a drop marker while clips or devices are dragged over another song, and a
+  session of the MCP server with several songs. The project format is unchanged (44) and the command count is 469.
 - **Collect plugin files, and Move Project tidies a shared folder.** Collect Files, Save As and Move Project copy the
   files that the text state of a plugin names outside the project (an impulse response, a preset) into a `Files`
   folder of the project, under their own names (a second file with the same name and other bytes becomes `name 2`,
@@ -757,6 +773,30 @@ may break APIs and the patch and project formats.
   cabled, of the key; every band has a handle (drag for frequency and static gain, wheel for Q, double click to
   switch it off or on) and every control has a tooltip. The analysers run only while a panel is on screen. The
   format is still 44; not done: the low and high cut, a hold time and a look-ahead.
+- **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
+  curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
+  slope 1 and settles on the ceiling), with a symmetry control that lowers one half of the wave (it adds even
+  harmonics, and an 8 Hz high-pass takes the offset out), off, 2x, 4x or 8x oversampling with the filter latency
+  reported (0, 29, 35 or 37 samples) and the dry path and the delta lined up with it, an output gain and a mix. A
+  multiband mode splits the sound in two or three bands with the flat-sum crossovers of the mastering device and
+  gives each band its own drive in front of its own curve. A delta switch plays what the clipper removes. The panel
+  draws the transfer curve with the level of the moment, and reads the clip activity: the share of clipped samples
+  and the longest clipped run in milliseconds, which turns warm past one millisecond, the number to judge
+  audibility by. With a hard curve, no oversampling, no symmetry, one band, a full mix and 0 dB gains the clipper
+  is bit-transparent below the ceiling. A guard (on by default) holds the single-band output to the ceiling after
+  the oversampling filters. The oversampler gains an 8x stage (37 samples of latency; images at least 84 dB
+  down). The project format stays 44 and the command count 469. Not done: a lookahead limiter stage after the
+  clipper, a user-drawn curve, and a per-band ceiling.
+- **Oscillator start phase and Clean Up Bass.** The Poly Synth, Mono Bass and Wavetable Synth have two new
+  params, `osc.phase` (reset or free) and `osc.phase_start` (0 to 360 degrees). Reset starts the oscillators at
+  the angle at every note start, so every kick or bass note begins with the same first cycle; free starts each
+  note at a seeded random angle. The default, reset at 0 degrees, is what these synths always did, so old
+  projects sound the same bit for bit and no format change was needed (the params are appended, after the
+  modulation slots on the poly synth and Mono Bass). Right-clicking the patch name of one of these synths now
+  opens a pop-up that starts with Clean Up Bass: it sets the phase to reset at 0 degrees, one voice, a 12 ms
+  amp release when the release is outside 5 to 20 ms and the filter key tracking on, only where they differ,
+  in one undo step, and the status line names what changed. The command is `rack.clean_up_bass`
+  (470 commands). The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

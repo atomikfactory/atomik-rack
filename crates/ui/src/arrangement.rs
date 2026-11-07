@@ -1290,6 +1290,38 @@ impl ArrangementView {
         !matches!(self.drag, Drag::None)
     }
 
+    /// True while clips are being moved or copied by a drag, or a track header is being dragged
+    /// to another place: the gestures a release over another song's window turns into a copy
+    /// there.
+    pub fn carries_selection(&self) -> bool {
+        matches!(self.drag, Drag::Move { .. } | Drag::TrackMove)
+    }
+
+    /// Ends the drag of [`Self::carries_selection`] as Escape does, putting what it moved back
+    /// (the actions say how). Nothing when no such drag is in progress.
+    pub fn cancel_carried(&mut self) -> Vec<UiAction> {
+        let mut out = Vec::new();
+        if self.carries_selection() {
+            self.cancel_drag(&mut out);
+            self.repaint = true;
+        }
+        out
+    }
+
+    /// Where something dropped at the view position `pos` lands: the track and lane of the row
+    /// under it (`None` over a row that is no lane) and the snapped tick. `None` outside the
+    /// track area. A pointer in the track list counts as the left edge of the timeline.
+    pub fn drop_spot_at(&self, pos: Point) -> Option<(Option<(DeviceKey, usize)>, i64)> {
+        let tick = self.drop_tick_at(pos)?;
+        let lane = match self.row_at(pos.y).map(|r| &r.kind) {
+            Some(RowKind::Lane { track, lane }) => {
+                Some((self.song.tracks[*track].device.clone(), *lane))
+            }
+            _ => None,
+        };
+        Some((lane, tick))
+    }
+
     /// True while a gesture or a menu would take Escape itself (a drag to cancel, a menu to
     /// close), so Escape does not close the open clip.
     pub fn escape_pending(&self) -> bool {

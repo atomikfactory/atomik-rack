@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 28, "{ids:?}");
+    assert_eq!(ids.len(), 29, "{ids:?}");
     ids
 }
 
@@ -35,10 +35,10 @@ fn wrapped(type_id: &str) -> DeviceHarness {
 fn raw(type_id: &str) -> DeviceHarness {
     use crate::stereo_delay;
     use crate::{
-        auto_filter, character, compressor, convolver, de_esser, distortion, duck, dynamic_eq,
-        dynamics, echo, env_filter, eq, gain_tool, gate, guitar_amp, mastering, modulation,
-        phase_meter, pitch_shifter, reverb, rotary_speaker, space_reverb, spectrum, stereo_tool,
-        transient_shaper, tuner, vocoder,
+        auto_filter, character, clipper, compressor, convolver, de_esser, distortion, duck,
+        dynamic_eq, dynamics, echo, env_filter, eq, gain_tool, gate, guitar_amp, mastering,
+        modulation, phase_meter, pitch_shifter, reverb, rotary_speaker, space_reverb, spectrum,
+        stereo_tool, transient_shaper, tuner, vocoder,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
@@ -69,6 +69,7 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.dynamic-eq" => Box::new(dynamic_eq::DynamicEq::new()),
         "atomik.transient-shaper" => Box::new(transient_shaper::TransientShaper::new()),
         "atomik.rotary-speaker" => Box::new(rotary_speaker::RotarySpeaker::new()),
+        "atomik.clipper" => Box::new(clipper::Clipper::new()),
         other => panic!("{other}"),
     };
     DeviceHarness::new(d, SR)

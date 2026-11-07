@@ -5,7 +5,7 @@ variants), the semi-modular synth, the organ, the wavetable synth, the FM synth,
 and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
 Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
 a hardware synth or a virtual port), the effects (reverb, space reverb, convolution reverb, vocoder, compressor, EQ,
-distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
+distortion, clipper, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the utility devices (gain tool, stereo tool, gate, gate + compressor,
 sidechain tool, envelope filter, auto-filter, transient shaper, de-esser, dynamic EQ, tuner, pitch shifter,
@@ -239,6 +239,37 @@ was (a test pins a render of a busy patch). They add the following; the same voi
   times 1 plus the sum, between 0 and 2). The mod envelope advances while a slot is in use. A synth with no slot in
   use takes none of these paths and renders bit for bit as before (a test compares). The slot params are the last
   32 of the table (68 to 99); the dual layer does not expose them and the generated panel does not show them.
+
+### Start phase (appended params)
+
+Two params after the slot block (ids 100 and 101) say where a new note starts its oscillators. A note that
+starts a voice always restarted both oscillators at phase 0; that is now the default, so a project from before
+the params plays the same bits.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `osc.phase` | 0–1: reset, free | 0 (reset) | choice | Linear | yes |
+| `osc.phase_start` | 0 to 360 (degrees; used when the phase is `reset`) | 0 | none | Linear | no |
+
+- **Reset** starts both oscillators at `osc.phase_start` at every note start, so every kick or bass note
+  begins with the same first cycle. A retriggered voice (the same key struck again, or a legato change of
+  key) keeps running and is not restarted. A sine at 0 degrees starts on its zero crossing, which also keeps
+  a sub from clicking at the start of a note.
+- **Free** starts every note at a seeded random angle (one stream per voice, derived from the patch seed, so a
+  bounce is the same every time).
+- The dual layer does not expose the two params; both layers start at 0.
+
+**Clean Up Bass.** Right-click the patch name of a Poly Synth, Mono Bass or Wavetable Synth: the first row of
+the pop-up is Clean Up Bass. It sets, in one undo step and only where they differ: `osc.phase` to reset and
+`osc.phase_start` to 0, `voices` to 1, `env.amp.release` to 12 ms when it is outside 5 to 20 ms, and
+`filter.key_track` to 0.5 when it is under 0.1. The status line names what it changed, or says the device
+already starts every note the same. (Polarity is in the Stereo Tool: `invert_l` and `invert_r`.)
+
+**Start phase of the other instruments.** The Semi-Modular and the FM synth restart the phases of a note at the
+start of a voice (the FM synth spreads its unison copies by a fixed step); the Wavetable Synth starts its first
+unison copy at phase 0 and the others at seeded random phases (now with the two params above); the Organ's
+tonewheels free-run, phase-locked to each other, from phases that follow the device seed; the Grain Sampler has
+no oscillator. No param was added for those.
 
 ---
 
@@ -608,9 +639,14 @@ at once, without a fade. Not done: a table editor, and the frames of a long samp
 | `osc2.unison_voices` | 1 to 7 (used when the mode is `separate`) | 1 | none | Linear | yes |
 | `osc2.unison_detune` | 0 to 100 (the widest copy, each way) | 20 | cents | Linear | no |
 | `osc2.unison_spread` | 0 to 1 (the widest copy, each way) | 0.5 | percent | Linear | no |
+| `osc.phase` | 0–1: reset, free | 0 (reset) | choice | Linear | yes |
+| `osc.phase_start` | 0 to 360 (degrees; used when the phase is `reset`) | 0 | none | Linear | no |
 
-The last four params were added after the first release; a project that does not have them plays as
-before (the unison mode is `shared`, so both oscillators use `unison.*`).
+The first four of these params were added after the first release; a project that does not have them plays as
+before (the unison mode is `shared`, so both oscillators use `unison.*`). The last two choose the start
+phase: reset at 0 degrees is what the synth always did. With reset, copy 0 of each oscillator and the sub
+start at `osc.phase_start` and the other copies at their seeded random offsets from it; with free, every copy
+starts at a seeded random angle. Clean Up Bass (see the Poly Synth) works on it too.
 
 ### Behaviour (as built)
 
@@ -631,8 +667,8 @@ before (the unison mode is `shared`, so both oscillators use `unison.*`).
   There is one filter per channel, so the unison spread survives it.
 - **Unison.** With *n* copies, copy *i* sits at x = 2i/(n − 1) − 1 (0 for a lone copy): detuned by x
   × `unison.detune` cents and balanced by x × `unison.spread` (unity at the centre, as the pan CV
-  does). Each copy has its own phase: the first starts at phase 0, the others at seeded random
-  phases. The copies are scaled by 1/√n. With `unison.mode` at `shared` both oscillators use the
+  does). Each copy has its own phase: the first starts at phase 0 (or `osc.phase_start`), the others at
+  seeded random phases (offset by the start angle). The copies are scaled by 1/√n. With `unison.mode` at `shared` both oscillators use the
   three `unison.*` settings; at `separate` oscillator 2 uses `osc2.unison_voices`,
   `osc2.unison_detune` and `osc2.unison_spread` and oscillator 1 keeps `unison.*`. The band limit
   follows each oscillator's own widest copy.
@@ -1593,14 +1629,16 @@ Oversampled saturation, waveshaping and bitcrushing. Source:
 
 ### Oversampler (`atomik_dsp::oversample`)
 
-Mono 1x / 2x / 4x polyphase halfband oversampler, shared with the planned limiter. Linear-phase FIR
+Mono 1x / 2x / 4x / 8x polyphase halfband oversampler, shared with the planned limiter. Linear-phase FIR
 halfband stages (centre tap 0.5, Kaiser-windowed sinc with the coefficients computed in `new` from
 IEEE `+ − × ÷ sqrt` only, so they are identical on every platform): stage 1 (base ⇄ 2x) 59 taps,
 stage 2 (2x ⇄ 4x) 23 taps padded to 25 so the delay is a whole number of base samples.
 Allocation-free after `Oversampler::new(max_block)`. Latency (up and down, base samples): 2x **29**,
-4x **35**, 1x 0 (measured as the impulse delay; the response is symmetric). Measured: passband
+4x **35**, 8x **37** (a third stage, 4x to 8x, of 15 taps padded to 17: two base samples), 1x 0
+(measured as the impulse delay; the response is symmetric). Measured: passband
 deviation below 0.0005 dB (2x) and 0.0011 dB up to 0.4 fs; image and alias rejection at least 90 dB
-for the 2x chain and **84.7 dB for the 4x chain** (the transition band is 0.4–0.6 fs).
+for the 2x chain, **84.7 dB for the 4x chain** and 84 dB for the 8x chain (the transition band is
+0.4–0.6 fs).
 
 ---
 
@@ -3893,6 +3931,98 @@ Frequencies, Q, ratio, attack and release use the exponential taper.
   over it steps the Q, a double click switches the band; every control has a tooltip. The panel is nine
   rack units tall.
 - **Not built:** the EQ's low and high cut, a hold time and a look-ahead.
+
+## Clipper: `atomik.clipper` (Effect)
+
+A stereo clipper: the signal is driven into a ceiling through a curve that runs from a hard clip to
+a soft knee, with an optional asymmetry, oversampling, a multiband mode and a delta switch.
+Source: [crates/devices/src/clipper.rs](../crates/devices/src/clipper.rs), curve in
+[crates/dsp/src/clipper.rs](../crates/dsp/src/clipper.rs).
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). The two channels are processed
+independently (a loud left does not pull the right down).
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `gain` | −24 to 36 (input gain, in front of the curve) | 0 | dB | Linear | no |
+| `ceiling` | −24 to 0 | −1 | dB | Linear | no |
+| `curve` | 0 (hard) to 1 (soft) | 0 | percent | Linear | no |
+| `symmetry` | −1 to 1 (lowers the negative or the positive ceiling) | 0 | none | Linear | no |
+| `oversample` | 0–3: off, 2x, 4x, 8x | 1 | choice | Linear | yes |
+| `output` | −24 to 12 | 0 | dB | Linear | no |
+| `mix` | 0 (dry) to 1 (wet) | 1 | percent | Linear | no |
+| `delta` | 0 or 1 (play what the clipper removes) | 0 | toggle | Linear | yes |
+| `bands` | 0–2: off, 2 bands, 3 bands | 0 | choice | Linear | yes |
+| `xover.low` | 40 to 2000 | 150 | Hz | Exp | no |
+| `xover.high` | 500 to 12000 (never below 1.25 times `xover.low`) | 3000 | Hz | Exp | no |
+| `band1.drive`, `band2.drive`, `band3.drive` | −12 to 24 (per band, in front of its curve) | 0 | dB | Linear | no |
+| `guard` | 0 or 1 (hold the ceiling after the oversampling filters) | 1 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **The curve.** With `c` the linear ceiling and `k = 1 − curve`, an input of magnitude `a` at or
+  below `k·c` passes untouched. Above it a hard curve (`k = 1`) gives `c`, and a soft one gives
+  `k·c + (1 − k)·c·t / √(1 + t²)` with `t = (a − k·c) / ((1 − k)·c)`: slope 1 where the knee
+  starts, no corner, and it settles on `c` without passing it. At `curve` 1 the knee is at 0 and
+  the curve is the plain sigmoid `c·u / √(1 + u²)`, `u = x / c`. The sign of the input is kept.
+  Only `+ − × ÷ √` are used, so the result is the same on every platform. The panel draws this
+  transfer curve.
+- **Symmetry.** The positive (symmetry above 0) or the negative (below 0) ceiling drops to
+  `c·(1 − |symmetry| / 2)`; the other half keeps `c`. A curve that treats the halves differently
+  adds even harmonics to the odd ones a symmetric curve makes, and a DC offset: a one-pole 8 Hz
+  high-pass takes the offset out after the curve (it is in the path only while `symmetry` is not 0).
+- **Oversampling** runs the curve between the halfband stages of the oversampler (one per channel
+  and band): 2x, 4x or 8x. The reported latency is that of the filters, **0** (off), **29**,
+  **35** or **37** samples, and it changes with the setting, so the host re-aligns the delay
+  compensation. The dry path and the delta reference are delayed by the same amount, so `mix` and
+  `delta` stay aligned. Measured with a 10 kHz tone at 12 dB over a −6 dB ceiling: the alias at
+  18 kHz falls from 0.20 (off) to 0.007 (2x), 0.005 (4x) and 0.0002 (8x) of full scale, with
+  `guard` off.
+- **Guard.** In the single-band mode `guard` holds the wet signal to the ceiling with a hard clamp
+  after the oversampling filters (which overshoot by up to several percent after a long hard
+  clip) and the DC block, so the ceiling is a hard limit on the output. The clamp runs at the base
+  rate and brings back a little of the aliasing on heavy clipping of a high tone; switch it off to
+  let the overshoot through. In the multiband mode there is no guard: each band holds the ceiling
+  on its own and the sum can pass it by what the other bands carry at that moment.
+- **Multiband.** `bands` 2 splits at `xover.low`, `bands` 3 adds a split at `xover.high`. The
+  splits are the 24 dB per octave Linkwitz-Riley crossovers of the mastering device (two
+  Butterworth sections cascaded per branch), with the low band passed through an allpass made of
+  the high split, so the bands add up to an allpass: with nothing clipped the magnitude is flat
+  within 0.05 dB (tested from 60 Hz to 8 kHz) and the phases agree. Each band has its own drive in
+  front of its own curve (all the bands share `gain`, `ceiling`, `curve`, `symmetry` and the
+  oversampling); `band3.drive` does nothing with 2 bands. Changing `bands` clears the crossover
+  state.
+- **Bit-transparent settings.** With `curve` 0 (hard), `oversample` 0 (off), `symmetry` 0, `bands`
+  0, `mix` 1, `delta` 0 and `gain` and `output` at 0 dB, every sample below the ceiling leaves
+  exactly as it came in and every sample above it leaves at the ceiling, bit for bit (tested on
+  random input at a −6 dB ceiling). A soft `curve` leaves everything below its knee
+  `(1 − curve)·c` untouched in the same way.
+- **Delta** plays what the clipper removes: the driven signal (input gain applied, delayed by the
+  latency) minus the clipped signal, times `output`. Below the ceiling it is exactly 0 with the
+  transparent settings; clipped plus delta gives back the driven signal. `mix` does not apply to it.
+- **Clip activity.** A sample counts as clipped when either channel (any band, in the multiband
+  mode) is beyond the ceiling of its side before the curve. Over the last one to two seconds the
+  device reports the share of clipped samples and the longest run of consecutive clipped samples in
+  milliseconds, the number to judge audibility by: a run of a millisecond or less is a click that
+  adds density, a longer one is heard as distortion. A 997 Hz sine 12 dB over the ceiling reports a
+  share within 1 % of the analytic value and a longest run within 0.06 ms of it.
+- **Meter values** (the panel reads them): the peak of the driven signal and of the output
+  (linear), the clipped share in percent and the longest clipped run in ms.
+- Gains, ceiling, mix and the band drives are smoothed per batch (10 ms). Non-finite input samples
+  count as 0. `process`, `set_param` (the oversampling too) and `reset` never allocate.
+
+### Suits
+
+A transparent clipper in front of a limiter (hard, 4x, a ceiling a decibel or two under the
+limiter) takes the short peaks that would make it pump. Chained clippers (a soft one first for
+density, a hard one after to catch the peaks it raises), one per drum bus and one on the master
+are the classic ways to gain loudness in small steps. A little asymmetry on a bass or a drum adds
+even harmonics.
 
 ---
 

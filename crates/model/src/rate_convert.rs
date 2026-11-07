@@ -8,8 +8,11 @@
 
 use crate::container::join;
 use crate::history::Edit;
-use crate::song::{AudioClipContent, ClipContent};
-use crate::{DeviceKey, ModelError, RackDevice, RackDoc, SAMPLE_RATES, ZoneDoc, zones};
+use crate::song::{AudioClipContent, ClipContent, Track};
+use crate::{
+    AssetMeta, ClipSnapshot, DeviceKey, DeviceSnapshot, ModelError, RackDevice, RackDoc,
+    SAMPLE_RATES, TakeSnapshot, ZoneDoc, zones,
+};
 use std::collections::BTreeMap;
 
 /// `x * to / from`, rounded to the nearest frame.
@@ -19,24 +22,30 @@ pub(crate) fn scale(x: u64, to: u32, from: u32) -> u64 {
 }
 
 struct Ctx<'a> {
-    doc: &'a RackDoc,
+    /// The pool the old and the converted assets are looked up in.
+    assets: &'a BTreeMap<String, AssetMeta>,
     rate: u32,
     map: BTreeMap<&'a str, &'a str>,
+    /// An asset the pool does not know and no copy replaces is left as it is (a snapshot may
+    /// name audio its pool entries do not list, a frozen render for one); a document names only
+    /// assets it holds.
+    lenient: bool,
 }
 
 impl Ctx<'_> {
     /// The asset a reference becomes and its source rate: the converted asset when mapped,
     /// the asset itself when it already has the new rate.
-    fn target(&self, asset: &str) -> Result<(String, u64, u32), ModelError> {
-        let old = self
-            .doc
-            .assets
-            .get(asset)
-            .ok_or_else(|| ModelError::MissingAsset(asset.to_owned()))?;
+    fn target(&self, asset: &str) -> Result<Option<(String, u64, u32)>, ModelError> {
+        let Some(old) = self.assets.get(asset) else {
+            return if self.lenient && !self.map.contains_key(asset) {
+                Ok(None)
+            } else {
+                Err(ModelError::MissingAsset(asset.to_owned()))
+            };
+        };
         match self.map.get(asset) {
             Some(to) => {
                 let new = self
-                    .doc
                     .assets
                     .get(*to)
                     .ok_or_else(|| ModelError::MissingAsset((*to).to_owned()))?;
@@ -46,9 +55,11 @@ impl Ctx<'_> {
                         old.channels, self.rate
                     )));
                 }
-                Ok(((*to).to_owned(), new.frames, old.sample_rate))
+                Ok(Some(((*to).to_owned(), new.frames, old.sample_rate)))
             }
-            None if old.sample_rate == self.rate => Ok((asset.to_owned(), old.frames, self.rate)),
+            None if old.sample_rate == self.rate => {
+                Ok(Some((asset.to_owned(), old.frames, self.rate)))
+            }
             None => Err(ModelError::BadSong(format!(
                 "asset {asset} is used but has no converted asset at {} Hz",
                 self.rate
@@ -57,7 +68,9 @@ impl Ctx<'_> {
     }
 
     fn audio(&self, a: &AudioClipContent) -> Result<AudioClipContent, ModelError> {
-        let (to, frames, from_rate) = self.target(&a.asset)?;
+        let Some((to, frames, from_rate)) = self.target(&a.asset)? else {
+            return Ok(a.clone());
+        };
         let s = |x: u64| scale(x, self.rate, from_rate);
         let mut n = a.clone();
         n.asset = to;
@@ -81,7 +94,9 @@ impl Ctx<'_> {
     }
 
     fn zone(&self, z: &ZoneDoc) -> Result<ZoneDoc, ModelError> {
-        let (to, frames, from_rate) = self.target(&z.asset)?;
+        let Some((to, frames, from_rate)) = self.target(&z.asset)? else {
+            return Ok(z.clone());
+        };
         let s = |x: u64| scale(x, self.rate, from_rate);
         let mut n = z.clone();
         n.asset = to;
@@ -156,7 +171,12 @@ pub(crate) fn plan(
             )));
         }
     }
-    let cx = Ctx { doc, rate, map };
+    let cx = Ctx {
+        assets: &doc.assets,
+        rate,
+        map,
+        lenient: false,
+    };
     let mut edits = vec![Edit::SampleRate {
         old: doc.sample_rate,
         new: rate,
@@ -211,6 +231,187 @@ pub(crate) fn plan(
     }
     edits.extend(zone_edits);
     Ok(Edit::Compound(edits))
+}
+
+/// A copy of an asset at another rate: what a snapshot's audio becomes when it is pasted into a
+/// song that runs at that rate (the app makes the copy; see [`DeviceSnapshot::at_rate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RateCopy {
+    /// The asset the snapshot names.
+    pub from: String,
+    /// Its copy at the new rate.
+    pub to: String,
+    /// What the pool stores about the copy.
+    pub meta: AssetMeta,
+}
+
+/// The assets of `assets` that are not at `rate`: the ones a paste into a song at that rate has
+/// to convert first. Sorted by id.
+pub fn assets_off_rate(assets: &BTreeMap<String, AssetMeta>, rate: u32) -> Vec<String> {
+    assets
+        .iter()
+        .filter(|(_, m)| m.sample_rate != rate)
+        .map(|(h, _)| h.clone())
+        .collect()
+}
+
+/// The pool of a converted snapshot: `assets` with each copied asset swapped for its copy (a
+/// copy of an asset the snapshot does not list is not added).
+fn pool_after(
+    assets: &BTreeMap<String, AssetMeta>,
+    copies: &[RateCopy],
+) -> BTreeMap<String, AssetMeta> {
+    let mut pool: BTreeMap<String, AssetMeta> = assets
+        .iter()
+        .filter(|(h, _)| !copies.iter().any(|c| &c.from == *h))
+        .map(|(h, m)| (h.clone(), m.clone()))
+        .collect();
+    for c in copies.iter().filter(|c| assets.contains_key(&c.from)) {
+        pool.insert(c.to.clone(), c.meta.clone());
+    }
+    pool
+}
+
+/// A pool and the map of a snapshot conversion; fails when a copy is listed twice.
+fn snapshot_ctx<'a>(
+    pool: &'a BTreeMap<String, AssetMeta>,
+    rate: u32,
+    copies: &'a [RateCopy],
+) -> Result<Ctx<'a>, ModelError> {
+    if !SAMPLE_RATES.contains(&rate) {
+        return Err(ModelError::OutOfRange(format!(
+            "{rate} Hz is not a supported sample rate"
+        )));
+    }
+    let mut map = BTreeMap::new();
+    for c in copies {
+        if map.insert(c.from.as_str(), c.to.as_str()).is_some() {
+            return Err(ModelError::BadSong(format!(
+                "asset {} is converted twice",
+                c.from
+            )));
+        }
+    }
+    Ok(Ctx {
+        assets: pool,
+        rate,
+        map,
+        lenient: true,
+    })
+}
+
+impl Ctx<'_> {
+    fn devices(&self, devices: &[RackDevice]) -> Result<Vec<RackDevice>, ModelError> {
+        devices
+            .iter()
+            .map(|d| {
+                let mut n = d.clone();
+                n.zones = d
+                    .zones
+                    .iter()
+                    .map(|z| self.zone(z))
+                    .collect::<Result<_, _>>()?;
+                if let Some(inner) = &mut n.inner {
+                    inner.devices = self.devices(&inner.devices)?;
+                }
+                Ok(n)
+            })
+            .collect()
+    }
+
+    fn track(&self, t: &Track) -> Result<Track, ModelError> {
+        let mut n = t.clone();
+        if let Some(f) = &mut n.frozen {
+            f.audio = self.audio(&f.audio)?;
+        }
+        for lane in &mut n.lanes {
+            for c in &mut lane.clips {
+                if let Some(new) = self.clip(c)? {
+                    *c = new;
+                }
+            }
+            for c in lane.take_groups.iter_mut().flat_map(|g| &mut g.takes) {
+                if let Some(new) = self.clip(c)? {
+                    *c = new;
+                }
+            }
+        }
+        Ok(n)
+    }
+}
+
+impl DeviceSnapshot {
+    /// The snapshot with every zone and audio clip that uses an asset of `copies` pointed at its
+    /// copy at `rate`, positions that count source frames scaled by the rate ratio (see
+    /// [`crate::WorkflowCommand::PasteDevices`]). Fails when a used asset is at another rate and
+    /// has no copy, or a copy has another channel count or rate.
+    pub fn at_rate(&self, rate: u32, copies: &[RateCopy]) -> Result<Self, ModelError> {
+        let pool = pool_with(&self.assets, copies);
+        let cx = snapshot_ctx(&pool, rate, copies)?;
+        Ok(Self {
+            devices: cx.devices(&self.devices)?,
+            cables: self.cables.clone(),
+            tracks: self
+                .tracks
+                .iter()
+                .map(|t| cx.track(t))
+                .collect::<Result<_, _>>()?,
+            assets: pool_after(&self.assets, copies),
+        })
+    }
+}
+
+impl ClipSnapshot {
+    /// The snapshot with its audio clips pointed at the copies of `copies` (see
+    /// [`DeviceSnapshot::at_rate`]).
+    pub fn at_rate(&self, rate: u32, copies: &[RateCopy]) -> Result<Self, ModelError> {
+        let pool = pool_with(&self.assets, copies);
+        let cx = snapshot_ctx(&pool, rate, copies)?;
+        let mut entries = self.entries.clone();
+        for e in &mut entries {
+            if let Some(new) = cx.clip(&e.clip)? {
+                e.clip = new;
+            }
+        }
+        Ok(Self {
+            entries,
+            origin: self.origin,
+            span: self.span,
+            assets: pool_after(&self.assets, copies),
+        })
+    }
+}
+
+impl TakeSnapshot {
+    /// The snapshot with its audio takes pointed at the copies of `copies` (see
+    /// [`DeviceSnapshot::at_rate`]).
+    pub fn at_rate(&self, rate: u32, copies: &[RateCopy]) -> Result<Self, ModelError> {
+        let pool = pool_with(&self.assets, copies);
+        let cx = snapshot_ctx(&pool, rate, copies)?;
+        let mut takes = self.takes.clone();
+        for c in &mut takes {
+            if let Some(new) = cx.clip(c)? {
+                *c = new;
+            }
+        }
+        Ok(Self {
+            takes,
+            span: self.span,
+            assets: pool_after(&self.assets, copies),
+        })
+    }
+}
+
+/// The lookup pool of a conversion: the snapshot's assets and the copies.
+fn pool_with(
+    assets: &BTreeMap<String, AssetMeta>,
+    copies: &[RateCopy],
+) -> BTreeMap<String, AssetMeta> {
+    let mut pool = assets.clone();
+    for c in copies {
+        pool.insert(c.to.clone(), c.meta.clone());
+    }
+    pool
 }
 
 #[cfg(test)]

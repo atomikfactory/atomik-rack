@@ -24,6 +24,7 @@ mod biquad;
 pub mod bitcrush;
 mod block_smoother;
 pub mod chorus;
+pub mod clipper;
 pub mod comb;
 pub mod convolver;
 pub mod crossover;

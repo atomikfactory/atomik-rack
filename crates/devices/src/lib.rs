@@ -23,6 +23,7 @@ pub mod bypass;
 mod chain_clock;
 pub mod channel;
 pub mod character;
+pub mod clipper;
 pub mod compressor;
 pub mod container;
 pub mod controller_state;
@@ -207,6 +208,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(bus::factory())?;
     registry.register(channel::factory())?;
     registry.register(character::factory())?;
+    registry.register(clipper::factory())?;
     registry.register(master::factory())?;
     registry.register(sample_hold::factory())?;
     registry.register(slew_limiter::factory())?;
@@ -227,13 +229,14 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 66] = [
+    const TYPE_IDS: [&str; 67] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.auto-filter",
         "atomik.bus",
         "atomik.channel",
         "atomik.character",
+        "atomik.clipper",
         "atomik.compressor",
         "atomik.container",
         "atomik.convolver",
@@ -333,6 +336,7 @@ mod tests {
         let doc = include_str!("../../../docs/DEVICES.md");
         for id in [
             "atomik.auto-filter",
+            "atomik.clipper",
             "atomik.cv-math",
             "atomik.cv-quantizer",
             "atomik.de-esser",

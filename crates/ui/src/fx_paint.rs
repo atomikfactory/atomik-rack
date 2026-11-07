@@ -172,6 +172,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::Eq => eq(c, theme, fx, info),
         FxKind::DynamicEq => dynamic_eq(c, theme, fx, info),
         FxKind::Distortion => distortion(c, theme, fx, info, &p),
+        FxKind::Clipper => clipper(c, theme, fx, info, &p),
         FxKind::GuitarAmp => guitar_amp(c, theme, fx, info, &p),
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),
@@ -846,6 +847,122 @@ fn distortion<C: Canvas + ?Sized>(
         pt(r.x1 - 5.0, r.y1 - 4.0),
         Align::End,
         None,
+    );
+    level_bars(
+        c,
+        theme,
+        fx.meters,
+        &[
+            ("IN", meter(info, 0, LEVEL_FLOOR_DB)),
+            ("OUT", meter(info, 1, LEVEL_FLOOR_DB)),
+        ],
+        10.0,
+    );
+}
+
+// ------------------------------------------------------------------ clipper
+
+/// The plot shows inputs up to this many ceilings.
+const CLIPPER_SPAN: f32 = 2.0;
+
+fn clipper<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    fx: FxPanel,
+    info: &PanelInfo<'_>,
+    p: &Params<'_>,
+) {
+    let r = fx.plot;
+    lcd(c, theme, r);
+    let (curve, symmetry, ceiling_db) = (p.get("curve"), p.get("symmetry"), p.get("ceiling"));
+    // Both axes run -2..2 ceilings, so the unity line is the diagonal and the ceiling is a line
+    // at half way to the edge.
+    let at = |x: f32, y: f32| {
+        let u =
+            |v: f32| f64::from((v.clamp(-CLIPPER_SPAN, CLIPPER_SPAN) / CLIPPER_SPAN + 1.0) / 2.0);
+        pt(r.x0 + u(x) * r.width(), r.y1 - u(y) * r.height())
+    };
+    let faint = alpha(theme.ink, 0.12);
+    c.stroke_with(Line::new(at(-2.0, 0.0), at(2.0, 0.0)), 1.0, faint);
+    c.stroke_with(Line::new(at(0.0, -2.0), at(0.0, 2.0)), 1.0, faint);
+    c.stroke_with(
+        Line::new(at(-2.0, -2.0), at(2.0, 2.0)),
+        1.0,
+        alpha(theme.ink, 0.07),
+    );
+    for y in [-1.0, 1.0] {
+        c.stroke_with(
+            Line::new(at(-2.0, y), at(2.0, y)),
+            1.0,
+            alpha(info.accent, 0.3),
+        );
+    }
+    // Where the driven level of the moment reaches: its peak, in ceilings.
+    let driven_db = meter(info, 0, LEVEL_FLOOR_DB);
+    if driven_db > LEVEL_FLOOR_DB {
+        let x = 10f32.powf((driven_db - ceiling_db) / 20.0);
+        let hot = x > 1.0;
+        let col = if hot {
+            hsl(28.0, 0.85, 0.55)
+        } else {
+            alpha(theme.ink, 0.35)
+        };
+        for s in [-1.0, 1.0] {
+            c.stroke_with(Line::new(at(s * x, -2.0), at(s * x, 2.0)), 1.0, col);
+        }
+    }
+    let n = 160;
+    let path = polyline((0..=n).map(|k| {
+        let x = -CLIPPER_SPAN + 2.0 * CLIPPER_SPAN * k as f32 / n as f32;
+        at(x, fx::clipper_transfer(curve, symmetry, x))
+    }));
+    c.push_clip(&r.into());
+    c.stroke_with(path, 1.75, info.accent);
+    c.pop_clip();
+    let name = if curve <= 0.005 {
+        "HARD CLIP".to_string()
+    } else {
+        format!("SOFT {:.0} %", curve * 100.0)
+    };
+    small(
+        c,
+        theme,
+        if symmetry == 0.0 {
+            name
+        } else {
+            format!("{name}, ASYM")
+        },
+        pt(r.x0 + 5.0, r.y0 + 10.0),
+        Align::Start,
+        Some(info.accent),
+    );
+    small(
+        c,
+        theme,
+        format!("{ceiling_db:+.1} dB"),
+        pt(r.x1 - 5.0, r.y0 + 10.0),
+        Align::End,
+        None,
+    );
+    // The clip activity: the share of clipped samples and the longest run.
+    let share = meter(info, 2, 0.0);
+    let run = meter(info, 3, 0.0);
+    let warm = (run > fx::CLIPPER_RUN_SAFE_MS).then(|| hsl(28.0, 0.85, 0.55));
+    small(
+        c,
+        theme,
+        format!("CLIPPED {share:.1} %"),
+        pt(r.x1 - 5.0, r.y1 - 14.0),
+        Align::End,
+        None,
+    );
+    small(
+        c,
+        theme,
+        format!("RUN {run:.2} ms"),
+        pt(r.x1 - 5.0, r.y1 - 4.0),
+        Align::End,
+        warm,
     );
     level_bars(
         c,

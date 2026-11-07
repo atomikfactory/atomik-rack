@@ -3666,7 +3666,8 @@ impl<B: AudioBackend> Shell<B> {
     /// (the current one checked). A choice runs `rack.patch_pick` with the file.
     fn open_patch_siblings(&mut self, device: &DeviceKey) {
         let (items, current) = self.core.patch_siblings(device);
-        if items.is_empty() {
+        let can_clean = self.core.can_clean_up_bass(device);
+        if items.is_empty() && !can_clean {
             self.core
                 .report("There are no patches for this device type in the folder");
             return;
@@ -3679,7 +3680,7 @@ impl<B: AudioBackend> Shell<B> {
             return;
         };
         let at = self.rack_window_point(at);
-        let entries = context_menus::patch_entries(&items, current);
+        let entries = context_menus::patch_entries(&items, current, can_clean);
         self.patch_menu = Some(device.clone());
         let (window, size) = self.menu_window(Pane::Rack);
         let menu = ContextMenu::from_entries(entries, at, size);
@@ -4575,6 +4576,10 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a device first"),
             },
             ("rack.reset_device", None) => self.core.reset_selected_device(),
+            ("rack.clean_up_bass", None) => {
+                self.patch_menu = None;
+                self.core.clean_up_bass();
+            }
             ("rack.preview_player", None) => self.core.preview_selected_player(),
             ("rack.combine", None) => {
                 self.core.combine_selection();

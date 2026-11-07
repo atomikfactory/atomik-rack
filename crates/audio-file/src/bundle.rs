@@ -326,6 +326,33 @@ impl Bundle {
         self.store(&converted, name)
     }
 
+    /// [`Self::convert_rate`] for an asset this bundle may not hold: it is read from this bundle
+    /// when it is here, else from the first of the bundle folders `sources` that has it, and only
+    /// the converted copy is stored (here; the source bundles are never written). `AssetMissing`
+    /// when no bundle has the asset.
+    pub fn convert_rate_from(
+        &mut self,
+        sources: &[PathBuf],
+        hash: &str,
+        rate: u32,
+        name: &str,
+    ) -> Result<AssetInfo> {
+        let data = if self.exists(hash) {
+            self.load(hash)?
+        } else {
+            sources
+                .iter()
+                .filter_map(|root| Bundle::open(root).ok())
+                .find(|b| b.exists(hash))
+                .ok_or_else(|| AudioFileError::AssetMissing {
+                    hash: hash.to_owned(),
+                })?
+                .load(hash)?
+        };
+        let converted = resample_owned(data, rate)?;
+        self.store(&converted, name)
+    }
+
     fn store(&mut self, data: &AudioData, name: &str) -> Result<AssetInfo> {
         data.validate()?;
         if data.frames() == 0 {
