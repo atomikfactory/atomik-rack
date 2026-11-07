@@ -49,6 +49,7 @@ pub mod plugins;
 pub mod project;
 pub mod samples;
 pub mod stems;
+pub mod translation;
 pub mod warp;
 pub mod wav;
 pub mod zone;
