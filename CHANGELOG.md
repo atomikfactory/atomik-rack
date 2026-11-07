@@ -746,6 +746,22 @@ may break APIs and the patch and project formats.
   43: a program change with a bank is saved as `[tick, program, bank MSB, bank LSB]`, the usual one as before,
   and a clip's data is changed by the new `SetClipMidi` command. Not done yet: per-note expression (MPE), a
   groove taken from a MIDI file, and typing the bytes of a SysEx message.
+- **Reference tracks.** A song keeps up to 16 reference audio files (Mixer > Reference > Add Reference Track), saved
+  in the project as paths in an optional root field (written only when there are any; the project format stays 44)
+  and copied into the project's `Files` folder by Collect Files and by a save to a new place, as one undo step.
+  One key (Ctrl+Alt+R, Cmd+Alt+R on macOS; Mixer > Reference > Listen to Reference) switches between the mix and
+  the selected reference with a 30 ms crossfade, also on a stopped song. The reference plays after the master chain
+  on outputs 1 and 2, so none of the master processing touches it, and only live: a bounce, an export, a freeze or
+  an offline render never gets one. It starts at the file position equal to the song position, or at a start of its
+  own (Start at Playhead Position; Follow Playhead takes it away). The level is matched automatically: the engine
+  measures the short-term loudness of the mix (K-weighted, 3 s) while any reference exists, the file is measured
+  once for its loudest 3 s section, and the reference plays at the difference, updated slowly (at most 0.5 dB a
+  quarter of a second, the first reading at once, silence never moves it); Match Reference Level switches it off.
+  Reference Band (sub below 80 Hz, low to 300 Hz, mid to 4 kHz, high above) and Reference Stereo Solo (mid or side
+  on both sides) limit the mix and the reference alike, with a 5 ms duck around a change. Not done yet: a Reference
+  panel that lists the files by name with the matched gain and loudness shown (the Mixer menu lists them as
+  Reference 1 to 16 today and the status line names the file), a reference that follows a seek while it plays, a
+  manual trim of the matched gain, and a loudness match over a chosen section. The command count is 478.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before

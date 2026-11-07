@@ -37,7 +37,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
 | `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), the `organ`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
-| `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
+| `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
@@ -5871,6 +5871,38 @@ stderr is their output).
   file: version and platform, the status line and every counter, `settings.json`, a summary of the
   plugin cache and the plugin journal, the last crash report and the end of the log. Everything
   under the user's home folder is written as `~`.
+
+## 6o. Reference tracks
+
+A song keeps up to 16 reference audio files to compare the mix with. The list is project data with no part in the
+sound: `RackDoc::references` (`Reference`: a path and an optional cue in milliseconds), edited by
+`Command::SetReferences` (one undo step, `ViewChanged`) and saved as the optional root `"references"` (written only
+when there is an entry, ignorable, so the project format stays 44). Save As, a save to a new place and Collect Files
+copy a reference that lies outside the project into its `Files` folder with the same helper as the plugin files and
+point the list at the copy in one undo step; the files are never changed or removed.
+
+**The voice** ([engine/src/reference.rs](../crates/engine/src/reference.rs)). `ReferenceVoice` lives in the engine
+beside the preview voice and reuses its stream (`preview_channel`, the same 4-point Hermite resampling, the same
+retire queue). It runs at the end of `Engine::run_batch`, after the routing and the master meters and before the click,
+on interface outputs 1 and 2, and only live: nothing offline ever calls `EngineHandle::reference_start`, and a voice
+that is told nothing leaves the outputs bit for bit as they were. `ReferenceSettings` (listening, linear gain, band,
+stereo solo, measure) reach it through `ControlOp::ReferenceStart`, `ReferenceSet` and `ReferenceClear`.
+Listening crossfades the mix and the reference linearly over 30 ms; the gain glides with a 150 ms time constant. A band
+(`ReferenceBand`: Linkwitz-Riley filters at 80 Hz, 300 Hz and 4 kHz) and a mid or side solo (`ReferenceSolo`) go through
+two identical paths, one for the mix and one for the reference, and a change of either ducks the output for 5 ms each
+way around the swap. While `measure` is on, the voice measures the short-term loudness of the mix (the K-weighting of
+`atomik_dsp::k_weighting`, 3 s windows every 100 ms) and publishes it in `ReferenceShared`. The engine therefore
+depends on `atomik-dsp` now.
+
+**The session** ([app/src/app_core_reference.rs](../crates/app/src/app_core_reference.rs)). Selecting a
+reference decodes it on the worker `atomik-reference` and measures `measure_loudest`: the maximum of the 3 s window over the file. The
+reference key (`AppCore::toggle_reference`) fills the ring from the song position in seconds (through the tempo map) or
+from the cue, then sends `EngineSink::reference_start`; a feeder thread keeps the ring full. While any reference exists
+the engine measures the mix; the matched gain is the mix reading minus the loudest section, moved at most 0.5 dB every
+15 frames, the first reading at once, readings at or under -60 LUFS ignored. A new engine (`rebuild_engine`) returns the
+song to the mix. Commands: `mixer.toggle_reference` (Ctrl+Alt+R), `mixer.add_reference`, `mixer.select_reference`,
+`mixer.next_reference`, `mixer.remove_reference`, `mixer.reference_cue`, `mixer.reference_match`,
+`mixer.reference_band` and `mixer.reference_solo`, all in the Mixer menu's Reference submenu.
 
 ## 7. The UI crate
 
