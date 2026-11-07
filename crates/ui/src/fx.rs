@@ -42,11 +42,13 @@ pub enum FxKind {
     /// `atomik.dynamic-eq`: the static and live response curves over the spectrum of the input
     /// and of the key, with a draggable handle per band.
     DynamicEq,
+    /// `atomik.duck`: the drawn duck curve with draggable points and bends, and a LEARN button.
+    Duck,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 14] = [
+    pub const ALL: [FxKind; 15] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -61,12 +63,13 @@ impl FxKind {
         FxKind::Tuner,
         FxKind::Clipper,
         FxKind::DynamicEq,
+        FxKind::Duck,
     ];
 
     /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 13] = [
+    pub const EFFECTS: [FxKind; 14] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -80,6 +83,7 @@ impl FxKind {
         FxKind::Tuner,
         FxKind::Clipper,
         FxKind::DynamicEq,
+        FxKind::Duck,
     ];
 
     /// The kind of a device type id.
@@ -104,6 +108,7 @@ impl FxKind {
             FxKind::Tuner => "atomik.tuner",
             FxKind::Clipper => "atomik.clipper",
             FxKind::DynamicEq => "atomik.dynamic-eq",
+            FxKind::Duck => "atomik.duck",
         }
     }
 
@@ -123,6 +128,7 @@ impl FxKind {
             FxKind::AudioTrack | FxKind::Tuner => 0,
             FxKind::Clipper => CLIPPER_METERS,
             FxKind::DynamicEq => DYNEQ_METERS,
+            FxKind::Duck => DUCK_METERS,
         }
     }
 }
@@ -169,6 +175,9 @@ pub const DYNEQ_PEAKS: usize = 37;
 pub const DYNEQ_KEY_CABLED: usize = 39;
 /// Number of bands of the dynamic EQ.
 pub const DYNEQ_BANDS: usize = 5;
+/// The Sidechain Tool publishes `[dip, position along the drawn curve]`, both 0 to 1
+/// (`atomik_devices::duck::METERS`; a test pins the two together).
+pub const DUCK_METERS: usize = 2;
 
 /// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
 /// two together): which index holds what.
@@ -244,6 +253,7 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::DynamicEq, i) if i < DYNEQ_INPUT => Slot::Gain,
         (FxKind::DynamicEq, i) if i < DYNEQ_PEAKS => Slot::Power,
         (FxKind::DynamicEq, DYNEQ_KEY_CABLED) => Slot::Unit,
+        (FxKind::Duck, _) => Slot::Unit,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::GuitarAmp, 2) => Slot::Gr,

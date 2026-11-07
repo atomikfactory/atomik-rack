@@ -86,6 +86,13 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "curve", 0.4);
             set(&mut d, "symmetry", 0.3);
         }
+        FxKind::Duck => {
+            set(&mut d, "mode", 3.0);
+            set(&mut d, "depth", 0.9);
+            set(&mut d, "length", 3.0);
+            set(&mut d, "band", 1.0);
+            set(&mut d, "band_freq", 90.0);
+        }
         FxKind::DynamicEq => {
             set(&mut d, "band1.on", 1.0);
             set(&mut d, "band1.gain", 2.0);
@@ -138,6 +145,8 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
         ],
         // driven peak, output peak, clipped share (percent), longest run (ms)
         FxKind::Clipper => vec![0.9, 0.5, 18.5, 1.4],
+        // The dip and the position along the drawn curve.
+        FxKind::Duck => vec![0.6, 0.3],
         // Band gains (dB), 16 input energies, 16 key energies, output peaks, key cabled.
         FxKind::DynamicEq => {
             let mut v = vec![-1.5, -4.5, 3.0, -2.0, 3.0];

@@ -106,6 +106,12 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::Resonance(_, ResonanceBtn::Cut) => s(
             "Cut the marked resonances with the free bells: dynamic cuts that act only while the peak sounds",
         ),
+        Hit::DuckLearn(_) => s(
+            "Listen to the range between the locators at the key and draw the duck curve from its hits",
+        ),
+        Hit::DuckPlot(_) => s(
+            "Drag a point or the line between two; click to add a point, double-click a point to remove it",
+        ),
         Hit::TunerButton(_) => s("Show or hide the tuner: it reads this track's input"),
         Hit::Preview(_) => s(
             "Preview this player: it and the players after it run while the song is stopped (click again to stop)",
@@ -187,6 +193,11 @@ impl RackView {
             }
             if self.devices[i].fx == Some(crate::fx::FxKind::DynamicEq)
                 && let Some(text) = crate::fx::dyneq_help(p.key)
+            {
+                return Some(Help::new(rect, text));
+            }
+            if self.devices[i].fx == Some(crate::fx::FxKind::Duck)
+                && let Some(text) = crate::duck_panel::duck_help(p.key)
             {
                 return Some(Help::new(rect, text));
             }

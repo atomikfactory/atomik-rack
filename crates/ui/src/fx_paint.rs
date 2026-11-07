@@ -173,6 +173,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::DynamicEq => dynamic_eq(c, theme, fx, info),
         FxKind::Distortion => distortion(c, theme, fx, info, &p),
         FxKind::Clipper => clipper(c, theme, fx, info, &p),
+        FxKind::Duck => crate::duck_panel::paint(c, theme, fx.plot, info),
         FxKind::GuitarAmp => guitar_amp(c, theme, fx, info, &p),
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),

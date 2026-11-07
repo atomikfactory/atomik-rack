@@ -46,6 +46,7 @@ mod cpu_readout;
 mod device_drag;
 mod device_maps;
 mod drum_input;
+mod duck_input;
 mod fx_input;
 mod group_chip;
 mod handles;
@@ -177,6 +178,10 @@ enum Hit {
     ScButton(usize),
     /// The FIND or CUT button of a dynamic EQ plot.
     Resonance(usize, crate::resonance_marks::ResonanceBtn),
+    /// The curve plot of a Sidechain Tool panel (points and segments are picked by position).
+    DuckPlot(usize),
+    /// The LEARN button of a Sidechain Tool panel.
+    DuckLearn(usize),
     /// The TUNER button of an audio track panel.
     TunerButton(usize),
     /// A button of the Character preset matrix (device index, preset 0..16).
@@ -249,6 +254,8 @@ impl Hit {
             | Hit::EqPlot(i)
             | Hit::ScButton(i)
             | Hit::Resonance(i, _)
+            | Hit::DuckPlot(i)
+            | Hit::DuckLearn(i)
             | Hit::TunerButton(i)
             | Hit::Preset(i, _)
             | Hit::PresetGrid(i)
@@ -490,6 +497,8 @@ enum Drag {
     Eq(EqDrag),
     /// The waveform of a granular sampler is dragged: it sets the position.
     Wave(wave_drag::WaveDrag),
+    /// A point or a segment of a Sidechain Tool's curve is dragged (see [`duck_input`]).
+    Duck(duck_input::DuckDrag),
     /// A cell of a drum generator grid is pressed (see [`drum_input::DrumDrag`]).
     Drum(drum_input::DrumDrag),
 }
@@ -1975,6 +1984,12 @@ impl RackView {
                                 for (btn, r) in crate::resonance_marks::buttons(fx.plot) {
                                     tree.add(dn, r + off, Hit::Resonance(i, btn), false);
                                 }
+                            }
+                            if fx.kind == FxKind::Duck {
+                                let area = crate::duck_panel::inner(fx.plot).inflate(8.0, 4.0);
+                                tree.add(dn, area + off, Hit::DuckPlot(i), false);
+                                let learn = crate::duck_panel::learn_button(fx.plot);
+                                tree.add(dn, learn + off, Hit::DuckLearn(i), false);
                             }
                             if let Some(b) = fx.button {
                                 tree.add(dn, b + off, Hit::ScButton(i), false);
@@ -3475,6 +3490,7 @@ impl RackView {
         match self.drag.clone() {
             Drag::Eq(e) => self.eq_move(e, rp, out),
             Drag::Wave(w) => self.wave_move(w, rp, out),
+            Drag::Duck(d) => self.duck_move(d, rp, out),
             Drag::Drum(d) => self.drum_move(d, pos, out),
             Drag::Value {
                 dev,
@@ -3838,6 +3854,8 @@ impl RackView {
             (Hit::Preset(i, n), PointerButton::Primary) => self.preset_down(i, n, out),
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
             (Hit::Resonance(i, btn), PointerButton::Primary) => self.resonance_down(i, btn, out),
+            (Hit::DuckPlot(i), PointerButton::Primary) => self.duck_down(i, rp, clicks, out),
+            (Hit::DuckLearn(i), PointerButton::Primary) => self.duck_learn_down(i, out),
             (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
             (h @ (Hit::IoClip(..) | Hit::IoHeader(_)), PointerButton::Primary) => self.io_down(h),
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
@@ -3875,6 +3893,8 @@ impl RackView {
                 | Hit::Plugin(i, _)
                 | Hit::ScButton(i)
                 | Hit::Resonance(i, _)
+                | Hit::DuckPlot(i)
+                | Hit::DuckLearn(i)
                 | Hit::Preview(i)
                 | Hit::TunerButton(i),
                 _,
@@ -4083,7 +4103,7 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
             Drag::Assign { device, param, .. } => self.assign_up(&device, &param, pos, out),
-            Drag::Eq(_) | Drag::Wave(_) => out.push(UiAction::EndMerge),
+            Drag::Eq(_) | Drag::Wave(_) | Drag::Duck(_) => out.push(UiAction::EndMerge),
             Drag::Drum(d) => self.drum_up(&d, out),
             Drag::Value { .. } => {
                 self.tree.release_capture();
@@ -4615,6 +4635,7 @@ impl RackView {
             Drag::Sens { dev, start, .. } => self.store_sens(dev, start),
             Drag::Eq(e) => self.eq_cancel(&e, out),
             Drag::Wave(w) => self.wave_cancel(&w, out),
+            Drag::Duck(d) => self.duck_cancel(&d, out),
             Drag::Drum(d) => self.drum_cancel(&d, out),
             _ => {}
         }

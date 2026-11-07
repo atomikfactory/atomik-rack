@@ -93,6 +93,7 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::Tuner), 3);
     assert_eq!(units(FxKind::Clipper), 3);
     assert_eq!(units(FxKind::DynamicEq), 9);
+    assert_eq!(units(FxKind::Duck), 4);
 }
 
 fn overlaps(a: &Rect, b: &Rect) -> bool {
@@ -118,12 +119,13 @@ fn every_param_and_socket_is_placed_once_and_nothing_overlaps() {
             "{kind:?} places bypass as a control"
         );
         params.push(bypass);
-        // Hidden `internal.` params are set by the app and never placed.
+        // Hidden `internal.` params are set by the app and `hidden.` ones belong to a panel's own
+        // editor: neither is placed.
         params.extend(
             d.params
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| p.key.starts_with("internal."))
+                .filter(|(_, p)| atomik_model::console::is_hidden_param(p.key))
                 .map(|(i, _)| i),
         );
         params.sort_unstable();

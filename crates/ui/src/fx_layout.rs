@@ -43,6 +43,7 @@ const TOP_MASTERING: f64 = 112.0;
 const TOP_SPECTRUM: f64 = 200.0;
 const TOP_PHASE: f64 = 148.0;
 const TOP_TUNER: f64 = 92.0;
+const TOP_DUCK: f64 = 150.0;
 
 /// Width of the guitar amp's setup selector.
 const SETUP_CELL_W: f64 = 140.0;
@@ -232,6 +233,12 @@ fn sections(kind: FxKind) -> Def {
             ("HIGH SHELF", DYNEQ_BAND_5),
             ("OUTPUT", &["output", "delta"]),
         ],
+        FxKind::Duck => &[
+            ("MODE", &["mode", "rate", "length", "trigger"]),
+            ("LEVEL", &["depth", "threshold", "send"]),
+            ("SHAPE", &["attack", "time", "curve"]),
+            ("BAND", &["band", "band_freq"]),
+        ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
             ("MULTIBAND", &["multiband.on", "xover.low", "xover.high"]),
@@ -300,6 +307,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
         FxKind::AudioTrack | FxKind::Tuner => "TUNER",
         FxKind::Clipper => "CURVE",
+        FxKind::Duck => "DUCK CURVE",
     }
 }
 
@@ -318,6 +326,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
         FxKind::AudioTrack | FxKind::Tuner => (0.0, TOP_TUNER),
         FxKind::Clipper => (LEFT_CLIPPER, 0.0),
+        FxKind::Duck => (0.0, TOP_DUCK),
     }
 }
 
@@ -486,6 +495,13 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         FxKind::Eq | FxKind::DynamicEq => (
             Rect::new(v.x0 + 26.0, v.y0, v.x1 - 40.0, v.y1 - 12.0),
             Rect::new(v.x1 - 32.0, v.y0, v.x1, v.y1 - 12.0),
+            empty,
+            None,
+        ),
+        // The curve fills the visual; the LEARN button sits inside it.
+        FxKind::Duck => (
+            Rect::new(v.x0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
+            empty,
             empty,
             None,
         ),
