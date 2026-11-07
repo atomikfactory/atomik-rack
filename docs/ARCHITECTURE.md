@@ -468,7 +468,13 @@ is named like the file, else the sibling `<name>/`); the job copies each used as
 its peak cache, from the session bundle and then from the folders near the project file that hold an `Audio/`
 directory (`audio_folders`), writes the project atomically and removes the orphans of the destination only. Save As
 uses the same copy instead of copying the whole `Audio/` tree. Audio that was missing and was found is loaded by the
-load worker, and a toast is the report. Assets are named by their hash, so the project text never changes.
+load worker, and a toast is the report. Files that the text state of a plugin names outside the project
+(`RackDoc::plugin_file_refs`) are gathered by `AppCore::collect_plugin_files` on the UI thread, from `prepare_save`,
+for Collect Files and for any save to a new place: `collect_external_file` (`audio-file`) copies each into the
+`Files/` folder of the bundle folder (never over a file; a size cap of 64 MiB) and `rewrite_paths` points the state
+at the copy through `PluginCommand::SetState`, the later plugins joined to the first undo step. Binary states are
+never read, and nothing is collected into the factory folder. Assets are named by their hash, so the project text
+never changes.
 
 The copy is read in blocks and watches a `CollectProgress` (a cancel flag and a file count) that the UI thread holds in
 the running `Flight`: `AppCore::cancel_collect` (`file.cancel_collect`) makes the worker stop before the next block, no
@@ -480,10 +486,14 @@ status line (`save_progress`) counts the files while it runs. `AppCore::collect_
 written: it checks that the new file reads back as written and that `verify_copy` finds every asset of the old bundle in
 the new one with the same bytes, and only then removes the old project file and the old copies of the assets the project
 uses, then the old folders that are empty (`remove_dir`, never recursive). A place that is the old one, inside it or
-around it, or another project file in the old folder or below it (its `Audio/` may hold audio that project uses),
-makes it remove less: the first two nothing, the last only the old project file. A failed check is an error that
-leaves the old project as it was. The project's versions (below) are copied to the new place and compared byte for
-byte with the same checks before the old ones are removed.
+around it makes it remove nothing. Other project files in the old folder or below it are all read first (with the
+versions kept beside them, `VersionStore::assets`) and the old audio any of them names stays; only the rest of the
+old audio goes, and if any project, version index or folder cannot be read (a link is not followed, and a folder
+more than twelve levels down counts as unreadable) none of the audio goes, only the old project file
+(`RetireReport::unreadable`, `kept_audio`). That loop is the only place old audio is removed. A failed check is an
+error that leaves the old project as it was. `AppCore::move_project` and `AppCore::collect_files` refuse a project in
+the factory folder (`AppCore::in_factory`). The project's versions (below) are copied to the new place and compared
+byte for byte with the same checks before the old ones are removed.
 
 Versions are [`audio-file/src/versions.rs`](../crates/audio-file/src/versions.rs): `VersionStore` reads and writes the
 index (`versions.txt`, tab separated, one line per version: number, automatic or named, protected, time, file, audio,

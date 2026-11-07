@@ -205,6 +205,10 @@ pub(super) struct AudioState {
     saving: Option<save::Flight>,
     /// The window saves on a worker (see [`AppCore::set_background_save`]).
     background_save: bool,
+    /// What the last save did with the files plugin states name, until its toast says so.
+    externals: Option<save::ExternalReport>,
+    /// The same, worded, waiting for the toast of Move Project.
+    externals_text: Option<String>,
 }
 
 /// How long a recording in the shared scratch folder must have been left alone before it is
@@ -257,6 +261,8 @@ impl AudioState {
             recovered_files: Vec::new(),
             saving: None,
             background_save: false,
+            externals: None,
+            externals_text: None,
         }
     }
 
