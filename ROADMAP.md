@@ -136,6 +136,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the details.
   (the tracks are summed to mono), a re-analysis that shows what a de-mask or a fix changed, a check of the kick
   against the bass (timing, phase and tuning), buttons that open a clipper for the peaks and a kick and bass tool
   from their findings (the findings give the number and the reason today), and tunable thresholds.
+- **Reference tracks.** Up to 16 reference files per song, kept in the project and collected with it, one key to switch between the mix and the selected reference after the master chain (live only, never in a bounce or export) with a short crossfade, a start at the song position or at a cue of its own, an automatic level match from the short-term loudness of the mix and of the loudest section of the reference with the matched gain slowly following, and a band solo (sub, low, mid, high) and a mid or side solo applied to both. Still to come: a Reference panel that lists the files by name and shows the matched gain and loudness (the Mixer menu lists them by number today), a reference that follows seeks while it plays, a manual trim of the matched gain and a loudness match over a section the user chooses.
 
 ## Phase 5: Devices
 

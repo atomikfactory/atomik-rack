@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 atomik-core.workspace = true
 atomik-device-sdk.workspace = true
+atomik-dsp.workspace = true
 rtrb.workspace = true
 thiserror.workspace = true
 

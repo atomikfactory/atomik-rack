@@ -307,6 +307,15 @@ enum ControlOp {
     },
     /// Fade the preview out.
     PreviewStop,
+    /// Load a reference stream and apply `settings` in the same step.
+    ReferenceStart {
+        stream: crate::PreviewStream,
+        settings: crate::ReferenceSettings,
+    },
+    /// Change the reference voice settings.
+    ReferenceSet(crate::ReferenceSettings),
+    /// Drop the reference stream, if any.
+    ReferenceClear,
     /// Start (`on`) or stop the preview clock of note player `id`.
     PreviewPlayer { id: DeviceInstanceId, on: bool },
     /// Put a tap on the notes device `id` receives (or, with `None`, take it off); the tap it
@@ -447,6 +456,8 @@ pub struct Engine {
     preview: crate::preview::PreviewVoice,
     /// Whether the preview voice is sounding, published once per batch.
     preview_active: Arc<AtomicBool>,
+    /// The reference voice (after the master chain, outside the graph).
+    reference: crate::reference::ReferenceVoice,
 }
 
 /// The non-RT half: submits plans, routings, devices, params and notes, and drops whatever the
@@ -482,6 +493,8 @@ pub struct EngineHandle {
     streams: StreamControl,
     /// Whether the preview voice is sounding (published by the engine each batch).
     preview_active: Arc<AtomicBool>,
+    /// What the reference voice publishes.
+    reference: Arc<crate::ReferenceShared>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -567,6 +580,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let meters = Arc::new(Meters::new(caps.arena));
     let latencies = Arc::new(Latencies::new(caps.arena));
     let preview_active = Arc::new(AtomicBool::new(false));
+    let reference = Arc::new(crate::ReferenceShared::default());
     let engine = Engine {
         config: cfg,
         tempo: cfg.tempo,
@@ -603,6 +617,10 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         tap: None,
         preview: crate::preview::PreviewVoice::new(cfg.sample_rate.hz()),
         preview_active: Arc::clone(&preview_active),
+        reference: crate::reference::ReferenceVoice::new(
+            cfg.sample_rate.hz(),
+            Arc::clone(&reference),
+        ),
     };
     let handle = EngineHandle {
         config: cfg,
@@ -626,6 +644,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         latencies,
         streams: StreamControl::new(stream_stats, request_rx),
         preview_active,
+        reference,
     };
     (engine, handle)
 }
@@ -869,6 +888,44 @@ impl EngineHandle {
     /// [`EngineError::QueueFull`].
     pub fn preview_stop(&mut self) -> Result<(), EngineError> {
         self.push(0, ControlOp::PreviewStop)
+    }
+
+    /// Loads `stream` as the reference (a file read from the position the user chose) and
+    /// applies `settings`, in one step at the next batch boundary. A reference that is loaded
+    /// already is cut. The voice plays after the master chain on interface outputs 1 and 2,
+    /// live only (see the `reference` module).
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`]; the stream is then dropped here (its feed sees it abandoned).
+    pub fn reference_start(
+        &mut self,
+        stream: crate::PreviewStream,
+        settings: crate::ReferenceSettings,
+    ) -> Result<(), EngineError> {
+        self.push(0, ControlOp::ReferenceStart { stream, settings })
+    }
+
+    /// Changes the reference voice settings (listening, level match, band and side solo,
+    /// measuring the mix).
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn reference_set(&mut self, settings: crate::ReferenceSettings) -> Result<(), EngineError> {
+        self.push(0, ControlOp::ReferenceSet(settings))
+    }
+
+    /// Drops the reference stream at once (no crossfade: set `listening` off first for one).
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn reference_clear(&mut self) -> Result<(), EngineError> {
+        self.push(0, ControlOp::ReferenceClear)
+    }
+
+    /// What the reference voice publishes: the short-term loudness of the mix and whether a
+    /// reference is loaded. Never blocks.
+    pub fn reference_shared(&self) -> Arc<crate::ReferenceShared> {
+        Arc::clone(&self.reference)
     }
 
     /// True while a preview voice is sounding (including its fade-out). Never blocks.
@@ -1465,6 +1522,8 @@ impl Engine {
             self.meters
                 .add_cpu_budget(crate::timing::batch_budget_ns(self.config.sample_rate.hz()));
         }
+        // The reference replaces the mix after the master chain, before the click.
+        self.reference.process(&mut self.out_fifo);
         let click_delay = self.routing.as_mut().and_then(|r| r.click_delay_mut());
         self.player.mix_metronome(&mut self.out_fifo, click_delay);
         self.preview.mix(&mut self.out_fifo);
@@ -1507,6 +1566,7 @@ impl Engine {
             // Streams the preview voice finished since the last boundary go back first, so
             // the voice's dead list is empty when a control message is applied.
             self.drain_preview();
+            self.drain_reference();
             if self.pending_retire.is_some() {
                 break;
             }
@@ -1659,6 +1719,18 @@ impl Engine {
                     self.retire(Garbage::Retired(Retired::Preview(cut)));
                 }
             }
+            ControlOp::ReferenceStart { stream, settings } => {
+                if let Some(cut) = self.reference.load(stream) {
+                    self.retire(Garbage::Retired(Retired::Preview(cut)));
+                }
+                self.reference.set(settings);
+            }
+            ControlOp::ReferenceSet(settings) => self.reference.set(settings),
+            ControlOp::ReferenceClear => {
+                if let Some(cut) = self.reference.clear() {
+                    self.retire(Garbage::Retired(Retired::Preview(cut)));
+                }
+            }
             ControlOp::PreviewPlayer { id, on } => self.arena.set_preview(id, on),
             ControlOp::NoteTap { id, tap } => {
                 if let Some(old) = self.arena.set_note_tap(id, tap) {
@@ -1677,6 +1749,16 @@ impl Engine {
     fn drain_preview(&mut self) {
         while self.pending_retire.is_none() {
             let Some(stream) = self.preview.take_dead() else {
+                break;
+            };
+            self.retire(Garbage::Retired(Retired::Preview(stream)));
+        }
+    }
+
+    /// Retires the reference streams that ended, like [`Self::drain_preview`].
+    fn drain_reference(&mut self) {
+        while self.pending_retire.is_none() {
+            let Some(stream) = self.reference.take_dead() else {
                 break;
             };
             self.retire(Garbage::Retired(Retired::Preview(stream)));

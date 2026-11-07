@@ -199,6 +199,16 @@ pub const MIDI_RESOLUTION_ARGS: &[&str] = &["native", "960", "480"];
 pub const METER_MODE_ARGS: &[&str] = &["peak", "ppm", "vu"];
 /// The values of `mixer.morph_time`: how long a morph between two snapshots takes, in seconds.
 pub const MORPH_TIME_ARGS: &[&str] = &["1", "2", "4", "8"];
+/// The values of `mixer.reference_band`: the band the mix and the reference are limited to.
+pub const REFERENCE_BAND_ARGS: &[&str] = &["full", "sub", "low", "mid", "high"];
+/// The values of `mixer.reference_solo`: the stereo part the mix and the reference are limited to.
+pub const REFERENCE_SOLO_ARGS: &[&str] = &["off", "mid", "side"];
+/// The values of `mixer.reference_cue`: where the selected reference starts from.
+pub const REFERENCE_CUE_ARGS: &[&str] = &["playhead", "follow"];
+/// The values of `mixer.select_reference`: the reference track, counted from 1.
+pub const REFERENCE_SELECT_ARGS: &[&str] = &[
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16",
+];
 /// The values of `audio.input_channels`: the host inputs the project asks for.
 pub const INPUT_CHANNEL_ARGS: &[&str] = &["0", "1", "2", "4", "8", "16", "32"];
 /// The values of `audio.output_channels`: the host outputs the project asks for.
@@ -1042,6 +1052,13 @@ const COMMANDS: &[CommandDef] = &[
         .menu(),
     cmd("midi.mappings", "MIDI Mappings...", G::Mixer, C::Global).menu(),
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
+    cmd(
+        "mixer.add_reference",
+        "Add Reference Track...",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
     cmd("mixer.add_to_vca", "Add to VCA", G::Mixer, C::Global).menu(),
     cmd(
         "mixer.bypass_all_inserts",
@@ -1156,6 +1173,13 @@ const COMMANDS: &[CommandDef] = &[
         .arg(MORPH_TIME_ARGS)
         .menu(),
     cmd(
+        "mixer.next_reference",
+        "Next Reference Track",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.paste_settings",
         "Paste Channel Settings",
         G::Mixer,
@@ -1184,6 +1208,37 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "mixer.reference_band",
+        "Reference Band",
+        G::Mixer,
+        C::Global,
+    )
+    .arg(REFERENCE_BAND_ARGS)
+    .menu(),
+    cmd(
+        "mixer.reference_cue",
+        "Reference Start",
+        G::Mixer,
+        C::Global,
+    )
+    .arg(REFERENCE_CUE_ARGS)
+    .menu(),
+    cmd(
+        "mixer.reference_match",
+        "Match Reference Level",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.reference_solo",
+        "Reference Stereo Solo",
+        G::Mixer,
+        C::Global,
+    )
+    .arg(REFERENCE_SOLO_ARGS)
+    .menu(),
+    cmd(
         "mixer.remove_channel",
         "Delete Channel",
         G::Mixer,
@@ -1193,6 +1248,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.remove_from_vca",
         "Remove from VCA",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.remove_reference",
+        "Remove Reference Track",
         G::Mixer,
         C::Global,
     )
@@ -1253,6 +1315,14 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "mixer.select_reference",
+        "Select Reference Track",
+        G::Mixer,
+        C::Global,
+    )
+    .arg(REFERENCE_SELECT_ARGS)
+    .menu(),
+    cmd(
         "mixer.select_right",
         "Select Next Channel",
         G::Mixer,
@@ -1283,6 +1353,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.toggle_polarity",
         "Toggle Polarity",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.toggle_reference",
+        "Listen to Reference",
         G::Mixer,
         C::Global,
     )

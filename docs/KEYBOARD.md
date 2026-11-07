@@ -175,6 +175,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Transpose Octave Up | `Shift+Up` (editor) | `Ctrl+Shift+Up` (editor) |
 | Transpose Up | `Up` (editor) | `Ctrl+Up` (editor) |
 | Compare A/B | - | `Ctrl+Alt+B` |
+| Listen to Reference | - | `Ctrl+Alt+R` |
 | Recall Next Snapshot | - | `Ctrl+Alt+PageDown` |
 | Recall Previous Snapshot | - | `Ctrl+Alt+PageUp` |
 | Route to New Output Bus | - | `Ctrl+G` |
@@ -385,6 +386,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Compare A/B | global | `Ctrl+Alt+B` | `Cmd+Opt+B` | `Ctrl+Alt+B` |
 | Extend Selection Left | mixer | `Shift+Left` | `Shift+Left` | `Shift+Left` |
 | Extend Selection Right | mixer | `Shift+Right` | `Shift+Right` | `Shift+Right` |
+| Listen to Reference | global | `Ctrl+Alt+R` | `Cmd+Opt+R` | `Ctrl+Alt+R` |
 | Lower Focused Control | mixer | `Down` | `Down` | `Down` |
 | Lower Focused Control (Fine) | mixer | `Shift+Down` | `Shift+Down` | `Shift+Down` |
 | Lower Focused Control by Ten | mixer | `PageDown` | `PageDown` | `PageDown` |

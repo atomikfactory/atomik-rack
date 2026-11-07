@@ -771,7 +771,7 @@ may break APIs and the patch and project formats.
   opens a pop-up that starts with Clean Up Bass: it sets the phase to reset at 0 degrees, one voice, a 12 ms
   amp release when the release is outside 5 to 20 ms and the filter key tracking on, only where they differ,
   in one undo step, and the status line names what changed. The command is `rack.clean_up_bass`
-  (470 commands). The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
+  The Semi-Modular and FM synth already restarted at phase 0; polarity stays in the Stereo Tool.
 - **Kick and Bass Check, and phase rotation.** Mixer > Kick and Bass Check opens a panel where you pick a kick
   track and a bass track. The check renders the two channel strips in one pass on a worker (the first 20
   seconds, deterministic), compares the sub range below 120 Hz of their sum with the power sum of the two for
@@ -787,7 +787,7 @@ may break APIs and the patch and project formats.
   song itself. The Stereo Tool has two new params, `rotate` (0 to 180 degrees) and `rotate_hz`,
   an all-pass that turns the phase at unit gain (0 is the input bit for bit, 180 is a polarity inversion); the
   fix for an uneven waveform in `atomik_dsp::best_rotation` finds the angle that evens the positive and negative
-  peaks and reports the headroom gained. The command is `mixer.kick_bass_check` (471 commands); the project
+  peaks and reports the headroom gained. The command is `mixer.kick_bass_check`; the project
   format is unchanged.
 - **Clipper.** A new effect, Clipper (`atomik.clipper`): an input gain drives the signal into a ceiling through a
   curve that runs from a hard clip to a soft knee (under the knee nothing changes; above it the curve leaves with
@@ -845,7 +845,7 @@ may break APIs and the patch and project formats.
   feed to the reference level, a static cut on a Dynamic EQ band of the track that fills the low mids most, or a
   Stereo Tool with Mono on. A peak finding moves the playhead to it and a low-mid finding opens the masking map.
   The thresholds are constants with their reasons in one place. The check never changes the song, the format is
-  still 44 and the command count 471.
+  still 44 and the command is `mixer.check_mix`.
 - **Loudness match and a blind A/B test for every built-in effect.** Right-click an effect and choose Match Loudness:
   the effect's bypass wrapper then measures the K-weighted short-term loudness (the Mastering meter's filters, 100 ms
   steps over 3 s) of what goes in and of what the effect makes, and applies a gain, smoothed over about a second, to
@@ -860,6 +860,22 @@ may break APIs and the patch and project formats.
   guessing, and whether you reliably prefer it. The test sets bypass on the engine only, hands the effect back as
   the project has it when it ends, and changes nothing in the project. New commands `rack.toggle_match` and
   `rack.blind_ab` (no default keys); the command count is 471 and the format is still 44.
+- **Reference tracks.** A song keeps up to 16 reference audio files (Mixer > Reference > Add Reference Track), saved
+  in the project as paths in an optional root field (written only when there are any; the project format stays 44)
+  and copied into the project's `Files` folder by Collect Files and by a save to a new place, as one undo step.
+  One key (Ctrl+Alt+R, Cmd+Alt+R on macOS; Mixer > Reference > Listen to Reference) switches between the mix and
+  the selected reference with a 30 ms crossfade, also on a stopped song. The reference plays after the master chain
+  on outputs 1 and 2, so none of the master processing touches it, and only live: a bounce, an export, a freeze or
+  an offline render never gets one. It starts at the file position equal to the song position, or at a start of its
+  own (Start at Playhead Position; Follow Playhead takes it away). The level is matched automatically: the engine
+  measures the short-term loudness of the mix (K-weighted, 3 s) while any reference exists, the file is measured
+  once for its loudest 3 s section, and the reference plays at the difference, updated slowly (at most 0.5 dB a
+  quarter of a second, the first reading at once, silence never moves it); Match Reference Level switches it off.
+  Reference Band (sub below 80 Hz, low to 300 Hz, mid to 4 kHz, high above) and Reference Stereo Solo (mid or side
+  on both sides) limit the mix and the reference alike, with a 5 ms duck around a change. Not done yet: a Reference
+  panel that lists the files by name with the matched gain and loudness shown (the Mixer menu lists them as
+  Reference 1 to 16 today and the status line names the file), a reference that follows a seek while it plays, a
+  manual trim of the matched gain, and a loudness match over a chosen section. The command count is 478.
 
 ### Fixed
 - Undoing while a clip start is being trimmed no longer makes the next mouse move send a trim before
