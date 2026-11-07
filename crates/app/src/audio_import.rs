@@ -158,6 +158,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<atomik_model::energy_map::EnergyMap>, String>>,
     },
+    /// The master measurement of the Delivery panel finished (`Ok(None)`: it was cancelled), or
+    /// failed: see [`crate::delivery_worker`].
+    Delivery {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_render::loudness::LoudnessReport>, String>>,
+    },
     /// The bass reading finished (`Ok(None)`: it was cancelled), or failed: see
     /// [`crate::bass_read_worker`].
     BassRead {

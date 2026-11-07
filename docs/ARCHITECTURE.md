@@ -4727,7 +4727,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (499) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (501) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5784,6 +5784,43 @@ audio thread.
 - **The count.** `overuse` says when a kind is on more than half of the boundaries and on at least three of them.
   The app keeps `(boundary, kind, undo depth)` for the session; an undo takes the entries above the new depth off,
   a new or opened project clears it, and the warning is added to the status line message.
+
+### Delivery targets and the Peak Surgeon
+
+File > Delivery Targets (`file.delivery_targets`) and Edit > Peak Surgeon (`sequencer.peak_surgeon`) open one modal
+panel, `DeliveryView` ([ui/src/delivery_panel.rs](../crates/ui/src/delivery_panel.rs)), on its Targets or its Peaks
+page. The panel only draws a `DeliveryData` and emits `UiAction::Delivery`; the app core holds the state and nothing
+runs on the audio thread.
+
+- **The targets** ([model/src/delivery.rs](../crates/model/src/delivery.rs)). `TARGETS` is the table of eight
+  generic targets (an integrated loudness and a true-peak ceiling each, no service named). `assess` applies one to a
+  measured master: the gain is the target minus the loudness, and the verdict is `Unchanged`, `TurnedDown`,
+  `TurnedUp` (the peak after the gain stays under the ceiling) or `IntoLimiter` (it does not: a quiet master with hot
+  peaks that a normalising chain would turn up into its own limiter).
+- **The measurement.** `atomik_render::delivery::measure_master` renders the master section as a stem over the song
+  with no tail (as `energy::render_blocks` does) and measures it with `loudness::measure`, the report the export
+  writes. The app runs it on the worker of [delivery_worker.rs](../crates/app/src/delivery_worker.rs) (`Msg::Delivery`,
+  progress and cancel as atomics), keeps the last report with the document revision it measured and shows it faded
+  once the song changed.
+- **The project's target.** `RackDoc::delivery` is `Option<Delivery>` (a name, a loudness and a ceiling), saved as the
+  root field `delivery` only when set (format 44, `.ignorable()`), edited with `Command::SetDelivery`, one `Swap`
+  that reports `ViewChanged`, and accepted by `Command::Batch`. Set Ceiling is a batch of that command and a
+  `SetParam` of `ceiling` on the Mastering device of the master's insert chain, else its Clipper
+  (`AppCore::delivery_set_ceiling`), so it is one undo step; `Delivery::compare` words the export toast against it.
+- **The scan** ([model/src/peak_surgeon.rs](../crates/model/src/peak_surgeon.rs)). `Scanner` takes the levels a clip
+  plays (the highest absolute sample of any channel times `AudioClipContent::played_gain`: clip gain, fades and
+  envelope) in chunks, so a clip of any length is read from the engine's assets in 64k-frame blocks, forwards or, for
+  a reversed clip, block by block from the end. A peak is the first frame of a flat top at least as high as every frame
+  within `width` frames, and the scanner keeps the `KEEP` highest.
+- **The plan and the edit.** `plan` takes the peaks from the highest down and dips each by `step_db` (0.2 to 0.4)
+  until it is under the threshold; a second step on the same frame deepens that dip, a dip never takes more than
+  `MAX_DIP_DB`, and the number of dips is bound by the room left in the envelope (`dips_that_fit`: three points
+  each). `apply_dips` writes each dip as three breakpoints of the clip's gain envelope (a triangle in linear gain,
+  the value at a breakpoint being the existing envelope's times the dips'), replacing the existing points inside the
+  dip's span, so the edit is one `SetAudioClip` and the file and the clip gain stay as they were. The app
+  ([app_core_surgeon.rs](../crates/app/src/app_core_surgeon.rs)) reads the clip again after every edit and reports the
+  drop of the highest peak from that second scan, not from the plan. A warped or looped clip, a missing file and an
+  asset at another rate are refused.
 
 ## 6l. The library
 

@@ -306,6 +306,10 @@ pub struct AppCore<S: EngineSink> {
     repetition: repetition::RepetitionState,
     /// The strip the bass-read panel reads and what it found (see [`bass_read`]).
     bass_read: bass_read::BassReadState,
+    /// The master measurement of the Delivery panel (see [`delivery`]).
+    delivery: delivery::DeliveryState,
+    /// The Peak Surgeon: the scanned clip and its peaks (see [`surgeon`]).
+    surgeon: surgeon::SurgeonState,
     /// The Sound Analyst: the analysed file, its proposed patch and the patch made (see
     /// [`sound`]).
     sound: sound::SoundState,
@@ -584,6 +588,8 @@ impl<S: EngineSink> AppCore<S> {
             reference: reference_ops::ReferenceState::new(),
             repetition: repetition::RepetitionState::default(),
             bass_read: bass_read::BassReadState::default(),
+            delivery: delivery::DeliveryState::default(),
+            surgeon: surgeon::SurgeonState::default(),
             sound: sound::SoundState::default(),
             wavetable: wavetable_edit::WavetableState::default(),
             lens: lens::LensState::default(),
@@ -3954,6 +3960,8 @@ pub use masking::DemaskReport;
 
 #[path = "app_core_bass_read.rs"]
 mod bass_read;
+#[path = "app_core_delivery.rs"]
+mod delivery;
 #[path = "app_core_energy.rs"]
 mod energy;
 #[path = "app_core_lens.rs"]
@@ -3968,6 +3976,8 @@ mod reverb_send;
 mod sound;
 #[path = "app_core_split_sub.rs"]
 mod split_sub;
+#[path = "app_core_surgeon.rs"]
+mod surgeon;
 #[path = "app_core_wavetable.rs"]
 mod wavetable_edit;
 
@@ -4043,6 +4053,10 @@ mod masking_tests;
 #[cfg(test)]
 #[path = "app_core_mixcheck_tests.rs"]
 mod mixcheck_tests;
+
+#[cfg(test)]
+#[path = "app_core_delivery_tests.rs"]
+mod delivery_tests;
 
 #[cfg(test)]
 #[path = "app_core_energy_tests.rs"]

@@ -831,6 +831,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.delivery_targets",
+        "Delivery Targets",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_archive",
         "Export Project Archive",
         G::Global,
@@ -2213,6 +2220,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.pattern_lane_to_notes",
         "Pattern Lane to Notes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.peak_surgeon",
+        "Peak Surgeon",
         G::Sequencer,
         C::Sequencer,
     )

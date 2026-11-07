@@ -87,6 +87,10 @@ pub enum AppCommand {
     /// File ▸ Sound Analyst…: the panel that measures an audio file and proposes a starting patch
     /// to recreate it.
     SoundAnalyst,
+    /// File ▸ Delivery Targets: the panel of the delivery targets, on its Targets page.
+    DeliveryTargets,
+    /// Edit ▸ Peak Surgeon: the same panel on its Peaks page, for the selected audio clip.
+    PeakSurgeon,
     /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
     /// (a file each, or a folder search). Only enabled while some are missing.
     RelinkAudio,
@@ -794,6 +798,8 @@ impl AppCommand {
             AppCommand::ImportMidi => ("file.import_midi", None),
             AppCommand::ImportMidiSong => ("file.import_midi_song", None),
             AppCommand::SoundAnalyst => ("file.sound_analyst", None),
+            AppCommand::DeliveryTargets => ("file.delivery_targets", None),
+            AppCommand::PeakSurgeon => ("sequencer.peak_surgeon", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::CollectFiles => ("file.collect_files", None),
             AppCommand::CollectPreview => ("file.collect_preview", None),
@@ -1158,6 +1164,8 @@ impl AppCommand {
             ("file.import_midi", None) => AppCommand::ImportMidi,
             ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
             ("file.sound_analyst", None) => AppCommand::SoundAnalyst,
+            ("file.delivery_targets", None) => AppCommand::DeliveryTargets,
+            ("sequencer.peak_surgeon", None) => AppCommand::PeakSurgeon,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.collect_files", None) => AppCommand::CollectFiles,
             ("file.collect_preview", None) => AppCommand::CollectPreview,
@@ -2617,6 +2625,7 @@ pub fn menus_with_songs(
                     AppCommand::ExportStems,
                     state.export_stems,
                 ),
+                item("Delivery Targets\u{2026}", AppCommand::DeliveryTargets),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
                 item("Stress Song", AppCommand::StressSong),
@@ -2668,6 +2677,11 @@ pub fn menus_with_songs(
                         })
                         .collect(),
                 }),
+                enabled(
+                    "Peak Surgeon\u{2026}",
+                    AppCommand::PeakSurgeon,
+                    state.audio.can_edit,
+                ),
                 enabled(
                     "Strip Silence\u{2026}",
                     AppCommand::AudioStripSilence,
@@ -4098,6 +4112,7 @@ mod tests {
             AppCommand::ExportLoopAudio,
             AppCommand::ExportSelectionAudio,
             AppCommand::ExportStems,
+            AppCommand::DeliveryTargets,
             AppCommand::StressRack,
             AppCommand::StressSong,
             AppCommand::Quit,
@@ -4261,6 +4276,7 @@ mod tests {
             AppCommand::ReverseClips(true),
             AppCommand::ReverseClips(false),
             AppCommand::AudioNormalise,
+            AppCommand::PeakSurgeon,
             AppCommand::AudioStripSilence,
             AppCommand::AudioQuantize,
             AppCommand::AudioWarp,
@@ -4815,6 +4831,7 @@ mod tests {
                 "Export Loop as Audio File\u{2026}",
                 "Export Selection as Audio File\u{2026}",
                 "Export Stems as Audio Files\u{2026}",
+                "Delivery Targets\u{2026}",
                 "Stress Rack",
                 "Stress Song",
                 "Quit"
@@ -4842,6 +4859,7 @@ mod tests {
                 "RMS -18 dBFS",
                 "Loudness -23 LUFS",
                 "Loudness -14 LUFS",
+                "Peak Surgeon\u{2026}",
                 "Strip Silence\u{2026}",
                 "Quantize Audio",
                 "Insert Bars at Locators",
