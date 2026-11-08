@@ -32,6 +32,16 @@ pub enum VideoError {
     /// The file has no picture (an audio file, or only cover art).
     #[error("the file has no video picture")]
     NoVideo,
+    /// The film has no audio track to import.
+    #[error("the film has no audio track")]
+    NoAudio,
+    /// The audio track asked for is not in the film.
+    #[error("the film has no audio track {0}")]
+    NoSuchAudio(u32),
+    /// The sound of the film was written but the song could not take it (decoding it, storing
+    /// it in the project, its waveform).
+    #[error("the audio of the film cannot be added to the song: {0}")]
+    Import(String),
     /// A file operation failed (the cache folder, the proxy file).
     #[error("{0}")]
     Io(#[from] io::Error),

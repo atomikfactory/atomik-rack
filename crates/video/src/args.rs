@@ -5,7 +5,7 @@
 //! another protocol a hostile file name could spell). `-protocol_whitelist file` stops a file
 //! (a playlist, say) from making FFmpeg open anything else.
 
-use crate::probe::ProbeInfo;
+use crate::probe::{AudioStream, ProbeInfo};
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -113,6 +113,35 @@ pub fn proxy_args(source: &Path, info: &ProbeInfo, spec: &ProxySpec) -> Vec<OsSt
     args
 }
 
+/// `ffmpeg` writing the audio track `stream` of `source` to the WAV file `out`, 24 bit, at the
+/// track's own rate (the song's import resamples it), mixed down to stereo when it has more than
+/// two channels. Progress goes to the standard output as `out_time_us=` lines
+/// ([`crate::audio::progress_us`]). An `rf64` header is written when the file passes 4 GiB.
+pub fn audio_args(source: &Path, stream: &AudioStream, out: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
+        "-progress",
+        "pipe:1",
+        "-protocol_whitelist",
+        "file",
+        "-i",
+    ]
+    .map(os)
+    .into();
+    args.push(file_input(source));
+    args.extend(["-map", &format!("0:{}", stream.index), "-vn", "-sn", "-dn"].map(os));
+    if stream.channels > 2 {
+        args.extend(["-ac", "2"].map(os));
+    }
+    args.extend(["-c:a", "pcm_s24le", "-rf64", "auto", "-f", "wav", "-y"].map(os));
+    args.push(file_input(out));
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +243,54 @@ mod tests {
         let filter = args.iter().position(|a| a == "-vf").unwrap();
         assert!(args[filter + 1].starts_with("fps=2983/100,"));
         assert!(args.windows(2).any(|w| w == ["-map", "0:0"]));
+    }
+
+    #[test]
+    fn the_audio_arguments_pick_one_track_and_write_a_wav_file() {
+        let info = parse_probe(MP4_H264).unwrap();
+        let args = strings(&audio_args(
+            Path::new("My Films/a film.mp4"),
+            &info.audio[0],
+            Path::new("tmp dir/out file.wav"),
+        ));
+        assert_eq!(args[0], "-nostdin");
+        let at = args.iter().position(|a| a == "-i").unwrap();
+        assert_eq!(args[at + 1], "file:My Films/a film.mp4");
+        assert!(args.windows(2).any(|w| w == ["-map", "0:1"]));
+        assert!(args.windows(2).any(|w| w == ["-progress", "pipe:1"]));
+        assert!(args.windows(2).any(|w| w == ["-c:a", "pcm_s24le"]));
+        assert!(args.windows(2).any(|w| w == ["-f", "wav"]));
+        assert!(args.contains(&"-vn".to_owned()));
+        // No rate is set: the import resamples to the song's rate.
+        assert!(!args.contains(&"-ar".to_owned()));
+        // Stereo stays stereo.
+        assert!(!args.contains(&"-ac".to_owned()));
+        assert_eq!(args.last().unwrap(), "file:tmp dir/out file.wav");
+    }
+
+    #[test]
+    fn a_surround_track_is_mixed_down_to_stereo_and_a_mono_one_is_kept() {
+        let info = parse_probe(crate::samples::MKV_HEVC).unwrap();
+        let surround = strings(&audio_args(
+            Path::new("f.mkv"),
+            &info.audio[0],
+            Path::new("o.wav"),
+        ));
+        assert!(surround.windows(2).any(|w| w == ["-ac", "2"]));
+        assert!(surround.windows(2).any(|w| w == ["-map", "0:1"]));
+        let second = strings(&audio_args(
+            Path::new("f.mkv"),
+            &info.audio[1],
+            Path::new("o.wav"),
+        ));
+        assert!(second.windows(2).any(|w| w == ["-map", "0:2"]));
+        let mono = parse_probe(crate::samples::MOV_PRORES).unwrap();
+        let args = strings(&audio_args(
+            Path::new("f.mov"),
+            &mono.audio[0],
+            Path::new("o.wav"),
+        ));
+        assert!(!args.contains(&"-ac".to_owned()));
     }
 
     #[test]

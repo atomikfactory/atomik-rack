@@ -14,6 +14,8 @@
 //! - the proxy ([`proxy`], [`jpeg`]): every frame as a small independent JPEG in one indexed
 //!   file, so any frame is one seek; [`prepare`] builds it from ffmpeg's piped output with
 //!   progress and cancel and never leaves a partial file;
+//! - [`audio`]: choosing a film's audio track and writing it to a WAV file (with progress and
+//!   cancel) for the song to import;
 //! - the viewer's side ([`decode`], [`frames`], [`timeline`]): a pure-Rust JPEG decoder, the
 //!   [`FrameDecoder`] worker with its [`FrameCache`], and the exact arithmetic from a song time to
 //!   a frame and a timecode ([`timeline::locate`], [`Timecode`]);
@@ -24,6 +26,7 @@
 //! real programs when they are installed.
 
 pub mod args;
+pub mod audio;
 pub mod cache;
 pub mod decode;
 pub mod discover;
@@ -40,6 +43,7 @@ pub mod timeline;
 pub mod version;
 
 pub use args::ProxySpec;
+pub use audio::{MAX_LEAD_US, Pick, extract_audio, lead_us, pick_stream};
 pub use cache::{DEFAULT_MAX_BYTES, ProxyCache, SourceIdentity};
 pub use decode::{Picture, decode_jpeg};
 pub use discover::{Ffmpeg, FfmpegStatus, Platform, Search, discover};

@@ -33,7 +33,8 @@
 //!   "references"?: [{ "path", "cue_ms"? }…]  (v44, ignorable; written only when non-empty),
 //!   "delivery"?: { "name", "lufs", "ceiling" }  (v44, ignorable; written only when set),
 //!   "video"?: { "path", "start_us", "in_us", "out_us", "duration_us", "fps_num", "fps_den",
-//!               "width", "height", "timecode"?, "audio"? }  (v44, ignorable; written only when set),
+//!               "width", "height", "timecode"?, "audio"?,
+//!               "audio_link"?: { "clip", "lead_us", "keep" } }  (v44, ignorable; written only when set),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],

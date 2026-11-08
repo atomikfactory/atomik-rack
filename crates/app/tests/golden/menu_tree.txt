@@ -84,9 +84,12 @@ File
     Cancel Project Archive
   Video >
     Import Video…
+    Import Video Audio
+    Import Audio with Video
     Remove Video
     Relink Video…
     ---
+    Keep Audio with Video
     Move Video to Playhead
     Trim Video Start to Playhead
     Trim Video End to Playhead

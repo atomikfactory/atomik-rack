@@ -412,6 +412,38 @@ impl Edit {
         true
     }
 
+    /// Folds the film edits `latest` of a drag into `parts`, the step of the drag so far: the
+    /// film (and the audio clip kept with it, when there is one) keeps its first old value and
+    /// takes the latest new one. False (nothing changed) when the two are not the same run.
+    pub(crate) fn merge_video(parts: &mut [Edit], latest: &[Edit]) -> bool {
+        let same = parts.len() == latest.len()
+            && parts.iter().zip(latest).all(|(a, b)| {
+                matches!(
+                    (a, b),
+                    (
+                        Edit::Swap(Swap::Video { .. }),
+                        Edit::Swap(Swap::Video { .. })
+                    )
+                ) || matches!((a, b), (
+                        Edit::Clip { device: d, lane: l, new: Some(n), .. },
+                        Edit::Clip { device: d2, lane: l2, new: Some(n2), .. },
+                    ) if d == d2 && l == l2 && n.id == n2.id)
+            });
+        if !same {
+            return false;
+        }
+        for (a, b) in parts.iter_mut().zip(latest) {
+            match (a, b) {
+                (Edit::Swap(Swap::Video { new, .. }), Edit::Swap(Swap::Video { new: n, .. })) => {
+                    new.clone_from(n)
+                }
+                (Edit::Clip { new, .. }, Edit::Clip { new: n, .. }) => new.clone_from(n),
+                _ => {}
+            }
+        }
+        true
+    }
+
     /// Folds `next`, the next clip edit of a drag-merge group, into this one (the last undo
     /// step of the group), so the group stays one step. A clip edit on the lane of an earlier
     /// edit of the same clip updates it in place (a drag keeps one edit per clip, not one per

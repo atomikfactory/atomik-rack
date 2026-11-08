@@ -78,6 +78,16 @@ pub enum AppCommand {
     /// File ▸ Video ▸ Import Video…: probe a film and put it in the song at its start (a dialog
     /// picks the film), then build its proxy in the background.
     ImportVideo,
+    /// File ▸ Video ▸ Import Video Audio: take the film's sound out through FFmpeg and put it on a
+    /// new track, lined up with the film's first frame (a pop-up asks which track when the film
+    /// has several).
+    ImportVideoAudio,
+    /// File ▸ Video ▸ Import Audio with Video: Import Video imports the film's sound too, off or
+    /// on.
+    ImportVideoWithAudio,
+    /// File ▸ Video ▸ Keep Audio with Video: the film's sound follows the film when it is moved
+    /// or trimmed, off or on.
+    KeepVideoAudio,
     /// File ▸ Video ▸ Remove Video: take the film out of the song (the file stays).
     RemoveVideo,
     /// File ▸ Video ▸ Relink Video…: point the song's film at another file (a dialog picks it).
@@ -822,6 +832,9 @@ impl AppCommand {
             AppCommand::PrepareVideo => ("video.prepare", None),
             AppCommand::CancelVideo => ("video.cancel", None),
             AppCommand::ImportVideo => ("video.import", None),
+            AppCommand::ImportVideoAudio => ("video.import_audio", None),
+            AppCommand::ImportVideoWithAudio => ("video.import_with_audio", None),
+            AppCommand::KeepVideoAudio => ("video.keep_audio", None),
             AppCommand::RemoveVideo => ("video.remove", None),
             AppCommand::RelinkVideo => ("video.relink", None),
             AppCommand::MoveVideoToPlayhead => ("video.move_to_playhead", None),
@@ -1199,6 +1212,9 @@ impl AppCommand {
             ("video.prepare", None) => AppCommand::PrepareVideo,
             ("video.cancel", None) => AppCommand::CancelVideo,
             ("video.import", None) => AppCommand::ImportVideo,
+            ("video.import_audio", None) => AppCommand::ImportVideoAudio,
+            ("video.import_with_audio", None) => AppCommand::ImportVideoWithAudio,
+            ("video.keep_audio", None) => AppCommand::KeepVideoAudio,
             ("video.remove", None) => AppCommand::RemoveVideo,
             ("video.relink", None) => AppCommand::RelinkVideo,
             ("video.move_to_playhead", None) => AppCommand::MoveVideoToPlayhead,
@@ -2096,6 +2112,12 @@ pub struct MenuState {
     pub video_busy: bool,
     /// The song has a video (File > Video > Remove, Relink, Move and Trim are available).
     pub video_clip: bool,
+    /// The song's film has its audio imported (File > Video > Keep Audio with Video is available).
+    pub video_audio: bool,
+    /// That audio follows the film.
+    pub video_audio_keep: bool,
+    /// Import Video imports the film's audio too.
+    pub video_import_audio: bool,
     /// The song's video file is not where the project says (the viewer cannot show it until
     /// it is relinked).
     pub video_missing: bool,
@@ -2723,6 +2745,16 @@ pub fn menus_with_songs(
                     label: "Video",
                     entries: vec![
                         item("Import Video\u{2026}", AppCommand::ImportVideo),
+                        enabled(
+                            "Import Video Audio",
+                            AppCommand::ImportVideoAudio,
+                            state.video_clip,
+                        ),
+                        check(
+                            "Import Audio with Video",
+                            AppCommand::ImportVideoWithAudio,
+                            state.video_import_audio,
+                        ),
                         enabled("Remove Video", AppCommand::RemoveVideo, state.video_clip),
                         enabled(
                             "Relink Video\u{2026}",
@@ -2730,6 +2762,12 @@ pub fn menus_with_songs(
                             state.video_clip,
                         ),
                         MenuEntry::Separator,
+                        make(
+                            "Keep Audio with Video",
+                            AppCommand::KeepVideoAudio,
+                            Some(state.video_audio_keep),
+                            state.video_audio,
+                        ),
                         enabled(
                             "Move Video to Playhead",
                             AppCommand::MoveVideoToPlayhead,
@@ -4300,6 +4338,9 @@ mod tests {
             archive_busy: false,
             video_busy: false,
             video_clip: false,
+            video_audio: false,
+            video_audio_keep: false,
+            video_import_audio: false,
             video_missing: false,
             collect_busy: false,
             default_song: false,
@@ -4350,6 +4391,9 @@ mod tests {
             AppCommand::PrepareVideo,
             AppCommand::CancelVideo,
             AppCommand::ImportVideo,
+            AppCommand::ImportVideoAudio,
+            AppCommand::ImportVideoWithAudio,
+            AppCommand::KeepVideoAudio,
             AppCommand::RemoveVideo,
             AppCommand::RelinkVideo,
             AppCommand::MoveVideoToPlayhead,
@@ -5402,6 +5446,9 @@ mod tests {
                 archive_busy: false,
                 video_busy: false,
                 video_clip: false,
+                video_audio: false,
+                video_audio_keep: false,
+                video_import_audio: false,
                 video_missing: false,
                 collect_busy: false,
                 default_song: false,

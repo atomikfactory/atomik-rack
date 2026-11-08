@@ -2023,6 +2023,11 @@ start a program either; they pass a `FakeTool` and a folder of stand-in files na
   runs the viewer in the core with the fake piping real tiny JPEGs (frame `n` is red, green, blue or white): the
   frame at a position, the frame edges, a start offset, a trim, a tempo change, decode-ahead while playing, the
   loop, the messages, the progress and the proxy started when a project opens.
+- `cargo test -p atomik-app --lib -- video_audio` runs Import Video Audio with the fake (`FakeTool::audio` writes
+  a WAV made by `wav_pcm16` to the output path of the call and prints progress, the `on_frame` hook sees each step,
+  so a test holds the extraction at its first step to press Cancel): the track chosen, the rate converted, the file's
+  start offsets, no audio, no FFmpeg, a failure, a stopped job leaving no asset and no track, keep with video.
+  `cargo test -p atomik-model --test video_audio` runs the film and its sound moving together in one undo step.
 - `cargo test -p atomik-model --test video` runs the model tests of the film in the song (undo of each command, a
   drag merging, the limits, relink, a tempo change keeping the film locked to time, the saved text, an old file).
 - The one test that needs the real programs is ignored by default:
@@ -2030,7 +2035,18 @@ start a program either; they pass a `FakeTool` and a folder of stand-in files na
   folder in `ATOMIK_FFMPEG_DIR` when set, else `PATH`), makes a two-second film with FFmpeg's own generators in a
   temporary folder, probes it, builds and reads its proxy, checks the cache hit and a cancelled build, and decodes
   real proxy frames with the viewer's decoder and worker. Without FFmpeg it says so and passes. A second one
-  runs Import Video of a generated film through the app core and checks the film in the song: `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`.
+  runs Import Video of a generated film through the app core and checks the film in the song: `cargo test -p atomik-app --lib real_ffmpeg -- --ignored --nocapture`
+  (the same filter also runs Import Video Audio of a generated film whose 44.1 kHz sound starts half a second after
+  its picture: the lead the probe finds, the converted asset, the first sample on its frame to the sample, and a trim
+  of the film trimming the sound). `cargo test -p atomik-video --test real_ffmpeg -- --ignored` also extracts that
+  sound to WAV and checks that a stopped extraction leaves no file.
+
+Hand checks for the film's sound (a machine with FFmpeg): import a film with sound, File > Video > Import Video Audio:
+the status line shows the extraction and a new track named after the film appears, its waveform starting under the
+film's first frame (zoom in; play and listen against the Video window); Cancel Video Job during a long film's
+extraction leaves no track and no new file in the project's `Audio` folder; a film with two sound tracks opens the
+pop-up; move the film by dragging its bar and the clip follows in one undo step; Keep Audio with Video off, drag, on:
+the clip jumps back under the picture.
 
 Hand checks (a machine with FFmpeg): File > Video > Check FFmpeg says `FFmpeg 7.1 found at ...`; Settings > Video
 shows the same line and the folder; set the folder to an empty one and Apply: the line says it was not found there;

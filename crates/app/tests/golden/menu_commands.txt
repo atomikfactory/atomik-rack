@@ -172,6 +172,8 @@ ImportMidi | Import MIDI…
 ImportMidiPreset | Import MIDI Mapping Preset…
 ImportMidiSong | Import MIDI as Song…
 ImportVideo | Import Video…
+ImportVideoAudio | Import Video Audio
+ImportVideoWithAudio | Import Audio with Video
 InputChannels(0) | 0 (off)
 InputChannels(1) | 1
 InputChannels(16) | 16
@@ -180,6 +182,7 @@ InputChannels(32) | 32
 InputChannels(4) | 4
 InputChannels(8) | 8
 InsertBars | Insert Bars at Locators
+KeepVideoAudio | Keep Audio with Video
 KeyboardShortcuts | Keyboard Shortcuts
 KickBassCheck | Kick and Bass Check…
 LensClubSub | Club Sub

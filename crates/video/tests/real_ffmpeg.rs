@@ -196,3 +196,124 @@ fn a_generated_film_is_probed_and_gets_its_proxy() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// The frames of the `data` chunk of a 24 bit WAV file, its channels and its rate.
+fn wav_shape(bytes: &[u8]) -> (u64, u16, u32) {
+    assert_eq!(&bytes[..4], b"RIFF");
+    let (mut at, mut channels, mut rate) = (12usize, 0u16, 0u32);
+    while at + 8 <= bytes.len() {
+        let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        match &bytes[at..at + 4] {
+            b"fmt " => {
+                channels = u16::from_le_bytes(bytes[at + 10..at + 12].try_into().unwrap());
+                rate = u32::from_le_bytes(bytes[at + 12..at + 16].try_into().unwrap());
+                let bits = u16::from_le_bytes(bytes[at + 22..at + 24].try_into().unwrap());
+                assert_eq!(bits, 24);
+            }
+            b"data" => return ((size / (3 * usize::from(channels))) as u64, channels, rate),
+            _ => {}
+        }
+        at += 8 + size + (size & 1);
+    }
+    panic!("no data chunk");
+}
+
+#[test]
+#[ignore = "needs a real FFmpeg"]
+fn the_audio_of_a_generated_film_is_extracted_with_its_start_offset() {
+    let folder = std::env::var_os("ATOMIK_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    let status = discover(
+        &Search {
+            folder: folder.as_deref(),
+            path_var: path_var.as_deref(),
+            platform: Platform::current(),
+        },
+        &SystemTool,
+        &Path::is_file,
+    );
+    let FfmpegStatus::Found(ffmpeg) = status else {
+        println!("no usable FFmpeg here: {}", status.message());
+        return;
+    };
+    let dir = temp("audio");
+    let film = dir.join("late sound.mkv");
+    let never = AtomicBool::new(false);
+    // The sound is made to start half a second after the picture.
+    let mut args: Vec<OsString> = [
+        "-nostdin",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=320x180:rate=25:duration=2",
+        "-itsoffset",
+        "0.5",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=2:sample_rate=44100",
+        "-pix_fmt",
+        "yuv420p",
+        "-y",
+    ]
+    .map(OsString::from)
+    .into();
+    args.push(film.clone().into_os_string());
+    capture(&SystemTool, &ffmpeg.ffmpeg, &args, 1 << 20, &never).unwrap();
+
+    let info = atomik_video::probe_file(&SystemTool, &ffmpeg, &film, &never).unwrap();
+    assert_eq!(info.audio.len(), 1);
+    let Ok(atomik_video::Pick::One(stream)) = atomik_video::pick_stream(&info, None) else {
+        panic!("one audio track expected");
+    };
+    let lead = atomik_video::lead_us(&info, stream);
+    println!("lead {lead} us");
+    assert!((lead - 500_000).abs() <= 5_000, "{lead}");
+
+    let out = dir.join("sound.wav");
+    let (done, total) = (AtomicU64::new(0), AtomicU64::new(0));
+    atomik_video::extract_audio(
+        &SystemTool,
+        &ffmpeg,
+        &film,
+        (&info, stream),
+        &out,
+        &Control {
+            cancel: &never,
+            done: &done,
+            total: &total,
+        },
+    )
+    .unwrap();
+    let (frames, channels, rate) = wav_shape(&fs::read(&out).unwrap());
+    println!("{frames} frames, {channels} channels, {rate} Hz");
+    // The file holds the sound only: no silence was written for the late start (the lead
+    // places it), and the track keeps its own rate.
+    assert_eq!((channels, rate), (1, 44_100));
+    let seconds = frames as f64 / f64::from(rate);
+    assert!((seconds - 2.0).abs() < 0.05, "{seconds} s");
+    assert_eq!(done.load(Ordering::Relaxed), total.load(Ordering::Relaxed));
+
+    // A stopped extraction leaves no file.
+    let stop = AtomicBool::new(true);
+    let other = dir.join("other.wav");
+    assert!(
+        atomik_video::extract_audio(
+            &SystemTool,
+            &ffmpeg,
+            &film,
+            (&info, stream),
+            &other,
+            &Control {
+                cancel: &stop,
+                done: &done,
+                total: &total,
+            },
+        )
+        .is_err()
+    );
+    assert!(!other.exists());
+    let _ = fs::remove_dir_all(&dir);
+}

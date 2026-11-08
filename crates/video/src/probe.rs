@@ -121,6 +121,40 @@ pub struct AudioStream {
     pub language: Option<String>,
     /// The title the file gives the track.
     pub title: Option<String>,
+    /// Where the track's first sample sits on the file's clock, in seconds (the picture's start
+    /// when the file does not say). The difference to [`ProbeInfo::start_time_s`] is how late
+    /// (positive) or early (negative) the sound starts against the first frame.
+    pub start_time_s: f64,
+}
+
+impl AudioStream {
+    /// The track as one line for a list: its number, then what [`AudioStream::describe`] says
+    /// (`2: stereo aac, eng`).
+    pub fn label(&self, number: usize) -> String {
+        format!("{number}: {}", self.describe())
+    }
+
+    /// The channel layout, codec, language and title (`stereo aac, eng, Commentary`).
+    pub fn describe(&self) -> String {
+        let layout = match self.channels {
+            0 => "no channels".to_owned(),
+            1 => "mono".to_owned(),
+            2 => "stereo".to_owned(),
+            6 => "5.1".to_owned(),
+            8 => "7.1".to_owned(),
+            n => format!("{n} channels"),
+        };
+        let mut line = format!("{layout} {}", self.codec);
+        if let Some(language) = &self.language {
+            line.push_str(", ");
+            line.push_str(language);
+        }
+        if let Some(title) = &self.title {
+            line.push_str(", ");
+            line.push_str(title);
+        }
+        line
+    }
 }
 
 /// What a probe found.
@@ -284,6 +318,7 @@ pub fn parse_probe(json: &str) -> Result<ProbeInfo, VideoError> {
                 sample_rate: count(s.get("sample_rate")).unwrap_or(0) as u32,
                 language,
                 title: tag(s, "title").map(str::to_owned),
+                start_time_s: number(s.get("start_time")).unwrap_or(start_time_s),
             }
         })
         .collect();
@@ -371,6 +406,27 @@ mod tests {
         assert_eq!(p.audio[1].language.as_deref(), Some("fre"));
         assert_eq!(p.audio[1].index, 2);
         assert_eq!(p.audio[1].sample_rate, 48000);
+    }
+
+    #[test]
+    fn a_track_has_its_own_start_time_and_a_label() {
+        let p = parse_probe(MKV_HEVC).unwrap();
+        assert_eq!(p.audio[0].start_time_s, 0.007);
+        assert_eq!(p.audio[0].label(1), "1: 5.1 opus, eng, Surround");
+        assert_eq!(
+            p.audio[1].label(2),
+            "2: stereo opus, fre, Stereo (Francais)"
+        );
+        // A track without a start time of its own starts with the picture.
+        let mut json: serde_json::Value = serde_json::from_str(MOV_PRORES).unwrap();
+        for s in json["streams"].as_array_mut().unwrap() {
+            if s["codec_type"] == "audio" {
+                s.as_object_mut().unwrap().remove("start_time");
+            }
+        }
+        let q = parse_probe(&json.to_string()).unwrap();
+        assert_eq!(q.audio[0].start_time_s, 3600.0);
+        assert_eq!(q.audio[0].label(1), "1: mono pcm_s24le, eng");
     }
 
     #[test]

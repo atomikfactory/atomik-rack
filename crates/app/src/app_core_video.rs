@@ -16,6 +16,9 @@
 //!   reports its probe first: the song takes the film (or points its film at the new file) as
 //!   soon as the probe is in, and the proxy builds on. They are the only jobs that change the
 //!   song, each through one undo step.
+//! * **Import Video Audio** (`app_core_video_audio.rs`) takes the film's sound out through
+//!   FFmpeg on the same worker, imports it like any audio file and puts it on a new track,
+//!   lined up with the film's first frame.
 //! * **Cancel** ([`AppCore::cancel_video`]) stops the worker, which kills ffmpeg and removes the
 //!   half-written proxy; closing the app does the same.
 //!
@@ -39,6 +42,8 @@ pub(super) enum Purpose {
     Import,
     /// Relinking the film of the song: the song points at the file when it is probed.
     Relink,
+    /// Importing the film's own sound as an audio clip (`app_core_video_audio.rs`).
+    Audio,
     /// Preparing the film of the song for the Video window, started by the core when a project
     /// with a film opens or the window opens: quiet, the window shows the progress and the
     /// reason when it cannot be done.
@@ -82,6 +87,11 @@ pub(super) struct VideoState {
     tool_set: bool,
     /// A project with a film was opened and its proxy is to be built once the tools are set.
     pub(super) warm: bool,
+    /// Import Video also imports the film's audio (Settings of the File > Video menu).
+    pub(super) import_audio: bool,
+    /// The film has several audio tracks and the user is to choose one (see
+    /// `app_core_video_audio.rs`).
+    pub(super) choice: Option<super::video_audio::AudioChoice>,
 }
 
 impl Default for VideoState {
@@ -99,6 +109,8 @@ impl Default for VideoState {
             warned: false,
             tool_set: false,
             warm: false,
+            import_audio: false,
+            choice: None,
         }
     }
 }
@@ -181,6 +193,21 @@ impl<S: EngineSink> AppCore<S> {
         let film = r.film.as_ref()?;
         let total = r.total.load(Ordering::Relaxed);
         let done = r.progress.load(Ordering::Relaxed);
+        if r.purpose == Purpose::Audio {
+            // The counters are milliseconds of the film; once they are all done the file is
+            // being decoded and stored.
+            return Some(match (done, total) {
+                (_, 0) => (0.0, format!("Extracting the audio of {film}")),
+                (d, t) if d >= t => (1.0, format!("Adding the audio of {film} to the song")),
+                (d, t) => {
+                    let fraction = (d as f64 / t as f64).clamp(0.0, 1.0) as f32;
+                    (
+                        fraction,
+                        format!("Extracting the audio of {film}: {:.0}%", fraction * 100.0),
+                    )
+                }
+            });
+        }
         if total == 0 {
             return Some((0.0, format!("Preparing video {film}")));
         }
@@ -261,7 +288,7 @@ impl<S: EngineSink> AppCore<S> {
         Err(why)
     }
 
-    fn spawn_video(
+    pub(super) fn spawn_video(
         &mut self,
         job: Job,
         film: Option<(String, PathBuf, Purpose)>,
@@ -289,6 +316,9 @@ impl<S: EngineSink> AppCore<S> {
                 let message = match &film {
                     Some((name, _, Purpose::Import)) => format!("Importing video {name}..."),
                     Some((name, _, Purpose::Relink)) => format!("Relinking video to {name}..."),
+                    Some((name, _, Purpose::Audio)) => {
+                        format!("Importing the audio of {name}...")
+                    }
                     Some((name, _, _)) => format!("Preparing video {name}..."),
                     None => "Looking for FFmpeg...".to_owned(),
                 };
@@ -326,6 +356,10 @@ impl<S: EngineSink> AppCore<S> {
         if done.status != FfmpegStatus::Unchecked {
             self.video.status = done.status;
         }
+        if let Some(audio) = done.audio {
+            self.finish_video_audio(running, audio);
+            return;
+        }
         let Some(result) = done.prepared else {
             if !running.quiet {
                 let message = self.video.status.message();
@@ -336,6 +370,11 @@ impl<S: EngineSink> AppCore<S> {
         let quiet = running.quiet;
         let film = running.film.unwrap_or_default();
         let in_song = matches!(running.purpose, Purpose::Import | Purpose::Relink);
+        // Import Video, set to import the sound too, goes on to the sound unless it was stopped.
+        let then_audio = running.purpose == Purpose::Import
+            && self.video.import_audio
+            && !matches!(result, Err(VideoError::Cancelled))
+            && running.generation == self.audio.generation;
         let warned = std::mem::take(&mut self.video.warned);
         match result {
             Ok(prepared) => {
@@ -362,6 +401,10 @@ impl<S: EngineSink> AppCore<S> {
             Err(VideoError::NotUsable(message)) => self.reject(message),
             Err(e) if in_song => self.reject(format!("Cannot use {film}: {e}")),
             Err(e) => self.reject(format!("Preparing {film} failed: {e}")),
+        }
+        if then_audio && self.video_clip().is_some_and(|c| c.facts.has_audio) {
+            // The toast of the job that follows says what it does.
+            let _ = self.import_video_audio(None);
         }
     }
 }
