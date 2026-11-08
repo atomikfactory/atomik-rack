@@ -450,6 +450,7 @@ pub mod transport;
 pub mod tree;
 pub mod tuner_panel;
 pub mod versions_panel;
+pub mod video_view;
 pub mod viewport;
 pub mod warp_panel;
 pub mod wave_paint;
@@ -550,6 +551,9 @@ pub use transport::{
 pub use vello;
 pub use vello::{kurbo, peniko};
 pub use versions_panel::{REPORT_LINES, VersionItem, VersionsAction, VersionsView};
+pub use video_view::{
+    VideoFrame, VideoImage, VideoOverlay, VideoPrefs, VideoScreen, VideoSize, VideoView,
+};
 pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};
 pub use wavetable_editor::{WavetableAction, WavetableData, WavetableView};
