@@ -1055,7 +1055,7 @@ may break APIs and the patch and project formats.
 - **Reference tracks.** A song keeps up to 16 reference audio files (Mixer > Reference > Add Reference Track), saved
   in the project as paths in an optional root field (written only when there are any; the project format stays 44)
   and copied into the project's `Files` folder by Collect Files and by a save to a new place, as one undo step.
-  One key (Ctrl+Alt+R, Cmd+Alt+R on macOS; Mixer > Reference > Listen to Reference) switches between the mix and
+  One key (Ctrl+Shift+R, Cmd+Shift+R on macOS; Mixer > Reference > Listen to Reference) switches between the mix and
   the selected reference with a 30 ms crossfade, also on a stopped song. The reference plays after the master chain
   on outputs 1 and 2, so none of the master processing touches it, and only live: a bounce, an export, a freeze or
   an offline render never gets one. It starts at the file position equal to the song position, or at a start of its
@@ -1093,6 +1093,9 @@ may break APIs and the patch and project formats.
   Softness macros). The Factory root now lists 42 patches and 14 containers.
 
 ### Changed
+- **Listen to Reference key.** The default key of Listen to Reference is now Ctrl+Shift+R (Cmd+Shift+R on macOS), in
+  place of Ctrl+Alt+R (Cmd+Alt+R), a chord other programs on the computer often claim system-wide. A binding the user
+  changed keeps their choice.
 - **Menus scroll, stay inside the window and are grouped.** A dropdown or a submenu taller than the window is cut to it
   and scrolls: with the mouse wheel over it, by resting the pointer on the small arrow strip at its top or bottom, or
   with Up, Down, Home and End (the lit row always stays in view). A submenu starts level with its row, moves up before
