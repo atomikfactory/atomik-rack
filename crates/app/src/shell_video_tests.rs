@@ -91,6 +91,12 @@ fn the_file_menu_has_a_video_submenu_with_the_three_commands() {
     assert_eq!(
         rows,
         [
+            ("Import Video\u{2026}".to_owned(), true),
+            ("Remove Video".to_owned(), false),
+            ("Relink Video\u{2026}".to_owned(), false),
+            ("Move Video to Playhead".to_owned(), false),
+            ("Trim Video Start to Playhead".to_owned(), false),
+            ("Trim Video End to Playhead".to_owned(), false),
             ("Prepare Video\u{2026}".to_owned(), true),
             ("Check FFmpeg".to_owned(), true),
             ("Cancel Video Job".to_owned(), false),
@@ -99,12 +105,51 @@ fn the_file_menu_has_a_video_submenu_with_the_three_commands() {
 }
 
 #[test]
+fn the_import_relink_and_edit_commands_ask_the_platform_or_the_core() {
+    let t = Tmp::new("clip");
+    let mut s = shell(&t, FakeTool::new());
+    assert_eq!(
+        s.execute(AppCommand::ImportVideo),
+        vec![ShellRequest::PickVideoFile(VideoPick::Import)]
+    );
+    // Without a film in the song there is nothing to relink, remove, move or trim.
+    assert!(s.execute(AppCommand::RelinkVideo).is_empty());
+    assert_eq!(s.core().last_rejection(), Some("The song has no video"));
+    for c in [
+        AppCommand::RemoveVideo,
+        AppCommand::MoveVideoToPlayhead,
+        AppCommand::TrimVideoStart,
+        AppCommand::TrimVideoEnd,
+    ] {
+        assert!(s.execute(c).is_empty());
+        assert_eq!(s.core().last_rejection(), Some("The song has no video"));
+    }
+    // The picked film is imported: the song has it and the menu enables the rest.
+    let film = t.path("scene.mp4");
+    std::fs::write(&film, b"pretend film").unwrap();
+    s.workflow.ffmpeg_folder = Some(programs(&t));
+    s.apply_workflow_to_views();
+    s.video_picked(VideoPick::Import, &film);
+    s.core_mut().wait_background();
+    assert!(s.core().video_clip().is_some());
+    let menu = s.menu_state();
+    assert!(menu.video_clip && !menu.video_missing);
+    assert_eq!(
+        s.execute(AppCommand::RelinkVideo),
+        vec![ShellRequest::PickVideoFile(VideoPick::Relink)]
+    );
+    s.execute(AppCommand::RemoveVideo);
+    assert!(s.core().video_clip().is_none());
+    assert!(!s.menu_state().video_clip);
+}
+
+#[test]
 fn prepare_video_asks_the_platform_for_a_film() {
     let t = Tmp::new("pick");
     let mut s = shell(&t, FakeTool::new());
     assert_eq!(
         s.execute(AppCommand::PrepareVideo),
-        vec![ShellRequest::PickVideoFile]
+        vec![ShellRequest::PickVideoFile(VideoPick::Prepare)]
     );
     // Cancel with nothing running says so.
     s.execute(AppCommand::CancelVideo);
@@ -142,7 +187,7 @@ fn a_film_that_is_prepared_shows_progress_in_the_status_line_until_it_is_done() 
     s.apply_workflow_to_views();
     let film = t.path("film.mp4");
     std::fs::write(&film, b"pretend film").unwrap();
-    s.prepare_video_from(&film);
+    s.video_picked(VideoPick::Prepare, &film);
     s.poll_status();
     assert!(
         s.status_text().contains("Preparing video film.mp4"),

@@ -113,6 +113,8 @@ enum WfOp {
     References(u8),
     /// The delivery target: none or one of the table's entries.
     Delivery(u8),
+    /// The song's video: set, remove, move, trim or relink (the first value picks which).
+    Video(u8, u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -335,6 +337,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..3).prop_map(WfOp::Sort),
         (0u8..4).prop_map(WfOp::References),
         (0u8..5).prop_map(WfOp::Delivery),
+        (0u8..6, 0u8..4).prop_map(|(k, v)| WfOp::Video(k, v)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0u8..8, 0usize..12, 0u8..=100).prop_map(|(k, t, s)| WfOp::Groove(k, t, s)),
@@ -903,6 +906,42 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 .get(usize::from(*step))
                 .map(atomik_model::Delivery::of),
         ),
+        WfOp::Video(kind, v) => {
+            let facts = |secs: u64| atomik_model::VideoFacts {
+                duration_us: secs * 1_000_000,
+                fps_num: 25,
+                fps_den: 1,
+                width: 640,
+                height: 360,
+                timecode: None,
+                has_audio: false,
+            };
+            let at = i64::from(*v) * 1_500_000 - 2_000_000;
+            Command::Video(match kind {
+                0 => atomik_model::VideoCommand::Set(atomik_model::VideoClip::new(
+                    format!("film-{v}.mov"),
+                    facts(30 + u64::from(*v)),
+                )),
+                1 => atomik_model::VideoCommand::Remove,
+                2 => atomik_model::VideoCommand::Move {
+                    start_us: at,
+                    merge: None,
+                },
+                3 => atomik_model::VideoCommand::Trim {
+                    in_us: u64::from(*v) * 1_000_000,
+                    out_us: 20_000_000 + u64::from(*v) * 1_000_000,
+                    merge: None,
+                },
+                4 => atomik_model::VideoCommand::Relink {
+                    path: format!("copy-{v}.mov"),
+                    facts: facts(25 + u64::from(*v)),
+                },
+                _ => atomik_model::VideoCommand::Move {
+                    start_us: at,
+                    merge: Some(1),
+                },
+            })
+        }
         WfOp::Sort(mode) => Command::SetRackSort(
             [RackSort::Free, RackSort::PerTrack, RackSort::AutoGroup][usize::from(*mode)],
         ),

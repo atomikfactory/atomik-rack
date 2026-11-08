@@ -104,6 +104,7 @@ pub mod theory;
 mod time_edit;
 pub mod transition;
 mod validate;
+pub mod video;
 pub mod warp;
 mod workflow;
 mod workflow_cmd;
@@ -202,6 +203,7 @@ pub use steps::{
     MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PATTERN_PARAM,
     PatternDoc, SeqResolution, StepDoc, StepSeqDoc, pattern_cap, player_data_for,
 };
+pub use video::{VideoClip, VideoCommand, VideoFacts, check_video};
 pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, TakeSnapshot,
     neighbour_clip, neighbour_device, neighbour_track,
@@ -449,6 +451,9 @@ pub struct RackDoc {
     /// The delivery target the song works to (see [`crate::delivery`]); `None` for a new project.
     /// Project data with no part in the sound.
     pub delivery: Option<Delivery>,
+    /// The film of the song, linked by path (see [`crate::video`]); `None` for a new project.
+    /// Project data with no part in the sound.
+    pub video: Option<VideoClip>,
 }
 
 /// An edit. Every command is undoable.
@@ -627,6 +632,9 @@ pub enum Command {
     /// target equal to the current one is rejected. Reports [`SyncOp::ViewChanged`]. Also accepted
     /// by [`Command::Batch`], so a limiter's ceiling and the target are one step.
     SetDelivery(Option<Delivery>),
+    /// Edits the song's video (see [`VideoCommand`]), one undo step; a command that changes
+    /// nothing is rejected. Reports [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
+    Video(VideoCommand),
     /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
     /// in one undo step. The app has already resampled the assets the song uses and registered
     /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
@@ -868,6 +876,7 @@ pub enum Command {
 /// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
 /// | `SetReferences` (also undo/redo) | `ViewChanged` |
 /// | `SetDelivery` (also undo/redo, also in a `Batch`) | `ViewChanged` |
+/// | `Video` (also undo/redo) | `ViewChanged` |
 /// | `SetMasterTune` (also undo/redo) | `TuneChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
@@ -1252,6 +1261,8 @@ enum MergeKey {
     PluginState(u64, DeviceKey),
     /// `MacroCommand::SetRange` or `MoveRange` of one drag.
     MacroRange(u64),
+    /// `VideoCommand::Move` or `Trim` of one drag.
+    Video(u64),
 }
 
 impl Document {
@@ -1430,6 +1441,10 @@ impl Document {
                 merge: Some(m),
                 ..
             }) => Some(MergeKey::TrackControllers(*m, device.clone())),
+            Command::Video(
+                VideoCommand::Move { merge: Some(m), .. }
+                | VideoCommand::Trim { merge: Some(m), .. },
+            ) => Some(MergeKey::Video(*m)),
             Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
                 Some(MergeKey::TempoMap(*merge))
             }
@@ -1654,6 +1669,12 @@ impl Document {
                 if merged =>
             {
                 *new = *latest;
+            }
+            (
+                Some(Edit::Swap(Swap::Video { new, .. })),
+                Edit::Swap(Swap::Video { new: latest, .. }),
+            ) if merged => {
+                new.clone_from(latest);
             }
             (
                 Some(Edit::Swap(Swap::TrackControllers {
@@ -2312,6 +2333,7 @@ impl Document {
             Command::SetRackSort(mode) => rack_groups::plan_set(doc, registry, mode)?,
             Command::SetReferences(list) => references::plan_set(doc, &list)?,
             Command::SetDelivery(target) => delivery::plan_set(doc, &target)?,
+            Command::Video(c) => video::plan(doc, &c)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
@@ -2491,6 +2513,7 @@ pub fn empty_doc() -> RackDoc {
         sort_mode: RackSort::Free,
         references: Vec::new(),
         delivery: None,
+        video: None,
     }
 }
 

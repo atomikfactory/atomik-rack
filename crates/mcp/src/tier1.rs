@@ -844,6 +844,31 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     if !folders.is_empty() {
         out["song"]["folders"] = Value::Array(folders);
     }
+    // The linked film: where it plays in song time, its trim and the facts the project kept.
+    // `missing` is whether the file is at the saved path now (a relative path counts from the
+    // working folder here: a stateless inspect has no project folder to resolve it from).
+    if let Some(v) = &doc.video {
+        let seconds = |us: i64| us as f64 / 1e6;
+        let mut film = json!({
+            "path": v.path,
+            "name": v.name(),
+            "missing": !Path::new(&v.path).is_file(),
+            "start_s": seconds(v.start_us),
+            "start_tick": v.start_tick(&doc.song),
+            "trim_in_s": seconds(i64::try_from(v.in_us).unwrap_or(i64::MAX)),
+            "trim_out_s": seconds(i64::try_from(v.out_us).unwrap_or(i64::MAX)),
+            "end_s": seconds(v.end_us()),
+            "duration_s": seconds(i64::try_from(v.facts.duration_us).unwrap_or(i64::MAX)),
+            "fps": (v.facts.fps() * 1e6).round() / 1e6,
+            "width": v.facts.width,
+            "height": v.facts.height,
+            "has_audio": v.facts.has_audio,
+        });
+        if let Some(timecode) = &v.facts.timecode {
+            film["timecode"] = json!(timecode);
+        }
+        out["song"]["video"] = film;
+    }
     // The song information, listing only the texts that are set.
     if !doc.info.is_empty() {
         let info = &doc.info;

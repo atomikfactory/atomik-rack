@@ -205,6 +205,17 @@ pub const MIN_PANE_HEIGHT: f64 = 80.0;
 /// The narrowest the Track Panel column is drawn; a window with less room hides it.
 pub const MIN_TRACK_PANEL_WIDTH: f64 = 160.0;
 
+/// What a film picked in the dialog of [`ShellRequest::PickVideoFile`] is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoPick {
+    /// File > Video > Import Video: the song takes the film.
+    Import,
+    /// File > Video > Relink Video: the song's film points at the file.
+    Relink,
+    /// File > Video > Prepare Video: only the proxy is built.
+    Prepare,
+}
+
 /// Something only the platform layer can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellRequest {
@@ -254,9 +265,9 @@ pub enum ShellRequest {
     /// Show an open dialog for a project archive (File > Import Project Archive), then call
     /// [`Shell::import_archive_from`] with the path.
     PickImportArchive,
-    /// Show an open dialog for a film (File > Video > Prepare Video), then call
-    /// [`Shell::prepare_video_from`] with the path.
-    PickVideoFile,
+    /// Show an open dialog for a film (File > Video > Import Video, Relink Video or Prepare
+    /// Video), then call [`Shell::video_picked`] with the same [`VideoPick`] and the path.
+    PickVideoFile(VideoPick),
     /// Show a folder dialog (the Video tab's FFmpeg folder Choose...), then call
     /// [`Shell::set_ffmpeg_folder`] with the picked folder.
     PickFfmpegFolder,
@@ -1104,10 +1115,18 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
-    /// Prepares the film the dialog picked: FFmpeg is looked for, the film probed and its proxy
-    /// built or found in the cache (see [`AppCore::start_prepare_video`]).
-    pub fn prepare_video_from(&mut self, path: &Path) {
-        let _ = self.core.start_prepare_video(path.to_path_buf());
+    /// Uses the film the dialog picked for what it was asked for: FFmpeg is looked for and the
+    /// film probed; Import puts it in the song, Relink points the song's film at it, and the
+    /// proxy is built or found in the cache (see [`AppCore::import_video`],
+    /// [`AppCore::relink_video`] and [`AppCore::start_prepare_video`]). The core says why in a
+    /// toast when it refuses.
+    pub fn video_picked(&mut self, pick: VideoPick, path: &Path) {
+        let path = path.to_path_buf();
+        let _ = match pick {
+            VideoPick::Prepare => self.core.start_prepare_video(path),
+            VideoPick::Import => self.core.import_video(path),
+            VideoPick::Relink => self.core.relink_video(path),
+        };
         self.repaint = true;
     }
 
@@ -3659,6 +3678,8 @@ impl<B: AudioBackend> Shell<B> {
             missing_audio: !self.core.missing_assets().is_empty(),
             archive_busy: self.core.archive_busy(),
             video_busy: self.core.video_busy(),
+            video_clip: self.core.video_clip().is_some(),
+            video_missing: self.core.video_missing(),
             collect_busy: self.core.collect_busy(),
             default_song: self.workflow.default_song.is_some(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
@@ -7036,7 +7057,32 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.cancel_archive();
                 Vec::new()
             }
-            AppCommand::PrepareVideo => vec![ShellRequest::PickVideoFile],
+            AppCommand::PrepareVideo => vec![ShellRequest::PickVideoFile(VideoPick::Prepare)],
+            AppCommand::ImportVideo => vec![ShellRequest::PickVideoFile(VideoPick::Import)],
+            AppCommand::RelinkVideo => {
+                if self.core.video_clip().is_some() {
+                    vec![ShellRequest::PickVideoFile(VideoPick::Relink)]
+                } else {
+                    self.notify("The song has no video".to_owned());
+                    Vec::new()
+                }
+            }
+            AppCommand::RemoveVideo => {
+                self.core.remove_video();
+                Vec::new()
+            }
+            AppCommand::MoveVideoToPlayhead => {
+                self.core.move_video_to_playhead();
+                Vec::new()
+            }
+            AppCommand::TrimVideoStart => {
+                self.core.trim_video_start_to_playhead();
+                Vec::new()
+            }
+            AppCommand::TrimVideoEnd => {
+                self.core.trim_video_end_to_playhead();
+                Vec::new()
+            }
             AppCommand::CheckFfmpeg => {
                 // The core says why in a toast when it refuses.
                 let _ = self.core.check_ffmpeg();

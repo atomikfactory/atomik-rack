@@ -26,6 +26,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 | [L](#l-format-version-cadence) | Project format version cadence | Decided (already applied) |
 | [M](#m-warp-on-import-default) | Warp on import default | Decided |
 | [N](#n-video-through-the-users-ffmpeg) | Video through the user's FFmpeg | Default (not yet confirmed) |
+| [O](#o-the-video-of-a-song-and-its-time) | The video of a song and its time | Default (not yet confirmed) |
 
 ---
 
@@ -271,5 +272,33 @@ folder, then `PATH`, then the usual package folders on macOS), needs release 4 o
 one trait with a fake for tests. The proxy is JPEG (every frame intra-coded; about 360 lines), packed in one indexed
 file per film in a per-user cache that is pruned to 2 GiB. JPEG decoding is a small pure-Rust dependency that comes
 with the viewer; the first item adds none.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## O. The video of a song and its time
+
+**Question.** How does a song hold a film, and in which unit are its start and trim kept, given that the song is in
+ticks and the tempo can change?
+
+**Options.**
+
+1. Ticks, like clips: the film's start and length are song ticks, converted with the tempo map.
+2. Seconds as floating point.
+3. Integer microseconds.
+
+**Implications.** A film runs on the clock. In ticks, a tempo change would move the film in time and shrink or
+stretch it against the picture, which is never what a user wants for sync (the tempo of a song is edited long after
+the film is placed). Floating-point seconds do not compare or round-trip exactly, so an undo or a save and load
+could move a start by a rounding error and the golden files would depend on the printer. Integers are exact; a
+microsecond is far finer than a frame (a frame of 30000/1001 fps is 33 366.7 microseconds and has no exact integer
+form in any unit, so no unit would be exact for frames: the viewer rounds to a frame, the model never counts them).
+The tick of a position is still needed for the ruler; it is computed from the tempo map and moves with the tempo,
+the stored start does not. The film is linked by path and never copied (a film is gigabytes); the cost is that a
+moved film is missing until it is relinked, which the app marks and offers, comparing the length and frame rate with
+the facts the project kept.
+
+**Decision.** Option 3. `RackDoc::video` is one optional clip with a path, the probe facts, a start and a trim in
+microseconds. It is saved as an optional ignorable root field of format 44 (no bump: a reader that does not know it
+drops it with a warning and plays the song, which is all it can do), and edited by `Command::Video`.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

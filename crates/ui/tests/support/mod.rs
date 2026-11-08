@@ -104,6 +104,7 @@ pub fn reference_doc() -> RackDoc {
         sort_mode: atomik_model::RackSort::Free,
         references: Vec::new(),
         delivery: None,
+        video: None,
     }
 }
 

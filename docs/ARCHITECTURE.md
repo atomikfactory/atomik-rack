@@ -2621,13 +2621,45 @@ Without FFmpeg the video features are off and nothing else changes. This section
   (`crates/app/src/video_worker.rs`, one job at a time, a result message even when the thread panics) with the
   progress in the status line and `AppCore::cancel_video`; closing the app cancels the job. File > Video holds
   Prepare Video, Check FFmpeg and Cancel Video Job (`video.prepare`, `video.check_ffmpeg`, `video.cancel`). The
-  films prepared in a session are kept in `AppCore::prepared_videos`. The project, the engine and the audio thread
-  are not touched: no format change.
+  films prepared in a session are kept in `AppCore::prepared_videos`. The engine and the audio thread are not
+  touched; the film's place in the song is in the next list.
+- **The film in the song.** `RackDoc::video` is `Option<VideoClip>` ([model/src/video.rs](../crates/model/src/video.rs)):
+  one film per song, **linked by path and never copied** (films are huge; Collect Files leaves it where it is), with
+  the facts the probe found (`VideoFacts`: length, frame rate as a fraction, picture size as it shows, start
+  timecode, whether it has sound) so a project opens, and shows its clip, without FFmpeg. Every position is
+  **integer microseconds**, not ticks: a film runs on the clock, so a tempo change must not move it (a tick is a
+  fraction of a beat and moves in time with the tempo map). Integers compare exactly, round-trip through the file as
+  plain numbers and need no frame arithmetic (30000/1001 fps has no exact microsecond frame; the viewer rounds, the
+  model never does). `VideoClip::start_tick` / `end_tick` give the tick a position falls on under the song's tempo
+  map for the ruler. The clip has a **start** (in song time, up to 24 hours before or after the song's start: a
+  film may begin before bar 1) and a **trim** `in_us..out_us` of the source, at least a millisecond long and inside
+  the film; trimming the in point moves the start with it, so the picture that stays keeps its place. It is saved as
+  the root field `"video"` only when set (**format 44, `.ignorable()`: no bump**), read and written by
+  `video::{load_video, write_video}`, and edited with `Command::Video(VideoCommand)`: `Set` (add or replace),
+  `Remove`, `Move`, `Trim` and `Relink`, each one `Swap` that reports `ViewChanged`; `Move` and `Trim` carry a merge
+  id so a drag is one undo step (`MergeKey::Video`). It is not accepted by `Command::Batch`. The model has no
+  dependency on `atomik-video`: the app turns a `ProbeInfo` into `VideoFacts` (`facts_of`).
+- **Import, relink, missing.** The video worker can report its probe before it builds the proxy
+  (`Msg::VideoProbed`). Import Video (`video.import`, File > Video) picks a film, probes it and the song takes it at
+  its start when the probe is in (one undo step, replacing a film the song had), while the proxy builds on in the
+  background with progress and cancel; if that is cancelled the film stays in the song without its preview. The
+  probe of a job is applied only to the project that started it. Without FFmpeg the toast is the install hint and
+  nothing changes. Relink Video (`video.relink`) probes another file the same way and points the film at it with
+  the new facts, keeping the start and trim (the out point is limited to the new length); when the length (more than
+  half a frame apart) or the frame rate differs from what the project knew, the toast says so
+  (`VideoFacts::differences`). A film whose file is gone opens as usual; `AppCore::video_missing` (cached per path,
+  looked at again on open, import and relink) marks it, a toast says so at open, and the project inspect of the MCP
+  tools lists the film with `missing`. Remove Video, Move Video to Playhead and Trim Video Start / End to Playhead
+  (`video.remove`, `video.move_to_playhead`, `video.trim_start`, `video.trim_end`) read the playhead through the
+  tempo map into the film's own time.
 - **Tests.** `crates/video` has unit tests for the version parser, the discovery order, the probe of an MP4/H.264,
   a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone film
   and cover art, the argument lists, the frame splitter, the proxy index and random access, the cache key,
   the version check and the pruning, and the worker's cancel; all with the fake. One ignored test uses a real FFmpeg
-  (see [TESTING.md](TESTING.md)).
+  (see [TESTING.md](TESTING.md)). The model has `crates/model/tests/video.rs` (every command as an undo step, drags
+  merging, the trim and start limits, relink, a tempo change keeping the film locked to time, the saved text and an
+  old file) and a video op in `doc_sequences.rs`; the app has `app_core_video_clip_tests.rs` and the File > Video
+  menu test, all with the fake.
 
 ## 3. Inside `Engine::render`
 
@@ -4860,7 +4892,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (503) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (509) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

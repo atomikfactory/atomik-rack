@@ -681,6 +681,7 @@ impl<S: EngineSink> AppCore<S> {
         core.audio_reset();
         core.rebuild_engine();
         core.audio_opened();
+        core.video_opened();
         core.midi_maps_changed();
         core
     }
@@ -1599,6 +1600,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio_reset();
         self.rebuild_engine();
         self.audio_opened();
+        self.video_opened();
     }
 
     // ------------------------------------------------------------------ engine
@@ -4036,6 +4038,13 @@ mod archive;
 
 #[path = "app_core_video.rs"]
 mod video;
+
+#[path = "app_core_video_clip.rs"]
+mod video_clip;
+
+#[cfg(test)]
+#[path = "app_core_video_clip_tests.rs"]
+mod video_clip_tests;
 
 #[cfg(test)]
 #[path = "app_core_video_tests.rs"]

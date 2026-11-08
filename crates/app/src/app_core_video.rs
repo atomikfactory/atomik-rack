@@ -11,7 +11,11 @@
 //! * **Prepare Video** ([`AppCore::start_prepare_video`]) probes a film and builds (or finds in
 //!   the per-user cache) its low-resolution proxy, the file the viewer and the thumbnails read.
 //!   The result is kept in [`AppCore::prepared_videos`] for the session. The song is not
-//!   touched: this item changes no project data.
+//!   touched.
+//! * **Import Video** and **Relink Video** (`app_core_video_clip.rs`) are a prepare job that
+//!   reports its probe first: the song takes the film (or points its film at the new file) as
+//!   soon as the probe is in, and the proxy builds on. They are the only jobs that change the
+//!   song, each through one undo step.
 //! * **Cancel** ([`AppCore::cancel_video`]) stops the worker, which kills ffmpeg and removes the
 //!   half-written proxy; closing the app does the same.
 //!
@@ -24,11 +28,30 @@ use crate::video_worker::{self, Done, Job};
 use atomik_video::{FfmpegStatus, NoVideoTools, Prepared, VideoError, VideoTool};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+/// What the job that runs is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Purpose {
+    /// Looking for FFmpeg.
+    Check,
+    /// Preparing a film (File > Video > Prepare Video): the song is not touched.
+    Prepare,
+    /// Importing a film: the song takes it when it is probed.
+    Import,
+    /// Relinking the film of the song: the song points at the file when it is probed.
+    Relink,
+}
+
 /// The video job that runs.
-struct Running {
-    job: u64,
+pub(super) struct Running {
+    pub(super) job: u64,
+    pub(super) purpose: Purpose,
+    /// The project the job was started in (see `AppCore::audio_reset`): a film is never put in
+    /// another project.
+    pub(super) generation: u64,
+    /// The film's path for a prepare job.
+    pub(super) source: Option<PathBuf>,
     /// The film's file name for a prepare job; `None` for a check.
-    film: Option<String>,
+    pub(super) film: Option<String>,
     /// A check nobody asked for (the Settings tab opened): it says nothing in a toast.
     quiet: bool,
     cancel: Arc<AtomicBool>,
@@ -43,9 +66,14 @@ pub(super) struct VideoState {
     folder: Option<PathBuf>,
     cache: Option<PathBuf>,
     status: FfmpegStatus,
-    running: Option<Running>,
+    pub(super) running: Option<Running>,
     next_job: u64,
     prepared: Vec<Prepared>,
+    /// Whether the film of the song is missing, keyed by the path it was looked for at (a stat
+    /// on every menu refresh would be too much): see `AppCore::video_missing`.
+    pub(super) file: std::cell::RefCell<Option<(PathBuf, bool)>>,
+    /// The probe of the running job already said something the proxy message must not replace.
+    pub(super) warned: bool,
 }
 
 impl Default for VideoState {
@@ -59,6 +87,8 @@ impl Default for VideoState {
             running: None,
             next_job: 0,
             prepared: Vec::new(),
+            file: std::cell::RefCell::new(None),
+            warned: false,
         }
     }
 }
@@ -181,6 +211,11 @@ impl<S: EngineSink> AppCore<S> {
     /// A video job runs already, `film` is not a file, or the worker cannot start; the message
     /// is also the toast. A machine without FFmpeg is reported by the worker.
     pub fn start_prepare_video(&mut self, film: PathBuf) -> Result<(), String> {
+        self.start_film_job(film, Purpose::Prepare)
+    }
+
+    /// Starts the prepare job for `film` (see the module docs).
+    pub(super) fn start_film_job(&mut self, film: PathBuf, purpose: Purpose) -> Result<(), String> {
         if self.video.running.is_some() {
             return self.video_refused("A video job is already running".to_owned());
         }
@@ -190,10 +225,11 @@ impl<S: EngineSink> AppCore<S> {
         let name = display_name(&film);
         let job = Job::Prepare {
             folder: self.video.folder.clone(),
-            source: film,
+            source: film.clone(),
             cache: self.video.cache.clone().unwrap_or_else(fallback_cache),
+            announce: matches!(purpose, Purpose::Import | Purpose::Relink),
         };
-        self.spawn_video(job, Some(name), false)
+        self.spawn_video(job, Some((name, film, purpose)), false)
     }
 
     /// Stops the running video job; it leaves no half-written proxy.
@@ -204,12 +240,17 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn video_refused(&mut self, why: String) -> Result<(), String> {
+    pub(super) fn video_refused(&mut self, why: String) -> Result<(), String> {
         self.reject(why.clone());
         Err(why)
     }
 
-    fn spawn_video(&mut self, job: Job, film: Option<String>, quiet: bool) -> Result<(), String> {
+    fn spawn_video(
+        &mut self,
+        job: Job,
+        film: Option<(String, PathBuf, Purpose)>,
+        quiet: bool,
+    ) -> Result<(), String> {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(AtomicU64::new(0));
         let total = Arc::new(AtomicU64::new(0));
@@ -230,11 +271,22 @@ impl<S: EngineSink> AppCore<S> {
             Ok(()) => {
                 self.audio.pending += 1;
                 let message = match &film {
-                    Some(name) => format!("Preparing video {name}..."),
+                    Some((name, _, Purpose::Import)) => format!("Importing video {name}..."),
+                    Some((name, _, Purpose::Relink)) => format!("Relinking video to {name}..."),
+                    Some((name, _, _)) => format!("Preparing video {name}..."),
                     None => "Looking for FFmpeg...".to_owned(),
                 };
+                let purpose = film.as_ref().map_or(Purpose::Check, |f| f.2);
+                let (film, source) = match film {
+                    Some((name, path, _)) => (Some(name), Some(path)),
+                    None => (None, None),
+                };
+                self.video.warned = false;
                 self.video.running = Some(Running {
                     job: id,
+                    purpose,
+                    generation: self.audio.generation,
+                    source,
                     film,
                     quiet,
                     cancel,
@@ -266,6 +318,8 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         let film = running.film.unwrap_or_default();
+        let in_song = matches!(running.purpose, Purpose::Import | Purpose::Relink);
+        let warned = std::mem::take(&mut self.video.warned);
         match result {
             Ok(prepared) => {
                 let p = *prepared;
@@ -278,10 +332,17 @@ impl<S: EngineSink> AppCore<S> {
                 );
                 self.video.prepared.retain(|q| q.source != p.source);
                 self.video.prepared.push(p);
-                self.reject(message);
+                // The warning of a relink stays on screen: this message would replace it.
+                if !warned {
+                    self.reject(message);
+                }
             }
+            Err(VideoError::Cancelled) if in_song => self.reject(format!(
+                "Preparing {film} cancelled; the video stays in the song without its preview"
+            )),
             Err(VideoError::Cancelled) => self.reject(format!("Preparing {film} cancelled")),
             Err(VideoError::NotUsable(message)) => self.reject(message),
+            Err(e) if in_song => self.reject(format!("Cannot use {film}: {e}")),
             Err(e) => self.reject(format!("Preparing {film} failed: {e}")),
         }
     }

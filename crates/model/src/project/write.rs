@@ -42,6 +42,7 @@ pub(crate) fn save(doc: &RackDoc) -> String {
     crate::rack_groups::write_sort(w, doc.sort_mode);
     crate::references::write_references(w, &doc.references);
     crate::delivery::write_delivery(w, &doc.delivery);
+    crate::video::write_video(w, &doc.video);
     write_assets(w, &doc.assets);
     write_song(w, &doc.song);
     let _ = writeln!(w, "}}");

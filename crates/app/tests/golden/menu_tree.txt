@@ -83,6 +83,14 @@ File
     Import Project Archive…
     Cancel Project Archive
   Video >
+    Import Video…
+    Remove Video
+    Relink Video…
+    ---
+    Move Video to Playhead
+    Trim Video Start to Playhead
+    Trim Video End to Playhead
+    ---
     Prepare Video…
     Check FFmpeg
     Cancel Video Job

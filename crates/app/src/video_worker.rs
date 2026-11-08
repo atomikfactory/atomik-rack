@@ -8,8 +8,8 @@
 
 use crate::audio_import::Msg;
 use atomik_video::{
-    Control, FfmpegStatus, Prepared, ProxyCache, ProxySpec, Search, VideoError, VideoTool,
-    discover, prepare,
+    Control, FfmpegStatus, Prepared, ProbeInfo, ProxyCache, ProxySpec, Search, VideoError,
+    VideoTool, discover, prepare, probe_file,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,6 +31,9 @@ pub(crate) enum Job {
         source: PathBuf,
         /// The proxy cache folder.
         cache: PathBuf,
+        /// Report what the probe found as soon as it is known ([`Msg::VideoProbed`]), before
+        /// the proxy is built (Import Video and Relink Video put the film in the song then).
+        announce: bool,
     },
 }
 
@@ -63,7 +66,13 @@ pub(crate) fn spawn(
                 prepares: matches!(job, Job::Prepare { .. }),
                 sent: false,
             };
-            let done = run(&*tool, job, &cancel, &progress, &total);
+            let announce = |probe: &ProbeInfo| {
+                let _ = guard.tx.send(Msg::VideoProbed {
+                    job: job_id,
+                    probe: Box::new(probe.clone()),
+                });
+            };
+            let done = run(&*tool, job, &cancel, &progress, &total, &announce);
             guard.send(done);
         })
         .map(|_| ())
@@ -84,6 +93,7 @@ fn run(
     cancel: &AtomicBool,
     done: &AtomicU64,
     total: &AtomicU64,
+    announce: &dyn Fn(&ProbeInfo),
 ) -> Done {
     match job {
         Job::Check { folder } => Done {
@@ -94,23 +104,28 @@ fn run(
             folder,
             source,
             cache,
+            announce: tell,
         } => {
             let status = search(tool, folder.as_deref());
             let prepared = match status.tools() {
                 None => Err(VideoError::NotUsable(status.message())),
-                Some(ffmpeg) => prepare(
-                    tool,
-                    ffmpeg,
-                    &source,
-                    &ProxyCache::new(cache),
-                    &ProxySpec::default(),
-                    &Control {
-                        cancel,
-                        done,
-                        total,
-                    },
-                )
-                .map(Box::new),
+                Some(ffmpeg) => {
+                    probed(tell, announce, tool, ffmpeg, &source, cancel).and_then(|()| {
+                        prepare(
+                            tool,
+                            ffmpeg,
+                            &source,
+                            &ProxyCache::new(cache),
+                            &ProxySpec::default(),
+                            &Control {
+                                cancel,
+                                done,
+                                total,
+                            },
+                        )
+                        .map(Box::new)
+                    })
+                }
             };
             Done {
                 status,
@@ -118,6 +133,22 @@ fn run(
             }
         }
     }
+}
+
+/// The probe the import and the relink need first: its answer goes out at once, so the film is in
+/// the song while the proxy builds. Nothing happens for a plain preparation.
+fn probed(
+    tell: bool,
+    announce: &dyn Fn(&ProbeInfo),
+    tool: &dyn VideoTool,
+    ffmpeg: &atomik_video::Ffmpeg,
+    source: &std::path::Path,
+    cancel: &AtomicBool,
+) -> Result<(), VideoError> {
+    if tell {
+        announce(&probe_file(tool, ffmpeg, source, cancel)?);
+    }
+    Ok(())
 }
 
 /// Sends the result, and the completion of the worker, even if the thread panics.
