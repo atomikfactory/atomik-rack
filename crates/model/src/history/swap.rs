@@ -107,6 +107,11 @@ swaps! {
         doc.delivery.clone_from(new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// The song's video (see [`crate::VideoClip`]).
+    Video {}: Option<crate::VideoClip> => |doc, new| {
+        doc.video.clone_from(new);
+        Ok(vec![SyncOp::ViewChanged])
+    };
     /// The master tune in cents.
     Tune {}: f32 => |doc, new| {
         doc.tune_cents = *new;

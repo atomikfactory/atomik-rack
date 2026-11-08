@@ -48,6 +48,7 @@ impl Command {
             Command::SetRackSort(_) => "Sort Rack",
             Command::SetReferences(_) => "Edit Reference Tracks",
             Command::SetDelivery(_) => "Set Delivery Target",
+            Command::Video(c) => crate::video::label(c),
             Command::ConvertSampleRate { .. } => "Convert Sample Rate",
             Command::Console(c) => console_label(c),
             Command::Container(c) => container_label(c),

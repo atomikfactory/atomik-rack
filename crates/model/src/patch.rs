@@ -324,6 +324,7 @@ pub(crate) fn load_rack(
         sort_mode: crate::RackSort::Free,
         references: Vec::new(),
         delivery: None,
+        video: None,
     };
     let (v, p) = field("devices");
     let mut first_use: BTreeMap<String, JsonPath> = BTreeMap::new();
