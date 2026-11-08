@@ -4347,3 +4347,7 @@ mod reference_tests;
 #[cfg(test)]
 #[path = "app_core_zone_tests.rs"]
 mod zone_tests;
+
+#[cfg(test)]
+#[path = "app_core_param_select_tests.rs"]
+mod param_select_tests;

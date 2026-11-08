@@ -1132,6 +1132,14 @@ may break APIs and the patch and project formats.
   to it and scrolls like the menu bar (wheel, the arrow strips at its top and bottom, Up, Down, Home and End), and a
   submenu near the window edge moves up or opens on the left to stay on screen. The menu bar flyouts already opened
   at once.
+- **Tweaking a device inside a container no longer moves the live keyboard to another track.** The rack named the
+  selected device by its view-local key inside a container (`synth`, not `container/synth`), so the keyboard did not
+  find the armed track the device belongs to and fell back to the first armed track of the song, which then showed
+  as the track playing (arrow in the track header, status line). A device inside a container now belongs to its
+  container's track, and a selection that is no armed track (an effect, an empty container view) leaves the keyboard
+  on the track selected in the arrangement while that one is armed. Tweaking never changes the selected track, the
+  selected mix channel or which tracks are armed. Follow Selection and Show Automation Lane read the same document
+  key now, so an inner device named like a top-level device no longer shows or adds that device's lane.
 
 ## [0.3.0-rc.2] - 2026-11-04
 
