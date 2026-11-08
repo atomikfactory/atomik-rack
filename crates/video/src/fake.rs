@@ -46,6 +46,7 @@ struct State {
     chunk: usize,
     stream_fails: Option<String>,
     on_frame: Option<FrameHook>,
+    audio: Option<Vec<u8>>,
     calls: Vec<Call>,
 }
 
@@ -137,6 +138,12 @@ impl FakeTool {
         self.with(|s| s.on_frame = Some(Arc::new(hook)))
     }
 
+    /// The WAV file an audio extraction (a call with `-vn`) writes to its output path, and the
+    /// progress it prints: four steps, each a call of the [`FakeTool::on_frame`] hook.
+    pub fn audio(self, wav: Vec<u8>) -> Self {
+        self.with(|s| s.audio = Some(wav))
+    }
+
     /// Every call so far, oldest first.
     pub fn calls(&self) -> Vec<Call> {
         self.lock().calls.clone()
@@ -162,7 +169,9 @@ impl VideoTool for FakeTool {
             args: args.to_vec(),
         };
         let (is_version, is_probe) = (call.has("-version"), call.has("-show_streams"));
-        let (version, version_fails, probe, frames, chunk, stream_fails, on_frame) = {
+        let is_audio = call.has("-vn");
+        let out_path = call.args.last().cloned();
+        let (version, version_fails, probe, frames, chunk, stream_fails, on_frame, audio) = {
             let mut s = self.lock();
             s.calls.push(call);
             (
@@ -173,6 +182,7 @@ impl VideoTool for FakeTool {
                 s.chunk,
                 s.stream_fails.clone(),
                 s.on_frame.clone(),
+                s.audio.clone(),
             )
         };
         let failure = |stderr: &str| Exit {
@@ -197,6 +207,45 @@ impl VideoTool for FakeTool {
                 None => failure("No such file or directory"),
             });
         }
+        if is_audio {
+            // The output is the last argument, `file:` and the path.
+            if let (Some(wav), Some(out)) = (audio, out_path) {
+                let text = out.to_string_lossy().into_owned();
+                let path = text.strip_prefix("file:").unwrap_or(&text);
+                if std::fs::write(path, wav).is_err() {
+                    return Ok(failure("cannot write the output"));
+                }
+            }
+            for step in 1..=4usize {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(VideoError::Cancelled);
+                }
+                // The sample probe is 12.021 s long: the progress counts quarters of it.
+                let line = format!(
+                    "out_time_us={}
+progress=continue
+",
+                    step * 3_005_333
+                );
+                if !stdout(line.as_bytes()) {
+                    return Ok(Exit {
+                        stopped: true,
+                        ..Exit::ok()
+                    });
+                }
+                if let Some(hook) = &on_frame {
+                    hook(step);
+                }
+            }
+            if let Some(stderr) = stream_fails {
+                return Ok(failure(&stderr));
+            }
+            let line = "out_time_us=12021333
+progress=end
+";
+            let _ = stdout(line.as_bytes());
+            return Ok(Exit::ok());
+        }
         for (n, frame) in frames.iter().enumerate() {
             for piece in frame.chunks(chunk) {
                 if cancel.load(Ordering::Relaxed) {
@@ -218,6 +267,28 @@ impl VideoTool for FakeTool {
             None => Exit::ok(),
         })
     }
+}
+
+/// A WAV file of 16 bit PCM: `samples` are the interleaved samples of `channels` channels.
+pub fn wav_pcm16(rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
+    let data = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * u32::from(channels) * 2).to_le_bytes());
+    out.extend_from_slice(&(channels * 2).to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    for s in samples {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    out
 }
 
 /// A small JPEG-shaped file of `width` by `height` (not decodable: the right markers around a
