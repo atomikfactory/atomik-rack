@@ -2725,6 +2725,12 @@ impl RackView {
         self.selected.as_ref()
     }
 
+    /// The selected device as the document names it: a path key inside a container (see
+    /// [`Self::selected`], which is the view's local key).
+    pub fn selected_path(&self) -> Option<DeviceKey> {
+        self.selected.as_ref().map(|k| self.abs_key(k))
+    }
+
     /// Selects a device (no action emitted).
     pub fn set_selected(&mut self, key: Option<DeviceKey>) {
         self.area_pick = None;
