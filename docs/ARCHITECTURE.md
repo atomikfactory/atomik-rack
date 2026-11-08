@@ -2670,14 +2670,44 @@ Without FFmpeg the video features are off and nothing else changes. This section
   missing) or the proxy's progress. The proxy of a song's film is built quietly (`Purpose::Open`, no toast) once
   per film when a project with a film opens (after the platform has set the tools and cache, in `video_frame`)
   and when the window opens. No key is bound (the menu has both commands).
+- **The video row.** A song with a film shows it in a row of its own above the track lanes, under the tempo and
+  energy lanes and over the whole width (it does not scroll with the tracks): `arrangement/video_row.rs`, 54 px
+  high, or an 18 px bar when collapsed with the chevron of its header cell. View > Lanes and Markers > Video Row
+  (`view.toggle_video_row`) hides it; both choices are in `ui-state.json` (`show_video_row`, `video_row_collapsed`).
+  The row is its own band between the lanes and the energy lane, so no lane or clip lies under it and it takes no
+  press a track would. The bar runs from the film's start to its end through the tempo map; thumbnail slots are as
+  wide as a picture of the bar's height (24 to 170 px), slot `k` starting `k` slots after the film's left edge and
+  showing the frame that plays at its start (`VideoSlot`), so the slots follow the zoom and hold still while
+  scrolling. Only the slots in view are asked for: `ArrangementView::video_wanted` lists the frames without a
+  picture, the middle of the view first, and the core (`app_core_video_thumbs.rs`) hands them to a second
+  `FrameDecoder` (`spawn_file_scaled`: its own thread and file handle, each picture scaled down to 92 px high by
+  `Picture::scaled_to_height` on that thread) and gives the finished pictures to `add_video_thumb`. The row keeps
+  them by frame number in a 10 MiB budget (the least recently wanted leave first), so zooming back finds them, and
+  a slot waits as a plain placeholder. A collapsed or hidden row, a missing film or no preview closes the worker.
+  The core also feeds the row (`VideoFeed`): missing, the preview's frame count, a note for when there is none
+  ("Preparing the preview 40%", no FFmpeg, not built) and the timecodes at the playhead, of the first and of the
+  last frame of the trim, counted from the film's own start timecode (the header shows the playhead's, the bar
+  the other two); a missing film is a red labelled bar and a film without a preview a labelled one, and both
+  still move. A press selects the film (any other press or Escape lets go, Delete removes it:
+  `VideoCommand::Remove`), a drag of the body moves it and a drag of either end trims it, every step a
+  `Command::Video` with one merge id and `EndMerge` at the release (Escape sends the first values back under the
+  same id): one undo step. The snapping is `atomik_model::video_snap`: a move takes the grid line nearest the
+  start (`moved_start`; a start before the song's first tick has no grid) and then the nearest whole frame of the
+  song's clock; a trim takes the grid line for the edge's song time, then the nearest whole frame of the source
+  (`trimmed_in`, `trimmed_out`: at least one frame is left, and an out edge within half a frame of the file's end
+  takes the end itself). The no-snap role switches both snaps off. The row is drawn live over the cached lanes,
+  so a timecode that changes with every frame of playback does not re-record them.
 - **Tests.** `crates/video` has unit tests for the version parser, the discovery order, the probe of an MP4/H.264,
   a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone film
   and cover art, the argument lists, the frame splitter, the proxy index and random access, the cache key,
   the version check and the pruning, and the worker's cancel; all with the fake. One ignored test uses a real FFmpeg
   (see [TESTING.md](TESTING.md)). The model has `crates/model/tests/video.rs` (every command as an undo step, drags
   merging, the trim and start limits, relink, a tempo change keeping the film locked to time, the saved text and an
-  old file) and a video op in `doc_sequences.rs`; the app has `app_core_video_clip_tests.rs` and the File > Video
-  menu test, all with the fake.
+  old file) and a video op in `doc_sequences.rs`, and the frame snap arithmetic in `video_snap.rs`; the UI has
+  `crates/ui/tests/video_row.rs` (slot layout per zoom, the frames asked for, the byte budget, the states painted,
+  moves and trims with both snaps, Escape, Delete, no press taken from a track); the app has
+  `app_core_video_clip_tests.rs`, `app_core_video_thumbs_tests.rs` and the File > Video menu test, all with the
+  fake.
 
 ## 3. Inside `Engine::render`
 
@@ -4910,7 +4940,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (511) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (512) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

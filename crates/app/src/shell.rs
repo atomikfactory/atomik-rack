@@ -867,6 +867,8 @@ impl<B: AudioBackend> Shell<B> {
             let arrangement = self.core.arrangement_mut();
             arrangement.set_tempo_lane(self.ui.show_tempo_lane);
             arrangement.set_energy_lane(self.ui.show_energy_lane);
+            arrangement.set_video_row(self.ui.show_video_row);
+            arrangement.set_video_row_collapsed(self.ui.video_row_collapsed);
             arrangement.set_marker_strip(self.ui.show_marker_strip);
             arrangement.set_inspector(self.ui.show_inspector);
             arrangement.set_marker_list(self.ui.show_marker_list);
@@ -3672,6 +3674,7 @@ impl<B: AudioBackend> Shell<B> {
             big_meter: view.big_meter_visible(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
             energy_lane: self.core.arrangement().energy_lane_visible(),
+            video_row: self.core.arrangement().video_row_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
             inspector: self.core.arrangement().inspector_visible(),
             marker_list: self.core.arrangement().marker_list_visible(),
@@ -6218,6 +6221,11 @@ impl<B: AudioBackend> Shell<B> {
             self.ui.audio_editor_mode = audio_mode;
             self.ui_changed();
         }
+        let collapsed = self.core.arrangement().video_row_collapsed();
+        if collapsed != self.ui.video_row_collapsed {
+            self.ui.video_row_collapsed = collapsed;
+            self.ui_changed();
+        }
     }
 
     /// The saved interface state changed: written by the next [`Self::flush_geometry`] (at most
@@ -7723,6 +7731,13 @@ impl<B: AudioBackend> Shell<B> {
                 if show && self.core.energy().is_none() && !self.core.energy_running() {
                     let _ = self.core.start_energy();
                 }
+                Vec::new()
+            }
+            AppCommand::ToggleVideoRow => {
+                let show = !self.core.arrangement().video_row_visible();
+                self.core.arrangement_mut().set_video_row(show);
+                self.ui.show_video_row = show;
+                self.ui_changed();
                 Vec::new()
             }
             AppCommand::RefreshEnergyLane => {

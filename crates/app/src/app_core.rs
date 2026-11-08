@@ -453,6 +453,8 @@ pub struct AppCore<S: EngineSink> {
     spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView,
     video_win: atomik_ui::VideoView,
     viewer: video_view::ViewerState,
+    /// The video row of the arrangement: its thumbnail worker.
+    thumbs: video_thumbs::ThumbState,
     speq: spectrum_eq::SpectrumEqState,
     keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
@@ -643,6 +645,7 @@ impl<S: EngineSink> AppCore<S> {
             spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView::new(Theme::dark()),
             video_win: atomik_ui::VideoView::new(Theme::dark()),
             viewer: video_view::ViewerState::default(),
+            thumbs: video_thumbs::ThumbState::default(),
             speq: spectrum_eq::SpectrumEqState::default(),
             keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
@@ -4055,6 +4058,9 @@ mod video_clip;
 #[path = "app_core_video_view.rs"]
 mod video_view;
 
+#[path = "app_core_video_thumbs.rs"]
+mod video_thumbs;
+
 #[cfg(test)]
 #[path = "app_core_video_clip_tests.rs"]
 mod video_clip_tests;
@@ -4066,6 +4072,10 @@ mod video_tests;
 #[cfg(test)]
 #[path = "app_core_video_view_tests.rs"]
 mod video_view_tests;
+
+#[cfg(test)]
+#[path = "app_core_video_thumbs_tests.rs"]
+mod video_thumbs_tests;
 
 #[path = "app_core_patches.rs"]
 mod patches;

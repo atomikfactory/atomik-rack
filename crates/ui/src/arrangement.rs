@@ -84,6 +84,7 @@ mod stretch;
 mod takes;
 mod tempo;
 mod track_move;
+mod video_row;
 
 pub use audio_edit::AudioMenu;
 pub use energy_lane::ENERGY_LANE_HEIGHT;
@@ -102,6 +103,9 @@ pub use organise::{
 pub use takes::{TAKE_GROUP_HEIGHT, TAKE_ROW_HEIGHT, take_color};
 pub use tempo::TempoMenu;
 pub use track_move::TrackDrop;
+pub use video_row::{
+    VIDEO_ROW_COLLAPSED, VIDEO_ROW_HEIGHT, VIDEO_THUMB_HEIGHT, VideoFeed, VideoSlot,
+};
 
 /// Width of the track list.
 pub const TRACK_LIST_WIDTH: f64 = 208.0;
@@ -373,6 +377,12 @@ enum Hit {
     TempoLane,
     /// The energy lane.
     EnergyLane,
+    /// The chevron in the video row header cell.
+    VideoToggle,
+    /// The video row header cell.
+    VideoHeader,
+    /// The bar of the film in the video row.
+    VideoBar(video_row::VideoPart),
     /// The arm button in the tempo lane's header.
     TempoArm,
     /// The meter tag of change `i` in the ruler.
@@ -569,6 +579,8 @@ enum Drag {
     None,
     /// A track header is dragged to another place of the list (`OrgUi::mv` has the state).
     TrackMove,
+    /// The bar of the film is dragged or trimmed (`VideoUi::drag` has the state).
+    Video,
     /// A note lane header is dragged to another place among the note lanes (`OrgUi::lane_mv`).
     LaneMove,
     /// A rubber band is dragged over the track headers (`OrgUi::band`).
@@ -962,6 +974,8 @@ pub struct ArrangementView {
     energy_lane: bool,
     /// What the energy lane draws.
     en: energy_lane::EnergyUi,
+    /// The video row above the lanes.
+    vid: video_row::VideoUi,
     /// The selected tempo point and meter change.
     tempo_sel: Option<usize>,
     meter_sel: Option<usize>,
@@ -1094,6 +1108,7 @@ impl ArrangementView {
             tempo_lane: false,
             energy_lane: false,
             en: energy_lane::EnergyUi::default(),
+            vid: video_row::VideoUi::default(),
             tempo_sel: None,
             meter_sel: None,
             ctx_tick: 0,
@@ -2083,9 +2098,12 @@ impl ArrangementView {
             && self.assets == doc.assets
             && self.input_channels == doc.input_channels
             && self.audio_headers == headers
+            && self.vid.clip == doc.video
         {
             return;
         }
+        self.vid.clip.clone_from(&doc.video);
+        self.video_synced(doc.video.as_ref());
         self.audio_headers = headers;
         self.rec_sources = sources;
         let takes_changed = self.song.org.open_takes != doc.song.org.open_takes;
@@ -2262,13 +2280,19 @@ impl ArrangementView {
             }
     }
 
-    fn lanes_top(&self) -> f64 {
+    /// The bottom of the energy lane (the tempo lane's bottom when it is hidden).
+    fn energy_bottom(&self) -> f64 {
         self.tempo_bottom()
             + if self.energy_lane {
                 energy_lane::ENERGY_LANE_HEIGHT
             } else {
                 0.0
             }
+    }
+
+    /// The top of the track lanes: under the video row, which sits under the energy lane.
+    fn lanes_top(&self) -> f64 {
+        self.energy_bottom() + self.video_row_height()
     }
 
     /// The tempo lane over the timeline (empty height when hidden).
@@ -2287,7 +2311,7 @@ impl ArrangementView {
             self.axis.x0,
             self.tempo_bottom(),
             self.bounds.x1.max(self.axis.x0),
-            self.lanes_top(),
+            self.energy_bottom(),
         )
     }
 
@@ -2650,7 +2674,11 @@ impl ArrangementView {
             }
             return self.strip_hit(pos);
         }
-        if pos.y >= self.tempo_bottom() && pos.y < self.lanes_top() {
+        if pos.y >= self.energy_bottom() && pos.y < self.lanes_top() {
+            // The video row (only when the song has a film and the row is on).
+            return self.video_hit(pos);
+        }
+        if pos.y >= self.tempo_bottom() && pos.y < self.energy_bottom() {
             // The energy lane (only when it is shown): nothing to press.
             return if pos.x < tl.x0 {
                 Hit::Empty
@@ -2658,7 +2686,7 @@ impl ArrangementView {
                 Hit::EnergyLane
             };
         }
-        if pos.y < self.lanes_top() {
+        if pos.y < self.tempo_bottom() {
             // The tempo lane (only when it is shown).
             if pos.x < tl.x0 {
                 return if self.tempo_lane && self.tempo_arm_rect().contains(pos) {
@@ -3179,6 +3207,9 @@ impl ArrangementView {
             self.tempo_sel = None;
             self.meter_sel = None;
         }
+        if !matches!(hit, Hit::VideoBar(_) | Hit::VideoHeader) {
+            self.video_deselect();
+        }
         if !matches!(
             hit,
             Hit::Marker(_) | Hit::MarkerLine(_) | Hit::Range(..) | Hit::Panel(_)
@@ -3248,6 +3279,9 @@ impl ArrangementView {
             Hit::Panel(h) => self.list_down(h, pos, button, clicks, out),
             Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
             Hit::TempoArm if primary => out.push(UiAction::ToggleTempoArm),
+            Hit::VideoToggle if primary => self.video_toggle(),
+            Hit::VideoHeader => self.video_down(None, pos, button),
+            Hit::VideoBar(part) => self.video_down(Some(part), pos, button),
             Hit::TempoLane => self.tempo_lane_down(pos, button, modifiers, clicks, tool, out),
             Hit::MeterTag(i) => self.meter_tag_down(i, button, pos, tool, out),
             Hit::RulerLabel | Hit::RulerBand | Hit::LoopEdge(_) | Hit::EndMark
@@ -4530,6 +4564,10 @@ impl ArrangementView {
             self.height_move(pos, modifiers.alt, out);
             return;
         }
+        if matches!(self.drag, Drag::Video) {
+            self.video_move(pos, modifiers, out);
+            return;
+        }
         if matches!(self.drag, Drag::LaneMove) {
             self.lane_move_move(pos, modifiers);
             return;
@@ -4631,6 +4669,7 @@ impl ArrangementView {
             | Drag::Snap { .. }
             | Drag::TempoPoint { .. }
             | Drag::Height
+            | Drag::Video
             | Drag::TrackMove
             | Drag::HeaderBand
             | Drag::LaneMove
@@ -5060,6 +5099,10 @@ impl ArrangementView {
             | Drag::Resize { .. }
             | Drag::Crossfade { .. }
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
+            Drag::Video => match self.video_drag_part() {
+                Some(video_row::VideoPart::Body) => CursorHint::Dragging,
+                _ => CursorHint::ResizeHorizontal,
+            },
             Drag::Stretch { .. } => CursorHint::Stretch,
             Drag::Static(_) | Drag::FolderFader(_) => CursorHint::Move,
             Drag::Range(_) => CursorHint::Crosshair,
@@ -5087,6 +5130,8 @@ impl ArrangementView {
                     CursorHint::ResizeHorizontal
                 }
                 Some(Hit::StaticHandle(..) | Hit::FolderFader(_)) => CursorHint::Move,
+                Some(Hit::VideoBar(video_row::VideoPart::Body)) => CursorHint::Move,
+                Some(Hit::VideoBar(_)) => CursorHint::ResizeHorizontal,
                 // The stretch role over an edge: the edge stretches the clip instead.
                 Some(Hit::Clip {
                     part: ClipPart::Edge | ClipPart::EdgeStart,
@@ -5155,6 +5200,7 @@ impl ArrangementView {
             Drag::Stretch { open: false, .. } | Drag::Crossfade { open: false, .. } => {}
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
+            Drag::Video => self.video_up(out),
             Drag::TrackMove => self.track_move_up(out),
             Drag::HeaderBand => self.header_band_up(),
             Drag::LaneMove => self.lane_move_up(out),
@@ -5465,6 +5511,7 @@ impl ArrangementView {
                     self.mk.sel = None;
                     self.og.group = None;
                     self.og.extra.clear();
+                    self.video_deselect();
                 }
             }
             Key::Home => {
@@ -5500,6 +5547,9 @@ impl ArrangementView {
         if let Some(tool) = Tool::from_command(id) {
             self.set_tool(tool);
             return CommandOutcome::Handled(Vec::new());
+        }
+        if let Some(outcome) = self.video_command(id) {
+            return outcome;
         }
         if let Some(outcome) = self.tempo_command(id, arg) {
             return outcome;
@@ -6117,6 +6167,9 @@ impl ArrangementView {
         if matches!(self.drag, Drag::Height) {
             return self.height_cancel(out);
         }
+        if matches!(self.drag, Drag::Video) {
+            return self.video_cancel(out);
+        }
         if matches!(self.drag, Drag::LaneMove) {
             return self.lane_move_cancel();
         }
@@ -6270,6 +6323,7 @@ impl ArrangementView {
         self.paint_marker_strip(canvas);
         self.paint_tempo_lane(canvas);
         self.paint_energy_lane(canvas);
+        self.paint_video_row(canvas);
         self.paint_ruler(canvas);
         let list = cache.headers(stamp, self.repaint || self.headers_dirty, |l| {
             self.paint_track_list(l, doc);

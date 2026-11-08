@@ -105,6 +105,7 @@ mod time_edit;
 pub mod transition;
 mod validate;
 pub mod video;
+pub mod video_snap;
 pub mod warp;
 mod workflow;
 mod workflow_cmd;

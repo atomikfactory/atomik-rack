@@ -247,6 +247,10 @@ pub enum AppCommand {
     /// View > Refresh Energy Lane: measures the master again (the lane shows an out-of-date
     /// result faded).
     RefreshEnergyLane,
+    /// View > Lanes and Markers > Video Row: the row above the arrangement's track lanes with the
+    /// song's film as a clip bar and frame thumbnails (saved with the view state; the row only
+    /// shows while the song has a film).
+    ToggleVideoRow,
     /// Edit > Find Repetition: opens the panel that lists what the song plays three times or more
     /// unchanged, with a suggested variation for each.
     FindRepetition,
@@ -924,6 +928,7 @@ impl AppCommand {
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleEnergyLane => ("view.toggle_energy_lane", None),
             AppCommand::RefreshEnergyLane => ("view.refresh_energy_lane", None),
+            AppCommand::ToggleVideoRow => ("view.toggle_video_row", None),
             AppCommand::FindRepetition => ("sequencer.find_repetition", None),
             AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
             AppCommand::ToggleInspector => ("view.toggle_inspector", None),
@@ -1295,6 +1300,7 @@ impl AppCommand {
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_energy_lane", None) => AppCommand::ToggleEnergyLane,
             ("view.refresh_energy_lane", None) => AppCommand::RefreshEnergyLane,
+            ("view.toggle_video_row", None) => AppCommand::ToggleVideoRow,
             ("sequencer.find_repetition", None) => AppCommand::FindRepetition,
             ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
             ("view.toggle_inspector", None) => AppCommand::ToggleInspector,
@@ -2052,6 +2058,8 @@ pub struct MenuState {
     pub tempo_lane: bool,
     /// The arrangement shows the energy lane.
     pub energy_lane: bool,
+    /// The arrangement shows the video row (when the song has a film).
+    pub video_row: bool,
     /// The arrangement shows the marker strip.
     pub marker_strip: bool,
     /// The arrangement shows the inspector strip.
@@ -3032,6 +3040,7 @@ pub fn menus_with_songs(
                             AppCommand::RefreshEnergyLane,
                             state.energy_lane,
                         ),
+                        check("Video Row", AppCommand::ToggleVideoRow, state.video_row),
                         check(
                             "Marker Strip",
                             AppCommand::ToggleMarkerStrip,
@@ -4273,6 +4282,7 @@ mod tests {
             big_meter: false,
             tempo_lane: false,
             energy_lane: false,
+            video_row: false,
             marker_strip: false,
             inspector: false,
             marker_list: false,
@@ -4402,6 +4412,7 @@ mod tests {
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleEnergyLane,
             AppCommand::RefreshEnergyLane,
+            AppCommand::ToggleVideoRow,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleInspector,
             AppCommand::ToggleMarkerList,
@@ -5373,6 +5384,7 @@ mod tests {
                 big_meter: false,
                 tempo_lane: false,
                 energy_lane: false,
+                video_row: false,
                 marker_strip: false,
                 inspector: false,
                 marker_list: false,

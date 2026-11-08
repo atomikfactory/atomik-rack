@@ -295,3 +295,26 @@ fn the_video_window_opens_closes_and_remembers_its_overlay() {
     assert!(!s.detached(WindowKind::Video));
     assert!(!s.core.video_shown(), "closing frees the pictures");
 }
+
+#[test]
+fn the_video_row_hides_collapses_and_is_remembered() {
+    let t = Tmp::new("row");
+    let mut s = shell(&t, FakeTool::new());
+    // On by default, open.
+    assert!(s.core.arrangement().video_row_visible());
+    assert!(s.menu_state().video_row);
+    assert!(s.ui.show_video_row && !s.ui.video_row_collapsed);
+    s.execute(AppCommand::ToggleVideoRow);
+    assert!(!s.core.arrangement().video_row_visible());
+    assert!(!s.menu_state().video_row);
+    assert!(!s.ui.show_video_row, "the choice is kept for the next run");
+    s.execute(AppCommand::ToggleVideoRow);
+    assert!(s.core.arrangement().video_row_visible() && s.ui.show_video_row);
+    // The chevron of the row collapses it; the next save of the zoom state keeps that.
+    s.core.arrangement_mut().set_video_row_collapsed(true);
+    s.save_zoom_state();
+    assert!(s.ui.video_row_collapsed);
+    s.core.arrangement_mut().set_video_row_collapsed(false);
+    s.save_zoom_state();
+    assert!(!s.ui.video_row_collapsed);
+}

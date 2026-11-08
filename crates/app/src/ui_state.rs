@@ -98,6 +98,11 @@ pub struct UiState {
     pub show_tempo_lane: bool,
     /// The arrangement shows the energy lane under the tempo lane. An absent key means hidden.
     pub show_energy_lane: bool,
+    /// The arrangement shows the video row above its lanes (when the song has a film). An absent
+    /// key means shown.
+    pub show_video_row: bool,
+    /// The video row is collapsed to a thin bar. An absent key means open.
+    pub video_row_collapsed: bool,
     /// The arrangement shows the marker strip under its ruler. An absent key in the file means
     /// shown.
     pub show_marker_strip: bool,
@@ -191,6 +196,8 @@ impl Default for UiState {
             show_console_links: false,
             show_tempo_lane: false,
             show_energy_lane: false,
+            show_video_row: true,
+            video_row_collapsed: false,
             show_marker_strip: true,
             show_inspector: false,
             show_marker_list: false,
@@ -342,6 +349,8 @@ mod tests {
             show_console_links: true,
             show_tempo_lane: true,
             show_energy_lane: true,
+            show_video_row: false,
+            video_row_collapsed: true,
             show_marker_strip: false,
             show_inspector: true,
             show_marker_list: true,
@@ -368,6 +377,8 @@ mod tests {
         assert!(!old.show_console_links);
         assert!(!old.show_tempo_lane, "an older file has no tempo lane");
         assert!(!old.show_energy_lane, "an older file has no energy lane");
+        assert!(old.show_video_row, "an older file shows the video row");
+        assert!(!old.video_row_collapsed, "an older file has it open");
         assert!(
             old.show_marker_strip,
             "an older file shows the marker strip"

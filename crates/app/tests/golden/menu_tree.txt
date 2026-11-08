@@ -212,6 +212,7 @@ View
     Tempo Lane
     Energy Lane
     Refresh Energy Lane
+    Video Row
     Marker Strip
     Marker List
   Meters and Links >

@@ -41,6 +41,51 @@ impl Picture {
         let at = (y as usize * self.width as usize + x as usize) * 4;
         self.rgba.get(at..at + 4)?.try_into().ok()
     }
+
+    /// A copy scaled down to `height` pixels high (the width keeps the aspect ratio, at least one
+    /// pixel), each new pixel the average of the source pixels it covers. A picture that is not
+    /// taller than `height` is returned as it is. Thumbnails are made with it, so a strip of
+    /// them holds a few kilobytes each instead of a whole proxy frame.
+    pub fn scaled_to_height(&self, height: u32) -> Picture {
+        let height = height.max(1);
+        if self.height <= height || self.width == 0 {
+            return self.clone();
+        }
+        let width = ((u64::from(self.width) * u64::from(height) + u64::from(self.height) / 2)
+            / u64::from(self.height))
+        .max(1) as u32;
+        let mut out = Vec::with_capacity(width as usize * height as usize * 4);
+        for y in 0..height {
+            let y0 = (u64::from(y) * u64::from(self.height) / u64::from(height)) as u32;
+            let y1 = ((u64::from(y + 1) * u64::from(self.height) / u64::from(height)) as u32)
+                .max(y0 + 1)
+                .min(self.height);
+            for x in 0..width {
+                let x0 = (u64::from(x) * u64::from(self.width) / u64::from(width)) as u32;
+                let x1 = ((u64::from(x + 1) * u64::from(self.width) / u64::from(width)) as u32)
+                    .max(x0 + 1)
+                    .min(self.width);
+                let mut sum = [0u64; 3];
+                for sy in y0..y1 {
+                    let row = sy as usize * self.width as usize;
+                    for sx in x0..x1 {
+                        let at = (row + sx as usize) * 4;
+                        for (c, s) in sum.iter_mut().enumerate() {
+                            *s += u64::from(self.rgba[at + c]);
+                        }
+                    }
+                }
+                let n = u64::from(y1 - y0) * u64::from(x1 - x0);
+                out.extend(sum.map(|s| ((s + n / 2) / n) as u8));
+                out.push(255);
+            }
+        }
+        Picture {
+            width,
+            height,
+            rgba: Arc::new(out),
+        }
+    }
 }
 
 /// Decodes one JPEG file to RGBA.
@@ -90,6 +135,23 @@ mod tests {
                 .iter()
                 .zip(b)
                 .all(|(x, y)| (i16::from(*x) - i16::from(y)).abs() <= 12)
+    }
+
+    #[test]
+    fn a_picture_scales_down_keeping_its_aspect_and_averaging_its_colours() {
+        let p = decode_jpeg(split_jpeg()).unwrap();
+        assert_eq!((p.width, p.height), (32, 16));
+        let small = p.scaled_to_height(4);
+        assert_eq!((small.width, small.height), (8, 4));
+        assert_eq!(small.bytes(), 8 * 4 * 4);
+        // The red half stays on the left, the blue half on the right.
+        assert!(near(small.pixel(1, 2).unwrap(), [255, 0, 0]));
+        assert!(near(small.pixel(6, 2).unwrap(), [0, 0, 255]));
+        // Never enlarged.
+        assert_eq!(p.scaled_to_height(16), p);
+        assert_eq!(p.scaled_to_height(99), p);
+        // A very thin result still has a pixel.
+        assert_eq!(p.scaled_to_height(1).width, 2);
     }
 
     #[test]
