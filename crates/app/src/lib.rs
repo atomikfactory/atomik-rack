@@ -81,6 +81,7 @@ pub mod text_clipboard;
 pub mod transition_choice;
 pub mod translate;
 pub mod ui_state;
+pub mod video_tab;
 pub mod video_worker;
 pub mod windows;
 pub mod workflow_tab;

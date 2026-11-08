@@ -151,7 +151,8 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
             Tab::Workflow,
             Tab::Interface,
             Tab::Surfaces,
-            Tab::Sync
+            Tab::Sync,
+            Tab::Video
         ]
     );
     assert_eq!(d.tab(), Tab::Audio);
@@ -1098,6 +1099,101 @@ fn golden_interface() {
     down(&mut d, l.rows[0].button.center());
     down(&mut d, l.rows[3].rect.center());
     golden("settings_interface_light_tooltips", &d);
+}
+
+#[test]
+fn the_video_tab_chooses_and_resets_the_ffmpeg_folder_and_apply_returns_it() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Video);
+    let l = d.video_layout(VIEW).unwrap();
+    assert!(l.folder.path.contains("system path"), "{}", l.folder.path);
+    assert_eq!(d.preferences().unwrap().1.ffmpeg_folder, None);
+    // Choose asks the platform for a folder; the dialog stays open.
+    assert_eq!(
+        down(&mut d, l.folder.choose.center()),
+        DialogOutcome::PickFfmpegFolder
+    );
+    // The picked folder goes into the draft and shows.
+    d.set_ffmpeg_folder(Some(PathBuf::from("/opt/ffmpeg/bin")));
+    let l = d.video_layout(VIEW).unwrap();
+    assert!(l.folder.path.contains("ffmpeg"), "{}", l.folder.path);
+    assert_eq!(
+        d.preferences().unwrap().1.ffmpeg_folder,
+        Some(PathBuf::from("/opt/ffmpeg/bin"))
+    );
+    // Default goes back to the system path.
+    assert_eq!(down(&mut d, l.folder.default.center()), DialogOutcome::Open);
+    assert_eq!(d.preferences().unwrap().1.ffmpeg_folder, None);
+    // An empty path is no folder.
+    d.set_ffmpeg_folder(Some(PathBuf::new()));
+    assert_eq!(d.preferences().unwrap().1.ffmpeg_folder, None);
+    // Everything sits inside the panel, above the Apply and Cancel buttons.
+    let panel = d.panel(VIEW);
+    let (apply, _) = d.buttons(VIEW);
+    let last_note = l.notes.last().unwrap().0.y;
+    assert!(
+        l.folder.rect.y0 >= panel.y0 && last_note < apply.y0,
+        "{last_note} {apply:?}"
+    );
+}
+
+#[test]
+fn the_video_tab_starts_from_the_saved_folder_and_keeps_the_other_drafts() {
+    let prefs = WorkflowPrefs {
+        ffmpeg_folder: Some(PathBuf::from("/ff")),
+        auto_route: false,
+        ..WorkflowPrefs::default()
+    };
+    let mut d = SettingsDialog::new(AudioSettings::default(), DeviceLists::default())
+        .with_preferences(
+            KeymapEditor::new(Os::Windows, Profile::Standard, UserKeymap::default()),
+            prefs,
+        );
+    goto(&mut d, Tab::Video);
+    let (_, wf) = d.preferences().unwrap();
+    assert_eq!(wf.ffmpeg_folder, Some(PathBuf::from("/ff")));
+    assert!(!wf.auto_route);
+}
+
+#[test]
+fn the_video_tab_shows_what_was_found_wrapped_and_in_the_panel() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Video);
+    let long = "FFmpeg was not found in /tools/ffmpeg (no ffmpeg): video needs it. Install it and set its folder here.";
+    d.set_video_status(long.to_owned());
+    let l = d.video_layout(VIEW).unwrap();
+    assert!(l.status.1.len() >= 2, "{:?}", l.status.1);
+    assert!(l.status.1.iter().all(|line| line.chars().count() <= 84));
+    assert_eq!(l.status.1.join(" "), long);
+    let mut list = DisplayList::new();
+    d.paint(&mut list, &Theme::dark(), VIEW);
+    let texts = list.texts();
+    for t in [
+        "Video",
+        "FFmpeg folder",
+        "FFmpeg status",
+        "Choose...",
+        "Default",
+    ] {
+        assert!(texts.contains(&t), "{t} in {texts:?}");
+    }
+    assert!(
+        texts.iter().any(|t| t.contains("video needs it")),
+        "{texts:?}"
+    );
+    // The panel grows with the status and stays inside the window.
+    let panel = d.panel(VIEW);
+    assert!(panel.y1 <= VIEW.height && panel.y0 >= 0.0);
+    let (apply, _) = d.buttons(VIEW);
+    assert!(l.notes.last().unwrap().0.y < apply.y0);
+}
+
+#[test]
+fn golden_video() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Video);
+    d.set_video_status("FFmpeg 7.1 found at /usr/local/bin".to_owned());
+    golden("settings_video", &d);
 }
 
 #[test]

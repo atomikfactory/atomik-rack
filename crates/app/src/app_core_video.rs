@@ -29,6 +29,8 @@ struct Running {
     job: u64,
     /// The film's file name for a prepare job; `None` for a check.
     film: Option<String>,
+    /// A check nobody asked for (the Settings tab opened): it says nothing in a toast.
+    quiet: bool,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
@@ -156,7 +158,20 @@ impl<S: EngineSink> AppCore<S> {
         let job = Job::Check {
             folder: self.video.folder.clone(),
         };
-        self.spawn_video(job, None)
+        self.spawn_video(job, None, false)
+    }
+
+    /// Looks for FFmpeg without a toast when it has not been looked for since the folder was
+    /// set (the Video tab of Settings shows the answer). Does nothing when it is known or a
+    /// job runs.
+    pub fn refresh_ffmpeg_status(&mut self) {
+        if self.video.status != FfmpegStatus::Unchecked || self.video.running.is_some() {
+            return;
+        }
+        let job = Job::Check {
+            folder: self.video.folder.clone(),
+        };
+        let _ = self.spawn_video(job, None, true);
     }
 
     /// Starts preparing `film`: FFmpeg is looked for again, the film probed and its proxy made
@@ -178,7 +193,7 @@ impl<S: EngineSink> AppCore<S> {
             source: film,
             cache: self.video.cache.clone().unwrap_or_else(fallback_cache),
         };
-        self.spawn_video(job, Some(name))
+        self.spawn_video(job, Some(name), false)
     }
 
     /// Stops the running video job; it leaves no half-written proxy.
@@ -194,7 +209,7 @@ impl<S: EngineSink> AppCore<S> {
         Err(why)
     }
 
-    fn spawn_video(&mut self, job: Job, film: Option<String>) -> Result<(), String> {
+    fn spawn_video(&mut self, job: Job, film: Option<String>, quiet: bool) -> Result<(), String> {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(AtomicU64::new(0));
         let total = Arc::new(AtomicU64::new(0));
@@ -221,11 +236,14 @@ impl<S: EngineSink> AppCore<S> {
                 self.video.running = Some(Running {
                     job: id,
                     film,
+                    quiet,
                     cancel,
                     progress,
                     total,
                 });
-                self.reject(message);
+                if !quiet {
+                    self.reject(message);
+                }
                 Ok(())
             }
             Err(e) => self.video_refused(format!("Cannot start the video worker: {e}")),
@@ -241,8 +259,10 @@ impl<S: EngineSink> AppCore<S> {
             self.video.status = done.status;
         }
         let Some(result) = done.prepared else {
-            let message = self.video.status.message();
-            self.reject(message);
+            if !running.quiet {
+                let message = self.video.status.message();
+                self.reject(message);
+            }
             return;
         };
         let film = running.film.unwrap_or_default();

@@ -158,3 +158,73 @@ fn a_film_that_is_prepared_shows_progress_in_the_status_line_until_it_is_done() 
     );
     assert!(s.core().prepared_video(&film).is_some());
 }
+
+fn click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) -> Vec<ShellRequest> {
+    use atomik_ui::{Modifiers, PointerButton};
+    let r = s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    s.handle(&UiEvent::PointerUp {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    r
+}
+
+#[test]
+fn the_video_tab_shows_the_check_and_applies_a_chosen_folder() {
+    use crate::settings_dialog::Tab;
+    let size = Size::new(1000.0, 800.0);
+    let t = Tmp::new("tab");
+    let mut s = shell(&t, FakeTool::new());
+    let before = s.core().last_rejection().map(str::to_owned);
+    s.execute(AppCommand::AudioSettings);
+    let tab = s
+        .dialog()
+        .unwrap()
+        .tab_strip(size)
+        .iter()
+        .find(|(_, tab)| *tab == Tab::Video)
+        .map(|(r, _)| r.center())
+        .unwrap();
+    click(&mut s, tab);
+    // Nothing was asked of the tool yet and no toast was made by opening the tab.
+    assert_eq!(s.core().last_rejection().map(str::to_owned), before);
+    // The first frame starts the quiet check; its answer reaches the tab.
+    s.poll_status();
+    let line = |s: &Shell<NullBackend>| s.dialog().unwrap().video_layout(size).unwrap().status.1;
+    assert_eq!(line(&s), ["Looking for FFmpeg..."]);
+    s.core_mut().wait_background();
+    s.poll_status();
+    // No folder is set and the fake finds nothing on the real path of this machine unless
+    // FFmpeg is installed; either way the line is a sentence about FFmpeg, not a toast.
+    let shown = line(&s).join(" ");
+    assert!(shown.contains("FFmpeg"), "{shown}");
+    assert_eq!(s.core().last_rejection().map(str::to_owned), before);
+    // Choose asks the platform; the picked folder is a draft until Apply.
+    let layout = s.dialog().unwrap().video_layout(size).unwrap();
+    assert_eq!(
+        click(&mut s, layout.folder.choose.center()),
+        vec![ShellRequest::PickFfmpegFolder]
+    );
+    s.set_ffmpeg_folder(programs(&t));
+    assert_eq!(s.core().video_folder(), None, "not before Apply");
+    let apply = s.dialog().unwrap().buttons(size).0.center();
+    click(&mut s, apply);
+    assert_eq!(s.core().video_folder(), Some(programs(&t).as_path()));
+    assert_eq!(s.workflow().ffmpeg_folder, Some(programs(&t)));
+    // The new folder is looked at without being asked, and it is found.
+    s.core_mut().wait_background();
+    assert!(s.core().video_status().is_usable());
+    assert_eq!(s.core().last_rejection().map(str::to_owned), before);
+    // It is saved with the other preferences.
+    let saved = std::fs::read_to_string(t.path("workflow.json")).unwrap();
+    assert!(saved.contains("ffmpeg_folder"), "{saved}");
+    // A picked folder with no dialog open is applied at once.
+    s.set_ffmpeg_folder(t.path("elsewhere"));
+    assert_eq!(s.core().video_folder(), Some(t.path("elsewhere").as_path()));
+}

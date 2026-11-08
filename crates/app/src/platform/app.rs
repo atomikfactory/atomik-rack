@@ -1462,6 +1462,16 @@ impl App {
                         self.shell.import_archive_from(&path);
                     }
                 }
+                ShellRequest::PickFfmpegFolder => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Choose the folder that holds ffmpeg and ffprobe");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.set_ffmpeg_folder(folder);
+                    }
+                }
                 ShellRequest::PickVideoFile => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Prepare a video")

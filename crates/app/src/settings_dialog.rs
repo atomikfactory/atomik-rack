@@ -26,6 +26,7 @@ use crate::settings::{
     MASTER_TUNE_CHOICES, MAX_BUFFER, MAX_SURFACES, MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES,
     RECORD_OFFSET_CHOICES, SurfaceSettings, WORKER_CHOICES,
 };
+use crate::video_tab::{VideoLayout, VideoTab};
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
 use atomik_ui::keymap::{KeymapEditor, UserKeymap};
@@ -183,17 +184,20 @@ pub enum Tab {
     Surfaces,
     /// MIDI clock in and out.
     Sync,
+    /// Where the user's FFmpeg is.
+    Video,
 }
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Audio,
         Tab::Keyboard,
         Tab::Workflow,
         Tab::Interface,
         Tab::Surfaces,
         Tab::Sync,
+        Tab::Video,
     ];
 
     /// The tab label.
@@ -205,6 +209,7 @@ impl Tab {
             Tab::Interface => "Interface",
             Tab::Surfaces => "Surfaces",
             Tab::Sync => "Sync",
+            Tab::Video => "Video",
         }
     }
 
@@ -217,6 +222,7 @@ impl Tab {
             Tab::Interface => "User interface",
             Tab::Surfaces => "Control surfaces",
             Tab::Sync => "MIDI clock",
+            Tab::Video => "Video",
         }
     }
 }
@@ -227,6 +233,7 @@ struct Prefs {
     keyboard: KeyboardTab,
     workflow: WorkflowTab,
     interface: InterfaceTab,
+    video: VideoTab,
 }
 
 /// Where everything is, for the current view size and scroll (logical units).
@@ -272,6 +279,8 @@ pub enum DialogOutcome {
     PickLibraryFolder,
     /// The Workflow tab asks for a folder for the session scratch bundle (the dialog stays open).
     PickScratchFolder,
+    /// The Video tab asks for the folder holding FFmpeg (the dialog stays open).
+    PickFfmpegFolder,
 }
 
 /// The settings modal.
@@ -358,6 +367,7 @@ impl SettingsDialog {
         self.prefs = Some(Prefs {
             keyboard: KeyboardTab::new(keymap),
             interface: InterfaceTab::new(UiPrefs::of(&workflow)),
+            video: VideoTab::new(workflow.ffmpeg_folder.clone(), String::new()),
             workflow: WorkflowTab::new(workflow),
         });
         self
@@ -427,12 +437,38 @@ impl SettingsDialog {
             .map(|p| p.interface.layout(self.panel(view)))
     }
 
+    /// The Video tab layout, while that tab shows.
+    pub fn video_layout(&self, view: Size) -> Option<VideoLayout> {
+        if self.tab != Tab::Video {
+            return None;
+        }
+        self.prefs
+            .as_ref()
+            .map(|p| p.video.layout(self.panel(view)))
+    }
+
+    /// Replaces the FFmpeg folder draft of the Video tab (a picked folder; `None`: search the
+    /// system path).
+    pub fn set_ffmpeg_folder(&mut self, folder: Option<PathBuf>) {
+        if let Some(p) = &mut self.prefs {
+            p.video.set_folder(folder);
+        }
+    }
+
+    /// Replaces the line the Video tab shows about FFmpeg (what the last check found).
+    pub fn set_video_status(&mut self, status: String) {
+        if let Some(p) = &mut self.prefs {
+            p.video.set_status(status);
+        }
+    }
+
     /// The keymap diff and the workflow preferences as edited (`None` for the audio-only
     /// dialog): what the shell saves when the dialog is applied.
     pub fn preferences(&self) -> Option<(UserKeymap, WorkflowPrefs)> {
         self.prefs.as_ref().map(|p| {
             let mut workflow = p.workflow.prefs().clone();
             p.interface.prefs().apply_to(&mut workflow);
+            workflow.ffmpeg_folder = p.video.folder().cloned();
             (p.keyboard.editor().user().clone(), workflow)
         })
     }
@@ -498,6 +534,17 @@ impl SettingsDialog {
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
             }
+            Tab::Video => {
+                let width = (view.width - 32.0).clamp(240.0, 640.0);
+                let content = self
+                    .prefs
+                    .as_ref()
+                    .map_or(0.0, |p| p.video.content_height());
+                let height = (TITLE + content + 24.0 + FOOTER).min(view.height - 32.0);
+                let x0 = ((view.width - width) / 2.0).max(0.0);
+                let y0 = ((view.height - height) / 2.0).max(0.0);
+                Rect::new(x0, y0, x0 + width, y0 + height)
+            }
         }
     }
 
@@ -522,12 +569,12 @@ impl SettingsDialog {
         let mut right = panel.x1 - PAD;
         let mut out = Vec::new();
         for tab in Tab::ALL.into_iter().rev() {
-            let w = text_width(tab.label()) + 20.0;
+            let w = text_width(tab.label()) + 14.0;
             out.push((
                 Rect::new(right - w, panel.y0 + 10.0, right, panel.y0 + 34.0),
                 tab,
             ));
-            right -= w + 4.0;
+            right -= w + 2.0;
         }
         out.reverse();
         out
@@ -1365,6 +1412,7 @@ impl SettingsDialog {
             Tab::Keyboard => prefs.keyboard.handle(event, panel),
             Tab::Workflow => prefs.workflow.handle(event, panel),
             Tab::Interface => prefs.interface.handle(event, panel),
+            Tab::Video => prefs.video.handle(event, panel),
             Tab::Audio | Tab::Surfaces | Tab::Sync => TabOutcome::Open,
         };
         match out {
@@ -1375,6 +1423,7 @@ impl SettingsDialog {
             TabOutcome::Import => DialogOutcome::ImportKeymap,
             TabOutcome::PickLibraryFolder => DialogOutcome::PickLibraryFolder,
             TabOutcome::PickScratchFolder => DialogOutcome::PickScratchFolder,
+            TabOutcome::PickFfmpegFolder => DialogOutcome::PickFfmpegFolder,
         }
     }
 
@@ -1428,6 +1477,11 @@ impl SettingsDialog {
             }
             (Tab::Interface, Some(p)) => {
                 p.interface.paint(canvas, theme, panel_rect);
+                self.paint_buttons(canvas, theme, panel_rect);
+                return;
+            }
+            (Tab::Video, Some(p)) => {
+                p.video.paint(canvas, theme, panel_rect);
                 self.paint_buttons(canvas, theme, panel_rect);
                 return;
             }

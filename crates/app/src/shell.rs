@@ -257,6 +257,9 @@ pub enum ShellRequest {
     /// Show an open dialog for a film (File > Video > Prepare Video), then call
     /// [`Shell::prepare_video_from`] with the path.
     PickVideoFile,
+    /// Show a folder dialog (the Video tab's FFmpeg folder Choose...), then call
+    /// [`Shell::set_ffmpeg_folder`] with the picked folder.
+    PickFfmpegFolder,
     /// Show a folder dialog (the Workflow tab's Scratch folder Choose...), then call
     /// [`Shell::set_scratch_folder`] with the picked folder.
     PickScratchFolder,
@@ -3079,6 +3082,21 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// The FFmpeg folder picked in the folder dialog: into the open settings dialog's draft
+    /// (applied with its Apply), else applied and saved at once.
+    pub fn set_ffmpeg_folder(&mut self, folder: PathBuf) {
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_ffmpeg_folder(Some(folder));
+        } else {
+            self.workflow.ffmpeg_folder = Some(folder);
+            self.save_workflow();
+            self.core
+                .set_video_folder(self.workflow.ffmpeg_folder.clone());
+            self.core.refresh_ffmpeg_status();
+        }
+        self.repaint = true;
+    }
+
     /// The library folder picked in the folder dialog: into the open settings dialog's draft
     /// (applied with its Apply), else applied and saved at once.
     pub fn set_library_folder(&mut self, folder: PathBuf) {
@@ -3135,6 +3153,8 @@ impl<B: AudioBackend> Shell<B> {
             self.save_workflow();
             self.apply_workflow_to_views();
             self.sync_library_root();
+            // A new FFmpeg folder is looked at once, so the Video tab has the answer.
+            self.core.refresh_ffmpeg_status();
         }
     }
 
@@ -5358,6 +5378,7 @@ impl<B: AudioBackend> Shell<B> {
                 DialogOutcome::ImportKeymap => return vec![ShellRequest::PickImportKeymap],
                 DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
                 DialogOutcome::PickScratchFolder => return vec![ShellRequest::PickScratchFolder],
+                DialogOutcome::PickFfmpegFolder => return vec![ShellRequest::PickFfmpegFolder],
             }
             return Vec::new();
         }
@@ -8902,6 +8923,23 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// While the Video tab of Settings shows, looks for FFmpeg when that has not been done and
+    /// gives the tab the line saying what was found.
+    fn sync_video_tab(&mut self) {
+        use crate::settings_dialog::Tab;
+        if !self.dialog.as_ref().is_some_and(|d| d.tab() == Tab::Video) {
+            return;
+        }
+        self.core.refresh_ffmpeg_status();
+        let line = match self.core.video_status() {
+            atomik_video::FfmpegStatus::Unchecked => "Looking for FFmpeg...".to_owned(),
+            status => status.message(),
+        };
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_video_status(line);
+        }
+    }
+
     /// Reads audio telemetry into the status bar; true when its text changed.
     pub fn poll_status(&mut self) -> bool {
         self.poll_status_at(crate::session::clock_now())
@@ -8981,6 +9019,7 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(progress) = self.core.freeze_progress() {
             text = format!("{progress} \u{b7} {text}");
         }
+        self.sync_video_tab();
         if let Some((_, progress)) = self.core.video_progress() {
             text = format!("{progress} \u{b7} {text}");
         }
