@@ -2002,3 +2002,29 @@ and with a sandboxed and an in-process plugin:
 - Kill the plugin's process from the task manager while it plays: Settings > Plugins shows CRASHED
   with the reason, the device shows CRASHED, RELOAD brings it back, and RETRY in the list clears the
   CRASHED word (it survives a restart of the app until then).
+
+## Video and the fake FFmpeg
+
+Video needs an FFmpeg the user installs, and CI and most machines have none, so no test needs one. Every
+`ffmpeg` and `ffprobe` call goes through the `VideoTool` trait of `atomik-video`; tests use `FakeTool`
+(`crates/video/src/fake.rs`), which answers `-version`, the probe and the frame stream with canned text and
+frames (`tiny_jpeg` makes a JPEG-shaped frame; `samples.rs` holds realistic `ffprobe` output for an MP4 with
+H.264, a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone
+film and cover art) and records every call, so a test can check the argument lists. A test stops a build by
+setting the cancel flag from the fake's `on_frame` hook. A core starts with `NoVideoTools`, so the app tests never
+start a program either; they pass a `FakeTool` and a folder of stand-in files named `ffmpeg` and `ffprobe`.
+
+- `cargo test -p atomik-video` runs the unit tests (version, discovery order, probe samples, arguments, frame
+  splitter, proxy index and random access, cache key and pruning, build, cancel and failures).
+- `cargo test -p atomik-app --lib -- video` runs the core, shell and Settings tab tests.
+- The one test that needs the real programs is ignored by default:
+  `cargo test -p atomik-video --test real_ffmpeg -- --ignored --nocapture`. It finds FFmpeg like the app does (the
+  folder in `ATOMIK_FFMPEG_DIR` when set, else `PATH`), makes a two-second film with FFmpeg's own generators in a
+  temporary folder, probes it, builds and reads its proxy, checks the cache hit and a cancelled build. Without
+  FFmpeg it says so and passes.
+
+Hand checks (a machine with FFmpeg): File > Video > Check FFmpeg says `FFmpeg 7.1 found at ...`; Settings > Video
+shows the same line and the folder; set the folder to an empty one and Apply: the line says it was not found there;
+File > Video > Prepare Video on a long film shows the progress in the status line, Cancel Video Job stops it and the
+cache folder holds no `.part` file; preparing the same film again says it came from the cache; with FFmpeg not on
+the `PATH` (rename it) nothing crashes and every message says to install it and set its folder.

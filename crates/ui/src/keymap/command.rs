@@ -2746,6 +2746,9 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd("transport.tempo_up", "Tempo Up", G::Transport, C::Global).rep(),
+    cmd("video.cancel", "Cancel Video Job", G::Global, C::Global).menu(),
+    cmd("video.check_ffmpeg", "Check FFmpeg", G::Global, C::Global).menu(),
+    cmd("video.prepare", "Prepare Video", G::Global, C::Global).menu(),
     cmd("view.app_zoom", "Application Zoom", G::View, C::Global)
         .arg(APP_ZOOM_ARGS)
         .menu(),
@@ -2968,7 +2971,7 @@ mod tests {
             assert!(!d.label.trim().is_empty(), "{}", d.id);
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
-                Group::Global => &["file", "audio", "help"],
+                Group::Global => &["file", "audio", "help", "video"],
                 Group::Transport => &["transport", "sync"],
                 Group::View => &["view", "window"],
                 Group::Edit => &["edit"],

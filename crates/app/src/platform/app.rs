@@ -114,6 +114,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     }
     let session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
     let mut core = AppCore::with_doc(session, doc, None);
+    install_video(&mut core);
     // The recent songs are read before a project named on the command line is opened, so that
     // it takes its place in the list.
     if let Some(path) = settings_path.as_deref().map(crate::recent::recent_path) {
@@ -307,6 +308,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             audio.surfaces.clear();
             let session = LiveSession::new(SystemBackend, audio.clone(), false);
             let mut core = AppCore::new(session);
+            install_video(&mut core);
             if let Some(path) = song_settings_path
                 .as_deref()
                 .map(crate::recent::recent_path)
@@ -457,6 +459,15 @@ struct App {
 /// The monitors as [`MonitorInfo`] and the index of the primary one.
 /// Opens `url` in the default browser. The address is one of the project's own constants
 /// (`ShellRequest::OpenUrl`), never typed by the user or read from a file; a failure is logged.
+/// Gives a core the real FFmpeg programs and the per-user folder of video proxies (the core
+/// itself starts without any, so no test or headless run starts a program).
+fn install_video(core: &mut AppCore<LiveSession<SystemBackend>>) {
+    core.set_video_tool(Arc::new(atomik_video::SystemTool));
+    if let Some(dir) = settings::default_video_cache_dir() {
+        core.set_video_cache(dir);
+    }
+}
+
 fn open_url(url: &str) {
     #[cfg(target_os = "windows")]
     let result = std::process::Command::new("explorer.exe").arg(url).spawn();
@@ -1449,6 +1460,34 @@ impl App {
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.import_archive_from(&path);
+                    }
+                }
+                ShellRequest::PickFfmpegFolder => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Choose the folder that holds ffmpeg and ffprobe");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.set_ffmpeg_folder(folder);
+                    }
+                }
+                ShellRequest::PickVideoFile => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Prepare a video")
+                        .add_filter(
+                            "Video",
+                            &[
+                                "mp4", "m4v", "mov", "mkv", "webm", "avi", "mxf", "mpg", "mpeg",
+                                "ts", "m2ts", "wmv", "ogv",
+                            ],
+                        )
+                        .add_filter("All files", &["*"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.prepare_video_from(&path);
                     }
                 }
                 ShellRequest::PickScratchFolder => {

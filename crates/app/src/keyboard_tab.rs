@@ -43,6 +43,8 @@ pub(crate) enum TabOutcome {
     PickLibraryFolder,
     /// Ask the platform for the scratch folder (the Workflow tab's Choose).
     PickScratchFolder,
+    /// Ask the platform for the folder holding FFmpeg (the Video tab's Choose).
+    PickFfmpegFolder,
 }
 
 /// One chord chip of a row.

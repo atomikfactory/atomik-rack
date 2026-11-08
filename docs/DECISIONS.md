@@ -25,6 +25,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 | [K](#k-undo-history-budget) | Undo history budget | Default (not yet confirmed) |
 | [L](#l-format-version-cadence) | Project format version cadence | Decided (already applied) |
 | [M](#m-warp-on-import-default) | Warp on import default | Decided |
+| [N](#n-video-through-the-users-ffmpeg) | Video through the user's FFmpeg | Default (not yet confirmed) |
 
 ---
 
@@ -247,3 +248,28 @@ stays, and the assets only dropped steps held leave the pool at the next prune. 
 **Status.** Decided. Decided by: maintainer, 2026-10-30.
 
 Applied: Settings, Workflow, **Warp on import** (Off, Loops only by default, All files); see [ARCHITECTURE.md](ARCHITECTURE.md) section 2.18.
+
+## N. Video through the user's FFmpeg
+
+**Question.** How does Atomik Rack decode video for video tracks?
+
+**Options.**
+
+1. Link a decoder library (a codec crate or FFmpeg itself) into the program.
+2. Ship an FFmpeg build beside the program.
+3. Use the FFmpeg the user installed, through its command-line programs, and read only a small proxy of the film.
+
+**Implications.** Linking or shipping a decoder makes the program (and its licence terms, patents and size) answer for
+every codec, and an FFmpeg build with the common codecs is GPL or LGPL with its own obligations. The user's own
+FFmpeg already decodes what the user has; the cost is that video needs an install, so the program must find it,
+say clearly when it is missing and never fail without it. Reading frames of a long film in the player with an
+external process per frame is too slow, so the picture is turned once into a low-resolution file of independent
+frames that is one seek away at any frame.
+
+**Decision.** Option 3. No codec and no FFmpeg is bundled; `atomik-video` finds `ffmpeg` and `ffprobe` (Settings
+folder, then `PATH`, then the usual package folders on macOS), needs release 4 or later, and runs them only through
+one trait with a fake for tests. The proxy is JPEG (every frame intra-coded; about 360 lines), packed in one indexed
+file per film in a per-user cache that is pruned to 2 GiB. JPEG decoding is a small pure-Rust dependency that comes
+with the viewer; the first item adds none.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

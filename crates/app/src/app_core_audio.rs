@@ -491,6 +491,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.audio.pending = self.audio.pending.saturating_sub(1);
                 }
                 Msg::Archived { job, result } => self.apply_archived(job, *result),
+                Msg::Video { job, done } => self.apply_video(job, *done),
                 Msg::Recorded { generation, result } => {
                     self.audio.rec_pending = self.audio.rec_pending.saturating_sub(1);
                     if generation == current {

@@ -266,6 +266,7 @@ dependencies = [
  "atomik-plugin-scan",
  "atomik-render",
  "atomik-ui",
+ "atomik-video",
  "clap",
  "embed-resource",
  "hound",
@@ -716,6 +717,16 @@ dependencies = [
  "thiserror 2.0.21",
  "vello",
  "vello_cpu",
+]
+
+[[package]]
+name = "atomik-video"
+version = "0.3.0-rc.2"
+dependencies = [
+ "log",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

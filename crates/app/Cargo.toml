@@ -33,6 +33,8 @@ atomik-model.workspace = true
 atomik-audio-file.workspace = true
 # The file browser's library database (favourites, tags, bookmarks) and file rows.
 atomik-library.workspace = true
+# FFmpeg discovery, the film probe and the proxy of a video track (run on a worker).
+atomik-video.workspace = true
 # The audio recording writer thread writes its in-progress WAV files incrementally.
 hound.workspace = true
 # The song → engine input conversion shared with project bounces (one implementation).

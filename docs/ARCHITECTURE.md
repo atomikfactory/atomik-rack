@@ -40,6 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
+| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`) and the per-user proxy cache (`cache.rs`) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -53,7 +54,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), model | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, video, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -2573,6 +2574,61 @@ the document adds is where a track's notes enter.
   renders the document offline with the same tap and writes the notes as a clip on a new lane.
 - **File.** Project format 31: `"notes_to"` after `"no_chase"`, omitted when unset.
 
+### 2.23 Video through the user's FFmpeg
+
+Video tracks are decoded by an FFmpeg the user installs: nothing is bundled and no codec ships with the program.
+Without FFmpeg the video features are off and nothing else changes. This section is the foundation (the crate
+`atomik-video` and its place in the app); the viewer, the thumbnail track and the film's sound come on top of it.
+
+- **Finding it.** `discover` (`crates/video/src/discover.rs`) looks in the folder set in Settings > Video (the
+  `ffmpeg_folder` of `workflow.json`; its `bin` folder too, or the `ffmpeg` program itself), else in the folders of
+  `PATH`, then on macOS in the folders the usual package managers install into (a windowed app starts with a minimal
+  `PATH`). The first folder with both `ffmpeg` and `ffprobe` wins. A folder that is set and has no FFmpeg is not
+  silently replaced by the system path: the answer is "missing" with the folder named. `ffmpeg -version` is run and
+  parsed (`parse_version`): a release below 4 is `TooOld`, a program that does not run or does not say it is FFmpeg
+  is `Broken`, a development build is accepted. Every outcome is an `FfmpegStatus` with a message for the user
+  (`FFmpeg 7.1 found at ...`, or `FFmpeg is not installed: video needs it. Install it and set its folder here.`).
+- **One seam.** Every `ffmpeg` and `ffprobe` call goes through `VideoTool::run`. `SystemTool` starts the process
+  with a list of arguments (no shell, a path is one argument, prefixed `file:` so a name can never be read as an
+  option or a protocol, `-protocol_whitelist file`, `-nostdin`, the input closed), no console window on Windows,
+  the standard error kept to its last 4 KiB for messages, and the child killed when the job is cancelled, when the
+  consumer of its output stops and when the call unwinds. `NoVideoTools` refuses every call: a core starts with it,
+  so a test or a headless session never starts a program, and the platform layer installs `SystemTool`.
+  `FakeTool` answers with canned text and frames and records the calls; no test needs FFmpeg.
+- **Probe.** `ffprobe -v error -print_format json -show_format -show_streams` is parsed by `parse_probe`: length,
+  size, rotation (display matrix or the old `rotate` tag), the nominal frame rate (the average rate, snapped to the
+  standard rates within 0.02 %; the container's rate when there is no average; `variable_rate` when the two differ
+  by more than 1 %), start time, timecode, and the audio tracks with channels, rate, language and title. Cover art
+  is not a film.
+- **Proxy.** A film is turned into one file of small independent JPEG frames (`proxy.rs`): every frame of the
+  picture at the nominal rate (`fps` and `scale=-2:360` in the filter, so frame `n` is at `n / rate` whatever the
+  film's timestamps and the picture is upright), cut from ffmpeg's piped `mjpeg` output by `FrameSplitter` (it walks
+  the JPEG markers, so bytes in a table are never taken for an end), and written by `ProxyWriter`: a 40-byte header
+  (version, size, rate, frame count, index offset), the frames, and an index of frame offsets, so frame `n` is one
+  seek and one read (`ProxyReader::read_frame`). JPEG was chosen because it is intra-only, about 20 to 40 KiB at 360
+  lines and decodable by a small pure-Rust decoder; the decoder dependency is added with the viewer that uses it.
+- **Build.** `prepare` probes, finds the proxy in the cache or builds it: ffmpeg's output is split and written to
+  `<key>.atproxy.part` with `done` and `total` frame counters for progress, and the file is renamed only when ffmpeg
+  ended with success and every frame is in. A cancel, an error, a cut-short frame or a stream without frames removes
+  the part file; a proxy under its final name is always whole.
+- **Cache.** `ProxyCache` lives in the per-user cache folder (`LOCALAPPDATA/Atomik Rack/Cache/video` on Windows,
+  `~/Library/Caches/Atomik Rack/video` on macOS, `$XDG_CACHE_HOME/atomik-rack/video` elsewhere). The key is a hash
+  of the absolute path, the size, the modification time, a hash of the first and last mebibyte and
+  `PROXY_VERSION`; an edited, moved or replaced film has another key, and a proxy of another format version is
+  refused by the reader and rebuilt. After each build the cache is pruned to 2 GiB, least recently used first (a
+  hit touches the file), never the proxy just built, and unfinished files are removed.
+- **In the app.** `AppCore::check_ffmpeg` and `AppCore::start_prepare_video` run on the `atomik-video` worker
+  (`crates/app/src/video_worker.rs`, one job at a time, a result message even when the thread panics) with the
+  progress in the status line and `AppCore::cancel_video`; closing the app cancels the job. File > Video holds
+  Prepare Video, Check FFmpeg and Cancel Video Job (`video.prepare`, `video.check_ffmpeg`, `video.cancel`). The
+  films prepared in a session are kept in `AppCore::prepared_videos`. The project, the engine and the audio thread
+  are not touched: no format change.
+- **Tests.** `crates/video` has unit tests for the version parser, the discovery order, the probe of an MP4/H.264,
+  a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone film
+  and cover art, the argument lists, the frame splitter, the proxy index and random access, the cache key,
+  the version check and the pruning, and the worker's cancel; all with the fake. One ignored test uses a real FFmpeg
+  (see [TESTING.md](TESTING.md)).
+
 ## 3. Inside `Engine::render`
 
 [crates/engine/src/engine.rs](../crates/engine/src/engine.rs):
@@ -2694,6 +2750,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-detail` | file browser: the tempo a file states and its loudness picture for the info pane (newest request only) | Yes (disk) |
 | `atomik-thumbs` | file browser: the 48-bar waveform thumbnail of each visible audio row (first thirty seconds, newest request first) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
+| `atomik-video` | video: looks for FFmpeg, or probes a film and builds its proxy file from ffmpeg's piped frames (one job at a time, progress and cancel); `atomik-video-stdout` and `atomik-video-stderr` read the two pipes of the child process | Yes (disk, child process) |
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
@@ -4803,7 +4860,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (500) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (503) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

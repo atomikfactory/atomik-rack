@@ -69,6 +69,12 @@ pub enum AppCommand {
     ImportArchive,
     /// File ▸ Cancel Project Archive: stop the archive that is being written or unpacked.
     CancelArchive,
+    /// File ▸ Video ▸ Check FFmpeg: look for the user's FFmpeg and say what was found.
+    CheckFfmpeg,
+    /// File ▸ Video ▸ Prepare Video…: probe a film and build its proxy (a dialog picks the film).
+    PrepareVideo,
+    /// File ▸ Video ▸ Cancel Video Job: stop the check or the preparation that runs.
+    CancelVideo,
     /// File ▸ Close: end the song and start a new empty one (asks about unsaved changes).
     Close,
     /// File ▸ Save.
@@ -789,6 +795,9 @@ impl AppCommand {
             AppCommand::ExportArchive => ("file.export_archive", None),
             AppCommand::ImportArchive => ("file.import_archive", None),
             AppCommand::CancelArchive => ("file.cancel_archive", None),
+            AppCommand::CheckFfmpeg => ("video.check_ffmpeg", None),
+            AppCommand::PrepareVideo => ("video.prepare", None),
+            AppCommand::CancelVideo => ("video.cancel", None),
             AppCommand::Close => ("file.close", None),
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
@@ -1154,6 +1163,9 @@ impl AppCommand {
             ("file.export_archive", None) => AppCommand::ExportArchive,
             ("file.import_archive", None) => AppCommand::ImportArchive,
             ("file.cancel_archive", None) => AppCommand::CancelArchive,
+            ("video.check_ffmpeg", None) => AppCommand::CheckFfmpeg,
+            ("video.prepare", None) => AppCommand::PrepareVideo,
+            ("video.cancel", None) => AppCommand::CancelVideo,
             ("file.close", None) => AppCommand::Close,
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
@@ -2032,6 +2044,9 @@ pub struct MenuState {
     /// A project archive is being written or unpacked (File > Cancel Project Archive is
     /// available).
     pub archive_busy: bool,
+    /// FFmpeg is being looked for or a film is being prepared (File > Video > Cancel Video Job
+    /// is available).
+    pub video_busy: bool,
     /// Collect Files or Move Project is copying audio on its worker (File > Cancel Collect or
     /// Move is available).
     pub collect_busy: bool,
@@ -2649,6 +2664,18 @@ pub fn menus_with_songs(
                             "Cancel Project Archive",
                             AppCommand::CancelArchive,
                             state.archive_busy,
+                        ),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Video",
+                    entries: vec![
+                        item("Prepare Video\u{2026}", AppCommand::PrepareVideo),
+                        item("Check FFmpeg", AppCommand::CheckFfmpeg),
+                        enabled(
+                            "Cancel Video Job",
+                            AppCommand::CancelVideo,
+                            state.video_busy,
                         ),
                     ],
                 }),
@@ -4184,6 +4211,7 @@ mod tests {
             editor: false,
             missing_audio: false,
             archive_busy: false,
+            video_busy: false,
             collect_busy: false,
             default_song: false,
             midi_clip: false,
@@ -4229,6 +4257,9 @@ mod tests {
             AppCommand::ExportArchive,
             AppCommand::ImportArchive,
             AppCommand::CancelArchive,
+            AppCommand::CheckFfmpeg,
+            AppCommand::PrepareVideo,
+            AppCommand::CancelVideo,
             AppCommand::Close,
             AppCommand::Save,
             AppCommand::SaveAs,
@@ -5268,6 +5299,7 @@ mod tests {
                 editor: false,
                 missing_audio: true,
                 archive_busy: false,
+                video_busy: false,
                 collect_busy: false,
                 default_song: false,
                 midi_clip: true,

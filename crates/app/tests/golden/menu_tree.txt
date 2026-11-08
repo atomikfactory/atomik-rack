@@ -82,6 +82,10 @@ File
     Export Project Archive…
     Import Project Archive…
     Cancel Project Archive
+  Video >
+    Prepare Video…
+    Check FFmpeg
+    Cancel Video Job
   ---
   Stress Test >
     Stress Rack

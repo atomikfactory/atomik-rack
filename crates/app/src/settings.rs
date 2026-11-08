@@ -769,6 +769,27 @@ pub fn config_dir(os: TargetOs, env: &dyn Fn(&str) -> Option<OsString>) -> Optio
     }
 }
 
+/// The per-user folder of the video proxies for `os`: caches live outside the roaming settings
+/// (`LOCALAPPDATA` on Windows, `Library/Caches` on macOS, `XDG_CACHE_HOME` or `~/.cache`
+/// elsewhere). `None` when the needed variable is missing or empty.
+pub fn video_cache_dir(os: TargetOs, env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let var = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        TargetOs::Windows => {
+            var("LOCALAPPDATA").map(|d| d.join("Atomik Rack").join("Cache").join("video"))
+        }
+        TargetOs::MacOs => var("HOME").map(|h| h.join("Library/Caches/Atomik Rack").join("video")),
+        TargetOs::Other => var("XDG_CACHE_HOME")
+            .or_else(|| var("HOME").map(|h| h.join(".cache")))
+            .map(|d| d.join("atomik-rack").join("video")),
+    }
+}
+
+/// The video cache folder of this OS and process environment.
+pub fn default_video_cache_dir() -> Option<PathBuf> {
+    video_cache_dir(TargetOs::current(), &|k| std::env::var_os(k))
+}
+
 /// The library folder used when the user has not chosen one: `Atomik Rack/Library` in the
 /// documents folder (`USERPROFILE`, `HOME`, `XDG_DOCUMENTS_DIR`). `None` when the needed
 /// variable is missing or empty.
@@ -1364,6 +1385,45 @@ mod tests {
         let s = AudioSettings::from_json(r#"{ "record_offset_frames": -999999 }"#).unwrap();
         assert_eq!(s.record_offset_frames, -MAX_RECORD_OFFSET);
         assert_eq!(MAX_RECORD_OFFSET, 48_000);
+    }
+
+    #[test]
+    fn the_video_cache_follows_platform_conventions_outside_the_settings_folder() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == k)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        let win = env(&[("LOCALAPPDATA", "C:/Local"), ("APPDATA", "C:/Roaming")]);
+        assert_eq!(
+            video_cache_dir(TargetOs::Windows, &win),
+            Some(PathBuf::from("C:/Local/Atomik Rack/Cache/video"))
+        );
+        let mac = env(&[("HOME", "/Users/name")]);
+        assert_eq!(
+            video_cache_dir(TargetOs::MacOs, &mac),
+            Some(PathBuf::from(
+                "/Users/name/Library/Caches/Atomik Rack/video"
+            ))
+        );
+        let xdg = env(&[("XDG_CACHE_HOME", "/c"), ("HOME", "/home/name")]);
+        assert_eq!(
+            video_cache_dir(TargetOs::Other, &xdg),
+            Some(PathBuf::from("/c/atomik-rack/video"))
+        );
+        let home = env(&[("HOME", "/home/name")]);
+        assert_eq!(
+            video_cache_dir(TargetOs::Other, &home),
+            Some(PathBuf::from("/home/name/.cache/atomik-rack/video"))
+        );
+        assert_eq!(video_cache_dir(TargetOs::Windows, &env(&[])), None);
+        assert_eq!(
+            video_cache_dir(TargetOs::MacOs, &env(&[("HOME", "")])),
+            None
+        );
     }
 
     #[test]
