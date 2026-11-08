@@ -147,11 +147,22 @@ impl FrameDecoder {
         R: Read + Seek,
         F: FnOnce() -> Result<ProxyReader<R>, VideoError> + Send + 'static,
     {
+        Self::spawn_scaled(open, None)
+    }
+
+    /// [`Self::spawn`] for a worker whose pictures are scaled down to `height` pixels high on the
+    /// worker's thread (`None`: as decoded). The thumbnails of the arrangement use it, so the
+    /// UI thread never scales a picture and a cache of thumbnails stays small.
+    pub fn spawn_scaled<R, F>(open: F, height: Option<u32>) -> std::io::Result<Self>
+    where
+        R: Read + Seek,
+        F: FnOnce() -> Result<ProxyReader<R>, VideoError> + Send + 'static,
+    {
         let (tx, requests) = channel();
         let (events, rx) = channel();
         std::thread::Builder::new()
             .name("atomik-video-frames".into())
-            .spawn(move || work(open, &requests, &events))?;
+            .spawn(move || work(open, height, &requests, &events))?;
         Ok(Self { tx, rx })
     }
 
@@ -161,6 +172,18 @@ impl FrameDecoder {
     /// The thread cannot be started (a file that cannot be opened is an [`Event::Failed`]).
     pub fn spawn_file(path: std::path::PathBuf) -> std::io::Result<Self> {
         Self::spawn(move || ProxyReader::open(std::fs::File::open(&path)?))
+    }
+
+    /// [`Self::spawn_file`] with pictures scaled down to `height` pixels high (see
+    /// [`Self::spawn_scaled`]).
+    ///
+    /// # Errors
+    /// The thread cannot be started.
+    pub fn spawn_file_scaled(path: std::path::PathBuf, height: u32) -> std::io::Result<Self> {
+        Self::spawn_scaled(
+            move || ProxyReader::open(std::fs::File::open(&path)?),
+            Some(height),
+        )
     }
 
     /// Asks for `frames`, the first one first. It replaces the earlier request: what the worker
@@ -175,7 +198,7 @@ impl FrameDecoder {
     }
 }
 
-fn work<R, F>(open: F, requests: &Receiver<Request>, events: &Sender<Event>)
+fn work<R, F>(open: F, height: Option<u32>, requests: &Receiver<Request>, events: &Sender<Event>)
 where
     R: Read + Seek,
     F: FnOnce() -> Result<ProxyReader<R>, VideoError>,
@@ -214,7 +237,13 @@ where
             .read_frame(n, &mut bytes)
             .and_then(|()| decode_jpeg(&bytes));
         let event = match result {
-            Ok(picture) => Event::Frame(n, picture),
+            Ok(picture) => Event::Frame(
+                n,
+                match height {
+                    Some(h) => picture.scaled_to_height(h),
+                    None => picture,
+                },
+            ),
             Err(e) => Event::Failed(Some(n), e.to_string()),
         };
         if events.send(event).is_err() {
@@ -298,6 +327,20 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         all
+    }
+
+    #[test]
+    fn a_scaled_worker_hands_out_small_pictures() {
+        let bytes = proxy_of(&[Solid::Red, Solid::Green]);
+        let decoder =
+            FrameDecoder::spawn_scaled(move || ProxyReader::open(Cursor::new(bytes)), Some(4))
+                .unwrap();
+        decoder.want(vec![1]);
+        let events = collect(&decoder, |e| e.len() >= 2);
+        let Some(Event::Frame(1, p)) = events.get(1) else {
+            panic!("frame 1 arrives: {events:?}")
+        };
+        assert_eq!((p.width, p.height), (4, 4));
     }
 
     #[test]
