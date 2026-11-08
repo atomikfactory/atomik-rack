@@ -12,7 +12,7 @@ use atomik_model::{
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::timeline::Snap;
-use atomik_ui::{ArrangementView, DisplayList, Key, Modifiers, UiAction, UiEvent};
+use atomik_ui::{ArrangementView, DisplayList, Key, Modifiers, Op, UiAction, UiEvent};
 use std::path::PathBuf;
 use support::audio::*;
 use support::song::*;
@@ -211,6 +211,58 @@ fn an_audio_clip_gets_a_loop_through_the_handle_but_a_reversed_one_has_none() {
             }
         )),
         "a reversed clip never loops"
+    );
+}
+
+#[test]
+fn shift_on_an_audio_clips_end_edge_repeats_it_and_a_plain_drag_resizes() {
+    let reg = registry();
+    let d = Document::new(audio_doc());
+    let mut v = audio_arrangement(d.doc(), &reg);
+    v.set_snap(Snap::Bar);
+    let bp = bar_px(&v);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let edge = Point::new(r.x1 - 2.0, r.center().y + 12.0);
+    let to = edge + Vec2::new(bp * 2.2, 0.0);
+    // Shift: the clip grows to bar 5 and loops over the two bars it plays; one merge group.
+    let a = drive(
+        &d,
+        &reg,
+        &mut v,
+        &[
+            down_mods(edge, Modifiers::SHIFT, 1),
+            mv_with(to, Modifiers::SHIFT),
+            up(to),
+        ],
+    );
+    let g = geometry(&a);
+    assert_eq!(
+        (g[0].0, g[0].1, g[0].2, g[0].3, g[0].4),
+        (ClipId(10), BAR, 4 * BAR, 0, Some(2 * BAR))
+    );
+    assert_eq!(a.iter().filter(|x| **x == UiAction::EndMerge).count(), 1);
+    // Dragging back below the length trims the repeats and leaves no loop.
+    let a = drive(
+        &d,
+        &reg,
+        &mut v,
+        &[
+            down_mods(edge, Modifiers::SHIFT, 1),
+            mv_with(edge - Vec2::new(bp * 1.0, 0.0), Modifiers::SHIFT),
+            up(edge),
+        ],
+    );
+    let g = geometry(&a);
+    assert_eq!((g[0].2, g[0].4), (BAR, None));
+    // No modifier: today's resize, no loop.
+    let mut v = audio_arrangement(d.doc(), &reg);
+    v.set_snap(Snap::Bar);
+    let a = drive(&d, &reg, &mut v, &[down(edge), mv(to), up(to)]);
+    assert!(geometry(&a).is_empty(), "a plain drag is a SetAudioClip");
+    assert!(
+        song_commands(&a)
+            .iter()
+            .any(|c| matches!(c, SongCommand::SetAudioClip { .. }))
     );
 }
 
@@ -475,4 +527,66 @@ fn the_set_clip_meta_command_is_a_song_command() {
         color: MetaChange::Keep,
     });
     assert!(matches!(c, Command::Song(SongCommand::SetClipMeta { .. })));
+}
+
+/// The drawing ops of the waveform of clip 10 whose boxes lie inside the x range `[x0, x1]`
+/// and below the clip header.
+fn wave_ops_between(v: &mut ArrangementView, d: &Document, reg: &Registry, x: (f64, f64)) -> usize {
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, d.doc(), reg);
+    dl.ops()
+        .iter()
+        .filter_map(|op| match op {
+            Op::Fill { shape, .. } | Op::Stroke { shape, .. } => Some(shape.bounding_box()),
+            _ => None,
+        })
+        .filter(|b| {
+            b.x0 >= x.0
+                && b.x1 <= x.1
+                && b.y0 > r.y0 + HEADER + 2.0
+                && b.y1 < r.y1
+                && b.height() > 3.0
+        })
+        .count()
+}
+
+#[test]
+fn a_looped_audio_clip_paints_its_waveform_in_every_repetition() {
+    let reg = registry();
+    let mut doc = audio_doc();
+    // Clip 10 (a two-bar pass of the asset) grows to four bars and loops every two.
+    for t in &mut doc.song_mut().tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(10) {
+                    c.length = 4 * BAR;
+                    c.loop_length = Some(2 * BAR);
+                }
+            }
+        }
+    }
+    let d = Document::new(doc);
+    let mut v = audio_arrangement(d.doc(), &reg);
+    let r = v.clip_rect(ClipId(10)).unwrap();
+    let mid = (r.x0 + r.x1) / 2.0;
+    let first = wave_ops_between(&mut v, &d, &reg, (r.x0, mid - 1.0));
+    let second = wave_ops_between(&mut v, &d, &reg, (mid + 1.0, r.x1));
+    assert!(first > 0, "the first pass shows the waveform");
+    assert!(second > 0, "the repetition shows the waveform too");
+    // Without the loop the clip runs past the asset and the same x range holds the shaded end.
+    let mut plain = audio_doc();
+    for t in &mut plain.song_mut().tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(10) {
+                    c.length = 4 * BAR;
+                }
+            }
+        }
+    }
+    let d = Document::new(plain);
+    let mut v = audio_arrangement(d.doc(), &reg);
+    let unlooped = wave_ops_between(&mut v, &d, &reg, (mid + 1.0, r.x1));
+    assert!(second > unlooped, "{second} ops looped, {unlooped} not");
 }

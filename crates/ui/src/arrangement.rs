@@ -4140,6 +4140,15 @@ impl ArrangementView {
                 if !self.selection.contains(&id) {
                     return;
                 }
+                // The loop-extend gesture on an audio clip repeats what it plays, like the loop
+                // handle (a reversed clip cannot loop, so it keeps the plain resize).
+                if modifiers.shift
+                    && id != FROZEN_CLIP
+                    && matches!(&clip.content, ClipContent::Audio(a) if !a.reverse)
+                {
+                    self.begin_loop_drag(clip, pos);
+                    return;
+                }
                 let merge = self.merge_id();
                 let loop_mode = modifiers.shift && !matches!(clip.content, ClipContent::Audio(_));
                 // The other selected clips follow the grabbed one (not while the loop length moves).
@@ -6703,23 +6712,62 @@ impl ArrangementView {
         let g = self.audio_geo(r, clip, a, tl);
         let (top, bottom) = value_range(r);
         self.paint_audio_wave(c, vis, body, clip, a, accent, muted, tl, &g);
-        if a.fade_in > 0 && g.fade_in_x > r.x0 {
-            let (path, line) = fade_paths(r.x0, g.fade_in_x, top, bottom, a.fade_curve, true);
-            c.fill_with(path, st.fade_shade);
-            c.stroke(
-                &line.into(),
-                &Stroke::new(1.0),
-                &st.base.text.with_alpha(0.7).into(),
-            );
-        }
-        if a.fade_out > 0 && g.fade_out_x < r.x1 {
-            let (path, line) = fade_paths(g.fade_out_x, r.x1, top, bottom, a.out_curve(), false);
-            c.fill_with(path, st.fade_shade);
-            c.stroke(
-                &line.into(),
-                &Stroke::new(1.0),
-                &st.base.text.with_alpha(0.7).into(),
-            );
+        let passes = audio_loop_passes(clip);
+        if passes.len() > 1 {
+            // Each repetition plays with its own fades, as it sounds.
+            for &(start, length) in &passes {
+                let x0 = self.x_of_tick(start as f64);
+                let x1 = self.x_of_tick((start + length) as f64);
+                if x1 < tl.x0 || x0 > tl.x1 {
+                    continue;
+                }
+                let start_frame = self.tempo.frame_at_tick(start as f64, g.rate);
+                let end_frame = self.tempo.frame_at_tick((start + length) as f64, g.rate);
+                let frames = (end_frame - start_frame).max(0.0) as u64;
+                let fx = |f: u64| {
+                    self.x_of_tick(self.tempo.tick_at_frame(start_frame + f as f64, g.rate))
+                };
+                let (fin, fout) = (a.fade_in.min(frames), a.fade_out.min(frames));
+                if fin > 0 {
+                    let (path, line) = fade_paths(x0, fx(fin), top, bottom, a.fade_curve, true);
+                    c.fill_with(path, st.fade_shade);
+                    c.stroke(
+                        &line.into(),
+                        &Stroke::new(1.0),
+                        &st.base.text.with_alpha(0.7).into(),
+                    );
+                }
+                if fout > 0 {
+                    let (path, line) =
+                        fade_paths(fx(frames - fout), x1, top, bottom, a.out_curve(), false);
+                    c.fill_with(path, st.fade_shade);
+                    c.stroke(
+                        &line.into(),
+                        &Stroke::new(1.0),
+                        &st.base.text.with_alpha(0.7).into(),
+                    );
+                }
+            }
+        } else {
+            if a.fade_in > 0 && g.fade_in_x > r.x0 {
+                let (path, line) = fade_paths(r.x0, g.fade_in_x, top, bottom, a.fade_curve, true);
+                c.fill_with(path, st.fade_shade);
+                c.stroke(
+                    &line.into(),
+                    &Stroke::new(1.0),
+                    &st.base.text.with_alpha(0.7).into(),
+                );
+            }
+            if a.fade_out > 0 && g.fade_out_x < r.x1 {
+                let (path, line) =
+                    fade_paths(g.fade_out_x, r.x1, top, bottom, a.out_curve(), false);
+                c.fill_with(path, st.fade_shade);
+                c.stroke(
+                    &line.into(),
+                    &Stroke::new(1.0),
+                    &st.base.text.with_alpha(0.7).into(),
+                );
+            }
         }
         if clip.id == FROZEN_CLIP {
             // A render has no fades, gain or envelope to grab.
@@ -6769,10 +6817,53 @@ impl ArrangementView {
         }
     }
 
-    /// Paints the waveform of an audio clip (or of a take of a comp row) inside `body`: the
-    /// part of the asset the clip plays, its end, and the placeholder when the peaks are missing.
+    /// Paints the waveform of an audio clip (or of a take of a comp row) inside `body`. A looped
+    /// clip is painted as it plays: every repetition as a clip of its own that starts at the
+    /// repetition start and plays the asset again from its source offset.
     #[allow(clippy::too_many_arguments, reason = "painting inputs")]
     fn paint_audio_wave(
+        &self,
+        c: &mut dyn Canvas,
+        vis: Rect,
+        body: Rect,
+        clip: &Clip,
+        a: &AudioClipContent,
+        accent: Color,
+        muted: bool,
+        tl: Rect,
+        g: &AudioGeo,
+    ) {
+        let passes = audio_loop_passes(clip);
+        if passes.len() <= 1 {
+            self.paint_audio_pass(c, vis, body, clip, a, accent, muted, tl, g);
+            return;
+        }
+        for (start, length) in passes {
+            let x0 = self.x_of_tick(start as f64).max(vis.x0);
+            let x1 = self.x_of_tick((start + length) as f64).min(vis.x1);
+            if x1 <= x0 || x1 < tl.x0 || x0 > tl.x1 {
+                continue;
+            }
+            let mut piece = clip.clone();
+            piece.start = start;
+            piece.length = length;
+            piece.loop_length = None;
+            let pass_geo = AudioGeo {
+                start_frame: self.tempo.frame_at_tick(start as f64, g.rate),
+                ..*g
+            };
+            let pass_vis = Rect::new(x0, vis.y0, x1, vis.y1);
+            let pass_body = Rect::new(x0, body.y0, x1, body.y1);
+            self.paint_audio_pass(
+                c, pass_vis, pass_body, &piece, a, accent, muted, tl, &pass_geo,
+            );
+        }
+    }
+
+    /// Paints the waveform of one pass of an audio clip inside `body`: the part of the asset
+    /// the clip plays, its end, and the placeholder when the peaks are missing.
+    #[allow(clippy::too_many_arguments, reason = "painting inputs")]
+    fn paint_audio_pass(
         &self,
         c: &mut dyn Canvas,
         vis: Rect,
@@ -8154,6 +8245,27 @@ fn content_cmd(id: ClipId, points: Vec<AutomationPoint>, merge: Option<u64>) -> 
     })
 }
 
+/// The passes of an audio clip as `(start tick, length in ticks)`, the way playback repeats it:
+/// pass `k` of a clip looping every `n` ticks covers `[start + k * n, min(start + (k + 1) * n,
+/// end))` and plays the asset again from the clip's source offset. One pass, the whole clip,
+/// when the clip does not loop.
+fn audio_loop_passes(clip: &Clip) -> Vec<(i64, i64)> {
+    let end = clip.end();
+    match clip.loop_length {
+        Some(n) if n > 0 => {
+            let mut out = Vec::new();
+            let mut s = clip.start;
+            while s < end {
+                let e = (s + n).min(end);
+                out.push((s, e - s));
+                s = e;
+            }
+            out
+        }
+        _ => vec![(clip.start, clip.length)],
+    }
+}
+
 /// Pixel geometry of an audio clip's handles and fade ends.
 #[derive(Debug, Clone, Copy)]
 struct AudioGeo {
@@ -8204,4 +8316,45 @@ fn fade_paths(
     }
     shade.close_path();
     (shade, line)
+}
+
+#[cfg(test)]
+mod loop_pass_tests {
+    use super::*;
+
+    fn clip(start: i64, length: i64, loop_length: Option<i64>) -> Clip {
+        Clip {
+            id: ClipId(1),
+            start,
+            length,
+            offset: 0,
+            loop_length,
+            muted: false,
+            scale: None,
+            param_lanes: Vec::new(),
+            midi: Default::default(),
+            groove: None,
+            controllers: Vec::new(),
+            name: None,
+            color: None,
+            grid: None,
+            content: ClipContent::Notes(Vec::new().into()),
+        }
+    }
+
+    #[test]
+    fn a_clip_without_a_loop_is_one_pass() {
+        assert_eq!(audio_loop_passes(&clip(100, 700, None)), [(100, 700)]);
+    }
+
+    #[test]
+    fn a_loop_repeats_from_the_clip_start_and_cuts_the_last_pass() {
+        // 2.5 repetitions: two full passes and a half one at the end.
+        assert_eq!(
+            audio_loop_passes(&clip(100, 500, Some(200))),
+            [(100, 200), (300, 200), (500, 100)]
+        );
+        // A loop longer than the clip is one pass.
+        assert_eq!(audio_loop_passes(&clip(0, 300, Some(900))), [(0, 300)]);
+    }
 }
