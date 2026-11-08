@@ -1109,6 +1109,11 @@ may break APIs and the patch and project formats.
   are ignored.
 
 ### Fixed
+- An **instrument patch** dropped on the rack, double-clicked or loaded from the browser now makes its song track, as
+  creating the instrument does: named after the device, with its mixer channel, armed like a created instrument (the
+  tracks an earlier auto-arm armed are disarmed; Manual Rec leaves arming alone), all in the load's one undo step. A
+  patch of several instruments gets one track each. Effect patches, patches dropped into a container or its slot, and
+  Replace Device or a patch dropped on an existing device (the device keeps its track) make no track.
 - **Add Channel** in the mixer always has something to add. The picker lists **Empty Mix Channel** first: a channel
   with no source, routed to the master, named "Channel N" (the next free number), added in one undo step, selected
   in the mixer and the rack, with the status line saying what was added. Its input jacks can be cabled by hand from
