@@ -97,6 +97,7 @@ fn the_file_menu_has_a_video_submenu_with_the_three_commands() {
             ("Move Video to Playhead".to_owned(), false),
             ("Trim Video Start to Playhead".to_owned(), false),
             ("Trim Video End to Playhead".to_owned(), false),
+            ("Video Overlay".to_owned(), true),
             ("Prepare Video\u{2026}".to_owned(), true),
             ("Check FFmpeg".to_owned(), true),
             ("Cancel Video Job".to_owned(), false),
@@ -272,4 +273,25 @@ fn the_video_tab_shows_the_check_and_applies_a_chosen_folder() {
     // A picked folder with no dialog open is applied at once.
     s.set_ffmpeg_folder(t.path("elsewhere"));
     assert_eq!(s.core().video_folder(), Some(t.path("elsewhere").as_path()));
+}
+
+#[test]
+fn the_video_window_opens_closes_and_remembers_its_overlay() {
+    let t = Tmp::new("window");
+    let mut s = shell(&t, FakeTool::new());
+    assert!(!s.detached(WindowKind::Video));
+    assert!(!s.core.video_shown());
+    s.execute(AppCommand::ToggleVideo);
+    assert!(s.detached(WindowKind::Video));
+    assert!(s.core.video_shown());
+    assert!(s.windows_wanted().contains(&WindowKind::Video));
+    assert_eq!(s.window_of(Pane::Video), WindowKind::Video);
+    // The View menu's check follows the window, the File > Video check follows the overlay.
+    assert!(s.menu_state().video_window && s.menu_state().video_overlay);
+    s.execute(AppCommand::ToggleVideoOverlay);
+    assert!(!s.menu_state().video_overlay);
+    assert!(!s.ui.video_timecode, "the choice is kept for the next run");
+    s.execute(AppCommand::ToggleVideo);
+    assert!(!s.detached(WindowKind::Video));
+    assert!(!s.core.video_shown(), "closing frees the pictures");
 }

@@ -395,6 +395,8 @@ ToggleSpectrumEq | Spectrum EQ
 ToggleStepEditor | Step Editor
 ToggleTempoLane | Tempo Lane
 ToggleTrackPanel | Track Panel
+ToggleVideo | Video
+ToggleVideoOverlay | Video Overlay
 TrackComment | Track Comment…
 TrackHeight(Fit) | Track Height: Fit
 TrackHeight(Large) | Track Height: Large

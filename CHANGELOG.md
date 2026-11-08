@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **The Video window.** View > Video opens a window with the picture of the song's film at the song position:
+  frame-accurate while stopped (locate, scrub, ruler clicks), following the transport while it plays (frames are
+  dropped, never lag), jumping back with the loop, and locked to time when the tempo changes. Before the film starts
+  and after it ends it is black. The timecode (from the film's start timecode, drop frame included) and the frame
+  number show over the picture (File > Video > Video Overlay, or the TC and # buttons); Fit, 50%, 100% and 200%
+  set the size with the aspect kept. The window says why when it has no picture (no film, missing file, no FFmpeg)
+  and shows the progress while the preview builds, which now starts by itself when a project with a film opens.
+  Frames are decoded off the UI thread by a pure-Rust JPEG decoder (`zune-jpeg`), with a decode-ahead cache.
 - **A video in the song.** A song can hold one film, linked by its path (never copied: films are huge) with what the
   probe found (length, frame rate, picture size, start timecode, whether it has sound) saved in the project, so the
   project opens and shows its film without FFmpeg. The film's start and trim are kept in microseconds, not in

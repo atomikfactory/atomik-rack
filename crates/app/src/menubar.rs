@@ -956,6 +956,8 @@ mod tests {
             console_detached: false,
             browser_detached: false,
             spectrum_eq: false,
+            video_window: false,
+            video_overlay: true,
             sequencer_only: false,
             editor: false,
             missing_audio: false,

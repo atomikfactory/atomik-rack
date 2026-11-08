@@ -106,6 +106,7 @@ impl<S: EngineSink> AppCore<S> {
     /// A video job runs already or `film` is not a file; the message is also the toast.
     pub fn import_video(&mut self, film: PathBuf) -> Result<(), String> {
         self.forget_video_file();
+        self.forget_viewer_film();
         self.start_film_job(film, Purpose::Import)
     }
 
@@ -251,7 +252,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The song position in microseconds, through the tempo map: the film's own time.
-    fn playhead_us(&self) -> i64 {
+    pub(super) fn playhead_us(&self) -> i64 {
         let seconds = TempoMap::new(&self.doc().song.tempo).seconds_at_tick(self.position as f64);
         (seconds * 1e6).round() as i64
     }
@@ -261,7 +262,10 @@ impl<S: EngineSink> AppCore<S> {
     /// After a project was opened: looks at the film's file again and says when it is missing.
     pub(super) fn video_opened(&mut self) {
         self.forget_video_file();
+        self.forget_viewer_film();
         if !self.video_missing() {
+            // The picture of a film that is there is prepared in the background, quietly.
+            self.video.warm = self.video_clip().is_some();
             return;
         }
         let Some(name) = self.video_clip().map(|c| c.name().to_owned()) else {

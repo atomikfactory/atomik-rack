@@ -316,6 +316,7 @@ fn window_name(kind: WindowKind) -> &'static str {
         WindowKind::SpectrumEq => "spectrum-eq",
         WindowKind::Browser => "browser",
         WindowKind::PianoKeys => "piano-keys",
+        WindowKind::Video => "video",
     }
 }
 
@@ -334,8 +335,9 @@ fn parse_window(name: Option<&str>) -> Result<WindowKind, String> {
         Some("spectrum-eq") => Ok(WindowKind::SpectrumEq),
         Some("browser") => Ok(WindowKind::Browser),
         Some("piano-keys") => Ok(WindowKind::PianoKeys),
+        Some("video") => Ok(WindowKind::Video),
         Some(other) => Err(format!(
-            "window must be main, rack, console, spectrum-eq, browser or piano-keys, not `{other}`"
+            "window must be main, rack, console, spectrum-eq, browser, piano-keys or video, not `{other}`"
         )),
     }
 }
@@ -1024,6 +1026,7 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
                 WindowKind::Browser => Pane::FileBrowser,
                 WindowKind::PianoKeys => Pane::PianoKeys,
+                WindowKind::Video => Pane::Video,
                 _ => Pane::Console,
             };
             let (_, rect) = session.shell().pane_rect(pane)?;

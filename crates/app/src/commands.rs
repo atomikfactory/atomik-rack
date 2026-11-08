@@ -474,6 +474,11 @@ pub enum AppCommand {
     /// View ▸ Spectrum EQ (F2): the floating analyser of the selected strip with its EQ points,
     /// in a window of its own; again closes it.
     ToggleSpectrumEq,
+    /// View ▸ Video: the song's film at the song position, in a window of its own; again closes
+    /// it.
+    ToggleVideo,
+    /// File ▸ Video ▸ Video Overlay: the timecode and frame number over the picture, off or on.
+    ToggleVideoOverlay,
     /// View ▸ Sequencer Only (F7): hide the rack and the console; again restores the layout.
     SequencerOnly,
     /// View ▸ Clip Editor (F8): open the editor of the selected clip, or close the open one.
@@ -737,6 +742,7 @@ fn window_arg(kind: WindowKind) -> &'static str {
         WindowKind::SpectrumEq => "spectrum-eq",
         WindowKind::Browser => "browser",
         WindowKind::PianoKeys => "piano-keys",
+        WindowKind::Video => "video",
     }
 }
 
@@ -1042,6 +1048,8 @@ impl AppCommand {
             AppCommand::DetachConsole => ("view.detach_console", None),
             AppCommand::DetachBrowser => ("view.detach_browser", None),
             AppCommand::ToggleSpectrumEq => ("view.toggle_spectrum_eq", None),
+            AppCommand::ToggleVideo => ("view.toggle_video", None),
+            AppCommand::ToggleVideoOverlay => ("video.toggle_overlay", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
             AppCommand::GroupTracks => ("sequencer.group_tracks", None),
             AppCommand::UngroupTracks => ("sequencer.ungroup_tracks", None),
@@ -1445,6 +1453,8 @@ impl AppCommand {
             ("view.detach_console", None) => AppCommand::DetachConsole,
             ("view.detach_browser", None) => AppCommand::DetachBrowser,
             ("view.toggle_spectrum_eq", None) => AppCommand::ToggleSpectrumEq,
+            ("view.toggle_video", None) => AppCommand::ToggleVideo,
+            ("video.toggle_overlay", None) => AppCommand::ToggleVideoOverlay,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
             ("sequencer.group_tracks", None) => AppCommand::GroupTracks,
             ("sequencer.ungroup_tracks", None) => AppCommand::UngroupTracks,
@@ -2060,6 +2070,10 @@ pub struct MenuState {
     pub browser_detached: bool,
     /// The Spectrum EQ window is open.
     pub spectrum_eq: bool,
+    /// The Video window is open.
+    pub video_window: bool,
+    /// The Video window shows its overlay (timecode, frame number).
+    pub video_overlay: bool,
     /// The sequencer-only layout (F7) is active.
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
@@ -2724,6 +2738,12 @@ pub fn menus_with_songs(
                             state.video_clip,
                         ),
                         MenuEntry::Separator,
+                        check(
+                            "Video Overlay",
+                            AppCommand::ToggleVideoOverlay,
+                            state.video_overlay,
+                        ),
+                        MenuEntry::Separator,
                         item("Prepare Video\u{2026}", AppCommand::PrepareVideo),
                         item("Check FFmpeg", AppCommand::CheckFfmpeg),
                         enabled(
@@ -2938,6 +2958,7 @@ pub fn menus_with_songs(
                             AppCommand::ToggleSpectrumEq,
                             state.spectrum_eq,
                         ),
+                        check("Video", AppCommand::ToggleVideo, state.video_window),
                         check(
                             "Rack Navigator",
                             AppCommand::ToggleRackNavigator,
@@ -4261,6 +4282,8 @@ mod tests {
             console_detached: false,
             browser_detached: false,
             spectrum_eq: false,
+            video_window: false,
+            video_overlay: true,
             sequencer_only: false,
             editor: false,
             missing_audio: false,
@@ -4457,6 +4480,8 @@ mod tests {
             AppCommand::DetachConsole,
             AppCommand::DetachBrowser,
             AppCommand::ToggleSpectrumEq,
+            AppCommand::ToggleVideo,
+            AppCommand::ToggleVideoOverlay,
             AppCommand::ToggleEditor,
             AppCommand::GroupTracks,
             AppCommand::UngroupTracks,
@@ -5357,6 +5382,8 @@ mod tests {
                 console_detached: false,
                 browser_detached: false,
                 spectrum_eq: false,
+                video_window: false,
+                video_overlay: true,
                 sequencer_only: false,
                 editor: false,
                 missing_audio: true,

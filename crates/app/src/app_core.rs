@@ -99,6 +99,8 @@ pub enum Pane {
     TrackPanel,
     /// The Spectrum EQ window: it fills a window of its own.
     SpectrumEq,
+    /// The Video window: it fills a window of its own.
+    Video,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 64;
@@ -449,6 +451,8 @@ pub struct AppCore<S: EngineSink> {
     track_panel_stamp: Option<(u64, Option<DeviceKey>)>,
     /// The Spectrum EQ window: its view and what the analyser feed remembers.
     spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView,
+    video_win: atomik_ui::VideoView,
+    viewer: video_view::ViewerState,
     speq: spectrum_eq::SpectrumEqState,
     keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
@@ -637,6 +641,8 @@ impl<S: EngineSink> AppCore<S> {
             track_panel_on: false,
             track_panel_stamp: None,
             spectrum_eq: atomik_ui::spectrum_eq::SpectrumEqView::new(Theme::dark()),
+            video_win: atomik_ui::VideoView::new(Theme::dark()),
+            viewer: video_view::ViewerState::default(),
             speq: spectrum_eq::SpectrumEqState::default(),
             keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
@@ -1244,6 +1250,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoKeys => self.piano_keys.help_at(pos),
             Pane::TrackPanel => self.track_panel.help_at(pos),
             Pane::SpectrumEq => self.spectrum_eq.help_at(pos),
+            Pane::Video => self.video_win.help_at(pos),
         }
     }
 
@@ -1279,6 +1286,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoKeys => self.piano_keys.handle(event),
             Pane::TrackPanel => self.track_panel.handle(event),
             Pane::SpectrumEq => self.spectrum_eq.handle(event),
+            Pane::Video => self.video_win.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -1743,6 +1751,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_device_scopes();
         self.feed_tuners();
         self.feed_spectrum_eq();
+        self.video_frame();
         self.feed_eq_analysers();
         self.poll_resonances();
         self.poll_duck_learn();
@@ -3013,6 +3022,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::PianoKeys => self.piano_keys.paint(canvas),
             Pane::TrackPanel => self.track_panel.paint(canvas),
             Pane::SpectrumEq => self.spectrum_eq.paint(canvas),
+            Pane::Video => self.video_win.paint(canvas),
         }
     }
 
@@ -4042,6 +4052,9 @@ mod video;
 #[path = "app_core_video_clip.rs"]
 mod video_clip;
 
+#[path = "app_core_video_view.rs"]
+mod video_view;
+
 #[cfg(test)]
 #[path = "app_core_video_clip_tests.rs"]
 mod video_clip_tests;
@@ -4049,6 +4062,10 @@ mod video_clip_tests;
 #[cfg(test)]
 #[path = "app_core_video_tests.rs"]
 mod video_tests;
+
+#[cfg(test)]
+#[path = "app_core_video_view_tests.rs"]
+mod video_view_tests;
 
 #[path = "app_core_patches.rs"]
 mod patches;

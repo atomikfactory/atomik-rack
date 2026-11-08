@@ -25,6 +25,8 @@ const CONSOLE_SIZE: Size = Size::new(1280.0, 520.0);
 const BROWSER_SIZE: Size = Size::new(420.0, 720.0);
 /// The size the Spectrum EQ window opens with when no geometry was saved.
 const SPECTRUM_EQ_SIZE: (f64, f64) = atomik_ui::spectrum_eq::DEFAULT_SIZE;
+/// The size the Video window opens with when no geometry was saved.
+const VIDEO_SIZE: (f64, f64) = atomik_ui::video_view::DEFAULT_SIZE;
 
 /// The size the Piano Keys window opens with when no geometry was saved.
 const PIANO_KEYS_SIZE: Size = Size::new(900.0, atomik_ui::PIANO_KEYS_HEIGHT);
@@ -66,6 +68,7 @@ fn pane_of(kind: WindowKind) -> Pane {
         WindowKind::SpectrumEq => Pane::SpectrumEq,
         WindowKind::Browser => Pane::FileBrowser,
         WindowKind::PianoKeys => Pane::PianoKeys,
+        WindowKind::Video => Pane::Video,
         WindowKind::Main | WindowKind::Rack => Pane::Rack,
     }
 }
@@ -168,6 +171,7 @@ impl<B: AudioBackend> Shell<B> {
             Pane::Console if self.console_detached() => WindowKind::Console,
             Pane::SpectrumEq => WindowKind::SpectrumEq,
             Pane::PianoKeys => WindowKind::PianoKeys,
+            Pane::Video => WindowKind::Video,
             Pane::FileBrowser if self.browser_detached() => WindowKind::Browser,
             _ => WindowKind::Main,
         }
@@ -226,9 +230,13 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::SpectrumEq,
             WindowKind::Browser,
             WindowKind::PianoKeys,
+            WindowKind::Video,
         ] {
             if self.detached(kind) {
                 self.open_window(kind);
+                if kind == WindowKind::Video {
+                    self.core.set_video_shown(true);
+                }
             }
         }
         self.settle_detached_layout();
@@ -258,6 +266,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::SpectrumEq => Size::new(SPECTRUM_EQ_SIZE.0, SPECTRUM_EQ_SIZE.1),
             WindowKind::Browser => BROWSER_SIZE,
             WindowKind::PianoKeys => PIANO_KEYS_SIZE,
+            WindowKind::Video => Size::new(VIDEO_SIZE.0, VIDEO_SIZE.1),
             WindowKind::Main | WindowKind::Rack => RACK_SIZE,
         });
         let scale = self.scale();
@@ -279,6 +288,7 @@ impl<B: AudioBackend> Shell<B> {
             WindowKind::SpectrumEq => self.core.spectrum_eq_mut().set_scale(scale),
             WindowKind::Browser => self.core.file_browser_mut().set_scale(scale),
             WindowKind::PianoKeys => self.core.piano_keys_mut().set_scale(scale),
+            WindowKind::Video => self.core.video_window_mut().set_scale(scale),
             WindowKind::Main => {
                 self.core.arrangement_mut().set_scale(scale);
                 self.core.piano_roll_mut().set_scale(scale);
@@ -433,6 +443,25 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
             return;
         }
+        if kind == WindowKind::Video {
+            // A floating window with no place in the main layout: it opens and closes on its own.
+            // Open, it decodes the picture of the film; closed, nothing is held.
+            if detached {
+                self.open_window(kind);
+            } else {
+                self.wins.remove(&kind);
+                if self.focus == pane {
+                    let back = self.live_pane(Pane::Arrangement);
+                    self.set_focus(back);
+                }
+            }
+            self.layout_view();
+            self.core.set_video_shown(detached);
+            self.focused = self.window_of(self.focus);
+            self.write_ui_state();
+            self.repaint = true;
+            return;
+        }
         if kind == WindowKind::PianoKeys {
             // A floating window with no place in the main layout, like the Spectrum EQ: opening
             // it gives it the keys, closing it lets go of the notes it was sounding.
@@ -471,6 +500,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 WindowKind::Main
                 | WindowKind::SpectrumEq
+                | WindowKind::Video
                 | WindowKind::PianoKeys
                 | WindowKind::Browser => {}
             }
@@ -535,6 +565,7 @@ impl<B: AudioBackend> Shell<B> {
                 WindowKind::SpectrumEq => Pane::SpectrumEq,
                 WindowKind::Browser => Pane::FileBrowser,
                 WindowKind::PianoKeys => Pane::PianoKeys,
+                WindowKind::Video => Pane::Video,
             }
         };
         self.set_focus(pane);

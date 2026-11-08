@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk, dsp | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`), the reference voice (`reference.rs`, after the master chain) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`) and the per-user proxy cache (`cache.rs`) |
+| `atomik-video` | [crates/video](../crates/video) | none (serde_json, sha2, thiserror, log, zune-jpeg) | none | The foundation of video tracks, pure and headless, with no codec of its own: finding the FFmpeg the user installed (Settings folder, then `PATH`, version check; `discover.rs`), the one `VideoTool` trait every `ffmpeg` and `ffprobe` call goes through (`SystemTool` with no shell, a list of arguments, no console window and a kill on cancel; a fake for the tests), the `ffprobe` parser (`probe.rs`), the proxy file of small independent JPEG frames with a frame index (`proxy.rs`, `jpeg.rs`), the build of it from the piped frames with progress and cancel (`prepare.rs`), the per-user proxy cache (`cache.rs`), and what the viewer reads it with: the pure-Rust JPEG decode to RGBA (`decode.rs`), the decode worker and its byte-limited frame cache (`frames.rs`) and the exact song-time to frame and timecode arithmetic (`timeline.rs`) |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v44), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
@@ -2606,7 +2606,7 @@ Without FFmpeg the video features are off and nothing else changes. This section
   the JPEG markers, so bytes in a table are never taken for an end), and written by `ProxyWriter`: a 40-byte header
   (version, size, rate, frame count, index offset), the frames, and an index of frame offsets, so frame `n` is one
   seek and one read (`ProxyReader::read_frame`). JPEG was chosen because it is intra-only, about 20 to 40 KiB at 360
-  lines and decodable by a small pure-Rust decoder; the decoder dependency is added with the viewer that uses it.
+  lines and decodable by a small pure-Rust decoder (`zune-jpeg`, see [Dependencies](DEPENDENCIES.md)).
 - **Build.** `prepare` probes, finds the proxy in the cache or builds it: ffmpeg's output is split and written to
   `<key>.atproxy.part` with `done` and `total` frame counters for progress, and the file is renamed only when ffmpeg
   ended with success and every frame is in. A cancel, an error, a cut-short frame or a stream without frames removes
@@ -2652,6 +2652,24 @@ Without FFmpeg the video features are off and nothing else changes. This section
   tools lists the film with `missing`. Remove Video, Move Video to Playhead and Trim Video Start / End to Playhead
   (`video.remove`, `video.move_to_playhead`, `video.trim_start`, `video.trim_end`) read the playhead through the
   tempo map into the film's own time.
+- **The Video window.** View > Video (`view.toggle_video`) is a floating window of its own, like the Spectrum EQ
+  (`WindowKind::Video`, `Pane::Video`, `windows.video` in `ui-state.json`); its view is
+  [video_view.rs](../crates/ui/src/video_view.rs) and its logic `app_core_video_view.rs`. The core works out the
+  picture once per `AppCore::frame`: the song position (ticks, read through the tempo map into microseconds) goes
+  through `atomik_video::timeline::locate` with the film's start, trim and the proxy's rate, in integer arithmetic
+  (a frame changes exactly at its start for 24, 25 and 30000/1001 alike), giving the proxy frame, or black before
+  and after the film with the frame number the film would have (for the timecode, drop frame included:
+  `Timecode`). A `FrameDecoder` worker thread opens the proxy and decodes with `zune-jpeg`; the core asks it for
+  the frame shown first, then `timeline::wanted` (ahead while playing, around while stopped, the first frames of
+  the loop near its end), a new request replaces the old one so a slow decode drops frames, and decoded frames
+  sit in a byte-limited `FrameCache` (48 MiB). Nothing is read or decoded on the UI or audio thread; closing the
+  window frees the worker and the pictures. The song position is whole ticks, so the picture can change up to one
+  tick (under a millisecond at usual tempos) late and at most one UI frame after the transport. The view paints
+  an RGBA image brush, the timecode and frame number overlay (`video.toggle_overlay`) and a bar with Fit, 50%,
+  100%, 200% (kept in `ui-state.json`). With no picture it shows a message (no film, file missing, FFmpeg
+  missing) or the proxy's progress. The proxy of a song's film is built quietly (`Purpose::Open`, no toast) once
+  per film when a project with a film opens (after the platform has set the tools and cache, in `video_frame`)
+  and when the window opens. No key is bound (the menu has both commands).
 - **Tests.** `crates/video` has unit tests for the version parser, the discovery order, the probe of an MP4/H.264,
   a ProRes MOV with a timecode, an MKV with two audio tracks, a silent film, a rotated variable-rate phone film
   and cover art, the argument lists, the frame splitter, the proxy index and random access, the cache key,
@@ -4892,7 +4910,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (509) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (511) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

@@ -72,6 +72,7 @@ proptest = "1.12.0"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 rustfft = "6"
 sha2 = "0.11"
+zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

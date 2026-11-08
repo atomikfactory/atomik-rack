@@ -247,3 +247,31 @@ pub fn tiny_jpeg(width: u32, height: u32, tag: u8) -> Vec<u8> {
     out.extend_from_slice(&[0xFF, 0xD9]);
     out
 }
+
+/// The colour of a [`solid_jpeg`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Solid {
+    /// Pure red.
+    Red,
+    /// Pure green.
+    Green,
+    /// Pure blue.
+    Blue,
+    /// White.
+    White,
+}
+
+/// A real, decodable 16 by 16 JPEG of one colour (for tests of the decoder and the viewer).
+pub fn solid_jpeg(colour: Solid) -> &'static [u8] {
+    match colour {
+        Solid::Red => include_bytes!("../fixtures/solid_red.jpg"),
+        Solid::Green => include_bytes!("../fixtures/solid_green.jpg"),
+        Solid::Blue => include_bytes!("../fixtures/solid_blue.jpg"),
+        Solid::White => include_bytes!("../fixtures/solid_white.jpg"),
+    }
+}
+
+/// A real, decodable 32 by 16 JPEG, red on the left half and blue on the right.
+pub fn split_jpeg() -> &'static [u8] {
+    include_bytes!("../fixtures/split_red_blue.jpg")
+}
